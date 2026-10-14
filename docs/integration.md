@@ -1,0 +1,155 @@
+# MCP 与 A2A 接入指南
+
+实现版本：0.1.0。两个入口共用任务与权限，没有“先 MCP 登录，再转 A2A”的必要步骤。客户端必须具备实际协议和认证支持；提示词不能自动增加网络连接能力。
+
+## 1. 身份与连接
+
+### 本地开发
+
+运行 `npm run setup:dev` 和 `npm run dev`。客户端在请求头添加 `Authorization: Bearer <.env 中的 EIGOS_DEV_TOKEN>`。不要把令牌放进提示词、URL、Agent Card 或 Git。
+
+本地开发只代表同一开发用户。测试套件另外验证了多个 JWT 用户／组织的权限隔离。禁止通过隧道公开开发令牌端点；公开服务必须使用下面的 JWT 配置。
+
+### 真实 OAuth 接入
+
+当前网关是 OAuth 资源服务器，不是授权服务器。绑定自己的 OIDC 身份提供方时：
+
+1. 注册 EIGOS API 资源，资源标识配置为 `OAUTH_AUDIENCE`（例如 `https://api.example.com`）。它覆盖 `/mcp` 与 `/a2a`。
+2. 定义 `services:read`、`tasks:read`、`tasks:write`；按用户和客户端授权这些 scope。
+3. 使用授权码＋PKCE，并按目标客户端实际支持的方式配置回调 URI 和客户端注册。CIMD／预注册／旧客户端注册方式取决于身份提供方与客户端，不由这个网关自动提供。
+4. 配置令牌映射：`sub` 是用户／服务身份，`tenant_id` 是受信任的组织 ID，`client_id` 是客户端 ID，`scope` 是空格分隔字符串。客户端提交的任务字段不能覆盖这些身份。
+5. 令牌使用 `typ: at+jwt`，具有正确的 `iss`／`aud`、`iat`／`exp`，最长 900 秒；支持 RS256、ES256、EdDSA。只提供普通 `JWT` 或 opaque access token 的提供方，需要先适配 verifier，不能直接降低检查或把 ID token 当 access token。
+6. 配置 HTTPS 的 `PUBLIC_URL`、`OAUTH_ISSUER`、`OAUTH_JWKS_URL`、`OAUTH_AUDIENCE`，运行已构建服务。签名公钥只从管理员配置的 JWKS 地址加载，不使用请求中声明的密钥地址。
+7. 在实际客户端验证登录、同意、刷新、过期和撤销；本仓库的测试不代替这一步。
+
+提供方应在 `${OAUTH_ISSUER}/.well-known/openid-configuration` 暴露其真实 OIDC 元数据，A2A Agent Card 引用此地址。MCP 授权服务器发现还需要符合 MCP 授权规范；不满足时应配置适配或选用兼容提供方。
+
+发现端点：
+
+- `/.well-known/oauth-protected-resource`
+- `/.well-known/oauth-protected-resource/mcp`
+- `/.well-known/oauth-protected-resource/a2a`
+
+三者描述同一资源服务器；未认证的受保护请求返回 401 和包含资源元数据位置的 `WWW-Authenticate`。JWT 的即时撤销尚未实现，当前依赖最长 15 分钟寿命；密钥轮换走 JWKS。会员 UI、组织成员管理、套餐和计费仍需独立建设。
+
+## 2. MCP
+
+接入地址：`https://你的域名/mcp`。传输：Streamable HTTP。SDK 优先支持 `2026-07-28`，同时启用官方无状态旧版 fallback；不启用 HTTP 会话 ID。
+
+工具参数示例：
+
+```json
+{
+  "name": "submit_task",
+  "arguments": {
+    "service": "brief.prepare",
+    "goal": "整理供应商比较任务的说明",
+    "requestId": "client-generated-unique-id"
+  }
+}
+```
+
+缺少 `deliverable` 时，返回 `state: input-required`、`question` 和 `id`。客户端自行回答已有且可分享的信息，或询问用户，然后调用：
+
+```json
+{
+  "name": "reply_to_task",
+  "arguments": {
+    "taskId": "上一步返回的 UUID",
+    "answer": "记录交付要求：三家供应商、价格、容量和资料来源的比较表",
+    "requestId": "another-client-generated-unique-id"
+  }
+}
+```
+
+完成结果中的 artifact 是任务说明：`goal`、`deliverable`、`execution: not_started`。`completed` 只表示整理说明完成，底层采购等目标尚未执行。
+
+`get_task` 和 `cancel_task` 接收 `{ "taskId": "UUID" }`。`list_tasks` 接收 `{ "limit": 50, "offset": 0 }`，limit 上限 100。
+
+MCP 工具返回可读文本与 `structuredContent.result`；业务错误标记 `isError: true`。本实现不要求 MRTR、elicitation 或 Tasks 扩展，任务编号通过显式参数传递。
+
+旧版调用先执行客户端正常的 `initialize` 流程；服务端仍不创建连接会话。不同厂商支持的 MCP 版本和 OAuth 能力需要实际验证。
+
+## 3. A2A
+
+发现地址：`https://你的域名/.well-known/agent-card.json`。卡片可公开读取，不含会员数据或密钥。
+
+调用地址：`https://你的域名/a2a`。设置 `A2A-Version: 1.0`、`Content-Type: application/json` 和 Bearer 授权头。本实现不启用 A2A 0.3 兼容；方法名与消息格式按 1.0。
+
+提交任务：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "rpc-1",
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "message-1",
+      "role": "ROLE_USER",
+      "parts": [{ "text": "整理供应商比较任务的说明" }]
+    }
+  }
+}
+```
+
+任务在 `result.task` 中。缺少交付要求时状态为 `TASK_STATE_INPUT_REQUIRED`。继续同一任务：
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "rpc-2",
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "message-2",
+      "taskId": "上一步返回的 UUID",
+      "role": "ROLE_USER",
+      "parts": [{ "text": "记录交付要求：三家供应商比较表" }]
+    }
+  }
+}
+```
+
+也支持单个结构化 data part：新任务用 `{ "data": { "goal": "...", "deliverable": "...", "service": "brief.prepare" } }`，回复用 `{ "data": { "answer": "..." } }`。不接受文件 URL、任意下游操作、隐式购买或伪装成 Agent 的入站消息。
+
+其他操作：
+
+| 方法 | params |
+| --- | --- |
+| `GetTask` | `{ "id": "UUID", "historyLength": 0 }` |
+| `ListTasks` | `{ "pageSize": 20, "includeArtifacts": true }` |
+| `CancelTask` | `{ "id": "UUID" }` |
+
+`ListTasks` 支持 contextId、status、statusTimestampAfter、historyLength 和 pageToken。下一页使用返回的 nextPageToken，保持原筛选条件；当前偏移分页不保证并发插入时的快照一致性。
+
+contextId 由服务器生成；新任务可以复用当前用户拥有的已有 context。继续任务时若同时传 taskId 和 contextId，两者必须匹配。未知与其他用户的任务统一按不存在处理。
+
+暂不支持 Streaming、Push Notifications、Extended Agent Card。卡片不会宣称支持；推送配置会在创建任务前拒绝，服务端不会访问用户提供的回调 URL。
+
+## 4. 重试、隔离与存储
+
+- MCP `requestId`、A2A `messageId` 用作同一个动作的幂等键。重试必须保留相同键和相同内容；改变内容请使用新键。
+- 幂等重试返回原动作的响应快照；要看最新状态，用 `get_task`／`GetTask`。
+- 任务与幂等收据在同一个 SQLite 事务中保存，不依赖某台 HTTP 进程的会话。
+- 同一 issuer、组织、用户可以从另一个获授权客户端继续任务。不同用户即使在同一组织，也不能默认读取彼此任务。
+- `tasks:write` 可以返回自己提交／修改任务的结果；独立查询需要 `tasks:read`。生产系统若需管理员共享、团队 ACL 或客户端级隔离，应明确增加授权模型。
+- 当前任务说明生成是同步、无外部副作用的动作。真实后台执行器需要另外实现持久队列、租约、失败恢复和业务系统的幂等；不要把 SQLite 重试记录当成外部支付的 exactly-once 保证。
+
+## 5. 部署准备与未完成条件
+
+仓库提供 Dockerfile，但未自动部署。可使用 `docker build -t eigos .` 构建；运行时注入真实 OAuth 配置，并将 `/app/data` 绑定持久卷。镜像使用非 root 用户和 JWT 模式，默认拒绝开发令牌模式。
+
+当前部署模型是单实例＋持久磁盘＋前置 HTTPS。公网入口还需按实际平台配置请求限流、日志／告警、备份和密钥管理。`PUBLIC_URL` 决定 Agent Card 与发现信息，Host 校验只允许其主机名；反向代理需保留正确 Host。
+
+浏览器跨域调用仅允许 `PUBLIC_URL` 及 `ALLOWED_ORIGINS` 中的精确 origin。命令行／服务端 Agent 可以不发送 Origin，但仍必须有访问令牌。
+
+尚未完成：实际身份提供方的浏览器登录联调、Grok Bot／MUSE 实测、云端部署、通用业务 Agent、本体驱动执行器与支付。协议接入层可用于继续这些工作，不据此宣称任一客户产品已经兼容。
+
+## 官方依据
+
+- [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/)
+- [MCP 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28)
+- [MCP 授权规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+- [A2A JavaScript SDK](https://github.com/a2aproject/a2a-js)
+- [A2A 1.0 规范](https://a2a-protocol.org/v1.0.0/specification/)
