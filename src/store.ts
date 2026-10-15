@@ -35,6 +35,17 @@ export class JobStore {
 
   close(): void { this.db.close(); }
 
+  // An interrupted model call cannot be assumed safe to replay or completed.
+  interruptWorking(): void {
+    const rows = this.db.prepare("SELECT owner, body FROM jobs WHERE state='working'").all();
+    for (const row of rows) {
+      const job = JSON.parse(String(row.body)) as Job;
+      job.state = 'failed'; job.error = 'Executor interrupted by server restart; submit a new task to retry.';
+      job.updatedAt = new Date().toISOString();
+      this.save(String(row.owner), job);
+    }
+  }
+
   get(owner: string, id: string): Job {
     const row = this.db.prepare('SELECT body FROM jobs WHERE owner = ? AND id = ?').get(owner, id);
     if (!row) throw new DomainError('NOT_FOUND', 'Task not found');
@@ -43,6 +54,10 @@ export class JobStore {
 
   hasContext(owner: string, contextId: string): boolean {
     return !!this.db.prepare('SELECT 1 FROM jobs WHERE owner = ? AND context_id = ? LIMIT 1').get(owner, contextId);
+  }
+
+  hasRequest(owner: string, operation: string, requestId: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM requests WHERE owner=? AND operation=? AND request_id=?').get(owner, operation, requestId);
   }
 
   save(owner: string, job: Job): void {

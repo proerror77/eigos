@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DomainError, SERVICES, replySchema, requireScope, submitSchema, taskIdSchema, type Principal } from './domain.js';
+import { DomainError, replySchema, requireScope, submitSchema, taskIdSchema, type Principal } from './domain.js';
 import { TaskService } from './tasks.js';
 
 function result(action: () => unknown): CallToolResult {
@@ -19,11 +19,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('list_services', {
-    description: 'List implemented EIGOS capabilities. Only brief.prepare is currently available; it prepares a brief and does not execute purchases or other business actions.',
+    description: 'List currently configured EIGOS capabilities. agent.execute is available only when a real executor is configured. No purchases or external business actions.',
     inputSchema: z.object({}), annotations: read,
-  }, () => result(() => { requireScope(principal, 'services:read'); return SERVICES; }));
+  }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Prepare a task brief. Supply a stable requestId for retries. If deliverable is missing, the task waits for input; ask the user or provide authorized context using reply_to_task.',
+    description: 'Submit brief.prepare or configured agent.execute. A model task initially returns working: use get_task to retrieve its question or deliverable. Reply to input-required tasks with reply_to_task. Reuse requestId for identical retries.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.submit(principal, args)));
@@ -37,7 +37,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     annotations: read,
   }, args => result(() => tasks.list(principal, args)));
   server.registerTool('reply_to_task', {
-    description: 'Answer an owned task waiting for input. The answer records the deliverable and acceptance criteria. Reuse requestId only for retries with identical input.',
+    description: 'Answer an owned task waiting for input. For agent.execute, the model continues with the full task history; poll get_task while working. Reuse requestId only for identical retries.',
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));

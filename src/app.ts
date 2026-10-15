@@ -4,6 +4,8 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { agentCardHandler, jsonRpcHandler } from '@a2a-js/sdk/server/express';
 import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
 import { z } from 'zod';
+import { appendFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { Config } from './config.js';
 import { createVerifier, protectedResourceMetadata, type VerifyToken } from './auth.js';
 import { A2AGateway, AgentUser, agentCard } from './a2a.js';
@@ -11,10 +13,11 @@ import { SCOPES, type Principal, type Scope } from './domain.js';
 import { createMcpServer } from './mcp.js';
 import { JobStore } from './store.js';
 import { TaskService } from './tasks.js';
+import { CodexExecutor, type Executor } from './executor.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
-export function createApp(config: Config, verify: VerifyToken = createVerifier(config)) {
+export function createApp(config: Config, verify: VerifyToken = createVerifier(config), executor?: Executor) {
   const hostname = new URL(config.PUBLIC_URL).hostname;
   const allowedOrigins = new Set([config.PUBLIC_URL, ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
   const app = createMcpExpressApp({
@@ -26,8 +29,22 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
   const store = new JobStore(config.DATABASE_PATH);
-  const tasks = new TaskService(store);
+  store.interruptWorking();
+  const tasks = new TaskService(store, executor ?? (config.EIGOS_EXECUTOR === 'codex' ? new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS) : undefined));
+  if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
+    if (config.EIGOS_AUDIT_PATH && ['/mcp', '/a2a', '/.well-known/agent-card.json'].includes(req.path)) {
+      const entry = {
+        at: new Date().toISOString(), path: req.path, method: req.body?.method,
+        requestId: req.body?.id, messageId: req.body?.params?.message?.messageId,
+        taskId: req.body?.params?.id ?? req.body?.params?.message?.taskId,
+      };
+      res.on('finish', () => {
+        // Never persist headers, tokens, prompts, or arbitrary peer metadata here.
+        try { appendFileSync(config.EIGOS_AUDIT_PATH!, JSON.stringify({ ...entry, httpStatus: res.statusCode }) + '\n', { mode: 0o600 }); }
+        catch { console.error('EIGOS audit write failed'); }
+      });
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'no-store');
     const origin = req.headers.origin;
@@ -70,7 +87,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const handleMcp = toNodeHandler(mcp);
   app.all('/mcp', authenticate, async (req, res) => { await handleMcp(req, res, req.body); });
 
-  const a2a = new A2AGateway(tasks, agentCard(config));
+  const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()));
   app.use('/.well-known/agent-card.json', agentCardHandler({ agentCardProvider: a2a }));
   const a2aScopes: Record<string, Scope> = {
     SendMessage: 'tasks:write', SendStreamingMessage: 'tasks:write',
@@ -99,5 +116,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, scopes: SCOPES, close: async () => { await mcp.close(); store.close(); } };
+  return { app, tasks, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); } };
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { RunEvidence } from './executor.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -28,7 +29,7 @@ export function ownerKey(p: Principal): string {
 export const requestIdSchema = z.string().trim().min(1).max(128);
 export const taskIdSchema = z.uuid();
 export const submitSchema = z.object({
-  service: z.literal('brief.prepare').default('brief.prepare'),
+  service: z.enum(['brief.prepare', 'agent.execute']).default('brief.prepare'),
   goal: z.string().trim().min(1).max(10_000),
   deliverable: z.string().trim().min(1).max(4_000).optional(),
   requestId: requestIdSchema,
@@ -41,7 +42,7 @@ export const replySchema = z.object({
 export type SubmitInput = z.infer<typeof submitSchema>;
 export type ReplyInput = z.infer<typeof replySchema>;
 
-export type JobState = 'input-required' | 'completed' | 'canceled';
+export type JobState = 'working' | 'input-required' | 'completed' | 'canceled' | 'failed';
 export interface JobMessage {
   id: string;
   role: 'user' | 'agent';
@@ -51,12 +52,15 @@ export interface JobMessage {
 export interface Job {
   id: string;
   contextId: string;
-  service: 'brief.prepare';
+  service: 'brief.prepare' | 'agent.execute';
   goal: string;
   deliverable?: string;
   state: JobState;
   question?: string;
-  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' } };
+  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'completed'; markdown?: string } };
+  runs?: RunEvidence[];
+  revision?: number;
+  error?: string;
   messages: JobMessage[];
   createdAt: string;
   updatedAt: string;

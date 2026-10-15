@@ -11,6 +11,10 @@ const schema = z.object({
   OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_AUDIENCE: z.url().optional(),
   ALLOWED_ORIGINS: z.string().default(''),
+  EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
+  EIGOS_CODEX_BIN: z.string().default('codex'),
+  EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
+  EIGOS_AUDIT_PATH: z.string().optional(),
 });
 export type Config = z.infer<typeof schema>;
 

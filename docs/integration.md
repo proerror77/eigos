@@ -144,7 +144,38 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 
 浏览器跨域调用仅允许 `PUBLIC_URL` 及 `ALLOWED_ORIGINS` 中的精确 origin。命令行／服务端 Agent 可以不发送 Origin，但仍必须有访问令牌。
 
-尚未完成：实际身份提供方的浏览器登录联调、Grok Bot／MUSE 实测、云端部署、通用业务 Agent、本体驱动执行器与支付。协议接入层可用于继续这些工作，不据此宣称任一客户产品已经兼容。
+尚未完成：实际身份提供方的浏览器登录联调、MUSE 实测、云端部署、通用业务连接器、本体驱动验收与支付。Grok Bot 的单次验证证据另行记录，不据此宣称所有客户端或全部功能都已兼容。
+
+## 6. 真实执行 Agent
+
+`EIGOS_EXECUTOR=codex` 启用本地已登录的 Codex CLI。其他设置：`EIGOS_CODEX_BIN`（默认 codex）、`EIGOS_EXECUTOR_TIMEOUT_MS`（默认 120000，最多 300000）。默认 disabled，未启用时提交 agent.execute 会报错，绝不回退到 brief.prepare 或固定回复。
+
+执行器通过 stdin 接收本任务内容，使用结构化输出模式，工具、插件、MCP 连接、浏览器与多 Agent 功能关闭，工作目录是临时目录，结束后清除。模型账户登录由本机 Codex 管理；网关 Bearer 凭据不传进子进程。当前运行时专用于基于输入资料的文档与计划生成，不是为任意访客开放个人 Codex 的文件和工具访问。
+
+提交示例：
+
+```json
+{
+  "jsonrpc": "2.0", "id": "request-1", "method": "SendMessage",
+  "params": {
+    "configuration": { "returnImmediately": true },
+    "message": {
+      "messageId": "unique-message-1", "role": "ROLE_USER",
+      "parts": [{ "data": { "service": "agent.execute", "goal": "请帮我设计工作坊，先确认必要条件。" } }]
+    }
+  }
+}
+```
+
+返回 TASK_STATE_WORKING 后查询 GetTask。模型返回 TASK_STATE_INPUT_REQUIRED 时，将问题交给实际请求方，用同一 taskId 和新的 messageId 回复。没有 returnImmediately 时，SendMessage 等待模型达到暂停／终态，仍受执行超时约束；长任务建议查询模式。
+
+每次模型执行将有限的证据写入任务 metadata.runs：调用 ID、运行时、开始／结束时间、模型响应摘要哈希，以及 CLI 返回的 threadId 和 token usage（如果提供）。不保存隐式推理。最终 Artifact 的 text/markdown 部分包含完整交付物。
+
+只有两类完成必须区分：brief.prepare 的任务说明完成，与 agent.execute 的文档生成完成。二者都不代表外部购买、发布或研究已发生。后续本体动作和确定性验收器应建立自己的完成证据。
+
+运行限制：同一进程最多两个模型调用；最多六次模型往返；取消使迟到结果失效；启动时把遗留 working 任务标记失败。当前没有跨进程租约和自动恢复队列，不支持多个实例同时操作这份 SQLite。
+
+可设置 `EIGOS_AUDIT_PATH=./data/http-audit.jsonl` 记录协议路径、方法、任务／消息编号、时间与 HTTP 状态。不记录 Authorization、用户消息正文或任意模型推理。
 
 ## 官方依据
 

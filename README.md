@@ -15,7 +15,14 @@ EIGOS 的协议接入原型：**远程 MCP 与 A2A 共用认证、任务库和�
 - 提交／回复的幂等记录，避免重试产生重复任务；相同 request ID 配不同输入会被拒绝。
 - 官方 MCP 和 A2A 客户端的跨协议集成测试、GitHub Actions CI。
 
-**当前实际能力只有 `brief.prepare`：收集目标与交付要求，生成结构化任务说明。** 它会补问缺失的交付要求，但不会研究市场、预订、发消息或付款。交付物的 `execution: not_started` 明确保留这一边界。这里验证的是接入闭环，不是通用 Agent 已经能完成任意业务。
+当前有两项明确分开的能力：
+
+- **`brief.prepare`**：固定流程整理任务说明，`execution: not_started`，不执行说明中的业务。
+- **`agent.execute`（需显式启用）**：通过本地已登录的 Codex 运行真实模型。模型读取目标和完整任务历史，自主提出必要问题，收到答复后生成完整 Markdown 文档／计划。它不具备外部研究、预订、发送或付款工具；生成文档是本阶段实际交付的服务。
+
+本体驱动的业务动作与验收器仍待实现，不能把模型返回 completed 当成任意业务已经可靠履约。方向见 [本体与执行边界](docs/ontology-execution-direction.md)。
+
+2026-10-15 已完成一次 **Grok Bot → A2A → EIGOS 真实执行 Agent** 的提问、回复和交付，未使用 MCP 桥接。见 [真实联调证据](docs/evidence/grok-a2a-2026-10-15/README.md)及[最终交付物](docs/evidence/grok-a2a-2026-10-15/deliverable.md)。这是通过 Grok Bot 已有的电脑执行能力发出 A2A 请求，不是对其原生 A2A 连接器的声明。
 
 ## 本地运行
 
@@ -46,6 +53,12 @@ npm run example
 
 远程云端 Bot 无法访问你电脑的 `127.0.0.1`。连接此类客户端需要另行部署 HTTPS 服务，配置真实身份提供方，并验证该客户端的协议版本和认证方式。
 
+### 启用真实执行 Agent
+
+本机安装 Codex CLI 并完成 `codex login` 后，在私有 `.env` 中加入 `EIGOS_EXECUTOR=codex`。可以用 `EIGOS_CODEX_BIN` 指定可执行文件。服务重启后，能力目录和 Agent Card 才会公布 `agent.execute`。
+
+通过 A2A 发纯文本新任务时，启用了模型便默认交给执行 Agent；结构化请求显式填写 `service: agent.execute`。MCP 的 `submit_task` 同样需要显式填写这个 service。执行中返回 working，补问返回 input-required，交付物是 Markdown。完整接法见 [接入指南](docs/integration.md#6-真实执行-agent)。
+
 ## 两种入口
 
 ```mermaid
@@ -56,7 +69,8 @@ flowchart TD
     A --> P
     P --> T[共用 TaskService]
     T --> D[(SQLite 任务与幂等记录)]
-    T --> B[brief.prepare：生成任务说明]
+    T --> B[brief.prepare：整理说明]
+    T --> A2[agent.execute：模型判断与文档交付]
 ```
 
 MCP 提供六个工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`cancel_task`。补问采用普通工具结果与后续回复，因此不要求客户端支持 MRTR 或 Tasks 扩展。本版本不宣称实现这些扩展。
@@ -93,9 +107,10 @@ npm run build
 ## 当前运行边界
 
 - MCP 协议入口无状态，业务任务持久化；当前存储面向单实例、本地持久磁盘。多副本／无持久盘部署需要共享数据库与相应运行时，不能直接复制 SQLite 文件启动多个实例。
-- 暂无后台 LLM worker、实际商业执行连接器、Payment 适配器、Webhook 推送或自动收费。
+- 真实模型执行器是单进程、每次调用有超时的本地 Codex 子进程；最多同时运行两个任务，每个任务最多六次模型调用。尚无实际商业执行连接器、Payment、Webhook 推送或自动收费。
+- 服务重启会将中断的 working 任务标记 failed，不自动重放可能已经计费的模型调用。取消会终止子进程，过期结果不能覆盖取消状态。
 - 自包含 JWT 的撤销存在令牌有效期窗口；需要即时撤销时，增加身份提供方 introspection 或服务端撤销记录后再上线该能力。
-- Dockerfile 是部署准备文件；本次未开通云资源或发布公网服务。
+- Dockerfile 仍只包含网关；使用 Codex 执行器时还需宿主安装与登录，镜像没有打包个人凭据或 Codex CLI。
 
 ## 项目资料
 

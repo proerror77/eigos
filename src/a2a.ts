@@ -16,6 +16,8 @@ const states: Record<JobState, TaskState> = {
   'input-required': TaskState.TASK_STATE_INPUT_REQUIRED,
   completed: TaskState.TASK_STATE_COMPLETED,
   canceled: TaskState.TASK_STATE_CANCELED,
+  working: TaskState.TASK_STATE_WORKING,
+  failed: TaskState.TASK_STATE_FAILED,
 };
 
 function toTask(job: Job, historyLength?: number): Task {
@@ -29,26 +31,28 @@ function toTask(job: Job, historyLength?: number): Task {
     id: job.id, contextId: job.contextId,
     status: { state: states[job.state], timestamp: job.updatedAt, message: messages.at(-1) },
     history: historyLength === undefined ? messages : historyLength === 0 ? [] : messages.slice(-historyLength),
-    artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service },
+    artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
+      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
+      : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
+    metadata: { service: job.service, ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 
-export function agentCard(c: Config): AgentCard {
+export function agentCard(c: Config, services = SERVICES): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: 'Authenticated task gateway. The implemented reference service prepares task briefs; it does not execute the underlying business goal.',
+    description: services.some(s => s.id === 'agent.execute') ? 'EIGOS real document execution agent. Delegate a document or planning task with service agent.execute; it may ask clarifying questions before delivering Markdown. No external actions.' : 'Authenticated task gateway. brief.prepare only prepares task briefs.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false },
-    defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json'],
+    defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
       eigos: c.EIGOS_AUTH_MODE === 'jwt'
         ? { openIdConnectSecurityScheme: { openIdConnectUrl: `${c.OAUTH_ISSUER!.replace(/\/$/, '')}/.well-known/openid-configuration` } }
         : { httpAuthSecurityScheme: { scheme: 'Bearer', bearerFormat: 'opaque', description: 'Loopback-only development credential' } },
     },
     securityRequirements: [{ schemes: { eigos: { list: c.EIGOS_AUTH_MODE === 'jwt' ? ['tasks:read', 'tasks:write'] : [] } } }],
-    skills: SERVICES.map(service => ({
+    skills: services.map(service => ({
       id: service.id, name: service.name, description: service.description,
       tags: ['task-brief'], examples: ['Prepare a task brief for comparing three suppliers.'],
     })),
@@ -80,13 +84,13 @@ export class A2AGateway implements A2ARequestHandler {
   }
 
   async sendMessage(params: SendMessageRequest, ctx: ServerCallContext): Promise<Task> {
-    return this.adapt(() => {
+    const job = this.adapt(() => {
       const p = this.principal(ctx, params.tenant);
       const message = params.message;
       if (!message || message.role !== Role.ROLE_USER || !message.messageId) throw new RequestMalformedError('A user message with messageId is required');
       if (params.configuration?.taskPushNotificationConfig) throw new PushNotificationNotSupportedError();
       const modes = params.configuration?.acceptedOutputModes;
-      if (modes?.length && !modes.some(mode => ['text/plain', 'application/json'].includes(mode))) throw new ContentTypeNotSupportedError();
+      if (modes?.length && !modes.some(mode => ['text/plain', 'application/json', 'text/markdown'].includes(mode))) throw new ContentTypeNotSupportedError();
       const length = params.configuration?.historyLength;
       // Validate response controls before any mutation.
       if (length !== undefined) z.number().int().min(0).max(1000).parse(length);
@@ -97,18 +101,22 @@ export class A2AGateway implements A2ARequestHandler {
         input = parts[0].content.value;
       } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
         const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text } : { goal: text };
+        input = message.taskId ? { answer: text } : { goal: text, service: this.tasks.services().some(s => s.id === 'agent.execute') ? 'agent.execute' : 'brief.prepare' };
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
       if (message.taskId) {
         const answer = z.object({ answer: z.string() }).strict().parse(input);
         job = this.tasks.reply(p, { ...answer, taskId: message.taskId, requestId: message.messageId }, message.contextId || undefined);
       } else {
-        const data = z.object({ service: z.literal('brief.prepare').optional(), goal: z.string(), deliverable: z.string().optional() }).strict().parse(input);
+        const data = z.object({ service: z.enum(['brief.prepare', 'agent.execute']).optional(), goal: z.string(), deliverable: z.string().optional() }).strict().parse(input);
         job = this.tasks.submit(p, { ...data, requestId: message.messageId }, message.contextId || undefined);
       }
-      return toTask(job, length);
+      return job;
     });
+    if (job.state === 'working' && !params.configuration?.returnImmediately) {
+      return toTask(await this.tasks.wait(this.principal(ctx, params.tenant), job.id), params.configuration?.historyLength);
+    }
+    return toTask(job, params.configuration?.historyLength);
   }
 
   async getTask(params: GetTaskRequest, ctx: ServerCallContext): Promise<Task> {
