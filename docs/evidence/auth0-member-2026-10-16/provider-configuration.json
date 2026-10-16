@@ -22,5 +22,5 @@
     "callbackMatches": true
   },
   "postLoginActionBound": true,
-  "boundary": "Private development integration; actual member authorization and Agent execution still pending"
+  "boundary": "Provider configuration snapshot only; member and Agent execution verified separately in verification.json"
 }

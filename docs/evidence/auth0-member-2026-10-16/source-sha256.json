@@ -1,0 +1,11 @@
+{
+  "apps/gateway/auth.ts": "e00a76a3c261c146897d1f41ba4e65b7b3f1069cd4a824f52af284889cae73ba",
+  "apps/gateway/members/routes.ts": "4b47cb9a29e22e28e67e9ca4cef8b35b60124d6e1f30f44a1386f3e6554d6dee",
+  "apps/gateway/members/oidc.ts": "3317ee88bfe06f5f2a20a32161bd864f1e9bd2fc6b91daf2edd7929855219453",
+  "packages/members/store.ts": "5c510c3a599c5ac582f4cd0e0d9788ad0789373fa3af22bced36b4c17cb47c35",
+  "packages/members/auth0.ts": "5846eb53e769af6063bc623ca3ef1978a07166368d8f8ac838a999c9e428b75e",
+  "apps/worker/runtime.ts": "4c812c288add790406c1349a8b0a2d1ceffb21646fb915cc317d49d1ea34a270",
+  "examples/member-oauth-agent.ts": "1d4a0d066a3253cf4de009de9a6f94d75f89b83c2e5a81c6ac79f7e41d215716",
+  "integrations/auth0/post-login.cjs": "39b5701ad02b1eaedf91a49cae7ddbc9693b17d37c0cc8c4ba1182c61333f4fc",
+  "package-lock.json": "b7c7777199a0659838b4fffb9409ac57052eb90eab352c809c9379825f1a278b"
+}

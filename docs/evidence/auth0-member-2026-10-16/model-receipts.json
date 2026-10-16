@@ -1,0 +1,57 @@
+{
+  "taskId": "93a908f6-7713-40c5-95db-00c670cadf74",
+  "service": "agent.execute",
+  "state": "completed",
+  "caller": {
+    "runtime": "codex-exec",
+    "threadId": "01a143c2-1cca-7de3-ac82-cf7620a96ae2",
+    "toolCalls": [
+      {
+        "tool": "list_services",
+        "status": "completed"
+      },
+      {
+        "tool": "submit_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      }
+    ]
+  },
+  "workerRuns": [
+    {
+      "runtime": "codex-exec",
+      "threadId": "01a143c2-6c0b-7731-920e-8f9efa368af6",
+      "startedAt": "2026-10-16T08:09:37.459Z",
+      "completedAt": "2026-10-16T08:09:56.488Z"
+    }
+  ],
+  "sameArtifactVerifiedBy": [
+    "caller MCP get_task",
+    "independent A2A GetTask",
+    "SQLite JobStore"
+  ],
+  "artifactSha256": "2cde5dce101c1a55be2bc46a86f28624b490babeaa7ffc90a70a738c69634562"
+}

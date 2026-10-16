@@ -189,6 +189,27 @@ test('signed OIDC + PKCE login, explicit membership application, MCP/A2A continu
   } finally { await mcp?.close(); await f.close(); }
 });
 
+test('member forms preserve their same-origin POST header, including validation retries', async () => {
+  const f = await fixture();
+  try {
+    const { response: callback } = await f.signIn();
+    assert.equal(callback.headers.get('referrer-policy'), 'no-referrer');
+    const page = await f.browser('/members'); assert.equal(page.headers.get('referrer-policy'), 'same-origin');
+    const csrf = await f.csrf();
+    const body = { ...profile, _csrf: csrf };
+    const form = (value: Record<string, string>, origin = f.base) => f.browser('/members/apply', {
+      method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(value).toString(),
+    });
+    const invalid = await form(body); assert.equal(invalid.status, 400);
+    assert.equal(invalid.headers.get('referrer-policy'), 'same-origin');
+    assert.equal((await form({ ...body, consent: 'true' }, 'null')).status, 403);
+    assert.equal((await form({ ...body, consent: 'true' }, 'https://attacker.example')).status, 403);
+    assert.equal((await form({ ...body, consent: 'true', _csrf: 'wrong' })).status, 403);
+    assert.equal((await form({ ...body, consent: 'true' })).status, 303);
+    assert.equal(f.gateway.members.list()[0]!.status, 'active');
+  } finally { await f.close(); }
+});
+
 test('manual approval, owner-only profile updates, CSRF, HTML escaping and logout', async () => {
   const f = await fixture(true);
   try {
@@ -266,7 +287,7 @@ test('membership does not replace token scopes; login config and browser securit
     const page = await f.browser('/members');
     assert.equal(page.headers.get('cache-control'), 'no-store');
     assert(page.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
-    assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
+    assert.equal(page.headers.get('referrer-policy'), 'same-origin');
     const html = await page.text(); assert(!html.includes('identity-provider-token-must-not-be-stored'));
   } finally { await f.close(); }
 });

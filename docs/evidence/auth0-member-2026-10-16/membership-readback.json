@@ -1,0 +1,16 @@
+{
+  "at": "2026-10-16T08:13:34.184Z",
+  "memberHash": "30954559632f3b296eab4ffdd769fdcc0b41afe317db4602c246b2ef29b8e13c",
+  "subjectHash": "ad6983a62c0595c4240598aec4c9c8a9c51e556905ddb55010b5942a5584f6b1",
+  "status": "active",
+  "explicitConsentRecorded": true,
+  "verifiedEmailPresent": true,
+  "registeredAgentConnectionObserved": true,
+  "connectionBlocked": false,
+  "scopes": [
+    "services:read",
+    "tasks:read",
+    "tasks:write"
+  ],
+  "browserSessionSurvivedGatewayRestart": true
+}

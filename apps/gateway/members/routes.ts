@@ -34,7 +34,9 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
   app.get('/members', (req, res) => {
     const current = session(req);
     const notice = typeof req.query.notice === 'string' ? notices[req.query.notice] : undefined;
-    res.type('html').send(memberPage({
+    // Native form navigations under no-referrer send Origin: null. Preserve
+    // the same-origin POST header; login/callback redirects keep no-referrer.
+    res.set('Referrer-Policy', 'same-origin').type('html').send(memberPage({
       ...(current ? { member: current.member, csrf: current.csrf, connections: store.connections(current.member.id) } : {}),
       loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL === 'manual', ...(notice ? { notice } : {}),
     }));
@@ -96,7 +98,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       if (error instanceof z.ZodError) {
         const message = '请检查名称、语言和时区；开通会员时需勾选同意。';
         if (req.is('application/json')) res.status(400).json({ error: 'invalid_member_input', message });
-        else res.status(400).type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL === 'manual', notice: message }));
+        else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL === 'manual', notice: message }));
         return;
       }
       if (error instanceof DomainError) { res.status(error.code === 'NOT_FOUND' ? 404 : 403).json({ error: error.code }); return; }

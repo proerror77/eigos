@@ -81,6 +81,8 @@ npm run verify:member-agent
 
 独立 Gateway／Worker 运行在本机，私有 HTTPS 使用单独 `8443` → loopback `3210`，原 `443` 服务保留。正常 TLS 校验、health、OAuth 资源发现和未授权 MCP `401` 已通过；会员门户已成功跳转到真实 Auth0 登录页。已检查的无凭据回执见 [提供方配置](evidence/auth0-member-2026-10-16/provider-configuration.json)和 [Gateway 就绪检查](evidence/auth0-member-2026-10-16/gateway-readiness.json)。
 
-本地 87 项测试、类型检查、构建和差异空白检查通过，覆盖新版连接接口的分页、增量启用、失败回读和重复游标。
+本地 88 项测试、类型检查、构建和差异空白检查通过，覆盖新版连接接口的分页、增量启用、失败回读、重复游标，以及会员表单的 Origin／Referrer-Policy 和校验重试。真实 Chrome 提交发现的 `Origin: null` 问题已修复，来源校验与 CSRF 防护保持启用。
 
-**真实会员到 Agent 链路尚待验收**：当前等待用户完成 EIGOS 会员登录和自助开通，再进行独立 Agent OAuth consent 与真实模型任务。本机凭据、会员库和原始截图位于忽略目录 `data/auth0-live/`，不纳入 Git；云端配置成功与本地回归不代替会员授权或任务完成。
+**真实会员到 Agent 链路已在私有 HTTPS 联调环境验收通过**：2026-10-16 16:10（Asia/Shanghai），真实会员自助开通后完成独立 Agent OAuth consent。Personal Agent 自行发现服务、提交唯一 `agent.execute` 任务并读取完成交付物；独立 Worker 模型生成会议议程。任务 `93a908f6-7713-40c5-95db-00c670cadf74` 的 MCP、A2A 和 SQLite 回读字节一致，详细证据见 [本次验收](evidence/auth0-member-2026-10-16/README.md)。
+
+本机凭据、会员库和原始截图位于忽略目录 `data/auth0-live/`，不纳入 Git。当前结论限于本机私有 HTTPS、预登记参考客户端和文档任务；公网生产部署、任意外部 MCP 客户端自动 OAuth 及真实商业履约另行核验。
