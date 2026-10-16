@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
-import { auth0Plan } from '../dist/packages/members/auth0.js';
+import { auth0Plan, ensureAuth0ConnectionClients } from '../dist/packages/members/auth0.js';
 
 const { values } = parseArgs({ options: {
   'public-url': { type: 'string' }, 'agent-callback': { type: 'string' }, tenant: { type: 'string' },
@@ -55,6 +55,7 @@ if (!values.apply) {
     const result = found[0] ? api('get', `clients/${encodeURIComponent(found[0].client_id)}`) : api('post', 'clients', body);
     if (found[0]) {
       if (JSON.stringify(result.callbacks) !== JSON.stringify(body.callbacks) || result.token_endpoint_auth_method !== body.token_endpoint_auth_method) throw new Error('An existing client has a different redirect/authentication contract');
+      if (result.is_first_party !== body.is_first_party) throw new Error('Existing client ownership differs; inspect the saved client before replacing an unused setup draft');
     }
     return result;
   }
@@ -77,12 +78,9 @@ if (!values.apply) {
     let connection = values.connection ? databases.find(connection => connection.name === values.connection)
       : databases.find(connection => connection.name === 'Username-Password-Authentication') ?? (databases.length === 1 ? databases[0] : undefined);
     if (!connection && (values.connection || databases.length)) throw new Error('Choose the intended Auth0 database connection explicitly');
-    if (!connection) connection = api('post', 'connections', { name: 'EIGOS-Members-' + plan.resource.replace(/[^a-zA-Z0-9]/g, '-').slice(-30), strategy: 'auth0', enabled_clients: [portal.client_id, agent.client_id] });
-    else {
-      const enabled = [...new Set([...(connection.enabled_clients ?? []), portal.client_id, agent.client_id])];
-      api('patch', `connections/${encodeURIComponent(connection.id)}`, { enabled_clients: enabled });
-    }
+    if (!connection) connection = api('post', 'connections', { name: 'EIGOS-Members-' + plan.resource.replace(/[^a-zA-Z0-9]/g, '-').slice(-30), strategy: 'auth0' });
     state.connectionId = connection.id; state.connectionName = connection.name; save('state.json', state);
+    ensureAuth0ConnectionClients(api, connection.id, [portal.client_id, agent.client_id]);
     if (!portal.client_secret || /redact|\*{3,}/i.test(portal.client_secret)) throw new Error('The CLI did not return a private portal client secret');
     const code = readFileSync(new URL('../integrations/auth0/post-login.cjs', import.meta.url), 'utf8');
     const secrets = [
@@ -117,7 +115,7 @@ if (!values.apply) {
     if (apiReadback.identifier !== plan.resource || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
     for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent]]) {
       const actual = api('get', `clients/${encodeURIComponent(client.client_id)}`);
-      if (JSON.stringify(actual.callbacks) !== JSON.stringify(expected.callbacks) || actual.token_endpoint_auth_method !== expected.token_endpoint_auth_method) throw new Error('OAuth client readback did not confirm the callback/authentication contract');
+      if (JSON.stringify(actual.callbacks) !== JSON.stringify(expected.callbacks) || actual.token_endpoint_auth_method !== expected.token_endpoint_auth_method || actual.is_first_party !== expected.is_first_party) throw new Error('OAuth client readback did not confirm the callback/authentication/ownership contract');
     }
     const bindingReadback = api('get', 'actions/triggers/post-login/bindings');
     if (!bindingReadback.bindings?.some(binding => binding.action?.id === action.id)) throw new Error('Action binding readback did not confirm deployment');
@@ -128,10 +126,14 @@ if (!values.apply) {
     ];
     save('gateway.env', [...common, 'EIGOS_AUTH_MODE=jwt', 'HOST=127.0.0.1', 'PORT=3210', `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `OIDC_CLIENT_ID=${portal.client_id}`, `OIDC_CLIENT_SECRET=${portal.client_secret}`, 'EIGOS_MEMBERSHIP_APPROVAL=self-service', 'EIGOS_EXECUTOR=codex', 'EIGOS_COORDINATOR=disabled', 'EIGOS_PAOTUI_ORDERS_ENABLED=false', 'EIGOS_CSV_PILOT=false', `EIGOS_AUDIT_PATH=${directory}/http-audit.jsonl`, ''].join('\n'));
     save('agent.env', [...common, `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `EIGOS_AGENT_CLIENT_ID=${agent.client_id}`, `EIGOS_AGENT_CALLBACK_URL=${plan.agentCallback}`, `EIGOS_OAUTH_HANDOFF_PATH=${directory}/agent-login.json`, `EIGOS_OAUTH_EVIDENCE_DIR=${directory}/agent-evidence`, ''].join('\n'));
-    state.configurationComplete = true; save('state.json', state);
+    state.configurationComplete = true; state.configuredAt = new Date().toISOString(); delete state.stoppedAtOperation; save('state.json', state);
     console.log('Auth0 API, two OAuth clients, shared member login connection and scoped identity Action configured. Private environment files saved; no credentials printed.');
-  } catch {
+  } catch (error) {
     state.configurationComplete = false; state.stoppedAtOperation = operation; save('state.json', state);
+    // Provider diagnostics can contain private fields; keep them only in the
+    // ignored 0600 file, including when a POST outcome needs investigation.
+    save('setup-error.json', { operation, at: new Date().toISOString(), message: error.message,
+      status: error.status, stdout: error.stdout?.toString(), stderr: error.stderr?.toString() });
     console.error(`Auth0 setup stopped at ${operation}. Inspect the saved private state and provider response locally before retrying; no automatic recreation was attempted.`);
     process.exitCode = 1;
   }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
-import { auth0Plan } from '../packages/members/auth0.js';
+import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/auth0.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
 
@@ -11,7 +11,8 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.equal(plan.api.skip_consent_for_verifiable_first_party_clients, false); assert.equal(plan.api.allow_offline_access, false);
   assert.equal(plan.portal.token_endpoint_auth_method, 'client_secret_post'); assert.equal(plan.agent.token_endpoint_auth_method, 'none');
   assert.notDeepEqual(plan.portal.callbacks, plan.agent.callbacks);
-  assert.equal(plan.agent.is_first_party, false); assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
+  assert.equal(plan.agent.is_first_party, true); assert.equal(plan.portal.is_first_party, true);
+  assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
@@ -35,4 +36,27 @@ test('Auth0 Action preserves unrelated applications and uses only administrator-
   const portal = await action('portal'); assert.equal(portal.id.get('https://eigos.example/claims/tenant_id'), 'personal'); assert.equal(portal.access.size, 0);
   const agent = await action('agent', 'https://eigos.example'); assert.equal(agent.id.get('https://eigos.example/claims/tenant_id'), 'personal'); assert.equal(agent.access.get('https://eigos.example/claims/tenant_id'), 'personal');
   const missing = await action('portal', undefined, false); assert(missing.denied); assert.equal(missing.id.size, 0);
+});
+
+test('Auth0 connection migration reads checkpoint pages and adds only missing clients', () => {
+  const enabled = new Set(['unrelated-app', 'portal']);
+  let patches = 0;
+  const api = (method: 'get' | 'patch', path: string, body?: unknown) => {
+    if (method === 'get') {
+      if (!path.includes('&from=')) return { clients: [{ client_id: 'unrelated-app' }], next: 'page/2+token' };
+      assert(path.endsWith('&from=page%2F2%2Btoken'));
+      return { clients: [...enabled].filter(id => id !== 'unrelated-app').map(client_id => ({ client_id })) };
+    }
+    assert.equal(path, 'connections/con_test/clients');
+    assert.deepEqual(body, [{ client_id: 'agent', status: true }]);
+    patches++; enabled.add('agent');
+  };
+  ensureAuth0ConnectionClients(api, 'con_test', ['portal', 'agent']);
+  ensureAuth0ConnectionClients(api, 'con_test', ['portal', 'agent']);
+  assert.equal(patches, 1); assert(enabled.has('unrelated-app'));
+});
+
+test('Auth0 connection setup fails when enablement is not confirmed or pagination repeats', () => {
+  assert.throws(() => ensureAuth0ConnectionClients(() => ({ clients: [] }), 'con_test', ['portal', 'agent']), /readback/);
+  assert.throws(() => ensureAuth0ConnectionClients(() => ({ clients: [], next: 'same' }), 'con_test', ['portal', 'agent']), /repeated a cursor/);
 });

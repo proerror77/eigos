@@ -20,6 +20,8 @@
 | 登录连接 | 两个客户端启用同一 Auth0 database connection，使用同一会员账号；保留连接上原有其他客户端 |
 | Post Login Action | 仅对本 Portal 或 EIGOS API 生效；ID／Access Token 写入相同、管理员控制的 namespaced tenant claim；不读取可由用户修改的 metadata 作为租户 |
 
+这两个预登记客户端由 EIGOS 自己管理，明确设置 `is_first_party=true`。Agent 授权请求包含 `prompt=consent`，API 的 `skip_consent_for_verifiable_first_party_clients=false` 继续要求用户同意；应用归属不代替会员授权。外部开发者的 third-party client 需要另外配置 domain connection 和 API client grant，不由本轮参考客户端自动开放。
+
 Auth0 的[自定义 claim 约束](https://auth0.com/docs/secure/tokens/json-web-tokens/create-custom-claims)要求明确处理命名空间。EIGOS 配置 `OAUTH_TENANT_CLAIM=<resource>/claims/tenant_id`，首个个人会员空间取值为 `personal`；`issuer + tenant + sub` 继续共同隔离数据，不按邮箱合并账号。缺少指定 claim、错误 audience、错误用途／签名或超长寿命都仍拒绝。
 
 ## 配置与运行
@@ -39,6 +41,8 @@ npm run setup:auth0 -- --public-url https://your-private-gateway-origin --tenant
 ```
 
 脚本使用官方 CLI 的 Management API，复用由 EIGOS metadata 标记的资源和客户端，保存阶段 ID；不使用密码 grant 或 client-credentials grant 代替用户授权。已有同标识的非本项目对象、不同回调契约或重复对象会停止。发布 Action 时保留原有 trigger bindings。默认选择 `Username-Password-Authentication` 或唯一 database connection；多个自定义连接时用 `--connection <name>` 明确选择。
+
+Auth0 已[停止在 connection 对象上管理 `enabled_clients`](https://auth0.com/docs/troubleshoot/product-lifecycle/deprecations-and-migrations)。脚本改用 [`connections/{id}/clients`](https://auth0.com/docs/api/management/v2/connections/patch-clients)，按 checkpoint 分页读取，只启用缺少的本项目客户端，再回读确认；不覆盖其他应用的连接。失败响应只写入私有 `setup-error.json`，用于判断原操作结果后恢复。
 
 生成 `gateway.env`、`agent.env` 和恢复用 `state.json`，目录权限 0700、文件权限 0600。Portal secret 只写 Gateway 私有配置，不显示在命令输出、提示词或 Git 中。脚本不修改项目现有 `.env`。
 
@@ -73,8 +77,10 @@ npm run verify:member-agent
 
 ## 当前状态
 
-2026-10-16 本次已准备提供方配置、Action、namespaced claim 适配和真实 Agent 工具；本地 85 项测试、类型检查与构建通过。Auth0 CLI 1.37.0 已从官方 Homebrew tap 安装。
+2026-10-16 已完成 Auth0 账号首次开户、Japan 开发租户创建和官方 CLI 管理授权。EIGOS API、两个自有 OAuth 客户端、共享会员登录连接及 Post Login Action 已配置，并通过 Management API 回读。初次配置中未启用的第三方客户端草案，在确认本租户没有会员用户、草案没有 API grant 后移除；继续使用正确归属的参考客户端。
 
-Mac 私有 HTTPS 已通过证书验证和 loopback 代理探测；临时探测端口随后移除，原 `443` 服务保留。私有探测回执及配置草案在 `data/auth0-live/`，不纳入 Git。
+独立 Gateway／Worker 运行在本机，私有 HTTPS 使用单独 `8443` → loopback `3210`，原 `443` 服务保留。正常 TLS 校验、health、OAuth 资源发现和未授权 MCP `401` 已通过；会员门户已成功跳转到真实 Auth0 登录页。已检查的无凭据回执见 [提供方配置](evidence/auth0-member-2026-10-16/provider-configuration.json)和 [Gateway 就绪检查](evidence/auth0-member-2026-10-16/gateway-readiness.json)。
 
-**尚未完成真实链路**：Auth0 控制台仍待账号持有人登录，没有可用的已授权租户／客户端凭据，尚未创建云端资源或运行真实会员 OAuth／Agent 验收。账号凭据、验证码和注册条款由账号持有人处理；准备好的代码和本地回归不代替这些步骤。
+本地 87 项测试、类型检查、构建和差异空白检查通过，覆盖新版连接接口的分页、增量启用、失败回读和重复游标。
+
+**真实会员到 Agent 链路尚待验收**：当前等待用户完成 EIGOS 会员登录和自助开通，再进行独立 Agent OAuth consent 与真实模型任务。本机凭据、会员库和原始截图位于忽略目录 `data/auth0-live/`，不纳入 Git；云端配置成功与本地回归不代替会员授权或任务完成。

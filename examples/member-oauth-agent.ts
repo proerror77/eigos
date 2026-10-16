@@ -39,7 +39,7 @@ const config = await oidc.discovery(new URL(issuer), clientId, undefined, oidc.N
 oidc.enableNonRepudiationChecks(config);
 const verifier = oidc.randomPKCECodeVerifier(), state = oidc.randomState(), nonce = oidc.randomNonce();
 const authorizationUrl = oidc.buildAuthorizationUrl(config, {
-  redirect_uri: callback.href, scope: ['openid', ...SCOPES].join(' '), state, nonce,
+  redirect_uri: callback.href, scope: ['openid', ...SCOPES].join(' '), state, nonce, prompt: 'consent',
   code_challenge: await oidc.calculatePKCECodeChallenge(verifier), code_challenge_method: 'S256',
   // Deliberate Auth0 extension for this pre-registered client; not a universal client-registration compatibility claim.
   audience,
