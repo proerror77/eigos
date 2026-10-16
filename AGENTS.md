@@ -12,6 +12,7 @@
 - 接口、认证与当前能力见 `README.md` 和 `docs/integration.md`。修改入口时同时检查两种协议的共用任务与权限行为。
 - 仓库采用 `apps/gateway`、`apps/worker` 和 `packages/core`／`packages/capabilities` 分层。Gateway 不启动模型或业务执行器；执行侧改动同时检查持久领取、取消、租约和迟到结果保护，架构及启动见 [Gateway／Worker 说明](docs/gateway-worker.md)。
 - `brief.prepare` 只生成任务说明，不能将其完成状态描述为底层业务目标已经完成。认证默认拒绝缺失配置；本地开发令牌只用于 loopback。
+- 操作支付宝平台时先读 [CLI 优先流程](docs/alipay-cli-workflow.md)，使用 `scripts/alipay-platform.mjs` 自动检查登录与查询权限；其他已授权操作优先调用官方 CLI。所需扩权已获用户授权，不逐项重复确认；只在平台要求扫码、核身、协议确认或确无 CLI 入口时交接。当前不允许真实下单或付款。
 
 - 根据具体任务选择技术与交付形式，不从品牌定位推定尚未确认的产品功能、协议支持或商业承诺。
 - 本地品牌探索、设计和实现可以在任务授权范围内推进；发布、域名购买、商标申请及对外联系按用户实际授权执行。
