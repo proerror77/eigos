@@ -10,5 +10,12 @@ exports.onExecutePostLogin = async (event, api) => {
   if (!claim || !tenant) { api.access.deny('EIGOS identity mapping is not configured'); return; }
   // The first personal-member tenant is administrator-controlled, never taken from user_metadata or input.
   api.idToken.setCustomClaim(claim, tenant);
-  if (forApi) api.accessToken.setCustomClaim(claim, tenant);
+  if (forApi) {
+    api.accessToken.setCustomClaim(claim, tenant);
+    if (event.client.client_id === event.secrets.EIGOS_AGENT_CONNECTOR_CLIENT_ID) {
+      // A refresh grant can continue its installation, but cannot enroll a new
+      // installation to bypass that Agent's revocation. Unknown flows fail closed.
+      api.accessToken.setCustomClaim(`${resource}/claims/agent_enrollment`, event.transaction?.protocol === 'oauth2-device-code');
+    }
+  }
 };

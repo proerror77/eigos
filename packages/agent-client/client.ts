@@ -1,0 +1,170 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdirSync, existsSync, readFileSync, writeFileSync, renameSync, statSync, openSync, closeSync, unlinkSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { decodeJwt } from 'jose';
+import * as oidc from 'openid-client';
+import { z } from 'zod';
+import type { Profile } from '../members/store.js';
+
+const metadataSchema = z.object({ version: z.literal(1), registration_endpoint: z.url(), issuer: z.url(), client_id: z.string().min(1), audience: z.url(), scopes: z.array(z.string()) });
+const admissionSchema = z.object({ registrationId: z.uuid(), status: z.string(), nextAction: z.string(), pollAfterSeconds: z.number(), links: z.record(z.string(), z.url()) });
+export type AgentAdmission = z.infer<typeof admissionSchema>;
+type Metadata = z.infer<typeof metadataSchema>;
+type Device = Awaited<ReturnType<typeof oidc.initiateDeviceAuthorization>>;
+type Tokens = Awaited<ReturnType<typeof oidc.refreshTokenGrant>>;
+type State = { version: 1; baseUrl: string; issuer: string; clientId: string; registrationId: string; credential: string; displayName: string;
+  accessToken?: string; refreshToken?: string; expiresAt?: number; bound?: boolean; refreshPending?: boolean; refreshCount?: number;
+  device?: Device; deviceExpiresAt?: number };
+const stateSchema = z.object({ version: z.literal(1), baseUrl: z.url(), issuer: z.url(), clientId: z.string(), registrationId: z.uuid(), credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/), displayName: z.string() });
+
+export class AgentConnectorError extends Error {
+  constructor(readonly code: string, readonly admission?: AgentAdmission) { super(code); }
+}
+
+/** Node Agent adapter. One private credential file per installation, no server-side refresh-token custody. */
+export class AgentConnector {
+  private state!: State;
+  private inflight?: Promise<string>;
+  private config?: Promise<oidc.Configuration>;
+  private constructor(readonly baseUrl: string, private path: string, private metadata: Metadata, private fetcher: typeof fetch) {}
+  static async open(options: { baseUrl: string; credentialPath: string; displayName: string; fetch?: typeof fetch }): Promise<AgentConnector> {
+    const origin = new URL(options.baseUrl);
+    if (origin.protocol !== 'https:' || origin.origin !== options.baseUrl) throw new AgentConnectorError('https_origin_required');
+    const fetcher = options.fetch ?? fetch;
+    const response = await fetcher(options.baseUrl + '/.well-known/eigos-agent-registration', { redirect: 'error', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new AgentConnectorError('agent_onboarding_unavailable');
+    const metadata = metadataSchema.parse(await response.json());
+    if (metadata.registration_endpoint !== options.baseUrl + '/agents/registrations' || new URL(metadata.issuer).protocol !== 'https:') throw new AgentConnectorError('invalid_onboarding_metadata');
+    const client = new AgentConnector(options.baseUrl, resolve(options.credentialPath), metadata, fetcher);
+    await client.lock(async () => {
+      if (existsSync(client.path)) client.reload();
+      else {
+        client.state = { version: 1, baseUrl: options.baseUrl, issuer: metadata.issuer, clientId: metadata.client_id,
+          registrationId: randomUUID(), credential: randomBytes(32).toString('base64url'), displayName: z.string().trim().min(1).max(80).parse(options.displayName) };
+        // Persist the idempotency identity BEFORE the registration request.
+        client.save();
+      }
+      const admission = await client.registrationRequest('', undefined, { registrationId: client.state.registrationId, displayName: client.state.displayName }, true);
+      // A successful provider response is saved before binding. If the binding
+      // acknowledgement was lost, resume that idempotent operation, not a new grant.
+      if (client.state.accessToken && !client.state.bound && (client.state.expiresAt ?? 0) > Date.now() && !['agent_registration_revoked', 'registration_expired'].includes(admission.status)) {
+        await client.bind(); client.state.bound = true; client.save();
+      }
+    });
+    return client;
+  }
+  get registrationId(): string { return this.state.registrationId; }
+  get refreshCount(): number { return this.state.refreshCount ?? 0; }
+  private reload(): void {
+    const stat = statSync(this.path);
+    if ((stat.mode & 0o077) !== 0 || (process.getuid && stat.uid !== process.getuid())) throw new AgentConnectorError('private_credential_file_required');
+    const state = JSON.parse(readFileSync(this.path, 'utf8')) as State; stateSchema.parse(state);
+    if (state.baseUrl !== this.baseUrl || state.issuer !== this.metadata.issuer || state.clientId !== this.metadata.client_id) throw new AgentConnectorError('credential_destination_mismatch');
+    this.state = state;
+  }
+  private save(): void {
+    const temporary = this.path + '.' + randomUUID() + '.tmp';
+    writeFileSync(temporary, JSON.stringify(this.state) + '\n', { mode: 0o600, flag: 'wx' });
+    renameSync(temporary, this.path);
+  }
+  private async lock<T>(fn: () => Promise<T>): Promise<T> {
+    mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
+    const path = this.path + '.lock'; let handle: number;
+    try { handle = openSync(path, 'wx', 0o600); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      // A crashed owner can be recovered; a live owner is never displaced by a timer.
+      const pid = Number(readFileSync(path, 'utf8'));
+      if (!Number.isSafeInteger(pid) || pid < 1) throw new AgentConnectorError('credentials_in_use');
+      try { process.kill(pid, 0); throw new AgentConnectorError('credentials_in_use'); }
+      catch (check) { if ((check as NodeJS.ErrnoException).code !== 'ESRCH') throw check; }
+      unlinkSync(path); handle = openSync(path, 'wx', 0o600);
+    }
+    writeFileSync(handle, String(process.pid));
+    try { if (existsSync(this.path)) this.reload(); return await fn(); }
+    finally { closeSync(handle); unlinkSync(path); }
+  }
+  private discover(): Promise<oidc.Configuration> {
+    return this.config ??= oidc.discovery(new URL(this.metadata.issuer), this.metadata.client_id, undefined, oidc.None(), {
+      timeout: 10, [oidc.customFetch]: (url, options) => this.fetcher(url, { ...options, body: options.body instanceof Uint8Array ? new Uint8Array(options.body) : options.body }),
+    }).then(config => {
+      const m = config.serverMetadata();
+      for (const url of [m.token_endpoint, m.device_authorization_endpoint, m.jwks_uri]) if (!url || new URL(url).protocol !== 'https:') throw new AgentConnectorError('https_provider_endpoints_required');
+      oidc.enableNonRepudiationChecks(config); return config;
+    });
+  }
+  private async registrationRequest(action: string, accessToken?: string, body?: unknown, create = false): Promise<AgentAdmission> {
+    const url = create ? this.metadata.registration_endpoint : `${this.metadata.registration_endpoint}/${this.state.registrationId}${action ? '/' + action : ''}`;
+    const response = await this.fetcher(url, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(10000),
+      headers: { 'X-EIGOS-Registration-Token': this.state.credential, ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    const value = await response.json();
+    if (!response.ok) throw new AgentConnectorError(typeof value.error === 'string' ? value.error : 'registration_request_failed');
+    const admission = admissionSchema.parse(value);
+    if (admission.registrationId !== this.state.registrationId) throw new AgentConnectorError('registration_response_mismatch');
+    return admission;
+  }
+  async status(): Promise<AgentAdmission> { return this.registrationRequest(''); }
+  async beginAuthorization(): Promise<{ verificationUri: string; userCode: string; expiresAt: number }> {
+    return this.lock(async () => {
+      const status = await this.status();
+      if (['agent_registration_revoked', 'registration_expired'].includes(status.status)) throw new AgentConnectorError(status.status, status);
+      if (!this.state.device || (this.state.deviceExpiresAt ?? 0) <= Date.now()) {
+        this.state.device = await oidc.initiateDeviceAuthorization(await this.discover(), { scope: this.metadata.scopes.join(' '), audience: this.metadata.audience });
+        this.state.deviceExpiresAt = Date.now() + this.state.device.expires_in * 1000; this.save();
+      }
+      return { verificationUri: this.state.device.verification_uri_complete ?? this.state.device.verification_uri, userCode: this.state.device.user_code, expiresAt: this.state.deviceExpiresAt! };
+    });
+  }
+  async finishAuthorization(): Promise<AgentAdmission> {
+    return this.lock(async () => {
+      if (!this.state.device || (this.state.deviceExpiresAt ?? 0) <= Date.now()) throw new AgentConnectorError('authorization_required');
+      const tokens = await oidc.pollDeviceAuthorizationGrant(await this.discover(), this.state.device);
+      this.install(tokens); delete this.state.device; delete this.state.deviceExpiresAt; this.save();
+      const status = await this.bind(); this.state.bound = true; this.save(); return status;
+    });
+  }
+  private install(tokens: Tokens, rotating = false): void {
+    if (tokens.token_type.toLowerCase() !== 'bearer' || !tokens.refresh_token || (rotating && tokens.refresh_token === this.state.refreshToken)) throw new AgentConnectorError('rotating_refresh_token_required');
+    const exp = z.number().parse(decodeJwt(tokens.access_token).exp);
+    this.state.accessToken = tokens.access_token; this.state.refreshToken = tokens.refresh_token;
+    this.state.expiresAt = exp * 1000; this.state.bound = false; this.state.refreshPending = false;
+    if (rotating) this.state.refreshCount = (this.state.refreshCount ?? 0) + 1;
+  }
+  private bind(): Promise<AgentAdmission> { return this.registrationRequest('token', this.state.accessToken, {}); }
+  private rawToken(forceRefresh = false): Promise<string> {
+    if (this.inflight) return this.inflight;
+    this.inflight = this.lock(async () => {
+      if (this.state.refreshPending) throw new AgentConnectorError('reauthorization_required_after_uncertain_refresh');
+      if (forceRefresh || !this.state.accessToken || (this.state.expiresAt ?? 0) <= Date.now() + 10000) {
+        if (!this.state.refreshToken) throw new AgentConnectorError('authorization_required');
+        this.state.refreshPending = true; this.save();
+        // Never retry an uncertain rotating grant with the old refresh token.
+        const tokens = await oidc.refreshTokenGrant(await this.discover(), this.state.refreshToken);
+        this.install(tokens, true); this.save();
+      }
+      if (!this.state.bound) { await this.bind(); this.state.bound = true; this.save(); }
+      return this.state.accessToken!;
+    }).finally(() => { this.inflight = undefined; });
+    return this.inflight;
+  }
+  async accessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
+    const admission = await this.status();
+    if (admission.status !== 'active') throw new AgentConnectorError(admission.status, admission);
+    return this.rawToken(options.forceRefresh);
+  }
+  async registerMembership(profile: Profile, consent: true): Promise<AgentAdmission> {
+    return this.registrationRequest('application', await this.rawToken(), { ...profile, consent });
+  }
+  async redeemInvitation(invitationToken: string): Promise<AgentAdmission> {
+    return this.registrationRequest('invitation', await this.rawToken(), { invitationToken });
+  }
+  async revoke(): Promise<AgentAdmission> { return this.registrationRequest('revoke', await this.rawToken(), {}); }
+  async fetch(path: string | URL, init: RequestInit = {}): Promise<Response> {
+    const url = new URL(path, this.baseUrl);
+    if (url.origin !== this.baseUrl) throw new AgentConnectorError('credential_destination_mismatch');
+    const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${await this.accessToken()}`);
+    // No automatic replay of task-creating POSTs after errors or token races.
+    return this.fetcher(url, { ...init, headers, redirect: 'error' });
+  }
+}

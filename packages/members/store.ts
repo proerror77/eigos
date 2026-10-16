@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { DomainError, type Principal } from '../core/domain.js';
+import { AgentRegistrations } from './agents.js';
 
 export const profileSchema = z.object({
   displayName: z.string().trim().min(1).max(80),
@@ -36,9 +37,10 @@ function member(row: Row): Member {
   };
 }
 
-// Gateway-only database. No passwords, access/refresh tokens or model context are stored here.
+// Gateway-only database. No raw passwords, access/refresh tokens or model context are stored here.
 export class MemberStore {
   private db: DatabaseSync;
+  readonly agents: AgentRegistrations;
   constructor(path: string) {
     if (path !== ':memory:') {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -61,6 +63,7 @@ export class MemberStore {
         scopes TEXT NOT NULL, blocked INTEGER NOT NULL DEFAULT 0 CHECK(blocked IN (0,1)), last_seen_at TEXT NOT NULL,
         UNIQUE(member_id,client_id)
       );`);
+    this.agents = new AgentRegistrations(this.db);
   }
   close(): void { this.db.close(); }
   private transaction<T>(fn: () => T): T {
@@ -96,11 +99,12 @@ export class MemberStore {
       return this.get(id);
     });
   }
-  apply(id: string, input: unknown, manualApproval: boolean): Member {
+  apply(id: string, input: unknown, manualApproval: boolean, options: { preserveActiveProfile?: boolean } = {}): Member {
     const profile = applicationSchema.parse(input);
     return this.transaction(() => {
       const current = this.get(id);
       if (current.status === 'suspended') throw new DomainError('FORBIDDEN', 'Membership is suspended');
+      if (options.preserveActiveProfile && current.status === 'active') return current;
       const now = new Date().toISOString();
       const status = current.status === 'active' ? 'active' : manualApproval ? 'pending' : 'active';
       this.db.prepare('UPDATE members SET display_name=?,locale=?,timezone=?,status=?,accepted_at=?,updated_at=? WHERE id=?')

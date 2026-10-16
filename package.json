@@ -11,6 +11,7 @@
     "setup:dev": "node scripts/setup-dev.mjs",
     "setup:auth0": "node scripts/setup-auth0.mjs",
     "verify:member-agent": "node --env-file=data/auth0-live/agent.env --import tsx examples/member-oauth-agent.ts",
+    "verify:agent-onboarding": "node --env-file=data/agent-onboarding-live/connector.env --import tsx examples/agent-onboarding-live.ts",
     "members": "node --env-file-if-exists=.env scripts/members.mjs",
     "dev": "node --env-file=.env scripts/run-local.mjs",
     "build": "tsc",

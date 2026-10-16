@@ -1,0 +1,24 @@
+{
+  "startedAt": "2026-10-16T10:43:45.553Z",
+  "completedAt": "2026-10-16T10:44:35.125Z",
+  "provider": "Auth0",
+  "authorization": "real Auth0 device authorization + automatic rotating refresh after actual expiry",
+  "client": "actual Codex Personal Agent over remote HTTP MCP",
+  "serverAgent": "actual Codex executor",
+  "memberHash": "f19a42491b44bfe7858eeb827f0b4b3f119b2890c8b992b91b8126cb4107ce47",
+  "subjectHash": "ad6983a62c0595c4240598aec4c9c8a9c51e556905ddb55010b5942a5584f6b1",
+  "scopes": [
+    "services:read",
+    "tasks:read",
+    "tasks:write"
+  ],
+  "toolCalls": 7,
+  "taskId": "3daa1d00-0810-457c-a999-fb2a17775534",
+  "state": "completed",
+  "workerModelCalls": 1,
+  "artifactSha256": "34622732e60b00780924aa77a99085888e42214b376b292d77cf3d1238eb9ea0",
+  "mcpAgentReadback": true,
+  "a2aReadback": true,
+  "independentDatabaseReadback": true,
+  "boundary": "Private HTTPS integration on this Mac; document generation only; no public production release or commerce execution"
+}

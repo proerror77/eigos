@@ -19,8 +19,9 @@ const schema = z.object({
   OAUTH_TENANT_CLAIM: z.string().trim().min(1).max(400).optional(),
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  OIDC_AGENT_CLIENT_ID: z.string().min(1).optional(),
   MEMBERSHIP_DATABASE_PATH: z.string().optional(),
-  EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual']).default('self-service'),
+  EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual', 'invite-only']).default('self-service'),
   ALLOWED_ORIGINS: z.string().default(''),
   EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
   EIGOS_CODEX_BIN: z.string().default('codex'),
@@ -40,6 +41,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   c.PUBLIC_URL = publicUrl.origin;
   if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
   if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');
+  if (c.OIDC_AGENT_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Agent onboarding requires JWT mode');
   if (role === 'gateway' && c.EIGOS_AUTH_MODE === 'jwt' && c.MEMBERSHIP_DATABASE_PATH === ':memory:') throw new Error('JWT membership requires a persistent database');
   if (c.MEMBERSHIP_DATABASE_PATH && c.MEMBERSHIP_DATABASE_PATH !== ':memory:' && resolve(c.MEMBERSHIP_DATABASE_PATH) === resolve(c.DATABASE_PATH)) throw new Error('Membership and task databases require separate files');
   if (c.EIGOS_AUTH_MODE === 'development') {

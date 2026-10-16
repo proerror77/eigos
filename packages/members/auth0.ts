@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { SCOPES } from '../core/domain.js';
+import { MEMBERSHIP_SCOPE } from './agents.js';
 
 type ManagementApi = (method: 'get' | 'patch', path: string, body?: unknown) => unknown;
 const clientPage = z.object({ clients: z.array(z.object({ client_id: z.string().min(1) })), next: z.string().min(1).optional() });
@@ -40,9 +41,9 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
     resource: publicUrl, tenantClaim: `${publicUrl}/claims/tenant_id`, agentCallback: callback.href,
     api: {
       name: `EIGOS API ${suffix}`, identifier: publicUrl, signing_alg: 'RS256', token_dialect: 'rfc9068_profile',
-      token_lifetime: 900, token_lifetime_for_web: 900, allow_offline_access: false,
+      token_lifetime: 900, token_lifetime_for_web: 900, allow_offline_access: true,
       skip_consent_for_verifiable_first_party_clients: false,
-      scopes: SCOPES.map(value => ({ value, description: value === 'services:read' ? 'View EIGOS services' : value === 'tasks:read' ? 'Read your EIGOS tasks' : 'Submit, reply to and cancel your EIGOS tasks' })),
+      scopes: [...SCOPES.map(value => ({ value, description: value === 'services:read' ? 'View EIGOS services' : value === 'tasks:read' ? 'Read your EIGOS tasks' : 'Submit, reply to and cancel your EIGOS tasks' })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }],
     },
     portal: {
       name: `EIGOS member portal ${suffix}`, app_type: 'regular_web', oidc_conformant: true, is_first_party: true,
@@ -58,5 +59,12 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
       jwt_configuration: { alg: 'RS256' }, is_first_party: true, client_metadata: metadata('personal-agent'),
     },
     actionName: `EIGOS member identity ${suffix}`,
+    connector: {
+      name: `EIGOS Agent connector ${suffix}`, app_type: 'native', oidc_conformant: true, is_first_party: true,
+      callbacks: [callback.href], token_endpoint_auth_method: 'none', jwt_configuration: { alg: 'RS256' },
+      grant_types: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+      refresh_token: { rotation_type: 'rotating', expiration_type: 'expiring', token_lifetime: 2592000, idle_token_lifetime: 604800, infinite_token_lifetime: false, infinite_idle_token_lifetime: false, leeway: 5 },
+      client_metadata: metadata('agent-onboarding'),
+    },
   };
 }

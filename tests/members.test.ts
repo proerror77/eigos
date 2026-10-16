@@ -52,7 +52,7 @@ test('member identity, consent, manual approval, suspended login and connection 
 });
 
 type Fault = 'none' | 'nonce' | 'audience' | 'issuer' | 'signature' | 'expired' | 'tenant';
-async function fixture(manualApproval = false, tenantClaim = 'tenant_id') {
+async function fixture(manualApproval: boolean | 'invite-only' = false, tenantClaim = 'tenant_id') {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-members-http-'));
   const keys = await generateKeyPair('ES256'), wrongKeys = await generateKeyPair('ES256');
   const jwk = { ...await exportJWK(keys.publicKey), kid: 'identity-fixture', alg: 'ES256', use: 'sig' };
@@ -103,7 +103,7 @@ async function fixture(manualApproval = false, tenantClaim = 'tenant_id') {
   const config: Config = {
     ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(dir, 'tasks.sqlite') }),
     EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: issuer + '/jwks',
-    OIDC_CLIENT_ID: clientId, EIGOS_MEMBERSHIP_APPROVAL: manualApproval ? 'manual' : 'self-service',
+    OIDC_CLIENT_ID: clientId, EIGOS_MEMBERSHIP_APPROVAL: manualApproval === 'invite-only' ? 'invite-only' : manualApproval ? 'manual' : 'self-service',
     OAUTH_TENANT_CLAIM: tenantClaim,
   };
   const login = oidcLoginProvider(async () => oidc.discovery(new URL(issuer), clientId, { id_token_signed_response_alg: 'ES256' }, oidc.None(), { execute: [oidc.allowInsecureRequests] }), base + '/members/callback', tenantClaim);
@@ -231,6 +231,22 @@ test('manual approval, owner-only profile updates, CSRF, HTML escaping and logou
     for (const [key, value] of sessionsBeforeLogout) f.browserCookies.set(key, value);
     assert.equal((await f.post('/members/profile', { ...profile, _csrf: csrf })).status, 401);
     assert(!(await (await f.browser('/members')).text()).includes(member.id));
+  } finally { await f.close(); }
+});
+
+test('browser membership application cannot bypass invite-only admission and invitations are owner-bound', async () => {
+  const f = await fixture('invite-only');
+  try {
+    await f.signIn(); const member = f.gateway.members.list()[0]!;
+    const csrf = await f.csrf();
+    assert.equal((await f.post('/members/apply', { ...profile, consent: true, _csrf: csrf })).status, 303);
+    assert.equal(f.gateway.members.get(member.id).status, 'pending');
+    assert((await (await f.browser('/members')).text()).includes('等待邀请'));
+    const invitation = f.gateway.members.agents.invite(member.id);
+    assert.equal((await f.post('/members/invitation', { invitationToken: invitation.token, _csrf: 'wrong' })).status, 403);
+    assert.equal((await f.post('/members/invitation', { invitationToken: invitation.token, _csrf: csrf })).status, 303);
+    assert.equal(f.gateway.members.get(member.id).status, 'active');
+    assert.equal((await f.post('/members/invitation', { invitationToken: invitation.token, _csrf: csrf })).status, 403);
   } finally { await f.close(); }
 });
 

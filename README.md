@@ -91,7 +91,7 @@ A2A 使用官方 SDK 实现 `SendMessage`、`GetTask`、`ListTasks`、`CancelTas
 
 生产接入时，将 `.env.example` 复制为 `.env`，配置自己的 OIDC/OAuth 身份提供方。身份账号注册、OAuth 授权、客户端注册和令牌签发／刷新由该提供方负责；EIGOS 保存会员资料、开通状态和本地连接停用记录。会员登录使用 Authorization Code + PKCE、state、nonce 和签名验证，不保存上游访问／刷新令牌。默认自助开通，也可配置人工审核。配置、接入顺序与管理方式见 [会员资料库与 OAuth](docs/membership.md)。套餐、订阅计费和支付授权尚未实现。
 
-首版选用 Auth0 托管身份服务，保留通用 OIDC 接口和 EIGOS 自己的会员库。已准备 RFC 9068 API、两个独立客户端、namespaced 租户映射和真实 Agent 联调工具；当前仍待 Auth0 账号登录及云端配置，不把本地测试记作真实会员联调成功。操作与验收见 [Auth0 接入方案](docs/auth0-integration.md)。
+选用 Auth0 托管身份服务，保留通用 OIDC 接口和 EIGOS 自己的会员库。真实会员登录、授权及 Agent 调用已在私有 HTTPS 环境验证。现在支持由客户 Agent 发起安装实例登记、会员申请、等待邀请及 Token 自动轮换续期，MCP／A2A 共用资格与停用检查。接入方法见 [Agent 自助登记](docs/agent-onboarding.md)，提供方配置见 [Auth0 接入方案](docs/auth0-integration.md)。
 
 令牌必须满足：
 

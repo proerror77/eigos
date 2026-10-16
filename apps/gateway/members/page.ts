@@ -1,4 +1,5 @@
 import type { Connection, Member, Profile } from '../../../packages/members/store.js';
+import type { AgentRegistration } from '../../../packages/members/agents.js';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 const statuses = { new: '待开通', pending: '等待审核', active: '已开通', suspended: '已停用' };
@@ -12,20 +13,22 @@ function fields(profile: Profile): string {
     <label>时区<input name="timezone" required maxlength="100" value="${escape(profile.timezone)}" aria-describedby="timezone-help"><small id="timezone-help">例如 Asia/Shanghai 或 UTC</small></label></div>`;
 }
 
-export function memberPage(input: { member?: Member; csrf?: string; connections?: Connection[]; loginAvailable: boolean; manualApproval: boolean; notice?: string }): string {
-  const { member, csrf, connections = [], loginAvailable, manualApproval, notice } = input;
+export function memberPage(input: { member?: Member; csrf?: string; connections?: Connection[]; agentRegistrations?: AgentRegistration[]; invitationOnly?: boolean; loginAvailable: boolean; manualApproval: boolean; notice?: string }): string {
+  const { member, csrf, connections = [], agentRegistrations = [], invitationOnly = false, loginAvailable, manualApproval, notice } = input;
   const hidden = `<input type="hidden" name="_csrf" value="${escape(csrf ?? '')}">`;
   const form = (action: string, body: string) => `<form method="post" action="/members/${action}">${hidden}${body}</form>`;
   const content = !member ? `<div class="intro"><p class="eyebrow">会员中心</p><h1>你的账号，<br>与你的助手。</h1><p class="lead">建立会员资料，让已获你授权的个人助手连接 EIGOS。</p>
     ${loginAvailable ? '<a class="button primary" href="/members/login">登录 / 注册</a><p class="muted">在登录服务中验证身份，再回来完成会员开通。</p>' : '<div class="notice">会员登录暂未开放。请联系服务管理员完成登录配置后再试。</div>'}</div>
     <aside><h2>由你决定访问范围</h2><p>个人助手在你同意的范围内查看服务、创建和查询任务。你可以随时在这里停用连接。</p><h2>重要操作另行确认</h2><p>连接助手不等于同意购买、付款或对外发送。具体业务操作仍需要相应授权。</p></aside>`
-    : `<section><div class="section-heading"><div><p class="eyebrow">会员资料</p><h1>${escape(member.displayName)}</h1></div><span class="status">${statuses[member.status]}</span></div>
+    : `<section><div class="section-heading"><div><p class="eyebrow">会员资料</p><h1>${escape(member.displayName)}</h1></div><span class="status">${member.status === 'pending' && invitationOnly ? '等待邀请' : statuses[member.status]}</span></div>
       ${member.email ? `<p class="muted">已验证邮箱 · ${escape(member.email)}</p>` : ''}
       ${member.status === 'new' ? form('apply', `${fields(member)}<label class="consent"><input type="checkbox" name="consent" value="true" required><span>我同意 EIGOS 保存以上会员资料，并接受个人助手在我授予的 OAuth 权限内调用服务。购买、付款与对外发送需另行授权。</span></label><button class="primary" type="submit">${manualApproval ? '提交会员申请' : '开通会员'}</button>`)
-        : `${member.status === 'pending' ? '<div class="notice">申请已保存。审核通过后，你的个人助手即可调用服务。</div>' : member.status === 'suspended' ? '<div class="notice">会员已停用，个人助手暂时无法调用服务。请联系管理员处理。</div>' : '<p>会员已开通。请在个人助手中连接 EIGOS，并完成它发起的服务授权。</p>'}
+        : `${member.status === 'pending' ? invitationOnly ? '<div class="notice">申请已登记，正在等待邀请。获得邀请后可在下方兑换，或让你的助手兑换。</div>' : '<div class="notice">申请已保存。审核通过后，你的个人助手即可调用服务。</div>' : member.status === 'suspended' ? '<div class="notice">会员已停用，个人助手暂时无法调用服务。请联系管理员处理。</div>' : '<p>会员已开通。请在个人助手中连接 EIGOS，并完成它发起的服务授权。</p>'}
+        ${member.status === 'pending' && invitationOnly ? form('invitation', '<label>邀请码<input name="invitationToken" required minlength="32" maxlength="200" autocomplete="off"></label><button type="submit">兑换邀请</button>') : ''}
         ${form('profile', `${fields(member)}<button type="submit">保存资料</button>`)}`}
       <p class="fine">会员编号 ${escape(member.id)}</p></section>
       <aside><p class="eyebrow">连接管理</p><h2>已连接的个人助手</h2>
+      ${agentRegistrations.length ? `<div class="connections">${agentRegistrations.map(agent => `<article><div class="connection-heading"><strong>${escape(agent.displayName)}</strong><span>${agent.revoked ? '已停用' : '已登记'}</span></div><small>登记于 ${escape(localTime(new Date(agent.createdAt).toISOString(), member))}</small>${agent.revoked ? '' : form(`agents/${agent.id}/revoke`, '<button type="submit">停用此助手</button>')}</article>`).join('')}</div>` : ''}
       ${connections.length ? `<div class="connections">${connections.map(connection => `<article><div class="connection-heading"><strong>${escape(connection.clientId)}</strong><span>${connection.blocked ? '已停用' : '允许访问'}</span></div><p>${connection.scopes.map(scope => escape(scopeNames[scope] ?? scope)).join(' · ')}</p><small>最近访问 ${escape(localTime(connection.lastSeenAt, member))}</small>
         ${form(`connections/${connection.id}/${connection.blocked ? 'restore' : 'revoke'}`, `<button type="submit">${connection.blocked ? '恢复连接' : '停用连接'}</button>`)}</article>`).join('')}</div>` : '<div class="empty">还没有助手访问过你的账号。<p>在个人助手中添加 EIGOS，完成服务授权后，连接会显示在这里。</p></div>'}
       <p class="fine">停用会立即阻止该助手的新调用。已接受的业务任务需要按任务和供应商的规则另行取消。</p>

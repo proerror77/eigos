@@ -47,7 +47,9 @@ export function agentCard(c: Config, services = SERVICES): AgentCard {
     description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
-    capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false },
+    capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
+      ...(c.OIDC_AGENT_CLIENT_ID ? { extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] } : {}),
+    },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
       eigos: c.EIGOS_AUTH_MODE === 'jwt'

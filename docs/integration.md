@@ -178,6 +178,10 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 
 可设置 `EIGOS_AUDIT_PATH=./data/http-audit.jsonl` 记录协议路径、方法、任务／消息编号、时间与 HTTP 状态。不记录 Authorization、用户消息正文或任意模型推理。
 
+## Agent 自助登记与续期
+
+客户 Agent 可通过公开的 `/.well-known/eigos-agent-registration` 自助登记，并用 Auth0 Device Flow 获得用户授权。非会员申请、邀请等待、Token 轮换及按安装实例停用见 [Agent 自助接入](agent-onboarding.md)。MCP 资源元数据与 A2A Card 会指向该发现入口，两种协议继续共用会员和任务权限。
+
 ## 官方依据
 
 - [MCP TypeScript SDK v2](https://ts.sdk.modelcontextprotocol.io/v2/)

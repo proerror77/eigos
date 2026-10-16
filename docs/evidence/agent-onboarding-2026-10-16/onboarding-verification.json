@@ -1,0 +1,35 @@
+{
+  "completedAt": "2026-10-16T10:43:45.552Z",
+  "registrationId": "3c908009-e15b-4dc2-bcaa-d491f8a9cc5a",
+  "memberHash": "f19a42491b44bfe7858eeb827f0b4b3f119b2890c8b992b91b8126cb4107ce47",
+  "states": [
+    "authorization_required",
+    "registration_required",
+    "waiting_invitation",
+    "active"
+  ],
+  "auth0DeviceGrant": true,
+  "freshEnrollmentClaim": true,
+  "noTokenStatuses": [
+    401,
+    401
+  ],
+  "waitingInvitationStatuses": [
+    403,
+    403
+  ],
+  "invitationReplayRejected": true,
+  "actualExpiredTokenStatuses": [
+    401,
+    401
+  ],
+  "initialAccessLifetimeSeconds": 60,
+  "restoredAccessLifetimeSeconds": 900,
+  "automaticRefreshes": 1,
+  "refreshTokenRotated": true,
+  "concurrentRefreshShared": true,
+  "resumedSameRegistration": true,
+  "mcpAfterRefresh": true,
+  "a2aAfterRefresh": true,
+  "refreshCannotEnrollNewAgent": true
+}

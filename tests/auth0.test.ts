@@ -8,16 +8,29 @@ const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/a
 test('Auth0 blueprint binds two distinct clients and a short-lived, consented RFC 9068 resource', () => {
   const plan = auth0Plan('https://eigos.example');
   assert.equal(plan.api.token_dialect, 'rfc9068_profile'); assert.equal(plan.api.token_lifetime, 900);
-  assert.equal(plan.api.skip_consent_for_verifiable_first_party_clients, false); assert.equal(plan.api.allow_offline_access, false);
+  assert.equal(plan.api.skip_consent_for_verifiable_first_party_clients, false); assert.equal(plan.api.allow_offline_access, true);
   assert.equal(plan.portal.token_endpoint_auth_method, 'client_secret_post'); assert.equal(plan.agent.token_endpoint_auth_method, 'none');
   assert.notDeepEqual(plan.portal.callbacks, plan.agent.callbacks);
   assert.equal(plan.agent.is_first_party, true); assert.equal(plan.portal.is_first_party, true);
+  assert.equal(plan.connector.token_endpoint_auth_method, 'none');
+  assert(plan.connector.grant_types.includes('refresh_token')); assert(plan.connector.grant_types.includes('urn:ietf:params:oauth:grant-type:device_code'));
+  assert.equal(plan.connector.refresh_token.rotation_type, 'rotating'); assert.equal(plan.connector.refresh_token.infinite_token_lifetime, false);
   assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
   assert.throws(() => auth0Plan('https://eigos.example', 'https://attacker.example/callback'));
   assert.throws(() => auth0Plan('https://eigos.example', 'http://127.0.0.1/callback'));
+});
+
+test('Auth0 connector refresh grants cannot authorize fresh installation enrollment', async () => {
+  for (const [protocol, allowed] of [['oauth2-device-code', true], ['oauth2-refresh-token', false], ['unknown', false]] as const) {
+    const claims = new Map();
+    await onExecutePostLogin({ client: { client_id: 'connector' }, resource_server: { identifier: 'https://eigos.example' }, transaction: { protocol }, secrets: {
+      EIGOS_RESOURCE: 'https://eigos.example', EIGOS_TENANT_CLAIM: 'https://eigos.example/claims/tenant_id', EIGOS_TENANT_ID: 'personal', EIGOS_AGENT_CONNECTOR_CLIENT_ID: 'connector',
+    } }, { idToken: { setCustomClaim: () => {} }, accessToken: { setCustomClaim: (key: string, value: unknown) => claims.set(key, value) }, access: { deny: () => assert.fail('Identity mapping should be valid') } });
+    assert.equal(claims.get('https://eigos.example/claims/agent_enrollment'), allowed);
+  }
 });
 
 async function action(clientId: string, resource?: string, configured = true) {

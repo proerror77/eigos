@@ -74,18 +74,21 @@ if (!values.apply) {
     state.apiId = resource.id; save('state.json', state);
     const portal = ownedClient('member-portal', plan.portal); state.portalId = portal.client_id; save('state.json', state);
     const agent = ownedClient('personal-agent', plan.agent); state.agentId = agent.client_id; save('state.json', state);
+    const connector = ownedClient('agent-onboarding', plan.connector); state.connectorId = connector.client_id; save('state.json', state);
+    api('patch', `clients/${encodeURIComponent(connector.client_id)}`, { grant_types: plan.connector.grant_types, refresh_token: plan.connector.refresh_token });
     const databases = list('connections', 'connections').filter(connection => connection.strategy === 'auth0');
     let connection = values.connection ? databases.find(connection => connection.name === values.connection)
       : databases.find(connection => connection.name === 'Username-Password-Authentication') ?? (databases.length === 1 ? databases[0] : undefined);
     if (!connection && (values.connection || databases.length)) throw new Error('Choose the intended Auth0 database connection explicitly');
     if (!connection) connection = api('post', 'connections', { name: 'EIGOS-Members-' + plan.resource.replace(/[^a-zA-Z0-9]/g, '-').slice(-30), strategy: 'auth0' });
     state.connectionId = connection.id; state.connectionName = connection.name; save('state.json', state);
-    ensureAuth0ConnectionClients(api, connection.id, [portal.client_id, agent.client_id]);
+    ensureAuth0ConnectionClients(api, connection.id, [portal.client_id, agent.client_id, connector.client_id]);
     if (!portal.client_secret || /redact|\*{3,}/i.test(portal.client_secret)) throw new Error('The CLI did not return a private portal client secret');
     const code = readFileSync(new URL('../integrations/auth0/post-login.cjs', import.meta.url), 'utf8');
     const secrets = [
       { name: 'EIGOS_RESOURCE', value: plan.resource }, { name: 'EIGOS_MEMBER_CLIENT_ID', value: portal.client_id },
       { name: 'EIGOS_TENANT_CLAIM', value: plan.tenantClaim }, { name: 'EIGOS_TENANT_ID', value: 'personal' },
+      { name: 'EIGOS_AGENT_CONNECTOR_CLIENT_ID', value: connector.client_id },
     ];
     const matches = list('actions/actions', 'actions').filter(action => action.name === plan.actionName);
     if (matches.length > 1) throw new Error('Multiple matching Actions require review');
@@ -112,22 +115,25 @@ if (!values.apply) {
       api('patch', 'actions/triggers/post-login/bindings', { bindings: next });
     }
     const apiReadback = api('get', `resource-servers/${encodeURIComponent(resource.id)}`);
-    if (apiReadback.identifier !== plan.resource || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
-    for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent]]) {
+    if (apiReadback.identifier !== plan.resource || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.allow_offline_access !== true || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
+    for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent], [connector, plan.connector]]) {
       const actual = api('get', `clients/${encodeURIComponent(client.client_id)}`);
       if (JSON.stringify(actual.callbacks) !== JSON.stringify(expected.callbacks) || actual.token_endpoint_auth_method !== expected.token_endpoint_auth_method || actual.is_first_party !== expected.is_first_party) throw new Error('OAuth client readback did not confirm the callback/authentication/ownership contract');
     }
+    const connectorReadback = api('get', `clients/${encodeURIComponent(connector.client_id)}`);
+    if (!plan.connector.grant_types.every(grant => connectorReadback.grant_types?.includes(grant)) || connectorReadback.refresh_token?.rotation_type !== 'rotating' || connectorReadback.refresh_token?.expiration_type !== 'expiring') throw new Error('Agent device/refresh grant readback failed');
     const bindingReadback = api('get', 'actions/triggers/post-login/bindings');
     if (!bindingReadback.bindings?.some(binding => binding.action?.id === action.id)) throw new Error('Action binding readback did not confirm deployment');
     const issuer = `https://${tenant}/`;
     const common = [
       `PUBLIC_URL=${plan.resource}`, `OAUTH_ISSUER=${issuer}`, `OAUTH_JWKS_URL=${issuer}.well-known/jwks.json`,
-      `OAUTH_AUDIENCE=${plan.resource}`, `OAUTH_TENANT_CLAIM=${plan.tenantClaim}`,
+      `OAUTH_AUDIENCE=${plan.resource}`, `OAUTH_TENANT_CLAIM=${plan.tenantClaim}`, `OIDC_AGENT_CLIENT_ID=${connector.client_id}`,
     ];
     save('gateway.env', [...common, 'EIGOS_AUTH_MODE=jwt', 'HOST=127.0.0.1', 'PORT=3210', `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `OIDC_CLIENT_ID=${portal.client_id}`, `OIDC_CLIENT_SECRET=${portal.client_secret}`, 'EIGOS_MEMBERSHIP_APPROVAL=self-service', 'EIGOS_EXECUTOR=codex', 'EIGOS_COORDINATOR=disabled', 'EIGOS_PAOTUI_ORDERS_ENABLED=false', 'EIGOS_CSV_PILOT=false', `EIGOS_AUDIT_PATH=${directory}/http-audit.jsonl`, ''].join('\n'));
     save('agent.env', [...common, `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `EIGOS_AGENT_CLIENT_ID=${agent.client_id}`, `EIGOS_AGENT_CALLBACK_URL=${plan.agentCallback}`, `EIGOS_OAUTH_HANDOFF_PATH=${directory}/agent-login.json`, `EIGOS_OAUTH_EVIDENCE_DIR=${directory}/agent-evidence`, ''].join('\n'));
+    save('connector.env', [...common, `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `EIGOS_AGENT_CREDENTIAL_PATH=${directory}/connector/credentials.json`, `EIGOS_ONBOARDING_HANDOFF_PATH=${directory}/connector-login.json`, `EIGOS_ONBOARDING_EVIDENCE_DIR=${directory}/connector-evidence`, ''].join('\n'));
     state.configurationComplete = true; state.configuredAt = new Date().toISOString(); delete state.stoppedAtOperation; save('state.json', state);
-    console.log('Auth0 API, two OAuth clients, shared member login connection and scoped identity Action configured. Private environment files saved; no credentials printed.');
+    console.log('Auth0 API, portal/reference/Agent connector clients, rotating refresh grants and scoped identity Action configured. Private environment files saved; no credentials printed.');
   } catch (error) {
     state.configurationComplete = false; state.stoppedAtOperation = operation; save('state.json', state);
     // Provider diagnostics can contain private fields; keep them only in the

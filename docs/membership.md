@@ -61,7 +61,7 @@ loopback 开发令牌继续保留为本地测试路径，不能证明真实会�
 
 ## 管理与人工审核选项
 
-默认 `self-service`：本人登录并提交明确同意后即开通。若改为 `manual`，申请进入 pending，只有管理员本地操作能批准；表单不能自提权。
+默认 `self-service`：本人登录并提交明确同意后即开通。若改为 `manual`，申请进入 pending，只有管理员本地操作能批准；表单不能自提权。`invite-only` 模式下，网页和 Agent 的会员申请都进入等待邀请状态，须兑换绑定该身份的有效邀请。Agent 自助登记与管理方法见 [接入指南](agent-onboarding.md)。
 
 ```sh
 npm run build

@@ -20,6 +20,8 @@ import { TaskService } from '../../packages/core/tasks.js';
 import { MemberAccessError, MemberStore } from '../../packages/members/store.js';
 import { mountMemberRoutes } from './members/routes.js';
 import type { LoginProvider } from './members/oidc.js';
+import { mountAgentRoutes } from './members/agent-routes.js';
+import { AgentAccessError } from '../../packages/members/agents.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
@@ -51,11 +53,12 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   });
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
-    if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path))) {
+    if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
       const entry = {
-        at: new Date().toISOString(), path: req.path, method: req.body?.method ?? req.body?.action,
+        at: new Date().toISOString(), path: req.path, method: req.body?.method ?? req.body?.action ?? req.method,
         requestId: req.body?.id, messageId: req.body?.params?.message?.messageId,
         taskId: req.body?.params?.id ?? req.body?.params?.message?.taskId,
+        ...(req.path.startsWith('/agents/registrations') ? { registrationId: req.body?.registrationId ?? req.path.split('/')[3] } : {}),
       };
       res.on('finish', () => {
         // Never persist headers, tokens, prompts, or arbitrary peer metadata here.
@@ -70,7 +73,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       if (!allowedOrigins.has(origin)) { res.status(403).json({ error: 'origin_not_allowed' }); return; }
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.vary('Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, A2A-Version');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, A2A-Version, X-EIGOS-Registration-Token');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate, MCP-Protocol-Version, A2A-Version');
     }
@@ -79,6 +82,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   });
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0' }));
   mountMemberRoutes(app, config, members, loginProvider);
+  mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
   app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (_req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
@@ -91,9 +95,17 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       if (!match?.[1]) throw new Error('Missing token');
       const principal = await verify(match[1]);
       if (config.EIGOS_AUTH_MODE === 'jwt') {
+        if (principal.clientId === config.OIDC_AGENT_CLIENT_ID) {
+          try { members.agents.authorize(principal, match[1]); }
+          catch (error) {
+            if (error instanceof AgentAccessError || error instanceof DomainError) res.status(403).json({ error: error instanceof AgentAccessError ? error.code : 'agent_registration_required', onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` });
+            else next(error);
+            return;
+          }
+        }
         try { members.authorize(principal); }
         catch (error) {
-          if (error instanceof MemberAccessError) res.status(403).json({ error: error.code, membership_url: `${config.PUBLIC_URL}/members` });
+          if (error instanceof MemberAccessError) res.status(403).json({ error: error.code, membership_url: `${config.PUBLIC_URL}/members`, ...(config.OIDC_AGENT_CLIENT_ID ? { onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}) });
           else next(error);
           return;
         }
@@ -104,7 +116,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     } catch {
       const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${metadataUrl}"` : '';
       res.setHeader('WWW-Authenticate', `Bearer realm="eigos", error="invalid_token"${discovery}`);
-      res.status(401).json({ error: 'invalid_token' });
+      res.status(401).json({ error: 'invalid_token', ...(config.OIDC_AGENT_CLIENT_ID ? { onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}) });
     }
   };
 

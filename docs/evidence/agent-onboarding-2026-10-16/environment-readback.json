@@ -1,0 +1,12 @@
+{
+  "at": "2026-10-16T11:21:30.400Z",
+  "normalMembershipDatabaseRestored": true,
+  "originalActiveMemberPreserved": true,
+  "defaultAdmissionPolicy": "self-service",
+  "agentDiscoveryReady": true,
+  "requestSchemasAvailable": true,
+  "accessTokenLifetimeSeconds": 900,
+  "webAccessTokenLifetimeSeconds": 900,
+  "existing443ServicesPreserved": true,
+  "privateGatewayHealth": "ok"
+}

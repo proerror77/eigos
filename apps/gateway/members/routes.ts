@@ -38,7 +38,8 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
     // the same-origin POST header; login/callback redirects keep no-referrer.
     res.set('Referrer-Policy', 'same-origin').type('html').send(memberPage({
       ...(current ? { member: current.member, csrf: current.csrf, connections: store.connections(current.member.id) } : {}),
-      loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL === 'manual', ...(notice ? { notice } : {}),
+      agentRegistrations: current ? store.agents.list(current.member.id) : [], invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only',
+      loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
     }));
   });
   app.get('/members/login', async (req, res) => {
@@ -73,7 +74,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
   });
 
   // A member browser session manages only its own profile/connections; it cannot authenticate MCP or A2A.
-  app.post(['/members/apply', '/members/profile', '/members/logout', '/members/connections/:id/:action'], (req, res, next) => {
+  app.post(['/members/apply', '/members/profile', '/members/logout', '/members/invitation', '/members/agents/:id/revoke', '/members/connections/:id/:action'], (req, res, next) => {
     const current = session(req);
     if (!current) { res.status(401).json({ error: 'member_login_required' }); return; }
     const supplied = Buffer.from(typeof req.body?._csrf === 'string' ? req.body._csrf : '');
@@ -87,10 +88,12 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
         store.logout(cookies(req)[sessionCookie]!); res.clearCookie(sessionCookie, cookieOptions); redirect(res); return;
       }
       if (req.path === '/members/apply') {
-        store.apply(current.member.id, { ...body, consent: body.consent === true || body.consent === 'true' }, c.EIGOS_MEMBERSHIP_APPROVAL === 'manual');
+        store.apply(current.member.id, { ...body, consent: body.consent === true || body.consent === 'true' }, c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service');
         redirect(res, 'applied'); return;
       }
       if (req.path === '/members/profile') { store.update(current.member.id, body); redirect(res, 'saved'); return; }
+      if (req.path === '/members/invitation') { store.agents.redeemForMember(current.member.id, z.string().min(32).max(200).parse(body.invitationToken)); redirect(res, 'applied'); return; }
+      if (req.path.startsWith('/members/agents/')) { store.agents.revoke(current.member.id, z.uuid().parse(req.params.id)); redirect(res, 'revoked'); return; }
       const action = z.enum(['revoke', 'restore']).parse(req.params.action);
       store.block(current.member.id, z.uuid().parse(req.params.id), action === 'revoke');
       redirect(res, action === 'revoke' ? 'revoked' : 'restored');
@@ -98,7 +101,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       if (error instanceof z.ZodError) {
         const message = '请检查名称、语言和时区；开通会员时需勾选同意。';
         if (req.is('application/json')) res.status(400).json({ error: 'invalid_member_input', message });
-        else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL === 'manual', notice: message }));
+        else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), agentRegistrations: store.agents.list(current.member.id), invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only', loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', notice: message }));
         return;
       }
       if (error instanceof DomainError) { res.status(error.code === 'NOT_FOUND' ? 404 : 403).json({ error: error.code }); return; }
