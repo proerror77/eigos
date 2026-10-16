@@ -17,7 +17,7 @@
 1. 注册 EIGOS API 资源，资源标识配置为 `OAUTH_AUDIENCE`（例如 `https://api.example.com`）。它覆盖 `/mcp` 与 `/a2a`。
 2. 定义 `services:read`、`tasks:read`、`tasks:write`；按用户和客户端授权这些 scope。
 3. 使用授权码＋PKCE，并按目标客户端实际支持的方式配置回调 URI 和客户端注册。CIMD／预注册／旧客户端注册方式取决于身份提供方与客户端，不由这个网关自动提供。
-4. 配置令牌映射：`sub` 是用户／服务身份，`tenant_id` 是受信任的组织 ID，`client_id` 是客户端 ID，`scope` 是空格分隔字符串。客户端提交的任务字段不能覆盖这些身份。
+4. 配置令牌映射：`sub` 是用户／服务身份，租户字段默认 `tenant_id`（Auth0 使用由 `OAUTH_TENANT_CLAIM` 配置的完整 namespaced claim 键），`client_id` 是客户端 ID，`scope` 是空格分隔字符串。租户字段来自经验证的令牌；客户端提交的任务字段不能覆盖这些身份。
 5. 令牌使用 `typ: at+jwt`，具有正确的 `iss`／`aud`、`iat`／`exp`，最长 900 秒；支持 RS256、ES256、EdDSA。只提供普通 `JWT` 或 opaque access token 的提供方，需要先适配 verifier，不能直接降低检查或把 ID token 当 access token。
 6. 配置 HTTPS 的 `PUBLIC_URL`、`OAUTH_ISSUER`、`OAUTH_JWKS_URL`、`OAUTH_AUDIENCE`，运行已构建服务。签名公钥只从管理员配置的 JWKS 地址加载，不使用请求中声明的密钥地址。
 7. 在同一提供方注册会员网页登录客户端，配置 `OIDC_CLIENT_ID` 及相应的私有 `OIDC_CLIENT_SECRET`；精确回调地址为 `${PUBLIC_URL}/members/callback`。会员先在 `/members` 登录并开通，再由 Personal Agent 走自己的 OAuth 客户端授权。详见 [会员接入](membership.md)。

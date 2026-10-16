@@ -2,6 +2,7 @@ import * as oidc from 'openid-client';
 import { z } from 'zod';
 import type { Config } from '../../../packages/core/config.js';
 import type { Identity } from '../../../packages/members/store.js';
+import { readTenantClaim } from '../../../packages/core/identity-claims.js';
 
 export interface LoginAttempt { state: string; nonce: string; verifier: string }
 export interface LoginProvider {
@@ -9,7 +10,7 @@ export interface LoginProvider {
   finish(url: URL, attempt: LoginAttempt): Promise<Identity>;
 }
 const identityClaims = z.object({
-  iss: z.url(), sub: z.string().min(1), tenant_id: z.string().min(1),
+  iss: z.url(), sub: z.string().min(1),
   name: z.string().optional(), email: z.email().optional(), email_verified: z.boolean().optional(),
 });
 
@@ -31,11 +32,11 @@ export function createLoginProvider(c: Config): LoginProvider | undefined {
     }
     return configuration;
   };
-  return oidcLoginProvider(discover, `${c.PUBLIC_URL}/members/callback`);
+  return oidcLoginProvider(discover, `${c.PUBLIC_URL}/members/callback`, c.OAUTH_TENANT_CLAIM);
 }
 
 // The injected discovery function is also used by the local signed-token identity-provider fixture.
-export function oidcLoginProvider(discover: () => Promise<oidc.Configuration>, redirectUri: string): LoginProvider {
+export function oidcLoginProvider(discover: () => Promise<oidc.Configuration>, redirectUri: string, tenantClaim = 'tenant_id'): LoginProvider {
   return {
     async start() {
       const config = await discover();
@@ -52,10 +53,11 @@ export function oidcLoginProvider(discover: () => Promise<oidc.Configuration>, r
       const tokens = await oidc.authorizationCodeGrant(config, url, {
         pkceCodeVerifier: attempt.verifier, expectedState: attempt.state, expectedNonce: attempt.nonce, idTokenExpected: true,
       });
-      const claims = identityClaims.parse(tokens.claims());
+      const signedClaims = tokens.claims();
+      const claims = identityClaims.parse(signedClaims);
       // Keep only validated identity fields; upstream tokens never enter sessions, tasks, logs or HTML.
       return {
-        issuer: claims.iss, subject: claims.sub, tenant: claims.tenant_id,
+        issuer: claims.iss, subject: claims.sub, tenant: readTenantClaim(signedClaims, tenantClaim),
         ...(claims.name ? { displayName: claims.name } : {}),
         ...(claims.email_verified && claims.email ? { email: claims.email } : {}),
       };

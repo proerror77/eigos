@@ -51,8 +51,8 @@ test('member identity, consent, manual approval, suspended login and connection 
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-type Fault = 'none' | 'nonce' | 'audience' | 'issuer' | 'signature' | 'expired';
-async function fixture(manualApproval = false) {
+type Fault = 'none' | 'nonce' | 'audience' | 'issuer' | 'signature' | 'expired' | 'tenant';
+async function fixture(manualApproval = false, tenantClaim = 'tenant_id') {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-members-http-'));
   const keys = await generateKeyPair('ES256'), wrongKeys = await generateKeyPair('ES256');
   const jwk = { ...await exportJWK(keys.publicKey), kid: 'identity-fixture', alg: 'ES256', use: 'sig' };
@@ -85,7 +85,7 @@ async function fixture(manualApproval = false) {
       if (!attempt || attempt.challenge !== challenge || body.get('redirect_uri') !== attempt.redirect || body.get('client_id') !== clientId || body.get('grant_type') !== 'authorization_code') {
         json(res, { error: 'invalid_grant' }, 400); return;
       }
-      const idToken = await new SignJWT({ nonce: fault === 'nonce' ? 'wrong' : attempt.nonce, tenant_id: 'one', name: 'Alice', email: 'alice@example.test', email_verified: true })
+      const idToken = await new SignJWT({ nonce: fault === 'nonce' ? 'wrong' : attempt.nonce, tenant_id: 'unselected-tenant', [tenantClaim]: fault === 'tenant' ? undefined : 'one', name: 'Alice', email: 'alice@example.test', email_verified: true })
         .setProtectedHeader({ alg: 'ES256', kid: jwk.kid }).setIssuer(fault === 'issuer' ? 'https://wrong.example' : issuer)
         .setAudience(fault === 'audience' ? 'wrong-client' : clientId).setSubject('alice').setIssuedAt(fault === 'expired' ? Math.floor(Date.now() / 1000) - 600 : undefined)
         .setExpirationTime(fault === 'expired' ? Math.floor(Date.now() / 1000) - 300 : '5m')
@@ -104,9 +104,10 @@ async function fixture(manualApproval = false) {
     ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(dir, 'tasks.sqlite') }),
     EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: issuer + '/jwks',
     OIDC_CLIENT_ID: clientId, EIGOS_MEMBERSHIP_APPROVAL: manualApproval ? 'manual' : 'self-service',
+    OAUTH_TENANT_CLAIM: tenantClaim,
   };
-  const login = oidcLoginProvider(async () => oidc.discovery(new URL(issuer), clientId, { id_token_signed_response_alg: 'ES256' }, oidc.None(), { execute: [oidc.allowInsecureRequests] }), base + '/members/callback');
-  const gateway = createApp(config, jwtVerifier(issuer, audience, createLocalJWKSet({ keys: [jwk] })), undefined, login);
+  const login = oidcLoginProvider(async () => oidc.discovery(new URL(issuer), clientId, { id_token_signed_response_alg: 'ES256' }, oidc.None(), { execute: [oidc.allowInsecureRequests] }), base + '/members/callback', tenantClaim);
+  const gateway = createApp(config, jwtVerifier(issuer, audience, createLocalJWKSet({ keys: [jwk] }), tenantClaim), undefined, login);
   server.on('request', gateway.app);
   const browserCookies = new Map<string, string>();
   async function browser(path: string, options: RequestInit = {}) {
@@ -133,8 +134,8 @@ async function fixture(manualApproval = false) {
   async function post(path: string, body: object, origin = base) {
     return browser(path, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   }
-  async function token(subject = 'alice', agent = 'personal-agent', scopes: string[] = [...SCOPES]) {
-    return new SignJWT({ tenant_id: 'one', client_id: agent, scope: scopes.join(' ') }).setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: jwk.kid })
+  async function token(subject = 'alice', agent = 'personal-agent', scopes: string[] = [...SCOPES], extra: Record<string, unknown> = {}) {
+    return new SignJWT({ tenant_id: 'unselected-tenant', [tenantClaim]: 'one', client_id: agent, scope: scopes.join(' '), ...extra }).setProtectedHeader({ alg: 'ES256', typ: 'at+jwt', kid: jwk.kid })
       .setIssuer(issuer).setAudience(audience).setSubject(subject).setIssuedAt().setExpirationTime('10m').sign(keys.privateKey);
   }
   async function protectedCall(path: string, accessToken: string, body: object = {}) {
@@ -267,5 +268,31 @@ test('membership does not replace token scopes; login config and browser securit
     assert(page.headers.get('content-security-policy')?.includes("frame-ancestors 'none'"));
     assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
     const html = await page.text(); assert(!html.includes('identity-provider-token-must-not-be-stored'));
+  } finally { await f.close(); }
+});
+
+test('Auth0 namespaced tenant claim maps the portal and Agent to the same isolated member', async () => {
+  const claim = 'https://eigos.example/claims/tenant_id';
+  const f = await fixture(false, claim);
+  try {
+    await f.signIn(); await f.post('/members/apply', { ...profile, consent: true, _csrf: await f.csrf() });
+    const member = f.gateway.members.list()[0]!; assert.equal(member.tenant, 'one');
+    const response = await f.protectedCall('/a2a', await f.token(), { jsonrpc: '2.0', id: 'list', method: 'ListTasks', params: {} });
+    assert.equal(response.status, 200); assert.equal((await response.json()).result.tasks.length, 0);
+    assert.equal(f.gateway.members.connections(member.id)[0]?.clientId, 'personal-agent');
+  } finally { await f.close(); }
+});
+
+test('configured namespaced claims never fall back to a plain tenant_id or an absent ID-token claim', async () => {
+  const claim = 'https://eigos.example/claims/tenant_id';
+  const f = await fixture(false, claim);
+  try {
+    f.setFault('tenant'); const invalid = await f.signIn();
+    assert(invalid.response.headers.get('location')?.includes('login_failed')); assert.equal(f.gateway.members.list().length, 0);
+    f.setFault('none'); await f.signIn(); await f.post('/members/apply', { ...profile, consent: true, _csrf: await f.csrf() });
+    const missing = await f.protectedCall('/mcp', await f.token('alice', 'agent', [...SCOPES], { [claim]: undefined, tenant_id: 'one' }));
+    assert.equal(missing.status, 401); assert.equal((await missing.json()).error, 'invalid_token');
+    const foreign = await f.protectedCall('/a2a', await f.token('alice', 'agent', [...SCOPES], { [claim]: 'other', tenant_id: 'one' }));
+    assert.equal(foreign.status, 403); assert.equal((await foreign.json()).error, 'membership_required');
   } finally { await f.close(); }
 });

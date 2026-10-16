@@ -29,9 +29,9 @@ EIGOS_MEMBERSHIP_APPROVAL=self-service
 
 在提供方精确注册 `https://your-eigos.example/members/callback`。会员网页登录应用与 Personal Agent 是独立 OAuth 客户端：不要共享网页登录客户端密钥给个人助手。当前网页登录客户端支持 `client_secret_post`；提供方明确注册为公共客户端时，可省略 secret，使用 PKCE 和 `none` 客户端认证。实际提供方仍需联调。
 
-会员网页登录请求 `openid profile email`，ID Token 必须携带经签名验证的 `iss`、`sub`、`tenant_id`，其中 `tenant_id` 必须与同一会员 Agent 访问令牌一致；只有 `email_verified=true` 时才保存邮箱。不按邮箱合并账号，不从请求参数、表单或 Agent 消息获取身份和租户。提供方应使用本客户端约定的默认 RS256 ID Token 签名算法。
+会员网页登录请求 `openid profile email`，ID Token 必须携带经签名验证的 `iss`、`sub` 和租户字段。默认租户字段为 `tenant_id`；可通过 `OAUTH_TENANT_CLAIM` 指定 Auth0 namespaced claim 的完整键名，网页登录和 Agent 访问令牌都必须使用同一字段及值，缺失时不回退。只有 `email_verified=true` 时才保存邮箱。不按邮箱合并账号，不从请求参数、表单或 Agent 消息获取身份和租户。提供方应使用本客户端约定的默认 RS256 ID Token 签名算法。
 
-Agent 的访问令牌仍遵守 [接入指南](integration.md)：正确的 EIGOS `aud`，`typ: at+jwt`，受支持签名算法，`sub`、`tenant_id`、`client_id`、`scope`、`iat`、`exp`，有效期不超过 15 分钟。只提供 opaque token、普通 ID Token 或不同 claim 结构的提供方需要明确适配，不能降低验证来凑通。
+Agent 的访问令牌仍遵守 [接入指南](integration.md)：正确的 EIGOS `aud`，`typ: at+jwt`，受支持签名算法，`sub`、已配置的租户字段、`client_id`、`scope`、`iat`、`exp`，有效期不超过 15 分钟。只提供 opaque token、普通 ID Token 或不同 claim 结构的提供方需要明确适配，不能降低验证来凑通。
 
 会员登录回调使用 `openid-client` 的 Authorization Code + S256 PKCE，并校验 state、nonce、issuer、audience、过期和签名。待完成登录保存在 Gateway 内存中，五分钟过期，一次消费；Gateway 重启后需重新开始登录。浏览器会话最长八小时，只有随机会话标识的 SHA-256 入库，使用 HttpOnly／Secure／SameSite Cookie，资料与连接修改须同源且通过 CSRF 验证。所有配置 URL 必须使用 HTTPS；仅测试代码显式注入的本地身份提供方允许 HTTP。
 
@@ -76,6 +76,6 @@ npm run members -- suspend <member-id>
 
 2026-10-16：类型检查、81 项全量测试（新增 11 项会员测试）、构建及差异检查通过；构建后的管理命令已在临时库验证 list／approve／suspend。Chrome 检查了开通表单和资料／连接管理页面；页面使用明确标注的示例资料，未连接真实账号。
 
-这证明本地实现；还没有选定外部身份提供方，没有真实会员注册／OAuth 浏览器联调或公网部署。上线前需在选定提供方登记网页登录与 Agent 客户端、完成 claim/scope 映射，并验证真实用户的登录、同意、刷新、撤销及账号恢复。组织邀请／角色、套餐、计费、支付和复杂偏好资料不属于本次实现。
+以上证明本地实现；2026-10-16 后续已选择 Auth0，并完成 namespaced claim 适配及联调工具准备。真实会员注册／OAuth 浏览器联调仍待账号登录和云端配置，没有公网部署。提供方登记、当前状态及验收步骤见 [Auth0 接入方案](auth0-integration.md)。组织邀请／角色、套餐、计费、支付和复杂偏好资料不属于本次实现。
 
 官方依据：[openid-client](https://github.com/panva/openid-client)、[OIDC 授权码示例](https://github.com/panva/openid-client/blob/main/examples/oidc.ts)、[MCP Authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)、[OAuth Security BCP / RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html)。

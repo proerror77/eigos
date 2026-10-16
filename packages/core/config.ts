@@ -16,6 +16,7 @@ const schema = z.object({
   OAUTH_ISSUER: z.url().optional(),
   OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_AUDIENCE: z.url().optional(),
+  OAUTH_TENANT_CLAIM: z.string().trim().min(1).max(400).optional(),
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   MEMBERSHIP_DATABASE_PATH: z.string().optional(),
