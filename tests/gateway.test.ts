@@ -47,8 +47,13 @@ before(async () => {
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
     EIGOS_COORDINATOR: 'disabled', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
+    EIGOS_MEMBERSHIP_APPROVAL: 'self-service',
   };
   gateway = createApp(config, verify);
+  for (const [tenant, subject] of [['org-a', 'alice'], ['org-a', 'bob'], ['org-b', 'alice'], ['org-a', 'invalid-input-tests']]) {
+    const member = gateway.members.login({ issuer, tenant: tenant!, subject: subject! });
+    gateway.members.apply(member.id, { displayName: subject, locale: 'zh-CN', timezone: 'Asia/Shanghai', consent: true }, false);
+  }
   server.on('request', req => {
     if (req.url === '/mcp' && typeof req.headers['mcp-protocol-version'] === 'string') mcpVersions.add(req.headers['mcp-protocol-version']);
   });

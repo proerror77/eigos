@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 
 const schema = z.object({
@@ -16,6 +16,10 @@ const schema = z.object({
   OAUTH_ISSUER: z.url().optional(),
   OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_AUDIENCE: z.url().optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  MEMBERSHIP_DATABASE_PATH: z.string().optional(),
+  EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual']).default('self-service'),
   ALLOWED_ORIGINS: z.string().default(''),
   EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
   EIGOS_CODEX_BIN: z.string().default('codex'),
@@ -33,6 +37,10 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
   }
   c.PUBLIC_URL = publicUrl.origin;
+  if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
+  if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');
+  if (role === 'gateway' && c.EIGOS_AUTH_MODE === 'jwt' && c.MEMBERSHIP_DATABASE_PATH === ':memory:') throw new Error('JWT membership requires a persistent database');
+  if (c.MEMBERSHIP_DATABASE_PATH && c.MEMBERSHIP_DATABASE_PATH !== ':memory:' && resolve(c.MEMBERSHIP_DATABASE_PATH) === resolve(c.DATABASE_PATH)) throw new Error('Membership and task databases require separate files');
   if (c.EIGOS_AUTH_MODE === 'development') {
     if (!['127.0.0.1', 'localhost', '::1'].includes(c.HOST) ||
         !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname) ||

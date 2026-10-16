@@ -20,7 +20,8 @@
 4. 配置令牌映射：`sub` 是用户／服务身份，`tenant_id` 是受信任的组织 ID，`client_id` 是客户端 ID，`scope` 是空格分隔字符串。客户端提交的任务字段不能覆盖这些身份。
 5. 令牌使用 `typ: at+jwt`，具有正确的 `iss`／`aud`、`iat`／`exp`，最长 900 秒；支持 RS256、ES256、EdDSA。只提供普通 `JWT` 或 opaque access token 的提供方，需要先适配 verifier，不能直接降低检查或把 ID token 当 access token。
 6. 配置 HTTPS 的 `PUBLIC_URL`、`OAUTH_ISSUER`、`OAUTH_JWKS_URL`、`OAUTH_AUDIENCE`，运行已构建服务。签名公钥只从管理员配置的 JWKS 地址加载，不使用请求中声明的密钥地址。
-7. 在实际客户端验证登录、同意、刷新、过期和撤销；本仓库的测试不代替这一步。
+7. 在同一提供方注册会员网页登录客户端，配置 `OIDC_CLIENT_ID` 及相应的私有 `OIDC_CLIENT_SECRET`；精确回调地址为 `${PUBLIC_URL}/members/callback`。会员先在 `/members` 登录并开通，再由 Personal Agent 走自己的 OAuth 客户端授权。详见 [会员接入](membership.md)。
+8. 在实际提供方和客户端验证登录、同意、刷新、过期和撤销；本仓库使用签名令牌的本地身份提供方测试不代替这一步。
 
 提供方应在 `${OAUTH_ISSUER}/.well-known/openid-configuration` 暴露其真实 OIDC 元数据，A2A Agent Card 引用此地址。MCP 授权服务器发现还需要符合 MCP 授权规范；不满足时应配置适配或选用兼容提供方。
 
@@ -30,7 +31,7 @@
 - `/.well-known/oauth-protected-resource/mcp`
 - `/.well-known/oauth-protected-resource/a2a`
 
-三者描述同一资源服务器；未认证的受保护请求返回 401 和包含资源元数据位置的 `WWW-Authenticate`。JWT 的即时撤销尚未实现，当前依赖最长 15 分钟寿命；密钥轮换走 JWKS。会员 UI、组织成员管理、套餐和计费仍需独立建设。
+三者描述同一资源服务器；未认证的受保护请求返回 401 和包含资源元数据位置的 `WWW-Authenticate`。有效 JWT 仍需关联已开通会员；会员未开通、已停用或助手连接已撤销时返回 403，并提供 `membership_url`。会员中心已实现本人资料、连接停用／恢复和退出登录；本地停用即时生效。上游 JWT 撤销仍存在最长 15 分钟窗口，密钥轮换走 JWKS；组织成员管理、套餐和计费尚未实现。
 
 ## 2. MCP
 

@@ -10,6 +10,7 @@
 | `apps/worker/` | 后台领取任务、调用模型和业务适配器、续租、超时、执行结果回写 |
 | `packages/core/` | 任务与身份模型、TaskService、SQLite 存储、幂等收据和执行领取契约 |
 | `packages/capabilities/` | 业务输入契约、文档模型执行器、跑腿适配器、CSV 模拟服务与验收 |
+| `packages/members/` | Gateway 专用会员资料、登录会话及连接停用记录；Worker 不读取 |
 | `apps/local.ts` | 测试和独立示例的显式进程内组合；不是生产入口 |
 
 Gateway 不导入模型执行器或跑腿凭据适配器，不启动后台执行定时器。`brief.prepare` 是无外部副作用的说明生成，可直接完成；CSV 报价／确认／取消只是任务状态转换，实际模拟履约在 Worker 进行。本地 CSV 导入在 Gateway 对配置目录内的输入取快照，再交由 Worker 使用，避免后续文件变化改变已确认的输入。
@@ -36,6 +37,8 @@ npm run dev:worker
 两个进程必须使用同一个本机 SQLite 文件（建议设置相同的绝对 `DATABASE_PATH`），并由相同系统用户或明确配置的文件权限访问。独立进程不能使用 `:memory:`。Gateway 和 Worker 的能力开关应保持一致；能力目录表示配置的服务，并不保证当前有健康 Worker 在线。Worker 不在线时，任务会持久等待，协议状态仍为 `working`。
 
 Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或 OAuth/JWKS 配置，不监听 HTTP。只有 Worker 主机需要安装和登录 Codex，或持有业务适配器凭据。`EIGOS_EXECUTOR=codex` 在 Gateway 用于声明能力，在 Worker 用于启用执行器；`EIGOS_CODEX_BIN` 和模型超时只由 Worker 执行时使用。生产应分别注入各角色所需环境变量，不必把完整 `.env` 同时发给两端。
+
+会员资料库默认位于 `DATABASE_PATH + .members`，也可由 `MEMBERSHIP_DATABASE_PATH` 指定；只有 Gateway 需要该文件及 `OIDC_CLIENT_ID`／`OIDC_CLIENT_SECRET`。备份会员库与任务库时保留各自权限。会员开通与令牌 scope 都通过后才接收任务；已接受的任务不会因会员停用被当作供应商业务已取消。详见 [会员资料库与 OAuth](membership.md)。
 
 ## 任务领取与故障行为
 

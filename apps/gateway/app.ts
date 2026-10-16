@@ -17,10 +17,13 @@ import { DomainError, SCOPES, type Principal, type Scope } from '../../packages/
 import { createMcpServer } from './mcp.js';
 import { JobStore } from '../../packages/core/store.js';
 import { TaskService } from '../../packages/core/tasks.js';
+import { MemberAccessError, MemberStore } from '../../packages/members/store.js';
+import { mountMemberRoutes } from './members/routes.js';
+import type { LoginProvider } from './members/oidc.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
-export function createApp(config: Config, verify: VerifyToken = createVerifier(config), registryFactory?: (store: JobStore) => CapabilityRegistry) {
+export function createApp(config: Config, verify: VerifyToken = createVerifier(config), registryFactory?: (store: JobStore) => CapabilityRegistry, loginProvider?: LoginProvider) {
   if (config.EIGOS_PAOTUI_SKILL_DIR && (config.EIGOS_AUTH_MODE !== 'development' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires loopback development mode');
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   const hostname = new URL(config.PUBLIC_URL).hostname;
@@ -34,6 +37,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
   const store = new JobStore(config.DATABASE_PATH);
+  const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   const pilot = config.EIGOS_CSV_PILOT === 'true' ? new PilotCommands() : undefined;
   const registry = registryFactory?.(store) ?? createCapabilityRegistry(store, { csvInputDirectory: config.EIGOS_CSV_INPUT_DIR, pilot });
   const tasks = new TaskService(store, {
@@ -74,6 +78,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     next();
   });
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0' }));
+  mountMemberRoutes(app, config, members, loginProvider);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
   app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (_req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
@@ -85,6 +90,14 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     try {
       if (!match?.[1]) throw new Error('Missing token');
       const principal = await verify(match[1]);
+      if (config.EIGOS_AUTH_MODE === 'jwt') {
+        try { members.authorize(principal); }
+        catch (error) {
+          if (error instanceof MemberAccessError) res.status(403).json({ error: error.code, membership_url: `${config.PUBLIC_URL}/members` });
+          else next(error);
+          return;
+        }
+      }
       principals.set(req, principal);
       Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes, extra: { principal } } });
       next();
@@ -140,5 +153,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, registry, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); } };
+  return { app, tasks, store, members, registry, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
 }

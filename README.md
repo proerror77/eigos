@@ -87,9 +87,9 @@ A2A 使用官方 SDK 实现 `SendMessage`、`GetTask`、`ListTasks`、`CancelTas
 
 ## OAuth 与会员登录
 
-此仓库实现 **OAuth 资源服务器**，可以验证身份提供方签发的访问令牌。它不签发登录令牌，也尚未提供会员注册页面、套餐管理、订阅计费或支付授权。
+此仓库实现 **OAuth 资源服务器和会员中心**。会员通过可配置 OIDC 身份提供方登录，在 `/members` 填写基础资料并明确同意开通后，已获 OAuth 授权的个人助手才能调用服务。MCP、A2A 和任务业务授权 API 共用会员状态检查；停用会员或助手连接会立即阻止新调用。
 
-生产接入时，将 `.env.example` 复制为 `.env`，配置自己的 OIDC/OAuth 身份提供方。账号注册、登录、同意授权、客户端注册、刷新令牌由该提供方负责；EIGOS 只接受符合约定的访问令牌。
+生产接入时，将 `.env.example` 复制为 `.env`，配置自己的 OIDC/OAuth 身份提供方。身份账号注册、OAuth 授权、客户端注册和令牌签发／刷新由该提供方负责；EIGOS 保存会员资料、开通状态和本地连接停用记录。会员登录使用 Authorization Code + PKCE、state、nonce 和签名验证，不保存上游访问／刷新令牌。默认自助开通，也可配置人工审核。配置、接入顺序与管理方式见 [会员资料库与 OAuth](docs/membership.md)。套餐、订阅计费和支付授权尚未实现。
 
 令牌必须满足：
 
@@ -98,7 +98,7 @@ A2A 使用官方 SDK 实现 `SendMessage`、`GetTask`、`ListTasks`、`CancelTas
 - 包含 `sub`、`tenant_id`、`client_id`、`scope`、`iat`、`exp`，有效期不超过 15 分钟。
 - `services:read` 查看能力；`tasks:read` 读取与列举任务；`tasks:write` 提交、回复和取消自己的任务。
 
-没有身份提供方配置时，默认 JWT 模式会拒绝启动。本地开发模式不会发布虚构的 OAuth 登录端点。
+没有身份提供方配置时，默认 JWT 模式会拒绝启动。未配置会员网页登录应用时，会员中心明确显示登录尚未开放；JWT 服务继续拒绝尚未开通的会员。本地开发令牌仍仅用于 loopback，不属于会员 OAuth 联调。
 
 完整的请求格式、身份提供方配置和部署说明见 [接入指南](docs/integration.md)。
 
