@@ -71,6 +71,8 @@ npm run example
 
 ## 两种入口
 
+可选的 **`life.request` 生活服务需求转交**支持购物、酒店、机票、跑腿、外送及家政等原始目标登记。PA 可按意图发现服务，不必每次点名 EIGOS。该入口只返回持久任务与未执行回执，提供方执行尚未接入；不会搜索商品／房票、创建订单或付款。开启、Grok 常驻连接及验收见 [生活需求转交](docs/life-request-intake.md)。
+
 ```mermaid
 flowchart TD
     C[客户 Personal Agent] --> M[Gateway：MCP / A2A]

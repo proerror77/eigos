@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 const schema = z.object({
   EIGOS_COORDINATOR: z.enum(['disabled', 'codex']).default('disabled'),
+  EIGOS_LIFE_INTAKE: z.enum(['false', 'true']).default('false'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_ORDERS_ENABLED: z.enum(['false', 'true']).optional(),

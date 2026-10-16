@@ -11,8 +11,9 @@ import { z } from 'zod';
 import { DomainError, ownerKey, replySchema, requireScope, submitSchema, taskIdSchema, type Job, type Principal } from './domain.js';
 import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
+import { LIFE_INTAKE, receiveLifeRequest, refreshLifeReceipt } from '../capabilities/life-intake.js';
 
-export interface TaskOptions { registry?: CapabilityRegistry; coordinator?: boolean; waitTimeoutMs?: number; csvInputDirectory?: string; agent?: boolean; paotui?: boolean; paotuiOrders?: boolean; pilot?: PilotCommands }
+export interface TaskOptions { registry?: CapabilityRegistry; coordinator?: boolean; lifeIntake?: boolean; waitTimeoutMs?: number; csvInputDirectory?: string; agent?: boolean; paotui?: boolean; paotuiOrders?: boolean; pilot?: PilotCommands }
 
 export class TaskService {
   private stopping = false;
@@ -20,6 +21,7 @@ export class TaskService {
 
   services() {
     const ids = ['brief.prepare'];
+    if (this.options.lifeIntake) ids.push(LIFE_INTAKE);
 
     if (this.options.agent) ids.push('agent.execute');
     if (this.options.paotui) ids.push('meituan.paotui.read');
@@ -38,6 +40,8 @@ export class TaskService {
     const args = submitSchema.parse(input);
     if (contextId) taskIdSchema.parse(contextId);
     const owner = ownerKey(p);
+    if (args.service === LIFE_INTAKE && !this.options.lifeIntake) throw new DomainError('INVALID_INPUT', 'Life request intake is not configured');
+    if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     if (args.service === 'meituan.paotui.read' || args.service === 'meituan.paotui.order') {
       if (args.service === 'meituan.paotui.order' ? !this.options.paotuiOrders : !this.options.paotui) throw new DomainError('INVALID_INPUT', 'Paotui is not configured');
       if (p.issuer !== 'local-development' || p.tenant !== 'local' || p.subject !== 'developer') throw new DomainError('FORBIDDEN', 'Personal Paotui queries require the local development identity');
@@ -60,7 +64,9 @@ export class TaskService {
         messages: [{ id: args.requestId, role: 'user', text: args.goal, at: now }],
         createdAt: now, updatedAt: now,
       };
-      if (args.service === DELEGATE) {
+      if (args.service === LIFE_INTAKE) {
+        receiveLifeRequest(job, args.domain);
+      } else if (args.service === DELEGATE) {
         job.state = 'submitted'; job.revision = 1; job.runs = [];
         job.executionMode = 'worker';
         job.delegation = { routingVersion: ROUTING_VERSION, ontologyVersion: 'unselected', phase: 'assessing', events: [{ at: now, event: 'delegation_received' }] };
@@ -94,6 +100,14 @@ export class TaskService {
     if (current.service === 'agent.execute') this.ensureAgentConfigured();
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
+      if (job.service === LIFE_INTAKE) {
+        if (job.state !== 'submitted' || job.intake?.status !== 'waiting_provider') throw new DomainError('CONFLICT', 'Life request is not open for updates');
+        job.updatedAt = new Date().toISOString();
+        job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
+        refreshLifeReceipt(job);
+        this.store.save(owner, job);
+        return job;
+      }
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
       job.updatedAt = new Date().toISOString();
@@ -143,9 +157,11 @@ export class TaskService {
       if (job.service === 'meituan.paotui.order') throw new DomainError('CONFLICT', 'Order workflow tasks cannot cancel provider orders; use order_state to inspect the outcome');
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
       job.state = 'canceled';
+      if (job.intake) { job.intake.status = 'canceled'; job.intake.nextAction = 'none'; }
       if (job.delegation) job.delegation.phase = 'canceled';
       delete job.question;
       job.updatedAt = new Date().toISOString();
+      if (job.intake) refreshLifeReceipt(job);
       job.messages.push({ id: randomUUID(), role: 'agent', text: 'Task canceled.', at: job.updatedAt });
       this.store.save(owner, job);
       return job;
@@ -173,7 +189,7 @@ export class TaskService {
     const owner = ownerKey(p);
     const deadline = Date.now() + (this.options.waitTimeoutMs ?? 300000);
     let job = this.store.get(owner, id);
-    while (job.state === 'working' || job.state === 'submitted') {
+    while ((job.state === 'working' || job.state === 'submitted') && job.executionMode !== 'intake') {
       if (this.stopping || Date.now() >= deadline) throw new Error('Blocking task wait interrupted; query the existing task or retry the same message with returnImmediately=true');
       await delay(50);
       job = this.store.get(owner, id);

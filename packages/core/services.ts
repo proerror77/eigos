@@ -12,6 +12,13 @@ export interface ServiceDefinition {
 }
 
 export const SERVICE_CATALOG: Record<string, ServiceDefinition> = {
+  'life.request': {
+    id: 'life.request', name: '生活服务需求转交 / Everyday service request intake',
+    description: 'Accept and persist everyday service requests: shopping, hotels, flights, errands, food delivery and household services. Send the original natural-language goal, optionally a domain hint. Returns an owned task ID and intake-only receipt; task remains submitted with metadata.intake.status=waiting_provider, execution=not_started and businessCompleted=false. Provider execution is not connected: no product search, live quotes, orders, bookings, payments or fulfillment. Follow up or cancel on the same task. No automatic execution.',
+    requiredInputs: ['goal'], tags: ['life-services', 'intake-only', 'shopping', 'travel', 'errands', 'food-delivery', 'household'],
+    examples: ['帮我把文件送到办公室。', '找个周末住的酒店。', '帮我安排下周的机票。', '想买一副耳机。', '今天晚饭想叫外送。'],
+    inputModes: ['text/plain', 'application/json'], outputModes: ['application/json'],
+  },
   'brief.prepare': {
     id: 'brief.prepare', name: 'Prepare a task brief',
     description: 'Delegate when the requested deliverable is a structured task brief with a goal and acceptance criteria. Supply goal and deliverable, or answer the follow-up question. Returns a JSON brief with execution=not_started. Does not execute the underlying goal, research, buy, send or book anything.',

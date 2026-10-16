@@ -19,11 +19,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('list_services', {
-    description: 'List currently configured EIGOS capabilities. agent.execute is available only when a real executor is configured. Optional meituan.paotui.read performs local read-only provider queries. No purchases.',
+    description: 'Discover configured EIGOS services and their actual scope. Optional life.request accepts everyday service goals for intake only, without provider execution. Other services have their own stated limits.',
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'For data.quality.audit.simulated, supply either datasetId or a CSV fileName in the configured local directory (never both). No real payment. Submit brief.prepare, configured agent.execute, or local meituan.paotui.read / meituan.paotui.order (goal is a JSON query). Order confirmation requires explicit human approval of the saved quote. A model task initially returns working: use get_task to retrieve its question or deliverable. Reply to input-required tasks with reply_to_task. Reuse requestId for identical retries.',
+    description: 'Submit a goal to a discovered service. life.request preserves the original everyday-service goal and returns a submitted task with an intake receipt: waiting_provider, execution=not_started, businessCompleted=false; it does not search, order, book or pay. Use get_task to inspect, reply_to_task to add information, cancel_task to withdraw. Other services: brief.prepare, configured agent.execute, local Paotui JSON queries, or CSV simulation with datasetId/fileName. Reuse requestId for identical retries.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, args => result(() => tasks.submit(principal, args)));
@@ -37,12 +37,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     annotations: read,
   }, args => result(() => tasks.list(principal, args)));
   server.registerTool('reply_to_task', {
-    description: 'For a CSV audit, confirm with action=confirm_simulated_payment, quoteId and quoteDigest from its quote; plain answer cannot confirm payment. Answer an owned task waiting for input. For agent.execute, the model continues with the full task history; poll get_task while working. Reuse requestId only for identical retries.',
+    description: 'Add information to an open life.request without starting execution, or answer an owned task waiting for input. For CSV simulation, confirmation requires action=confirm_simulated_payment, quoteId and quoteDigest; plain answer cannot approve payment. Reuse requestId only for identical retries.',
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));
   server.registerTool('cancel_task', {
-    description: 'Cancel an owned task waiting for input. A completed task cannot be canceled.',
+    description: 'Cancel an owned open task or life.request registration. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, ({ taskId }) => result(() => tasks.cancel(principal, taskId)));

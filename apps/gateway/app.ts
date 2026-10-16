@@ -45,6 +45,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const tasks = new TaskService(store, {
     registry,
     coordinator: config.EIGOS_COORDINATOR === 'codex',
+    lifeIntake: config.EIGOS_LIFE_INTAKE === 'true',
     csvInputDirectory: config.EIGOS_CSV_INPUT_DIR,
     agent: config.EIGOS_EXECUTOR === 'codex',
     paotui: !!config.EIGOS_PAOTUI_SKILL_DIR,

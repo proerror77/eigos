@@ -37,7 +37,7 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.pilot ? { pilot: job.pilot } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { service: job.service, ...(job.intake ? { intake: job.intake } : {}), ...(job.pilot ? { pilot: job.pilot } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 
@@ -107,7 +107,7 @@ export class A2AGateway implements A2ARequestHandler {
         input = parts[0].content.value;
       } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
         const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text } : { goal: text, service: this.tasks.services().some(s => s.id === 'eigos.delegate') ? 'eigos.delegate' : this.tasks.services().some(s => s.id === 'agent.execute') ? 'agent.execute' : 'brief.prepare' };
+        input = message.taskId ? { answer: text } : { goal: text, service: this.tasks.services().some(s => s.id === 'eigos.delegate') ? 'eigos.delegate' : this.tasks.services().some(s => s.id === 'life.request') ? 'life.request' : this.tasks.services().some(s => s.id === 'agent.execute') ? 'agent.execute' : 'brief.prepare' };
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
       if (message.taskId) {

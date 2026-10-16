@@ -190,10 +190,11 @@ class Client:
             current = self.rpc('GetTask', {'id': task_id}, endpoint)
             service = current.get('metadata', {}).get('service')
         else:
-            service = 'eigos.delegate'
+            service = self.config.get('defaultService', 'eigos.delegate')
         if service not in self.config['allowedServices'] or not any(s.get('id') == service for s in card['skills']):
             raise ClientError('Delegation service is not configured and enabled; no fallback performed')
-        message = {'messageId': request_id, 'role': 'ROLE_USER', 'parts': [{'text': text}]}
+        parts = [{'data': {'service': service, 'goal': text}}] if not task_id and self.config.get('defaultService') else [{'text': text}]
+        message = {'messageId': request_id, 'role': 'ROLE_USER', 'parts': parts}
         if task_id:
             message['taskId'] = task_id
         return self.write('reply:' + task_id if task_id else 'submit', request_id,
@@ -217,6 +218,9 @@ class Client:
         while True:
             task = self.rpc('GetTask', {'id': task_id}, endpoint)
             state = task['status']['state']
+            intake = task.get('metadata', {}).get('intake', {})
+            if state == 'TASK_STATE_SUBMITTED' and intake.get('status') == 'waiting_provider':
+                return {'task': task, 'resumeRequired': False, 'handoffAccepted': True, 'businessCompleted': False}
             if state in TERMINAL or state in ('TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED'):
                 return {'task': task, 'resumeRequired': False}
             if state not in ('TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'):
@@ -244,6 +248,7 @@ def main():
     credentials.add_argument('--token-env')
     configure.add_argument('--allow-loopback-http', action='store_true')
     configure.add_argument('--allow-service', action='append')
+    configure.add_argument('--default-service')
     commands.add_parser('discover')
     send = commands.add_parser('send')
     send.add_argument('--text-file', required=True)
@@ -272,6 +277,10 @@ def main():
         address(args.card_url, args.allow_loopback_http)
         config = {'cardUrl': args.card_url, 'allowedServices': args.allow_service or DEFAULT_SERVICES,
                   'allowLoopbackHttp': args.allow_loopback_http}
+        if args.default_service:
+            if args.default_service not in config['allowedServices']:
+                raise ClientError('Default service must be in the configured delegation allowlist')
+            config['defaultService'] = args.default_service
         if args.token_file:
             config['tokenFile'] = str(Path(args.token_file).expanduser().resolve())
         else:
@@ -283,7 +292,9 @@ def main():
         client.config = config
         client.origin = address(config['cardUrl'], config['allowLoopbackHttp'])
         client.opener = urllib.request.build_opener(NoRedirect())
-        client.discover()
+        card, _ = client.discover()
+        if args.default_service and not any(s.get('id') == args.default_service for s in card['skills']):
+            raise ClientError('Default service is not enabled in the current Agent Card')
         write_private(Path(args.config).expanduser().resolve(), config)
         output = {'configured': True, 'cardUrl': args.card_url, 'allowedServices': config['allowedServices']}
     else:

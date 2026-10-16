@@ -10,6 +10,7 @@
   "scripts": {
     "setup:dev": "node scripts/setup-dev.mjs",
     "setup:auth0": "node scripts/setup-auth0.mjs",
+    "setup:grok-life": "node scripts/setup-grok-life.mjs",
     "verify:member-agent": "node --env-file=data/auth0-live/agent.env --import tsx examples/member-oauth-agent.ts",
     "verify:agent-onboarding": "node --env-file=data/agent-onboarding-live/connector.env --import tsx examples/agent-onboarding-live.ts",
     "members": "node --env-file-if-exists=.env scripts/members.mjs",
