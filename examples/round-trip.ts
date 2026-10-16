@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { ClientFactory } from '@a2a-js/sdk/client';
 import { SendMessageRequest, TaskState } from '@a2a-js/sdk';
-import type { Job } from '../src/domain.js';
+import type { Job } from '../packages/core/domain.js';
 
 const base = process.env.PUBLIC_URL ?? 'http://127.0.0.1:3000';
 const token = process.env.EIGOS_ACCESS_TOKEN ?? process.env.EIGOS_DEV_TOKEN;

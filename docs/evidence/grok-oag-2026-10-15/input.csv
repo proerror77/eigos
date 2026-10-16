@@ -1,0 +1,7 @@
+record_id,email,amount_cny,event_date,notes
+R1,one@example.test,12.00,2026-10-15,fixture
+R2,two@example.test,8,2026-10-15,fixture
+R3,broken,-2,2026-10-15,fixture
+R2,four@example.test,4.50,2026-02-30,fixture
+R5,,0,2026-10-15,fixture
+R6,six@example.test,6.00,2024-02-29,fixture

@@ -1,0 +1,3 @@
+usage: eigos_a2a.py reply [-h] --task-id TASK_ID --input-file INPUT_FILE
+                          --request-id REQUEST_ID
+eigos_a2a.py reply: error: argument --task-id: expected one argument

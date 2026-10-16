@@ -1,0 +1,111 @@
+{
+  "environment": "simulated",
+  "task": {
+    "id": "c57e46e7-3d22-406a-b4aa-a7067affcc55",
+    "contextId": "9785d49b-8624-434d-a08f-6a35072bc260",
+    "service": "data.quality.audit.simulated",
+    "goal": "审计合成 CSV",
+    "state": "failed",
+    "messages": [
+      {
+        "id": "demo",
+        "role": "user",
+        "text": "审计合成 CSV",
+        "at": "2026-10-15T07:58:15.445Z"
+      }
+    ],
+    "createdAt": "2026-10-15T07:58:15.445Z",
+    "updatedAt": "2026-10-15T00:00:05.000Z",
+    "pilot": {
+      "environment": "simulated",
+      "datasetId": "duplicate-and-missing-v1",
+      "orderId": "cb6b6fec-e1cd-414d-819a-a87aafcf1ca1",
+      "quote": {
+        "id": "7b95fd14-d980-46ee-938d-085773fc37f3",
+        "taskId": "c57e46e7-3d22-406a-b4aa-a7067affcc55",
+        "supplierId": "local-supplier",
+        "sku": "csv-quality-v1",
+        "inputSha256": "ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0",
+        "rulesVersion": "csv-quality-v1",
+        "amountMinor": 100,
+        "currency": "CNY",
+        "expiresAt": "2026-10-15T00:10:00.000Z"
+      },
+      "quoteDigest": "e0fc7715cf8945aec3ee67a3792122bbfb7ed7d4f1189f0a2abd6b2c9f146906",
+      "payment": "paid",
+      "acceptance": "rejected",
+      "remediation": "refunded",
+      "step": "done",
+      "nextAt": 1792022406000,
+      "deadline": 1792022463000,
+      "deliveryAttempt": 1,
+      "fetchAttempts": 0,
+      "cancelRequested": false,
+      "trace": [
+        {
+          "at": "2026-10-15T00:00:00.000Z",
+          "event": "quote_created"
+        },
+        {
+          "at": "2026-10-15T00:00:00.000Z",
+          "event": "simulated_payment_confirmed"
+        },
+        {
+          "at": "2026-10-15T00:00:01.000Z",
+          "event": "simulated_payment_verified"
+        },
+        {
+          "at": "2026-10-15T00:00:02.000Z",
+          "event": "delivery_rejected"
+        },
+        {
+          "at": "2026-10-15T00:00:02.000Z",
+          "event": "redelivery_requested"
+        },
+        {
+          "at": "2026-10-15T00:00:03.000Z",
+          "event": "delivery_rejected"
+        },
+        {
+          "at": "2026-10-15T00:00:03.000Z",
+          "event": "refund_required"
+        },
+        {
+          "at": "2026-10-15T00:00:04.000Z",
+          "event": "refund_pending"
+        },
+        {
+          "at": "2026-10-15T00:00:05.000Z",
+          "event": "simulated_refund_verified"
+        }
+      ],
+      "checks": [
+        {
+          "accepted": false,
+          "reason": "Findings differ from independent fixture oracle",
+          "at": "2026-10-15T00:00:02.000Z",
+          "sha256": "0a19e1bd09fb462c7e8adbdb8fa4c6400c52b44bf44185fc3381002726d6797a"
+        },
+        {
+          "accepted": false,
+          "reason": "Findings differ from independent fixture oracle",
+          "at": "2026-10-15T00:00:03.000Z",
+          "sha256": "a490ee842abc83709a02f884efa014f46f3608e1dad72d09f1296d9a6586de34"
+        }
+      ],
+      "approval": {
+        "quoteDigest": "e0fc7715cf8945aec3ee67a3792122bbfb7ed7d4f1189f0a2abd6b2c9f146906",
+        "at": "2026-10-15T00:00:00.000Z",
+        "simulationOnly": true
+      }
+    },
+    "revision": 9
+  },
+  "providerLedger": {
+    "orderId": "cb6b6fec-e1cd-414d-819a-a87aafcf1ca1",
+    "payment": "paid",
+    "refund": "refunded",
+    "charges": 1,
+    "refunds": 1
+  }
+}

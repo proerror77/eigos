@@ -1,0 +1,225 @@
+{
+  "id": "c765e195-cf76-4f06-88b7-82b7d75d311e",
+  "contextId": "97ef3b44-5dae-4262-98d9-a2706cc9d827",
+  "service": "eigos.delegate",
+  "goal": "请用 EIGOS 实际审计 oag-review-20261015.csv，检查已注册的五项规则，交付 JSON 和 Markdown 报告，不是只写审计任务说明。我授权本次这个合成数据文件、上述检查范围以及上限 1.00 CNY 的本地模拟流程，无真实资金。",
+  "state": "completed",
+  "messages": [
+    {
+      "id": "4a321819-512e-405c-a3da-57bf09414320",
+      "role": "user",
+      "text": "请用 EIGOS 实际审计 oag-review-20261015.csv，检查已注册的五项规则，交付 JSON 和 Markdown 报告，不是只写审计任务说明。我授权本次这个合成数据文件、上述检查范围以及上限 1.00 CNY 的本地模拟流程，无真实资金。",
+      "at": "2026-10-15T13:41:43.850Z"
+    },
+    {
+      "id": "600a6f9f-9a46-4112-80df-f9e0fca10128",
+      "role": "agent",
+      "text": "可承接 oag-review-20261015.csv 的 CSV 审计，6 条记录。检查必填值、record_id 重复、邮箱／金额／日期格式；额外列不审计。交付 JSON 和 Markdown，独立验收后才完成。模拟报价 1.00 CNY，无真钱。请通过授权接口确认绑定的计划和报价；普通聊天回复不构成授权。",
+      "at": "2026-10-15T13:41:55.642Z"
+    }
+  ],
+  "createdAt": "2026-10-15T13:41:43.850Z",
+  "updatedAt": "2026-10-15T13:41:56.894Z",
+  "revision": 5,
+  "runs": [
+    {
+      "id": "ad6f98e1-227b-4c90-a0b6-c91be5626c3c",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-15T13:41:43.885Z",
+      "completedAt": "2026-10-15T13:41:55.637Z",
+      "outputSha256": "1a0c82791ef1db9106c7545feea9d47cde80f42b39afe7c62c4ef78d68f88a3f",
+      "threadId": "01a13fcc-1d96-7d10-92c9-f5442345c45a",
+      "usage": {
+        "input_tokens": 24832,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 142,
+        "reasoning_output_tokens": 0
+      }
+    }
+  ],
+  "executionMode": "capability",
+  "delegation": {
+    "routingVersion": "eigos-capability-routing-v1",
+    "ontologyVersion": "eigos-csv-ontology-v1",
+    "phase": "accepted",
+    "events": [
+      {
+        "at": "2026-10-15T13:41:43.850Z",
+        "event": "delegation_received"
+      },
+      {
+        "at": "2026-10-15T13:41:55.642Z",
+        "event": "ontology_grounded_assessment",
+        "evidence": "ad6f98e1-227b-4c90-a0b6-c91be5626c3c"
+      },
+      {
+        "at": "2026-10-15T13:41:55.642Z",
+        "event": "quote_created"
+      },
+      {
+        "at": "2026-10-15T13:41:55.642Z",
+        "event": "input_and_plan_verified",
+        "evidence": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4"
+      },
+      {
+        "at": "2026-10-15T13:41:55.642Z",
+        "event": "capability_selected",
+        "evidence": "data.quality.audit.simulated"
+      },
+      {
+        "at": "2026-10-15T13:41:55.883Z",
+        "event": "simulated_payment_confirmed"
+      },
+      {
+        "at": "2026-10-15T13:41:55.883Z",
+        "event": "plan_authorized",
+        "evidence": "d07339b56d16df75a56f0d57fea09217bb177f656221b6b1ef30d278834caacf"
+      },
+      {
+        "at": "2026-10-15T13:41:55.886Z",
+        "event": "simulated_payment_verified"
+      },
+      {
+        "at": "2026-10-15T13:41:56.894Z",
+        "event": "delivery_accepted"
+      }
+    ],
+    "assessment": {
+      "decision": "select_capability",
+      "reason": "选择实际 CSV 审计能力，对 oag-review-20261015.csv 执行已注册的五项检查，要求交付 JSON 和 Markdown 报告。用户限定为无真实资金、上限 1.00 CNY 的本地模拟流程；运行时仍须独立校验报价及授权。",
+      "provider": "local-csv-auditor",
+      "checkedAt": "2026-10-15T13:41:55.642Z"
+    },
+    "capabilityId": "data.quality.audit.simulated",
+    "capabilityVersion": "1",
+    "providerId": "local-csv-auditor",
+    "plan": {
+      "id": "c159d4ca-02c9-42a0-99b1-d16481c2b414",
+      "capabilityId": "data.quality.audit.simulated",
+      "capabilityVersion": "1",
+      "providerId": "local-csv-auditor",
+      "input": {
+        "fileName": "oag-review-20261015.csv",
+        "checks": [
+          "missing_required_values",
+          "duplicate_record_id",
+          "invalid_email",
+          "invalid_amount_cny",
+          "invalid_event_date"
+        ]
+      },
+      "details": {
+        "inputSha256": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4",
+        "fileName": "oag-review-20261015.csv",
+        "rulesVersion": "csv-quality-file-v1",
+        "checks": [
+          "missing_required_values",
+          "duplicate_record_id",
+          "invalid_email",
+          "invalid_amount_cny",
+          "invalid_event_date"
+        ],
+        "actions": [
+          "inspect_input",
+          "prepare_plan",
+          "execute_audit",
+          "verify_report",
+          "remediate"
+        ]
+      },
+      "digest": "e5b05a603844d7595c84cd2b58aeaa0de663ca33fadc7264b2eda3a0eafc45ac"
+    },
+    "acceptance": {
+      "accepted": true,
+      "reason": "Independent raw-file parser, rules, order/hash and Markdown verified",
+      "at": "2026-10-15T13:41:56.894Z"
+    }
+  },
+  "pilot": {
+    "environment": "simulated",
+    "input": {
+      "source": "local-file",
+      "fileName": "oag-review-20261015.csv",
+      "sha256": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4",
+      "byteLength": 276,
+      "rowCount": 6
+    },
+    "orderId": "88b15128-65f4-4a02-a4fa-8fe107a1c4ee",
+    "quote": {
+      "id": "ccbeb1b1-d9ae-4a8d-8269-9ae1f49114ac",
+      "taskId": "c765e195-cf76-4f06-88b7-82b7d75d311e",
+      "supplierId": "local-supplier",
+      "sku": "csv-quality-file-v1",
+      "inputSha256": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4",
+      "rulesVersion": "csv-quality-file-v1",
+      "amountMinor": 100,
+      "currency": "CNY",
+      "expiresAt": "2026-10-15T13:51:55.642Z",
+      "planDigest": "e5b05a603844d7595c84cd2b58aeaa0de663ca33fadc7264b2eda3a0eafc45ac",
+      "ontologyVersion": "eigos-csv-ontology-v1"
+    },
+    "quoteDigest": "d07339b56d16df75a56f0d57fea09217bb177f656221b6b1ef30d278834caacf",
+    "payment": "paid",
+    "acceptance": "accepted",
+    "remediation": "none",
+    "step": "done",
+    "nextAt": 1792071717891,
+    "deadline": 1792071745886,
+    "deliveryAttempt": 0,
+    "fetchAttempts": 0,
+    "cancelRequested": false,
+    "trace": [
+      {
+        "at": "2026-10-15T13:41:55.642Z",
+        "event": "quote_created"
+      },
+      {
+        "at": "2026-10-15T13:41:55.883Z",
+        "event": "simulated_payment_confirmed"
+      },
+      {
+        "at": "2026-10-15T13:41:55.886Z",
+        "event": "simulated_payment_verified"
+      },
+      {
+        "at": "2026-10-15T13:41:56.894Z",
+        "event": "delivery_accepted"
+      }
+    ],
+    "checks": [
+      {
+        "accepted": true,
+        "reason": "Independent raw-file parser, rules, order/hash and Markdown verified",
+        "at": "2026-10-15T13:41:56.894Z",
+        "sha256": "4fc9dae5a67acc2a0acd6da1aa1458e8a1b940405873bbf4b964bff8f2549503"
+      }
+    ],
+    "approval": {
+      "quoteDigest": "d07339b56d16df75a56f0d57fea09217bb177f656221b6b1ef30d278834caacf",
+      "at": "2026-10-15T13:41:55.883Z",
+      "simulationOnly": true
+    },
+    "files": {
+      "json": "{\n  \"schemaVersion\": 2,\n  \"environment\": \"simulated\",\n  \"orderId\": \"88b15128-65f4-4a02-a4fa-8fe107a1c4ee\",\n  \"inputSha256\": \"f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4\",\n  \"rulesVersion\": \"csv-quality-file-v1\",\n  \"rowCount\": 6,\n  \"findings\": [\n    {\n      \"rule\": \"missing\",\n      \"column\": \"email\",\n      \"rows\": [\n        5\n      ]\n    },\n    {\n      \"rule\": \"duplicate\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        2,\n        4\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"email\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"amount_cny\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"event_date\",\n      \"rows\": [\n        4\n      ]\n    }\n  ],\n  \"generatedAt\": \"2026-10-15T13:41:56.891Z\"\n}",
+      "markdown": "# CSV 数据质量审计\n\n支付环境：本地模拟，无真实资金交易\n\n订单：88b15128-65f4-4a02-a4fa-8fe107a1c4ee\n\n原文件 SHA-256：f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4\n\n规则：csv-quality-file-v1\n\n数据记录数：6\n\n行号为数据记录序号，不是文件物理行号。额外列仅解析，不审计。\n\n- missing / email：数据记录 5\n- duplicate / record_id：数据记录 2, 4\n- invalid / email：数据记录 3\n- invalid / amount_cny：数据记录 3\n- invalid / event_date：数据记录 4\n",
+      "jsonSha256": "4fc9dae5a67acc2a0acd6da1aa1458e8a1b940405873bbf4b964bff8f2549503",
+      "markdownSha256": "bb54638bb758a1bed20915b99ce8e12be4f29422943cc5288f5ab47259b00230"
+    }
+  },
+  "artifact": {
+    "id": "07b81c13-322f-457b-b110-7d00387d3fc9",
+    "name": "csv-quality-delivery.json",
+    "data": {
+      "goal": "请用 EIGOS 实际审计 oag-review-20261015.csv，检查已注册的五项规则，交付 JSON 和 Markdown 报告，不是只写审计任务说明。我授权本次这个合成数据文件、上述检查范围以及上限 1.00 CNY 的本地模拟流程，无真实资金。",
+      "deliverable": "Verified CSV audit; local simulation only.",
+      "execution": "completed",
+      "result": {
+        "json": "{\n  \"schemaVersion\": 2,\n  \"environment\": \"simulated\",\n  \"orderId\": \"88b15128-65f4-4a02-a4fa-8fe107a1c4ee\",\n  \"inputSha256\": \"f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4\",\n  \"rulesVersion\": \"csv-quality-file-v1\",\n  \"rowCount\": 6,\n  \"findings\": [\n    {\n      \"rule\": \"missing\",\n      \"column\": \"email\",\n      \"rows\": [\n        5\n      ]\n    },\n    {\n      \"rule\": \"duplicate\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        2,\n        4\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"email\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"amount_cny\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"invalid\",\n      \"column\": \"event_date\",\n      \"rows\": [\n        4\n      ]\n    }\n  ],\n  \"generatedAt\": \"2026-10-15T13:41:56.891Z\"\n}",
+        "markdown": "# CSV 数据质量审计\n\n支付环境：本地模拟，无真实资金交易\n\n订单：88b15128-65f4-4a02-a4fa-8fe107a1c4ee\n\n原文件 SHA-256：f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4\n\n规则：csv-quality-file-v1\n\n数据记录数：6\n\n行号为数据记录序号，不是文件物理行号。额外列仅解析，不审计。\n\n- missing / email：数据记录 5\n- duplicate / record_id：数据记录 2, 4\n- invalid / email：数据记录 3\n- invalid / amount_cny：数据记录 3\n- invalid / event_date：数据记录 4\n",
+        "jsonSha256": "4fc9dae5a67acc2a0acd6da1aa1458e8a1b940405873bbf4b964bff8f2549503",
+        "markdownSha256": "bb54638bb758a1bed20915b99ce8e12be4f29422943cc5288f5ab47259b00230"
+      }
+    }
+  }
+}

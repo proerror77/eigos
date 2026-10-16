@@ -1,0 +1,113 @@
+{
+  "name": "EIGOS",
+  "description": "Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.",
+  "supportedInterfaces": [
+    {
+      "url": "http://127.0.0.1:3421/a2a",
+      "protocolBinding": "JSONRPC",
+      "protocolVersion": "1.0"
+    }
+  ],
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/proerror77/eigos",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extendedAgentCard": false
+  },
+  "securitySchemes": {
+    "eigos": {
+      "httpAuthSecurityScheme": {
+        "description": "Loopback-only development credential",
+        "scheme": "Bearer",
+        "bearerFormat": "opaque"
+      }
+    }
+  },
+  "securityRequirements": [
+    {
+      "schemes": {
+        "eigos": {}
+      }
+    }
+  ],
+  "defaultInputModes": [
+    "text/plain",
+    "application/json"
+  ],
+  "defaultOutputModes": [
+    "text/plain",
+    "application/json",
+    "text/markdown"
+  ],
+  "skills": [
+    {
+      "id": "brief.prepare",
+      "name": "Prepare a task brief",
+      "description": "Delegate when the requested deliverable is a structured task brief with a goal and acceptance criteria. Supply goal and deliverable, or answer the follow-up question. Returns a JSON brief with execution=not_started. Does not execute the underlying goal, research, buy, send or book anything.",
+      "tags": [
+        "task-brief",
+        "requirements",
+        "acceptance-criteria"
+      ],
+      "examples": [
+        "Prepare a supplier-comparison task brief; the deliverable should specify three suppliers, price, capacity and source requirements."
+      ],
+      "inputModes": [
+        "application/json"
+      ],
+      "outputModes": [
+        "application/json"
+      ]
+    },
+    {
+      "id": "data.quality.audit.simulated",
+      "name": "CSV data quality audit with simulated payment",
+      "description": "Delegate only an explicitly requested local CSV audit simulation. Supply goal and either a supported synthetic datasetId or a fileName in the configured local input directory. Follow-up confirmation requires action=confirm_simulated_payment, quoteId and quoteDigest from the task quote. Returns an audit report with independent checks and simulated remediation. Local non-production only; no real payment or Alipay connection. File input requires the local development identity.",
+      "tags": [
+        "csv",
+        "data-quality",
+        "audit",
+        "simulation",
+        "local-development"
+      ],
+      "examples": [
+        "{\"service\":\"data.quality.audit.simulated\",\"goal\":\"Audit the synthetic CSV and report invalid values\",\"datasetId\":\"invalid-values-v1\"}"
+      ],
+      "inputModes": [
+        "application/json"
+      ],
+      "outputModes": [
+        "application/json"
+      ]
+    },
+    {
+      "id": "eigos.delegate",
+      "name": "Delegate to registered EIGOS capabilities",
+      "description": "Submit a goal in natural language. EIGOS selects only a registered capability matching the requested outcome, asks for missing inputs, validates its plan and applies capability-specific execution and acceptance. Unsupported outcomes are rejected, not silently changed. Current registered capabilities: brief.prepare: Delegate when the requested deliverable is a structured task brief with a goal and acceptance criteria. Supply goal and deliverable, or answer the follow-up question. Returns a JSON brief with execution=not_started. Does not execute the underlying goal, research, buy, send or book anything. | data.quality.audit.simulated: Audit an actual UTF-8 CSV from the configured local directory. Required columns: record_id, email, amount_cny, event_date; 1–1000 records, at most 1 MiB. Checks missing values, duplicate record_id and invalid email/amount/date formats. Extra columns are not audited. Requires fileName; a general audit uses all registered checks. The hash-bound plan requests simulated payment confirmation at AUTH_REQUIRED through POST /tasks/{taskId}/authorize (action=confirm_simulated_payment, exact quoteId/quoteDigest and stable requestId). Independent raw-input verification gates report delivery. Local developer only. No real money, data repair or arbitrary rules.",
+      "tags": [
+        "delegation",
+        "ontology",
+        "task-brief",
+        "requirements",
+        "acceptance-criteria",
+        "csv",
+        "data-quality",
+        "audit",
+        "simulation",
+        "local-development"
+      ],
+      "examples": [
+        "Prepare a supplier-comparison task brief; the deliverable should specify three suppliers, price, capacity and source requirements.",
+        "{\"service\":\"data.quality.audit.simulated\",\"goal\":\"Audit the synthetic CSV and report invalid values\",\"datasetId\":\"invalid-values-v1\"}"
+      ],
+      "inputModes": [
+        "text/plain",
+        "application/json"
+      ],
+      "outputModes": [
+        "application/json"
+      ]
+    }
+  ]
+}

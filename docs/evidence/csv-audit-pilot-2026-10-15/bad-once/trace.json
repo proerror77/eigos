@@ -1,0 +1,120 @@
+{
+  "environment": "simulated",
+  "task": {
+    "id": "7e9c9914-fd28-4136-9d12-51679d56c33e",
+    "contextId": "e975295e-fb4b-4851-8e02-419032c4caaf",
+    "service": "data.quality.audit.simulated",
+    "goal": "审计合成 CSV",
+    "state": "completed",
+    "messages": [
+      {
+        "id": "demo",
+        "role": "user",
+        "text": "审计合成 CSV",
+        "at": "2026-10-15T07:58:15.440Z"
+      }
+    ],
+    "createdAt": "2026-10-15T07:58:15.440Z",
+    "updatedAt": "2026-10-15T00:00:03.000Z",
+    "pilot": {
+      "environment": "simulated",
+      "datasetId": "duplicate-and-missing-v1",
+      "orderId": "de6f51b0-f66b-4b3e-a655-cf808bfc5fb2",
+      "quote": {
+        "id": "9afe7d03-6551-437c-b22e-7e30b9a8d82b",
+        "taskId": "7e9c9914-fd28-4136-9d12-51679d56c33e",
+        "supplierId": "local-supplier",
+        "sku": "csv-quality-v1",
+        "inputSha256": "ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0",
+        "rulesVersion": "csv-quality-v1",
+        "amountMinor": 100,
+        "currency": "CNY",
+        "expiresAt": "2026-10-15T00:10:00.000Z"
+      },
+      "quoteDigest": "9235faab5c4cf71c14b6dfeb1b63fc94826134bcb42132d934e85b2a2ed96b36",
+      "payment": "paid",
+      "acceptance": "accepted",
+      "remediation": "none",
+      "step": "done",
+      "nextAt": 1792022404000,
+      "deadline": 1792022432000,
+      "deliveryAttempt": 1,
+      "fetchAttempts": 0,
+      "cancelRequested": false,
+      "trace": [
+        {
+          "at": "2026-10-15T00:00:00.000Z",
+          "event": "quote_created"
+        },
+        {
+          "at": "2026-10-15T00:00:00.000Z",
+          "event": "simulated_payment_confirmed"
+        },
+        {
+          "at": "2026-10-15T00:00:01.000Z",
+          "event": "simulated_payment_verified"
+        },
+        {
+          "at": "2026-10-15T00:00:02.000Z",
+          "event": "delivery_rejected"
+        },
+        {
+          "at": "2026-10-15T00:00:02.000Z",
+          "event": "redelivery_requested"
+        },
+        {
+          "at": "2026-10-15T00:00:03.000Z",
+          "event": "delivery_accepted"
+        }
+      ],
+      "checks": [
+        {
+          "accepted": false,
+          "reason": "Findings differ from independent fixture oracle",
+          "at": "2026-10-15T00:00:02.000Z",
+          "sha256": "d2acc54936a08cfd979606ac14762e736b00feb23d2d0646353155a1083a77fd"
+        },
+        {
+          "accepted": true,
+          "reason": "Exact fixture oracle, order, input hash and both files verified",
+          "at": "2026-10-15T00:00:03.000Z",
+          "sha256": "8512b486a4338c25150aa4f85903e8b700812823fba4ff7b943700fa41590065"
+        }
+      ],
+      "approval": {
+        "quoteDigest": "9235faab5c4cf71c14b6dfeb1b63fc94826134bcb42132d934e85b2a2ed96b36",
+        "at": "2026-10-15T00:00:00.000Z",
+        "simulationOnly": true
+      },
+      "files": {
+        "json": "{\n  \"schemaVersion\": 1,\n  \"environment\": \"simulated\",\n  \"orderId\": \"de6f51b0-f66b-4b3e-a655-cf808bfc5fb2\",\n  \"inputSha256\": \"ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0\",\n  \"rulesVersion\": \"csv-quality-v1\",\n  \"rowCount\": 3,\n  \"findings\": [\n    {\n      \"rule\": \"missing\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"email\",\n      \"rows\": [\n        2\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"amount_cny\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"event_date\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"duplicate\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        1,\n        2\n      ]\n    }\n  ],\n  \"generatedAt\": \"2026-10-15T00:00:03.000Z\"\n}",
+        "markdown": "# CSV 数据质量审计（本地模拟）\n\n订单：de6f51b0-f66b-4b3e-a655-cf808bfc5fb2\n\n数据摘要：ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0\n\n规则：csv-quality-v1\n\n数据行数：3\n\n- missing / record_id：数据行 3\n- missing / email：数据行 2\n- missing / amount_cny：数据行 3\n- missing / event_date：数据行 3\n- duplicate / record_id：数据行 1, 2\n",
+        "jsonSha256": "8512b486a4338c25150aa4f85903e8b700812823fba4ff7b943700fa41590065",
+        "markdownSha256": "d3a3b7f5055f647ac326cdbfac7d5db5a5266dcbe35a20bd6d21427c98e2e82b"
+      }
+    },
+    "revision": 6,
+    "artifact": {
+      "id": "91699889-91a4-4968-a8fe-d35d37282405",
+      "name": "csv-quality-delivery.json",
+      "data": {
+        "goal": "审计合成 CSV",
+        "deliverable": "Verified CSV audit; local simulation only.",
+        "execution": "completed",
+        "result": {
+          "json": "{\n  \"schemaVersion\": 1,\n  \"environment\": \"simulated\",\n  \"orderId\": \"de6f51b0-f66b-4b3e-a655-cf808bfc5fb2\",\n  \"inputSha256\": \"ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0\",\n  \"rulesVersion\": \"csv-quality-v1\",\n  \"rowCount\": 3,\n  \"findings\": [\n    {\n      \"rule\": \"missing\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"email\",\n      \"rows\": [\n        2\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"amount_cny\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"missing\",\n      \"column\": \"event_date\",\n      \"rows\": [\n        3\n      ]\n    },\n    {\n      \"rule\": \"duplicate\",\n      \"column\": \"record_id\",\n      \"rows\": [\n        1,\n        2\n      ]\n    }\n  ],\n  \"generatedAt\": \"2026-10-15T00:00:03.000Z\"\n}",
+          "markdown": "# CSV 数据质量审计（本地模拟）\n\n订单：de6f51b0-f66b-4b3e-a655-cf808bfc5fb2\n\n数据摘要：ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0\n\n规则：csv-quality-v1\n\n数据行数：3\n\n- missing / record_id：数据行 3\n- missing / email：数据行 2\n- missing / amount_cny：数据行 3\n- missing / event_date：数据行 3\n- duplicate / record_id：数据行 1, 2\n",
+          "jsonSha256": "8512b486a4338c25150aa4f85903e8b700812823fba4ff7b943700fa41590065",
+          "markdownSha256": "d3a3b7f5055f647ac326cdbfac7d5db5a5266dcbe35a20bd6d21427c98e2e82b"
+        }
+      }
+    }
+  },
+  "providerLedger": {
+    "orderId": "de6f51b0-f66b-4b3e-a655-cf808bfc5fb2",
+    "payment": "paid",
+    "refund": "none",
+    "charges": 1,
+    "refunds": 0
+  }
+}

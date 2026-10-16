@@ -1,0 +1,4 @@
+{"at":"2026-10-15T08:04:51.877Z","path":"/mcp","method":"initialize","requestId":0,"httpStatus":200}
+{"at":"2026-10-15T08:04:51.893Z","path":"/mcp","method":"notifications/initialized","httpStatus":202}
+{"at":"2026-10-15T08:04:51.914Z","path":"/mcp","method":"tools/list","requestId":1,"httpStatus":200}
+{"at":"2026-10-15T08:05:00.804Z","path":"/mcp","method":"tools/call","requestId":2,"httpStatus":200}

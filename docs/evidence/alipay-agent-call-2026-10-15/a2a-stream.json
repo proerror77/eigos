@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-15T10:08:30.892576+00:00",
+  "endpoint": "https://opengw.alipay.com/api/v1/open/agents/dmdzfoesbnlsmzam",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": "1743f066-eac5-4bff-abd5-c19cdc51ecfe",
+    "method": "message/stream",
+    "params": {
+      "message": {
+        "messageId": "ade0084c-f754-4b29-a0c6-429eee1402b2",
+        "role": "user",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "这是EIGOS接入测试，不是实际落户咨询或申请。请只介绍你的能力范围，以及一般需要哪些输入字段；不要判断任何人的资格，不要执行申请，不要索取姓名、电话、身份证号或其他个人信息。"
+          }
+        ]
+      }
+    }
+  },
+  "a2aVersion": "0.3.0",
+  "httpStatus": 200,
+  "contentType": "application/json",
+  "traceId": "0b2536c317920589106264410e641d",
+  "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32603,\"message\":\"系统内部错误\"}}",
+  "note": "Documented SSE transport, standard A2A streaming message; no personal data or funds"
+}

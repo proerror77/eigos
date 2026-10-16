@@ -1,0 +1,40 @@
+{
+  "at": "2026-10-16T01:54:50.895985+00:00",
+  "endpoint": "https://opengw.alipay.com/api/v1/open/agents/dmdzfoesbnlsmzam",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": "3cd47115-97d9-4486-9c61-3d8b2af58eaf",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "messageId": "eaa209f5-1296-40f1-a85f-5e0f472c90da",
+        "role": "user",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "这是EIGOS接入测试，不是实际落户咨询或申请。请只介绍你的能力范围，以及一般需要哪些输入字段；不要判断任何人的资格，不要执行申请，不要索取姓名、电话、身份证号或其他个人信息。"
+          }
+        ],
+        "kind": "message",
+        "contextId": "959ce081-4a08-4f83-9ffa-2932a8bbeea6",
+        "metadata": {},
+        "extensions": [],
+        "referenceTaskIds": []
+      },
+      "metadata": {},
+      "configuration": {
+        "acceptedOutputModes": [
+          "text/plain"
+        ],
+        "blocking": true,
+        "historyLength": 1
+      }
+    }
+  },
+  "a2aVersion": "0.3.0",
+  "httpStatus": 200,
+  "contentType": "application/json",
+  "traceId": "21d817e117921156907234005eaaae",
+  "body": "{\"jsonrpc\":\"2.0\",\"id\":\"3cd47115-97d9-4486-9c61-3d8b2af58eaf\",\"error\":{\"code\":-32603,\"message\":\"系统内部错误\"}}",
+  "hypothesis": "Use schema-defined explicit context, empty metadata and blocking configuration to test upstream null/default handling"
+}

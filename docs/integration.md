@@ -1,6 +1,6 @@
 # MCP 与 A2A 接入指南
 
-实现版本：0.1.0。两个入口共用任务与权限，没有“先 MCP 登录，再转 A2A”的必要步骤。客户端必须具备实际协议和认证支持；提示词不能自动增加网络连接能力。
+实现版本：0.1.0。运行架构已拆为 Gateway／Worker，启动、队列和迁移说明见 [架构说明](gateway-worker.md)。两个入口共用任务与权限，没有“先 MCP 登录，再转 A2A”的必要步骤。客户端必须具备实际协议和认证支持；提示词不能自动增加网络连接能力。
 
 ## 1. 身份与连接
 
@@ -134,13 +134,13 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 - 任务与幂等收据在同一个 SQLite 事务中保存，不依赖某台 HTTP 进程的会话。
 - 同一 issuer、组织、用户可以从另一个获授权客户端继续任务。不同用户即使在同一组织，也不能默认读取彼此任务。
 - `tasks:write` 可以返回自己提交／修改任务的结果；独立查询需要 `tasks:read`。生产系统若需管理员共享、团队 ACL 或客户端级隔离，应明确增加授权模型。
-- 当前任务说明生成是同步、无外部副作用的动作。真实后台执行器需要另外实现持久队列、租约、失败恢复和业务系统的幂等；不要把 SQLite 重试记录当成外部支付的 exactly-once 保证。
+- `brief.prepare` 是同步、无外部副作用的说明生成。模型与跑腿操作由 Worker 通过 SQLite 持久任务、原子领取与租约执行；过期的已开始调用标记失败，不自动重放。业务连接器仍需自身防重与结果查证，SQLite 收据不构成外部支付的 exactly-once 保证。
 
 ## 5. 部署准备与未完成条件
 
-仓库提供 Dockerfile，但未自动部署。可使用 `docker build -t eigos .` 构建；运行时注入真实 OAuth 配置，并将 `/app/data` 绑定持久卷。镜像使用非 root 用户和 JWT 模式，默认拒绝开发令牌模式。
+仓库提供 Dockerfile，但未自动部署。可使用 `docker build -t eigos .` 构建；运行时注入真实 OAuth 配置，并将 `/app/data` 绑定持久卷。镜像使用非 root 用户和 JWT 模式，默认启动 Gateway 并拒绝开发令牌模式；Worker 使用 `node dist/apps/worker/main.js` 独立启动并挂载同一个本地持久卷。
 
-当前部署模型是单实例＋持久磁盘＋前置 HTTPS。公网入口还需按实际平台配置请求限流、日志／告警、备份和密钥管理。`PUBLIC_URL` 决定 Agent Card 与发现信息，Host 校验只允许其主机名；反向代理需保留正确 Host。
+当前部署模型是同机 Gateway／Worker 分进程＋共享本地持久磁盘＋前置 HTTPS。公网入口还需按实际平台配置请求限流、日志／告警、备份和密钥管理。`PUBLIC_URL` 决定 Agent Card 与发现信息，Host 校验只允许其主机名；反向代理需保留正确 Host。
 
 浏览器跨域调用仅允许 `PUBLIC_URL` 及 `ALLOWED_ORIGINS` 中的精确 origin。命令行／服务端 Agent 可以不发送 Origin，但仍必须有访问令牌。
 
@@ -150,7 +150,7 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 
 `EIGOS_EXECUTOR=codex` 启用本地已登录的 Codex CLI。其他设置：`EIGOS_CODEX_BIN`（默认 codex）、`EIGOS_EXECUTOR_TIMEOUT_MS`（默认 120000，最多 300000）。默认 disabled，未启用时提交 agent.execute 会报错，绝不回退到 brief.prepare 或固定回复。
 
-执行器通过 stdin 接收本任务内容，使用结构化输出模式，工具、插件、MCP 连接、浏览器与多 Agent 功能关闭，工作目录是临时目录，结束后清除。模型账户登录由本机 Codex 管理；网关 Bearer 凭据不传进子进程。当前运行时专用于基于输入资料的文档与计划生成，不是为任意访客开放个人 Codex 的文件和工具访问。
+执行器通过 stdin 接收本任务内容，使用结构化输出模式，工具、插件、MCP 连接、浏览器与多 Agent 功能关闭，工作目录是临时目录，结束后清除。模型账户登录由 Worker 主机的 Codex 管理；网关 Bearer 凭据不传进子进程。当前运行时专用于基于输入资料的文档与计划生成，不是为任意访客开放个人 Codex 的文件和工具访问。
 
 提交示例：
 
@@ -171,9 +171,9 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 
 每次模型执行将有限的证据写入任务 metadata.runs：调用 ID、运行时、开始／结束时间、模型响应摘要哈希，以及 CLI 返回的 threadId 和 token usage（如果提供）。不保存隐式推理。最终 Artifact 的 text/markdown 部分包含完整交付物。
 
-只有两类完成必须区分：brief.prepare 的任务说明完成，与 agent.execute 的文档生成完成。二者都不代表外部购买、发布或研究已发生。后续本体动作和确定性验收器应建立自己的完成证据。
+旧文档服务有两类完成必须区分：brief.prepare 的任务说明完成，与 agent.execute 的文档生成完成。二者都不代表外部购买、发布或研究已发生。后续本体动作和确定性验收器应建立自己的完成证据。
 
-运行限制：同一进程最多两个模型调用；最多六次模型往返；取消使迟到结果失效；启动时把遗留 working 任务标记失败。当前没有跨进程租约和自动恢复队列，不支持多个实例同时操作这份 SQLite。
+运行限制：同一数据库最多同时领取两个执行任务；文档任务最多六次模型往返。Gateway 不执行模型，重启不影响任务。Worker 领取租约默认 15 秒，取消由 Worker 检测并终止调用；结果写回校验令牌、revision、状态和有效期。未领取任务可在重启后继续执行；已开始的调用中断后标记失败并要求查证，不自动重放。当前仅支持同机共享本地 SQLite，详见 [故障与迁移说明](gateway-worker.md)。
 
 可设置 `EIGOS_AUDIT_PATH=./data/http-audit.jsonl` 记录协议路径、方法、任务／消息编号、时间与 HTTP 状态。不记录 Authorization、用户消息正文或任意模型推理。
 
@@ -184,3 +184,21 @@ contextId 由服务器生成；新任务可以复用当前用户拥有的已有 
 - [MCP 授权规范](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 - [A2A JavaScript SDK](https://github.com/a2aproject/a2a-js)
 - [A2A 1.0 规范](https://a2a-protocol.org/v1.0.0/specification/)
+
+## 7. 美团跑腿只读接入
+
+`meituan.paotui.read` 可通过 MCP submit_task 或 A2A SendMessage 的 data part 调用。仅本地开发模式可启用，goal 为严格的 JSON 查询（含仅报价的 preview），复用任务所有权、幂等和取消逻辑。完整配置、请求与验证见 [跑腿接入说明](meituan-paotui-integration.md)。没有真实下单或支付能力。
+
+订单准备服务 `meituan.paotui.order` 与两条协议共用任务入口和所有权，动作包括 prepare_order、confirm_order、payment_links、order_state。当前真实下单开关关闭，见 [确认、防重和支付链接流程](meituan-paotui-orders.md)。
+
+## CSV 审计模拟服务
+
+非生产 loopback 环境显式启用 `EIGOS_CSV_PILOT=true` 后，两种入口会注册 `data.quality.audit.simulated`。它只使用合成数据和本地模拟付款，不代表支付宝接入。输入、结构化确认、查询及验证边界见 [CSV 试点说明](csv-audit-pilot.md)。现有 `brief.prepare` 和其他服务保持各自行为。
+
+CSV 试点也支持 `fileName` 替代 `datasetId`，仅从显式配置的 `EIGOS_CSV_INPUT_DIR` 读取指定文件；限本地开发身份。文件快照与报价/报告摘要绑定，原始内容不发给模型。格式、边界和真实 Agent 文件演示见 [CSV 文件输入](csv-audit-pilot.md#真实-csv-文件输入付款仍为模拟)。
+
+## Ontology/OAG 委托入口
+
+开启本地 `EIGOS_COORDINATOR=codex` 后，A2A 文本新任务默认进入通用能力协调器（当前注册 brief.prepare，以及配置启用的 CSV 审计）；支持 SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED 和 REJECTED 等状态。AUTH_REQUIRED 通过独立的任务授权 API 续接，详见 [CSV 本体闭环](csv-ontology-delegation.md)。`service` 等结构化字段属于 EIGOS 业务契约，非 A2A 标准必填字段。阻塞调用超时返回错误，不再正常返回 WORKING。
+
+新增能力应通过注册表接入；选中能力及验收记录见 metadata.delegation。详情见 [可注册能力](registered-capabilities.md)。

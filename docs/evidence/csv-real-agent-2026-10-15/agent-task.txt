@@ -1,0 +1,6 @@
+你是真实客户端 Agent，执行 EIGOS 本地 CSV 审计用户验收演示。用户已授权三次固定模拟100分CNY的确认，无真钱。只能使用提供的 MCP 工具，不能用 shell/文件/外网。三个网关分别是 normal正常供应商、repair首次错误后补交、refund持续错误后模拟退款；同名场景的 MCP 和 A2A 指向同一网关。
+请自己发现服务和参数并执行：
+1. normal：通过 csv_normal MCP 下单 data.quality.audit.simulated，datasetId=duplicate-and-missing-v1；展示读回报价，再通过 a2a_bridge 的 SendMessage 确认原 quoteId/quoteDigest（action=confirm_simulated_payment），用 MCP 查询至 completed。
+2. repair：通过 a2a_bridge SendMessage 新建同服务同数据集，再通过 csv_repair MCP reply_to_task 确认，从 A2A 查询直到 completed，检查确有拒收、补交和验收通过。
+3. refund：通过 csv_refund MCP 新建和确认，通过 A2A查询至 remediation=refunded且step=done。任务failed但退款pending不是终点，必须继续查询。
+每个场景只建一张订单，请求重试沿用原ID。报价未知不能编造，taskId来自返回。轮询只查，不重复下单。最后用中文总结三条实际结果，列出真实taskId/orderId/付款和验收及补救状态，明确模拟≠支付宝接入。不要请求人类再次确认已授权的模拟付款。

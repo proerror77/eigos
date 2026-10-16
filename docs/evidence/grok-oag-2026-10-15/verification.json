@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-15",
+  "scope": "two real Grok Bot delegations; real model assessments; synthetic local CSV; simulated payment",
+  "runs": [
+    {
+      "run": 1,
+      "taskId": "f98354c7-1ca1-4738-aa7d-1feadad5b757",
+      "state": "completed",
+      "ontologyVersion": "eigos-csv-ontology-v1",
+      "modelCalls": 2,
+      "inputSha256": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4",
+      "planDigest": "5cccbe7dc329efed75ab0ae578e282f94c9bbbcd2cf4324c002e4295d8222fd7",
+      "acceptance": "accepted",
+      "clientEqualsServer": true,
+      "reportHashes": {
+        "report.json": "621a09389fbd7547b70bf5e3225982b0b3db7eea38094773b42d5da953856556",
+        "report.md": "f3bdc69be0e323604717ef7005a09b19d33e93b76614dba1841b0dad0fe537bb"
+      },
+      "simulatedCharges": 1
+    },
+    {
+      "run": 2,
+      "taskId": "0eadbc33-213a-4fed-829f-9a410a9a3b5a",
+      "state": "completed",
+      "ontologyVersion": "eigos-csv-ontology-v1",
+      "modelCalls": 1,
+      "inputSha256": "f9e82357291a9592cf5f1fb3aaaacec17d901971991f2b2fdd90da3ff082c0a4",
+      "planDigest": "e07673d3f9c2106a50d2862fbb63eeb3e0c7fce721611d5ee3b6b544dd5d2fe6",
+      "acceptance": "accepted",
+      "clientEqualsServer": true,
+      "reportHashes": {
+        "report.json": "2e9a1f4d76d3ea0e321e1339bd6201cb6c7da35249640f158df2584177753c20",
+        "report.md": "550d331f9fa74a393d8562f6bf0abc3f8b201a10de4f587aa6fdf712d65f561f"
+      },
+      "simulatedCharges": 1
+    }
+  ],
+  "noMcpRequests": true,
+  "tokenScanPassed": true,
+  "installedSkillSha256": "3df1adf620f392635ddbaab623313de37b79100189bb9a1afc82a73657372acc"
+}

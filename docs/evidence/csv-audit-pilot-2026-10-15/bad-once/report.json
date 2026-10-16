@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "environment": "simulated",
+  "orderId": "de6f51b0-f66b-4b3e-a655-cf808bfc5fb2",
+  "inputSha256": "ee2c6043ecde25be5974f4a556a5900f388a8bd73551ed8e364fc65a8b9bc8e0",
+  "rulesVersion": "csv-quality-v1",
+  "rowCount": 3,
+  "findings": [
+    {
+      "rule": "missing",
+      "column": "record_id",
+      "rows": [
+        3
+      ]
+    },
+    {
+      "rule": "missing",
+      "column": "email",
+      "rows": [
+        2
+      ]
+    },
+    {
+      "rule": "missing",
+      "column": "amount_cny",
+      "rows": [
+        3
+      ]
+    },
+    {
+      "rule": "missing",
+      "column": "event_date",
+      "rows": [
+        3
+      ]
+    },
+    {
+      "rule": "duplicate",
+      "column": "record_id",
+      "rows": [
+        1,
+        2
+      ]
+    }
+  ],
+  "generatedAt": "2026-10-15T00:00:03.000Z"
+}

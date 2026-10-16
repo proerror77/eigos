@@ -1,0 +1,7 @@
+{"at":"2026-10-15T08:19:14.052Z","path":"/mcp","method":"initialize","requestId":0,"httpStatus":200}
+{"at":"2026-10-15T08:19:14.088Z","path":"/mcp","method":"notifications/initialized","httpStatus":202}
+{"at":"2026-10-15T08:19:14.095Z","path":"/mcp","method":"tools/list","requestId":1,"httpStatus":200}
+{"at":"2026-10-15T08:19:26.235Z","path":"/mcp","method":"tools/call","requestId":2,"httpStatus":200}
+{"at":"2026-10-15T08:19:49.881Z","path":"/mcp","method":"tools/call","requestId":3,"httpStatus":200}
+{"at":"2026-10-15T08:19:54.182Z","path":"/mcp","method":"tools/call","requestId":4,"httpStatus":200}
+{"at":"2026-10-15T08:19:59.473Z","path":"/a2a","method":"GetTask","requestId":"d7778926-b585-4b10-9e48-3bb5d5a74552","taskId":"9cea8621-646e-4e04-93d1-bd71eacce5d4","httpStatus":200}

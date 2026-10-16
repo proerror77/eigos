@@ -1,0 +1,2 @@
+# Preserve the original BOM/CRLF bytes used by recorded CSV evidence hashes.
+docs/evidence/**/*.csv -text whitespace=trailing-space,space-before-tab,cr-at-eol

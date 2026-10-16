@@ -7,4 +7,8 @@ data/
 *.sqlite*
 .DS_Store
 .tgrep/
+/output/
+# Raw screenshots containing a credential or personal contact information stay local.
+/docs/eigos-alipay-sms-verification-2026-10-15.jpg
+/docs/alipay-free-resource-request-2026-10-15.jpg
 coverage/

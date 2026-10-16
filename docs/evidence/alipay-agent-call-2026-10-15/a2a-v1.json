@@ -1,0 +1,26 @@
+{
+  "at": "2026-10-15T10:07:49.118336+00:00",
+  "endpoint": "https://opengw.alipay.com/api/v1/open/agents/dmdzfoesbnlsmzam",
+  "request": {
+    "jsonrpc": "2.0",
+    "id": "a764f95e-181c-4af6-8835-2573a169a550",
+    "method": "SendMessage",
+    "params": {
+      "message": {
+        "messageId": "ade0084c-f754-4b29-a0c6-429eee1402b2",
+        "role": "ROLE_USER",
+        "parts": [
+          {
+            "text": "这是EIGOS接入测试，不是实际落户咨询或申请。请只介绍你的能力范围，以及一般需要哪些输入字段；不要判断任何人的资格，不要执行申请，不要索取姓名、电话、身份证号或其他个人信息。"
+          }
+        ]
+      }
+    }
+  },
+  "a2aVersion": "1.0",
+  "httpStatus": 200,
+  "contentType": "application/json",
+  "traceId": "0b44744317920588691998674e2718",
+  "body": "{\"jsonrpc\":\"2.0\",\"error\":{\"code\":-32602,\"message\":\"Unsupported A2A protocol version. upstreamVersion=1.0\"}}",
+  "note": "A2A 1.0 request after explicit missing-version error; no personal data or funds"
+}

@@ -9,12 +9,12 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { ClientFactory } from '@a2a-js/sdk/client';
 import { SendMessageRequest, GetTaskRequest, TaskState } from '@a2a-js/sdk';
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { createApp } from '../src/app.js';
-import { jwtVerifier } from '../src/auth.js';
-import { readConfig, type Config } from '../src/config.js';
-import { JobStore } from '../src/store.js';
-import { TaskService } from '../src/tasks.js';
-import { DomainError, SCOPES, type Job, type Principal } from '../src/domain.js';
+import { createApp } from '../apps/gateway/app.js';
+import { jwtVerifier } from '../apps/gateway/auth.js';
+import { readConfig, type Config } from '../packages/core/config.js';
+import { JobStore } from '../packages/core/store.js';
+import { TaskService } from '../packages/core/tasks.js';
+import { DomainError, SCOPES, type Job, type Principal } from '../packages/core/domain.js';
 
 const issuer = 'https://issuer.example';
 const audience = 'https://eigos.example';
@@ -46,7 +46,7 @@ before(async () => {
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
-    EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
+    EIGOS_COORDINATOR: 'disabled', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
   };
   gateway = createApp(config, verify);
   server.on('request', req => {

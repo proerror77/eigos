@@ -1,0 +1,48 @@
+{
+  "startedAt": "2026-10-15T08:19:11.134Z",
+  "completedAt": "2026-10-15T08:20:14.726Z",
+  "environment": "simulated",
+  "input": {
+    "source": "local-file",
+    "sha256": "69df841ca9b1e961fc205a75008708f4910e832820c1bdfff85eccada6460622",
+    "rows": 64
+  },
+  "client": "real Codex CLI agent",
+  "a2aTransport": "thin MCP bridge forwarding actual A2A JSON-RPC",
+  "toolCalls": 12,
+  "verified": [
+    {
+      "scenario": "normal",
+      "taskId": "838b476b-2902-4fbb-89c6-8daf9aa6c915",
+      "orderId": "a9b8f6cd-05ad-487e-861f-dd8c34ae675a",
+      "state": "completed",
+      "payment": "paid",
+      "acceptance": "accepted",
+      "remediation": "none",
+      "charges": 1,
+      "refunds": 0
+    },
+    {
+      "scenario": "repair",
+      "taskId": "ea9f349d-7dbc-4a39-8e56-135eb349aafa",
+      "orderId": "abf94ce6-db34-4d1a-b87f-6a3d765445fc",
+      "state": "completed",
+      "payment": "paid",
+      "acceptance": "accepted",
+      "remediation": "none",
+      "charges": 1,
+      "refunds": 0
+    },
+    {
+      "scenario": "refund",
+      "taskId": "9cea8621-646e-4e04-93d1-bd71eacce5d4",
+      "orderId": "87bb500a-8abd-42d5-961c-b0bbe55762de",
+      "state": "failed",
+      "payment": "paid",
+      "acceptance": "rejected",
+      "remediation": "refunded",
+      "charges": 1,
+      "refunds": 1
+    }
+  ]
+}

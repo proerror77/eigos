@@ -1,0 +1,89 @@
+{
+  "goal": "请用 EIGOS 实际购买一杯咖啡并配送给我。我要真实购买，不是写一份任务说明、建议或计划。",
+  "result": {
+    "id": "0427f4e4-3566-4103-a7a2-c6fa031a8cd9",
+    "contextId": "b8041caa-0fd1-4549-a9e3-04a9b61bc489",
+    "status": {
+      "state": "TASK_STATE_REJECTED",
+      "message": {
+        "messageId": "161d3cd6-b6ba-4980-a6f7-48a67a5abb35",
+        "contextId": "b8041caa-0fd1-4549-a9e3-04a9b61bc489",
+        "taskId": "0427f4e4-3566-4103-a7a2-c6fa031a8cd9",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "当前注册能力仅支持编写任务说明和本地 CSV 数据质量审计，无法实际购买咖啡或安排配送。"
+          }
+        ]
+      },
+      "timestamp": "2026-10-15T13:42:07.329Z"
+    },
+    "history": [
+      {
+        "messageId": "0f59f0ea-4a54-466b-bb7c-451065433c85",
+        "contextId": "b8041caa-0fd1-4549-a9e3-04a9b61bc489",
+        "taskId": "0427f4e4-3566-4103-a7a2-c6fa031a8cd9",
+        "role": "ROLE_USER",
+        "parts": [
+          {
+            "text": "请用 EIGOS 实际购买一杯咖啡并配送给我。我要真实购买，不是写一份任务说明、建议或计划。"
+          }
+        ]
+      },
+      {
+        "messageId": "161d3cd6-b6ba-4980-a6f7-48a67a5abb35",
+        "contextId": "b8041caa-0fd1-4549-a9e3-04a9b61bc489",
+        "taskId": "0427f4e4-3566-4103-a7a2-c6fa031a8cd9",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "当前注册能力仅支持编写任务说明和本地 CSV 数据质量审计，无法实际购买咖啡或安排配送。"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "service": "eigos.delegate",
+      "delegation": {
+        "routingVersion": "eigos-capability-routing-v1",
+        "ontologyVersion": "unselected",
+        "phase": "rejected",
+        "events": [
+          {
+            "at": "2026-10-15T13:41:57.890Z",
+            "event": "delegation_received"
+          },
+          {
+            "at": "2026-10-15T13:42:07.329Z",
+            "event": "ontology_grounded_assessment",
+            "evidence": "181ff285-4908-4fdf-becb-95902c3bb565"
+          }
+        ],
+        "assessment": {
+          "decision": "unsupported",
+          "reason": "当前注册能力仅支持编写任务说明和本地 CSV 数据质量审计，无法实际购买咖啡或安排配送。",
+          "provider": "",
+          "checkedAt": "2026-10-15T13:42:07.329Z"
+        }
+      },
+      "runs": [
+        {
+          "id": "181ff285-4908-4fdf-becb-95902c3bb565",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-15T13:41:57.900Z",
+          "completedAt": "2026-10-15T13:42:07.328Z",
+          "outputSha256": "dcd4c674070dff87de5faa849596837960a1adc1177952eca7d66e146b2d8d1b",
+          "threadId": "01a13fcc-5451-7730-8eb1-b7568041261e",
+          "usage": {
+            "input_tokens": 24754,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 55,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ],
+      "error": "当前注册能力仅支持编写任务说明和本地 CSV 数据质量审计，无法实际购买咖啡或安排配送。"
+    }
+  }
+}

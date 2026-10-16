@@ -1,0 +1,1 @@
+python3 /Users/proerror/Documents/eigo8/integrations/grok/eigos-delegate/scripts/eigos_a2a.py --config /Users/proerror/Documents/eigo8/data/grok-oag/profile.json send --text-file 01-goal.txt --request-id oag-run1-goal

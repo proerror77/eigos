@@ -3,7 +3,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY tsconfig.json ./
-COPY src ./src
+COPY apps ./apps
+COPY packages ./packages
 RUN npm run build && npm prune --omit=dev
 
 FROM node:22-bookworm-slim
@@ -12,7 +13,8 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app/package*.json ./
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --chown=node:node scripts/run-local.mjs ./scripts/run-local.mjs
 RUN mkdir /app/data && chown node:node /app/data
 USER node
 EXPOSE 3000
-CMD ["node", "dist/src/main.js"]
+CMD ["node", "dist/apps/gateway/main.js"]
