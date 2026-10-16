@@ -52,3 +52,15 @@
 - 公司邮箱重发正文（本地 `output/alipay-agent-debug-2026-10-16/support-email-company.txt`，含联系信息，未纳入版本库）。
 
 用户偏好已通过指定记忆入口记录：今后所有对外业务邮件使用公司飞书邮箱；不可用时停下说明，不自动改用个人邮箱。未撤回或删除此前Gmail邮件。
+
+## 公司邮箱首封回复与跟进基线
+
+2026-10-16 11:56，alipay.ai@service.alipay.com 回复公司飞书邮箱。message_id：QXNrMnY2ZnVrenBaNmdaVHpiVlhBZkJLYkw0PQ==，同一公司邮件thread。内容建议查看 https://aipay.alipay.com，并请留下联系电话以安排深入沟通；未提供请求格式、认证/授权要求或trace排查结论。原公司邮件已包含联系电话。
+
+已读此条作为监控基线；无新的技术前提，因此未重复发起失败接口请求，也未自动发送回复。用户已请求持续留意公司邮箱，收到可用技术信息后继续无付款验证。
+
+## 用户授权的需求澄清与排程取消
+
+随后用户明确授权使用公司飞书邮箱回复：需要阿宝面向外部 Agent 的服务发现、选择、任务执行和结果回读能力，不只是支付或商家上架；询问正确接入入口、文档、授权要求及技术对接人，仍不涉及付款。已在原线程回复，message_id `ZjlhYzQyZDAtZjllYy00ZDNkLWIyMWUtN2M4YjZhNWNlMDFk`，send_status 对官方收件人返回 `status:4`（投递成功）。这不等于平台已确认接入资格。
+
+按用户要求，每小时邮箱检查任务 automation-3 已删除。后续研究为用户单独授权的主动核对，不再有定时检查。阿宝／AHA 的进一步官方资料核对见 [外部 Agent 接入研究](abao-external-agent-research-2026-10-16.md)。
