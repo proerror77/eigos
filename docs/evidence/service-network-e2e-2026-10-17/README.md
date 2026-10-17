@@ -1,52 +1,42 @@
-# 三阶段后端与最终 E2E 验收
+# PA → EIGOS → Ontology MCP → 美团跑腿：两段 E2E
 
-2026-10-17，Asia/Shanghai。后端 `ontology-execution-v3`。本目录归档已检查的 [结构化证据](verification.json)，私有完整运行输出在忽略的 `data/service-network-e2e/`。未归档令牌、个人地址簿、原始 CSV 或隐式推理。
+本轮按用户 2026-10-17 的纠正重新验收，替换此前未覆盖实际 PA 和真实美团查价的探针及记录。最终以此处新记录为准。
 
-## 真实模型与官方只读来源
+## 验收路径
 
-最后一轮由独立 Gateway、真实 Worker/Codex CLI、官方麦当劳 MCP 和独立本机沙箱提供方运行，经 A2A 提交、MCP 读取，并逐字摘要比对两协议交付物。
+实际 Grok Bot／Monk → 本机 A2A Agent Card／委托 → EIGOS Gateway → 独立 Worker／真实 Codex 协调模型 → 内部 stdio Ontology MCP → 官方美团跑腿查询程序 → 真实配送价格 → 独立验收 → PA 读回同一交付物。
 
-| 场景 | 当前结果 | 真实模型调用 |
-| --- | --- | --- |
-| 上海虹桥火车站20杯美式、500元预算的到店报价比较 | COMPLETED，3家实际门店；保存来源 trace、具体默认规格、当前价格、窗口与 unknown | 2 |
-| 要求真实购买并送达、不接受模拟/报价 | REJECTED，无业务意图/交付物；真实请求没有转入沙箱 | 1 |
-| 显式沙箱20杯服务 | 三步计划：接单→模拟付款→观察交付；付款后仍无完成 artifact，外部测试提供方确认交付后才 COMPLETED | 2 |
+两段均通过。2026-10-17 16:14–16:15（Asia/Shanghai），实际 Monk 发现 Card、提交新任务并保存完整 GetTask；16:15:40 在其界面报告已收到交付物。任务 `81ef2437-95f9-441a-acd4-31c115968767` 为 COMPLETED，独立验收 accepted=true。
 
-合计5次成功真实模型调用；每次保存 codex-exec、threadId、起止时间、输出摘要及可用 usage。探针在进程启动前记录63个构建模块的统一指纹，归档时与当前构建重新计算一致；不是仅凭某个配置文件或绿灯推定跑过当前实现。
+| 部分 | 本轮实测证据 |
+| --- | --- |
+| PA 接入 | 实际 Grok Bot／Monk 使用已有 Mac 执行能力调用 Python A2A 客户端；discover、submit、poll/get 均由 PA 发起；不是观察器代提交 |
+| 模型规划 | 2次真实 Codex 调用：grounding 和 planning，均保存运行时间、threadId、输出摘要及 usage |
+| Ontology MCP | 2次真实 `ontology_delivery_quote`：候选读取及执行复查；每次先核对版本化本体定义 |
+| 美团来源 | 每次读取调用 get_address_list、两次 get_address_info 和 delivery_preview，共8次成功只读调用；源程序摘要已固定 |
+| 查价结果 | 本人两处同城保存地址，文件1公斤、普通送，52.5元、23.5公里；预计送达时间只是估计 |
+| 验收与读回 | `read_only` 和 `goods_weight` 均 pass；PA/A2A/MCP 同一 taskId、完成状态及交付物摘要一致 |
 
-真实供应来自官方只读接口，库存/产能/取餐时间及未来最终优惠资格仍未证明。报价变化和可用门店随时间变化，前轮观察到4家、最终复测3家均按实返回，不能凑数或声称全网最优。接入方式来自 [官方文档](https://open.mcd.cn/mcp/doc)。这里没有现实麦当劳订单、资金或配送。
+[结构化证据](verification.json) 和 [PA 界面摘录](pa-readback.txt) 已脱敏。运行前记录的构建指纹覆盖实际 apps/packages 及 Gateway/Worker 启动器；归档时重新计算匹配。个人地址、电话、令牌及完整原始输出保留在用户私有运行目录，不进入本目录。
 
-## 独立进程故障 E2E
+首次实际 PA 测试揭示报价重量没有映射为候选事实，任务 `954ab3ea-f4dd-49f5-9e98-c66c8424f426` 被正确拒绝，未算通过。修复后，匹配的计价重量成为有证据的 quantity；不匹配的物品、重量、服务或缺少总费用仍不可执行。133项常规测试和7项进程间工程 E2E 均通过。工程 E2E 的模型/提供方仍是 fixtures，和上表实际 PA／真实来源分别记录。
 
-`npm run test:e2e:run` 运行7项：独立 Gateway、两个竞争 Worker、独立 HTTP 提供方与其持久 SQLite；模型决策在这组故障测试中使用 fixtures，凭据和所有业务效果均为沙箱。
+## 复现
 
-1. 外部接单成功后 Worker SIGKILL，重启按原键对账；order POST及订单都只有一次。
-2. 外部模拟扣款成功后 Worker SIGKILL，原预算占用保留；payment POST及扣款都只有一次。
-3. 许可撤销后保留在途事实，停止后续付款；准确重新授权后继续原操作。
-4. 真实/default-environment 请求不能用沙箱提供方交付。
-5. 15/20部分交付拒绝，退款申请保持未完成；到账读回后关联退款 Task 完成，原失败 Task 不重写；重复请求不重复退款。
-6. 任务取消后读回迟到接单，阻止付款；另建、授权并核验业务取消，任务取消不伪装为供应商已撤单。
-7. 取消与未知付款竞态：先 held，原操作查证后 consumed，付款事实保留，取消 Task 不被改成完成。
+先运行 `npm run check`、`npm test` 和 `npm run build`。工程故障回归为 `npm run test:e2e:run`，模型和远端业务为明确标记的 fixtures，不替代实际 PA／美团测试。
 
-这组“外部”是独立工程测试进程，模拟资金和履约；它证明恢复协议，不证明现实商家服务质量或付款权限。
-
-## 其他检查
-
-- Node v22.22.3；`npm run check`、130项 `npm test`、构建及 `git diff --check` 通过。
-- 常规测试另覆盖同店跨渠道归组、同名不同规格、未知费用/货币、源失败、过期/变化报价、需求来源、模型改条件/动作/绑定、定义/配置漂移、旧任务只读、快照损坏、回执冲突/旧版本、累计预算和跨用户隔离。
-- 既有文档模型、POI/地址簿/运费已迁入新后端。文档格式/摘要的通过不认证内容真理；美团迁入测试的模型/提供方使用 fixtures，历史真实 CLI 证据单列在原接入文档。
-- Claim/Verification/变更提议和样本按 owner/绑定/目标/证据层级区分；未知、取消和进行中不从分母消失，退款不算原购买成功，未自动发布任何能力或共享私人订单。
-- GitHub Actions 新增同一提交的 E2E 门槛，不使用个人 MCD 凭据。远端验收以对应提交的 Actions 和交付回读为准。
-
-## 复现与限制
-
-先运行 `npm run build`，再执行 `npm run test:e2e:run`。真实探针显式运行：
+显式运行真实测试观察器：
 
 ```sh
-EIGOS_MCD_TOKEN_FILE=/absolute/private/token \
-  node --import tsx examples/verify-service-network-e2e.ts --live
+EIGOS_PAOTUI_SKILL_DIR=/absolute/path/to/meituan-paotui \
+EIGOS_PAOTUI_E2E_QUERY_FILE=/absolute/private/preview-input.json \
+  node dist/examples/verify-pa-paotui-e2e.js --live
 ```
 
-令牌使用已有个人授权；只允许 loopback 开发身份，不是生产多用户凭据代理。测试过程建立并清理临时进程/数据库，不部署或重启常驻实例。
+输入符合 `paotuiPreviewSchema`，只引用本人已保存的同城地址。观察器创建独立 loopback Gateway／Worker，生成私有临时连接 profile 后等待实际 PA；不自行提交任务。让 PA 使用打印出的私有目录中的既有 Python 接入、profile、技能和 task-input.json，实际发现、提交、查询，再保存完整 GetTask 到 pa-received.json。观察器比较同一交付物摘要后才报告通过。
 
-三阶段**工程实现与当前授权范围的 E2E**完成。现实下单、付款、配送及现实退款仍禁止、未运行；不能把沙箱回执、MCP 连接成功或这组样本外推成现实履约、通用规划质量或长期可靠性。
+原始任务、地址、电话和令牌只保存在用户私有运行目录。公开证据仅归档检查过的费用、模型与 MCP 元数据、taskId 和摘要。观察器关闭自己的临时进程，不改变既有常驻 PA 连接或部署。
+
+## 边界
+
+只查询价格，不创建订单、不下单、不付款。报价、距离和预计送达时间不证明实际履约。本次不验证生产部署、多用户私人凭据代理、通用规划质量或长期服务可靠性。

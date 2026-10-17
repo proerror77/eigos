@@ -51,13 +51,12 @@ LLM 没有工具、数据库、凭据或授权能力。它先读取最多16项�
 | `brief.prepare@2` | 本地说明生成与精确验收 | 说明完成，底层 execution=not_started |
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
-| `geo.search@1`、`address.book.read@1`、`delivery.quote@1` | 既有美团个人 CLI 的新适配器 | 地点/本人地址/运费只读结果；无订单/支付/送达 |
-| `food.pickup.compare@1` | 官方麦当劳 MCP 门店、菜单、详情、计价及复查 | 当前账号、当前已查门店的只读报价比较；库存、产能、取餐时间仍未知 |
+| `geo.search@1`、`address.book.read@1`、`delivery.quote@1` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |
 
 CSV 只支持完整五项审计，子集或重复检查明确拒绝，不静默扩大范围。文档、跑腿读取已走新后端；独立历史原型仅保留其原有测试模式，不作为新后端执行 fallback。
 
-麦当劳只读接入复用现有授权，以私有 `EIGOS_MCD_TOKEN_FILE` 配置；固定官方 `https://mcp.mcd.cn`，只允许门店/菜单/详情/计价/原单查询工具，禁止创建、取消、领券及积分兑换。使用方式及端点以 [官方 MCP 接入说明](https://open.mcd.cn/mcp/doc) 为准。个人 MCD/美团凭据仅限 loopback 开发身份，不能共享给 JWT 多用户。
+个人美团凭据仅限 loopback 开发身份，不共享给 JWT 多用户。新后端由 Worker 通过内部 stdio Ontology MCP 读取版本化能力定义，再调用对应只读工具；Gateway 不运行查询程序。见 [美团接入说明](meituan-paotui-integration.md)。
 
 ## 动作与恢复
 
@@ -85,4 +84,4 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝，不静默�
 
 运行 `npm run check`、`npm test`、`npm run test:e2e`、`git diff --check`。E2E 使用独立 Gateway、两个竞争 Worker、独立持久测试提供方，覆盖接单/扣款后崩溃、取消/撤销竞态、部分交付和退款读回。
 
-真实模型/真实只读来源另行显式运行 `EIGOS_MCD_TOKEN_FILE=/private/token node --import tsx examples/verify-service-network-e2e.ts --live`（先构建）。证据见 [本轮 E2E](evidence/service-network-e2e-2026-10-17/README.md)。它不部署、不创建现实商家订单、不移动真实资金，也不能证明所有商家、地域、任务或长期可靠性。
+真实 PA／模型／美团只读来源另行运行 `node dist/examples/verify-pa-paotui-e2e.js --live`（先构建并设置私有测试输入）。该观察器不代替 PA 提交；需实际 PA 发现 Card、委托任务并读回同一交付物才通过。见 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md)。不部署，不创建现实商家订单或支付。

@@ -13,7 +13,7 @@ export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 // Official CLI has a personal credential/cache. Restrict this adapter to one local
 // development identity; it is not a multi-user token broker or a payment executor.
 export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
-  constructor(private skillDir: string, private ordersEnabled = false) {
+  constructor(private skillDir: string, private ordersEnabled = false, private onCommand?: (command: string) => void) {
     if (!isAbsolute(skillDir)) throw new Error('Paotui skill directory must be absolute');
   }
   private async token(signal: AbortSignal): Promise<string> {
@@ -30,6 +30,7 @@ export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
       });
       const data = JSON.parse(r.stdout);
       if (data.status !== 'ok') throw new Error('Provider rejected request');
+      this.onCommand?.(args[0]!);
       return data;
     } catch { throw new Error('Meituan operation failed; inspect provider account before retrying.'); }
   }
@@ -81,23 +82,14 @@ export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
   async query(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     const q = paotuiQuerySchema.parse(input);
     try {
-      const credential = await exec('pt-passport', ['get-token', '--client_id', clientId], { signal, timeout: 10000, maxBuffer: 65536 });
-      const token = credential.stdout.trim().split('\n').at(-1);
-      if (!token || /\s/.test(token)) throw new Error('Missing credential');
-      const call = async (args: string[]) => (await exec(process.execPath, [join(this.skillDir, 'paotui.js'), ...args], {
-        cwd: this.skillDir, signal, timeout: 30000, maxBuffer: 512000,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_ACCESS_TOKEN: token },
-      })).stdout;
       if (q.action === 'preview') {
         const prepared = await this.prepare(q, signal);
         return { source: 'meituan', previewOnly: true, orderCreated: false, ...prepared.summary };
       }
       const args = q.action === 'authorization' ? ['confirm_auth'] : q.action === 'addresses' ? ['get_address_list'] : ['search_poi', '--keyword', q.keyword, '--city', q.city];
-      const response = { stdout: await call(args) };
+      const data = await this.command(args, await this.token(signal), signal);
       // confirm_auth can print credentials; never forward its output.
       if (q.action === 'authorization') return { authorized: true, source: 'meituan', readOnly: true };
-      const data = JSON.parse(response.stdout);
-      if (data.status !== 'ok') throw new Error('Provider did not confirm success');
       if (q.action === 'addresses') {
         if (!Array.isArray(data.addresses)) throw new Error('Unexpected address response');
         return { source: 'meituan', readOnly: true, addresses: data.addresses.map((a: Record<string, unknown>) => ({

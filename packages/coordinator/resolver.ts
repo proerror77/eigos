@@ -103,7 +103,7 @@ export class CapabilityResolver {
       if (payload && typeof payload === 'object') privateData.set(candidate.id, { ...payload, comparison });
     }
     if (this.providerEvidence) for (const candidate of candidates) candidate.details = { ...(candidate.details ?? {}), operationalEvidence: this.providerEvidence(ctx.owner, candidate.binding.ref, bindingDigest(candidate.binding)) };
-    return { candidates, privateData, scope: { capabilityRef, searchedBindingRefs: candidates.map(c => c.binding.ref), observedAt: new Date().toISOString(), realSupply: coverage.some(c => c.realSupply && c.status === 'returned'), coverage },
+    return { candidates, privateData, scope: { capabilityRef, searchedBindingRefs: candidates.map(c => c.binding.ref), observedAt: new Date().toISOString(), realSupply: coverage.some(c => c.realSupply && c.status === 'returned') || candidates.some(c => c.status === 'ready' && c.details?.evidenceKind === 'live_readonly'), coverage },
       ...(comparison ? { comparison } : {}) };
   }
 }

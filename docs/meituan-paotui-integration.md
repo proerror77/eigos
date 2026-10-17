@@ -57,3 +57,13 @@ category 支持文件、快递、餐饮；service 支持 ordinary / express。�
 ## 后续订单准备
 
 2026-10-15 已实现单独的待启用订单服务，当前生产下单与支付链接均关闭。见 [订单流程与验证边界](meituan-paotui-orders.md)。原 read 服务仍然只有查询/预览，不通过追加字段变成下单入口。
+
+## 新后端的 Ontology MCP（2026-10-17）
+
+上面的 `meituan.paotui.read` 和独立验证脚本描述历史专用原型。启用 `EIGOS_COORDINATOR=codex` 时，PA 统一委托给 `eigos.delegate`，模型根据版本化本体和真实候选形成计划。后端读取通过 Worker → 独立 stdio Ontology MCP → 既有官方美团程序执行；不回退到专用原型。
+
+`EIGOS_PAOTUI_SKILL_DIR` 在 Gateway／Worker 保持一致。Gateway 只注册定义；Worker 在调用时启动 `apps/ontology-mcp/main`，先读取并校验 `ontology_definition`，再调用 `ontology_delivery_quote`、`ontology_geo_search` 或 `ontology_address_book_read`。该 MCP 没有 HTTP 监听，不开放订单、支付或取消工具，官方授权仍只在查询进程内部取得。
+
+每次成功读取带有能力／本体版本、输入与完整结果摘要、时间、来源调用名称和 `live_readonly` 回执；可将这些不含地址／电话的元数据记录到绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH`。报价候选映射实际适用重量（公斤）、总价和只读事实；重量是计价参数，不表示已称重或配送。执行前复查价格、路线和服务，显示用的预计送达时间更新不触发无意义重规划。
+
+实际 PA 接入与真实查询需一起按 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 验收。`npm run test:e2e:run` 的工程提供方和模型替身不算真实美团来源。当前仍只查价格，不下单、不付款。

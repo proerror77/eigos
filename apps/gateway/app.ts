@@ -41,7 +41,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const store = new JobStore(config.DATABASE_PATH);
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   const pilot = config.EIGOS_CSV_PILOT === 'true' && config.EIGOS_COORDINATOR !== 'codex' ? new PilotCommands() : undefined;
-  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined, mcdTokenFile: config.EIGOS_MCD_TOKEN_FILE,
+  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
   const tasks = new TaskService(store, {

@@ -208,7 +208,7 @@ CSV 试点也支持 `fileName` 替代 `datasetId`，仅从显式配置的 `EIGOS
 
 ## Ontology/OAG 委托入口
 
-开启本地 `EIGOS_COORDINATOR=codex` 后，MCP/A2A 默认进入 `ontology-execution-v3`：LLM 解释需求 → Resolver 取得事实 → LLM 短计划 → 程序许可/约束检查 → Worker 动作/原键对账 → 独立验收。配置可启用文档、全量 CSV、美团只读和麦当劳报价比较；SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED、REJECTED 等协议状态保留。`service`、可选 requirements/executionEnvironment 是 EIGOS 业务字段，非 A2A 标准必填字段。
+开启本地 `EIGOS_COORDINATOR=codex` 后，MCP/A2A 默认进入 `ontology-execution-v3`：LLM 解释需求 → Resolver 取得事实 → LLM 短计划 → 程序许可/约束检查 → Worker 动作/原键对账 → 独立验收。配置可启用文档、全量 CSV，以及通过内部 Ontology MCP 进行的美团只读查询；SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED、REJECTED 等协议状态保留。`service`、可选 requirements/executionEnvironment 是 EIGOS 业务字段，非 A2A 标准必填字段。
 
 新增能力分别登记 ServiceCapability、ProviderBinding、适配器与可选 DiscoverySource。metadata.delegation 包含 request/successCriteria/resolution/plan/actions/businessFacts/authorizationBudget/outcome，报价在 plan.quote。现有 Agent Python 客户端的原委托/模拟确认参数保留；旧执行计划不兼容或迁移。
 

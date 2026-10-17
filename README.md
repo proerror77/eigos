@@ -22,7 +22,7 @@ EIGOS 的执行网络原型采用 **一个仓库、Gateway 与 Worker 两个独�
 - **`brief.prepare`**：固定流程整理任务说明，`execution: not_started`，不执行说明中的业务。
 - **`agent.execute`（需显式启用）**：通过本地已登录的 Codex 运行真实模型。模型读取目标和完整任务历史，自主提出必要问题，收到答复后生成完整 Markdown 文档／计划。它不具备外部研究、预订、发送或付款工具；生成文档是本阶段实际交付的服务。
 
-通用委托使用 Ontology + LLM v3：分离能力与提供者，以固定需求和真实候选事实形成短计划，事务外执行、原操作对账并独立验收。已接官方麦当劳只读门店/规格/计价，以及文档、美团地址/POI/运费和 CSV；异步接单、模拟付款、交付及售后恢复由独立沙箱提供方验证。现实下单、付款和履约未运行。阶段目标见 [后端实施目标](docs/backend-implementation-goals.md)。
+通用委托使用 Ontology + LLM v3：分离能力与提供者，以固定需求和真实候选事实形成短计划，事务外执行、原操作对账并独立验收。已接文档、CSV，以及通过内部 Ontology MCP 读取的美团地址/POI/运费；异步接单、模拟付款、交付及售后恢复由独立沙箱提供方验证。现实下单、付款和履约未运行。阶段目标见 [后端实施目标](docs/backend-implementation-goals.md)。
 
 2026-10-15 已完成一次 **Grok Bot → A2A → EIGOS 真实执行 Agent** 的提问、回复和交付，未使用 MCP 桥接。见 [真实联调证据](docs/evidence/grok-a2a-2026-10-15/README.md)及[最终交付物](docs/evidence/grok-a2a-2026-10-15/deliverable.md)。这是通过 Grok Bot 已有的电脑执行能力发出 A2A 请求，不是对其原生 A2A 连接器的声明。
 

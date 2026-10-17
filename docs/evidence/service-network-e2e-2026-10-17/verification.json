@@ -1,1818 +1,213 @@
 {
+  "status": "passed",
   "backendVersion": "ontology-execution-v3",
   "implementationSnapshot": {
-    "capturedAt": "2026-10-17T06:44:49.681Z",
-    "fileCount": 63,
-    "digest": "fa1f9c9d07747b1f9538ba9c818978b6e3762360e72e48aed48418b55996b838"
+    "capturedAt": "2026-10-17T08:14:17.678Z",
+    "fileCount": 61,
+    "digest": "8c3aa87b3e5e8de3e0cb60a84041499365a43d784cbcf80d94358f914729ec3c"
   },
-  "evidenceScope": "Real Codex reasoning + official MCD read-only supply + separately labeled loopback sandbox effects; no real merchant order or payment",
-  "localChecks": {
-    "node": "v22.22.3",
-    "unitTests": 130,
-    "independentProcessE2e": 7,
-    "check": true,
-    "build": true,
-    "diffCheck": true
+  "taskId": "81ef2437-95f9-441a-acd4-31c115968767",
+  "state": "completed",
+  "capabilityRef": {
+    "id": "delivery.quote",
+    "version": "1"
   },
-  "scenarios": [
+  "bindingRef": {
+    "id": "meituan:delivery.quote",
+    "version": "1"
+  },
+  "planDigest": "b2300942aa2800be606fe2d2c2336ba4a1589855f9590bbf468a45490efa1953",
+  "realSupply": true,
+  "modelReceipts": [
     {
-      "scenario": "official_mcd_read",
-      "taskId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-      "state": "completed",
-      "requestEnvironment": "live",
-      "capabilityRef": {
-        "id": "food.pickup.compare",
-        "version": "1"
+      "id": "49e8a394-6faa-42f8-b022-e257251c5439",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-17T08:14:49.852Z",
+      "completedAt": "2026-10-17T08:15:04.048Z",
+      "outputSha256": "041c04f9c0495e797c332132bef5fa65a3eada5160562982816d732ba3ce0cd2",
+      "threadId": "01a148ed-8d1d-7dd2-9971-09b065258ed4",
+      "usage": {
+        "input_tokens": 25797,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 329,
+        "reasoning_output_tokens": 64
       },
-      "planDigest": "1f6c472219a40dd05ba82eb5e8cdf0fcbdc2cd39b52019a09e4848ca74e59f9d",
-      "modelReceipts": [
-        {
-          "id": "37dd7b5a-6d12-4ad5-a44a-a853484c6fe4",
-          "runtime": "codex-exec",
-          "startedAt": "2026-10-17T06:44:50.071Z",
-          "completedAt": "2026-10-17T06:45:05.548Z",
-          "outputSha256": "cc8942e6f2b0e79a8a0b83efba4a3ea1684f5275b4242fc69e67ba37fa280a2c",
-          "threadId": "01a1489b-280d-7b83-9a8d-89af1f89f1a0",
-          "usage": {
-            "input_tokens": 25775,
-            "cached_input_tokens": 0,
-            "cache_write_input_tokens": 0,
-            "output_tokens": 606,
-            "reasoning_output_tokens": 70
-          },
-          "purpose": "grounding"
-        },
-        {
-          "id": "1636e847-40c8-42b0-9fa8-1f86ce74c730",
-          "runtime": "codex-exec",
-          "startedAt": "2026-10-17T06:45:09.035Z",
-          "completedAt": "2026-10-17T06:45:24.872Z",
-          "outputSha256": "18c3c4f978af0e485d9192b2d5031badb220bbe3225033d29e50272b592e413a",
-          "threadId": "01a1489b-717e-7ed2-af0f-9f4b3bdf99db",
-          "usage": {
-            "input_tokens": 80887,
-            "cached_input_tokens": 40192,
-            "cache_write_input_tokens": 0,
-            "output_tokens": 459,
-            "reasoning_output_tokens": 33
-          },
-          "purpose": "planning"
-        }
-      ],
-      "outcome": {
-        "requestId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-        "requestRevision": 1,
-        "status": "satisfied",
-        "criterionResults": [
-          {
-            "requirementId": "quantity",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "budget",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "read_only",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "search_area",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "default_specifications",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "unknowns_disclosed",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "independent_verifier",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          },
-          {
-            "requirementId": "goal.artifact",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-              "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-              "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-              "mcd:26b96df9c95557fca9ff38133d84d2cd",
-              "mcd:7dec7c7068170225e4cf687646b2e526"
-            ]
-          }
-        ],
-        "reason": "Independent quote line/count/total, source references, fixed comparison and no-order scope verified; no fulfillment asserted.",
-        "evidenceRefs": [
-          "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-          "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-          "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-          "mcd:26b96df9c95557fca9ff38133d84d2cd",
-          "mcd:7dec7c7068170225e4cf687646b2e526"
-        ],
-        "assessedAt": "2026-10-17T06:45:25.361Z"
-      },
-      "offers": [
-        {
-          "id": "98e8da56-b149-40a3-b0cb-16a1081fd53a",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450110"
-          },
-          "merchantName": "麦当劳上海九亭餐厅",
-          "merchantAddress": "九亭镇沪亭北路563-565号",
-          "bindingRef": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450110",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "06:30",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:07.782Z",
-          "expiresAt": "2026-10-17T06:50:07.782Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ],
-          "sourceRevision": "26b96df9c95557fca9ff38133d84d2cd",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        },
-        {
-          "id": "fc62e81f-3218-4eb4-ab30-9d4412b989f9",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450427"
-          },
-          "merchantName": "麦当劳上海涞坊路餐厅",
-          "merchantAddress": "九亭镇涞坊路1010号109室",
-          "bindingRef": {
-            "id": "mcd.pickup:1450427",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450427",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "06:30",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:08.327Z",
-          "expiresAt": "2026-10-17T06:50:08.327Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:ba92b734660c7008fe8b7d222b289b8f",
-            "mcd:d7cfd9a18cad2b0df7a308756c6dd1d6",
-            "mcd:1b3140399beb32de1b18ed55cb50dc25"
-          ],
-          "sourceRevision": "1b3140399beb32de1b18ed55cb50dc25",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        },
-        {
-          "id": "c75df32f-0d70-4037-86b3-8bb8dda98ebe",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450256"
-          },
-          "merchantName": "麦当劳上海闵行七宝领展餐厅",
-          "merchantAddress": "漕宝路3366号L150B室",
-          "bindingRef": {
-            "id": "mcd.pickup:1450256",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450256",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(07:14至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "07:00",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:08.930Z",
-          "expiresAt": "2026-10-17T06:50:08.930Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:487d691815d7376dabf5e2a69d827c5e",
-            "mcd:e3b24411f82bd5e49c6cb00658015fc5",
-            "mcd:14f982d1f47fc66020b7f8bdb6568057"
-          ],
-          "sourceRevision": "14f982d1f47fc66020b7f8bdb6568057",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        }
-      ],
-      "coverage": {
-        "capabilityRef": {
-          "id": "food.pickup.compare",
-          "version": "1"
-        },
-        "searchedBindingRefs": [
-          {
-            "id": "mcd.pickup:1450681",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450111",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450427",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450427",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450256",
-            "version": "1"
-          },
-          {
-            "id": "mcd.pickup:1450256",
-            "version": "1"
-          }
-        ],
-        "observedAt": "2026-10-17T06:45:09.031Z",
-        "realSupply": true,
-        "coverage": [
-          {
-            "sourceId": "mcd.pickup.v1",
-            "status": "returned",
-            "queriedAt": "2026-10-17T06:45:05.557Z",
-            "returnedStores": 5,
-            "queriedStores": 5,
-            "hasMore": false,
-            "realSupply": true
-          }
-        ]
-      }
+      "purpose": "grounding"
     },
     {
-      "scenario": "real_purchase_boundary",
-      "taskId": "b6dab35d-28f6-482c-a078-5f4be2fc5838",
-      "state": "rejected",
-      "requestEnvironment": "live",
-      "modelReceipts": [
-        {
-          "id": "20731273-adda-4e64-adda-e8febb569bc6",
-          "runtime": "codex-exec",
-          "startedAt": "2026-10-17T06:45:25.791Z",
-          "completedAt": "2026-10-17T06:45:38.728Z",
-          "outputSha256": "ed2c70e2417f187072ecad9c44857996cdc22acae7075fd21101a88ea5eed8f3",
-          "threadId": "01a1489b-b2e5-7802-9b24-0c69178fab18",
-          "usage": {
-            "input_tokens": 25615,
-            "cached_input_tokens": 21376,
-            "cache_write_input_tokens": 0,
-            "output_tokens": 407,
-            "reasoning_output_tokens": 57
-          },
-          "purpose": "grounding"
-        }
-      ]
-    },
-    {
-      "scenario": "live_model_sandbox",
-      "taskId": "e8c61637-0194-4687-a696-fdbc5f90765a",
-      "state": "completed",
-      "requestEnvironment": "sandbox",
-      "capabilityRef": {
-        "id": "service.fulfillment.sandbox",
-        "version": "1"
+      "id": "1a5927b2-b20d-45f3-b5f3-d26c66174688",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-17T08:15:06.592Z",
+      "completedAt": "2026-10-17T08:15:20.688Z",
+      "outputSha256": "b113ad8b33d37cb991a2f878a550ab0e17c0c4537c2110021c24920416119ae3",
+      "threadId": "01a148ed-cdae-75a2-befb-bac21df17005",
+      "usage": {
+        "input_tokens": 50999,
+        "cached_input_tokens": 25216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 292,
+        "reasoning_output_tokens": 13
       },
-      "planDigest": "6734db1190b0b86839adf84adda426c91782a2190b3d6f634ee25522fca585ac",
-      "modelReceipts": [
-        {
-          "id": "f2b84dcf-e9a2-429e-8103-cd776476a910",
-          "runtime": "codex-exec",
-          "startedAt": "2026-10-17T06:45:39.085Z",
-          "completedAt": "2026-10-17T06:45:53.498Z",
-          "outputSha256": "fe378271258d02093136092188c771bd8d50ac5635ca3637392500879b0d8ee6",
-          "threadId": "01a1489b-e6d4-7381-a1b2-f6b02ab37263",
-          "usage": {
-            "input_tokens": 25796,
-            "cached_input_tokens": 21376,
-            "cache_write_input_tokens": 0,
-            "output_tokens": 330,
-            "reasoning_output_tokens": 0
-          },
-          "purpose": "grounding"
-        },
-        {
-          "id": "9f19743b-bc64-4a05-a8c5-cb1de0b90fb7",
-          "runtime": "codex-exec",
-          "startedAt": "2026-10-17T06:45:53.519Z",
-          "completedAt": "2026-10-17T06:46:07.725Z",
-          "outputSha256": "71979dea16cedeac6bc22ad5c44faf49794a888ab92e45c61f2a2556ed4ed862",
-          "threadId": "01a1489c-1f39-7c73-9052-84aca0e66bcd",
-          "usage": {
-            "input_tokens": 51754,
-            "cached_input_tokens": 25728,
-            "cache_write_input_tokens": 0,
-            "output_tokens": 376,
-            "reasoning_output_tokens": 0
-          },
-          "purpose": "planning"
-        }
-      ],
-      "outcome": {
-        "requestId": "e8c61637-0194-4687-a696-fdbc5f90765a",
-        "requestRevision": 1,
-        "status": "satisfied",
-        "criterionResults": [
-          {
-            "requirementId": "quantity",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          },
-          {
-            "requirementId": "budget",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          },
-          {
-            "requirementId": "sandbox_only",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          },
-          {
-            "requirementId": "delivered",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          },
-          {
-            "requirementId": "independent_verifier",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          },
-          {
-            "requirementId": "goal.delivery",
-            "status": "satisfied",
-            "evidenceRefs": [
-              "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-            ]
-          }
-        ],
-        "reason": "Independent sandbox original-object, amount and goal-specific delivery/refund/cancellation verification passed",
-        "evidenceRefs": [
-          "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-        ],
-        "assessedAt": "2026-10-17T06:46:08.225Z"
-      },
-      "coverage": {
-        "capabilityRef": {
-          "id": "service.fulfillment.sandbox",
-          "version": "1"
-        },
-        "searchedBindingRefs": [
-          {
-            "id": "sandbox.loopback",
-            "version": "1"
-          }
-        ],
-        "observedAt": "2026-10-17T06:45:53.518Z",
-        "realSupply": false,
-        "coverage": []
-      }
+      "purpose": "planning"
     }
   ],
-  "officialReadComparison": {
-    "taskId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-    "request": {
-      "id": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-      "revision": 1,
-      "originalGoal": "只查询并比较上海市虹桥火车站附近麦当劳20杯美式咖啡到店自取的当前报价，总预算500元。允许比较不同规格，注明实际默认配置和未知项，最多查询5家门店。选出当前已查范围内的报价方案。不下单、不付款。",
-      "executionEnvironment": "live",
-      "messages": [
-        {
-          "id": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-          "text": "只查询并比较上海市虹桥火车站附近麦当劳20杯美式咖啡到店自取的当前报价，总预算500元。允许比较不同规格，注明实际默认配置和未知项，最多查询5家门店。选出当前已查范围内的报价方案。不下单、不付款。",
-          "receivedAt": "2026-10-17T06:44:50.012Z"
-        }
-      ],
-      "requirements": [
-        {
-          "id": "quantity",
-          "strength": "hard",
-          "kind": "quantity",
-          "expected": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "structured",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z"
-          }
-        },
-        {
-          "id": "budget",
-          "strength": "hard",
-          "kind": "budget",
-          "expected": {
-            "minor": "50000",
-            "currency": "CNY"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "structured",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z"
-          }
-        },
-        {
-          "id": "read_only",
-          "strength": "hard",
-          "kind": "condition",
-          "expected": {
-            "predicate": "execution.no_order"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "structured",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z"
-          }
-        },
-        {
-          "id": "search_area",
-          "strength": "hard",
-          "kind": "location",
-          "expected": {
-            "ref": "上海市虹桥火车站附近"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "quoted_text",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z",
-            "quote": "上海市虹桥火车站附近"
-          }
-        }
-      ],
-      "successCriteria": [
-        {
-          "id": "default_specifications",
-          "strength": "hard",
-          "kind": "condition",
-          "expected": {
-            "predicate": "comparison.default_specifications"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "quoted_text",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z",
-            "quote": "注明实际默认配置和未知项"
-          }
-        },
-        {
-          "id": "unknowns_disclosed",
-          "strength": "hard",
-          "kind": "condition",
-          "expected": {
-            "predicate": "comparison.unknowns_disclosed"
-          },
-          "provenance": {
-            "source": "pa",
-            "interpretation": "quoted_text",
-            "messageId": "55be4902-d9b2-4c52-bb2b-b15f51173c8f",
-            "receivedAt": "2026-10-17T06:44:50.012Z",
-            "quote": "注明实际默认配置和未知项"
-          }
-        }
-      ]
-    },
-    "plan": {
-      "id": "08d1ca6a-1363-4834-85bf-259494a4b5ce",
-      "version": "3",
-      "requestId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-      "requestRevision": 1,
-      "requestDigest": "5264e64057ba85d5445b2b4204baa7217724c3e7575b45d18b02dfcddff39bd1",
+  "quote": {
+    "feeDisplay": "52.5 元",
+    "estimateTime": "预计 1 分钟内有骑手接单，预计18:17送达",
+    "distance": "23.5公里",
+    "serviceType": "帮取送",
+    "deliveryServiceType": "普通送",
+    "_deliveryFee": 52.5,
+    "_previewTotal": 52.5
+  },
+  "receipts": [
+    {
+      "id": "c96fe106-9464-4ec7-9b93-f1123569a899",
+      "transport": "mcp-stdio",
+      "server": "eigos-ontology",
       "capabilityRef": {
-        "id": "food.pickup.compare",
+        "id": "delivery.quote",
         "version": "1"
       },
       "ontologyRef": {
-        "id": "pickup-offer-comparison",
+        "id": "locations-and-parcel-quotes",
         "version": "1"
       },
-      "candidateId": "fb7798ba-2b02-4640-a36b-e9b910698ce9",
-      "bindingRef": {
-        "id": "mcd.pickup:1450110",
-        "version": "1"
-      },
-      "verifierRef": {
-        "id": "mcd.quote-independent",
-        "version": "1"
-      },
-      "steps": [
-        {
-          "id": "read_pickup_comparison",
-          "operationId": "primary",
-          "actionTypeRef": {
-            "id": "read_pickup_comparison",
-            "version": "1"
-          },
-          "bindingRef": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "capabilityRef": {
-            "id": "food.pickup.compare",
-            "version": "1"
-          },
-          "effect": "read",
-          "input": {
-            "storeCode": "1450110",
-            "productCode": "507411",
-            "quantity": 20,
-            "unit": "杯",
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "inputRefs": [],
-          "dependsOn": []
-        }
+      "tool": "ontology_delivery_quote",
+      "evidenceKind": "live_readonly",
+      "inputDigest": "be8eb024fa191668f83380095a9c3d40482544ecfc47938911ea4d5f682f9f0c",
+      "resultDigest": "d96d885f344c5ea29f09bfc2dd5e6b8de25ec5d4d9572b5a2e75a685ef2ee88d",
+      "observedAt": "2026-10-17T08:15:06.581Z",
+      "sourceCalls": [
+        "get_address_list",
+        "get_address_info",
+        "get_address_info",
+        "delivery_preview"
       ],
-      "details": {
-        "offer": {
-          "id": "98e8da56-b149-40a3-b0cb-16a1081fd53a",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450110"
-          },
-          "merchantName": "麦当劳上海九亭餐厅",
-          "merchantAddress": "九亭镇沪亭北路563-565号",
-          "bindingRef": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450110",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "06:30",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:07.782Z",
-          "expiresAt": "2026-10-17T06:50:07.782Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ],
-          "sourceRevision": "26b96df9c95557fca9ff38133d84d2cd",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        },
-        "store": {
-          "storeCode": "1450110",
-          "storeName": "麦当劳上海九亭餐厅",
-          "address": "九亭镇沪亭北路563-565号",
-          "businessStatus": true,
-          "distance": 2429,
-          "businessStartTime": "06:30",
-          "businessEndTime": "23:00",
-          "reservation": true,
-          "reservationTimeOptions": [
-            {
-              "date": "2026-10-17",
-              "today": true,
-              "reservationOptionText": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-            },
-            {
-              "date": "2026-10-18",
-              "today": false,
-              "reservationOptionText": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-            }
-          ]
-        },
-        "readOnly": true,
-        "underlyingPurchase": "not_started",
-        "comparisonDigest": "4a5691cfbc7bc4da3279135aa9c9a44d15bae7b6a38ac2fd94d897e057ff99b9",
-        "operationalEvidence": {
-          "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
-          "definitionDigest": "c7b48122b86fdb1310b7436fbad9b97083ca4e70b2731b388945c37c0150f344",
-          "sampleCount": 0,
-          "outcomeCounts": {},
-          "taskStateCounts": {},
-          "evidenceLevelCounts": {},
-          "goalKindCounts": {},
-          "firstObservedAt": null,
-          "lastObservedAt": null,
-          "includesUnknownAndCanceled": true,
-          "availabilityProof": false,
-          "automaticPromotion": false
-        }
-      },
-      "completionTarget": "artifact",
-      "requirementChecks": [
-        {
-          "requirementId": "quantity",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ]
-        },
-        {
-          "requirementId": "budget",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ]
-        },
-        {
-          "requirementId": "read_only",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ]
-        },
-        {
-          "requirementId": "search_area",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ]
-        }
-      ],
-      "expiresAt": "2026-10-17T06:50:07.782Z",
-      "definitionDigests": [
-        {
-          "ref": {
-            "id": "food.pickup.compare",
-            "version": "1"
-          },
-          "digest": "2c1412b45b48cf748dde9a8a12801c7e1535957d1ff89751d8a75a953b14da75"
-        }
-      ],
-      "bindingDigests": [
-        {
-          "ref": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "digest": "c7b48122b86fdb1310b7436fbad9b97083ca4e70b2731b388945c37c0150f344"
-        }
-      ],
-      "bindingSnapshots": [
-        {
-          "ref": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "capabilityRef": {
-            "id": "food.pickup.compare",
-            "version": "1"
-          },
-          "providerId": "mcd-cn:1450110",
-          "channelId": "mcd-cn",
-          "merchantId": "1450110",
-          "adapterId": "mcd.readonly.v1",
-          "configurationDigest": "cb10ea05a66e1b1ebdf4b91acc0a1b769444a1c59bae1d3c6bd781e6b0cf6114",
-          "protocol": "mcp",
-          "enabled": true,
-          "verification": {
-            "level": "read_only_probe",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8"
-            ]
-          },
-          "recovery": {
-            "idempotency": "none",
-            "lookup": false
-          },
-          "discovery": {
-            "sourceId": "mcd.pickup.v1",
-            "requestId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-            "requestRevision": 1,
-            "observedAt": "2026-10-17T06:45:05.557Z",
-            "evidenceRefs": [
-              "mcd:60e190d5e7443f29f63b8a2a58d72ce8"
-            ]
-          }
-        }
-      ],
-      "digest": "1f6c472219a40dd05ba82eb5e8cdf0fcbdc2cd39b52019a09e4848ca74e59f9d"
+      "readOnly": true
     },
-    "comparison": {
-      "requestId": "3983c77c-ff6d-43a0-ac05-e58db4ab89af",
-      "requestRevision": 1,
-      "offers": [
-        {
-          "id": "98e8da56-b149-40a3-b0cb-16a1081fd53a",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450110"
-          },
-          "merchantName": "麦当劳上海九亭餐厅",
-          "merchantAddress": "九亭镇沪亭北路563-565号",
-          "bindingRef": {
-            "id": "mcd.pickup:1450110",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450110",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "06:30",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:07.782Z",
-          "expiresAt": "2026-10-17T06:50:07.782Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd"
-          ],
-          "sourceRevision": "26b96df9c95557fca9ff38133d84d2cd",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        },
-        {
-          "id": "fc62e81f-3218-4eb4-ab30-9d4412b989f9",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450427"
-          },
-          "merchantName": "麦当劳上海涞坊路餐厅",
-          "merchantAddress": "九亭镇涞坊路1010号109室",
-          "bindingRef": {
-            "id": "mcd.pickup:1450427",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450427",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(06:44至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "06:30",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:08.327Z",
-          "expiresAt": "2026-10-17T06:50:08.327Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:ba92b734660c7008fe8b7d222b289b8f",
-            "mcd:d7cfd9a18cad2b0df7a308756c6dd1d6",
-            "mcd:1b3140399beb32de1b18ed55cb50dc25"
-          ],
-          "sourceRevision": "1b3140399beb32de1b18ed55cb50dc25",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        },
-        {
-          "id": "c75df32f-0d70-4037-86b3-8bb8dda98ebe",
-          "channelId": "mcd-cn",
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450256"
-          },
-          "merchantName": "麦当劳上海闵行七宝领展餐厅",
-          "merchantAddress": "漕宝路3366号L150B室",
-          "bindingRef": {
-            "id": "mcd.pickup:1450256",
-            "version": "1"
-          },
-          "product": {
-            "sourceProductRef": {
-              "namespace": "mcd-cn:1450256",
-              "id": "507411"
-            },
-            "name": "麦咖啡™冰美式中杯",
-            "specification": {
-              "name": "麦咖啡™冰美式中杯",
-              "defaults": [
-                {
-                  "code": "200002",
-                  "name": "标准",
-                  "key": "0-1",
-                  "quantity": 1
-                },
-                {
-                  "code": "8008",
-                  "name": "不加",
-                  "key": "0-0",
-                  "quantity": 1
-                }
-              ],
-              "rounds": []
-            },
-            "specificationDigest": "5aed76fec5313eda2f7a43a5f5c42c9777cda323bf33611c35e10ac88bbfd6ff"
-          },
-          "quotedQuantity": {
-            "amount": "20",
-            "unit": "杯"
-          },
-          "pricing": {
-            "currency": "CNY",
-            "total": {
-              "minor": "23800",
-              "currency": "CNY"
-            },
-            "productSubtotal": "23800",
-            "fees": {},
-            "kind": "calculated_quote"
-          },
-          "availability": {
-            "storeOpen": true,
-            "capacity": "unknown",
-            "reservation": {
-              "supported": true,
-              "options": [
-                {
-                  "date": "2026-10-17",
-                  "today": true,
-                  "label": "下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                },
-                {
-                  "date": "2026-10-18",
-                  "today": false,
-                  "label": "早餐(07:14至10:15)，午餐(10:44至14:15)，下午茶(14:44至16:45)，夜市(17:14至21:45)，宵夜(22:14至22:46)"
-                }
-              ]
-            },
-            "businessHours": {
-              "start": "07:00",
-              "end": "23:00"
-            }
-          },
-          "observedAt": "2026-10-17T06:45:08.930Z",
-          "expiresAt": "2026-10-17T06:50:08.930Z",
-          "validityBasis": "local_refresh_limit",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:487d691815d7376dabf5e2a69d827c5e",
-            "mcd:e3b24411f82bd5e49c6cb00658015fc5",
-            "mcd:14f982d1f47fc66020b7f8bdb6568057"
-          ],
-          "sourceRevision": "14f982d1f47fc66020b7f8bdb6568057",
-          "unknowns": [
-            "stock/capacity",
-            "ready/collection time",
-            "future price guarantee",
-            "discount eligibility on a future final order"
-          ]
-        }
-      ],
-      "merchantGroups": [
-        {
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450110"
-          },
-          "offerIds": [
-            "98e8da56-b149-40a3-b0cb-16a1081fd53a"
-          ],
-          "channels": [
-            "mcd-cn"
-          ]
-        },
-        {
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450427"
-          },
-          "offerIds": [
-            "fc62e81f-3218-4eb4-ab30-9d4412b989f9"
-          ],
-          "channels": [
-            "mcd-cn"
-          ]
-        },
-        {
-          "merchant": {
-            "namespace": "mcd-cn",
-            "id": "1450256"
-          },
-          "offerIds": [
-            "c75df32f-0d70-4037-86b3-8bb8dda98ebe"
-          ],
-          "channels": [
-            "mcd-cn"
-          ]
-        }
-      ],
-      "productMatches": [
-        {
-          "left": "98e8da56-b149-40a3-b0cb-16a1081fd53a",
-          "right": "fc62e81f-3218-4eb4-ab30-9d4412b989f9",
-          "kind": "same_observed_specification",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:ba92b734660c7008fe8b7d222b289b8f",
-            "mcd:d7cfd9a18cad2b0df7a308756c6dd1d6",
-            "mcd:1b3140399beb32de1b18ed55cb50dc25"
-          ]
-        },
-        {
-          "left": "98e8da56-b149-40a3-b0cb-16a1081fd53a",
-          "right": "c75df32f-0d70-4037-86b3-8bb8dda98ebe",
-          "kind": "same_observed_specification",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:487d691815d7376dabf5e2a69d827c5e",
-            "mcd:e3b24411f82bd5e49c6cb00658015fc5",
-            "mcd:14f982d1f47fc66020b7f8bdb6568057"
-          ]
-        },
-        {
-          "left": "fc62e81f-3218-4eb4-ab30-9d4412b989f9",
-          "right": "c75df32f-0d70-4037-86b3-8bb8dda98ebe",
-          "kind": "same_observed_specification",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:ba92b734660c7008fe8b7d222b289b8f",
-            "mcd:d7cfd9a18cad2b0df7a308756c6dd1d6",
-            "mcd:1b3140399beb32de1b18ed55cb50dc25",
-            "mcd:487d691815d7376dabf5e2a69d827c5e",
-            "mcd:e3b24411f82bd5e49c6cb00658015fc5",
-            "mcd:14f982d1f47fc66020b7f8bdb6568057"
-          ]
-        }
-      ],
-      "coverage": [
-        {
-          "sourceId": "mcd.pickup.v1",
-          "status": "returned",
-          "queriedAt": "2026-10-17T06:45:05.557Z",
-          "returnedStores": 5,
-          "queriedStores": 5,
-          "hasMore": false,
-          "realSupply": true
-        }
-      ]
-    },
-    "acceptance": {
-      "accepted": true,
-      "reason": "Independent quote line/count/total, source references, fixed comparison and no-order scope verified; no fulfillment asserted.",
-      "checks": [
-        {
-          "requirementId": "quantity",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        },
-        {
-          "requirementId": "budget",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        },
-        {
-          "requirementId": "read_only",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        },
-        {
-          "requirementId": "search_area",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        },
-        {
-          "requirementId": "default_specifications",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        },
-        {
-          "requirementId": "unknowns_disclosed",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-            "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-            "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-            "mcd:26b96df9c95557fca9ff38133d84d2cd",
-            "mcd:7dec7c7068170225e4cf687646b2e526"
-          ]
-        }
-      ],
-      "evidenceRefs": [
-        "mcd:60e190d5e7443f29f63b8a2a58d72ce8",
-        "mcd:d9cb7e3ed2ebde22cad3f1340da84306",
-        "mcd:f5123f050f08610a18bdfa3714f9e0a7",
-        "mcd:26b96df9c95557fca9ff38133d84d2cd",
-        "mcd:7dec7c7068170225e4cf687646b2e526"
-      ],
-      "at": "2026-10-17T06:45:25.361Z"
-    }
-  },
-  "sandbox": {
-    "beforeDelivery": {
-      "state": "working",
-      "hasArtifact": false,
-      "businessFacts": [
-        {
-          "intentId": "887c3121-18db-4547-99a9-9d8bbbc0089b",
-          "snapshot": {
-            "order": "confirmed",
-            "payment": "not_started",
-            "fulfillment": "pending",
-            "refund": "not_started"
-          },
-          "sourceVersion": 1,
-          "evidenceRefs": [
-            "sandbox:receipt:57473a3af49104cc6970ebc70eda8a8866a34ce73f46f585eb24e835ed3b49e3"
-          ]
-        },
-        {
-          "intentId": "9d611674-24fb-4d24-9066-721a042a4205",
-          "snapshot": {
-            "order": "confirmed",
-            "payment": "paid",
-            "fulfillment": "pending",
-            "refund": "not_started"
-          },
-          "sourceVersion": 2,
-          "evidenceRefs": [
-            "sandbox:receipt:03039d8f8e9624ab2557043687e0fe638d01bec3a72c07a74263cf85689f5813"
-          ]
-        },
-        {
-          "intentId": "e0a7b739-036f-4d03-98a3-7ac5888aa4e8",
-          "snapshot": {
-            "order": "confirmed",
-            "payment": "paid",
-            "fulfillment": "pending",
-            "refund": "not_started"
-          },
-          "sourceVersion": 2,
-          "evidenceRefs": [
-            "sandbox:receipt:64c7e1231ef8016629680adc998f9313cb6fc1320318ed90d973cb7b010eb23f"
-          ]
-        }
-      ]
-    },
-    "plan": {
-      "id": "f9b19342-7f01-45d2-8651-e3ff07489667",
-      "version": "3",
-      "requestId": "e8c61637-0194-4687-a696-fdbc5f90765a",
-      "requestRevision": 1,
-      "requestDigest": "e809fb6dfba4e4d6f2ba9f883b45d2955005256e0cb5f747e720973a1b9a25ec",
+    {
+      "id": "b13a4c48-7829-444e-ac1e-824e979f1913",
+      "transport": "mcp-stdio",
+      "server": "eigos-ontology",
       "capabilityRef": {
-        "id": "service.fulfillment.sandbox",
+        "id": "delivery.quote",
         "version": "1"
       },
       "ontologyRef": {
-        "id": "sandbox-service-lifecycle",
+        "id": "locations-and-parcel-quotes",
         "version": "1"
       },
-      "candidateId": "2bd52c9a-807d-4608-a69b-fce7c8b14c13",
-      "bindingRef": {
-        "id": "sandbox.loopback",
-        "version": "1"
-      },
-      "verifierRef": {
-        "id": "sandbox.business-independent",
-        "version": "1"
-      },
-      "steps": [
-        {
-          "id": "order",
-          "operationId": "purchase",
-          "actionTypeRef": {
-            "id": "sandbox.place_order",
-            "version": "1"
-          },
-          "bindingRef": {
-            "id": "sandbox.loopback",
-            "version": "1"
-          },
-          "capabilityRef": {
-            "id": "service.fulfillment.sandbox",
-            "version": "1"
-          },
-          "effect": "order",
-          "input": {
-            "quoteId": "65a13193-4c3c-4491-b0c7-21a3062a6604",
-            "quantity": 20,
-            "unit": "杯",
-            "totalMinor": "45000",
-            "currency": "CNY",
-            "payeeId": "sandbox-provider"
-          },
-          "inputRefs": [],
-          "dependsOn": [],
-          "cost": {
-            "minor": "0",
-            "currency": "CNY",
-            "payeeId": "sandbox-provider"
-          }
-        },
-        {
-          "id": "payment",
-          "operationId": "payment",
-          "actionTypeRef": {
-            "id": "sandbox.pay",
-            "version": "1"
-          },
-          "bindingRef": {
-            "id": "sandbox.loopback",
-            "version": "1"
-          },
-          "capabilityRef": {
-            "id": "service.fulfillment.sandbox",
-            "version": "1"
-          },
-          "effect": "payment",
-          "input": {
-            "amountMinor": "45000",
-            "currency": "CNY",
-            "payeeId": "sandbox-provider"
-          },
-          "inputRefs": [
-            {
-              "stepId": "order",
-              "path": "remoteRef",
-              "targetKey": "orderId"
-            }
-          ],
-          "dependsOn": [
-            "order"
-          ],
-          "cost": {
-            "minor": "45000",
-            "currency": "CNY",
-            "payeeId": "sandbox-provider"
-          }
-        },
-        {
-          "id": "delivery",
-          "operationId": "delivery-observation",
-          "actionTypeRef": {
-            "id": "sandbox.await_delivery",
-            "version": "1"
-          },
-          "bindingRef": {
-            "id": "sandbox.loopback",
-            "version": "1"
-          },
-          "capabilityRef": {
-            "id": "service.fulfillment.sandbox",
-            "version": "1"
-          },
-          "effect": "read",
-          "input": {},
-          "inputRefs": [
-            {
-              "stepId": "order",
-              "path": "remoteRef",
-              "targetKey": "orderId"
-            }
-          ],
-          "dependsOn": [
-            "order",
-            "payment"
-          ]
-        }
+      "tool": "ontology_delivery_quote",
+      "evidenceKind": "live_readonly",
+      "inputDigest": "be8eb024fa191668f83380095a9c3d40482544ecfc47938911ea4d5f682f9f0c",
+      "resultDigest": "4a83dae1384c6007e9ce405ee6ea09541d43cddc4900a7fc65fe331c238b995a",
+      "observedAt": "2026-10-17T08:15:23.051Z",
+      "sourceCalls": [
+        "get_address_list",
+        "get_address_info",
+        "get_address_info",
+        "delivery_preview"
       ],
-      "details": {
-        "environment": "sandbox",
-        "quote": {
-          "id": "65a13193-4c3c-4491-b0c7-21a3062a6604",
-          "quantity": 20,
-          "unit": "杯",
-          "totalMinor": "45000",
-          "currency": "CNY",
-          "payeeId": "sandbox-provider",
-          "expiresAt": "2026-10-17T06:50:53.513Z",
-          "deliveryBy": "2026-10-17T06:45:54.514Z",
-          "capacity": 100
-        },
-        "operationalEvidence": {
-          "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
-          "definitionDigest": "bbd9d316884227ce9f97ef34f213079dd1f947af1c99f7e11e9d6c38c2d2ea6e",
-          "sampleCount": 0,
-          "outcomeCounts": {},
-          "taskStateCounts": {},
-          "evidenceLevelCounts": {},
-          "goalKindCounts": {},
-          "firstObservedAt": null,
-          "lastObservedAt": null,
-          "includesUnknownAndCanceled": true,
-          "availabilityProof": false,
-          "automaticPromotion": false
-        }
-      },
-      "completionTarget": "delivery",
-      "requirementChecks": [
-        {
-          "requirementId": "quantity",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "sandbox:quote:fa17eda8e3166d94ff640911c2fe292a5adc1a1debee240f3ed7f9d481ad2c32"
-          ]
-        },
-        {
-          "requirementId": "budget",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "sandbox:quote:fa17eda8e3166d94ff640911c2fe292a5adc1a1debee240f3ed7f9d481ad2c32"
-          ]
-        },
-        {
-          "requirementId": "sandbox_only",
-          "result": "pass",
-          "reason": "Observed fact meets the fixed requirement",
-          "evidenceRefs": [
-            "sandbox:quote:fa17eda8e3166d94ff640911c2fe292a5adc1a1debee240f3ed7f9d481ad2c32"
-          ]
-        }
-      ],
-      "expiresAt": "2026-10-17T06:50:53.513Z",
-      "definitionDigests": [
-        {
-          "ref": {
-            "id": "service.fulfillment.sandbox",
-            "version": "1"
-          },
-          "digest": "8562473c9b68103112e703f277cece26527f5fc3bc26b93be24d7b8679ba07be"
-        }
-      ],
-      "bindingDigests": [
-        {
-          "ref": {
-            "id": "sandbox.loopback",
-            "version": "1"
-          },
-          "digest": "bbd9d316884227ce9f97ef34f213079dd1f947af1c99f7e11e9d6c38c2d2ea6e"
-        }
-      ],
-      "bindingSnapshots": [],
-      "digest": "6734db1190b0b86839adf84adda426c91782a2190b3d6f634ee25522fca585ac"
-    },
-    "outcome": {
-      "requestId": "e8c61637-0194-4687-a696-fdbc5f90765a",
-      "requestRevision": 1,
-      "status": "satisfied",
-      "criterionResults": [
-        {
-          "requirementId": "quantity",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        },
-        {
-          "requirementId": "budget",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        },
-        {
-          "requirementId": "sandbox_only",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        },
-        {
-          "requirementId": "delivered",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        },
-        {
-          "requirementId": "independent_verifier",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        },
-        {
-          "requirementId": "goal.delivery",
-          "status": "satisfied",
-          "evidenceRefs": [
-            "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-          ]
-        }
-      ],
-      "reason": "Independent sandbox original-object, amount and goal-specific delivery/refund/cancellation verification passed",
-      "evidenceRefs": [
-        "sandbox:receipt:d1bc0dc04b284422469bb6a50f60a1ae477ba562ceeef7cfad67a7c602dc3ef7"
-      ],
-      "assessedAt": "2026-10-17T06:46:08.225Z"
-    },
-    "counters": {
-      "quoteCalls": 1,
-      "orderPostCalls": 1,
-      "ordersCreated": 1,
-      "payPostCalls": 1,
-      "charges": 1,
-      "observeCalls": 2
+      "readOnly": true
     }
+  ],
+  "protocolArtifactDigestsMatch": true,
+  "orderCreated": false,
+  "paymentsMade": false,
+  "paReceivedArtifactDigest": "c9d277bb1547919f8aba5db6d9d793fcc3103cfd642ff717dd6c652f85d4140e",
+  "scope": "Actual user PA invocation and readback; real Codex planning; real read-only Meituan Paotui via internal Ontology MCP. No real order or payment.",
+  "pa": {
+    "application": "Grok Bot",
+    "agent": "Monk",
+    "interface": "Existing connected-Mac Python A2A client; not evidence of a native Grok A2A connector",
+    "requestId": "pa-paotui-7a4ada68-0189-4e82-967b-3c3d3c1079ba",
+    "discoverySha256": "c3b14c3231ec127abf912a5fa726f4dfe0cbca2e3391564a1ddcb2e52b534292",
+    "receivedTaskSha256": "047b078824f4bfddffe899f7fde3dc5582cfc48d61f4bca02e7b18a3053da10a",
+    "clientSha256": "9f08c5cee0eb25592c6bce4043b5a59d822737e7b5e360a8bc5b6335b2c5b847",
+    "replyObservedAt": "2026-10-17T16:15:40+08:00",
+    "uiReadbackFile": "pa-readback.txt",
+    "requestIdMatches": true,
+    "taskIdMatches": true,
+    "artifactDigestMatches": true,
+    "uiReadbackSha256": "fcd5bafe4c86573fb108aa2ab6d67ad1e38a8aae7735b1c0e491d07f6a233c81"
   },
-  "limitations": [
-    "MCD evidence is read-only and account/time/scope specific; inventory/capacity and collection time are unknown",
-    "Sandbox order/payment/delivery/refund evidence is not real merchant fulfillment or money",
-    "No deployment, no real merchant order/payment, no claim of universal planning or long-term reliability"
-  ]
+  "sourceProgramSha256": "0a6b0ef9371bcbf9a6a5cecc20f3efe1b6220174dcffed365d91fc9949d407ba",
+  "requirementChecks": [
+    {
+      "requirementId": "read_only",
+      "result": "pass",
+      "reason": "Observed fact meets the fixed requirement",
+      "evidenceRefs": [
+        "meituan:read:a144d6947be5498e6c70665c34a9b3b9ceb1702353478180aab3d3d4588fccbe"
+      ]
+    },
+    {
+      "requirementId": "goods_weight",
+      "result": "pass",
+      "reason": "Observed fact meets the fixed requirement",
+      "evidenceRefs": [
+        "meituan:read:a144d6947be5498e6c70665c34a9b3b9ceb1702353478180aab3d3d4588fccbe"
+      ]
+    }
+  ],
+  "planSteps": [
+    {
+      "id": "quote",
+      "bindingRef": {
+        "id": "meituan:delivery.quote",
+        "version": "1"
+      },
+      "capabilityRef": {
+        "id": "delivery.quote",
+        "version": "1"
+      },
+      "effect": "read",
+      "dependsOn": []
+    }
+  ],
+  "acceptance": {
+    "accepted": true,
+    "reason": "Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted",
+    "checks": [
+      {
+        "requirementId": "read_only",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "meituan:read:a144d6947be5498e6c70665c34a9b3b9ceb1702353478180aab3d3d4588fccbe"
+        ]
+      },
+      {
+        "requirementId": "goods_weight",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "meituan:read:a144d6947be5498e6c70665c34a9b3b9ceb1702353478180aab3d3d4588fccbe"
+        ]
+      }
+    ],
+    "evidenceRefs": [
+      "meituan:read:a144d6947be5498e6c70665c34a9b3b9ceb1702353478180aab3d3d4588fccbe"
+    ],
+    "at": "2026-10-17T08:15:23.061Z"
+  },
+  "recordedAt": "2026-10-17T08:16:47.619986+00:00",
+  "engineeringRegression": {
+    "typecheck": "passed",
+    "unitTests": 133,
+    "unitTestFailures": 0,
+    "build": "passed",
+    "independentProcessE2E": 7,
+    "independentProcessE2EFailures": 0,
+    "scope": "Explicit model/provider fixtures, separate from live PA/source acceptance"
+  },
+  "earlierFailedLiveRun": {
+    "taskId": "954ab3ea-f4dd-49f5-9e98-c66c8424f426",
+    "state": "rejected",
+    "cause": "Priced goods weight was not mapped into evidenced candidate quantity; quantity hard requirement remained unknown",
+    "fix": "Map matching read receipt goods.weightKg into priced quantity in 公斤; reject mismatched goods/weight/service and missing totals",
+    "countsAsPassed": false
+  }
 }

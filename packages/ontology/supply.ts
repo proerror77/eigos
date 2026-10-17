@@ -1,12 +1,6 @@
 import { z } from 'zod';
 import { moneySchema, refSchema, type ProviderBinding } from './execution.js';
 
-export const pickupQuerySchema = z.object({
-  city: z.string().trim().min(1).max(50), locationKeyword: z.string().trim().min(1).max(100),
-  productQuery: z.string().trim().min(1).max(100).describe('Product search words, e.g. 美式. Quantity is a separate field; actual specifications come from provider detail.'), quantity: z.number().int().min(1).max(100), unit: z.enum(['杯', '份']),
-  mode: z.literal('pickup'), allowAlternatives: z.boolean(), maxStores: z.number().int().min(1).max(5).default(3),
-}).strict();
-export type PickupQuery = z.infer<typeof pickupQuerySchema>;
 export interface SupplyIdentity { namespace: string; id: string }
 export interface ProductVariant {
   sourceProductRef: SupplyIdentity; name: string; specification: Record<string, unknown>;

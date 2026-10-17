@@ -8,7 +8,7 @@ const schema = z.object({
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_ORDERS_ENABLED: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
-  EIGOS_MCD_TOKEN_FILE: z.string().optional(),
+  EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
   EIGOS_SANDBOX_TOKEN_FILE: z.string().optional(),
@@ -65,7 +65,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (new URL(origin).origin !== origin) throw new Error('ALLOWED_ORIGINS must contain exact origins, without trailing slashes');
   }
   if (c.EIGOS_PAOTUI_SKILL_DIR && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal Paotui credentials are restricted to local development');
-  if (c.EIGOS_MCD_TOKEN_FILE && (!isAbsolute(c.EIGOS_MCD_TOKEN_FILE) || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal MCD credentials require an absolute private token file and loopback development');
+  if (c.EIGOS_ONTOLOGY_AUDIT_PATH && (!c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_ONTOLOGY_AUDIT_PATH))) throw new Error('Ontology audit requires configured Paotui and an absolute private path');
   if (c.EIGOS_ACTION_SANDBOX === 'true' && (c.EIGOS_COORDINATOR !== 'codex' || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Action sandbox requires the local ontology backend');
   if (!!c.EIGOS_SANDBOX_PROVIDER_URL !== !!c.EIGOS_SANDBOX_TOKEN_FILE) throw new Error('Sandbox provider requires both endpoint and private token file');
   if (c.EIGOS_SANDBOX_PROVIDER_URL) {

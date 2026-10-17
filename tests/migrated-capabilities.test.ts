@@ -37,7 +37,7 @@ test('document generation uses the common action runtime, resumes the same task 
 
 test('Paotui read capabilities preserve private preparation and execute through the ontology backend', async () => {
   const calls: string[] = [];
-  const result = { source: 'meituan', previewOnly: true, orderCreated: false, route: { sender: 'PRIVATE_ADDRESS_MARKER', recipient: '另一处授权地址' }, quote: { _previewTotal: '52.50', estimateTime: '预计时间' } };
+  const result = { source: 'meituan', previewOnly: true, orderCreated: false, goods: { name: '文件', category: '文件', weightKg: 1 }, service: 'ordinary', route: { sender: 'PRIVATE_ADDRESS_MARKER', recipient: '另一处授权地址' }, quote: { _previewTotal: '52.50', estimateTime: '预计时间' } };
   const reader = { query: async (q: { action: string }) => { calls.push(q.action); return result; } };
   const cap = PAOTUI_READ_CAPABILITIES[1]!; const adapter = new PaotuiReadAdapter(1, reader);
   const catalog = new ExecutionCatalog([cap], [PAOTUI_READ_BINDINGS[1]!], [adapter]);
