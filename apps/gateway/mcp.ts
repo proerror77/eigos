@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, type Principal } from '../../packages/core/domain.js';
+import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 
 function result(action: () => unknown): CallToolResult {
@@ -46,5 +46,10 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, ({ taskId }) => result(() => tasks.cancel(principal, taskId)));
+  if (tasks.services().some(s => s.id === 'eigos.delegate')) {
+    server.registerTool('reconcile_task', { description: 'Query the original owned business operation after an unknown result; never place a replacement order.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(() => tasks.reconcile(principal, taskId, requestId)));
+    server.registerTool('revoke_task_authorization', { description: 'Revoke permits for future dispatch. In-flight facts still require reconciliation; this does not reverse an order or payment.', inputSchema: z.object({ taskId: taskIdSchema, requestId: requestIdSchema }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, ({ taskId, requestId }) => result(() => tasks.revokeAuthorization(principal, taskId, requestId)));
+    if (tasks.services().some(s => s.id === 'eigos.aftersales')) server.registerTool('request_remediation', { description: 'Create a separate linked cancellation/refund task for a verified owned operation. A request or application is not proof of cancellation/refund success. Only explicitly configured sandbox effects are enabled.', inputSchema: remediationSchema, annotations: { idempotentHint: true, destructiveHint: false } }, args => result(() => tasks.requestRemediation(principal, args)));
+  }
   return server;
 }

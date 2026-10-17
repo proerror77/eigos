@@ -20,6 +20,9 @@ export class DomainError extends Error {
     super(message);
   }
 }
+export class ReplanRequired extends DomainError {
+  constructor(message: string) { super('CONFLICT', message); }
+}
 
 export function requireScope(principal: Principal, scope: Scope): void {
   if (!principal.scopes.includes(scope)) throw new DomainError('FORBIDDEN', `Required scope: ${scope}`);
@@ -36,18 +39,22 @@ const lifeSubmitSchema = z.object({
   service: z.literal(LIFE_INTAKE), goal: z.string().min(1).max(10000).refine(value => !!value.trim()),
   domain: z.string().trim().min(1).max(80).optional(), requestId: requestIdSchema,
 }).strict();
+export const remediationSchema = z.object({ originalTaskId: taskIdSchema, action: z.enum(['cancel', 'refund']), reason: z.string().trim().min(1).max(1000), requestId: requestIdSchema }).strict();
+const afterSalesSubmitSchema = remediationSchema.extend({ service: z.literal('eigos.aftersales') });
 export const ontologySubmitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
-}).strict(), lifeSubmitSchema]);
+  executionEnvironment: z.enum(['live', 'sandbox']).optional(),
+}).strict(), lifeSubmitSchema, afterSalesSubmitSchema]);
 const serviceSubmitSchema = z.object({
   service: z.enum(['brief.prepare', 'agent.execute', 'meituan.paotui.read', 'meituan.paotui.order', 'eigos.delegate']).default('brief.prepare'),
   goal: z.string().trim().min(1).max(10_000),
   deliverable: z.string().trim().min(1).max(4_000).optional(),
   requestId: requestIdSchema,
   requirements: requirementsSchema.optional(),
+  executionEnvironment: z.enum(['live', 'sandbox']).optional(),
 }).strict();
-export const submitSchema = z.union([lifeSubmitSchema, serviceSubmitSchema, z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), datasetId: datasetSchema, requestId: requestIdSchema }).strict(),
+export const submitSchema = z.union([lifeSubmitSchema, afterSalesSubmitSchema, serviceSubmitSchema, z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), datasetId: datasetSchema, requestId: requestIdSchema }).strict(),
   z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), fileName: z.string().min(1).max(200).regex(/^[^/\\\x00-\x1f]+\.csv$/i), requestId: requestIdSchema }).strict()]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,
@@ -72,6 +79,7 @@ export interface Job {
   service: 'brief.prepare' | 'agent.execute' | 'meituan.paotui.read' | 'meituan.paotui.order' | typeof PILOT | 'eigos.delegate' | typeof LIFE_INTAKE;
   intake?: LifeRequest;
   delegation?: Delegation;
+  afterSales?: Omit<import('../ontology/actions.js').AfterSalesCase, 'owner'>[];
   executionMode?: 'worker' | 'capability' | 'intake';
   pilot?: PilotState;
   goal: string;

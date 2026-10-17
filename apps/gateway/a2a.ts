@@ -37,7 +37,7 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.intake ? { intake: job.intake } : {}), ...(job.pilot ? { pilot: job.pilot } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { service: job.service, ...(job.intake ? { intake: job.intake } : {}), ...(job.pilot ? { pilot: job.pilot } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 

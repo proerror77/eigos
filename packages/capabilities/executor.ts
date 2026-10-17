@@ -24,6 +24,7 @@ export interface RunEvidence {
   model?: string;
   threadId?: string;
   usage?: Record<string, number>;
+  purpose?: 'grounding' | 'planning' | 'document';
 }
 export interface ExecutionResult {
   output: z.infer<typeof decisionSchema>;

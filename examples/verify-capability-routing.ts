@@ -103,7 +103,7 @@ try {
   console.log(JSON.stringify({ scenario: 'providers', progress: 'planning' }));
   const planned = await new CodexReasoner(new CodexExecutor(config.EIGOS_CODEX_BIN, 120000)).plan({ request, capability, resolution: { candidates: resolution.candidates, scope: resolution.scope } }, new AbortController().signal);
   const selected = resolution.candidates.find(c => c.id === planned.decision.candidateId); assert(selected);
-  const plan = proposePlan(request, capability, selected, planned.decision); assert.equal(plan.bindingRef.id, 'fixture.on-time');
+  const plan = proposePlan(catalog, 'fixture', request, capability, selected, planned.decision); assert.equal(plan.bindingRef.id, 'fixture.on-time');
   const row = { scenario: 'providers', state: 'PLAN_VALIDATED', bindingRef: plan.bindingRef, modelRuns: 1, receipts: [planned.evidence], summary: planned.decision.message };
   summary.push(row); transcript.push({ scenario: 'providers', request, candidates: resolution.candidates, proposal: planned.decision, plan }); console.log(JSON.stringify(row));
 } finally {

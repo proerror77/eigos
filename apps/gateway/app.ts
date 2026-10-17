@@ -41,10 +41,13 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const store = new JobStore(config.DATABASE_PATH);
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   const pilot = config.EIGOS_CSV_PILOT === 'true' && config.EIGOS_COORDINATOR !== 'codex' ? new PilotCommands() : undefined;
-  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined });
+  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined, mcdTokenFile: config.EIGOS_MCD_TOKEN_FILE,
+    documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
+    sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
   const tasks = new TaskService(store, {
     catalog,
     coordinator: config.EIGOS_COORDINATOR === 'codex',
+    allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true',
     lifeIntake: config.EIGOS_LIFE_INTAKE === 'true',
     csvInputDirectory: config.EIGOS_CSV_INPUT_DIR,
     agent: config.EIGOS_EXECUTOR === 'codex',
@@ -128,6 +131,18 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_authorization' }); return; }
       next(error);
+    }
+  });
+  for (const action of ['reconcile', 'revoke-authorization', 'aftersales'] as const) app.post(`/tasks/:taskId/${action}`, authenticate, (req, res, next) => {
+    try {
+      const p = principals.get(req)!; const id = String(req.params.taskId);
+      const task = action === 'aftersales' ? tasks.requestRemediation(p, { ...req.body, originalTaskId: id })
+        : action === 'reconcile' ? tasks.reconcile(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId)
+        : tasks.revokeAuthorization(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId);
+      res.json({ task });
+    } catch (error) {
+      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
+      if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_business_action' }); return; } next(error);
     }
   });
 

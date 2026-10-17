@@ -22,7 +22,7 @@ EIGOS 的执行网络原型采用 **一个仓库、Gateway 与 Worker 两个独�
 - **`brief.prepare`**：固定流程整理任务说明，`execution: not_started`，不执行说明中的业务。
 - **`agent.execute`（需显式启用）**：通过本地已登录的 Codex 运行真实模型。模型读取目标和完整任务历史，自主提出必要问题，收到答复后生成完整 Markdown 文档／计划。它不具备外部研究、预订、发送或付款工具；生成文档是本阶段实际交付的服务。
 
-通用委托主路径已改用新的 Ontology + LLM 后端：分离业务能力与提供者，以固定需求和候选事实生成计划，事务外执行并独立验收。当前适配器仍是本地说明与 CSV，现实服务发现和履约尚待接入。阶段目标见 [后端实施目标](docs/backend-implementation-goals.md)。
+通用委托使用 Ontology + LLM v3：分离能力与提供者，以固定需求和真实候选事实形成短计划，事务外执行、原操作对账并独立验收。已接官方麦当劳只读门店/规格/计价，以及文档、美团地址/POI/运费和 CSV；异步接单、模拟付款、交付及售后恢复由独立沙箱提供方验证。现实下单、付款和履约未运行。阶段目标见 [后端实施目标](docs/backend-implementation-goals.md)。
 
 2026-10-15 已完成一次 **Grok Bot → A2A → EIGOS 真实执行 Agent** 的提问、回复和交付，未使用 MCP 桥接。见 [真实联调证据](docs/evidence/grok-a2a-2026-10-15/README.md)及[最终交付物](docs/evidence/grok-a2a-2026-10-15/deliverable.md)。这是通过 Grok Bot 已有的电脑执行能力发出 A2A 请求，不是对其原生 A2A 连接器的声明。
 
@@ -148,4 +148,6 @@ CSV 试点现支持专用目录内的真实 UTF-8 CSV 文件（固定四个必�
 
 ## Ontology + LLM 后端
 
-`eigos.delegate` 使用 `ontology-execution-v2`。ServiceCapability 与多个 ProviderBinding 分开；任务保存原文、要求、来源和 revision；计划固定输入和绑定版本。旧执行注册表、事务内 start 和旧计划迁移已移除。旧委托只读；新计划不静默换供应方。前端 Agent、认证及协议接入保留，既有跑腿/文档专用原型仍待迁入。当前实现、边界与验证见 [后端说明](docs/registered-capabilities.md)。
+`eigos.delegate` 使用 `ontology-execution-v3`。任务保留原文/要求/成功条件及来源；计划固定定义、绑定和配置摘要。ActionIntent、ExecutionAttempt、Observation 与许可分别保存，未知业务结果不重放，取消不抹掉迟到事实。售后建立独立关联任务，退款受理不等于到账。v1/v2 旧委托只读，前端 Agent/认证/协议接入保留；旧专用执行器不会作为 fallback。当前实现与证据见 [后端说明](docs/registered-capabilities.md)。
+
+完整工程验证：`npm run check`、`npm test`、`npm run test:e2e`、`git diff --check`。真实模型+官方只读来源另行显式运行，见 [E2E 证据](docs/evidence/service-network-e2e-2026-10-17/README.md)；CI 不使用个人凭据或现实交易。

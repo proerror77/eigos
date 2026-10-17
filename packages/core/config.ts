@@ -8,6 +8,11 @@ const schema = z.object({
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_ORDERS_ENABLED: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
+  EIGOS_MCD_TOKEN_FILE: z.string().optional(),
+  EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
+  EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
+  EIGOS_SANDBOX_TOKEN_FILE: z.string().optional(),
+  EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
@@ -60,6 +65,13 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (new URL(origin).origin !== origin) throw new Error('ALLOWED_ORIGINS must contain exact origins, without trailing slashes');
   }
   if (c.EIGOS_PAOTUI_SKILL_DIR && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal Paotui credentials are restricted to local development');
+  if (c.EIGOS_MCD_TOKEN_FILE && (!isAbsolute(c.EIGOS_MCD_TOKEN_FILE) || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal MCD credentials require an absolute private token file and loopback development');
+  if (c.EIGOS_ACTION_SANDBOX === 'true' && (c.EIGOS_COORDINATOR !== 'codex' || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Action sandbox requires the local ontology backend');
+  if (!!c.EIGOS_SANDBOX_PROVIDER_URL !== !!c.EIGOS_SANDBOX_TOKEN_FILE) throw new Error('Sandbox provider requires both endpoint and private token file');
+  if (c.EIGOS_SANDBOX_PROVIDER_URL) {
+    const target = new URL(c.EIGOS_SANDBOX_PROVIDER_URL);
+    if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_SANDBOX_TOKEN_FILE!)) throw new Error('Sandbox provider must be an explicit loopback origin with an absolute credential file');
+  }
   return c;
 }
 

@@ -208,6 +208,10 @@ CSV 试点也支持 `fileName` 替代 `datasetId`，仅从显式配置的 `EIGOS
 
 ## Ontology/OAG 委托入口
 
-开启本地 `EIGOS_COORDINATOR=codex` 后，A2A 文本新任务默认进入 `ontology-execution-v2` 后端：LLM 解释需求，Resolver 取得提供者事实，LLM 提议计划，程序校验并由 Worker 执行/验收。当前支持本地 brief.prepare 和全量 CSV；SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED、REJECTED 等协议状态保留。AUTH_REQUIRED 通过原任务授权 API 续接，详见 [CSV 本体闭环](csv-ontology-delegation.md)。`service`、可选 requirements 等是 EIGOS 业务字段，不是 A2A 标准必填字段。
+开启本地 `EIGOS_COORDINATOR=codex` 后，MCP/A2A 默认进入 `ontology-execution-v3`：LLM 解释需求 → Resolver 取得事实 → LLM 短计划 → 程序许可/约束检查 → Worker 动作/原键对账 → 独立验收。配置可启用文档、全量 CSV、美团只读和麦当劳报价比较；SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED、REJECTED 等协议状态保留。`service`、可选 requirements/executionEnvironment 是 EIGOS 业务字段，非 A2A 标准必填字段。
 
-新增能力分别登记 ServiceCapability、ProviderBinding 和 ExecutionAdapter；记录见 metadata.delegation.request/resolution/plan/acceptance，报价在 plan.quote。旧委托只读，不兼容或迁移旧执行计划。现有 Agent Python 客户端无需改代码，旧业务专用入口仍待迁入。详情见 [后端说明](registered-capabilities.md)。
+新增能力分别登记 ServiceCapability、ProviderBinding、适配器与可选 DiscoverySource。metadata.delegation 包含 request/successCriteria/resolution/plan/actions/businessFacts/authorizationBudget/outcome，报价在 plan.quote。现有 Agent Python 客户端的原委托/模拟确认参数保留；旧执行计划不兼容或迁移。
+
+新增 MCP 工具：reconcile_task 查询原操作，revoke_task_authorization 撤销未来派发许可，request_remediation（有对应适配器时公布）建立关联售后 Task。HTTP 同源入口为 `/tasks/{id}/reconcile`、`/revoke-authorization`、`/aftersales`，均要求任务身份和 tasks:write。售后也可用 A2A data `{service:"eigos.aftersales",originalTaskId,action:"refund"或"cancel",reason}`，messageId 仍为幂等键。
+
+真实/default-environment 请求不会检索沙箱履约。工程沙箱必须显式 executionEnvironment=sandbox、loopback 配置和准确许可。批准格式为 action=approve_plan、requestId、planDigest、allowedEffects、maxAmount（minor/currency）、payeeIds、expiresAt、environment=sandbox；`confirm_simulated_payment` 仍仅用于本地 CSV。没有任何许可可开启现实付款；聊天“yes”不是授权。更多约束见 [后端说明](registered-capabilities.md)。

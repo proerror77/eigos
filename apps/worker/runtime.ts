@@ -11,6 +11,7 @@ import { Worker } from './worker.js';
 export function createWorker(config: Config, overrides: {
   reasoner?: Reasoner; store?: JobStore; executor?: Executor; orderProvider?: PaotuiOrderProvider;
   pilotFactory?: (store: JobStore) => AuditPilot;
+  timing?: { leaseMs?: number; pollMs?: number; timeoutMs?: number };
 } = {}) {
   if (!overrides.store && config.DATABASE_PATH === ':memory:') throw new Error('Separate Gateway and Worker require a shared database file');
   const store = overrides.store ?? new JobStore(config.DATABASE_PATH);
@@ -20,12 +21,15 @@ export function createWorker(config: Config, overrides: {
     const paotui = !ontologyBackend && config.EIGOS_PAOTUI_SKILL_DIR ? new LocalPaotuiReader(config.EIGOS_PAOTUI_SKILL_DIR, config.EIGOS_PAOTUI_ORDERS_ENABLED === 'true') : undefined;
     orders = paotui ? new PaotuiOrders(config.DATABASE_PATH === ':memory:' ? ':memory:' : config.DATABASE_PATH + '.paotui', overrides.orderProvider ?? paotui, config.EIGOS_PAOTUI_ORDERS_ENABLED === 'true') : undefined;
     const pilot = !ontologyBackend && config.EIGOS_CSV_PILOT === 'true' ? (overrides.pilotFactory?.(store) ?? new AuditPilot(store)) : undefined;
-    const catalog = createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined });
+    const catalog = createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined, mcdTokenFile: config.EIGOS_MCD_TOKEN_FILE,
+      documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? (config.EIGOS_EXECUTOR === 'codex' ? new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS) : undefined), paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
+      sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
     const worker = new Worker(store, {
-      coordinator: config.EIGOS_COORDINATOR === 'codex' ? new Coordinator(store, overrides.reasoner ?? new CodexReasoner(new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS)), catalog) : undefined,
+      coordinator: config.EIGOS_COORDINATOR === 'codex' ? new Coordinator(store, overrides.reasoner ?? new CodexReasoner(new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS)), catalog, { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }) : undefined,
       executor: ontologyBackend ? undefined : overrides.executor ?? (config.EIGOS_EXECUTOR === 'codex' ? new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS) : undefined),
       paotui, paotuiOrders: orders,
       maintenance: pilot ? () => pilot.tick() : undefined,
+      ...overrides.timing,
     });
     worker.start();
     return { worker, close: async () => { await worker.close(); orders?.close(); if (!overrides.store) store.close(); } };

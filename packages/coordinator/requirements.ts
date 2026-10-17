@@ -15,8 +15,11 @@ function quantityMatches(quote: string, amount: string, unit: string): boolean {
   }
   return false;
 }
-export function groundRequirements(request: ServiceRequest, json: string): ServiceRequest {
+export function groundRequirements(request: ServiceRequest, json: string, outcomePredicates: string[] = []): ServiceRequest {
   const result = structuredClone(request);
+  for (const requirement of [...result.requirements]) if (requirement.kind === 'condition' && outcomePredicates.includes(requirement.expected.predicate)) {
+    result.successCriteria = [...(result.successCriteria ?? []), requirement]; result.requirements = result.requirements.filter(r => r.id !== requirement.id);
+  }
   for (const item of extractionSchema.parse(JSON.parse(json))) {
     const message = request.messages.find(m => m.id === item.messageId);
     if (!message || !message.text.includes(item.quote)) throw new DomainError('CONFLICT', 'Requirement provenance is not an exact quote from this request');
@@ -29,13 +32,15 @@ export function groundRequirements(request: ServiceRequest, json: string): Servi
       if (!moneyMatches) throw new DomainError('CONFLICT', 'Budget interpretation differs from its source quote');
     }
     if (r.kind === 'deadline' && r.expected.original !== item.quote) throw new DomainError('CONFLICT', 'Deadline must retain its original expression');
-    const existing = result.requirements.find(x => x.id === r.id || (x.kind === r.kind && r.kind !== 'condition'));
+    const existing = [...result.requirements, ...(result.successCriteria ?? [])].find(x => x.id === r.id || (x.kind === r.kind && r.kind !== 'condition'));
     if (existing) {
       if (existing.kind !== r.kind || existing.strength !== r.strength || digest(existing.expected) !== digest(r.expected)) throw new DomainError('CONFLICT', 'Model attempted to replace a fixed requirement');
       continue;
     }
-    result.requirements.push({ ...r, provenance: { source: 'pa', interpretation: 'quoted_text', messageId: message.id, receivedAt: message.receivedAt, quote: item.quote } });
+    const sourced = { ...r, provenance: { source: 'pa' as const, interpretation: 'quoted_text' as const, messageId: message.id, receivedAt: message.receivedAt, quote: item.quote } };
+    if (r.kind === 'condition' && outcomePredicates.includes(r.expected.predicate)) result.successCriteria = [...(result.successCriteria ?? []), sourced];
+    else result.requirements.push(sourced);
   }
-  if (result.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
+  if (result.requirements.length + (result.successCriteria?.length ?? 0) > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
   return result;
 }

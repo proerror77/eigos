@@ -46,7 +46,7 @@ before(async () => {
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
-    EIGOS_COORDINATOR: 'disabled', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
+    EIGOS_COORDINATOR: 'disabled', EIGOS_ACTION_SANDBOX: 'false', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
     EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_LIFE_INTAKE: 'false',
   };
   gateway = createApp(config, verify);

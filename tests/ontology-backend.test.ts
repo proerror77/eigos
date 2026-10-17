@@ -195,14 +195,17 @@ test('lease loss preserves late observations and never replays a started action'
   let calls = 0;
   const adapter = fixtureAdapter('one', {}, { execute: async ctx => { calls++; started(); await waiting; return { artifact: { id: randomUUID(), name: 'fixture', data: { goal: ctx.request.originalGoal, deliverable: 'Late observed result', execution: 'completed' } }, facts: {}, evidenceRefs: ['fixture-late'] }; } });
   const b = backend(new ExecutionCatalog([fixtureCapability], [fixtureBinding('one')], [adapter]), reasoner(r => interpretation(r, 'fixture.supply', {})));
+  let running: Promise<import('../packages/core/domain.js').Job> | undefined;
   try {
-    const job = b.submit(); const running = b.run(); await dispatched;
-    assert.equal(b.store.claim(['eigos.delegate'], 15000, Date.now() + 30000), undefined);
-    assert.equal(b.store.get(owner, job.id).state, 'failed'); release(); await running;
-    const failed = b.store.get(owner, job.id); assert.equal(failed.artifact, undefined); assert.equal(calls, 1);
-    assert.equal(b.store.observations(owner, failed.delegation!.intentId!).length, 1);
-    assert.throws(() => b.store.dispatchIntent(owner, failed.delegation!.intentId!), /automatic replay/);
-  } finally { release(); b.store.close(); }
+    const job = b.submit(); running = b.run(); await dispatched;
+    const recovery = b.store.claim(['eigos.delegate'], 15000, Date.now() + 30000); assert(recovery);
+    assert.equal(b.store.get(owner, job.id).state, 'working'); release(); await running;
+    const pending = b.store.get(owner, job.id); assert.equal(pending.artifact, undefined); assert.equal(calls, 1);
+    assert.equal(b.store.observations(owner, pending.delegation!.intentId!).length, 1);
+    await b.coordinator.run(recovery, new AbortController().signal);
+    assert.equal(b.store.get(owner, job.id).state, 'completed'); assert.equal(calls, 1);
+    assert.throws(() => b.store.dispatchIntent(owner, pending.delegation!.intentId!), /automatic replay/);
+  } finally { release(); await running?.catch(() => {}); b.store.close(); }
 });
 
 test('fixed plan cannot switch to a different binding version or a disabled provider at execution', async () => {
@@ -232,11 +235,11 @@ test('damaged private input is rejected after restart and cannot deliver a repor
     b.submit(); const ready = await b.run(); const plan = ready.delegation!.plan!;
     b.tasks.authorize(principal, ready.id, { requestId: 'approve', action: 'confirm_simulated_payment', quoteId: plan.quote!.id, quoteDigest: plan.quote!.digest });
     const intent = b.store.intent(owner, ready.delegation!.intentId!); const corrupt = intent.privateData as { base64: string }; corrupt.base64 = Buffer.from('damaged').toString('base64');
-    b.store.close(); const db = new DatabaseSync(path); db.prepare('UPDATE execution_intents SET private_data=? WHERE id=?').run(JSON.stringify(corrupt), intent.id); db.close();
+    b.store.close(); const db = new DatabaseSync(path); db.prepare('UPDATE action_intents SET private_data=? WHERE id=?').run(JSON.stringify(corrupt), intent.id); db.close();
     reopened = new JobStore(path); const claim = reopened.claim(['eigos.delegate'], 15000)!;
     await assert.rejects(new ActionRuntime(reopened, catalog).run(claim, new AbortController().signal), /snapshot changed/);
-    assert.equal(reopened.get(owner, ready.id).artifact, undefined); assert.equal(reopened.observations(owner, intent.id).length, 1);
-    assert.throws(() => reopened!.dispatchIntent(owner, intent.id), /automatic replay/);
+    assert.equal(reopened.get(owner, ready.id).artifact, undefined); assert.equal(reopened.observations(owner, intent.id).length, 0);
+    assert.equal(reopened.attempts(owner, intent.id).length, 0);
   } finally { if (reopened) reopened.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

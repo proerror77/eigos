@@ -81,7 +81,7 @@ test('altered plan cannot be approved; cancellation of a prepared plan prevents 
     assert.equal((await f.approve(ready)).status, 409);
     const next = await f.send('审计 sample.csv'); const pending = await f.wait(next.result.task.id, 'auth-required');
     assert(!(await f.rpc('CancelTask', { id: pending.id })).error); assert.equal((await f.approve(pending)).status, 409);
-    assert.equal(f.gateway.store.intent(owner, pending.delegation!.intentId!).state, 'ready');
+    assert.equal(f.gateway.store.intent(owner, pending.delegation!.intentId!).state, 'canceled_before_dispatch');
     assert.equal(f.gateway.store.observations(owner, pending.delegation!.intentId!).length, 0);
   } finally { await f.close(); }
 });

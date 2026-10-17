@@ -4,10 +4,8 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
-
-export interface LocalActionIntent {
-  id: string; jobId: string; planDigest: string; state: 'ready' | 'dispatching' | 'observed'; privateData: unknown;
-}
+import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSalesCase } from '../ontology/actions.js';
+import { digest } from './delegation.js';
 
 export interface ListFilter {
   limit: number;
@@ -17,7 +15,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -51,13 +49,30 @@ export class JobStore {
           fingerprint TEXT NOT NULL, response TEXT NOT NULL,
           PRIMARY KEY (owner, operation, request_id)
         );
-        CREATE TABLE IF NOT EXISTS execution_intents (
-          id TEXT PRIMARY KEY, owner TEXT NOT NULL, job_id TEXT NOT NULL, plan_digest TEXT NOT NULL,
-          state TEXT NOT NULL, private_data TEXT NOT NULL, UNIQUE(owner,job_id)
+        CREATE TABLE IF NOT EXISTS action_intents (
+          id TEXT PRIMARY KEY, owner TEXT NOT NULL, job_id TEXT NOT NULL, business_key TEXT NOT NULL,
+          state TEXT NOT NULL, private_data TEXT NOT NULL, body TEXT NOT NULL, UNIQUE(owner,business_key)
         );
-        CREATE TABLE IF NOT EXISTS execution_observations (
-          id TEXT PRIMARY KEY, intent_id TEXT NOT NULL, owner TEXT NOT NULL, observed_at TEXT NOT NULL, body TEXT NOT NULL
+        CREATE INDEX IF NOT EXISTS action_jobs ON action_intents(owner,job_id);
+        CREATE TABLE IF NOT EXISTS action_attempts (
+          id TEXT PRIMARY KEY, owner TEXT NOT NULL, intent_id TEXT NOT NULL, body TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS action_intent_versions (intent_id TEXT NOT NULL, owner TEXT NOT NULL, plan_digest TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(intent_id,plan_digest));
+        CREATE TABLE IF NOT EXISTS action_observations (
+          id TEXT PRIMARY KEY, owner TEXT NOT NULL, intent_id TEXT NOT NULL, event_id TEXT NOT NULL,
+          attempt_id TEXT NOT NULL, received_at TEXT NOT NULL, digest TEXT NOT NULL, applied INTEGER NOT NULL, body TEXT NOT NULL,
+          UNIQUE(owner,intent_id,event_id)
+        );
+        CREATE TABLE IF NOT EXISTS plan_grants (id TEXT PRIMARY KEY, owner TEXT NOT NULL, job_id TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS budget_reservations (
+          intent_id TEXT PRIMARY KEY, owner TEXT NOT NULL, grant_id TEXT NOT NULL, minor TEXT NOT NULL,
+          currency TEXT NOT NULL, state TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS aftersales_cases (id TEXT PRIMARY KEY, owner TEXT NOT NULL, original_job_id TEXT NOT NULL, remedy_job_id TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS outcome_feedback (job_id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS capability_claims (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS capability_verifications (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS capability_change_proposals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
       `);
       if (legacy) {
         const rows = this.db.prepare("SELECT owner,body FROM jobs WHERE state='working'").all();
@@ -87,30 +102,183 @@ export class JobStore {
   close(): void { this.db.close(); }
 
   // Called inside the same fenced checkpoint that saves the fixed plan.
-  createIntent(owner: string, intent: LocalActionIntent): void {
-    this.db.prepare('INSERT INTO execution_intents VALUES(?,?,?,?,?,?)').run(intent.id, owner, intent.jobId, intent.planDigest, intent.state, JSON.stringify(intent.privateData ?? null));
+  createIntent(owner: string, intent: ActionIntent): string {
+    this.get(owner, intent.jobId);
+    if (intent.owner !== owner) throw new DomainError('FORBIDDEN', 'Action owner mismatch');
+    const previous = this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND business_key=?').get(owner, intent.businessOperationKey);
+    if (previous) {
+      const old = this.intent(owner, String(previous.id));
+      if (old.jobId !== intent.jobId || !['local', 'read'].includes(old.effect) || !['local', 'read'].includes(intent.effect) || !['rejected', 'effect_confirmed', 'needs_review'].includes(old.state)) throw new DomainError('CONFLICT', 'Business operation already exists; reconcile its original intent');
+      this.db.prepare('INSERT OR IGNORE INTO action_intent_versions VALUES(?,?,?,?)').run(old.id, owner, old.planDigest, JSON.stringify(old));
+      const { privateData, ...body } = { ...intent, id: old.id };
+      this.db.prepare('UPDATE action_intents SET state=?,private_data=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body), owner, old.id);
+      return old.id;
+    }
+    const { privateData, ...body } = intent;
+    this.db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id, owner, intent.jobId, intent.businessOperationKey, intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body));
+    return intent.id;
   }
-  intent(owner: string, id: string): LocalActionIntent {
-    const row = this.db.prepare('SELECT * FROM execution_intents WHERE owner=? AND id=?').get(owner, id);
+  intent(owner: string, id: string): ActionIntent {
+    const row = this.db.prepare('SELECT * FROM action_intents WHERE owner=? AND id=?').get(owner, id);
     if (!row) throw new DomainError('NOT_FOUND', 'Action intent not found');
-    return { id, jobId: String(row.job_id), planDigest: String(row.plan_digest), state: String(row.state) as LocalActionIntent['state'], privateData: JSON.parse(String(row.private_data)) };
+    return { ...JSON.parse(String(row.body)), state: String(row.state), privateData: JSON.parse(String(row.private_data)) } as ActionIntent;
+  }
+  intents(owner: string, jobId: string): ActionIntent[] {
+    this.get(owner, jobId);
+    return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, jobId).map(r => this.intent(owner, String(r.id)));
+  }
+  saveIntent(owner: string, intent: ActionIntent): void {
+    const current = this.intent(owner, intent.id);
+    if (intent.owner !== owner || intent.businessOperationKey !== current.businessOperationKey || intent.planDigest !== current.planDigest) throw new DomainError('CONFLICT', 'Action identity changed');
+    const { privateData, ...body } = intent;
+    this.db.prepare('UPDATE action_intents SET state=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(body), owner, intent.id);
   }
   dispatchIntent(owner: string, id: string): void {
-    const result = this.db.prepare("UPDATE execution_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
+    const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
     if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
   }
-  observeIntent(owner: string, id: string, observation: unknown): string {
-    const observationId = randomUUID();
-    this.transaction(() => {
-      this.intent(owner, id);
-      this.db.prepare('INSERT INTO execution_observations VALUES(?,?,?,?,?)').run(observationId, id, owner, new Date().toISOString(), JSON.stringify(observation));
-      this.db.prepare("UPDATE execution_intents SET state='observed' WHERE owner=? AND id=?").run(owner, id);
+  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string): ExecutionAttempt {
+    const intent = this.intent(claim.owner, intentId);
+    if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
+    if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
+    else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
+    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
+    this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
+    return attempt;
+  }
+  attempts(owner: string, intentId: string): ExecutionAttempt[] {
+    this.intent(owner, intentId);
+    return this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=? ORDER BY rowid').all(owner, intentId).map(r => JSON.parse(String(r.body)));
+  }
+  recordObservation(owner: string, intentId: string, attemptId: string, result: ActionResult, verified: boolean): { id: string; applied: boolean } {
+    return this.transaction(() => {
+      const intent = this.intent(owner, intentId);
+      const attemptRow = this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId);
+      if (!attemptRow) throw new DomainError('FORBIDDEN', 'Observation has no owned attempt');
+      const attempt = JSON.parse(String(attemptRow.body)) as ExecutionAttempt;
+      if (!result.eventId || !Number.isSafeInteger(result.sourceVersion) || result.sourceVersion < 0) throw new DomainError('INVALID_INPUT', 'Observation requires a stable event and source version');
+      const hash = digest(result);
+      const duplicate = this.db.prepare('SELECT id,digest FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, result.eventId);
+      if (duplicate) {
+        if (duplicate.digest !== hash) {
+          if (attempt.planDigest === intent.planDigest) { intent.state = 'needs_review'; this.saveIntent(owner, intent); }
+          const event = `${result.eventId}:conflict:${hash}`; const previous = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, event);
+          const id = previous ? String(previous.id) : randomUUID();
+          if (!previous) this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, event, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+          return { id, applied: false };
+        }
+        if (verified && result.kind !== 'unknown' && attempt.planDigest === intent.planDigest && intent.state !== 'needs_review' && (intent.latestVersion === undefined || result.sourceVersion >= intent.latestVersion) && attempt.ordinal >= (intent.lastAppliedAttemptOrdinal ?? 0)) {
+          intent.failedQueries = 0; intent.needsObservation = false; intent.lastAppliedAttemptOrdinal = attempt.ordinal; intent.lastVerifiedResult = result; intent.lastResult = result;
+          intent.state = result.kind === 'confirmed' ? 'effect_confirmed' : result.kind === 'rejected' ? 'rejected' : result.kind === 'not_found' ? 'needs_review' : 'awaiting_remote';
+          intent.nextAt = Date.now() + Math.min(60000, Math.max(100, result.retryAfterMs ?? 1000));
+          this.saveIntent(owner, intent);
+        }
+        return { id: String(duplicate.id), applied: false };
+      }
+      const comparable = (r: ActionResult) => digest({ kind: r.kind, remoteRef: r.remoteRef, output: r.output, business: r.business, delivery: r.delivery });
+      const stale = attempt.planDigest !== intent.planDigest || result.kind === 'unknown' && (intent.lastAppliedAttemptOrdinal ?? 0) > attempt.ordinal || result.kind !== 'unknown' && intent.latestVersion !== undefined && result.sourceVersion < intent.latestVersion;
+      const conflict = !stale && intent.latestVersion === result.sourceVersion && intent.lastVerifiedResult && result.kind !== 'unknown' && comparable(intent.lastVerifiedResult) !== comparable(result);
+      const applied = !stale && !conflict && (verified || result.kind === 'unknown');
+      const id = randomUUID();
+      this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), hash, applied ? 1 : 0, JSON.stringify(result));
+      if (!stale && (conflict || (!verified && result.kind !== 'unknown'))) intent.state = 'needs_review';
+      else if (applied) {
+        if (result.kind !== 'unknown') intent.latestVersion = result.sourceVersion;
+        if (verified && result.kind !== 'unknown') { intent.lastVerifiedResult = result; intent.needsObservation = false; }
+        intent.lastAppliedAttemptOrdinal = Math.max(intent.lastAppliedAttemptOrdinal ?? 0, attempt.ordinal); intent.latestObservationId = id; intent.lastResult = result;
+        if (verified && result.kind !== 'unknown' && result.business) intent.businessSnapshot = { value: result.business, sourceVersion: result.sourceVersion, evidenceRefs: result.evidenceRefs };
+        if (verified && result.remoteRef) intent.remoteRef = result.remoteRef;
+        intent.state = result.kind === 'confirmed' ? 'effect_confirmed' : result.kind === 'rejected' ? 'rejected' : result.kind === 'unknown' ? 'effect_unknown' : result.kind === 'not_found' ? 'needs_review' : 'awaiting_remote';
+        intent.nextAt = Date.now() + Math.min(60000, Math.max(100, result.retryAfterMs ?? 1000));
+        if (verified && result.kind === 'confirmed') { intent.acceptedOutput = result.output ?? (result.remoteRef ? { remoteRef: result.remoteRef } : {}); if (result.delivery) intent.delivery = result.delivery; }
+        if (result.kind === 'unknown') intent.failedQueries = (intent.failedQueries ?? 0) + 1; else intent.failedQueries = 0;
+        if ((intent.failedQueries ?? 0) >= 3) intent.state = 'needs_review';
+        if (verified && result.kind === 'confirmed' && intent.effect === 'payment') this.db.prepare("UPDATE budget_reservations SET state='consumed' WHERE owner=? AND intent_id=?").run(owner, intentId);
+        if (verified && result.kind === 'rejected') this.db.prepare("UPDATE budget_reservations SET state='released' WHERE owner=? AND intent_id=? AND state='held'").run(owner, intentId);
+      }
+      this.saveIntent(owner, intent); return { id, applied: !!applied };
     });
-    return observationId;
   }
   observations(owner: string, intentId: string): unknown[] {
     this.intent(owner, intentId);
-    return this.db.prepare('SELECT body FROM execution_observations WHERE owner=? AND intent_id=? ORDER BY observed_at,id').all(owner, intentId).map(r => JSON.parse(String(r.body)));
+    return this.db.prepare('SELECT body FROM action_observations WHERE owner=? AND intent_id=? ORDER BY received_at,id').all(owner, intentId).map(r => JSON.parse(String(r.body)));
+  }
+  grant(owner: string, grant: PlanGrant): void {
+    if (grant.owner !== owner) throw new DomainError('FORBIDDEN', 'Grant owner mismatch'); this.get(owner, grant.jobId);
+    this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
+  }
+  grants(owner: string, jobId: string): PlanGrant[] { this.get(owner, jobId); return this.db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner, jobId).map(r => JSON.parse(String(r.body))); }
+  revokeGrants(owner: string, jobId: string): void {
+    for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true }), owner, grant.id);
+  }
+  reserveBudget(owner: string, intentId: string, grant: PlanGrant, amount: { minor: string; currency: string }): void {
+    this.intent(owner, intentId);
+    if (this.db.prepare('SELECT 1 FROM budget_reservations WHERE intent_id=?').get(intentId)) return;
+    const rows = this.db.prepare("SELECT b.minor,b.currency FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, grant.jobId);
+    if (amount.currency !== grant.maxAmount.currency || rows.some(r => r.currency !== amount.currency) || rows.reduce((n, r) => n + BigInt(String(r.minor)), 0n) + BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Cumulative action budget exceeds the grant');
+    this.db.prepare('INSERT INTO budget_reservations VALUES(?,?,?,?,?,?)').run(intentId, owner, grant.id, amount.minor, amount.currency, 'held');
+  }
+  budget(owner: string, jobId: string) {
+    this.get(owner, jobId);
+    return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId);
+  }
+  cancelActions(owner: string, jobId: string): boolean {
+    let pending = false;
+    for (const intent of this.intents(owner, jobId)) {
+      if (intent.state === 'ready') intent.state = 'canceled_before_dispatch';
+      else if (['read', 'local'].includes(intent.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(intent.state)) { intent.state = 'canceled_after_dispatch'; intent.needsObservation = false; this.saveIntent(owner, intent); continue; }
+      if (intent.state === 'dispatching') intent.state = 'effect_unknown';
+      if (['effect_unknown', 'awaiting_remote'].includes(intent.state)) { pending = true; intent.nextAt = Date.now(); }
+      this.saveIntent(owner, intent);
+    }
+    return pending;
+  }
+  createAfterSales(owner: string, value: AfterSalesCase): void {
+    this.get(owner, value.originalJobId); this.get(owner, value.remedyJobId);
+    this.db.prepare('INSERT INTO aftersales_cases VALUES(?,?,?,?,?)').run(value.id, owner, value.originalJobId, value.remedyJobId, JSON.stringify(value));
+  }
+  afterSales(owner: string, originalJobId: string): AfterSalesCase[] { this.get(owner, originalJobId); return this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND original_job_id=?').all(owner, originalJobId).map(r => JSON.parse(String(r.body))); }
+  updateAfterSales(owner: string, caseId: string, state: AfterSalesCase['state']): void {
+    const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId); if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
+    const value = JSON.parse(String(row.body)) as AfterSalesCase;
+    this.db.prepare('UPDATE aftersales_cases SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...value, state, updatedAt: new Date().toISOString() }), owner, caseId);
+  }
+  recordFeedback(owner: string, job: Job, evidenceLevel: string, verification = true): void {
+    const d = job.delegation; if (!d?.plan) return;
+    const row = { capabilityRef: d.plan.capabilityRef, bindingRef: d.plan.bindingRef, bindingDefinitionDigest: d.plan.bindingDigests.find(p => p.ref.id === d.plan!.bindingRef.id && p.ref.version === d.plan!.bindingRef.version)?.digest,
+      goalKind: d.request.outcome ?? d.plan.completionTarget, outcome: ['working', 'submitted', 'auth-required', 'input-required', 'canceled'].includes(job.state) ? 'unknown' : d.outcome?.status ?? 'unknown', taskState: job.state, evidenceLevel, criterionResults: d.outcome?.criterionResults ?? [], observedAt: new Date().toISOString() };
+    this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, digest(d.plan.bindingRef), JSON.stringify(row));
+    if (!verification) return;
+    const selected = d.resolution?.candidates.find(c => c.id === d.plan!.candidateId);
+    const sourceRevision = selected?.offer?.sourceRevision ?? d.plan.digest;
+    const claim = { id: digest({ owner, binding: d.plan.bindingRef, sourceRevision }), capabilityRef: d.plan.capabilityRef, bindingRef: d.plan.bindingRef, publisherId: selected?.binding.channelId ?? 'configured-binding', sourceRevision,
+      sourceRef: selected?.binding.discovery?.sourceId ?? 'configured-versioned-definition', observedAt: row.observedAt };
+    const verified = { id: digest({ owner, jobId: job.id, at: row.observedAt }), claimId: claim.id, sourceRevision, actionTypeRefs: d.plan.steps.map(s => s.actionTypeRef), level: evidenceLevel,
+      result: job.state === 'completed' && row.outcome === 'satisfied' ? 'passed' : row.outcome === 'unsatisfied' ? 'failed' : 'inconclusive',
+      scope: { capabilityRef: d.plan.capabilityRef, requestId: job.id, requestRevision: d.request.revision, executionEnvironment: d.request.executionEnvironment ?? 'live', requirements: d.request.requirements.map(r => ({ kind: r.kind, expected: r.expected })), observedAt: row.observedAt },
+      evidenceRefs: d.outcome?.evidenceRefs ?? [], verifiedAt: row.observedAt, availabilityProof: false };
+    const key = digest(d.plan.bindingRef);
+    this.db.prepare('INSERT OR IGNORE INTO capability_claims VALUES(?,?,?,?)').run(claim.id, owner, key, JSON.stringify(claim));
+    this.db.prepare('INSERT OR IGNORE INTO capability_verifications VALUES(?,?,?,?)').run(verified.id, owner, key, JSON.stringify(verified));
+    if (verified.result !== 'passed') {
+      const proposal = { id: digest({ owner, verificationId: verified.id }), kind: 'inspect_binding', bindingRef: d.plan.bindingRef, sourceRevision, evidenceRefs: verified.evidenceRefs, status: 'proposed', publishable: false, reason: d.outcome?.reason ?? 'Business outcome unresolved', createdAt: row.observedAt };
+      this.db.prepare('INSERT OR IGNORE INTO capability_change_proposals VALUES(?,?,?,?)').run(proposal.id, owner, key, JSON.stringify(proposal));
+    }
+  }
+  providerFeedback(owner: string, bindingRef: { id: string; version: string }): unknown[] {
+    return this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND binding_key=?').all(owner, digest(bindingRef)).map(r => JSON.parse(String(r.body)));
+  }
+  providerEvidenceView(owner: string, bindingRef: { id: string; version: string }, definitionDigest?: string) {
+    const all = this.providerFeedback(owner, bindingRef) as { bindingDefinitionDigest?: string; goalKind: string; outcome: string; taskState: string; evidenceLevel: string; observedAt: string }[];
+    const rows = definitionDigest ? all.filter(r => r.bindingDefinitionDigest === definitionDigest) : all;
+    const outcomes: Record<string, number> = {}, levels: Record<string, number> = {}, states: Record<string, number> = {}, goals: Record<string, number> = {};
+    for (const row of rows) { outcomes[row.outcome] = (outcomes[row.outcome] ?? 0) + 1; levels[row.evidenceLevel] = (levels[row.evidenceLevel] ?? 0) + 1; states[row.taskState] = (states[row.taskState] ?? 0) + 1; goals[row.goalKind] = (goals[row.goalKind] ?? 0) + 1; }
+    return { scope: 'Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator', definitionDigest: definitionDigest ?? null, sampleCount: rows.length, outcomeCounts: outcomes, taskStateCounts: states, evidenceLevelCounts: levels, goalKindCounts: goals,
+      firstObservedAt: rows.map(r => r.observedAt).sort()[0] ?? null, lastObservedAt: rows.map(r => r.observedAt).sort().at(-1) ?? null, includesUnknownAndCanceled: true, availabilityProof: false, automaticPromotion: false };
+  }
+  capabilityFacts(owner: string, bindingRef: { id: string; version: string }) {
+    const query = (table: 'capability_claims' | 'capability_verifications' | 'capability_change_proposals') => this.db.prepare(`SELECT body FROM ${table} WHERE owner=? AND binding_key=? ORDER BY rowid DESC LIMIT 50`).all(owner, digest(bindingRef)).map(r => JSON.parse(String(r.body)));
+    return { claims: query('capability_claims'), verifications: query('capability_verifications'), changeProposals: query('capability_change_proposals'), summary: this.providerEvidenceView(owner, bindingRef) };
   }
 
   transaction<T>(action: () => T): T {
@@ -127,6 +295,13 @@ export class JobStore {
     for (const row of rows) {
       const job = JSON.parse(String(row.body)) as Job;
       if (job.service === 'eigos.delegate' && job.delegation?.backendVersion !== BACKEND_VERSION) continue;
+      if (job.delegation?.plan && (job.revision ?? 0) === Number(row.revision)) {
+        const owner = String(row.owner); const intents = this.intents(owner, job.id);
+        for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
+        if (job.state === 'working') job.delegation.nextAt = now;
+        else if (intents.some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state))) job.delegation.recoveryPending = true;
+        job.updatedAt = new Date(now).toISOString(); this.save(owner, job); continue;
+      }
       if (job.state !== 'working' || (job.revision ?? 0) !== Number(row.revision)) continue;
       job.state = 'failed'; job.error = 'Worker lease expired; execution outcome is unknown. Inspect evidence before submitting a new task.';
       job.updatedAt = new Date(now).toISOString(); this.save(String(row.owner), job);
@@ -141,17 +316,18 @@ export class JobStore {
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE state IN ('working','submitted')
+      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND (json_extract(body,'$.service')!='eigos.delegate' OR json_extract(body,'$.delegation.backendVersion')=?)
-        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION);
+        AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
+        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
-      return { owner: String(row.owner), job, token };
+      return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
 
@@ -167,7 +343,7 @@ export class JobStore {
   private active(claim: WorkClaim, now: number): boolean {
     const lease = this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(claim.job.id);
     const current = this.get(claim.owner, claim.job.id);
-    return lease?.token === claim.token && Number(lease.expires_at) > now && current.state === 'working'
+    return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
 

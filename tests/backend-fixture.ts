@@ -17,13 +17,13 @@ export function interpretation(request: ServiceRequest, id = 'brief.prepare', in
 export function proposal(context: PlanningContext, index = 0): PlanProposal {
   const candidate = context.resolution.candidates[index]!;
   return { kind: 'propose_plan', requestRevision: context.request.revision, candidateId: candidate.id, message: 'Fixture plan based on observations',
-    steps: [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
+    steps: candidate.recipe ? candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) : [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
 }
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
   return { ground: async request => ({ decision: ground(request), evidence: evidence() }), plan: async context => ({ decision: plan(context), evidence: evidence() }) };
 }
-export function backend(catalog: ExecutionCatalog, model = reasoner(), store = new JobStore(':memory:')) {
-  const tasks = new TaskService(store, { catalog, coordinator: true }); const coordinator = new Coordinator(store, model, catalog);
+export function backend(catalog: ExecutionCatalog, model = reasoner(), store = new JobStore(':memory:'), options: { allowSandbox?: boolean } = {}) {
+  const tasks = new TaskService(store, { catalog, coordinator: true, allowSandboxActions: options.allowSandbox }); const coordinator = new Coordinator(store, model, catalog, options);
   const submit = (extra: object = {}) => tasks.submit(principal, { service: 'eigos.delegate', goal: 'Prepare a brief', requestId: randomUUID(), ...extra });
   const run = async () => { const claim = store.claim(['eigos.delegate'], 15000); if (!claim) throw new Error('Expected durable claim'); await coordinator.run(claim, new AbortController().signal); return store.get(owner, claim.job.id); };
   return { store, tasks, coordinator, submit, run };
