@@ -71,7 +71,18 @@ writeFileSync(plistPath, plist, { mode: 0o600 }); chmodSync(plistPath, 0o600);
 const service = `gui/${process.getuid()}/${label}`;
 let loaded = false;
 try { execFileSync('launchctl', ['print', service], { stdio: 'ignore' }); loaded = true; } catch {}
-if (loaded && (previousPlist !== plist || process.argv.includes('--restart'))) { execFileSync('launchctl', ['bootout', service], { stdio: 'ignore' }); loaded = false; }
+if (loaded && previousPlist !== plist) {
+  execFileSync('launchctl', ['bootout', service], { stdio: 'ignore' });
+  for (let i = 0; i < 50; i++) {
+    try { execFileSync('launchctl', ['print', service], { stdio: 'ignore' }); }
+    catch { loaded = false; break; }
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  if (loaded) throw new Error('Previous launch configuration is still unloading; retry after it stops');
+} else if (loaded && process.argv.includes('--restart')) {
+  // Restart the existing job; immediate bootout/bootstrap can race launchd removal.
+  execFileSync('launchctl', ['kickstart', '-k', service], { stdio: 'pipe' });
+}
 if (!loaded) execFileSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { stdio: 'pipe' });
 let ready = false;
 for (let i = 0; i < 50; i++) {
@@ -87,7 +98,15 @@ const profile = join(directory, 'profile.json');
 const client = join(root, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
 execFileSync('python3', [client, '--config', profile, 'configure', '--card-url', 'http://127.0.0.1:3430/.well-known/agent-card.json',
   '--token-file', tokenPath, '--allow-loopback-http', '--allow-service', 'life.request', '--default-service', 'life.request'], { stdio: 'pipe' });
+const peerClient = join(runtime, 'eigos_a2a.py'); cpSync(client, peerClient);
+const peerToken = join(runtime, 'client-token'); writeFileSync(peerToken, token + '\n', { mode: 0o600 }); chmodSync(peerToken, 0o600);
+const peerProfile = join(runtime, 'profile.json');
+execFileSync('python3', [peerClient, '--config', peerProfile, 'configure', '--card-url', 'http://127.0.0.1:3430/.well-known/agent-card.json',
+  '--token-file', peerToken, '--allow-loopback-http', '--allow-service', 'life.request', '--default-service', 'life.request'], { stdio: 'pipe' });
+const peerDirectory = join(runtime, 'peer'); mkdirSync(peerDirectory, { recursive: true, mode: 0o700 });
 const skill = readFileSync(join(root, 'integrations/grok/eigos-delegate/SKILL.md'), 'utf8');
-const install = join(directory, 'skill-install.md');
-writeFileSync(install, `${skill}\n## Saved connection for this user\n\n- Run commands on the user's connected Mac, not the Grok cloud computer.\n- Client: ${client}\n- Profile: ${profile}\n- Command: python3 ${client} --config ${profile} <command>\n- This profile defaults to life.request; credentials remain in a private referenced file. Do not read or print that file or server.env.\n- Service is managed by launchd (${label}) while the Mac is available.\n`, { mode: 0o600 });
-console.log(JSON.stringify({ status: 'ready', endpoint: 'http://127.0.0.1:3430', profile, skillInstall: install, launchAgent: label }));
+const install = join(runtime, 'skill-install.md');
+const installedSkill = `${skill}\n## Saved connection for this user\n\n- Run commands on the user's connected Mac, not the Grok cloud computer.\n- Client: ${peerClient}\n- Profile: ${peerProfile}\n- Command: python3 ${peerClient} --config ${peerProfile} <command>\n- Save input and evidence files in ${peerDirectory}; use /tmp or the user's home as working directory. No Documents-folder access is required.\n- This profile defaults to life.request; credentials remain in a private referenced file. Do not read or print that file or server.env.\n- Service is managed by launchd (${label}) while the Mac is available.\n`;
+writeFileSync(install, installedSkill, { mode: 0o600 });
+writeFileSync(join(directory, 'skill-install.md'), installedSkill, { mode: 0o600 });
+console.log(JSON.stringify({ status: 'ready', endpoint: 'http://127.0.0.1:3430', profile: peerProfile, skillInstall: install, launchAgent: label }));

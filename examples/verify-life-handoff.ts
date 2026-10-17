@@ -27,8 +27,8 @@ try {
   for (const request of manifest.requests) {
     const response: Response = await fetch(`${base}/a2a`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' },
       body: JSON.stringify({ jsonrpc: '2.0', id: `readback-${request.taskId}`, method: 'GetTask', params: { id: request.taskId } }) });
-    const json: { error?: unknown; result: { task: ReceiptTask } } = await response.json(); assert(response.ok && !json.error);
-    const task = json.result.task;
+    const json: { error?: unknown; result: ReceiptTask | { task: ReceiptTask } } = await response.json(); assert(response.ok && !json.error);
+    const task: ReceiptTask = 'task' in json.result ? json.result.task : json.result;
     const tool = await client.callTool({ name: 'get_task', arguments: { taskId: request.taskId } }); assert(!tool.isError);
     const mcp = (tool.structuredContent as { result: Job }).result;
     const row = db.prepare('SELECT body FROM jobs WHERE id=? AND owner=?').get(request.taskId, ownerKey(p)); assert(row);

@@ -1,0 +1,8 @@
+{
+  "question": "What does hotel check-in time mean? Please explain only; do not arrange or hand off any service.",
+  "replyObservedAt": "2026-10-17T08:04:34+08:00",
+  "replyType": "knowledge explanation only",
+  "tasksBefore": 6,
+  "tasksAfter": 6,
+  "misroutedTasks": 0
+}

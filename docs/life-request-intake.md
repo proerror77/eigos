@@ -47,7 +47,7 @@ npm run setup:grok-life
 - 实际构建、任务库、审计、日志：`~/.local/share/eigos/grok-life/`，目录 `0700`；`runtime-location.json` 保存路径而不保存凭据。
 - `~/Library/LaunchAgents/com.eigos.grok-life.plist` 登录时启动，异常后恢复。Mac 关机、休眠、断连或退出登录仍会影响可用性。
 - 在用户数据目录运行快照，避免依赖桌面应用的 Documents 授权。源码更新后，构建并运行 `node scripts/setup-grok-life.mjs --restart` 更新快照。
-- Grok 读取 `data/grok-life/skill-install.md`，自己保存到技能库，并记录连接 Mac 的 machineId 和绝对路径。loopback 不属于 Grok 云电脑。
+- Grok 读取 `~/.local/share/eigos/grok-life/skill-install.md`，自己保存到技能库，并记录连接 Mac 的 machineId 和绝对路径。它使用同目录的 Python 客户端与 profile，输入和回执保存在 `peer/`，不依赖 Documents 访问权限。项目 `data/grok-life/` 保留诊断副本。loopback 不属于 Grok 云电脑。
 - 停止本服务可使用 `launchctl bootout gui/$(id -u)/com.eigos.grok-life`；若不再自动启动，移除该专用 plist。保留运行目录可保留历史与凭据。
 
 开发凭据不用于公网或其他会员。生产身份继续使用 Auth0／OIDC；Python 接入不证明 Grok 原生内置 A2A 连接器。

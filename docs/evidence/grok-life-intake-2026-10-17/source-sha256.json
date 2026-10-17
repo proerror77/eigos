@@ -1,0 +1,14 @@
+{
+  "apps/gateway/a2a.ts": "30541eaaca55ff1e440e2749761a9b87ff8aff0500db656e67a873aabb00407d",
+  "apps/gateway/app.ts": "bc88c4a0d5a225cbf2e0188137addd0b6b3b6df28e52c5cc235af6cb7b159f59",
+  "apps/gateway/mcp.ts": "82709bb34fa48557b7d546d85aa0523b40b28dafe967c9edc43a936492584b34",
+  "packages/core/config.ts": "d9a62e7db6d94374b5e5caadd00585927cfaf7d15f7c075582fdfcbe989d7a19",
+  "packages/core/domain.ts": "4a8bd9b0fe61f5d461ec39fcc875bf6f6233a833715e27ef7e522f35f82c5049",
+  "packages/core/services.ts": "7780c1e9983a71af899a486c5ab87712fbb22f955f95e89165842311f0107ba7",
+  "packages/core/tasks.ts": "b2fd29981df94c4afbce6b8722ed61040d40d97ca06acd3b57582f0cc41eeefa",
+  "packages/capabilities/life-intake.ts": "f6649b1415336e7ebe54938b2599872c3c7723a8254a64d246cd50aa826e3969",
+  "integrations/grok/eigos-delegate/SKILL.md": "a9f09aca5da1924a409d47e62898f9c952aba0d7db3109cabdacfbb91c406530",
+  "integrations/grok/eigos-delegate/scripts/eigos_a2a.py": "9f08c5cee0eb25592c6bce4043b5a59d822737e7b5e360a8bc5b6335b2c5b847",
+  "scripts/setup-grok-life.mjs": "90f17435c86e288302019075436175df253ed7bb55a755507f13652a0567bc78",
+  "examples/verify-life-handoff.ts": "625f6df85e64f00f4bc37e8ad21a12dffdbb3f80cc6e0b0d8626a063c4bfffad"
+}
