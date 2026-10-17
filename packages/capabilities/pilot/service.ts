@@ -1,5 +1,3 @@
-import { CSV_ONTOLOGY, csvPlanSchema } from '../../ontology/csv-audit.js';
-import { digest } from '../../core/delegation.js';
 import { bytesHash, type CsvSnapshot } from './csv-file.js';
 import { acceptFile } from './file-acceptance.js';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -24,29 +22,6 @@ export class AuditPilot extends PilotCommands {
     for (const { owner, job } of this.store.pilotJobs()) {
       const s = job.pilot!; if (s.step === 'done' || s.nextAt > this.now()) continue;
       s.nextAt = this.now() + 1000;
-      if (job.delegation && !s.cancelRequested && (s.step === 'payment' || s.step === 'delivery')) {
-        const plan = job.delegation.plan;
-        const parsed = csvPlanSchema.safeParse(plan?.details ?? plan);
-        const details = parsed.success ? parsed.data : undefined;
-        const snapshot = this.store.pilotRead<CsvSnapshot>(`input:${s.orderId}`);
-        const body = plan ? Object.fromEntries(Object.entries(plan).filter(([key]) => key !== 'digest')) : undefined;
-        const allowed = plan && details && digest(body) === plan.digest && plan.digest === s.quote.planDigest &&
-          job.delegation.ontologyVersion === CSV_ONTOLOGY.version && s.quote.ontologyVersion === CSV_ONTOLOGY.version &&
-          details.rulesVersion === 'csv-quality-file-v1' && s.quote.rulesVersion === details.rulesVersion &&
-          JSON.stringify(details.checks) === JSON.stringify(CSV_ONTOLOGY.checks) &&
-          JSON.stringify(details.actions) === JSON.stringify(CSV_ONTOLOGY.actions.map(a => a.id)) &&
-          s.approval?.quoteDigest === s.quoteDigest && digest(s.quote) === s.quoteDigest &&
-          Date.parse(s.approval.at) < Date.parse(s.quote.expiresAt) &&
-          snapshot && snapshot.sha256 === details.inputSha256 && details.inputSha256 === s.quote.inputSha256 &&
-          bytesHash(Buffer.from(snapshot.base64, 'base64')) === details.inputSha256;
-        if (!allowed) {
-          job.state = 'failed'; s.acceptance = 'insufficient_evidence';
-          if (this.provider.query(s.orderId)?.payment === 'paid') this.refund(job);
-          else s.step = 'done';
-          this.event(job, 'ontology_precondition_failed'); this.store.save(owner, job); continue;
-        }
-      }
-
       if (s.step === 'payment') {
         const receipt = s.cancelRequested ? this.provider.closeUnpaid(s.orderId) : this.provider.query(s.orderId) ?? this.provider.payment(s.orderId);
         this.afterEffect?.();

@@ -1,79 +1,75 @@
-# 可注册能力：CSV 审计与 brief.prepare
+# Ontology + LLM 后端
 
-2026-10-15 实现状态。`eigos.delegate` 现在通过同一协调器选择注册能力，不再绑定 CSV。
+2026-10-17。通用委托主路径已改用 `ontology-execution-v2`；旧 `CapabilityRegistry`、同步 `start(job)` 和旧计划迁移已移除。阶段目标和未完成条件见 [实施目标](backend-implementation-goals.md)。前端 Personal Agent、MCP/A2A 协议、认证及会员接入保持现有接口。
 
-## 当前职责
+## 业务契约与职责
 
-| 模块 | 职责 |
+| 模块 | 当前职责 |
 | --- | --- |
-| `packages/core/capabilities.ts` | 能力契约与注册表；按身份提供候选、固定版本／提供者、生成委托服务的 Card 描述 |
-| `packages/core/delegation.ts` | 通用路由决策、计划与验收记录；不再包含必填 CSV 文件名／检查项 |
-| `packages/coordinator/coordinator.ts` | 向真实模型提供当前候选、本体和输入契约；选择、补问或拒绝；校验选择确实注册且可用，再调用能力包 |
-| `packages/capabilities/brief.ts` | 任务说明的输入、生成与验收；始终明确 `execution=not_started` |
-| `packages/capabilities/pilot/capability.ts` | CSV 文件检查、计划、模拟报价授权、执行衔接与取消；复用独立审计验收和补救 |
-| `packages/capabilities/registry.ts` | 组合入口；默认注册 brief，启用 CSV pilot 且配置目录后注册 CSV |
-| Worker | 领取协调工作并调用通用后台维护回调，不导入 CsvCoordinator 或 AuditPilot |
+| `packages/ontology/execution.ts` | 版本化 ServiceCapability、ProviderBinding、ServiceRequest、Requirement、ExecutionPlan |
+| `packages/core/catalog.ts` | 分开登记能力、多个提供者及受控适配器；精确版本与身份检查 |
+| `packages/coordinator/requirements.ts` | 从已认证 PA 的原文引用补充约束；拒绝来源不明或覆盖既有条件的模型解释 |
+| `packages/coordinator/resolver.ts` | 询问已配置适配器，逐条件 pass/fail/unknown；身份可用性与业务事实分开 |
+| `packages/coordinator/plan.ts` | 校验候选、固定输入、动作、版本、约束、依赖、报价及有效期 |
+| `packages/coordinator/coordinator.ts` | LLM 解释需求 → Resolver → LLM 基于事实提议计划；不接受模型授权或完成声明 |
+| `packages/coordinator/runtime.ts` | 持久意图、事务外异步调用、独立验收、迟到事实记录及 fenced 结果写回 |
+| `packages/capabilities/catalog.ts` | 当前能力、绑定和适配器的组合入口 |
 
-模型的输出是 `ask_user / select_capability / unsupported`，包含 capabilityId、说明及按候选输入契约生成的 inputJson。JSON 文本只用于模型传输；能力包负责解析和校验。选择不存在或不对当前身份开放的能力会失败，不能回退到 brief。
+同一业务能力允许多个提供者。同版本重复定义、重复绑定、悬空实现均拒绝。新计划固定 capability、binding、ontology、verifier 版本和需求摘要，不静默换供应方。当前只有本地 Brief 与 CSV 提供者；多提供者比较使用明确标记的测试供给，不能宣称已有两家真实商户。
 
-“为 CSV 审计写任务说明”和“实际执行 CSV 审计”即使都包含 CSV 这个词，也应分别选择 brief 与 CSV。购买咖啡等无匹配执行能力的目标应拒绝，不能悄悄改成写计划。
+## 任务与推理
 
-## 能力包契约
+`eigos.delegate` 保留自然语言 `goal`。PA 可选传入 `requirements`，字段由入口 schema 验证，来源由服务器写入：
 
-每个 `RegisteredCapability` 提供：
-
-- `definition`：能力 ID／版本、提供者 ID、本体版本、对外说明、输入 schema、本体。
-- `available(owner)`：对经过认证的任务所有者是否可用。本轮 CSV 限本地开发身份；brief 可用于其他正常授权身份。
-- `prepare(job, input)`：校验领域输入并取得必要事实；返回需要补问，或规范化输入、计划详情及内部准备数据。
-- `start(job, prepared)`：在带领取校验的任务事务内启动领域流程。短的无外部副作用操作可以直接完成；完成时必须有 artifact 与验收通过记录。
-- 可选 `authorize(job, input)`：能力自己的授权输入与校验。共用任务核心只负责身份、任务状态和幂等。
-- 可选 `cancel(job)`：能力自己的取消语义。
-- 可选 `tick()`：本轮同步、本地持久后台流程的推进；Worker 通过统一维护回调调用它。
-
-能力包是受信任的代码，不从外部 Card 下载或执行任意脚本。prepare/start/tick 当前都是同步契约；不可在数据库事务里塞长时间网络调用。接入真正异步外部 A2A 提供者前，需要明确发起／查询／恢复的持久工作项接口，而不是照搬同步 tick。
-
-## 两个注册能力的区别
-
-| 项目 | brief.prepare | data.quality.audit.simulated |
-| --- | --- | --- |
-| 用户要的结果 | 一份目标／交付要求的任务说明 | 对实际 CSV 数据的审计报告 |
-| 主要输入 | goal、deliverable | fileName、checks |
-| 本体 | eigos-brief-v1 | eigos-csv-ontology-v1 |
-| 提供者 | local-brief-builder | local-csv-auditor |
-| 执行与验收 | 校验说明保留目标和交付要求，且明确未执行底层业务 | 独立解析字节、重算规则、核对哈希／订单／Markdown |
-| 付款和授权 | 不创建报价／模拟账本 | 保留绑定计划的模拟授权与补交／退款 |
-| 完成含义 | 任务说明已生成 | 规则范围内的报告已验收，不代表原始业务数据绝对真实 |
-
-新委托任务在 `metadata.delegation.capabilityId`、capabilityVersion、providerId 中记录选择。通用计划保留 input 和 details；CSV 特有字段位于 plan.details。统一验收结果在 `metadata.delegation.acceptance`，CSV 同时保留原有 pilot 验收证据。
-
-## 新增第三项能力
-
-1. 定义能力的输入 schema、本体、输出、前置条件和验收方法。
-2. 实现 RegisteredCapability，把具体执行、授权与恢复逻辑留在能力包里。
-3. 在 `createCapabilityRegistry` 中注册实例，提供实际配置和依赖。
-4. 验证相似措辞选路、缺信息补问、不支持／不可用、授权、失败以及验收。
-
-在现有同步／本地流程语义内，不需要修改 Gateway、Coordinator、Worker、通用授权分支或领取 SQL。测试中的第三能力仅通过注册即完成调用，以检验这个边界。全新执行语义仍需扩展运行时接口；本轮没有实现通用 DAG、在线安装能力、全网 Agent 搜索或同一能力的多供应商竞价。
-
-## 兼容与调度
-
-原有显式 `service: brief.prepare` 和 CSV pilot 接口保留。任务核心中的这部分是历史直调兼容路径，不属于新协调器；本轮没有声称将所有既有跑腿／文档入口都改成插件。
-
-调度通过通用 `executionMode` 区分 worker 工作与能力自身的后台流程，不再在领取 SQL 中判断是否存在 pilot。启动组合时对旧 CSV 任务进行明确迁移，保持原报价／摘要不变。CSV 适配器可按其声明的旧本体版本识别历史计划，完成任务仍可读。缺失或改变已选版本时拒绝替换提供者。
-
-授权请求幂等比较忽略 JSON 对象键顺序，保留数组和字段值语义，避免从旧的定长授权 schema 迁移到按能力授权后，同一请求因字段顺序变化而冲突。
-
-## 验证
-
-- 全套 70 项自动测试通过；既有 CSV 补问、授权、输入／计划篡改、验收失败补交／退款、跨协议读回保留。
-- 新测试覆盖：同一入口两种能力、没有 CSV 配置时的 brief、补问续接、不可用／不存在能力、第三能力仅注册、旧计划授权与领取迁移。
-- 真实协调模型通过 A2A 完成三路验证：CSV 任务说明 → brief.prepare；实际 CSV 审计 → CSV 能力并验收；真实买咖啡 → REJECTED。每例一次真实模型调用，付款仅本地模拟。
-- 本轮真实三路调用由固定验证客户端发出，不冒称三次都由 Grok 发起。Grok 保存的技能另行同步，连接引用和权限不变。
-
-重复真实验证会产生模型调用和新的模拟任务，需显式运行：
-
-```sh
-node --env-file=data/grok-oag/server.env --import tsx examples/verify-capability-routing.ts
+```json
+{
+  "service": "eigos.delegate",
+  "goal": "20杯咖啡，预算500元",
+  "requestId": "unique-request-id",
+  "requirements": [
+    {"id":"cups","kind":"quantity","strength":"hard","expected":{"amount":"20","unit":"杯"}},
+    {"id":"budget","kind":"budget","strength":"hard","expected":{"minor":"50000","currency":"CNY"}}
+  ]
+}
 ```
 
-真实证据见 [注册能力选路验证](evidence/registered-capabilities-2026-10-15/README.md)。
+此例展示输入契约，当前没有咖啡购买能力，会如实拒绝。也支持 deadline、location 和 condition；金额使用整数字符串，deadline 保存明确时区时间和原表述。condition.expected.predicate 使用已登记谓词，如 brief.json、execution.none；自由文字/未登记条件保持 unknown。原文与结构化来源共存，模型抽取另标 `quoted_text`，不能冒充 PA 的结构化事实。自然语言解释仍可能遗漏或误解要求，不能把保存原文和单例实测当成通用理解质量保证。
+
+第一轮模型看到有界能力摘要和输入 schema，输出 clarify / resolve / unsupported。程序取得选定领域的实际候选后，第二轮模型读取该本体、固定需求和候选观察，输出 propose_plan / clarify / no_feasible_plan。完整目录不无限塞入上下文：最多16项能力摘要、每能力8个绑定；超限需缩小检索范围，现阶段尚无大型目录检索器。
+
+逐条件检查由程序执行。硬条件 fail 或 unknown、币种不兼容、观察过期均阻止计划执行。模型不能修改已准备输入、使用其他绑定、引入不存在的动作或复用旧需求 revision。当前只执行单项业务动作，再运行独立验收；组合步骤和动态重规划尚待第二阶段。
+
+## 适配器与执行
+
+`ExecutionAdapter` 提供异步 `prepare`、异步 `execute` 和独立 `verify`。适配器不直接修改 Job；只有运行时依据验证结果推进任务。`prepare`、模型调用和 `execute` 都在数据库事务外。Gateway 只建立目录及接受提交，不启动这些调用。
+
+准备数据有公开事实和私有载荷两部分。原始 CSV 快照只保存到按 owner 隔离的 `execution_intents`，不进入模型上下文或任务 metadata。派发前意图落盘；适配器返回后先保存 Observation，再用当前领取令牌、revision、租约和任务状态写回结果。取消或租约丢失后的观察保留，但不会把任务改成完成。
+
+第一阶段只开放 local/read 动作；order/payment/cancel/refund 等真实业务副作用尚未开放。已开始但结果不明的动作不自动重放。目前没有远端 reconcile、预算预留、售后恢复或外部 exactly-once 保证；它们属于第三阶段。
+
+## 当前两个适配器
+
+| 业务能力 | 新绑定 | 交付与验收 |
+| --- | --- | --- |
+| `brief.prepare@2` | `local-brief@2` | 独立核对目标/交付要求，artifact 明确底层 `execution=not_started` |
+| `data.quality.audit.simulated@2` | `local-csv@2` | 本地身份、配置文件快照、准确模拟授权、报告原始字节独立复算；无真钱 |
+
+CSV 选择**仅支持全量审计**的契约：五项检查必须完整且无重复，子集明确拒绝，不能静默扩大。新后端没有复用旧 pilot 的付款、补交或退款状态机；独立的旧模拟服务仍保留其测试用途，后续迁入新架构时另行验证。
+
+## 读回、旧记录与扩展
+
+新任务的 `metadata.delegation` 包含 backendVersion、request、resolution、reasoning、plan、intentId 和 acceptance。报价在 `plan.quote`，不再在 `metadata.pilot`。原有 `/tasks/{id}/authorize` 路径及确认参数保留，含义仅为本地模拟授权。Python Personal Agent 客户端无需改代码即可发送、补问、授权和读回。
+
+新后端启用后只发现 eigos.delegate 和可选 intake-only life.request，拒绝旧专用服务直调；Worker 不启动旧文档/跑腿执行器或 pilot 后台循环。旧原型仅保留在独立原型模式，等待后续适配，不作执行 fallback。旧记录保留查询，回复/授权/取消不继续执行；没有兼容适配器、隐式迁移或旧摘要 fallback。不要在同一数据库同时运行新旧 Worker；更新既有实例前停止旧进程并备份数据，本轮未更新任何常驻实例。
+
+新增业务能力：定义 ServiceCapability → 分别登记 ProviderBinding → 实现受控 ExecutionAdapter → 加入组合入口 → 验证硬条件、授权与独立验收。不改变通用协调器来识别业务名称。接入新外部副作用前还须完成对应运行时及授权里程碑。
+
+项目检查覆盖真实协议、合成模型/提供者、双 Worker 领取、取消/租约迟到结果、私有快照损坏和旧记录拒绝执行。真实模型探针单独运行，不计入自动测试：
+
+```sh
+node --import tsx examples/verify-capability-routing.ts --live
+```
+
+该探针启动隔离的 loopback 实例，使用合成 CSV，无商家、真钱或部署。历史 v1 的 [注册选路证据](evidence/registered-capabilities-2026-10-15/README.md)及 [Grok OAG 证据](evidence/grok-oag-2026-10-15/README.md)只证明当时版本。
+
+新版本已完成7次真实模型调用，含合成多提供者规划；见 [本轮证据与限制](evidence/ontology-backend-2026-10-17/README.md)。

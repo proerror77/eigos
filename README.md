@@ -22,7 +22,7 @@ EIGOS 的执行网络原型采用 **一个仓库、Gateway 与 Worker 两个独�
 - **`brief.prepare`**：固定流程整理任务说明，`execution: not_started`，不执行说明中的业务。
 - **`agent.execute`（需显式启用）**：通过本地已登录的 Codex 运行真实模型。模型读取目标和完整任务历史，自主提出必要问题，收到答复后生成完整 Markdown 文档／计划。它不具备外部研究、预订、发送或付款工具；生成文档是本阶段实际交付的服务。
 
-本体驱动的业务动作与验收器仍待实现，不能把模型返回 completed 当成任意业务已经可靠履约。方向见 [本体与执行边界](docs/ontology-execution-direction.md)。
+通用委托主路径已改用新的 Ontology + LLM 后端：分离业务能力与提供者，以固定需求和候选事实生成计划，事务外执行并独立验收。当前适配器仍是本地说明与 CSV，现实服务发现和履约尚待接入。阶段目标见 [后端实施目标](docs/backend-implementation-goals.md)。
 
 2026-10-15 已完成一次 **Grok Bot → A2A → EIGOS 真实执行 Agent** 的提问、回复和交付，未使用 MCP 桥接。见 [真实联调证据](docs/evidence/grok-a2a-2026-10-15/README.md)及[最终交付物](docs/evidence/grok-a2a-2026-10-15/deliverable.md)。这是通过 Grok Bot 已有的电脑执行能力发出 A2A 请求，不是对其原生 A2A 连接器的声明。
 
@@ -142,10 +142,10 @@ CSV 试点现支持专用目录内的真实 UTF-8 CSV 文件（固定四个必�
 
 ## Ontology/OAG CSV 委托
 
-可选 `eigos.delegate` 支持 A2A 自然语言委托：真实协调模型依据版本化 CSV 本体判断范围、补问文件名；程序检查文件并生成绑定计划；经独立授权接口确认后执行现有 CSV 审计，独立验收通过才交付。付款仍为本地模拟。配置、状态与 Grok 可复用接入见 [CSV 本体闭环](docs/csv-ontology-delegation.md)。
+可选 `eigos.delegate` 支持 A2A 自然语言委托：LLM 解释需求 → Resolver 取得候选事实 → LLM 提议计划 → 程序校验 → Worker 执行 → 独立验收。CSV 仅支持完整五项审计，子集明确拒绝；模拟授权不移动真实资金。配置、状态与 Grok 接入见 [CSV 本体闭环](docs/csv-ontology-delegation.md)。
 
 2026-10-15 Grok Bot 已通过保存的接入技能完成两次独立 CSV 委托，首次补问、后续复用、计划授权、执行和独立验收均通过；原始证据见 [Grok OAG 联调](docs/evidence/grok-oag-2026-10-15/README.md)。
 
-## 可注册能力路由
+## Ontology + LLM 后端
 
-`eigos.delegate` 已通过通用注册表选择 CSV 审计或 `brief.prepare`，不再将所有委托绑定到 CSV。模型选择候选，能力包校验输入并负责执行和验收；任务说明完成仍明确为 `execution: not_started`。接口、扩展方法和真实选路验证见 [可注册能力](docs/registered-capabilities.md)。
+`eigos.delegate` 使用 `ontology-execution-v2`。ServiceCapability 与多个 ProviderBinding 分开；任务保存原文、要求、来源和 revision；计划固定输入和绑定版本。旧执行注册表、事务内 start 和旧计划迁移已移除。旧委托只读；新计划不静默换供应方。前端 Agent、认证及协议接入保留，既有跑腿/文档专用原型仍待迁入。当前实现、边界与验证见 [后端说明](docs/registered-capabilities.md)。

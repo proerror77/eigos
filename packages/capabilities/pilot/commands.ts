@@ -21,7 +21,7 @@ export class PilotCommands {
   }
   confirm(job: Job, input: unknown): void {
     const args = confirmSchema.parse(input); const s = job.pilot!;
-    if ((job.state !== 'input-required' && !(job.service === 'eigos.delegate' && job.state === 'auth-required')) || s.approval || s.cancelRequested) throw new DomainError('CONFLICT', 'Not awaiting simulation confirmation');
+    if (job.state !== 'input-required' || s.approval || s.cancelRequested) throw new DomainError('CONFLICT', 'Not awaiting simulation confirmation');
     if (args.quoteId !== s.quote.id || args.quoteDigest !== s.quoteDigest || this.now() >= Date.parse(s.quote.expiresAt)) throw new DomainError('CONFLICT', 'Quote changed or expired');
     s.approval = { quoteDigest: s.quoteDigest, at: new Date(this.now()).toISOString(), simulationOnly: true };
     s.payment = 'pending'; s.step = 'payment'; s.deadline = this.now() + 60000; s.nextAt = this.now();
@@ -38,15 +38,5 @@ export class PilotCommands {
   protected event(job: Job, event: string): void {
     job.updatedAt = new Date(this.now()).toISOString(); job.revision = (job.revision ?? 0) + 1;
     job.pilot!.trace.push({ at: job.updatedAt, event });
-    if (job.delegation) {
-      job.delegation.events.push({ at: job.updatedAt, event });
-      if (job.state === 'completed') {
-        job.delegation.phase = 'accepted';
-        const check = job.pilot!.checks.at(-1);
-        job.delegation.acceptance = { accepted: job.pilot!.acceptance === 'accepted' && check?.accepted === true, reason: check?.reason ?? 'No independent acceptance evidence', at: job.updatedAt };
-      }
-      if (job.state === 'failed') job.delegation.phase = 'failed';
-      if (job.state === 'canceled') job.delegation.phase = 'canceled';
-    }
   }
 }

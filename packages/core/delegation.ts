@@ -1,41 +1,42 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { BACKEND_VERSION, refSchema, type ExecutionPlan, type ServiceRequest, type RequirementCheck, type ResolvedCandidate, type ResolutionScope } from '../ontology/execution.js';
 
 export const DELEGATE = 'eigos.delegate' as const;
-export const ROUTING_VERSION = 'eigos-capability-routing-v1';
-export const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-export const assessmentSchema = z.object({
-  decision: z.enum(['ask_user', 'select_capability', 'unsupported']),
-  capabilityId: z.string().max(200),
-  message: z.string().trim().min(1).max(4000),
-  // JSON text keeps the model envelope independent of each registered input schema.
-  inputJson: z.string().max(16000),
+// Canonical JSON for new plans only. No historical-plan fallback or digest migration.
+export function canonical(value: unknown): string {
+  const normalize = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(normalize);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, x]) => [k, normalize(x)]));
+    return v;
+  };
+  return JSON.stringify(normalize(value));
+}
+export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
+export function validPlanDigest(plan: ExecutionPlan): boolean { const { digest: expected, ...body } = plan; return digest(body) === expected; }
+
+export const groundingSchema = z.object({
+  kind: z.enum(['clarify', 'resolve', 'unsupported']), requestRevision: z.number().int().positive(),
+  capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
+  requirementsJson: z.string().max(16000),
 }).strict();
-export type Assessment = z.infer<typeof assessmentSchema>;
-export interface DelegationPlan {
-  id: string;
-  digest: string;
-  capabilityId?: string;
-  capabilityVersion?: string;
-  providerId?: string;
-  input?: unknown;
-  details?: Record<string, unknown>;
-  // Historical plans remain readable; only their owning adapter interprets old fields.
-  [legacyField: string]: unknown;
-}
+export type Grounding = z.infer<typeof groundingSchema>;
+export const proposalSchema = z.object({
+  kind: z.enum(['propose_plan', 'clarify', 'no_feasible_plan']), requestRevision: z.number().int().positive(),
+  candidateId: z.string().max(200), message: z.string().trim().min(1).max(4000),
+  steps: z.array(z.object({ id: z.string().min(1).max(100), actionTypeRef: refSchema, bindingRef: refSchema,
+    inputJson: z.string().max(16000), dependsOn: z.array(z.string().min(1).max(100)).max(8) }).strict()).max(8),
+}).strict();
+export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
-  routingVersion?: string;
-  capabilityId?: string;
-  capabilityVersion?: string;
-  providerId?: string;
-  ontologyVersion: string;
-  phase: 'assessing' | 'clarifying' | 'awaiting_authorization' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
-  assessment?: { decision: string; reason: string; provider: string; checkedAt: string };
-  plan?: DelegationPlan;
-  acceptance?: { accepted: boolean; reason: string; at: string };
+  backendVersion: typeof BACKEND_VERSION;
+  request: ServiceRequest;
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  plan?: ExecutionPlan;
+  resolution?: { candidates: ResolvedCandidate[]; scope: ResolutionScope };
+  reasoning?: { summary: string; evidenceRef: string };
+  intentId?: string;
+  approval?: { planDigest: string; quoteDigest: string; at: string; simulationOnly: true };
+  acceptance?: { accepted: boolean; reason: string; at: string; checks: RequirementCheck[]; evidenceRefs: string[] };
   events: { at: string; event: string; evidence?: string }[];
-}
-export function validPlanDigest(plan: DelegationPlan): boolean {
-  const { digest: expected, ...body } = plan;
-  return digest(body) === expected;
 }

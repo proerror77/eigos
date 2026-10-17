@@ -1,5 +1,7 @@
-import { DELEGATE, ROUTING_VERSION } from './delegation.js';
-import type { CapabilityRegistry } from './capabilities.js';
+import { DELEGATE } from './delegation.js';
+import type { ExecutionCatalog } from './catalog.js';
+import { BACKEND_VERSION } from '../ontology/execution.js';
+import { validatePlan } from '../coordinator/plan.js';
 import { prepareBrief } from '../capabilities/brief.js';
 import { SERVICE_CATALOG } from './services.js';
 import { loadCsvFile } from '../capabilities/pilot/csv-file.js';
@@ -13,13 +15,16 @@ import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { LIFE_INTAKE, receiveLifeRequest, refreshLifeReceipt } from '../capabilities/life-intake.js';
 
-export interface TaskOptions { registry?: CapabilityRegistry; coordinator?: boolean; lifeIntake?: boolean; waitTimeoutMs?: number; csvInputDirectory?: string; agent?: boolean; paotui?: boolean; paotuiOrders?: boolean; pilot?: PilotCommands }
+export interface TaskOptions { catalog?: ExecutionCatalog; coordinator?: boolean; lifeIntake?: boolean; waitTimeoutMs?: number; csvInputDirectory?: string; agent?: boolean; paotui?: boolean; paotuiOrders?: boolean; pilot?: PilotCommands }
 
 export class TaskService {
   private stopping = false;
-  constructor(private store: JobStore, private options: TaskOptions = {}) {}
+  constructor(private store: JobStore, private options: TaskOptions = {}) {
+    if (options.coordinator && !options.catalog) throw new Error('Ontology backend requires an execution catalogue');
+  }
 
   services() {
+    if (this.options.coordinator && this.options.catalog) return [this.options.catalog.delegationService(), ...(this.options.lifeIntake ? [structuredClone(SERVICE_CATALOG[LIFE_INTAKE]!)] : [])];
     const ids = ['brief.prepare'];
     if (this.options.lifeIntake) ids.push(LIFE_INTAKE);
 
@@ -27,7 +32,7 @@ export class TaskService {
     if (this.options.paotui) ids.push('meituan.paotui.read');
     if (this.options.paotuiOrders) ids.push('meituan.paotui.order');
     if (this.options.pilot) ids.push(PILOT);
-    return [...ids.map(id => structuredClone(SERVICE_CATALOG[id]!)), ...(this.options.coordinator && this.options.registry ? [this.options.registry.delegationService()] : [])];
+    return ids.map(id => structuredClone(SERVICE_CATALOG[id]!));
   }
 
   private ensureAgentConfigured(): void {
@@ -40,6 +45,8 @@ export class TaskService {
     const args = submitSchema.parse(input);
     if (contextId) taskIdSchema.parse(contextId);
     const owner = ownerKey(p);
+    if (this.options.coordinator && args.service !== DELEGATE && args.service !== LIFE_INTAKE) throw new DomainError('INVALID_INPUT', 'Use eigos.delegate in the ontology backend; dedicated prototype services are not execution fallbacks');
+    if ('requirements' in args && args.requirements && args.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
     if (args.service === LIFE_INTAKE && !this.options.lifeIntake) throw new DomainError('INVALID_INPUT', 'Life request intake is not configured');
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     if (args.service === 'meituan.paotui.read' || args.service === 'meituan.paotui.order') {
@@ -51,7 +58,7 @@ export class TaskService {
     if (args.service === PILOT && 'fileName' in args && (p.issuer !== 'local-development' || p.tenant !== 'local' || p.subject !== 'developer')) throw new DomainError('FORBIDDEN', 'Local CSV files require the local development identity');
     if (args.service === PILOT && !this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
     if (args.service === DELEGATE) {
-      if (!this.options.coordinator || !this.options.registry) throw new DomainError('INVALID_INPUT', 'Coordinator is not configured');
+      if (!this.options.coordinator || !this.options.catalog) throw new DomainError('INVALID_INPUT', 'Coordinator is not configured');
 
     }
     if (args.service === 'agent.execute') this.ensureAgentConfigured();
@@ -69,7 +76,10 @@ export class TaskService {
       } else if (args.service === DELEGATE) {
         job.state = 'submitted'; job.revision = 1; job.runs = [];
         job.executionMode = 'worker';
-        job.delegation = { routingVersion: ROUTING_VERSION, ontologyVersion: 'unselected', phase: 'assessing', events: [{ at: now, event: 'delegation_received' }] };
+        job.delegation = { backendVersion: BACKEND_VERSION, request: { id: job.id, revision: 1, originalGoal: args.goal,
+          requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
+          requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
+          phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
       } else if (args.service === PILOT) {
         const snapshot = 'fileName' in args ? loadCsvFile(this.options.csvInputDirectory, args.fileName) : undefined;
         job.executionMode = 'capability';
@@ -89,6 +99,9 @@ export class TaskService {
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
     const current = this.store.get(owner, args.taskId);
+    if (this.options.coordinator && current.service !== DELEGATE && current.service !== LIFE_INTAKE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
+    if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
+    if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
     if (current.service === PILOT) {
       if (!this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
@@ -113,7 +126,15 @@ export class TaskService {
       job.updatedAt = new Date().toISOString();
       job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
       if (job.service === DELEGATE) {
-        job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'assessing';
+        const request = job.delegation!.request;
+        request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+        for (const r of args.requirements ?? []) {
+          const previous = request.requirements.findIndex(x => x.id === r.id);
+          const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };
+          if (previous < 0) request.requirements.push(next); else request.requirements[previous] = next;
+        }
+        if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
+        job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
       } else if (job.service === 'agent.execute') {
         job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
       } else { job.deliverable = args.answer; prepareBrief(job); }
@@ -144,12 +165,8 @@ export class TaskService {
     taskIdSchema.parse(id);
     const canceled = this.store.once(owner, `cancel:${id}`, id, id, () => {
       const job = this.store.get(owner, id);
-      if (job.service === DELEGATE && job.delegation?.plan) {
-        const capability = this.options.registry?.forJob(job, owner);
-        if (!capability) throw new DomainError('CONFLICT', 'Selected capability is unavailable');
-        if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
-        if (capability.cancel) { capability.cancel(job); this.store.save(owner, job); return job; }
-      }
+      if (this.options.coordinator && job.service !== DELEGATE && job.service !== LIFE_INTAKE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
+      if (job.service === DELEGATE && job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
       if (job.service !== DELEGATE && job.pilot) {
         if (!this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
         this.options.pilot.cancel(job); if (job.delegation) job.delegation.phase = 'canceled'; this.store.save(owner, job); return job;
@@ -176,9 +193,15 @@ export class TaskService {
     return this.store.once(owner, `authorize:${id}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, id);
       if (job.service !== DELEGATE || job.state !== 'auth-required') throw new DomainError('CONFLICT', 'No pending delegation authorization');
-      const capability = this.options.registry?.forJob(job, owner);
-      if (!capability?.authorize) throw new DomainError('CONFLICT', 'Selected capability does not accept authorization');
-      capability.authorize(job, args);
+      if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only');
+      const approval = z.object({ requestId: z.string().min(1).max(128), action: z.literal('confirm_simulated_payment'), quoteId: z.uuid(), quoteDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(input);
+      const d = job.delegation; const plan = d.plan;
+      if (!plan?.quote || !this.options.catalog || plan.quote.id !== approval.quoteId || plan.quote.digest !== approval.quoteDigest) throw new DomainError('CONFLICT', 'Exact plan quote approval required');
+      validatePlan(this.options.catalog, owner, d.request, plan);
+      job.updatedAt = new Date().toISOString();
+      d.approval = { planDigest: plan.digest, quoteDigest: plan.quote.digest, at: job.updatedAt, simulationOnly: true };
+      d.phase = 'executing'; d.events.push({ at: job.updatedAt, event: 'plan_authorized', evidence: plan.digest });
+      job.state = 'submitted'; job.revision = (job.revision ?? 0) + 1; delete job.question;
       this.store.save(owner, job); return job;
     });
   }

@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DomainError, replySchema, requireScope, submitSchema, taskIdSchema, type Principal } from '../../packages/core/domain.js';
+import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 
 function result(action: () => unknown): CallToolResult {
@@ -19,14 +19,14 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('list_services', {
-    description: 'Discover configured EIGOS services and their actual scope. Optional life.request accepts everyday service goals for intake only, without provider execution. Other services have their own stated limits.',
+    description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional intake-only life.request. Dedicated prototype services are available only in the separate prototype mode.',
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit a goal to a discovered service. life.request preserves the original everyday-service goal and returns a submitted task with an intake receipt: waiting_provider, execution=not_started, businessCompleted=false; it does not search, order, book or pay. Use get_task to inspect, reply_to_task to add information, cancel_task to withdraw. Other services: brief.prepare, configured agent.execute, local Paotui JSON queries, or CSV simulation with datasetId/fileName. Reuse requestId for identical retries.',
-    inputSchema: submitSchema,
+    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. life.request saves an intake-only receipt and does not execute. Discover the current scope first. Reuse requestId for identical retries.',
+    inputSchema: tasks.services().some(s => s.id === 'eigos.delegate') ? ontologySubmitSchema : submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, args => result(() => tasks.submit(principal, args)));
+  }, (args: unknown) => result(() => tasks.submit(principal, args)));
   server.registerTool('get_task', {
     description: 'Read an owned task, its pending question and artifacts. Works for tasks created through MCP or A2A.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(), annotations: read,

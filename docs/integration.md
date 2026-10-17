@@ -4,6 +4,8 @@
 
 实现版本：0.1.0。运行架构已拆为 Gateway／Worker，启动、队列和迁移说明见 [架构说明](gateway-worker.md)。两个入口共用任务与权限，没有“先 MCP 登录，再转 A2A”的必要步骤。客户端必须具备实际协议和认证支持；提示词不能自动增加网络连接能力。
 
+启用 `EIGOS_COORDINATOR=codex` 后使用新 Ontology + LLM 后端：MCP/A2A 默认提交到 eigos.delegate，只发现该服务及可选的需求登记；不接受旧专用服务直调。下文 brief.prepare / agent.execute / 跑腿的直调示例属于独立原型模式。新后端字段及报价读回见本文末尾和 [后端说明](registered-capabilities.md)。
+
 ## 1. 身份与连接
 
 ### 本地开发
@@ -206,6 +208,6 @@ CSV 试点也支持 `fileName` 替代 `datasetId`，仅从显式配置的 `EIGOS
 
 ## Ontology/OAG 委托入口
 
-开启本地 `EIGOS_COORDINATOR=codex` 后，A2A 文本新任务默认进入通用能力协调器（当前注册 brief.prepare，以及配置启用的 CSV 审计）；支持 SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED 和 REJECTED 等状态。AUTH_REQUIRED 通过独立的任务授权 API 续接，详见 [CSV 本体闭环](csv-ontology-delegation.md)。`service` 等结构化字段属于 EIGOS 业务契约，非 A2A 标准必填字段。阻塞调用超时返回错误，不再正常返回 WORKING。
+开启本地 `EIGOS_COORDINATOR=codex` 后，A2A 文本新任务默认进入 `ontology-execution-v2` 后端：LLM 解释需求，Resolver 取得提供者事实，LLM 提议计划，程序校验并由 Worker 执行/验收。当前支持本地 brief.prepare 和全量 CSV；SUBMITTED、INPUT_REQUIRED、AUTH_REQUIRED、REJECTED 等协议状态保留。AUTH_REQUIRED 通过原任务授权 API 续接，详见 [CSV 本体闭环](csv-ontology-delegation.md)。`service`、可选 requirements 等是 EIGOS 业务字段，不是 A2A 标准必填字段。
 
-新增能力应通过注册表接入；选中能力及验收记录见 metadata.delegation。详情见 [可注册能力](registered-capabilities.md)。
+新增能力分别登记 ServiceCapability、ProviderBinding 和 ExecutionAdapter；记录见 metadata.delegation.request/resolution/plan/acceptance，报价在 plan.quote。旧委托只读，不兼容或迁移旧执行计划。现有 Agent Python 客户端无需改代码，旧业务专用入口仍待迁入。详情见 [后端说明](registered-capabilities.md)。

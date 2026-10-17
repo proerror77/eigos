@@ -104,9 +104,11 @@ export class Worker {
       }
     }).catch(error => {
       this.store.finish(claim, current => {
+        const intentId = current.delegation?.intentId;
+        const dispatched = intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
         current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect external outcome before retrying.'
-          : job.service === 'eigos.delegate' ? 'Coordinator could not verify a supported plan. No execution was authorized.'
+          : job.service === 'eigos.delegate' ? dispatched ? 'Action did not return an accepted result. Inspect recorded observations before any new attempt; no automatic replay.' : 'Ontology backend could not validate a supported plan. No business action was dispatched.'
           : job.service !== 'agent.execute' ? (error instanceof DomainError ? error.message : 'Meituan operation failed. Check local authorization and connectivity.')
           : error instanceof z.ZodError ? 'Executor output did not match the required schema' : 'Model execution failed; check Worker provider availability.';
         current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });

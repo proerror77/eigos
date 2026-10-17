@@ -3,6 +3,7 @@ import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { LIFE_INTAKE, type LifeRequest } from '../capabilities/life-intake.js';
+import { requirementsSchema } from '../ontology/execution.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -31,23 +32,30 @@ export function ownerKey(p: Principal): string {
 
 export const requestIdSchema = z.string().trim().min(1).max(128);
 export const taskIdSchema = z.uuid();
-const legacySubmitSchema = z.object({
+const lifeSubmitSchema = z.object({
+  service: z.literal(LIFE_INTAKE), goal: z.string().min(1).max(10000).refine(value => !!value.trim()),
+  domain: z.string().trim().min(1).max(80).optional(), requestId: requestIdSchema,
+}).strict();
+export const ontologySubmitSchema = z.union([z.object({
+  service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
+  deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
+}).strict(), lifeSubmitSchema]);
+const serviceSubmitSchema = z.object({
   service: z.enum(['brief.prepare', 'agent.execute', 'meituan.paotui.read', 'meituan.paotui.order', 'eigos.delegate']).default('brief.prepare'),
   goal: z.string().trim().min(1).max(10_000),
   deliverable: z.string().trim().min(1).max(4_000).optional(),
   requestId: requestIdSchema,
+  requirements: requirementsSchema.optional(),
 }).strict();
-export const submitSchema = z.union([z.object({
-  service: z.literal(LIFE_INTAKE), goal: z.string().min(1).max(10000).refine(value => !!value.trim()),
-  domain: z.string().trim().min(1).max(80).optional(), requestId: requestIdSchema,
-}).strict(), legacySubmitSchema, z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), datasetId: datasetSchema, requestId: requestIdSchema }).strict(),
+export const submitSchema = z.union([lifeSubmitSchema, serviceSubmitSchema, z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), datasetId: datasetSchema, requestId: requestIdSchema }).strict(),
   z.object({ service: z.literal(PILOT), goal: z.string().trim().min(1).max(10000), fileName: z.string().min(1).max(200).regex(/^[^/\\\x00-\x1f]+\.csv$/i), requestId: requestIdSchema }).strict()]);
-const legacyReplySchema = z.object({
+const answerReplySchema = z.object({
   taskId: taskIdSchema,
   answer: z.string().trim().min(1).max(4_000),
   requestId: requestIdSchema,
+  requirements: requirementsSchema.optional(),
 }).strict();
-export const replySchema = z.union([legacyReplySchema, confirmSchema]);
+export const replySchema = z.union([answerReplySchema, confirmSchema]);
 export type SubmitInput = z.infer<typeof submitSchema>;
 export type ReplyInput = z.infer<typeof replySchema>;
 

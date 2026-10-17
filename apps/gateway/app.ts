@@ -1,5 +1,5 @@
-import { createCapabilityRegistry } from '../../packages/capabilities/registry.js';
-import type { CapabilityRegistry } from '../../packages/core/capabilities.js';
+import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
+import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { PilotCommands } from '../../packages/capabilities/pilot/commands.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -25,7 +25,7 @@ import { AgentAccessError } from '../../packages/members/agents.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
-export function createApp(config: Config, verify: VerifyToken = createVerifier(config), registryFactory?: (store: JobStore) => CapabilityRegistry, loginProvider?: LoginProvider) {
+export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
   if (config.EIGOS_PAOTUI_SKILL_DIR && (config.EIGOS_AUTH_MODE !== 'development' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires loopback development mode');
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   const hostname = new URL(config.PUBLIC_URL).hostname;
@@ -40,10 +40,10 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const principals = new WeakMap<Request, Principal>();
   const store = new JobStore(config.DATABASE_PATH);
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
-  const pilot = config.EIGOS_CSV_PILOT === 'true' ? new PilotCommands() : undefined;
-  const registry = registryFactory?.(store) ?? createCapabilityRegistry(store, { csvInputDirectory: config.EIGOS_CSV_INPUT_DIR, pilot });
+  const pilot = config.EIGOS_CSV_PILOT === 'true' && config.EIGOS_COORDINATOR !== 'codex' ? new PilotCommands() : undefined;
+  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined });
   const tasks = new TaskService(store, {
-    registry,
+    catalog,
     coordinator: config.EIGOS_COORDINATOR === 'codex',
     lifeIntake: config.EIGOS_LIFE_INTAKE === 'true',
     csvInputDirectory: config.EIGOS_CSV_INPUT_DIR,
@@ -166,5 +166,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, registry, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
 }
