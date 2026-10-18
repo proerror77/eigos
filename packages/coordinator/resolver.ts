@@ -59,7 +59,7 @@ export function checkRequirements(request: ServiceRequest, facts: CandidateFacts
           const target = requirement.expected.ref.replace(/\s/g, '').replace(/(?:附近|周边)(?:的)?$/, '');
           const original = request.originalGoal + request.messages.map(m => m.text).join('');
           const stripCity = (s: string) => s.startsWith(city) ? s.slice(city.length).replace(/^市/, '') : s;
-          if (stripCity(target) === stripCity(keyword) && (target.startsWith(city) || original.includes(city))) pass = true;
+          if (city && (target.replace(/市$/, '') === city || (stripCity(target) === stripCity(keyword) && (target.startsWith(city) || original.includes(city))))) pass = true;
         } else if (facts.locationRef) pass = false;
         break;
       }

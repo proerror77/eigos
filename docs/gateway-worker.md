@@ -56,6 +56,8 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 
 启用新后端和个人美团读取时，Worker 通过内部 stdio Ontology MCP 调用官方查询程序；Gateway 不启动该进程、模型或业务读取。两端使用相同 `EIGOS_PAOTUI_SKILL_DIR` 以固定能力／绑定配置，只有 Worker 需要实际个人授权。MCP 只提供版本化定义与只读动作，没有公网监听、下单或付款工具；独立进程不构成新的公共服务。详见 [只读接入](meituan-paotui-integration.md)。
 
+本人常驻服务先构建，再用 `npm run setup:pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
+
 当前适用于同机、持久本地磁盘上的 Gateway／Worker 分进程部署。SQLite WAL 不用于跨机器网络文件系统。跨主机和容器集群扩容，需要以后替换共享存储／队列实现并重新验证故障恢复。
 
 Docker 镜像默认启动 Gateway，也包含构建后的 Worker 代码。Worker 可覆盖命令为 `node dist/apps/worker/main.js`，但启用 Codex 的 Worker 还需要单独准备 CLI 和其运行凭据；镜像不包含个人登录信息。容器分进程运行时需挂载同一宿主本地持久卷，并确保权限一致。

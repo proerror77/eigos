@@ -74,3 +74,21 @@ test('search-area checks cannot be used as a guaranteed delivery destination or 
   assert.equal(checkRequirements(req, facts, ['provider-search-receipt'], [], 'destination')[0]!.result, 'unknown');
   req.requirements[0]!.expected.ref = '北京市虹桥火车站附近'; assert.equal(checkRequirements(req, facts, ['provider-search-receipt'], [], 'search_area')[0]!.result, 'unknown');
 });
+
+test('a city-only requirement is checked as query scope only for search-area capabilities', () => {
+  const req = { id: randomUUID(), revision: 1, originalGoal: '查询北京市的公开地点，关键词天安门', messages: [], requirements: [{ id: 'city-scope', kind: 'location' as const, strength: 'hard' as const, expected: { ref: '北京市' }, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: 'm', receivedAt: new Date().toISOString() } }] };
+  const facts = { searchArea: { city: '北京市', keyword: '天安门' } };
+  for (const ref of ['北京市', '北京']) {
+    req.requirements[0]!.expected.ref = ref;
+    assert.equal(checkRequirements(req, facts, ['query-receipt'], [], 'search_area')[0]!.result, 'pass');
+    assert.equal(checkRequirements(req, facts, ['query-receipt'], [], 'destination')[0]!.result, 'unknown');
+    assert.equal(checkRequirements(req, facts, ['query-receipt'])[0]!.result, 'unknown');
+    assert.equal(checkRequirements(req, facts, [], [], 'search_area')[0]!.result, 'unknown');
+  }
+  for (const ref of ['上海市', '北京市故宫']) {
+    req.requirements[0]!.expected.ref = ref;
+    assert.equal(checkRequirements(req, facts, ['query-receipt'], [], 'search_area')[0]!.result, 'unknown');
+  }
+  assert.equal(PAOTUI_READ_CAPABILITIES[0]!.locationSemantics, 'search_area');
+  assert.equal(PAOTUI_READ_CAPABILITIES[1]!.locationSemantics, undefined);
+});

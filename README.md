@@ -64,6 +64,6 @@ npm run test:e2e:run
 git diff --check
 ```
 
-常规及工程 E2E 使用明确标记的模型／提供方 fixtures，验证协议、权限、计划、恢复与失败边界。真实 PA、模型和美团查询另行实测，不能由 CI 代替。阶段目标见 [实施记录](docs/backend-implementation-goals.md)；[2026-10-17 两段 E2E](docs/evidence/service-network-e2e-2026-10-17/README.md) 是临时实例历史证据，本次 [常驻自然语言流程](docs/evidence/persistent-pa-2026-10-18/README.md) 已验证地址选择、重启续接与真实查价。
+常规及工程 E2E 使用明确标记的模型／提供方 fixtures，验证协议、权限、计划、恢复与失败边界。真实 PA、模型和美团查询另行实测，不能由 CI 代替。阶段目标见 [实施记录](docs/backend-implementation-goals.md)；[2026-10-17 两段 E2E](docs/evidence/service-network-e2e-2026-10-17/README.md) 是临时实例历史证据，本次 [常驻自然语言流程](docs/evidence/persistent-pa-2026-10-18/README.md) 已验证地址选择、重启续接与真实查价。[公开地点发现验收](docs/evidence/public-geo-pa-2026-10-18/README.md) 已验证现有 PA 经 A2A、真实模型和新 DiscoverySource 读回“北京市／天安门”的 20 个地点；常驻新来源仅启用这一公开查询组合。
 
 品牌与候选名称边界见 [品牌说明](docs/brand-brief.md)。项目规则见 [AGENTS.md](AGENTS.md)。

@@ -28,7 +28,9 @@ function fixedReasoner(input = query): Reasoner {
   return {
     ground: async request => ({ decision: {
       kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
-      message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input), requirementsJson: '[]',
+      message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input),
+      // Reproduce the real PA interpreter's city requirement, rather than hiding it.
+      requirementsJson: JSON.stringify([{ requirement: { id: 'public-location-scope', strength: 'hard', kind: 'location', expected: { ref: '北京市' } }, messageId: request.messages[0]!.id, quote: '北京市' }]),
     }, evidence: evidence() }),
     plan: async context => ({ decision: context.resolution.candidates.some(candidate => candidate.status === 'ready')
       ? proposal(context) : { kind: 'no_feasible_plan', requestRevision: context.request.revision, candidateId: '', steps: [],
@@ -83,7 +85,7 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
     gateway = createApp(readConfig(env));
     assert.equal(gateway.catalog.discoverySources(capability.ref, owner).length, 1, 'Gateway must wire the configured discovery source');
     assert.deepEqual(gateway.catalog.bindings(capability.ref, owner), [], 'opt-in must replace the unrestricted static search binding');
-    const submitted = gateway.tasks.submit(principal, { service: 'eigos.delegate', goal: 'Synthetic public search fixture; no model or actual provider', requestId: randomUUID() });
+    const submitted = gateway.tasks.submit(principal, { service: 'eigos.delegate', goal: 'Synthetic public search fixture for 北京市; no model or actual provider', requestId: randomUUID() });
     assert.equal(submitted.state, 'submitted');
     assert.deepEqual(fixture.calls(), [], 'Gateway must only enqueue, never invoke the CLI');
     assert.equal(fixture.tokenReads(), 0);
@@ -110,6 +112,8 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
       assert.equal(candidate.binding.discovery?.requestId, submitted.id);
       assert.equal(candidate.binding.discovery?.requestRevision, 1);
       assert.equal(candidate.offer, undefined);
+      assert.deepEqual(candidate.facts.searchArea, query);
+      assert.equal(candidate.requirementChecks.find(check => check.requirementId === 'public-location-scope')?.result, 'pass');
       assert.equal(candidate.binding.configurationDigest, gateway.catalog.discoverySources(capability.ref, owner)[0]!.configurationDigest);
       assert.equal(completed.delegation!.acceptance!.accepted, true);
       assert.equal(completed.delegation!.plan!.completionTarget, 'artifact');

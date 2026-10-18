@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { readWorkerConfig } from '../dist/packages/core/config.js';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
@@ -32,6 +33,15 @@ if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Existing runtime credential 
 for (const path of [join(directory, 'token'), join(runtime, 'client-token')]) if (read(path).trim() && read(path).trim() !== token) throw new Error('Existing client credential mismatch');
 const skill = process.env.EIGOS_PAOTUI_SKILL_DIR ?? field(read(join(root, '.env')), 'EIGOS_PAOTUI_SKILL_DIR') ?? join(homedir(), '.codex/skills/meituan-paotui');
 if (!isAbsolute(skill) || /[\r\n]/.test(skill) || !existsSync(join(skill, 'paotui.js'))) throw new Error('Configure the existing absolute official Paotui skill directory');
+// Preserve an owned whitelist across updates; only an explicit setting replaces it.
+// Use the runtime validator before stopping the existing service or writing settings.
+const publicGeoQueries = readWorkerConfig({
+  NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430',
+  EIGOS_AUTH_MODE: 'development', EIGOS_PAOTUI_SKILL_DIR: skill,
+  EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: process.env.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES
+    ?? field(oldSettings, 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES'),
+}).EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES ?? [];
+const publicGeoSetting = "'" + JSON.stringify(publicGeoQueries).replaceAll("'", '\\u0027') + "'";
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
@@ -56,6 +66,7 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   `DATABASE_PATH=${join(runtime, 'tasks.sqlite')}`, 'EIGOS_AUTH_MODE=development', `EIGOS_DEV_TOKEN=${token}`,
   'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
   'EIGOS_PAOTUI_ORDERS_ENABLED=false', `EIGOS_PAOTUI_SKILL_DIR=${skill}`, `EIGOS_AUDIT_PATH=${join(runtime, 'http.jsonl')}`,
+  `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');
 const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>
@@ -106,7 +117,7 @@ try {
   privateWrite(join(directory,'runtime-location.json'),JSON.stringify({runtime,release,buildDigest,database:join(runtime,'tasks.sqlite'),audit:join(runtime,'http.jsonl')})+'\n');
   // Retired executable snapshots are recovery material, never a second active mode.
   for (const name of ['dist','scripts']) if (existsSync(join(runtime,name))) renameSync(join(runtime,name), join(backup,'retired-'+name));
-  console.log(JSON.stringify({status:'ready',endpoint:'http://127.0.0.1:3430',defaultService:'eigos.delegate',buildDigest,release,backup,sourceCommit,sourceTreeDirty:dirty,skillInstall:join(runtime,'skill-install.md')}));
+  console.log(JSON.stringify({status:'ready',endpoint:'http://127.0.0.1:3430',defaultService:'eigos.delegate',buildDigest,release,backup,sourceCommit,sourceTreeDirty:dirty,publicGeoDiscoveryQueries:publicGeoQueries,skillInstall:join(runtime,'skill-install.md')}));
 } catch (error) {
   if (needsRestart) {
     await stop().catch(()=>{});
