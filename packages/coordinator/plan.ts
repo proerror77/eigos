@@ -32,7 +32,7 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
     const costs = steps.flatMap(s => s.cost ? [s.cost] : []);
     if (costs.some(c => c.currency !== requirement.expected.currency) || costs.reduce((n, c) => n + BigInt(c.minor), 0n) > BigInt(requirement.expected.minor)) throw new DomainError('CONFLICT', 'Prepared action costs exceed the fixed request budget');
   }
-  const body = { id: randomUUID(), version: '4' as const, ontologyPlanning, requestId: request.id, requestRevision: request.revision, requestDigest: digest(request),
+  const body = { id: randomUUID(), version: '5' as const, ontologyPlanning, requestId: request.id, requestRevision: request.revision, requestDigest: digest(request),
     capabilityRef: capability.ref, ontologyRef: capability.ontologyRef, candidateId: candidate.id, bindingRef: candidate.binding.ref, verifierRef: capability.verifierRef,
     steps, details: candidate.details, completionTarget: capability.completion ?? 'artifact', requirementChecks: candidate.requirementChecks, expiresAt: candidate.expiresAt, ...(candidate.quote ? { quote: candidate.quote } : {}) };
   const capabilityRefs = [...new Map([capability.ref, ...steps.map(s => s.capabilityRef)].map(r => [JSON.stringify(r), r])).values()];
@@ -42,7 +42,7 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
   return { ...pinned, digest: digest(pinned) };
 }
 export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
-  if (plan.version !== '4' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
+  if (plan.version !== '5' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
   const { digest: proofDigest, ...proof } = plan.ontologyPlanning;
   if (digest(proof) !== proofDigest || digest(proof.model) !== digest(businessModel.ref) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
   const capability = catalog.capability(plan.capabilityRef);

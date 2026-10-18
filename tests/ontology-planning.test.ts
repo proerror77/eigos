@@ -142,7 +142,7 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
     b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
     assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
     assert.equal(done.delegation!.ontologyReads!.length, 4); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 2);
-    assert.equal(done.delegation!.plan!.version, '4');
+    assert.equal(done.delegation!.plan!.version, '5');
     assert(prompts.some(p => p.includes('propertiesDigest')) === false, 'Internal snapshot hashes need not be shown as business data');
   } finally { b.store.close(); }
 });

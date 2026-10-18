@@ -8,6 +8,8 @@ import { functionCallSchema } from '../ontology/object-functions.js';
 import { planningSnapshot, type PlanningReadReceipt, type ObjectSnapshot, type DecisionActionProposal, type PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { ResolvedCandidate, ServiceRequest } from '../ontology/execution.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
+import { serviceDomains } from '../ontology/service-domains.js';
+import type { DomainAssessment } from '../ontology/domain-rules.js';
 
 const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), includeSchemas: z.boolean().optional().describe('Request full property value schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
@@ -122,6 +124,19 @@ export class OntologyPlanningSession {
         if (inputs.request?.object.id !== this.request.id) throw new DomainError('FORBIDDEN', 'Action belongs to another request');
         if (this.graph.read(this.owner, inputs.request.object).properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Action request revision changed');
         const checks: DecisionActionProposal['checks'] = definition.submissionCriteria.map(criterion => ({ criterion, result: ['same_owner', 'current_request_revision'].includes(criterion) ? 'pass' : 'unknown' }));
+        const domain = serviceDomains.find(d => d.action === args.action);
+        if (domain) {
+          const option = inputs.option!.object, requirements = inputs.requirements!.object;
+          const related = this.graph.related(this.owner, option, 'requirements', { remaining: 1000 });
+          const requestLinks = [option, requirements].map(ref => this.graph.related(this.owner, ref, 'request', { remaining: 1000 }));
+          checks.find(c => c.criterion === 'same_request')!.result = requestLinks.every(rows => rows?.length === 1 && rows[0]!.ref.id === this.request.id) ? 'pass' : 'fail';
+          checks.find(c => c.criterion === 'current_requirements')!.result = related?.length === 1 && key(related[0]!.ref) === key(requirements) && related[0]!.properties.requestRevision === this.request.revision ? 'pass' : 'fail';
+          const eligibility = this.graph.evaluate(this.owner, { function: domain.eligibleFunction, object: option });
+          for (const ref of eligibility.evidenceRefs) this.remember(ref);
+          const status = (eligibility.value as DomainAssessment | undefined)?.status;
+          checks.find(c => c.criterion === 'eligible_option')!.result = eligibility.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
+          // Proposal tools cannot manufacture a dispatch permit, even for a local itinerary.
+        }
         if (inputs.offer) {
           const requests = this.graph.related(this.owner, inputs.offer.object, 'request', { remaining: 1000 });
           const sameRequest = checks.find(c => c.criterion === 'same_request'); if (sameRequest) sameRequest.result = requests?.length === 1 && requests[0]!.ref.id === this.request.id ? 'pass' : 'fail';

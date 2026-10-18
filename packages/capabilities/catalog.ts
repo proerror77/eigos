@@ -1,3 +1,4 @@
+import { DomainServiceAdapter, domainBinding, domainCapability, type DomainSandboxProvider } from './domain-service.js';
 import { ExecutionCatalog } from '../core/catalog.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from './brief.js';
 import { CSV_CAPABILITY, CSV_BINDING, CsvAuditAdapter } from './csv-audit.js';
@@ -10,7 +11,9 @@ import type { JobStore } from '../core/store.js';
 import { DELIVERY_REQUEST_CAPABILITY, DELIVERY_REQUEST_BINDING, PaotuiRequestAdapter } from './paotui-request.js';
 import { PaotuiGeoDiscoverySource, type PublicGeoQuery } from './paotui-geo-discovery.js';
 
-export function createExecutionCatalog(options: { store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string } } = {}): ExecutionCatalog {
+export function createExecutionCatalog(options: { store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[] } = {}): ExecutionCatalog {
+  const domainProviders = options.domainSandboxProviders ?? [];
+  const domainCapabilities = [...new Map(domainProviders.map(p => [p.domain, domainCapability(p.domain)])).values()];
   const paotui = options.paotuiSkillDirectory ? new OntologyMcpPaotuiReader(options.paotuiSkillDirectory, options.ontologyAuditPath) : undefined;
   const sandbox = options.sandbox ? new SandboxServiceAdapter(options.sandbox.endpoint, options.sandbox.tokenFile) : undefined;
   if (paotui && !options.store) throw new Error('Address selection requires the owned persistent task store');
@@ -20,8 +23,8 @@ export function createExecutionCatalog(options: { store?: JobStore; csvInputDire
   const geoDiscovery = paotui && options.publicGeoDiscoveryQueries?.length
     ? new PaotuiGeoDiscoverySource(paotui, paotui.configurationDigest, options.publicGeoDiscoveryQueries) : undefined;
   const reads = PAOTUI_READ_CAPABILITIES.map((c, i) => ({ capability: c, binding: PAOTUI_READ_BINDINGS[i]!, i })).filter(x => x.i !== 1);
-  return new ExecutionCatalog([BRIEF_CAPABILITY, ...(options.csvInputDirectory ? [CSV_CAPABILITY] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(options.documentEnabled ? [DOCUMENT_CAPABILITY] : []), ...(paotui ? [...reads.map(x => x.capability), DELIVERY_REQUEST_CAPABILITY] : [])],
-    [BRIEF_BINDING, ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : []), ...(options.documentEnabled ? [DOCUMENT_BINDING] : []), ...(paotui ? [...reads.filter(x => !geoDiscovery || x.i !== 0).map(x => x.binding), DELIVERY_REQUEST_BINDING].map(b => ({ ...b, configurationDigest: paotui.configurationDigest })) : [])],
-    [new BriefAdapter(), ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : []), ...(options.documentEnabled ? [new DocumentAdapter(options.documentExecutor)] : []), ...(paotui ? [...reads.map(x => x.i === 0 && geoDiscovery ? geoDiscovery.adapter : new PaotuiReadAdapter(x.i, paotui)), new PaotuiRequestAdapter(paotui, options.store!, paotui.configurationDigest)] : [])],
+  return new ExecutionCatalog([BRIEF_CAPABILITY, ...domainCapabilities, ...(options.csvInputDirectory ? [CSV_CAPABILITY] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(options.documentEnabled ? [DOCUMENT_CAPABILITY] : []), ...(paotui ? [...reads.map(x => x.capability), DELIVERY_REQUEST_CAPABILITY] : [])],
+    [BRIEF_BINDING, ...domainProviders.map(domainBinding), ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : []), ...(options.documentEnabled ? [DOCUMENT_BINDING] : []), ...(paotui ? [...reads.filter(x => !geoDiscovery || x.i !== 0).map(x => x.binding), DELIVERY_REQUEST_BINDING].map(b => ({ ...b, configurationDigest: paotui.configurationDigest })) : [])],
+    [new BriefAdapter(), ...domainProviders.map(p => new DomainServiceAdapter(p)), ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : []), ...(options.documentEnabled ? [new DocumentAdapter(options.documentExecutor)] : []), ...(paotui ? [...reads.map(x => x.i === 0 && geoDiscovery ? geoDiscovery.adapter : new PaotuiReadAdapter(x.i, paotui)), new PaotuiRequestAdapter(paotui, options.store!, paotui.configurationDigest)] : [])],
     geoDiscovery ? [geoDiscovery] : []);
 }

@@ -19,7 +19,7 @@ flowchart LR
   E --> G
 ```
 
-LLM 没有工具、数据库、凭据或授权能力。它先读取最多16项能力摘要及输入契约，选定领域后再读取相关本体、最多8项候选、来源与逐条件检查。目录超限要缩小检索范围，不能静默截断或假装搜过全网。
+LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函数；不能直接访问数据库、凭据或授予业务权限。它先读取最多16项能力摘要及输入契约，选定领域后再读取相关本体、最多8项候选、来源与逐条件检查。目录超限要缩小检索范围，不能静默截断或假装搜过全网。
 
 ## 对象与职责
 
@@ -87,3 +87,9 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 运行 `npm run check`、`npm test`、`npm run test:e2e`、`git diff --check`。E2E 使用独立 Gateway、两个竞争 Worker、独立持久测试提供方，覆盖接单/扣款后崩溃、取消/撤销竞态、部分交付和退款读回。
 
 真实 PA／模型／美团只读来源在本人常驻服务上验收。PA 发起自然语言目标、收到真实地址选项、在原任务选择并读回报价后，运行 `node dist/examples/verify-pa-paotui-e2e.js --live --session-dir /private/session --expected-query /private/expected-route.json` 只读核对证据。观察器不代替 PA 提交、选择或查询供应商。实际记录见 [本轮常驻验收](evidence/persistent-pa-2026-10-18/README.md)；[前轮临时实例](evidence/service-network-e2e-2026-10-17/README.md) 保留为历史证据。
+
+## 2026-10-18 六类服务扩展
+
+当前运行契约为 ontology-execution-v5，业务模型为 eigos.business@3。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
+
+[六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。本轮不切换常驻服务，不运行真实交易或预约。
