@@ -1,3 +1,5 @@
+import type { NetworkService } from '../../packages/network/service.js';
+import { mountNetworkMcp } from './network/mcp.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
@@ -17,8 +19,9 @@ function result(action: () => unknown): CallToolResult {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal): McpServer {
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
+  if (network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',

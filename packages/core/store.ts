@@ -1,3 +1,4 @@
+import { NetworkStore } from '../network/store.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -79,6 +80,8 @@ export class JobStore {
     });
     this.ontology = new OntologyObjectStore(this.db);
   }
+
+  createNetworkStore(): NetworkStore { return new NetworkStore(this.db); }
 
   close(): void { this.db.close(); }
 

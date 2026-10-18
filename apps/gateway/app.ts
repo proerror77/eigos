@@ -1,3 +1,5 @@
+import { NetworkService } from '../../packages/network/service.js';
+import { mountNetworkRoutes } from './network/routes.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
@@ -27,6 +29,7 @@ const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tena
 export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
   if (config.EIGOS_PAOTUI_SKILL_DIR && (config.EIGOS_AUTH_MODE !== 'development' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires loopback development mode');
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
+  if (config.EIGOS_NETWORK_ENABLED === 'true' && (config.EIGOS_AUTH_MODE !== 'jwt' || !config.OIDC_AGENT_CLIENT_ID || !config.OIDC_CLIENT_ID || !config.EIGOS_NETWORK_MEMBER_IDS.length)) throw new Error('Network requires explicit JWT and enrolled-member configuration');
   const hostname = new URL(config.PUBLIC_URL).hostname;
   const allowedOrigins = new Set([config.PUBLIC_URL, ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
   const app = createMcpExpressApp({
@@ -43,6 +46,9 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
+  let network: NetworkService | undefined;
+  try { if (config.EIGOS_NETWORK_ENABLED === 'true') network = new NetworkService(store.createNetworkStore(), members, { memberIds: config.EIGOS_NETWORK_MEMBER_IDS }); }
+  catch (error) { store.close(); members.close(); throw error; }
   const tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
@@ -113,6 +119,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   };
 
+  mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
+
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
   for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
     try {
@@ -147,7 +155,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal)), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);
@@ -182,5 +190,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, network, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
 }

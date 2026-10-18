@@ -39,7 +39,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
     res.set('Referrer-Policy', 'same-origin').type('html').send(memberPage({
       ...(current ? { member: current.member, csrf: current.csrf, connections: store.connections(current.member.id) } : {}),
       agentRegistrations: current ? store.agents.list(current.member.id) : [], invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only',
-      loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
+      networkAccess: c.EIGOS_NETWORK_ENABLED === 'true' && !!current && c.EIGOS_NETWORK_MEMBER_IDS.includes(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
     }));
   });
   app.get('/members/login', async (req, res) => {
@@ -101,7 +101,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       if (error instanceof z.ZodError) {
         const message = '请检查名称、语言和时区；开通会员时需勾选同意。';
         if (req.is('application/json')) res.status(400).json({ error: 'invalid_member_input', message });
-        else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), agentRegistrations: store.agents.list(current.member.id), invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only', loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', notice: message }));
+        else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), agentRegistrations: store.agents.list(current.member.id), invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only', networkAccess: c.EIGOS_NETWORK_ENABLED === 'true' && !!current && c.EIGOS_NETWORK_MEMBER_IDS.includes(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', notice: message }));
         return;
       }
       if (error instanceof DomainError) { res.status(error.code === 'NOT_FOUND' ? 404 : 403).json({ error: error.code }); return; }

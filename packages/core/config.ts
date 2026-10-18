@@ -17,7 +17,14 @@ const publicGeoQueries = z.string().max(16384).transform((value, ctx) => {
   return parsed.data;
 });
 
+const networkMembers = z.string().max(4096).default('[]').transform((value, ctx) => {
+  try { return z.array(z.uuid()).max(50).refine(ids => new Set(ids).size === ids.length).parse(JSON.parse(value)); }
+  catch { ctx.addIssue({ code: 'custom', message: 'EIGOS_NETWORK_MEMBER_IDS must be a unique JSON array of at most 50 member UUIDs' }); return z.NEVER; }
+});
+
 const schema = z.object({
+  EIGOS_NETWORK_ENABLED: z.enum(['false', 'true']).default('false'),
+  EIGOS_NETWORK_MEMBER_IDS: networkMembers,
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
@@ -62,6 +69,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
   }
   c.PUBLIC_URL = publicUrl.origin;
+  if (c.EIGOS_NETWORK_ENABLED === 'true' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:')) throw new Error('Network pilot requires persistent JWT membership, browser/agent clients and explicit enrolled member IDs');
   if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
   if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');
   if (c.OIDC_AGENT_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Agent onboarding requires JWT mode');
