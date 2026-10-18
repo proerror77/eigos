@@ -8,6 +8,39 @@ import type { Comparison, DiscoveryCoverage, Offer } from '../ontology/supply.js
 import { compareOffers } from './comparison.js';
 export type { ResolvedCandidate } from '../ontology/execution.js';
 
+class DiscoveryTimeout extends Error {
+  constructor() { super('Capability discovery timed out'); }
+}
+
+// Abort signals alone cannot bound an adapter that ignores cancellation. Race the
+// wait too, and never let a late response reach candidate registration.
+async function resolveCall<T>(call: (signal: AbortSignal) => Promise<T>, signal: AbortSignal, timeoutMs?: number): Promise<T> {
+  signal.throwIfAborted();
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort(signal.reason);
+  let rejectOnAbort!: () => void;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectOnAbort = () => reject(controller.signal.reason);
+    controller.signal.addEventListener('abort', rejectOnAbort, { once: true });
+  });
+  signal.addEventListener('abort', forwardAbort, { once: true });
+  const timer = timeoutMs === undefined ? undefined : setTimeout(() => controller.abort(new DiscoveryTimeout()), timeoutMs);
+  try {
+    // Attach both settlement handlers before invoking the adapter, including
+    // adapters that throw synchronously or reject after cancellation.
+    const result = await Promise.race([Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return call(controller.signal);
+    }), aborted]);
+    controller.signal.throwIfAborted();
+    return result;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', forwardAbort);
+    controller.signal.removeEventListener('abort', rejectOnAbort);
+  }
+}
+
 export function checkRequirements(request: ServiceRequest, facts: CandidateFacts, evidenceRefs: string[], predicates: string[] = [], locationSemantics?: 'search_area' | 'destination'): RequirementCheck[] {
   return request.requirements.map(requirement => {
     let pass: boolean | undefined;
@@ -74,25 +107,26 @@ export class CapabilityResolver {
       signal.throwIfAborted();
       const { adapter } = this.catalog.binding(binding.ref, ctx.owner);
       let preparation: Preparation;
-      try { preparation = await adapter.prepare(structuredClone(ctx), structuredClone(input), signal); }
+      try { preparation = await resolveCall(bounded => adapter.prepare(structuredClone(ctx), structuredClone(input), bounded), signal); }
       catch (error) {
         signal.throwIfAborted();
         if (error instanceof DomainError || error instanceof SyntaxError) throw error;
         candidates.push({ id: randomUUID(), binding, status: 'unavailable', facts: {}, evidenceRefs: [], requirementChecks: checkRequirements(ctx.request, {}, []), observedAt: new Date().toISOString(), expiresAt: new Date().toISOString() });
         continue;
       }
+      signal.throwIfAborted();
       append(binding, preparation);
     }
     for (const source of this.catalog.discoverySources(capabilityRef, ctx.owner)) {
-      signal.throwIfAborted(); const bounded = AbortSignal.any([signal, AbortSignal.timeout(60000)]);
+      signal.throwIfAborted();
       try {
-        const result = await source.discover(structuredClone(ctx), structuredClone(input), bounded);
+        const result = await resolveCall(bounded => source.discover(structuredClone(ctx), structuredClone(input), bounded), signal, 60000);
         signal.throwIfAborted(); coverage.push(result.coverage);
         if (result.candidates.length + candidates.length > 8) throw new DomainError('CONFLICT', 'Discovery exceeded the bounded candidate limit');
         for (const discovered of result.candidates) { this.catalog.registerDiscovered(ctx, discovered.binding); append(discovered.binding, discovered.preparation, discovered.offer); }
       } catch (error) {
         signal.throwIfAborted(); if (error instanceof DomainError && error.code === 'INVALID_INPUT') throw error;
-        coverage.push({ sourceId: source.id, status: bounded.aborted ? 'timeout' : error instanceof DomainError && error.code === 'FORBIDDEN' ? 'needs_authorization' : 'unavailable', queriedAt: new Date().toISOString(), returnedStores: 0, queriedStores: 0, hasMore: false, realSupply: true });
+        coverage.push({ sourceId: source.id, status: error instanceof DiscoveryTimeout ? 'timeout' : error instanceof DomainError && error.code === 'FORBIDDEN' ? 'needs_authorization' : 'unavailable', queriedAt: new Date().toISOString(), returnedStores: 0, queriedStores: 0, hasMore: false, realSupply: true });
       }
     }
     const offers = candidates.flatMap(c => c.offer ? [c.offer] : []);
