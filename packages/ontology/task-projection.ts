@@ -7,6 +7,7 @@ import { ontologyReceiptSchema } from '../capabilities/paotui-mcp-server.js';
 import { paotuiPublicPlaceSchema } from '../capabilities/paotui-public-locations.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectBatch, type ObjectWrite, type ObjectSource } from './object-store.js';
 import type { ObjectRef } from './model.js';
+import { projectDomainSnapshot } from './domain-projection.js';
 
 function upsert(graph: OntologyObjectStore, owner: string, type: string, id: string, values: Record<string, unknown>): ObjectWrite {
   const ref = { type, id }; let expectedRevision: number | undefined;
@@ -47,6 +48,7 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
   const request = read.request;
   if (!read.result || typeof read.result !== 'object') return { state: 'request_only' };
   const result = read.result as Record<string, unknown>;
+  if (result.domainSnapshot !== undefined) return projectDomainSnapshot(graph, owner, read.capabilityId, request, read.input, result.domainSnapshot);
   const parsed = ontologyReceiptSchema.safeParse(result.ontologyReceipt);
   if (!parsed.success) return { state: result.ontologyReceipt !== undefined ? 'invalid_source' : 'request_only' };
   const receipt = parsed.data, { ontologyReceipt: _receipt, ...business } = result;

@@ -135,7 +135,13 @@ export class ActionRuntime {
       }
       result = { kind: 'unknown', eventId: `${attempt!.id}:unknown`, sourceVersion: intent.latestVersion ?? 0, evidenceRefs: [], message: 'Operation result unknown; query the original business operation before any further effect.' }; verified = true;
     }
-    this.store.recordObservation(claim.owner, intent.id, attempt!.id, result, verified);
+    const recorded = this.store.recordObservation(claim.owner, intent.id, attempt!.id, result, verified);
+    if (recorded.applied && verified && result.kind !== 'unknown' && result.output?.domainSnapshot !== undefined) {
+      if (!this.store.checkpoint(claim, () => {
+        const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: { domainSnapshot: result.output!.domainSnapshot } });
+        if (projection.state !== 'typed_result') throw new DomainError('CONFLICT', 'Verified domain observation could not be projected');
+      })) return false;
+    }
     if (result.runEvidence) this.store.checkpoint(claim, job => { if (!(job.runs ?? []).some(r => r.id === result.runEvidence!.id)) job.runs = [...(job.runs ?? []), result.runEvidence!]; });
     if (reply && result.kind !== 'unknown') this.store.checkpoint(claim, job => { if (job.delegation!.actionReply?.messageId === reply.messageId) { delete job.delegation!.actionReply; delete job.delegation!.pendingActionInput; } });
     if (!isActionAdapter(adapter) && result.kind === 'unknown') { this.fail(claim, 'Read/local action did not return an accepted result. Inspect recorded observations before any new attempt.', 'unknown'); return false; }
@@ -157,7 +163,7 @@ export class ActionRuntime {
     const checks = checkRequirements(outcomeRequest, delivery.facts, delivery.evidenceRefs, definition.predicates.map(p => p.id), definition.locationSemantics);
     const target = ctx.request.outcome ?? plan.completionTarget;
     const business = intent.businessSnapshot?.value;
-    const goalSatisfied = target === 'artifact' || target === 'delivery' && business?.fulfillment === 'delivered' || target === 'order' && business?.order === 'confirmed' || target === 'refund' && business?.refund === 'refunded' || target === 'cancel' && business?.order === 'canceled';
+    const goalSatisfied = target === 'artifact' || target === 'domain' && business?.domain?.status === 'satisfied' || target === 'delivery' && business?.fulfillment === 'delivered' || target === 'order' && business?.order === 'confirmed' || target === 'refund' && business?.refund === 'refunded' || target === 'cancel' && business?.order === 'canceled';
     const accepted = goalSatisfied && verdict.accepted && delivery.evidenceRefs.length > 0 && hardRequirementsPass(outcomeRequest, checks) && hardConditionsPass(conditionChecks, 'result');
     const hardFailure = !verdict.accepted || checks.some(c => c.result === 'fail' && outcomeRequest.requirements.some(r => r.id === c.requirementId && r.strength === 'hard')) || conditionChecks.some(c => c.strength === 'hard' && c.result === 'fail');
     const outcome: OutcomeAssessment = { requestId: plan.requestId, requestRevision: plan.requestRevision, status: accepted ? 'satisfied' : hardFailure ? 'unsatisfied' : 'unknown',

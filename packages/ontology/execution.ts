@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v4' as const;
+export const BACKEND_VERSION = 'ontology-execution-v5' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -41,7 +41,7 @@ export interface ServiceCapability {
   actions: ActionType[];
   predicates: { id: string; description: string }[];
   verifierRef: Ref;
-  completion?: 'artifact' | 'delivery' | 'order' | 'refund';
+  completion?: 'artifact' | 'delivery' | 'order' | 'refund' | 'domain';
   outcomePredicates?: string[];
   environment?: 'local' | 'live' | 'sandbox';
   locationSemantics?: 'search_area' | 'destination';
@@ -91,7 +91,7 @@ export interface PlanStep {
 }
 export interface ExecutionPlan {
   id: string;
-  version: '4';
+  version: '5';
   ontologyPlanning: import('./planning-contract.js').PlanningSnapshot;
   requestId: string;
   requestRevision: number;
@@ -103,7 +103,7 @@ export interface ExecutionPlan {
   bindingSnapshots: import('./supply.js').DiscoveredBinding[];
   definitionDigests: { ref: Ref; digest: string }[];
   bindingDigests: { ref: Ref; digest: string }[];
-  completionTarget: 'artifact' | 'delivery' | 'order' | 'refund';
+  completionTarget: 'artifact' | 'delivery' | 'order' | 'refund' | 'domain';
   verifierRef: Ref;
   steps: PlanStep[];
   details: Record<string, unknown>;

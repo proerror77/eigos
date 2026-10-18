@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
 
 export const decimalSchema = z.string().regex(/^(0|[1-9]\d{0,14})(?:\.\d{1,6})?$/);
@@ -20,6 +21,7 @@ const condition = (predicate: string, types: [string, ...string[]], role: string
 // Conditions are domain data. The N2 planner must explicitly bind them; N1 never
 // reinterprets an old generic requirement or lets a condition grant authority.
 export const businessConditionSchema = z.union([
+  ...domainConditionSchemas,
   condition('geo.query_scope_matches', ['Place'], 'search_area', ['result'], 'eq', z.object({ city: z.string().min(1).max(100), keyword: z.string().min(1).max(200) }).strict()),
   condition('parcel.quote_matches_request', ['DeliveryQuote'], 'parcel_quote', ['result'], 'eq', z.object({ weight: quantitySchema.refine(v => ['kg', 'g'].includes(v.unit)), serviceLevel: z.enum(['ordinary', 'express']), parcel: objectRefSchema.extend({ type: z.literal('Parcel') }).optional(), route: objectRefSchema.extend({ type: z.literal('DeliveryRoute') }).optional() }).strict()),
   condition('offer.total_within_budget', ['DeliveryQuote', 'ProductOffer'], 'total_price', ['precondition'], 'lte', z.object({ amount: moneyValueSchema, priceBasis: z.enum(['estimate', 'firm_quote']), scope: z.literal('all_mandatory_fees') }).strict()),
@@ -93,12 +95,12 @@ const objects: ObjectTypeDefinition[] = [
   type('Payment', '付款记录', 'paymentId', { providerReference: str('Provider payment reference'), purpose: choice(['goods', 'deposit'], 'Payment business purpose'), amount: money('Observed payment amount'), paymentState: choice(['not_started', 'pending', 'paid', 'failed', 'unknown'], 'Payment source state'), observedAt: time('Payment observation') }),
   type('Refund', '退款记录', 'refundId', { providerReference: str('Provider refund reference'), amount: money('Observed refund amount'), refundState: choice(['not_started', 'pending', 'refunded', 'rejected', 'unknown'], 'Refund state; acceptance is not receipt of funds'), observedAt: time('Refund observation') }),
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
-  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'order', 'delivery', 'reservation', 'payment', 'refund'], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
+  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
 // Only changed definitions advance. Historical object fingerprints are never rewritten.
-objects.find(o => o.id === 'ServiceRequest')!.version = '2';
+objects.find(o => o.id === 'ServiceRequest')!.version = '3';
 const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
-receiptType.version = '2';
+receiptType.version = '3';
 receiptType.properties.queryScope = p('struct', z.object({ city: z.string().min(1).max(100), keyword: z.string().min(1).max(200) }).strict(), 'Actual public query scope, bound to the validated source input digest');
 const productOfferType = objects.find(o => o.id === 'ProductOffer')!;
 productOfferType.version = '2';
@@ -152,16 +154,18 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '2', objects, links,
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '3', objects: [...objects, ...domainObjects], links: [...links, ...domainLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
   actions: [
+    ...domainActions,
     { id: 'RequestDeliveryQuote', description: 'Record the decision to request a quote; does not create a price or order', inputs: { request: 'ServiceRequest', parcel: 'Parcel', route: 'DeliveryRoute' }, changes: ['ServiceRequest.progress', 'ServiceRequest.selectedRoute'], submissionCriteria: ['same_owner', 'current_request_revision', 'explicit_read_scope', 'complete_route_and_parcel'], providerOperation: 'delivery_preview' },
     { id: 'SelectOffer', description: 'Record a version-bound choice; grants no payment or order authority', inputs: { request: 'ServiceRequest', offer: 'Offer' }, changes: ['Proposal', 'Proposal.selectedOffer', 'ServiceRequest.selectedProposal'], submissionCriteria: ['same_owner', 'same_request', 'current_request_revision', 'fresh_offer', 'hard_preconditions_pass'] },
   ],
   functions: [
+    ...domainFunctions,
     { id: 'offerFreshness', version: '1', inputTypes: ['Offer'], description: 'Evidence-backed freshness at the server clock; local refresh windows are not provider commitments' },
     { id: 'remainingQuantity', version: '1', inputTypes: ['OrderLine'], description: 'Ordered quantity minus accepted delivery allocations, with unit, specification and event checks' },
     { id: 'actualArrival', version: '1', inputTypes: ['Shipment'], description: 'Actual arrival from accepted delivery events; an ETA is never an arrival' },

@@ -2,6 +2,8 @@
 
 日期：2026-10-18。本文是 [主规格](ontology-spec-v0.2-2026-10-18.md) 的对象、属性、关系、接口和数据映射目录。28 个类型、接口、关系及有界查询已在 N1 实现；[N2](ontology-n2.md) 已衔接模型查询、条件和不执行的决策提案，并完成独立 Agent 演练。人工非建模者、正式来源及领域动作仍按阶段推进；本文不是 Foundry 部署、SDK 兼容或正式认证声明。
 
+当前完整模型已扩展为 eigos.business@3：63 个具体类型、2 接口、21 函数、8 决策 Action。本文保留原三个领域的目录；新增 35 个类型、双向关系和来源映射见 [六类服务实现](service-domains-2026-10-18.md)，后续共用 Action 定义卡见 [完整设计](ontology-design-completion-v0.2-2026-10-18.md)。
+
 ## 1. 建模依据与本项目的选择
 
 Palantir 的设计指导先确立领域实体，再考虑复用、扩展及组合；对象模型要服务实际业务问题。下表右侧是 EIGOS 的设计决策，不是官方提供的生活服务模板。[官方设计原则](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)
@@ -173,12 +175,12 @@ Worker 内部的 Ontology MCP 继续提供定义读取和供应方查询边界�
 | 业务决策 | 为已明确包裹和路线请求新报价 | 为本需求选定具体报价／条款 |
 | 参数 | request、parcel、route、serviceLevel 引用及 revision | request、具体 Offer 引用、报价 revision |
 | 提交条件 | 身份及读取范围允许；引用归属一致；输入完整；查询组合在受控范围内 | 同一 owner／需求；前置硬条件通过；报价新鲜；需求 revision 未变 |
-| 对象／关系变更 | Request 进入 awaiting_quote；关联准确 Parcel／Route；追加操作意图 | 建立 Proposal 与 selectedOffer 关系，固定条款及需求版本 |
+| 对象／关系变更 | Request.progress=planning；关联准确 Parcel／Route；沟通记录等待报价，追加只读操作意图 | 建立 Proposal 与 selectedOffer 关系，固定条款及需求版本 |
 | 不可直接写的属性 | 报价金额、来源承诺、订单／付款状态 | 来源报价、库存、授权已批准或交付成功 |
 | 后续事实 | Worker 只读操作获得回执后，由映射管线产生 DeliveryQuote | 仅表示选择；实际业务动作另外检查授权 |
 | 审计 | actor、参数、变更集、规则版本、关联运行意图 | actor、选中对象／版本、变更集、拒绝理由 |
 
-RequestOrder、RequestReservation、RequestRefund 同样要列出变更集和权限；仅生成待处理业务意图不会产生“已建立订单”“已付”“已确认预订”等事实。其真实副作用在当前运行策略下继续禁止。提交条件与对象编辑权限分别检查。[官方提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
+RequestOrder、RequestReservation、RequestRefund 等完整变更集及权限已列于[后续 Action 定义卡](ontology-design-completion-v0.2-2026-10-18.md#3-决策-action-与执行操作)；仅生成待处理业务意图不会产生“已建立订单”“已付”“已确认预订”等事实。其真实副作用在当前运行策略下继续禁止。提交条件与对象编辑权限分别检查。[官方提交条件](https://www.palantir.com/docs/foundry/action-types/submission-criteria)
 
 ## 7. 业务权限和可发现性
 

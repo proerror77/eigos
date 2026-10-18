@@ -27,6 +27,7 @@ export interface ExecutionAttempt {
   ordinal: number;
 }
 export interface BusinessSnapshot {
+  domain?: import('./domain-rules.js').DomainAssessment & { name: import('./service-domains.js').ServiceDomain };
   order?: 'pending' | 'confirmed' | 'canceled' | 'unknown';
   payment?: 'not_started' | 'pending' | 'paid' | 'failed' | 'unknown';
   fulfillment?: 'pending' | 'partial' | 'delivered' | 'failed' | 'disputed' | 'unknown';

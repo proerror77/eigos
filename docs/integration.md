@@ -32,6 +32,8 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
+六类服务扩展复用这些接口和权限。运行契约为 `ontology-execution-v5`、模型为 `eigos.business@3`；新增领域默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+
 ## A2A
 
 `/a2a` 实现 A2A 1.0 JSON-RPC 的 SendMessage、GetTask、ListTasks、CancelTask。请求携带 `Authorization: Bearer …`、`Content-Type: application/json`、`A2A-Version: 1.0`。普通 text parts 默认进入 `eigos.delegate`：

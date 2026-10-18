@@ -6,6 +6,8 @@ import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectRef } from '../ontology/model.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from '../ontology/object-store.js';
 import type { ConditionCheck } from '../ontology/planning-contract.js';
+import { serviceDomains } from '../ontology/service-domains.js';
+import type { DomainAssessment } from '../ontology/domain-rules.js';
 
 const conditionsSchema = z.array(businessConditionSchema).max(40);
 const refEqual = (a: ObjectRef, b: ObjectRef) => a.type === b.type && a.id === b.id;
@@ -69,6 +71,8 @@ export function groundConditions(request: ServiceRequest, json: string, retrieve
 
 function scopedObjects(graph: OntologyObjectStore, owner: string, requestId: string, type: string, budget: ReadBudget): ObjectView[] | undefined {
   const root = { type: 'ServiceRequest', id: requestId };
+  const domain = serviceDomains.find(d => [d.candidateType, d.resultType].includes(type));
+  if (domain) return graph.related(owner, root, `${domain.id}${type === domain.candidateType ? 'Options' : 'Results'}`, budget);
   if (['DeliveryQuote', 'ProductOffer', 'ReservationOffer'].includes(type)) return graph.related(owner, root, 'offers', budget)?.filter(o => o.ref.type === type).map(o => graph.read(owner, o.ref, budget));
   if (type === 'Reservation') return graph.related(owner, root, 'reservations', budget);
   if (type === 'OrderLine') {
@@ -109,6 +113,15 @@ export function assessConditions(graph: OntologyObjectStore, owner: string, requ
       return check;
     };
     const evaluate = (input: unknown) => graph.evaluate(owner, input, budget);
+    const domain = serviceDomains.find(d => rule === `domain.${d.id}.eligible` || rule === `domain.${d.id}.complete`);
+    if (domain) {
+      const requirements = graph.related(owner, object.ref, 'requirements', budget);
+      if (requirements?.length !== 1 || !refEqual(requirements[0]!.ref, c.expected as ObjectRef)) return { ...check, reason: 'The domain condition refers to different fixed requirements' };
+      const value = evaluate({ function: c.phase === 'result' ? domain.outcomeFunction : domain.eligibleFunction, object: object.ref });
+      const status = (value.value as DomainAssessment | undefined)?.status;
+      if (value.status === 'unknown' || status === 'unknown') return { ...check, reason: value.reason ?? 'Domain evidence is incomplete; no business completion established', evidenceRefs: value.evidenceRefs, evidenceLevels: value.evidenceLevels };
+      return apply(value, () => status === 'satisfied');
+    }
     if (rule === 'offer.total_within_budget') return apply(evaluate({ function: 'withinBudget', object: object.ref, budget: expected.amount, priceBasis: expected.priceBasis }), v => v === 'pass');
     if (rule === 'parcel.quote_matches_request') {
       const value = evaluate({ function: 'deliveryQuoteMatches', object: object.ref, request: { type: 'ServiceRequest', id: request.id }, serviceLevel: expected.serviceLevel });

@@ -4,13 +4,15 @@
 
 本规格细化 [架构 v0.2](architecture-design-v0.2-2026-10-17.md)，沿用单仓库、Gateway／Worker、共享任务核心及 Ontology + LLM 决策分工。术语由 [CONTEXT.md](../CONTEXT.md) 维护；本文维护对象契约、语义规则和实现要求。原设计中的旧执行架构兼容建议已经撤销：历史记录保留只读，不自动迁移成可执行计划。
 
-这里的 v0.2 是所沿用的架构文档版本，N2 的运行内核标记 ontology-execution-v4，业务模型为 eigos.business@2；具体领域定义与绑定各自独立版本，不以文档修订号替代运行契约版本。
+这里的 v0.2 是所沿用的架构文档版本；N2 历史交付为 ontology-execution-v4／eigos.business@2，后续六类服务扩展的当前代码为 ontology-execution-v5／eigos.business@3；具体领域定义与绑定各自独立版本，不以文档修订号替代运行契约版本。
 
 建模依据为 Palantir 的[设计原则](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)、[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)及[业务问题验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)。具体对象、接口、主键、属性来源、双向关系和数据映射以配套[对象目录](ontology-model-catalog-v0.2-2026-10-18.md)为准。官方原则与 EIGOS 的实施选择分别标明；采用方法不等于已经接入 Foundry 或实现其全部平台能力。
 
 规格阶段交付了本文、[三个场景的设计验证](ontology-scenarios-v0.2-2026-10-18.md)、代码差距和[新阶段目标](backend-implementation-goals.md)。随后 N1 的代码与验证记录见 [验收记录](evidence/ontology-n1-2026-10-18/README.md)。两轮均不调用真实来源、不启动模型业务任务、不改变常驻服务或权限；订单、付款、占位、取消和退款均没有本轮执行授权。场景中的业务数据全部合成。
 
 后续 N2 已在隔离环境运行实际模型查询与决策提案验证，仍只使用合成业务来源；没有真实交易或常驻切换。独立 Agent 与人工演练的不同状态以 [N2 验收记录](evidence/ontology-n2-2026-10-18/README.md) 为准。
+
+六类新增领域的实现、动作和验收见 [六类服务说明](service-domains-2026-10-18.md)；N3～N5 的来源、变更集、状态、整体结果、接入及版本切换设计见 [完整设计核对](ontology-design-completion-v0.2-2026-10-18.md)。二者沿用本文，不建立另一套执行器或放开真实副作用。
 
 ## 1. 本体要回答的问题
 

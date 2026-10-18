@@ -2,12 +2,16 @@ import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
 import { moneyValueSchema, quantitySchema, timeZoneSchema, addressValueSchema } from './business-model.js';
 import { digest } from '../core/delegation.js';
+import { sourceProof as proof } from './object-evidence.js';
+import { evaluateDomainFunction } from './domain-functions.js';
+import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store.js';
 
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
   z.object({ function: z.literal('withinBudget'), object: objectRefSchema, budget: moneyValueSchema, priceBasis: z.enum(['estimate', 'firm_quote']) }).strict(),
@@ -30,14 +34,6 @@ function fromScaled(value: bigint, factor: bigint) {
   return `${whole}${part ? '.' + part : ''}`;
 }
 function requireType(object: ObjectView, type: string) { if (object.ref.type !== type) throw new DomainError('INVALID_INPUT', 'Function requires its registered object type'); }
-function proof(store: OntologyObjectStore, owner: string, ref: ObjectRef, budget: ReadBudget) {
-  const receipts = store.related(owner, ref, 'sourceReceipts', budget);
-  const subject = store.read(owner, ref, budget);
-  const scopes: Record<string, string> = { DeliveryQuote: 'delivery_quote', ProductOffer: 'goods_offer', ReservationOffer: 'reservation', ReservationSlot: 'reservation', Order: 'order', Shipment: 'delivery', DeliveryEvent: 'delivery', DeliveryAllocation: 'delivery', Reservation: 'reservation', Payment: 'payment', Refund: 'refund' };
-  const linksDigest = store.relationshipDigest(owner, ref, budget);
-  if (!receipts?.length || receipts.some(r => !r.properties.sourceIdentity || !r.properties.sourceEventId || !r.properties.contentDigest || !r.properties.evidenceLevel || r.properties.evidenceLevel === 'user_asserted' || r.properties.scope !== scopes[ref.type] || !r.properties.observedAt || Date.parse(String(r.properties.observedAt)) > store.now() || !(r.properties.subjects as { object: ObjectRef; digest: string; linksDigest: string }[] | undefined)?.some(s => same(s.object, ref) && s.digest === digest(subject.properties) && s.linksDigest === linksDigest))) return undefined;
-  return { refs: receipts.map(r => r.ref), levels: receipts.map(r => String(r.properties.evidenceLevel)) };
-}
 function one(store: OntologyObjectStore, owner: string, ref: ObjectRef, link: string, budget: ReadBudget) {
   const values = store.related(owner, ref, link, budget); return values?.length === 1 ? values[0] : undefined;
 }
@@ -50,6 +46,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const domainResult = evaluateDomainFunction(store, owner, input, budget);
+  if (domainResult) return domainResult;
   const object = store.read(owner, input.object, budget), p = object.properties;
   if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
   if (input.function === 'remainingQuantity') {
