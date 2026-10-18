@@ -2,6 +2,8 @@
 
 日期：2026-10-18。契约 `eigos.network.v1`，待实现；依赖 [D01](d01-identity-publication-2026-10-18.md)，基线见 [总览](agent-network-contracts-v1-2026-10-18.md)。
 
+T09 已在原事件表上实现有界增量拉取、持久游标和权限重置；实际字段、迁移与密钥存储见 [T09 说明](../network-t09.md)。本分册其余尚未实现的询价/结果摘要契约保持设计状态。
+
 ## 1. 存储拓扑定案
 
 N1 已用同一个 SQLite 连接保存 Job 与 ontology_objects/links，savepoint 保证任务与投影原子提交。第一阶段沿用这一能力：新增网络表位于同一个业务 DATABASE_PATH，通过独立 NetworkStore/NetworkService 访问。会员库仍独立，Worker 不读其凭据。

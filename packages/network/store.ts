@@ -1,12 +1,13 @@
+import type { FollowEdge, NetworkEvent } from './activity-contracts.js';
 import type { NeedPost, EngagementMessage } from './collaboration-contracts.js';
 import type { Space, Membership, Invitation, Representation, Listing } from './directory-contracts.js';
 import type { DatabaseSync } from 'node:sqlite';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { digest } from '../core/delegation.js';
 import { fail, type Profile, type Binding, type Draft, type Approval, type Grant, type Publication, type ResultRef } from './contracts.js';
 
-export type Records = { need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
-const tables = { need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export type Records = { follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
+const tables = { follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
@@ -20,6 +21,7 @@ export class NetworkStore {
     `);
     for (const table of Object.values(tables)) db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY,owner TEXT NOT NULL,body TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_owner ON ${table}(owner,id);`);
     db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS network_follow_identity ON network_follows(json_extract(body,'$.profileId'),json_extract(body,'$.targetProfileId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_membership_identity ON network_memberships(json_extract(body,'$.spaceId'),json_extract(body,'$.memberId'));
       CREATE INDEX IF NOT EXISTS network_member_spaces ON network_memberships(json_extract(body,'$.memberId'),json_extract(body,'$.state'),id);
       CREATE INDEX IF NOT EXISTS network_publication_kind_state ON network_publications(json_extract(body,'$.content.kind'),json_extract(body,'$.state'),id);
@@ -33,6 +35,25 @@ export class NetworkStore {
       'responderMemberIds',json('[]'),'questionCounts',json('{}')) FROM network_publications WHERE json_extract(body,'$.content.kind')='need' AND json_extract(body,'$.needId') IS NULL;
       CREATE INDEX IF NOT EXISTS network_message_post ON network_publications(json_extract(body,'$.content.body.postId'),id);`);
     db.prepare('INSERT OR IGNORE INTO network_state VALUES(?,?)').run('space_id', randomUUID());
+    this.transaction(() => {
+      const columns = db.prepare('PRAGMA table_info(network_events)').all().map(c => c.name);
+      if (!columns.includes('publication_id')) db.exec('ALTER TABLE network_events ADD COLUMN publication_id TEXT');
+      if (!columns.includes('object_revision')) db.exec('ALTER TABLE network_events ADD COLUMN object_revision TEXT');
+      db.prepare('INSERT OR IGNORE INTO network_state VALUES(?,?)').run('activity_epoch', '1');
+      db.prepare('INSERT OR IGNORE INTO network_state VALUES(?,?)').run('activity_cursor_key', randomBytes(32).toString('hex'));
+      if (!db.prepare('SELECT 1 FROM network_state WHERE key=?').get('activity_events_migrated')) {
+        for (const row of db.prepare("SELECT seq,kind,object_id FROM network_events WHERE kind IN ('published','need_closed')").all()) {
+          const target = this.eventTarget(String(row.kind), String(row.object_id));
+          if (!target) continue;
+          const pub = this.get('publication', target);
+          // Published snapshots start at publication revision 1; a later need.close is a separate event.
+          const stamp = row.kind === 'published' ? digest([1, pub.content.kind === 'need' ? this.get('need', pub.needId ?? pub.id).contentRevision : null,
+            pub.content.kind === 'message' ? this.get('message', pub.messageId ?? pub.id).revision : null]) : this.publicationRevision(pub);
+          db.prepare('UPDATE network_events SET publication_id=?,object_revision=? WHERE seq=?').run(target, stamp, Number(row.seq));
+        }
+        db.prepare('INSERT INTO network_state VALUES(?,?)').run('activity_events_migrated', '1');
+      }
+    });
   }
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
   transaction<T>(fn: () => T): T {
@@ -56,7 +77,7 @@ export class NetworkStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 201) return fail('INVALID_INPUT', 422);
     const clauses = ['id>?']; const params: string[] = [after];
     for (const [field, value] of Object.entries(filters)) {
-      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId'].includes(field)) return fail('INVALID_INPUT', 422);
+      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId', 'targetProfileId'].includes(field)) return fail('INVALID_INPUT', 422);
       clauses.push(`json_extract(body,'$.${field}')=?`); params.push(value);
     }
     return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`).all(...params, limit).map(r => JSON.parse(String(r.body)));
@@ -67,10 +88,48 @@ export class NetworkStore {
     const found = this.list('binding', owner).find(b => b.profileId === profileId && b.installationId === installationId && !b.revoked);
     return found ?? fail('ACTOR_NOT_BOUND', 403);
   }
-  event(kind: string, id: string) { this.db.prepare('INSERT INTO network_events(event_id,kind,object_id,at) VALUES(?,?,?,?)').run(randomUUID(), kind, id, new Date(this.now()).toISOString()); }
+  private eventTarget(kind: string, id: string): string | undefined {
+    if (kind === 'published') return this.db.prepare('SELECT 1 FROM network_publications WHERE id=?').get(id) ? id : undefined;
+    if (kind === 'need_closed') {
+      const row = this.db.prepare('SELECT body FROM network_needs WHERE id=?').get(id);
+      return row ? JSON.parse(String(row.body)).currentPublicationId : undefined;
+    }
+    return undefined;
+  }
+  publicationRevision(pub: Publication) {
+    return digest([pub.revision, pub.content.kind === 'need' ? this.get('need', pub.needId ?? pub.id).revision : null,
+      pub.content.kind === 'message' ? this.get('message', pub.messageId ?? pub.id).revision : null]);
+  }
+  event(kind: string, id: string) {
+    const publicationId = this.eventTarget(kind, id);
+    this.db.prepare('INSERT INTO network_events(event_id,kind,object_id,at,publication_id,object_revision) VALUES(?,?,?,?,?,?)')
+      .run(randomUUID(), kind, id, new Date(this.now()).toISOString(), publicationId ?? null, publicationId ? this.publicationRevision(this.get('publication', publicationId)) : null);
+    if (['retracted', 'superseded', 'grant_revoked', 'binding_revoked', 'profile_changed', 'membership_changed', 'space_changed', 'invitation_changed', 'representation_reviewed', 'listing_changed', 'listing_reviewed', 'access_revoked'].includes(kind))
+      this.db.prepare("UPDATE network_state SET value=CAST(value AS INTEGER)+1 WHERE key='activity_epoch'").run();
+  }
+  activityKey() {
+    const key = String(this.db.prepare("SELECT value FROM network_state WHERE key='activity_cursor_key'").get()!.value);
+    if (!/^[a-f0-9]{64}$/.test(key)) return fail('INVALID_ACTIVITY_KEY', 503);
+    return Buffer.from(key, 'hex');
+  }
+  activityEpoch() {
+    const epoch = this.db.prepare("SELECT value FROM network_state WHERE key='activity_epoch'").get()!.value;
+    // Expiry also invalidates cached projections even when no writer emits an event.
+    const expiry = this.db.prepare(`SELECT MAX(t) AS boundary FROM (
+      SELECT julianday(json_extract(body,'$.visibleUntil')) AS t FROM network_publications
+      UNION ALL SELECT julianday(json_extract(body,'$.validUntil')) AS t FROM network_representations
+    ) WHERE t<=julianday(?)`).get(new Date(this.now()).toISOString())!.boundary ?? 0;
+    return digest([epoch, expiry]);
+  }
+  events(after: number, highWater: number): NetworkEvent[] {
+    return this.db.prepare('SELECT * FROM network_events WHERE seq>? AND seq<=? ORDER BY seq LIMIT 201').all(after, highWater).map(r => ({
+      seq: Number(r.seq), eventId: String(r.event_id), kind: String(r.kind), objectId: String(r.object_id), at: String(r.at),
+      ...(r.publication_id ? { publicationId: String(r.publication_id), objectRevision: String(r.object_revision) } : {}),
+    }));
+  }
   fence(memberId: string, kind: 'member' | 'installation' | 'client', target = '') {
     // Persist this BEFORE mutating the separate membership database; failures leave access denied.
-    this.transaction(() => { this.db.prepare('INSERT OR IGNORE INTO network_auth_fences VALUES(?,?,?)').run(memberId, kind, target); });
+    this.transaction(() => { this.db.prepare('INSERT OR IGNORE INTO network_auth_fences VALUES(?,?,?)').run(memberId, kind, target); this.event('access_revoked', memberId); });
   }
   checkFence(memberId: string, installationId?: string, clientId?: string) {
     const found = this.db.prepare("SELECT 1 FROM network_auth_fences WHERE member_id=? AND (kind='member' OR kind='installation' AND target=? OR kind='client' AND target=?) LIMIT 1").get(memberId, installationId ?? '', clientId ?? '');

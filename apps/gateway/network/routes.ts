@@ -1,3 +1,4 @@
+import { activityPage } from './activity-page.js';
 import { collaborationPage } from './collaboration-page.js';
 import { escape, form } from './html.js';
 import { directoryControls, directoryBrowserPage, directoryDetailPage } from './directory-page.js';
@@ -12,6 +13,7 @@ import { NetworkService } from '../../../packages/network/service.js';
 import { NetworkError, commands } from '../../../packages/network/contracts.js';
 
 export function networkFailure(error: unknown): { status: number; body: object } {
+  if (error instanceof NetworkError && error.code === 'CURSOR_STALE') return { status: 409, body: { version: 1, error: { code: 'CURSOR_STALE', retryable: false, details: { resetRequired: true } } } };
   if (error instanceof NetworkError && error.code.endsWith('_HANDOFF_REQUIRED')) return { status: error.status, body: { version: 1, error: { code: error.code, retryable: false, details: { nextAction: 'human_review_required' } } } };
   if (error instanceof NetworkError) return { status: error.status, body: { version: 1, error: { code: error.code, retryable: false } } };
   if (error instanceof z.ZodError) return { status: 422, body: { version: 1, error: { code: 'INVALID_INPUT', retryable: false } } };
@@ -22,7 +24,7 @@ export function networkFailure(error: unknown): { status: number; body: object }
 export function networkPage(service: NetworkService, memberId: string, csrf: string): string {
   const p = service.panel(memberId);
   const profiles = p.profiles.map(profile => `<section><h2>${escape(profile.displayName)}</h2><p>身份 ${escape(profile.id)}</p>` + form(csrf, { action: 'profile.update', profileId: profile.id, expectedRevision: profile.revision, displayName: profile.displayName }, '修改显示名称', `<label>显示名称 <input name="displayName" value="${escape(profile.displayName)}" required></label>`) + form(csrf, { action: 'profile.set_state', profileId: profile.id, expectedRevision: profile.revision, state: profile.state === 'suspended' ? 'active' : 'suspended' }, profile.state === 'suspended' ? '重新启用身份（不恢复旧许可）' : '停用身份并撤销共享') +
-    (p.installations.length ? form(csrf, { action: 'profile.bind_installation', profileId: profile.id, installationId: p.installations[0]!.id, allowedCommands: [...commands] }, '绑定所选助手', `<label>助手 <select name="installationId">${p.installations.map(i => `<option value="${escape(i.id)}">${escape(i.displayName)} (${escape(i.id)})</option>`).join('')}</select></label><p>允许准备草稿、提交服务资料和代表关系申请、请求批准、发布已批准内容和撤回自己的内容。助手不能批准或审核。</p>`) : '<p>请先登记一个助手。</p>') +
+    (p.installations.length ? form(csrf, { action: 'profile.bind_installation', profileId: profile.id, installationId: p.installations[0]!.id, allowedCommands: [...commands] }, '绑定所选助手', `<label>助手 <select name="installationId">${p.installations.map(i => `<option value="${escape(i.id)}">${escape(i.displayName)} (${escape(i.id)})</option>`).join('')}</select></label><p>允许准备草稿、提交服务资料和代表关系申请、请求批准、发布已批准内容、撤回自己的内容及管理私有关注。助手不能批准或审核。</p>`) : '<p>请先登记一个助手。</p>') +
     p.bindings.filter(b => b.profileId === profile.id && !b.revoked).map(b => form(csrf, { action: 'profile.revoke_binding', bindingId: b.id, expectedRevision: b.revision }, `停用绑定 ${b.installationId}`)).join('') + '</section>').join('');
   const reviews = p.approvals.filter(r => r.status === 'pending').map(r => `<section><h2>待批准内容</h2>${r.replacementId ? `<p>此次操作将替换原发布 ${escape(r.replacementId)}（版本 ${escape(r.replacementRevision)}），旧版本将停止共享。</p>` : '<p>此次操作为新增发布。</p>'}<pre>${escape(JSON.stringify(r.content, null, 2))}</pre><p>接收者：${escape(r.recipientMemberIds.map(id => (p.recipients.find(m => m.id === id)?.displayName ?? '当前不可用的成员') + ' (' + id + ')' ).join('、'))}</p><p>发布截止：${escape(r.publishBefore)}；可见截止：${escape(r.visibleUntil)}</p><p>仅批准此内容版本和这些接收者，之后加入的成员不会获得访问权。</p>` + form(csrf, { action: 'publication.approve', approvalRequestId: r.id, expectedDraftRevision: r.draftRevision, reviewDigest: r.reviewDigest }, '批准这一次发布') + '</section>').join('');
   const grants = p.grants.filter(g => g.status !== 'revoked').map(g => `<section><p>许可 ${escape(g.id)} · ${escape(g.status)}</p>` + form(csrf, { action: 'publication.revoke', grantId: g.id, expectedRevision: g.revision }, '撤销许可并停止共享') + '</section>').join('');
@@ -31,7 +33,7 @@ export function networkPage(service: NetworkService, memberId: string, csrf: str
 
 export function mountNetworkRoutes(app: Express, config: Config, members: MemberStore, service: NetworkService | undefined, authenticate: RequestHandler, principal: (req: Request) => Principal) {
   const enabled: RequestHandler = (_req, res, next) => { if (!service) { res.status(403).json({ version: 1, error: { code: 'NETWORK_DISABLED' } }); return; } next(); };
-  for (const [path, method] of [['commands', 'command'], ['query', 'query'], ['receipts/get', 'receipt']] as const) app.post('/network/v1/' + path, enabled, authenticate, (req, res) => {
+  for (const [path, method] of [['commands', 'command'], ['query', 'query'], ['receipts/get', 'receipt'], ['updates', 'updates']] as const) app.post('/network/v1/' + path, enabled, authenticate, (req, res) => {
     try {
       if (Buffer.byteLength(JSON.stringify(req.body)) > 32768) throw new NetworkError('INVALID_INPUT', 422);
       const token = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
@@ -54,6 +56,13 @@ export function mountNetworkRoutes(app: Express, config: Config, members: Member
       const spaceId = z.uuid().parse(req.params.spaceId);
       const query = z.object({ kind: z.enum(['profile', 'listing', 'need']).default('profile'), q: z.string().max(100).optional(), cursor: z.string().max(2048).optional() }).strict().parse(req.query);
       res.type('html').send(directoryBrowserPage(service!, s.member.id, spaceId, query.kind, { search: query.q, cursor: query.cursor }));
+    } catch (error) { const f = networkFailure(error); res.status(f.status).json(f.body); }
+  });
+  app.get('/members/network/spaces/:spaceId/updates', enabled, (req, res) => {
+    const s = session(req); if (!s) { res.status(401).json({ error: 'MEMBER_SESSION_REQUIRED' }); return; }
+    try {
+      const query = z.object({ cursor: z.string().max(2048).optional() }).strict().parse(req.query);
+      res.type('html').send(activityPage(service!, s.member.id, z.uuid().parse(req.params.spaceId), query.cursor));
     } catch (error) { const f = networkFailure(error); res.status(f.status).json(f.body); }
   });
   app.get('/members/network/spaces/:spaceId/needs/:id', enabled, (req, res) => {

@@ -19,7 +19,7 @@ export function directoryBrowserPage(service: NetworkService, memberId: string, 
   const spaces = service.directory.spaces(memberId), title = spaces.find(s => s.id === spaceId)?.name ?? '协作圈';
   const params = new URLSearchParams({ kind, ...(query.search !== undefined ? { q: query.search } : {}) });
   const next = result.page?.cursor ? `<a href="${spaceUrl(spaceId)}?${escape(params.toString())}&cursor=${encodeURIComponent(result.page.cursor)}">继续查看</a>` : '';
-  return directoryShell(title, `<nav><a href="${spaceUrl(spaceId)}?kind=profile">Agent 主页</a><a href="${spaceUrl(spaceId)}?kind=listing">服务目录</a><a href="${spaceUrl(spaceId)}?kind=need">需求协作</a></nav><form method="get"><input type="hidden" name="kind" value="${kind}"><label>搜索可见内容 <input name="q" maxlength="100" value="${escape(query.search ?? '')}"></label><button>搜索</button></form>${result.items?.map(v => card(v, spaceId)).join('') || '<p>这一页没有可见结果。</p>'}${next}`);
+  return directoryShell(title, `<nav><a href="${spaceUrl(spaceId)}?kind=profile">Agent 主页</a><a href="${spaceUrl(spaceId)}?kind=listing">服务目录</a><a href="${spaceUrl(spaceId)}?kind=need">需求协作</a><a href="${spaceUrl(spaceId)}/updates">圈内动态</a></nav><form method="get"><input type="hidden" name="kind" value="${kind}"><label>搜索可见内容 <input name="q" maxlength="100" value="${escape(query.search ?? '')}"></label><button>搜索</button></form>${result.items?.map(v => card(v, spaceId)).join('') || '<p>这一页没有可见结果。</p>'}${next}`);
 }
 export function directoryDetailPage(service: NetworkService, memberId: string, spaceId: string, kind: 'profile' | 'listing', id: string) {
   const result: NetworkQueryResult = service.directoryQuery(memberId, { version: 1, kind, spaceId, ...(kind === 'profile' ? { profileId: id } : { listingId: id }) });

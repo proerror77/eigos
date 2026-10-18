@@ -222,3 +222,52 @@ test('T08 HTTP/MCP share need and message permissions; concurrent publication, b
     assert.equal((await f.call(path, undefined, { Cookie: `__Host-eigos-member=${bs.token}` })).status, 404);
   } finally { await client.close(); await f.close(); }
 });
+
+test('T09 HTTP/MCP updates share private follow filtering, checkpoints and revocation reset with the member page', async () => {
+  const f = await fixture(); const client = new Client({ name: 't09-test', version: '1' });
+  try {
+    const { profileId } = await f.init(), bs = f.gateway.members.createSession(f.bob.id);
+    const bobControl = (action: object) => f.control({ ...action, _csrf: bs.csrf }, { Cookie: `__Host-eigos-member=${bs.token}` });
+    const bp = await bobControl({ action: 'profile.create', displayName: 'Following PA' }); assert.equal(bp.status, 200);
+    const bobProfile = (await bp.json()).refs[0].id;
+    assert.equal((await bobControl({ action: 'profile.bind_installation', profileId: bobProfile, installationId: f.b.id, allowedCommands: [...commands] })).status, 200);
+    const privateTask = f.gateway.tasks.submit(f.a.p, { goal: 'PRIVATE_T09_TASK with address and contact', requestId: randomUUID() });
+    const original = f.gateway.tasks.get(f.a.p, privateTask.id);
+    const dr = await f.command(profileId, { operation: 'draft.create', content: { kind: 'profile', body: { displayName: '<script>Publisher</script>', summary: 'Approved summary', roleTags: [] } } }); assert.equal(dr.status, 200);
+    const draftId = (await dr.json()).refs[0].id;
+    const ar = await f.command(profileId, { operation: 'publication.request_approval', draftId, expectedRevision: 1, recipientMemberIds: [f.bob.id], publishBefore: new Date(Date.now() + 60000).toISOString(), visibleUntil: new Date(Date.now() + 3600000).toISOString() });
+    assert.equal(ar.status, 200); const approval = (await ar.json()).result[0];
+    const gr = await f.control({ action: 'publication.approve', approvalRequestId: approval.id, expectedDraftRevision: 1, reviewDigest: approval.reviewDigest }); assert.equal(gr.status, 200);
+    const grantId = (await gr.json()).refs[0].id;
+    assert.equal((await f.command(profileId, { operation: 'publication.publish', draftId, expectedRevision: 1, grantId })).status, 200);
+    const spaceId = f.gateway.network!.store.spaceId;
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.b.token}` } } }));
+    assert((await client.listTools()).tools.some(t => t.name === 'network_updates' && t.annotations?.readOnlyHint));
+    const followInput = { version: 1, asProfileId: bobProfile, operation: 'follow.set', targetProfileId: profileId, spaceId, following: true, requestId: randomUUID() };
+    const [fm, fh] = await Promise.all([client.callTool({ name: 'network_command', arguments: followInput }), f.api('commands', followInput, f.b.token)]);
+    assert(!fm.isError); assert.equal(fh.status, 200); assert.equal(f.gateway.network!.store.scan('follow').length, 1);
+    const input = { version: 1, spaceId, mode: 'following', asProfileId: bobProfile };
+    const http = await f.api('updates', input, f.b.token); assert.equal(http.status, 200); const data = await http.json();
+    const mcp = await client.callTool({ name: 'network_updates', arguments: input }); assert(!mcp.isError);
+    assert.deepEqual((mcp.structuredContent as { result: {items: unknown[]} }).result.items, data.items); assert.equal(data.items.length, 1);
+    assert(!JSON.stringify(data).includes('PRIVATE_T09_TASK')); assert(!JSON.stringify(data).includes(privateTask.id));
+    assert(!JSON.stringify(data).includes(ownerKey(f.a.p))); assert(!JSON.stringify(data).includes(f.b.token));
+    const empty = await f.api('updates', { ...input, cursor: data.page.checkpoint }, f.b.token); assert.equal(empty.status, 200); assert.deepEqual((await empty.json()).items, []);
+    const pagePath = `/members/network/spaces/${spaceId}/updates`;
+    const page = await f.call(pagePath, undefined, { Cookie: `__Host-eigos-member=${bs.token}` }); assert.equal(page.status, 200);
+    const html = await page.text(); assert(html.includes('&lt;script&gt;Publisher')); assert(!html.includes('<script>')); assert(!html.includes(privateTask.id));
+    assert.equal(page.headers.get('cache-control'), 'no-store');
+    assert.equal((await f.call(pagePath)).status, 401);
+    assert.equal((await f.api('updates', input)).status, 404, 'Another owner cannot use a private follow filter');
+    assert.equal((await f.control({ action: 'publication.revoke', grantId, expectedRevision: 2 })).status, 200);
+    const stale = await f.api('updates', { ...input, cursor: data.page.checkpoint }, f.b.token); assert.equal(stale.status, 409);
+    assert.deepEqual((await stale.json()).error.details, { resetRequired: true });
+    const staleMcp = await client.callTool({ name: 'network_updates', arguments: { ...input, cursor: data.page.checkpoint } }); assert(staleMcp.isError); assert(JSON.stringify(staleMcp).includes('resetRequired'));
+    const cleared = await f.api('updates', input, f.b.token); assert.deepEqual((await cleared.json()).items, []);
+    const resetPage = await f.call(pagePath + '?cursor=' + encodeURIComponent(data.page.checkpoint), undefined, { Cookie: `__Host-eigos-member=${bs.token}` }); assert.equal(resetPage.status, 200);
+    const resetHtml = await resetPage.text(); assert(resetHtml.includes('重新同步动态')); assert(!resetHtml.includes('Publisher'));
+    assert.deepEqual(f.gateway.tasks.get(f.a.p, privateTask.id), original); assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 50, offset: 0 }).total, 1);
+    f.gateway.members.agents.revoke(f.bob.id, f.b.id);
+    assert.equal((await f.api('updates', { version: 1, spaceId }, f.b.token)).status, 403);
+  } finally { await client.close(); await f.close(); }
+});

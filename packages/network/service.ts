@@ -1,3 +1,5 @@
+import { NetworkActivity } from './activity.js';
+import { updatesQuerySchema } from './activity-contracts.js';
 import { NetworkCollaboration } from './collaboration.js';
 import type { CollaborationLimits } from './collaboration-contracts.js';
 import { NetworkDirectory } from './directory.js';
@@ -18,17 +20,19 @@ function fields(value: unknown, prefix = ''): string[] {
   if (value && typeof value === 'object' && !Array.isArray(value)) return Object.entries(value).flatMap(([key, child]) => fields(child, prefix + '/' + key));
   return [prefix];
 }
-const requiredCommand = { 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
+const requiredCommand = { 'follow.set': 'follow.manage', 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
 
 /** No model, supplier, payment or task-dispatch access. All mutations are synchronous. */
 export class NetworkService {
   readonly holder = randomUUID();
   readonly directory: NetworkDirectory;
   readonly collaboration: NetworkCollaboration;
+  readonly activity: NetworkActivity;
   private timer: ReturnType<typeof setInterval>;
   private leaseLost = false;
   private cursorKey = randomBytes(32);
   constructor(readonly store: NetworkStore, private members: MemberStore, private options: NetworkOptions) {
+    this.activity = new NetworkActivity(store, (pub, viewer) => this.publicView(pub, viewer), (profileId, spaceId, memberId) => { this.directoryQuery(memberId, { version: 1, kind: 'profile', profileId, spaceId }); });
     this.collaboration = new NetworkCollaboration(store, (pub, viewer) => !!this.baseView(pub, viewer), options.collaborationLimits);
     store.acquire(this.holder);
     this.directory = new NetworkDirectory(store, id => this.member(id), options.operatorIds ?? [], options.catalog);
@@ -157,6 +161,7 @@ export class NetworkService {
       actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
     }, () => {
       const a = actor;
+      if (args.operation === 'follow.set') return this.activity.follow(a, args);
       if (args.operation === 'need.close') return this.collaboration.close(a, args.postId, args.expectedRevision);
       if (isDirectoryCommand(args)) return this.directory.command(a, args);
       if (args.operation === 'draft.create') {
@@ -201,7 +206,7 @@ export class NetworkService {
         if (replacing) {
           if (g.replacementId !== args.previousPublicationId || g.replacementRevision !== args.previousRevision) fail('CONTENT_CHANGED');
           const old = this.replacement(d, a.owner, g.spaceId, args.previousPublicationId, args.previousRevision);
-          previous = old; old.state = 'superseded'; old.revision++; this.store.put('publication', old);
+          previous = old; old.state = 'superseded'; old.revision++; this.store.put('publication', old); this.store.event('superseded', old.id);
         } else if (d.content.kind !== 'need' && this.activeResource(d, g.spaceId).length) fail('PUBLICATION_EXISTS');
         const pub: Publication = { id: randomUUID(), owner: a.owner, memberId: a.memberId, profileId: a.profileId, draftId: d.id, grantId: g.id,
           content: structuredClone(d.content), revision: 1, state: 'active', visibleUntil: g.visibleUntil, recipientMemberIds: [...g.recipientMemberIds] };
@@ -286,8 +291,15 @@ export class NetworkService {
       const { member } = this.identity(p, token, 'network:read');
       return this.directoryQuery(member.id, args);
     }
-    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory') return fail('INVALID_INPUT', 422);
+    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory' && args.kind !== 'my_follows') return fail('INVALID_INPUT', 422);
     const a = this.actor(p, token, args.asProfileId, 'network:read');
+    if (args.kind === 'my_follows') {
+      const rows = this.activity.follows(a.owner, a.profileId);
+      const context = digest(['follows', this.actorKey(a), a.bindingRevision, rows.map(f => [f.id, f.revision])]);
+      const after = this.decodeCursor(args.cursor, context), rest = rows.filter(f => f.id > after);
+      const items = rest.slice(0, args.limit).map(f => this.ownView(a.owner, { kind: 'follow', id: f.id })), hasMore = rest.length > items.length;
+      return { version: 1, items, page: { hasMore, cursor: hasMore ? this.encodeCursor(context, rest[items.length - 1]!.id) : undefined } };
+    }
     if (args.kind === 'my_directory') return { version: 1, representations: this.store.list('representation', a.owner).filter(r => r.profileId === a.profileId).map(r => this.ownView(a.owner, { kind: 'representation', id: r.id })), listings: this.store.list('listing', a.owner).filter(l => l.profileId === a.profileId).map(l => this.ownView(a.owner, { kind: 'listing', id: l.id })) };
     if (args.kind === 'my_drafts') {
       const rows = this.store.list('draft', a.owner).filter(d => d.profileId === a.profileId && d.bindingId === a.bindingId && d.bindingRevision === a.bindingRevision);
@@ -384,6 +396,25 @@ export class NetworkService {
     }
     const hasMore = rows.length > scanned;
     return { version: 1, items, page: { hasMore, cursor: hasMore ? this.encodeCursor(context, last) : undefined } };
+  }
+
+  updates(p: Principal, token: string, input: unknown) {
+    const args = updatesQuerySchema.parse(input);
+    return this.store.transaction(() => {
+      const { member } = this.identity(p, token, 'network:read');
+      if (args.asProfileId) this.actor(p, token, args.asProfileId, 'network:read');
+      return this.activityForMember(member.id, args);
+    });
+  }
+  memberUpdates(memberId: string, input: unknown) {
+    return this.store.transaction(() => this.activityForMember(memberId, input));
+  }
+  private activityForMember(memberId: string, input: unknown) {
+    const args = updatesQuerySchema.parse(input), m = this.member(memberId), owner = ownerKey({ ...m, clientId: '', scopes: [] });
+    // This internal member-session entry point still requires ownership of a private follow filter.
+    if (args.asProfileId) this.directory.profile(args.asProfileId, owner);
+    const access = this.directory.assertMember(args.spaceId, memberId);
+    return this.activity.updates(owner, memberId, args, [access.space.epoch, access.membership.generation, this.options.memberIds.slice().sort()]);
   }
 
   receipt(p: Principal, token: string, input: unknown) {
