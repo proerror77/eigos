@@ -8,6 +8,9 @@ import { BACKEND_VERSION, type ExecutionPlan, type PlanStep } from '../ontology/
 import type { ActionContext, ActionIntent, ActionResult, ExecutionAttempt, OutcomeAssessment } from '../ontology/actions.js';
 import { validatePlan } from './plan.js';
 import { checkRequirements, hardRequirementsPass } from './resolver.js';
+import { assessConditions, hardConditionsPass } from './conditions.js';
+import { validatePlanningSnapshot } from './planning-session.js';
+import { projectReadResult } from '../ontology/task-projection.js';
 
 export function createActionIntents(store: JobStore, owner: string, job: Job, privateData: unknown): void {
   const plan = job.delegation!.plan!; const ids: string[] = [];
@@ -39,6 +42,7 @@ export class ActionRuntime {
     const job = this.store.get(claim.owner, claim.job.id); const d = job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION || !d.plan || !d.intentIds?.length) throw new DomainError('CONFLICT', 'Current execution plan and action intents required');
     const plan = d.plan; validatePlan(this.catalog, claim.owner, d.request, plan, Date.now(), 'observe');
+    validatePlanningSnapshot(this.store.ontology, claim.owner, d.request, plan.ontologyPlanning, false);
     const expired = Date.now() - Date.parse(job.createdAt) >= (this.options.maxTaskMs ?? 86400000);
     const queriesOnly = expired && !!d.manualReconciliation;
     if (expired && !queriesOnly) {
@@ -90,6 +94,7 @@ export class ActionRuntime {
     const freshPermit = kind === 'dispatch' || kind === 'resume' && !['local', 'read'].includes(intent.effect);
     if (freshPermit) {
       validatePlan(this.catalog, claim.owner, ctx.request, plan, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
+      validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, plan.ontologyPlanning, true);
       const approval = current.delegation!.approval;
       if (plan.quote && (!approval?.simulationOnly || approval.planDigest !== plan.digest || approval.quoteDigest !== plan.quote.digest)) { this.pause(claim, 'auth-required', '请批准当前准确的本地模拟报价。'); return false; }
     }
@@ -142,22 +147,30 @@ export class ActionRuntime {
     const { adapter, binding } = this.catalog.binding(plan.bindingRef, claim.owner, plan.requestId);
     const ctx = { owner: claim.owner, request: job.delegation!.request }; const delivery = intent.delivery;
     const verdict = adapter.verify(ctx, plan, intent.privateData, delivery);
+    let subject: import('../ontology/model.js').ObjectRef | undefined;
+    if (verdict.accepted && delivery.artifact.data.result && !this.store.checkpoint(claim, () => {
+      subject = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: plan.details.ontologyReceipt, result: delivery.artifact.data.result }).subject;
+    })) return;
+    const conditionChecks = assessConditions(this.store.ontology, claim.owner, ctx.request, subject, 'result');
     const outcomeRequest = { ...ctx.request, requirements: [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])] };
     const definition = this.catalog.capability(plan.capabilityRef);
     const checks = checkRequirements(outcomeRequest, delivery.facts, delivery.evidenceRefs, definition.predicates.map(p => p.id), definition.locationSemantics);
     const target = ctx.request.outcome ?? plan.completionTarget;
     const business = intent.businessSnapshot?.value;
     const goalSatisfied = target === 'artifact' || target === 'delivery' && business?.fulfillment === 'delivered' || target === 'order' && business?.order === 'confirmed' || target === 'refund' && business?.refund === 'refunded' || target === 'cancel' && business?.order === 'canceled';
-    const accepted = goalSatisfied && verdict.accepted && delivery.evidenceRefs.length > 0 && hardRequirementsPass(outcomeRequest, checks);
-    const outcome: OutcomeAssessment = { requestId: plan.requestId, requestRevision: plan.requestRevision, status: accepted ? 'satisfied' : 'unsatisfied',
+    const accepted = goalSatisfied && verdict.accepted && delivery.evidenceRefs.length > 0 && hardRequirementsPass(outcomeRequest, checks) && hardConditionsPass(conditionChecks, 'result');
+    const hardFailure = !verdict.accepted || checks.some(c => c.result === 'fail' && outcomeRequest.requirements.some(r => r.id === c.requirementId && r.strength === 'hard')) || conditionChecks.some(c => c.strength === 'hard' && c.result === 'fail');
+    const outcome: OutcomeAssessment = { requestId: plan.requestId, requestRevision: plan.requestRevision, status: accepted ? 'satisfied' : hardFailure ? 'unsatisfied' : 'unknown',
       criterionResults: [...checks.map(c => ({ requirementId: c.requirementId, status: c.result === 'pass' ? 'satisfied' as const : c.result === 'fail' ? 'unsatisfied' as const : 'unknown' as const, evidenceRefs: c.evidenceRefs })),
-        { requirementId: 'independent_verifier', status: verdict.accepted ? 'satisfied' : 'unsatisfied', evidenceRefs: delivery.evidenceRefs }, { requirementId: `goal.${target}`, status: goalSatisfied ? 'satisfied' : 'unknown', evidenceRefs: delivery.evidenceRefs }], reason: verdict.reason, evidenceRefs: delivery.evidenceRefs, assessedAt: new Date().toISOString() };
+        ...conditionChecks.map(c => ({ requirementId: c.conditionId, status: c.result === 'pass' ? 'satisfied' as const : c.result === 'fail' ? 'unsatisfied' as const : 'unknown' as const, evidenceRefs: c.evidenceRefs.map(ref => JSON.stringify(ref)) })),
+        { requirementId: 'independent_verifier', status: verdict.accepted ? 'satisfied' : 'unsatisfied', evidenceRefs: delivery.evidenceRefs }, { requirementId: `goal.${target}`, status: goalSatisfied ? 'satisfied' : 'unknown', evidenceRefs: delivery.evidenceRefs }], reason: accepted ? verdict.reason : hardFailure ? 'Required conditions were disproved or independent verification rejected the result' : 'Required business evidence remains unknown', evidenceRefs: delivery.evidenceRefs, assessedAt: new Date().toISOString() };
     this.store.finish(claim, current => {
       current.updatedAt = outcome.assessedAt; current.state = accepted ? 'completed' : 'failed'; current.delegation!.phase = accepted ? 'accepted' : 'failed';
-      current.delegation!.outcome = outcome; current.delegation!.acceptance = { accepted, reason: verdict.reason, checks, evidenceRefs: delivery.evidenceRefs, at: outcome.assessedAt };
+      current.delegation!.outcome = outcome; current.delegation!.acceptance = { accepted, reason: outcome.reason, checks, evidenceRefs: delivery.evidenceRefs, at: outcome.assessedAt };
+      current.delegation!.conditionChecks = conditionChecks;
       delete current.delegation!.manualReconciliation;
       current.delegation!.recoveryPending = false; delete current.delegation!.actionReply; delete current.delegation!.pendingActionInput; delete current.question;
-      if (accepted) current.artifact = delivery.artifact; else current.error = 'Independent goal verification failed or hard criteria were unmet';
+      if (accepted) current.artifact = delivery.artifact; else current.error = outcome.status === 'unknown' ? 'Required business evidence remains unknown; inspect the original task before retrying' : 'Independent goal verification failed or hard criteria were unmet';
       const level = isActionAdapter(adapter) ? adapter.environment === 'sandbox' ? 'sandbox' : final.effect === 'local' ? 'model_generated' : target === 'delivery' && accepted ? 'live_fulfillment' : 'live_operation' : binding.verification.level === 'live_fulfillment' && target === 'artifact' ? 'read_only_probe' : binding.verification.level;
       this.project(current, intents); this.store.recordFeedback(claim.owner, current, level);
       if (current.delegation!.afterSalesCaseId) this.store.updateAfterSales(claim.owner, current.delegation!.afterSalesCaseId, accepted ? 'resolved' : 'rejected');

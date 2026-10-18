@@ -13,6 +13,7 @@ const queryFields = { select: z.array(nameSchema).min(1).max(20).optional(), whe
 export const objectQuerySchema = z.union([
   z.object({ type: nameSchema, ...queryFields }).strict(),
   z.object({ from: objectRefSchema, link: nameSchema, ...queryFields }).strict(),
+  z.object({ object: objectRefSchema, ...queryFields }).strict(),
 ]);
 export type ObjectQuery = z.input<typeof objectQuerySchema>;
 export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number }
@@ -160,7 +161,12 @@ export class OntologyObjectStore {
       last = cursor.last;
     }
     let target: string, sql: string, params: (string | number)[];
-    if ('from' in args) {
+    if ('object' in args) {
+      this.raw(owner, args.object, budget);
+      target = args.object.type;
+      sql = 'SELECT o.* FROM ontology_objects o WHERE o.owner=? AND o.type=? AND o.id=?';
+      params = [owner, args.object.type, args.object.id];
+    } else if ('from' in args) {
       this.raw(owner, args.from, budget);
       const nav = this.model.navigation(args.from.type, args.link);
       target = nav.other.type;
@@ -180,6 +186,7 @@ export class OntologyObjectStore {
       if (properties[name]!.restricted) throw new DomainError('FORBIDDEN', 'Restricted property cannot be selected');
     }
     for (const f of args.where) {
+      if (!Object.hasOwn(properties, f.property)) failure('Filter requires a registered property');
       const p = properties[f.property];
       if (!p || p.derived || ['struct', 'array'].includes(p.kind)) failure('Filter requires a registered stored scalar property');
       if (p.restricted) throw new DomainError('FORBIDDEN', 'Restricted property cannot be filtered');

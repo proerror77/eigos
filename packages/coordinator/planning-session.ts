@@ -1,0 +1,159 @@
+import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
+import { DomainError } from '../core/domain.js';
+import { digest } from '../core/delegation.js';
+import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { objectQuerySchema, type OntologyObjectStore } from '../ontology/object-store.js';
+import { functionCallSchema } from '../ontology/object-functions.js';
+import { planningSnapshot, type PlanningReadReceipt, type ObjectSnapshot, type DecisionActionProposal, type PlanningSnapshot } from '../ontology/planning-contract.js';
+import type { ResolvedCandidate, ServiceRequest } from '../ontology/execution.js';
+import { assessConditions, hardConditionsPass } from './conditions.js';
+
+const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), includeSchemas: z.boolean().optional().describe('Request full property value schemas; default returns concise names, semantics and links') }).strict();
+const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
+const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
+export const planningToolSchemas = { describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
+const key = (ref: ObjectRef) => JSON.stringify(ref);
+
+function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
+  if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
+  const { progress: _progress, projectionState: _coverage, ...business } = properties;
+  return business;
+}
+export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: ObjectRef, request: ServiceRequest): ObjectSnapshot {
+  const object = graph.read(owner, ref);
+  return { ref, revision: object.revision, propertiesDigest: digest(relevantProperties(ref, object.properties, request)), linksDigest: graph.relationshipDigest(owner, ref, { remaining: 1000 }) };
+}
+export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
+  const { digest: expected, ...body } = snapshot;
+  if (!['model_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
+  if (snapshot.mode === 'model_queries' && (!snapshot.reads.some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !snapshot.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new DomainError('CONFLICT', 'A model plan requires actual definition and object reads');
+  if (!hardConditionsPass(snapshot.conditionChecks, 'precondition') || (request.conditions ?? []).some(c => c.phase === 'precondition' && c.strength === 'hard' && !snapshot.conditionChecks.some(r => r.conditionId === c.id && r.result === 'pass'))) throw new DomainError('CONFLICT', 'Hard business preconditions are unresolved');
+  if (!fresh) return;
+  for (const old of snapshot.objects) {
+    const current = snapshotObject(graph, owner, old.ref, request);
+    const currentRequest = old.ref.type === 'ServiceRequest' && old.ref.id === request.id;
+    if ((!currentRequest && current.revision !== old.revision) || current.propertiesDigest !== old.propertiesDigest || current.linksDigest !== old.linksDigest) throw new DomainError('CONFLICT', 'An object used by the planner changed; replan before dispatch');
+  }
+  const bound = { ...request, conditions: request.conditions?.map(c => {
+    const subject = snapshot.conditionChecks.find(check => check.conditionId === c.id)?.subject;
+    return subject ? { ...c, subject: { ...c.subject, object: subject } } : c;
+  }) };
+  if (!hardConditionsPass(assessConditions(graph, owner, bound, undefined, 'precondition'), 'precondition')) throw new DomainError('CONFLICT', 'Business precondition evidence expired or changed before dispatch');
+}
+
+/** One request-scoped model interaction. Data access uses the existing authenticated owner. */
+export class OntologyPlanningSession {
+  private reads: PlanningReadReceipt[] = [];
+  private seen = new Map<string, ObjectSnapshot>();
+  private proposals: DecisionActionProposal[] = [];
+  private bytes = 0;
+  private failures = new Map<string, number>();
+  constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
+    private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner') {}
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships and exact objects already retrieved through this request. Other owner data requires tasks:read.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+  receipts() { return structuredClone(this.reads); }
+  retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
+  private remember(ref: ObjectRef, expectedRevision?: number) {
+    const next = snapshotObject(this.graph, this.owner, ref, this.request), old = this.seen.get(key(ref));
+    if (expectedRevision !== undefined && next.revision !== expectedRevision) throw new DomainError('CONFLICT', 'Object changed after its query result');
+    if (old && (old.propertiesDigest !== next.propertiesDigest || old.linksDigest !== next.linksDigest || ref.type !== 'ServiceRequest' && old.revision !== next.revision)) throw new DomainError('CONFLICT', 'Object changed between reasoning reads');
+    this.seen.set(key(ref), next);
+    if (this.seen.size > 150) throw new DomainError('CONFLICT', 'Planner object budget exceeded');
+  }
+  private retrieved(ref: ObjectRef) {
+    if (ref.type === 'ServiceRequest' && ref.id === this.request.id) return;
+    if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
+  }
+  call(tool: string, input: unknown): unknown {
+    this.active();
+    if (this.reads.length >= 20) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
+    const before = new Set(this.seen.keys());
+    const datasetRevision = this.graph.revision(this.owner);
+    let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
+    try {
+      if (tool === 'describe_ontology') {
+        const { includeSchemas = false, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
+          const value = type as { properties: Record<string, Record<string, unknown>> };
+          return { ...value, properties: Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
+        }) };
+      }
+      else if (tool === 'query_ontology') {
+        let query = objectQuerySchema.parse(input);
+        if (this.readScope === 'request') {
+          if ('type' in query) {
+            if (query.type !== 'ServiceRequest') throw new DomainError('FORBIDDEN', 'This delegation lacks tasks:read for owner-wide object search');
+            const { type: _type, ...fields } = query;
+            query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
+          } else if ('object' in query) this.retrieved(query.object);
+          else if (query.from.type !== 'ServiceRequest' || query.from.id !== this.request.id) throw new DomainError('FORBIDDEN', 'This delegation permits only relationships of the current request');
+        }
+        if ('from' in query) this.retrieved(query.from);
+        const result = this.graph.query(this.owner, query);
+        for (const object of result.items) this.remember(object.ref, object.revision);
+        output = result;
+      } else if (tool === 'evaluate_ontology') {
+        const args = functionCallSchema.parse(input);
+        for (const value of Object.values(args)) { const ref = objectRefSchema.safeParse(value); if (ref.success) this.retrieved(ref.data); }
+        const result = this.graph.evaluate(this.owner, args);
+        for (const ref of [args.object, ...result.evidenceRefs]) this.remember(ref);
+        output = result;
+      } else if (tool === 'assess_conditions') {
+        const args = assessmentSchema.parse(input), candidate = this.candidates.find(c => c.id === args.candidateId);
+        if (args.candidateId && !candidate) throw new DomainError('FORBIDDEN', 'Unknown candidate');
+        if (args.subject) this.retrieved(args.subject);
+        if (args.subject && candidate?.ontologySubject && key(args.subject) !== key(candidate.ontologySubject)) throw new DomainError('CONFLICT', 'Candidate and selected condition subject differ');
+        const checks = assessConditions(this.graph, this.owner, this.request, args.subject ?? candidate?.ontologySubject, args.phase);
+        for (const check of checks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
+        output = { checks, grantsAuthority: false };
+      } else if (tool === 'propose_action') {
+        const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
+        if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
+        const inputs: DecisionActionProposal['inputs'] = {};
+        for (const item of args.inputs) {
+          this.retrieved(item.object);
+          if (!definition.inputs[item.name] || !this.graph.model.implements(item.object.type, definition.inputs[item.name]!)) throw new DomainError('INVALID_INPUT', 'Action input type mismatch');
+          const actual = this.graph.read(this.owner, item.object);
+          if (actual.revision !== item.revision) throw new DomainError('CONFLICT', 'Action proposal references a stale object revision');
+          this.remember(item.object); inputs[item.name] = { object: item.object, revision: item.revision };
+        }
+        if (inputs.request?.object.id !== this.request.id) throw new DomainError('FORBIDDEN', 'Action belongs to another request');
+        if (this.graph.read(this.owner, inputs.request.object).properties.revision !== this.request.revision) throw new DomainError('CONFLICT', 'Action request revision changed');
+        const checks: DecisionActionProposal['checks'] = definition.submissionCriteria.map(criterion => ({ criterion, result: ['same_owner', 'current_request_revision'].includes(criterion) ? 'pass' : 'unknown' }));
+        if (inputs.offer) {
+          const requests = this.graph.related(this.owner, inputs.offer.object, 'request', { remaining: 1000 });
+          const sameRequest = checks.find(c => c.criterion === 'same_request'); if (sameRequest) sameRequest.result = requests?.length === 1 && requests[0]!.ref.id === this.request.id ? 'pass' : 'fail';
+          const fresh = this.graph.evaluate(this.owner, { function: 'offerFreshness', object: inputs.offer.object });
+          const freshness = checks.find(c => c.criterion === 'fresh_offer'); if (freshness) freshness.result = fresh.status === 'known' ? fresh.value ? 'pass' : 'fail' : 'unknown';
+          const preconditions = checks.find(c => c.criterion === 'hard_preconditions_pass');
+          if (preconditions) { const assessment = assessConditions(this.graph, this.owner, this.request, inputs.offer.object, 'precondition'); preconditions.result = assessment.some(c => c.strength === 'hard' && c.result === 'fail') ? 'fail' : hardConditionsPass(assessment, 'precondition') ? 'pass' : 'unknown'; }
+        }
+        const proposal: DecisionActionProposal = { action: args.action, definitionDigest: digest(definition), inputs, changes: definition.changes, checks, execution: 'proposal_only', executionAllowed: false };
+        this.proposals.push(proposal); output = proposal;
+      } else throw new DomainError('INVALID_INPUT', 'Unregistered planning tool');
+      if (tool !== 'describe_ontology' && this.graph.revision(this.owner) !== datasetRevision) throw new DomainError('CONFLICT', 'Objects changed during the planning read');
+    } catch (error) {
+      if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
+      status = 'rejected'; output = { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
+      const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
+      if (count >= 3) throw new DomainError('CONFLICT', 'Three identical planning read failures; stop and report the unresolved input');
+    }
+    this.bytes += Buffer.byteLength(JSON.stringify(output));
+    if (this.bytes > 200000) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
+    this.active();
+    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v) });
+    this.onRead(this.reads.at(-1)!);
+    return output;
+  }
+  finish(candidate?: ResolvedCandidate): PlanningSnapshot {
+    this.active();
+    const conditionChecks = assessConditions(this.graph, this.owner, this.request, candidate?.ontologySubject);
+    for (const check of conditionChecks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
+    const result = planningSnapshot({ mode: 'model_queries', model: this.graph.model.ref, requestRevision: this.request.revision, conditionsDigest: digest(this.request.conditions ?? []),
+      reads: this.receipts(), objects: [...this.seen.values()], conditionChecks, actionProposals: structuredClone(this.proposals) });
+    validatePlanningSnapshot(this.graph, this.owner, this.request, result, true);
+    return result;
+  }
+}

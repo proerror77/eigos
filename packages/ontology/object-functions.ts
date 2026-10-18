@@ -151,7 +151,12 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     requireType(object, 'ProductOffer'); const requestedVariant = store.read(owner, input.variant, budget); requireType(requestedVariant, 'ProductVariant');
     const variant = one(store, owner, object.ref, 'productVariant', budget), requested = quantity(input.quantity), offered = quantity(p.offeredQuantity);
     const price = evaluateFunction(store, owner, { function: 'withinBudget', object: object.ref, budget: input.budget, priceBasis: 'firm_quote' }, budget);
-    if (!variant || !requested || !offered || p.capacity === undefined || p.capacity === 'unknown' || !p.capacityObservationRef || !p.deliveryCommitment || !p.deliveryDestination || price.status !== 'known') return unknown('Quantity, capacity, complete price, destination or commitment is not evidenced', [object.ref]);
+    if (!variant || p.variantRevision !== variant.revision) return unknown('The quoted product specification revision is not current', [object.ref]);
+    if (!requested || !offered) return unknown('Requested or quoted quantity is unavailable in a supported unit', [object.ref]);
+    if (p.capacity === undefined || p.capacity === 'unknown' || !p.capacityObservationRef) return unknown('Current capacity for the quoted quantity is not evidenced', [object.ref]);
+    if (!p.deliveryCommitment) return unknown('No provider delivery commitment is evidenced; an ETA is insufficient', [object.ref]);
+    if (!p.deliveryDestination) return unknown('No delivery destination is bound to this quote', [object.ref]);
+    if (price.status !== 'known') return unknown(price.reason ?? 'Complete scoped total is not evidenced', price.evidenceRefs, price.evidenceLevels);
     if (digest(p.deliveryDestination) !== digest(input.destination)) return unknown('No verified equivalence for this service destination', [object.ref]);
     return known(same(variant.ref, requestedVariant.ref) && offered.dimension === requested.dimension && offered.scaled === requested.scaled && p.capacity === 'confirmed' && price.value === 'pass' && Date.parse(String(p.deliveryCommitment)) <= Date.parse(input.deadline) ? 'pass' : 'fail', [object.ref, variant.ref, ...price.evidenceRefs], price.evidenceLevels);
   }

@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-18",
+  "implementationBase": "204cfee22ffb3478bd0941e03281097b20545f03",
+  "backend": "ontology-execution-v4",
+  "model": {
+    "id": "eigos.business",
+    "version": "2",
+    "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+  },
+  "checks": {
+    "typecheck": "passed",
+    "tests": {
+      "passed": 248,
+      "failed": 0,
+      "skipped": 0
+    },
+    "build": "passed",
+    "processE2E": {
+      "passed": 7,
+      "failed": 0
+    },
+    "diffCheck": "passed"
+  },
+  "independentAgent": {
+    "firstRun": {
+      "completed": 9,
+      "reviewedPass": 8
+    },
+    "secondRun": {
+      "completed": 9,
+      "reviewedPass": 9,
+      "assistance": 0
+    },
+    "scenarioDigestsMatchFinalCode": true
+  },
+  "actualModel": {
+    "taskId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+    "state": "completed",
+    "modelRuns": 7,
+    "ontologyReads": 11,
+    "typedResultChecks": [
+      {
+        "id": "synthetic-quote-applicability",
+        "result": "pass"
+      }
+    ],
+    "decisionRuns": 6,
+    "decision": "proposed",
+    "businessGraphMutated": false
+  },
+  "humanDrill": "not_run",
+  "boundaries": {
+    "allBusinessDataSynthetic": true,
+    "realProviderCalled": false,
+    "realTransactionRun": false,
+    "actualUserPAInvoked": false,
+    "persistentServiceDeployed": false
+  },
+  "ciVerification": "Read the terminal CI result for the exact commit containing this record; baseline CI is not N2 validation."
+}

@@ -2,9 +2,11 @@ import { z } from 'zod';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { requirementSchema, type ServiceRequest } from '../ontology/execution.js';
+import { quantityAppearsInQuote } from '../ontology/quantity.js';
 
 const extractionSchema = z.array(z.object({ requirement: requirementSchema, messageId: z.string().min(1), quote: z.string().min(1).max(1000) }).strict()).max(40);
 function quantityMatches(quote: string, amount: string, unit: string): boolean {
+  if (quantityAppearsInQuote(quote, { amount, unit })) return true;
   let position = -1;
   while ((position = quote.indexOf(amount, position + 1)) >= 0) {
     if (/[\d.]/.test(quote[position - 1] ?? '')) continue;

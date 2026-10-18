@@ -2,6 +2,8 @@
 
 2026-10-18。实现范围：本地 TypeScript／Zod 定义、同一 SQLite 内的对象与关系、受认证保护的只读查询、来源投影和三个场景的合成验证。建模基线见 [对象目录](ontology-model-catalog-v0.2-2026-10-18.md)。此实现不依赖 Foundry，也没有执行真实订单、付款或预订。
 
+本文记录 N1 首次交付 `204cfee` 的接口与边界。当前 N2 已升级运行和模型版本、衔接模型查询／条件、增加精确对象读取并完成独立 Agent 演练；最新行为和仍待人工完成的部分见 [N2 使用说明](ontology-n2.md)。
+
 ## 构件与身份
 
 - 28 个具体 Object Type，包括 Parcel、DeliveryRoute、DeliveryQuote、ProductOffer、OrderLine、DeliveryAllocation、ReservationSlot、Reservation、Payment 和 SourceReceipt。

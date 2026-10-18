@@ -14,7 +14,7 @@ import { ontologyReceiptSchema } from '../packages/capabilities/paotui-mcp-serve
 import { backend, interpretation, reasoner, owner } from './backend-fixture.js';
 
 const quoteInput = { senderAddressId: 'synthetic-a', recipientAddressId: 'synthetic-b', goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };
-function runner(index: number, store = new JobStore(':memory:')) {
+function runner(index: number, store = new JobStore(':memory:'), price: string | number = '16.80') {
   const input = index === 0 ? { city: '北京市', keyword: '合成地点' } : quoteInput;
   const capability = PAOTUI_READ_CAPABILITIES[index]!;
   let reads = 0;
@@ -22,7 +22,7 @@ function runner(index: number, store = new JobStore(':memory:')) {
     reads++;
     const business = index === 0
       ? { source: 'meituan', readOnly: true, places: [{ poiId: 'synthetic-place', name: '同名合成地点', address: '合成公开位置', lat: 39.9, lng: 116.4, coordinateUnit: 'degree' }, { name: '同名合成地点' }] }
-      : { source: 'meituan', previewOnly: true, orderCreated: false, goods: { name: '文件', category: '文件', weightKg: 1 }, service: 'ordinary', route: { sender: '合成寄件位置', recipient: '合成收件位置' }, quote: { _previewTotal: '16.80' } };
+      : { source: 'meituan', previewOnly: true, orderCreated: false, goods: { name: '文件', category: '文件', weightKg: 1 }, service: 'ordinary', route: { sender: '合成寄件位置', recipient: '合成收件位置' }, quote: { _previewTotal: price } };
     const receipt = ontologyReceiptSchema.parse({ id: randomUUID(), transport: 'mcp-stdio', server: 'eigos-ontology', capabilityRef: capability.ref, ontologyRef: capability.ontologyRef,
       tool: index === 0 ? 'ontology_geo_search' : 'ontology_delivery_quote', evidenceKind: 'fixture', inputDigest: digest(input), resultDigest: digest(business),
       observedAt: new Date().toISOString(), sourceCalls: index === 0 ? ['search_poi'] : ['get_address_info', 'delivery_preview'], readOnly: true });
@@ -40,7 +40,9 @@ test('N1 current task projection persists quote applicability without new reads 
     assert.equal(b.store.ontology.read(owner, { type: 'ServiceRequest', id: submitted.id }).properties.projectionState, 'request_only');
     const done = await b.run(); assert.equal(done.state, 'completed'); assert.equal(b.reads(), 2);
     const request = { type: 'ServiceRequest', id: done.id }, graph = b.store.ontology;
-    const quote = graph.read(owner, graph.query(owner, { from: request, link: 'offers' }).items[0]!.ref);
+    const receiptId = ((done.artifact!.data.result as Record<string, unknown>).ontologyReceipt as { id: string }).id;
+    const quote = graph.read(owner, { type: 'DeliveryQuote', id: receiptId });
+    assert.equal(graph.query(owner, { from: request, link: 'offers' }).items.length, 2, 'Prepared and final source observations remain distinct');
     assert.equal(quote.ref.type, 'DeliveryQuote'); assert.equal(quote.source.kind, 'synthetic');
     assert.deepEqual(quote.properties.pricingTerms, { total: { minor: '1680', currency: 'CNY' }, scope: 'unknown', components: [] });
     assert.equal(graph.evaluate(owner, { function: 'deliveryQuoteMatches', object: quote.ref, request, serviceLevel: 'ordinary' }).value, 'pass');
@@ -69,6 +71,17 @@ test('N1 public places keep source identity and receipt-local identity without b
     assert.equal(graph.query(owner, { type: 'Offer' }).items.length, 0);
     assert.equal(graph.query(owner, { type: 'Provider' }).items.length, 0);
     assert.equal(b.reads(), 1);
+  } finally { b.store.close(); }
+});
+
+test('N2 preserves the existing numeric source-price contract when projecting exact minor units', async () => {
+  const b = runner(1, new JobStore(':memory:'), 16.8);
+  try {
+    b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
+    const receiptId = ((done.artifact!.data.result as Record<string, unknown>).ontologyReceipt as { id: string }).id;
+    const object = b.store.ontology.read(owner, { type: 'DeliveryQuote', id: receiptId });
+    assert.deepEqual((object.properties.pricingTerms as { total: unknown }).total, { minor: '1680', currency: 'CNY' });
+    assert.equal(b.store.ontology.evaluate(owner, { function: 'deliveryQuoteMatches', object: object.ref, request: { type: 'ServiceRequest', id: done.id }, serviceLevel: 'ordinary' }).value, 'pass');
   } finally { b.store.close(); }
 });
 

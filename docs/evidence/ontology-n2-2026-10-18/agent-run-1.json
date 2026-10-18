@@ -1,0 +1,273 @@
+{
+  "participant": "independent-agent-1",
+  "modelingContextIncluded": false,
+  "answerPathsProvided": false,
+  "osFilesystemIsolationClaimed": false,
+  "informationBoundary": "Fresh conversation; participant instructed to use only one connection file and the supplied HTTP interface. Participant attested compliance. Business reads are recorded in the companion trace.",
+  "manifest": {
+    "scope": "synthetic",
+    "cases": [
+      {
+        "id": "QD-1",
+        "question": "本人已选 A 到 B，1 公斤文件、普通送，目前能核对的费用是什么？适用于哪些条件，何时需要重查？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "286fd29646ab5653592021a52911b8b8d780e67c464cb0b3391f4bccd29e06c6"
+      },
+      {
+        "id": "QD-2",
+        "question": "最新返回按 2 公斤快送计价，它还能回答原来的问题吗？指出有依据的差异及仍未知的内容。",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "f7951d0a95daecb0bfe23ceee07bfdadf178a943645b5086b0ca75235cf3644b"
+      },
+      {
+        "id": "QD-3",
+        "question": "原地址选项发生变化后，之前的报价是否仍可用？需要重新确认或读取哪些信息，哪些内容已有充分依据？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "954517109184d4922a62d60231825b1b08bc213dc871a9fbd8612360d3aed53f"
+      },
+      {
+        "id": "QG-1",
+        "question": "20 杯指定规格咖啡须在指定期限前送达，总支出上限 500 元。当前查到的候选中，哪些可选，哪些仍不能确定？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "5b8acf59714ffcd9069679eade9ca0cdd3d986f451821f50eb8324d560ac140b"
+      },
+      {
+        "id": "QG-2",
+        "question": "两个渠道各有报价，它们是否真的来自不同商家？价格和交付条件是否可直接比较？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "31c982c2aef5e58a6c43cacfae315a5edff90bcda6c655a42397b6645cb9bb70"
+      },
+      {
+        "id": "QG-3",
+        "question": "已确认订单共 20 杯，目前收到 18 杯。原任务现在是否完成，还缺什么；哪些批次或记录支持你的判断？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "286fd29646ab5653592021a52911b8b8d780e67c464cb0b3391f4bccd29e06c6"
+      },
+      {
+        "id": "QR-1",
+        "question": "餐厅 V、指定日期 19:00、4 人的预订是否已经生效？有哪些确认依据或尚未满足的条件？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "286fd29646ab5653592021a52911b8b8d780e67c464cb0b3391f4bccd29e06c6"
+      },
+      {
+        "id": "QR-2",
+        "question": "订金显示已付，但预订仍待确认。这时能向用户说什么，下一步允许做什么？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "dde83f27cc8a46be6649f637c1ff2b50334362e5bead369aff8feaec17590ee5"
+      },
+      {
+        "id": "QR-3",
+        "question": "占位已过期，随后收到取消和退款处理中通知。哪些状态已经确定，哪些仍待查证，原任务与售后分别到哪一步？",
+        "asOf": "2026-10-18T05:33:56.053Z",
+        "datasetVersion": "n2-drill-v1",
+        "datasetDigest": "0f2242d0f95ddcb659dae9fdb9bad91436c7bbbfeef76e2960badb4c6a2c5909"
+      }
+    ]
+  },
+  "answers": [
+    {
+      "caseId": "QD-1",
+      "startedAt": "2026-10-18T05:35:04.705Z",
+      "completedAt": "2026-10-18T05:37:07.536Z",
+      "elapsedMs": 122831,
+      "calls": 11,
+      "answer": "截至本题asOf，可核对19.40元估价，覆盖全部必收费用，非锁价。适用A至B已选路线、1公斤文件普通送；委托/包裹/路线均第1版，1000克与1公斤相等，匹配通过。05:38:56.053Z为本地重查上限，非商家有效期。到期或地址选择、路线、重量、内容、服务、相关版本改变需重查。未证明下单、付款或送达。",
+      "evidence": [
+        "quote-D及receipt-quote-D：1940分CNY、estimate、complete；offerFreshness=true，deliveryQuoteMatches=pass。",
+        "D/parcel/route：第1版，文件1kg，A→B；两地址sourceRevision=1。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "费用分项为空，未知商家锁价期限与送达承诺。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确区分19.40元估价与本地刷新上限。"
+      }
+    },
+    {
+      "caseId": "QD-2",
+      "startedAt": "2026-10-18T05:36:53.396Z",
+      "completedAt": "2026-10-18T05:37:29.494Z",
+      "elapsedMs": 36098,
+      "calls": 5,
+      "answer": "不能回答原问题。委托仍要求1公斤文件、普通送，最新19.40元估价实际按2公斤、快送计价；重量多1公斤，服务等级也不同。匹配计算失败，即使报价仍新鲜也不适用。现有数据不能推算1公斤普通送价格、差价或改价原因，应按原条件重查。它仍是估价，不能据此确认下单或履约。",
+      "evidence": [
+        "ServiceRequest/D：目标及条件为1kg、ordinary。",
+        "DeliveryQuote/quote-D：2kg、express、1940分CNY；receipt-quote-D支持该报价。",
+        "deliveryQuoteMatches=known/fail；offerFreshness=known/true。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "未知原条件价格、两种服务差价、错配原因与准确送达时间。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确拒绝2公斤快送替代1公斤普通送。"
+      }
+    },
+    {
+      "caseId": "QD-3",
+      "startedAt": "2026-10-18T05:37:37.055Z",
+      "completedAt": "2026-10-18T05:37:58.895Z",
+      "elapsedMs": 21840,
+      "calls": 8,
+      "answer": "旧报价不能直接用于当前地址选项：寄件地址已变为A2、来源版本2，所选路线与报价仍绑定A、来源版本1，匹配失败。先确认用户实际要从A还是A2寄出，读取确认后的地址和路线版本，再核对包裹、服务并重查报价及期限；不能擅自替用户改选。已充分确认文件1公斤、普通送、收件地址B及版本1一致；旧路线历史估价19.40元仍可说明，但新路线价格未知。",
+      "evidence": [
+        "route.originSnapshot=A/sourceRevision1；其originAddress关联address-A现为A2/sourceRevision2。",
+        "address-B与route.destinationSnapshot均为B/1；parcel=文件1kg；quote-D=ordinary、1000g、1940分。",
+        "deliveryQuoteMatches=known/fail，引用quote-D、route、address-A、receipt-quote-D。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "缺少用户对寄件地址的新确认及相应新报价；不能认定A2已被选定。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确识别地址版本与路线快照不一致。"
+      }
+    },
+    {
+      "caseId": "QG-1",
+      "startedAt": "2026-10-18T05:35:04.712Z",
+      "completedAt": "2026-10-18T05:39:02.312Z",
+      "elapsedMs": 237600,
+      "calls": 10,
+      "answer": "本题时点可选offer-G：20杯350毫升标准奶拿铁，送B，全费用确定报价465元，低于500元，供货已确认，承诺10月19日北京时间19:00送达，符合已建模的截止条件（恰在边界）。offer-X报410元但产能unknown，暂不能确定；offer-Y报409元但费用仅partial，不能证明总支出≤500元。三者均有供应方到05:38:56.053Z的期限，条件变化或到期应重查。可选不等于已获下单付款权或已送达。",
+      "evidence": [
+        "ServiceRequest/G及ProductVariant/variant：20杯、350ml、standard奶、B、500元、截止11:00Z。",
+        "productOfferMatches：G=pass，X/Y=unknown；G四项硬前提均pass，引用receipt-offer-G。",
+        "variant.offers关联G/X/Y；报价字段分别465/410/409元，X容量未知，Y费用不全。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "X缺产能确认；Y缺完整费用；承诺不证明实际送达。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确区分465元可比较候选、未知产能和不完整费用。"
+      }
+    },
+    {
+      "caseId": "QG-2",
+      "startedAt": "2026-10-18T05:38:47.425Z",
+      "completedAt": "2026-10-18T05:39:36.284Z",
+      "elapsedMs": 48859,
+      "calls": 10,
+      "answer": "两报价来自不同渠道、同一商家主体：均关联Provider/provider及已核验标识synthetic:provider；渠道分别channel与other-channel。465元覆盖全部必收费用，409元仅部分费用，不能直接算便宜56元或比较最终总支出。已查到的交付口径一致：同规格第1版350ml标准奶拿铁、20杯、产能确认、送B、承诺10月19日北京时间19:00，报价期限也相同。应补齐409元报价的费用范围再作总价比较。",
+      "evidence": [
+        "offer-G/offer-Y的provider、channel及productVariant关系；两者productVariant均为variant/spec-1。",
+        "offer-G：46500分、complete/all_mandatory_fees；offer-Y：40900分、partial。",
+        "receipt-offer-G与receipt-offer-Y分别绑定对应报价；两报价destination/commitment/quantity一致。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "409元报价未说明遗漏哪些必收费用，最终总额未知；未展示的交易条款不能认定相同。"
+      ],
+      "review": {
+        "result": "needs_revision",
+        "reason": "首轮把同一报价提供主体直接称作同一销售商家；仅有fulfiller角色证据，不支持这个表述。"
+      }
+    },
+    {
+      "caseId": "QG-3",
+      "startedAt": "2026-10-18T05:39:45.198Z",
+      "completedAt": "2026-10-18T05:40:27.832Z",
+      "elapsedMs": 42634,
+      "calls": 14,
+      "answer": "原任务尚未完成：确认订单20杯，已独立验收同规格18杯，仍缺2杯，不能把订单数量改成18来视为完成。需要补齐2杯并取得对应批次、规格、验收及实际到达证据，再核对原截止时间。当前唯一批次为partial，事件也是partial；actualArrival返回unknown，不能称整单已按时送达。订单尚无关联售后案，未证明补送或退款已启动。",
+      "evidence": [
+        "order/receipt-order：订单confirmed；line：20 cup、spec-1。",
+        "shipment=partial；allocation：18 cup、spec-1、accepted；delivery-event=partial，05:33:55.053Z。",
+        "receipt-allocation、receipt-delivery-event；remainingQuantity=known/2 cup；actualArrival=unknown。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "缺2杯的交付及整批实际到达证据；售后关系为空，后续补救安排未知。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确核算仍欠2杯，未把部分交付写成完成。"
+      }
+    },
+    {
+      "caseId": "QR-1",
+      "startedAt": "2026-10-18T05:35:04.717Z",
+      "completedAt": "2026-10-18T05:40:56.103Z",
+      "elapsedMs": 351386,
+      "calls": 9,
+      "answer": "截至本题asOf，预订已经生效：餐厅V、2026年10月19日北京时间19:00、4人精确匹配；供应方已确认并绑定slot第1版，所需50元订金有已付记录与证据。reservationStatus=confirmed，reservationMatches=pass；已建模的生效条件没有未满足项。委托progress仍为executing，只表示任务流程尚未收尾，不能据此否认商家确认，也不能把有效预订说成已用餐。",
+      "evidence": [
+        "R要求venue、11:00Z/Asia/Shanghai、4人；slot第1版与Venue/venue吻合。",
+        "Reservation/reservation：confirmed、4人、confirmedSlotRevision=1、providerReference=synthetic-reservation。",
+        "Payment/payment：deposit、5000分CNY、paid；reservationStatus及reservationMatches引用receipt-reservation与receipt-payment。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "判断仅对应本题时点；委托流程尚未显示accepted。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确结合指定时段人数、确认及足额订金判断合成预订生效。"
+      }
+    },
+    {
+      "caseId": "QR-2",
+      "startedAt": "2026-10-18T05:41:13.971Z",
+      "completedAt": "2026-10-18T05:41:52.601Z",
+      "elapsedMs": 38630,
+      "calls": 10,
+      "answer": "可告知：50元订金已有支付凭据，但餐厅预订仍待确认，尚不能承诺V餐厅指定19:00、4人的预订生效。当前reservationStatus=pending，生效条件unknown；即使留有confirmedAt字段也不能替代当前确认。下一步可只读核对商家确认、时段版本、订金回执及占位期限（05:38:56.053Z），准备不执行的处理建议。不能重复付款、自动另订或取消；本接口不提供执行预订确认的动作。",
+      "evidence": [
+        "payment及receipt-payment：deposit、5000分CNY、paid。",
+        "reservation及receipt-reservation：pending；reservationStatus=pending；assess_conditions生效条件unknown/grantsAuthority=false。",
+        "R目标为V/10月19日19:00/4人；slot时间人数相符，offer-R为50元订金及五分钟占位。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "尚缺供应方有效确认；取消条款只有泛化文字，不能据此推定退款或取消权限。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确区分订金已付与预订待确认，没有增加执行权限。"
+      }
+    },
+    {
+      "caseId": "QR-3",
+      "startedAt": "2026-10-18T05:41:37.538Z",
+      "completedAt": "2026-10-18T05:42:41.077Z",
+      "elapsedMs": 63539,
+      "calls": 13,
+      "answer": "本题时点占位期限05:32:56.053Z已过，供应方当前已取消，取消有回执支持。原目标是V餐厅指定19:00的4人有效预订，现为unmet，生效条件fail；取消完成不等于原任务成功。50元订金历史付款已证实，关联售后案正在处理退款，50元退款记录为pending，尚未证明到账或售后解决。下一步只读跟进该退款的最终状态、实际到账金额和凭据，以及售后结案记录。",
+      "evidence": [
+        "reservation/receipt-reservation：canceled；reservationStatus=known/canceled；R.progress=unmet。",
+        "payment/receipt-payment：订金5000分paid。",
+        "case：refund/processing，关联synthetic-reservation；case与payment均关联refund。",
+        "refund/receipt-refund：5000分、pending；生效条件评估fail。"
+      ],
+      "assistanceNeeded": false,
+      "limitations": [
+        "退款到账金额、时间和最终状态未知；未取得完整历史事件链，不能推定取消原因。"
+      ],
+      "review": {
+        "result": "pass",
+        "reason": "正确区分取消、原目标未达成、退款处理中及未到账。"
+      }
+    }
+  ],
+  "summary": {
+    "submitted": 9,
+    "reviewedPass": 8,
+    "assistanceNeeded": 0,
+    "elapsedMsSummedAcrossCases": 963417,
+    "toolCalls": 90
+  }
+}

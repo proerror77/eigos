@@ -340,6 +340,7 @@ export class JobStore {
     return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
+  claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
     return this.transaction(() => {
