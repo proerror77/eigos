@@ -5,6 +5,7 @@ import { networkFixture, type NetworkFixture } from './fixtures/network-pilot.js
 import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalog.js';
 import { ownerKey } from '../packages/core/domain.js';
 import type { ServiceCapability, ProviderBinding } from '../packages/ontology/execution.js';
+import { networkPage } from '../apps/gateway/network/routes.js';
 import { NetworkService } from '../packages/network/service.js';
 import { DatabaseSync } from 'node:sqlite';
 import { NetworkStore } from '../packages/network/store.js';
@@ -166,6 +167,8 @@ test('replacement is explicit and exact; original publication and single-use gra
     const d = f.command({ operation: 'draft.create', content: profileContent('New profile') }).refs[0]!.id;
     const req = f.command({ operation: 'publication.request_approval', draftId: d, expectedRevision: 1, recipientMemberIds: [f.c.member.id], replacementId: old.publicationId, replacementRevision: 1,
       publishBefore: new Date(f.store.now() + 600000).toISOString(), visibleUntil: new Date(f.store.now() + 3600000).toISOString() }).refs[0]!.id;
+    const review = networkPage(f.service, f.a.member.id, 'fixture-csrf');
+    assert(review.includes('此次操作将替换原发布')); assert(review.includes(old.publicationId));
     const g = f.approve(req), requestId = randomUUID();
     assert.throws(() => f.publish(d, g), code('GRANT_ACTION_MISMATCH'));
     f.db.exec("CREATE TRIGGER fail_replace BEFORE INSERT ON network_events WHEN NEW.kind='published' BEGIN SELECT RAISE(ABORT,'failure'); END;");

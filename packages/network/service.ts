@@ -100,6 +100,8 @@ export class NetworkService {
     if (d.revision !== r.draftRevision || digest(d.content) !== r.contentDigest || b.revision !== r.bindingRevision || d.bindingId !== b.id) fail('REVIEW_STALE');
     this.directory.validAudience(r, b.memberId);
     this.directory.validateContent(d.content, d.owner, d.profileId);
+    if (r.replacementId) this.replacement(d, r.owner, r.spaceId, r.replacementId, r.replacementRevision!);
+    else if (d.content.kind !== 'need' && this.activeResource(d, r.spaceId).length) fail('PUBLICATION_EXISTS');
     this.timeWindow(d, r.publishBefore, r.visibleUntil);
     return d;
   }
@@ -172,6 +174,7 @@ export class NetworkService {
         this.directory.validateContent(d.content, d.owner, d.profileId);
         if (!!args.replacementId !== !!args.replacementRevision) fail('INVALID_INPUT', 422);
         if (args.replacementId) this.replacement(d, a.owner, spaceId, args.replacementId, args.replacementRevision!);
+        else if (d.content.kind !== 'need' && this.activeResource(d, spaceId).length) fail('PUBLICATION_EXISTS');
         const material = { id: randomUUID(), owner: a.owner, profileId: a.profileId, draftId: d.id, draftRevision: d.revision, bindingId: a.bindingId, bindingRevision: a.bindingRevision,
           contentDigest: digest(d.content), ...audience, spaceId, ...(args.replacementId ? { replacementId: args.replacementId, replacementRevision: args.replacementRevision } : {}), publishBefore: args.publishBefore, visibleUntil: args.visibleUntil };
         const r: Approval = { ...material, reviewDigest: this.approvalMaterial(material), status: 'pending' };
