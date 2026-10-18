@@ -267,7 +267,15 @@ export class NetworkService {
     if (ref.kind === 'publication') {
       const pub = record as Publication, grant = this.store.get('grant', pub.grantId, owner);
       // Never replay content which has since expired or been revoked.
-      return { id: pub.id, kind: ref.kind, revision: pub.revision, state: pub.state === 'active' && grant.status !== 'revoked' && Date.parse(pub.visibleUntil) > this.store.now() ? 'active' : 'unavailable' };
+      let available = pub.state === 'active' && grant.status === 'consumed' && grant.usedPublicationId === pub.id && Date.parse(pub.visibleUntil) > this.store.now();
+      if (available && pub.content.kind === 'message') {
+        try { available = this.collaboration.readable(pub, pub.memberId); }
+        catch (error) {
+          if (error instanceof NetworkError && error.status < 500 || error instanceof DomainError) available = false;
+          else throw error;
+        }
+      }
+      return { id: pub.id, kind: ref.kind, revision: pub.revision, state: available ? 'active' : 'unavailable' };
     }
     const { owner: _owner, ...safe } = record;
     return safe;

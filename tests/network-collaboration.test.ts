@@ -87,7 +87,7 @@ test('structured responses reuse grants, replay references and cannot expand par
 test('close blocks drafts and preapproved responses while preserving approved history; withdraw hides the thread', () => {
   const f = networkFixture(); try {
     const bob = actor(f, f.b), postId = need(f);
-    const first = prepare(f, bob, message(postId)).publish().refs[0]!.id, pending = prepare(f, bob, message(postId));
+    const firstReady = prepare(f, bob, message(postId)), first = firstReady.publish().refs[0]!.id, pending = prepare(f, bob, message(postId));
     assert.throws(() => cmd(f, bob, { operation: 'need.close', postId, expectedRevision: 1 }), code('NOT_FOUND'));
     const close = { operation: 'need.close', postId, expectedRevision: 1, requestId: randomUUID() };
     cmd(f, buyer(f), close); assert.equal(cmd(f, buyer(f), close).replayed, true);
@@ -98,6 +98,9 @@ test('close blocks drafts and preapproved responses while preserving approved hi
     assert.throws(() => cmd(f, buyer(f), { ...close, requestId: randomUUID() }), code('REVISION_CONFLICT'));
     cmd(f, buyer(f), { operation: 'publication.withdraw', publicationId: postId, expectedRevision: 1 });
     assert.throws(() => f.get(first, f.a), code('NOT_FOUND'));
+    assert.equal((firstReady.publish().result[0] as { state: string }).state, 'unavailable');
+    const receipt = f.service.receipt(f.b.p, f.b.token, { version: 1, asProfileId: bob.profileId, operation: 'publication.publish', requestId: firstReady.command.requestId });
+    assert.equal((receipt.result[0] as { state: string }).state, 'unavailable');
     assert.throws(() => query(f, { kind: 'messages', postId }), code('NOT_FOUND'));
   } finally { f.close(); }
 });
