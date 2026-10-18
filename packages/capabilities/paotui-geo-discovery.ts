@@ -9,24 +9,15 @@ import type { PaotuiReader } from './paotui-contracts.js';
 import { ontologyReceiptSchema } from './paotui-mcp-server.js';
 import { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions } from './paotui-ontology.js';
 import { PaotuiReadAdapter } from './paotui-read.js';
+import { paotuiPublicPlaceSchema } from './paotui-public-locations.js';
 
 const capability = PAOTUI_READ_CAPABILITIES[0]!;
 const binding = PAOTUI_READ_BINDINGS[0]!;
 const inputSchema = paotuiReadDefinitions[0].schema;
 const querySchema = inputSchema.extend({ action: z.literal('search_address') }).strict();
 export type PublicGeoQuery = z.infer<typeof inputSchema>;
-const identity = z.union([z.string().min(1).max(128), z.number().int().nonnegative().safe()]);
-const coordinate = (limit: number) => z.union([
-  z.number().min(-limit).max(limit),
-  z.string().max(32).regex(/^-?\d+(?:\.\d+)?$/).refine(value => Math.abs(Number(value)) <= limit),
-]);
-const placeSchema = z.object({
-  name: z.string().min(1).max(300), address: z.string().max(1000).optional(),
-  city: z.string().max(100).optional(), cityId: identity.optional(),
-  id: identity.optional(), poiId: identity.optional(), lat: coordinate(90).optional(), lng: coordinate(180).optional(),
-}).strict();
 const resultSchema = z.object({
-  source: z.literal('meituan'), readOnly: z.literal(true), places: z.array(placeSchema).max(100),
+  source: z.literal('meituan'), readOnly: z.literal(true), places: z.array(paotuiPublicPlaceSchema).max(100),
   ontologyReceipt: ontologyReceiptSchema,
 }).strict();
 
@@ -45,7 +36,7 @@ export class PaotuiGeoDiscoverySource implements DiscoverySource {
   constructor(reader: PaotuiReader, readerConfigurationDigest: string, allowedQueries: readonly PublicGeoQuery[] = []) {
     const queries = z.array(inputSchema).max(16).parse(allowedQueries);
     this.allowedQueries = new Set(queries.map(query => digest(query)));
-    this.configurationDigest = digest({ readerConfigurationDigest, publicQueries: [...this.allowedQueries].sort(), sourceVersion: '1' });
+    this.configurationDigest = digest({ readerConfigurationDigest, publicQueries: [...this.allowedQueries].sort(), sourceVersion: '2' });
     const protectedReader: PaotuiReader = { query: async (value, signal) => {
       const query = querySchema.parse(value);
       const { action: _action, ...input } = query;

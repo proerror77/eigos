@@ -27,7 +27,7 @@ const context = (): AdapterContext => ({ owner, request: {
   id: randomUUID(), revision: 1, originalGoal: 'PRIVATE_GOAL_MUST_NOT_REACH_PROVIDER',
   messages: [{ id: 'private-message', text: 'PRIVATE_MESSAGE_MUST_NOT_REACH_PROVIDER', receivedAt: new Date().toISOString() }], requirements: [],
 } });
-const places = () => [{ name: 'Synthetic public location', address: 'Synthetic public square', city: '北京市', cityId: 'fixture-city', lat: 39.9, lng: 116.4, id: 'fixture-place-1', poiId: 'fixture-poi-1' }];
+const places = () => [{ name: 'Synthetic public location', address: 'Synthetic public square', city: '北京市', cityId: 'fixture-city', lat: 39.9, lng: 116.4, coordinateUnit: 'degree', id: 'fixture-place-1', poiId: 'fixture-poi-1' }];
 function response(items: unknown[] = places(), evidenceKind: OntologyReceipt['evidenceKind'] = 'fixture') {
   const business = { source: 'meituan', readOnly: true, places: items };
   const ontologyReceipt: OntologyReceipt = {

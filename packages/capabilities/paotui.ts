@@ -6,6 +6,7 @@ const exec = promisify(execFile);
 const clientId = 'ac76c22d257c4c6d9164719eea64ed4b';
 export { paotuiPreviewSchema, paotuiQuerySchema } from './paotui-contracts.js';
 import { paotuiPreviewSchema, paotuiQuerySchema, type PaotuiQuery, type PaotuiReader } from './paotui-contracts.js';
+import { normalizePaotuiPublicPlaces } from './paotui-public-locations.js';
 export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 
 // Official CLI has a personal credential/cache. Restrict this adapter to one local
@@ -81,10 +82,7 @@ export class LocalPaotuiReader implements PaotuiReader {
       // Only business POI fields are allowed out; tokens/provider debug metadata
       // cannot become persisted task artifacts.
       const pois = data.pois ?? data.results ?? data.list;
-      if (!Array.isArray(pois)) throw new Error('Unexpected search response');
-      return { source: 'meituan', readOnly: true, places: pois.map((p: Record<string, unknown>) => Object.fromEntries(
-        ['name', 'address', 'city', 'cityId', 'lat', 'lng', 'id', 'poiId'].filter(k => p[k] !== undefined).map(k => [k, p[k]]),
-      )) };
+      return { source: 'meituan', readOnly: true, places: normalizePaotuiPublicPlaces(pois) };
     } catch {
       // execFile errors include argv/env/output. Do not propagate them.
       throw new Error('Meituan read-only query failed; check local authorization and connectivity.');
