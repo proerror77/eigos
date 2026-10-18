@@ -1,6 +1,8 @@
 # 六类服务本体：真实模型与独立调查验证
 
-2026-10-18。接续 [六类服务实现](service-domains-2026-10-18.md)，本轮完成真实模型验证、独立 Agent 业务问题调查及暴露问题的修复。当前为 **ontology-execution-v6／eigos.business@4**，类型、接口、函数和决策 Action 数量仍为 63／2／21／8。
+2026-10-18。接续 [六类服务实现](service-domains-2026-10-18.md)，本轮完成真实模型验证、独立 Agent 业务问题调查及暴露问题的修复。当时验证版本为 **ontology-execution-v6／eigos.business@4**，类型、接口、函数和决策 Action 数量仍为 63／2／21／8。
+
+本文件保留 `70aaa12` 对应的验证记录与当时版本。后续 UCP 本地接入的当前实现与新增验证见 [UCP 说明](ucp-local-integration-2026-10-18.md)，不改写本页历史结果。
 
 ## 1. 结论与验证范围
 

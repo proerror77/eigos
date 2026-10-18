@@ -121,6 +121,10 @@ export class JobStore {
     if (!row) throw new DomainError('NOT_FOUND', 'Action intent not found');
     return { ...JSON.parse(String(row.body)), state: String(row.state), privateData: JSON.parse(String(row.private_data)) } as ActionIntent;
   }
+  intentByBusinessKey(owner: string, businessKey: string): ActionIntent | undefined {
+    const row = this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND business_key=?').get(owner, businessKey);
+    return row ? this.intent(owner, String(row.id)) : undefined;
+  }
   intents(owner: string, jobId: string): ActionIntent[] {
     this.get(owner, jobId);
     return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, jobId).map(r => this.intent(owner, String(r.id)));

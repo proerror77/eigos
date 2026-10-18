@@ -138,6 +138,18 @@ export class OntologyPlanningSession {
           checks.find(c => c.criterion === 'eligible_option')!.result = eligibility.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
           // Proposal tools cannot manufacture a dispatch permit, even for a local itinerary.
         }
+        if (['PrepareCheckout', 'CompleteCheckout'].includes(args.action)) {
+          const requirements = this.graph.read(this.owner, inputs.requirements!.object), root = this.graph.related(this.owner, requirements.ref, 'request', { remaining: 1000 });
+          checks.find(c => c.criterion === 'current_requirements')!.result = requirements.properties.requestRevision === this.request.revision && root?.length === 1 && root[0]!.ref.id === this.request.id ? 'pass' : 'fail';
+          if (args.action === 'CompleteCheckout') {
+            const session = this.graph.related(this.owner, requirements.ref, 'session', { remaining: 1000 });
+            if (session?.length !== 1 || key(session[0]!.ref) !== key(inputs.checkout!.object)) checks.find(c => c.criterion === 'current_requirements')!.result = 'fail';
+            const ready = this.graph.evaluate(this.owner, { function: 'checkoutReadiness', object: inputs.checkout!.object });
+            for (const ref of ready.evidenceRefs) this.remember(ref);
+            const status = (ready.value as { status?: string } | undefined)?.status;
+            checks.find(c => c.criterion === 'checkout_ready')!.result = ready.status === 'unknown' || status === 'unknown' ? 'unknown' : status === 'satisfied' ? 'pass' : 'fail';
+          }
+        }
         if (inputs.offer) {
           const requests = this.graph.related(this.owner, inputs.offer.object, 'request', { remaining: 1000 });
           const sameRequest = checks.find(c => c.criterion === 'same_request'); if (sameRequest) sameRequest.result = requests?.length === 1 && requests[0]!.ref.id === this.request.id ? 'pass' : 'fail';

@@ -13,15 +13,16 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 - `document.compose@1`：显式开启文档模型后产生 Markdown 草稿；不代表执行文档中的业务。
 - `data.quality.audit.simulated@2`：专用本地 CSV 的完整五项审计、模拟许可与独立验收。
 - N1 业务对象模型：28 个具体类型、Offer／EvidenceBacked 接口、双向关系、有界查询和九个只读计算。MCP 与 HTTP 使用现有认证；[接口与验证](docs/ontology-n1.md) 已用三个场景合成数据验证。
-- 六类服务本体：新增打车、医院挂号、外卖、酒店、行程安排、预约用车／自驾租车的对象、关系、规则、决策 Action、沙箱执行和独立验收。全模型现有 63 类型、21 个函数；[实现与真实接口缺口](docs/service-domains-2026-10-18.md)。[六类真实模型与 18 题独立调查](docs/service-domain-validation-2026-10-18.md) 已在合成来源上通过，真实接口仍未接通。
+- 六类服务本体：新增打车、医院挂号、外卖、酒店、行程安排、预约用车／自驾租车的对象、关系、规则、决策 Action、沙箱执行和独立验收。全模型现有 65 类型、23 个函数；[实现与真实接口缺口](docs/service-domains-2026-10-18.md)。[六类真实模型与 18 题独立调查](docs/service-domain-validation-2026-10-18.md) 已在合成来源上通过，真实接口仍未接通。
 - N2 模型规划：解释和规划阶段可主动读取对象、核对类型化条件并提出不执行的业务决策提案。固定证据／版本、权限及取消边界由程序检查；[实现与验证](docs/ontology-n2.md) 使用独立 Agent 和真实模型、合成业务数据。
+- UCP 本地商家接入：通过正式签名 HTTP 请求创建结账、取得准确模拟许可、确认并独立读取原订单；已用真实模型和独立官方商家进程验证。[实现与边界](docs/ucp-local-integration-2026-10-18.md)。仅支持显式配置的本地测试商家，尚未接通生产 Shopify／AHA。
 - 订单、模拟支付、交付、取消退款的恢复状态机仅在明确配置的本机沙箱验证。现实业务副作用仍禁止。
 
 旧需求登记、直接执行、跑腿订单和 CSV pilot 的独立业务入口及执行器已经删除。历史记录可以按原归属读取，不自动迁移或恢复执行。当前接口与配置见 [接入指南](docs/integration.md)，各能力与证据边界见 [后端说明](docs/registered-capabilities.md)。
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前运行契约为 `ontology-execution-v6`、业务模型为 `eigos.business@4`。本轮六类服务扩展未更新本人常驻部署；历史任务及对象不自动迁移或重新执行。
+仓库当前运行契约为 `ontology-execution-v7`、业务模型为 `eigos.business@5`。本轮六类服务扩展未更新本人常驻部署；历史任务及对象不自动迁移或重新执行。
 
 ## 本地开发
 

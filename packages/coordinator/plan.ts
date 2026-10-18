@@ -7,6 +7,7 @@ import type { PreparedStep } from '../ontology/actions.js';
 import { businessModel } from '../ontology/business-model.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { hardRequirementsPass, type ResolvedCandidate } from './resolver.js';
+import { requiredEffects } from '../core/policy.js';
 
 export function proposePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, capability: ServiceCapability, candidate: ResolvedCandidate, proposal: PlanProposal, ontologyPlanning: PlanningSnapshot, now = Date.now()): ExecutionPlan {
   if (proposal.kind !== 'propose_plan' || proposal.requestRevision !== request.revision || proposal.candidateId !== candidate.id) throw new DomainError('CONFLICT', 'Plan proposal has a stale request or unknown candidate');
@@ -22,18 +23,19 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
     const input: unknown = JSON.parse(step.inputJson); const bindingRef = expected.bindingRef ?? candidate.binding.ref;
     if (!sameRef(step.bindingRef, bindingRef) || digest(step.dependsOn) !== digest(expected.dependsOn) || digest(input) !== digest(expected.input)) throw new DomainError('CONFLICT', 'Model changed a provider, dependency or prepared input');
     if (expected.cost?.purpose && !amountRoles.includes(expected.cost.purpose)) throw new DomainError('INVALID_INPUT', 'Unknown cost purpose');
+    if (expected.operationScope !== undefined && (typeof expected.operationScope !== 'string' || !/^[A-Za-z0-9:_-]{1,200}$/.test(expected.operationScope))) throw new DomainError('INVALID_INPUT', 'Invalid prepared business operation scope');
     if (expected.cost) moneySchema.parse({ minor: expected.cost.minor, currency: expected.cost.currency });
     if (!['read', 'local'].includes(action.effect) && (!expected.cost || !expected.cost.payeeId)) throw new DomainError('FORBIDDEN', 'Business effects require an explicit amount/currency/counterparty bound');
-    return { id: step.id, operationId: expected.operationId, actionTypeRef: step.actionTypeRef, bindingRef, capabilityRef: expected.capabilityRef ?? capability.ref,
-      effect: action.effect, input: expected.input, inputRefs: expected.inputRefs, dependsOn: expected.dependsOn, ...(expected.cost ? { cost: expected.cost } : {}) };
+    return { id: step.id, operationId: expected.operationId, ...(expected.operationScope ? { operationScope: expected.operationScope } : {}), actionTypeRef: step.actionTypeRef, bindingRef, capabilityRef: expected.capabilityRef ?? capability.ref,
+      effect: action.effect, ...(action.additionalEffects?.length ? { additionalEffects: [...action.additionalEffects] } : {}), input: expected.input, inputRefs: expected.inputRefs, dependsOn: expected.dependsOn, ...(expected.cost ? { cost: expected.cost } : {}) };
   });
   validateDependencies(steps);
-  if (steps.filter(s => s.effect === 'order').length > 1) throw new DomainError('FORBIDDEN', 'This plan supports one business purchase; splitting orders requires a separate explicit policy');
+  if (steps.filter(s => requiredEffects(s).includes('order')).length > 1) throw new DomainError('FORBIDDEN', 'This plan supports one business purchase; splitting orders requires a separate explicit policy');
   for (const requirement of request.requirements) if (requirement.kind === 'budget' && requirement.strength === 'hard') {
     const costs = steps.flatMap(s => s.cost && (!requirement.role || (s.cost.purpose ?? 'service_total') === requirement.role) ? [s.cost] : []);
     if (costs.some(c => c.currency !== requirement.expected.currency) || costs.reduce((n, c) => n + BigInt(c.minor), 0n) > BigInt(requirement.expected.minor)) throw new DomainError('CONFLICT', 'Prepared action costs exceed the fixed request budget');
   }
-  const body = { id: randomUUID(), version: '6' as const, ontologyPlanning, requestId: request.id, requestRevision: request.revision, requestDigest: digest(request),
+  const body = { id: randomUUID(), version: '7' as const, ontologyPlanning, requestId: request.id, requestRevision: request.revision, requestDigest: digest(request),
     capabilityRef: capability.ref, ontologyRef: capability.ontologyRef, candidateId: candidate.id, bindingRef: candidate.binding.ref, verifierRef: capability.verifierRef,
     steps, details: candidate.details, completionTarget: capability.completion ?? 'artifact', requirementChecks: candidate.requirementChecks, expiresAt: candidate.expiresAt, ...(candidate.quote ? { quote: candidate.quote } : {}) };
   const capabilityRefs = [...new Map([capability.ref, ...steps.map(s => s.capabilityRef)].map(r => [JSON.stringify(r), r])).values()];
@@ -43,7 +45,7 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
   return { ...pinned, digest: digest(pinned) };
 }
 export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
-  if (plan.version !== '6' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
+  if (plan.version !== '7' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
   const { digest: proofDigest, ...proof } = plan.ontologyPlanning;
   if (digest(proof) !== proofDigest || digest(proof.model) !== digest(businessModel.ref) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
   const capability = catalog.capability(plan.capabilityRef);
@@ -60,7 +62,9 @@ export function validatePlan(catalog: ExecutionCatalog, owner: string, request: 
   validateDependencies(plan.steps);
   for (const step of plan.steps) {
     const service = catalog.capability(step.capabilityRef); const provider = catalog.binding(step.bindingRef, owner, request.id).binding;
-    if (!sameRef(provider.capabilityRef, service.ref) || !service.actions.some(a => sameRef(a.ref, step.actionTypeRef) && a.effect === step.effect)) throw new DomainError('FORBIDDEN', 'Plan contains an unsupported action or binding');
+    if (step.operationScope !== undefined && (typeof step.operationScope !== 'string' || !/^[A-Za-z0-9:_-]{1,200}$/.test(step.operationScope))) throw new DomainError('INVALID_INPUT', 'Invalid business operation scope');
+    if (!sameRef(provider.capabilityRef, service.ref) || !service.actions.some(a => sameRef(a.ref, step.actionTypeRef) && a.effect === step.effect && digest(a.additionalEffects ?? []) === digest(step.additionalEffects ?? []))) throw new DomainError('FORBIDDEN', 'Plan contains an unsupported action, effect or binding');
+    if (step.additionalEffects?.length && (['local', 'read'].includes(step.effect) || step.additionalEffects.some(e => !['reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(e)))) throw new DomainError('FORBIDDEN', 'Composite business effects require a business action');
     if (step.cost?.purpose && !amountRoles.includes(step.cost.purpose)) throw new DomainError('INVALID_INPUT', 'Unknown cost purpose');
     if (step.cost) moneySchema.parse({ minor: step.cost.minor, currency: step.cost.currency });
     if (!['read', 'local'].includes(step.effect) && (!step.cost || !step.cost.payeeId)) throw new DomainError('FORBIDDEN', 'Unbounded business effect');

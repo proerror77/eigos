@@ -84,7 +84,7 @@ test('source-backed extraction preserves quantities and budgets; model cannot re
   const quantity = { id: 'cups', kind: 'quantity', strength: 'hard', expected: { amount: '20', unit: '杯' } };
   const extracted = [{ requirement: quantity, messageId: 'm', quote: '20杯' }, { requirement: { id: 'budget', kind: 'budget', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, messageId: 'm', quote: '预算500元' }];
   const fixed = groundRequirements(request, JSON.stringify(extracted)); assert.equal(fixed.requirements.length, 2); assert.deepEqual(groundRequirements(fixed, '[]'), fixed);
-  assert.throws(() => groundRequirements(fixed, JSON.stringify([{ requirement: { ...quantity, expected: { amount: '15', unit: '杯' } }, messageId: 'm', quote: '20杯' }])), /Quantity/);
+  assert.throws(() => groundRequirements(fixed, JSON.stringify([{ requirement: { ...quantity, expected: { amount: '15', unit: '杯' } }, messageId: 'm', quote: '20杯' }])), /replace a fixed requirement/);
   assert.throws(() => groundRequirements(fixed, JSON.stringify([{ requirement: { ...quantity, strength: 'preference' }, messageId: 'm', quote: '20杯' }])), /replace/);
   assert.throws(() => groundRequirements(request, JSON.stringify([{ ...extracted[0], messageId: 'someone-else' }])), /provenance/);
   const mixed = { ...request, messages: [{ ...request.messages[0]!, text: '20杯，预算15元' }] };

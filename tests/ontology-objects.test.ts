@@ -20,8 +20,8 @@ function fixture() {
   return { ...data, db, graph };
 }
 
-test('Ontology compiles core and six-domain concrete business types, inherited interfaces and bounded metadata', () => {
-  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 63);
+test('Ontology compiles core, service and checkout business types, inherited interfaces and bounded metadata', () => {
+  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 65);
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');
@@ -31,7 +31,7 @@ test('Ontology compiles core and six-domain concrete business types, inherited i
     assert(page.types.length <= 2); assert(page.actions.every(a => a.execution === 'definition_only'));
     all.push(...page.types.map(t => (t as { id: string }).id)); after = page.next;
   } while (after);
-  assert.equal(new Set(all).size, 65);
+  assert.equal(new Set(all).size, 67);
   assert((businessModel.describe({ search: '报价' }).types as { id: string }[]).length > 0);
   const metadata = businessModel.describeType('DeliveryQuote') as { interfaces: { id: string }[] };
   metadata.interfaces[0]!.id = 'tampered';
