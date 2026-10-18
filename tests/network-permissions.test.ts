@@ -1,3 +1,4 @@
+import { networkFixture as fixture } from './fixtures/network-pilot.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -14,42 +15,7 @@ import { readConfig } from '../packages/core/config.js';
 import { protectedResourceMetadata } from '../apps/gateway/auth.js';
 import { networkPage } from '../apps/gateway/network/routes.js';
 
-function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'eigos-network-')), path = join(dir, 'business.sqlite');
-  const db = new DatabaseSync(path), members = new MemberStore(join(dir, 'members.sqlite'));
-  let now = Date.now();
-  const store = new NetworkStore(db, () => now);
-  const identity = (subject: string) => ({ issuer: 'https://idp.test', subject, tenant: 'one' });
-  const create = (subject: string) => {
-    const member = members.login(identity(subject)); members.apply(member.id, { displayName: subject, locale: 'en', timezone: 'UTC', consent: true }, false);
-    const p: Principal = { ...identity(subject), clientId: 'connector', scopes: [...SCOPES, 'network:read', 'network:write'] };
-    members.authorize(p); return { member, p };
-  };
-  const alice = create('alice'), bob = create('bob'), charlie = create('charlie');
-  const install = (u: typeof alice) => {
-    const id = randomUUID(), secret = randomBytes(32).toString('base64url'), token = 'ACCESS_SECRET_' + randomUUID();
-    members.agents.create({ registrationId: id, displayName: 'Agent' }, secret);
-    members.agents.bind(id, secret, u.p, u.member.id, token, Date.now() + 3600000, Date.now(), true);
-    return { ...u, id, secret, token };
-  };
-  const a = install(alice), a2 = install(alice), b = install(bob), c = install(charlie);
-  const service = new NetworkService(store, members, { memberIds: [a.member.id, b.member.id, c.member.id] });
-  const control = (action: object, memberId = a.member.id) => service.control(memberId, { version: 1, requestId: randomUUID(), ...action });
-  const profileId = control({ action: 'profile.create', displayName: 'Alice Agent' }).refs[0]!.id;
-  const bindingId = control({ action: 'profile.bind_installation', profileId, installationId: a.id, allowedCommands: [...commands] }).refs[0]!.id;
-  const command = (body: object, user = a) => service.command(user.p, user.token, { version: 1, requestId: randomUUID(), asProfileId: profileId, ...body });
-  const draft = (body = 'Need a quotation, no purchase') => command({ operation: 'draft.create', content: { kind: 'need', body: { title: 'Quote', safeGoal: body, category: 'delivery', coarseArea: '110105', replyDeadline: new Date(now + 86400000).toISOString() } } }).refs[0]!.id;
-  const request = (draftId: string, ids = [b.member.id]) => command({ operation: 'publication.request_approval', draftId, expectedRevision: 1, recipientMemberIds: ids,
-    publishBefore: new Date(now + 600000).toISOString(), visibleUntil: new Date(now + 3600000).toISOString() }).refs[0]!.id;
-  const approval = (id: string) => store.get('approval', id, ownerKey(a.p));
-  const approve = (id: string) => { const r = approval(id); return control({ action: 'publication.approve', approvalRequestId: id, expectedDraftRevision: r.draftRevision, reviewDigest: r.reviewDigest }).refs[0]!.id; };
-  const grant = (id: string) => store.get('grant', id, ownerKey(a.p));
-  const publish = (draftId: string, grantId: string, requestId = randomUUID()) => command({ operation: 'publication.publish', draftId, expectedRevision: 1, grantId, requestId });
-  const get = (publicationId: string, user = b) => service.query(user.p, user.token, { version: 1, kind: 'get', publicationId });
-  return { dir, path, db, store, members, service, a, a2, b, c, profileId, bindingId, control, command, draft, request, approval, approve, grant, publish, get,
-    advance: (ms: number) => { now += ms; store.acquire(service.holder); },
-    close: () => { service.close(); members.close(); db.close(); rmSync(dir, { recursive: true, force: true }); } };
-}
+
 const errorCode = (expected: string) => (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === expected;
 
 test('T06 actor is server-bound; owner task semantics remain unchanged and client metadata cannot impersonate another installation', () => {

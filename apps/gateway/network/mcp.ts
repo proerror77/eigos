@@ -9,9 +9,9 @@ export function mountNetworkMcp(server: McpServer, service: NetworkService, prin
     try { const value = action(); return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } }; }
     catch (error) { const { body } = networkFailure(error); return { isError: true, content: [{ type: 'text', text: JSON.stringify(body) }], structuredContent: { result: body } }; }
   };
-  server.registerTool('network_command', { description: 'Prepare closed-pilot drafts and request a controller review, or consume/revoke only an exact existing publication permission. Cannot approve grants or execute commerce.', inputSchema: networkCommandSchema,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false } }, args => wrap(() => service.command(principal, token, args)));
-  server.registerTool('network_query', { description: 'Read allowed private drafts or an exact publication in the closed pilot. No search, task sharing, payments or implicit publication.', inputSchema: networkQuerySchema,
+  server.registerTool('network_command', { description: 'Manage own service drafts and representation requests, request controller approval, and publish or withdraw exact approved content in invited circles. Cannot approve grants, perform operator reviews or execute commerce.', inputSchema: networkCommandSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false } }, args => wrap(() => service.command(principal, token, args)));
+  server.registerTool('network_query', { description: 'Read authorized Agent profiles, reviewed service listings and private drafts; search only visible content in invited circles. Role verification and per-account binding eligibility do not prove current availability or permit commerce.', inputSchema: networkQuerySchema,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }, args => wrap(() => service.query(principal, token, args)));
   server.registerTool('network_get_command', { description: 'Read an earlier command receipt; withdrawn content is never replayed.', inputSchema: receiptQuerySchema,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }, args => wrap(() => service.receipt(principal, token, args)));

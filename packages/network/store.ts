@@ -1,10 +1,11 @@
+import type { Space, Membership, Invitation, Representation, Listing } from './directory-contracts.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../core/delegation.js';
 import { fail, type Profile, type Binding, type Draft, type Approval, type Grant, type Publication, type ResultRef } from './contracts.js';
 
-type Records = { profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
-const tables = { profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export type Records = { space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
+const tables = { space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
@@ -17,6 +18,13 @@ export class NetworkStore {
       CREATE TABLE IF NOT EXISTS network_lease (id INTEGER PRIMARY KEY CHECK(id=1),holder TEXT NOT NULL,expires INTEGER NOT NULL);
     `);
     for (const table of Object.values(tables)) db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY,owner TEXT NOT NULL,body TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_owner ON ${table}(owner,id);`);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS network_membership_identity ON network_memberships(json_extract(body,'$.spaceId'),json_extract(body,'$.memberId'));
+      CREATE INDEX IF NOT EXISTS network_member_spaces ON network_memberships(json_extract(body,'$.memberId'),json_extract(body,'$.state'),id);
+      CREATE INDEX IF NOT EXISTS network_publication_kind_state ON network_publications(json_extract(body,'$.content.kind'),json_extract(body,'$.state'),id);
+      CREATE INDEX IF NOT EXISTS network_publication_profile ON network_publications(json_extract(body,'$.profileId'),json_extract(body,'$.content.kind'),json_extract(body,'$.state'),id);
+      CREATE INDEX IF NOT EXISTS network_publication_listing ON network_publications(json_extract(body,'$.content.listingId'),json_extract(body,'$.state'),id);
+    `);
     db.prepare('INSERT OR IGNORE INTO network_state VALUES(?,?)').run('space_id', randomUUID());
   }
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
@@ -37,6 +45,17 @@ export class NetworkStore {
   list<K extends keyof Records>(kind: K, owner: string): Records[K][] {
     return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE owner=? ORDER BY id LIMIT 101`).all(owner).map(r => JSON.parse(String(r.body)));
   }
+  scan<K extends keyof Records>(kind: K, filters: Record<string, string> = {}, after = '', limit = 201): Records[K][] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 201) return fail('INVALID_INPUT', 422);
+    const clauses = ['id>?']; const params: string[] = [after];
+    for (const [field, value] of Object.entries(filters)) {
+      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'representationId'].includes(field)) return fail('INVALID_INPUT', 422);
+      clauses.push(`json_extract(body,'$.${field}')=?`); params.push(value);
+    }
+    return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`).all(...params, limit).map(r => JSON.parse(String(r.body)));
+  }
+  quota(kind: keyof Records, owner: string) { if (this.list(kind, owner).length >= 100) fail('RESOURCE_BUDGET', 429); }
+  visibilityRevision() { return Number(this.db.prepare('SELECT COALESCE(max(seq),0) AS n FROM network_events').get()!.n); }
   binding(owner: string, profileId: string, installationId: string): Binding {
     const found = this.list('binding', owner).find(b => b.profileId === profileId && b.installationId === installationId && !b.revoked);
     return found ?? fail('ACTOR_NOT_BOUND', 403);

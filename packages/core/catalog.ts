@@ -80,6 +80,9 @@ export class ExecutionCatalog {
     for (const source of sources) if (!this.adapters.has(source.adapterId) || source.capabilityRefs.some(r => !this.services.has(key(r)))) throw new Error('Unresolved discovery source');
     this.sources = sources;
   }
+  // Metadata only, for the configured operator's listing review; never installs discovered code.
+  configuredBinding(ref: Ref): ProviderBinding | undefined { const value = this.providers.get(key(ref)); return value ? structuredClone(value) : undefined; }
+
   capability(ref: Ref): ServiceCapability {
     const definition = this.services.get(key(ref));
     if (!definition) throw new DomainError('CONFLICT', 'Capability version is unavailable');

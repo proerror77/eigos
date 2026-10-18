@@ -15,7 +15,7 @@ import { commands } from '../packages/network/contracts.js';
 import { createApp } from '../apps/gateway/app.js';
 import { jwtVerifier, protectedResourceMetadata } from '../apps/gateway/auth.js';
 
-async function fixture(enabled = true) {
+async function fixture(enabled = true, directory = false) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-network-http-')), memberPath = join(dir, 'members.sqlite');
   const seed = new MemberStore(memberPath);
   const identity = { issuer: 'https://issuer.test', tenant: 't1', subject: 'alice' };
@@ -28,7 +28,7 @@ async function fixture(enabled = true) {
   const config: Config = { ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(dir, 'tasks.sqlite') }),
     EIGOS_AUTH_MODE: 'jwt', OAUTH_ISSUER: identity.issuer, OAUTH_AUDIENCE: origin, OAUTH_JWKS_URL: identity.issuer + '/jwks', PUBLIC_URL: origin,
     OIDC_CLIENT_ID: 'browser', OIDC_AGENT_CLIENT_ID: 'connector', MEMBERSHIP_DATABASE_PATH: memberPath,
-    EIGOS_NETWORK_ENABLED: enabled ? 'true' : 'false', EIGOS_NETWORK_MEMBER_IDS: [alice.id, bob.id] };
+    EIGOS_NETWORK_ENABLED: enabled ? 'true' : 'false', EIGOS_NETWORK_MEMBER_IDS: [alice.id, bob.id], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: directory ? [bob.id] : [] };
   const keys = await generateKeyPair('ES256'), jwk = { ...await exportJWK(keys.publicKey), kid: 'test', alg: 'ES256' };
   const gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })));
   server.on('request', gateway.app);
@@ -126,4 +126,47 @@ test('network disabled leaves original scopes and APIs intact; valid JWT without
     assert.equal(denied.status, 403); assert.equal((await denied.json()).error.code, 'SCOPE_REQUIRED');
     assert.equal((await f.command(profileId, { operation: 'draft.create', content: { kind: 'profile', body: { displayName: 'PA', summary: '', roleTags: [] } }, owner: ownerKey(f.b.p) })).status, 422);
   } finally { await f.close(); }
+});
+
+test('T07 HTTP/MCP and browser pages share invitation, listing review and visibility boundaries', async () => {
+  const f = await fixture(true, true); const client = new Client({ name: 't07-test', version: '1' });
+  try {
+    const { profileId } = await f.init(), bs = f.gateway.members.createSession(f.bob.id);
+    const bobControl = (action: object) => f.control({ ...action, _csrf: bs.csrf }, { Cookie: `__Host-eigos-member=${bs.token}` });
+    const created = await bobControl({ action: 'space.create', name: '测试邀请圈' }); assert.equal(created.status, 200); const spaceId = (await created.json()).refs[0].id;
+    const invited = await bobControl({ action: 'space.invite', spaceId, memberId: f.alice.id, expiresAt: new Date(Date.now() + 600000).toISOString() }); assert.equal(invited.status, 200);
+    const invitationId = (await invited.json()).refs[0].id;
+    assert.equal((await f.api('query', { version: 1, kind: 'search', objectKind: 'profile', spaceId })).status, 404);
+    assert.equal((await f.control({ action: 'space.accept_invitation', invitationId, expectedRevision: 1 })).status, 200);
+    const requested = await f.command(profileId, { operation: 'representation.request', providerId: 'fixture-provider', role: 'aggregator', capabilityRefs: [{ id: 'fixture.quote', version: '1' }], note: 'PRIVATE_REVIEW_CANARY' });
+    assert.equal(requested.status, 200); const representationId = (await requested.json()).refs[0].id;
+    const review = await bobControl({ action: 'representation.review', representationId, expectedRevision: 1, decision: 'verified', proofRef: 'PRIVATE_PROOF_CANARY', validUntil: new Date(Date.now() + 86400000).toISOString() }); assert.equal(review.status, 200);
+    const createListing = await f.command(profileId, { operation: 'listing.create', representationId, capabilityRef: { id: 'fixture.quote', version: '1' }, details: { title: '同城查价介绍', description: '<script>no execution</script>', coarseAreas: ['110105'] } }); assert.equal(createListing.status, 200);
+    const listingId = (await createListing.json()).refs[0].id;
+    assert.equal((await f.command(profileId, { operation: 'listing.submit_review', listingId, expectedRevision: 1 })).status, 200);
+    assert.equal((await bobControl({ action: 'listing.review', listingId, expectedRevision: 2, decision: 'approved' })).status, 200);
+    const makePublication = async (content: object) => {
+      const d = await f.command(profileId, { operation: 'draft.create', content }); assert.equal(d.status, 200); const draftId = (await d.json()).refs[0].id;
+      const r = await f.command(profileId, { operation: 'publication.request_approval', draftId, expectedRevision: 1, spaceId, recipientMemberIds: [f.bob.id], publishBefore: new Date(Date.now() + 600000).toISOString(), visibleUntil: new Date(Date.now() + 3600000).toISOString() }); assert.equal(r.status, 200);
+      const approval = (await r.json()).result[0];
+      const g = await f.control({ action: 'publication.approve', approvalRequestId: approval.id, expectedDraftRevision: 1, reviewDigest: approval.reviewDigest }); assert.equal(g.status, 200);
+      const grantId = (await g.json()).refs[0].id;
+      const pub = await f.command(profileId, { operation: 'publication.publish', draftId, expectedRevision: 1, grantId }); assert.equal(pub.status, 200);
+    };
+    await makePublication({ kind: 'profile', body: { displayName: 'Agent 主页', summary: '只读协作', roleTags: ['assistant'] } });
+    await makePublication({ kind: 'listing', listingId, listingRevision: 3 });
+    const path = `/members/network/spaces/${spaceId}/profiles/${profileId}`;
+    assert.equal((await f.call(path)).status, 401);
+    const page = await f.call(path, undefined, { Cookie: `__Host-eigos-member=${bs.token}` }); assert.equal(page.status, 200);
+    const html = await page.text(); assert(html.includes('同城查价介绍')); assert(html.includes('仅介绍')); assert(!html.includes('<script>')); assert(!html.includes('PRIVATE_REVIEW_CANARY')); assert(!html.includes('PRIVATE_PROOF_CANARY'));
+    assert.equal((await f.call(path, undefined, { Cookie: `__Host-eigos-member=${f.session.token}` })).status, 404, 'Controller cannot bypass its chosen publication audience on the shared page');
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.b.token}` } } }));
+    const result = await client.callTool({ name: 'network_query', arguments: { version: 1, kind: 'search', objectKind: 'listing', spaceId } }); assert(!result.isError);
+    assert(JSON.stringify(result).includes('introduction_only')); assert(!JSON.stringify(result).includes('PRIVATE_PROOF_CANARY'));
+    const submitted = f.gateway.tasks.submit(f.a.p, { goal: 'Existing private task', requestId: randomUUID() });
+    const original = f.gateway.tasks.get(f.a.p, submitted.id);
+    assert.equal((await f.command(profileId, { operation: 'listing.set_state', listingId, expectedRevision: 3, state: 'paused' })).status, 200);
+    assert.equal((await f.call(`/members/network/spaces/${spaceId}/listings/${listingId}`, undefined, { Cookie: `__Host-eigos-member=${bs.token}` })).status, 404);
+    assert.deepEqual(f.gateway.tasks.get(f.a.p, original.id), original, 'Pausing a listing must not rewrite private tasks');
+  } finally { await client.close(); await f.close(); }
 });

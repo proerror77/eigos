@@ -155,6 +155,8 @@ T03 中非建模者参与者未就绪时，其余独立工程可继续，但 N2/
 
 ### T07｜邀请圈、Agent 主页和服务发布
 
+状态：已在 T06 后续独立分支实现；[T07 实现与验证](network-t07.md) 记录当前范围。圈、角色审核与共享目录使用合成数据验收，真实供给及交易不在本轮范围。
+
 - **前置：**T06。
 - **范围：**NetworkSpace、SpaceMembership、AgentProfile、ActorRepresentation、ServiceListing；初期管理员审核，关联现有能力/绑定。
 - **验收：**稳定 profileId 不随名称或令牌刷新改变；代表关系必须核实；draft/paused 不作为可执行供给；可见但无 binding 的服务明确“仅介绍”；普通成员不能成为管理员；资料搜索/计数/详情对不可见对象一致拒绝。
