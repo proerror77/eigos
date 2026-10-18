@@ -1,7 +1,7 @@
 import { DomainError, type Job } from './domain.js';
 import type { ServiceDefinition } from './services.js';
 import { type Ref, type ServiceCapability, type ProviderBinding, type CandidateFacts, type ExecutionPlan, type ServiceRequest } from '../ontology/execution.js';
-import type { DiscoveredBinding, DiscoveryCoverage, Offer } from '../ontology/supply.js';
+import type { DiscoveredBinding, DiscoveryCoverage, ProductOfferSnapshot } from '../ontology/supply.js';
 import type { ActionContext, ActionResult, PreparedStep } from '../ontology/actions.js';
 import { digest } from './delegation.js';
 
@@ -46,7 +46,7 @@ export interface DiscoverySource {
   readonly realSupply?: boolean;
   permitted(owner: string): boolean;
   discover(ctx: AdapterContext, input: unknown, signal: AbortSignal): Promise<{
-    candidates: { binding: DiscoveredBinding; preparation: Preparation; offer?: Offer }[];
+    candidates: { binding: DiscoveredBinding; preparation: Preparation; offer?: ProductOfferSnapshot }[];
     coverage: DiscoveryCoverage;
   }>;
 }

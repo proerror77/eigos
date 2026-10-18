@@ -4,7 +4,7 @@ import { DomainError } from '../core/domain.js';
 import { ExecutionCatalog, bindingDigest, type AdapterContext, type Preparation } from '../core/catalog.js';
 import { digest } from '../core/delegation.js';
 import { moneySchema, type CandidateFacts, type Ref, type RequirementCheck, type ServiceRequest, type ResolvedCandidate, type ResolutionScope } from '../ontology/execution.js';
-import type { Comparison, DiscoveryCoverage, Offer } from '../ontology/supply.js';
+import type { Comparison, DiscoveryCoverage, ProductOfferSnapshot } from '../ontology/supply.js';
 import { compareOffers } from './comparison.js';
 export type { ResolvedCandidate } from '../ontology/execution.js';
 
@@ -86,7 +86,7 @@ export class CapabilityResolver {
     const locationSemantics = this.catalog.capability(capabilityRef).locationSemantics;
     if (bindings.length > 8) throw new DomainError('CONFLICT', 'Provider retrieval limit exceeded; narrow the discovery scope');
     const candidates: ResolvedCandidate[] = []; const privateData = new Map<string, unknown>(); const coverage: DiscoveryCoverage[] = [];
-    const append = (binding: ResolvedCandidate['binding'], preparation: Preparation, offer?: Offer) => {
+    const append = (binding: ResolvedCandidate['binding'], preparation: Preparation, offer?: ProductOfferSnapshot) => {
       const id = randomUUID();
       if (preparation.kind === 'unavailable') {
         candidates.push({ id, binding, status: 'unavailable', question: preparation.reason, details: preparation.details, facts: {}, evidenceRefs: [], requirementChecks: checkRequirements(ctx.request, {}, []), observedAt: new Date().toISOString(), expiresAt: new Date().toISOString() }); return;

@@ -1,6 +1,6 @@
 # Ontology v0.2 对象目录：按 Palantir 官方指南建模
 
-日期：2026-10-18。本文是 [主规格](ontology-spec-v0.2-2026-10-18.md) 的对象、属性、关系、接口和数据映射目录，替代初稿中只有概念清单和流程箭头的部分。所有新增类型均为待实现设计；本文不是 Foundry 部署、SDK 兼容或正式认证声明。
+日期：2026-10-18。本文是 [主规格](ontology-spec-v0.2-2026-10-18.md) 的对象、属性、关系、接口和数据映射目录，替代初稿中只有概念清单和流程箭头的部分。28 个类型、接口、关系及有界查询已在 N1 实现并用合成数据验证，具体范围见 [N1 使用说明](ontology-n1.md)。正式来源、模型衔接与动作执行仍按阶段推进；本文不是 Foundry 部署、SDK 兼容或正式认证声明。
 
 ## 1. 建模依据与本项目的选择
 
@@ -141,10 +141,10 @@ ChannelParticipation 和 DeliveryAllocation 因关系自身具有角色、期限
 
 | 来源 | 规范化目标 | 关键映射／生命周期 | 现状 |
 | --- | --- | --- | --- |
-| PA 的原始消息与明确选择 | ServiceRequest、条件、Parcel、DeliveryRoute | 保留原文／revision；地址角色和申报重量明确；修改由受控动作形成新版本 | 已有任务与地址流程，待本体化投影 |
+| PA 的原始消息与明确选择 | ServiceRequest、条件、Parcel、DeliveryRoute | 保留原文／revision；地址角色和申报重量明确；修改由受控动作形成新版本 | N1 投影当前任务及完整查价结果；新条件结构的模型绑定待 N2 |
 | 美团公开地点读取 | Place＋来源观察 | 原生 id 带 namespace；微度转换为度发生在摘要前；不派生成 Merchant／Offer | 已有真实读取；仅授权公开查询组合 |
-| 本人保存地址读取 | SavedAddress、所选路线快照 | 私人地址／联系人与公开 Place 不因字符串相似合并；字段权限先于模型展示 | 已有本人流程，类型目录待实现 |
-| 美团配送报价回执 | DeliveryQuote，实现 Offer | 关联准确路线、物品、重量、服务及输入摘要；保留估价性质／缺失费用，不猜来源承诺 | 已有真实查价；完整 Offer 映射待实现 |
+| 本人保存地址读取 | SavedAddress、所选路线快照 | 私人地址／联系人与公开 Place 不因字符串相似合并；字段权限先于模型展示 | N1 类型与权限已实现；完整地址簿仍在现有私有流程，未自动复制 |
+| 美团配送报价回执 | DeliveryQuote，实现 Offer | 关联准确路线、物品、重量、服务及输入摘要；保留估价性质／缺失费用，不猜来源承诺 | N1 映射已用完整合成回执验证；本轮没有真实读取或常驻部署 |
 | 商品目录、报价、订单与交付来源 | ProductVariant／ProductOffer／Order／OrderLine／Shipment／DeliveryAllocation | 分开实体身份与观察；交付事件去重后形成数量分配 | 正式来源契约待取得；当前只有合成场景 |
 | 餐厅时段、预订及订金来源 | Venue／ReservationSlot／ReservationOffer／Reservation／Payment | held、确认、生效条件及付款分别映射 | 正式来源契约待取得；当前只有合成场景 |
 
@@ -164,7 +164,7 @@ ChannelParticipation 和 DeliveryAllocation 因关系自身具有角色、期限
 
 Actions 和 Functions 的依据见 [Action 类型](https://www.palantir.com/docs/foundry/action-types/overview) 与 [Function 的本体读取及逻辑](https://www.palantir.com/docs/foundry/functions/overview)。EIGOS 继续用写前意图与事务外 I/O：本地对象编辑可原子提交，不承诺本地事务与外部订单／付款共同原子成功。
 
-当前 Ontology MCP 主要提供定义读取和供应方查询边界；它不能单独代替本规格的对象目录、关系查询与受控变更层。这些语义及接口需要在后续阶段补齐，而非把现有工具改名后即认为完成。
+Worker 内部的 Ontology MCP 继续提供定义读取和供应方查询边界。N1 在认证 Gateway 增加业务定义、对象集／关系查询及登记函数；两个 Action 只返回 definition_only。模型规划与受控变更执行仍由后续阶段衔接，不能把工具存在视为业务完成。
 
 ### 6.1 两个具体 Action 定义卡
 
@@ -192,4 +192,4 @@ RequestOrder、RequestReservation、RequestRefund 同样要列出变更集和权
 
 本目录的作者结构走查只确认定义是否自洽，不能证明新用户或 Agent 能独立使用。正式演练要提供问题和有权限的对象目录／数据，让非建模者与 Agent 分别查找、导航、计算并解释；不给定答案路径，记录正确性、耗时、所走关系及求助情况。[官方验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
 
-本轮状态：官方来源已核对、目录与结构走查已写出；独立人／Agent 演练未运行，因为本体对象查询接口与三领域数据模型尚未实现。演练题目见 [独立问题集](ontology-drill-questions-v0.2-2026-10-18.md)，主持人参考及既有 23 个反例见 [场景文件](ontology-scenarios-v0.2-2026-10-18.md)。不得把 CI 或作者按固定流程走查标成这项演练已通过。
+本轮状态：官方来源已核对、目录与结构走查已写出；N1 对象查询、三领域合成数据与规则测试已实现。独立人／Agent 演练仍未运行，属于 N2。题目见 [独立问题集](ontology-drill-questions-v0.2-2026-10-18.md)，主持人参考及既有 23 个反例见 [场景文件](ontology-scenarios-v0.2-2026-10-18.md)。不得把 CI、自动测试或作者按固定流程走查标成这项演练已通过。

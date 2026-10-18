@@ -1,0 +1,35 @@
+{
+  "date": "2026-10-18",
+  "scope": "N1 ontology objects, interfaces, relationships, bounded queries and synthetic validation",
+  "implementationBase": "3266f35b462fe091ccfe7ddb6bcbf790cbd6ae4a",
+  "model": {
+    "id": "eigos.business",
+    "version": "1",
+    "digest": "1bb5cae14d031745535d691bf0d4db4cb7fb3a2910762489a554c3f2bb424168",
+    "objectTypes": 28,
+    "interfaces": 2,
+    "bidirectionalLinks": 52,
+    "readOnlyFunctions": 9,
+    "definitionOnlyActions": 2,
+    "maxObservedDefinitionPageBytes": 38221
+  },
+  "checks": {
+    "typecheck": "passed",
+    "unitAndIntegration": { "passed": 235, "failed": 0, "skipped": 0, "n1CasesIncludingSubtests": 57 },
+    "build": "passed",
+    "processE2E": { "passed": 7, "failed": 0, "skipped": 0 },
+    "diffCheck": "passed"
+  },
+  "boundaries": {
+    "evidence": "synthetic",
+    "currentPaTransportsRetained": true,
+    "legacyBackendExecutionCompatibility": false,
+    "historicalTasksAutoMigrated": false,
+    "independentHumanOrAgentDrillRun": false,
+    "realProviderCalled": false,
+    "realBusinessModelInvoked": false,
+    "realTransactionRun": false,
+    "persistentServiceDeployed": false
+  },
+  "ciVerification": "Check the terminal GitHub Actions result for the exact commit containing this record. This file does not use its implementation baseline CI as evidence for N1."
+}

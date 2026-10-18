@@ -12,11 +12,12 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 - `brief.prepare@2`：生成任务说明，底层业务仍 `execution=not_started`。
 - `document.compose@1`：显式开启文档模型后产生 Markdown 草稿；不代表执行文档中的业务。
 - `data.quality.audit.simulated@2`：专用本地 CSV 的完整五项审计、模拟许可与独立验收。
+- N1 业务对象模型：28 个具体类型、Offer／EvidenceBacked 接口、双向关系、有界查询和九个只读计算。MCP 与 HTTP 使用现有认证；[接口与验证](docs/ontology-n1.md) 已用三个场景合成数据验证。
 - 订单、模拟支付、交付、取消退款的恢复状态机仅在明确配置的本机沙箱验证。现实业务副作用仍禁止。
 
 旧需求登记、直接执行、跑腿订单和 CSV pilot 的独立业务入口及执行器已经删除。历史记录可以按原归属读取，不自动迁移或恢复执行。当前接口与配置见 [接入指南](docs/integration.md)，各能力与证据边界见 [后端说明](docs/registered-capabilities.md)。
 
-后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[三个场景](docs/ontology-scenarios-v0.2-2026-10-18.md) 当前为作者结构走查，[独立业务问题演练](docs/ontology-drill-questions-v0.2-2026-10-18.md) 尚未运行；未实现契约与 N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
+后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[三个场景](docs/ontology-scenarios-v0.2-2026-10-18.md) 的结构走查已补充 N1 自动规则测试，[独立业务问题演练](docs/ontology-drill-questions-v0.2-2026-10-18.md) 尚未运行；后续契约与 N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
 ## 本地开发
 

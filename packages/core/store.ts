@@ -6,6 +6,8 @@ import { DomainError, type Job, type JobState } from './domain.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSalesCase } from '../ontology/actions.js';
 import { digest } from './delegation.js';
+import { OntologyObjectStore } from '../ontology/object-store.js';
+import { projectTask } from '../ontology/task-projection.js';
 
 export interface ListFilter {
   limit: number;
@@ -27,6 +29,7 @@ function equivalentFingerprint(a: string, b: string): boolean {
 
 export class JobStore {
   private db: DatabaseSync;
+  readonly ontology: OntologyObjectStore;
 
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -74,6 +77,7 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
     });
+    this.ontology = new OntologyObjectStore(this.db);
   }
 
   close(): void { this.db.close(); }
@@ -375,11 +379,17 @@ export class JobStore {
   }
 
   save(owner: string, job: Job): void {
-    this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
+    this.db.exec('SAVEPOINT task_and_ontology');
+    try {
+      const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
-    );
+      );
+      if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
+      projectTask(this.ontology, owner, job);
+      this.db.exec('RELEASE task_and_ontology');
+    } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }
 
   list(owner: string, filter: ListFilter): { jobs: Job[]; total: number } {

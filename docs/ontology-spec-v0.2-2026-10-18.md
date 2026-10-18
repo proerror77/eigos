@@ -1,6 +1,6 @@
 # EIGOS Ontology 规格：v0.2 落地细化
 
-日期：2026-10-18。状态：按 Palantir 官方建模指南修订的规格基线，供后续实现与验收；新增契约尚未实现。运行代码核对基线为 `29eb3740ae93b728e77b7f8283c785055f5da19b`。初稿 `66d6e1c` 没有逐条核对官方方法，本次补充依据并修正模型，不能将初稿的作者走查视为完整本体验证。
+日期：2026-10-18。状态：按 Palantir 官方建模指南修订的规格基线；随后已实现 N1 对象／关系／接口、有界查询和合成规则验证，范围见 [N1 使用说明](ontology-n1.md)。完整规格中的模型衔接、独立演练、领域动作和真实履约仍分阶段实施。规格最初核对的运行代码基线为 `29eb3740ae93b728e77b7f8283c785055f5da19b`。初稿 `66d6e1c` 没有逐条核对官方方法，不能将其作者走查视为完整本体验证。
 
 本规格细化 [架构 v0.2](architecture-design-v0.2-2026-10-17.md)，沿用单仓库、Gateway／Worker、共享任务核心及 Ontology + LLM 决策分工。术语由 [CONTEXT.md](../CONTEXT.md) 维护；本文维护对象契约、语义规则和实现要求。原设计中的旧执行架构兼容建议已经撤销：历史记录保留只读，不自动迁移成可执行计划。
 
@@ -8,7 +8,7 @@
 
 建模依据为 Palantir 的[设计原则](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)、[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)及[业务问题验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)。具体对象、接口、主键、属性来源、双向关系和数据映射以配套[对象目录](ontology-model-catalog-v0.2-2026-10-18.md)为准。官方原则与 EIGOS 的实施选择分别标明；采用方法不等于已经接入 Foundry 或实现其全部平台能力。
 
-本轮交付仅为规格、[三个场景的设计验证](ontology-scenarios-v0.2-2026-10-18.md)、代码差距和[新阶段目标](backend-implementation-goals.md)。不调用真实来源、不启动模型业务任务、不改变常驻服务或权限；订单、付款、占位、取消和退款均没有本轮执行授权。场景中的业务数据全部合成。
+规格阶段交付了本文、[三个场景的设计验证](ontology-scenarios-v0.2-2026-10-18.md)、代码差距和[新阶段目标](backend-implementation-goals.md)。随后 N1 的代码与验证记录见 [验收记录](evidence/ontology-n1-2026-10-18/README.md)。两轮均不调用真实来源、不启动模型业务任务、不改变常驻服务或权限；订单、付款、占位、取消和退款均没有本轮执行授权。场景中的业务数据全部合成。
 
 ## 1. 本体要回答的问题
 
@@ -259,7 +259,7 @@ LLM 应能从业务名称和别名找到具体对象类型，通过受控 Object
 
 ## 11. 当前代码需要修改的地方
 
-以下为核对 `29eb374` 后的实施清单。本轮不修改这些源码；列出的未来文件名仅为建议，落地时可采用更小的模块划分。
+以下保留核对 `29eb374` 时的完整差距清单。N1 已补充 `model.ts`、`business-model.ts`、`object-store.ts`、`object-functions.ts`、`task-projection.ts` 并接入共享任务库及只读 MCP／HTTP；原商品发现传输记录改名为 ProductOfferSnapshot，避免与 Offer 接口混淆。尚未迁入模型规划和动作执行的部分仍按后续阶段推进，不能把此表全部视为已完成；实际范围见 [N1 使用说明](ontology-n1.md)。
 
 | 当前位置 | 已有基础／具体缺口 | 后续修改与最近验收 |
 | --- | --- | --- |
@@ -286,6 +286,6 @@ LLM 应能从业务名称和别名找到具体对象类型，通过受控 Object
 
 本规格的结构验收要求：具体类型有身份、属性来源和权限；关系有两侧名称、基数及映射；接口只表达真实共性；三个场景有明确终点和条件证据；每个 Action 有变更集、提交条件及未知结果处理；代码差距可定位到现有模块。
 
-可用性验收另外开展：让非建模者与 Agent 分别依据业务问题在通用对象查询／导航环境中寻找答案，不提供固定路径或专用页面。记录正确性、耗时、导航路径、求助和权限阻塞。本文只完成作者的结构走查；[独立问题集](ontology-drill-questions-v0.2-2026-10-18.md) 已定义，独立人／Agent 演练尚未运行，不把结构走查或 CI 写成其通过证据。[官方验证指导](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
+可用性验收另外开展：让非建模者与 Agent 分别依据业务问题在通用对象查询／导航环境中寻找答案，不提供固定路径或专用页面。记录正确性、耗时、导航路径、求助和权限阻塞。作者结构走查及 N1 自动规则测试已有记录；[独立问题集](ontology-drill-questions-v0.2-2026-10-18.md) 已定义，独立人／Agent 演练尚未运行，不把结构走查、自动测试或 CI 写成其通过证据。[官方验证指导](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
 
 仍取决于外部契约的事项：真实商品／预订来源能返回哪些字段与身份、报价／占位有效期、写操作防重与查证、数据保留条件、押金和取消规则。这些字段缺失时按本规格保留 unknown 或拒绝相关动作，不预设某平台已经支持。多用户私人渠道授权、跨服务多订单优化、长期偏好和跨用户反馈属于后续独立范围。

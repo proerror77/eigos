@@ -113,6 +113,18 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   };
 
+  // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
+  for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
+    try {
+      const p = principals.get(req)!;
+      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body) : tasks.evaluateOntology(p, req.body));
+    } catch (error) {
+      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message }); return; }
+      if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }
+      next(error);
+    }
+  });
+
   // Application authorization channel, separate from A2A messages. No raw credentials in task parts.
   app.post('/tasks/:taskId/authorize', authenticate, (req, res, next) => {
     try { res.json({ task: tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body) }); }

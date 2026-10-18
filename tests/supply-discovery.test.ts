@@ -7,12 +7,12 @@ import { CapabilityResolver } from '../packages/coordinator/resolver.js';
 import { compareOffers } from '../packages/coordinator/comparison.js';
 import { proposePlan, validatePlan } from '../packages/coordinator/plan.js';
 import { digest } from '../packages/core/delegation.js';
-import type { Offer } from '../packages/ontology/supply.js';
+import type { ProductOfferSnapshot } from '../packages/ontology/supply.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import { owner, fixtureCapability, fixtureBinding, fixtureAdapter, proposal } from './backend-fixture.js';
 
 const request = (): ServiceRequest => ({ id: randomUUID(), revision: 1, originalGoal: 'Compare synthetic parcel offers', messages: [], requirements: [] });
-function offer(id: string): Offer {
+function offer(id: string): ProductOfferSnapshot {
   return { id, channelId: 'fixture', merchant: { namespace: 'fixture', id }, merchantName: 'Synthetic ' + id, merchantAddress: 'Synthetic location', bindingRef: { id, version: '2' },
     product: { sourceProductRef: { namespace: 'fixture', id }, name: 'Same display name', specification: { weightKg: 1, service: 'ordinary' }, specificationDigest: digest({ weightKg: 1, service: 'ordinary' }) }, quotedQuantity: { amount: '1', unit: 'parcel' },
     pricing: { currency: 'CNY', total: { minor: '1000', currency: 'CNY' }, fees: {}, kind: 'calculated_quote' }, availability: { storeOpen: true, capacity: 'unknown' },

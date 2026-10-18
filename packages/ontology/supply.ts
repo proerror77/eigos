@@ -6,7 +6,7 @@ export interface ProductVariant {
   sourceProductRef: SupplyIdentity; name: string; specification: Record<string, unknown>;
   specificationDigest: string; globalProductRef?: SupplyIdentity;
 }
-export interface Offer {
+export interface ProductOfferSnapshot {
   id: string; channelId: string; merchant: SupplyIdentity; merchantName: string; merchantAddress: string;
   bindingRef: z.infer<typeof refSchema>; product: ProductVariant; quotedQuantity: { amount: string; unit: string };
   pricing: { currency: 'CNY'; total?: z.infer<typeof moneySchema>; productSubtotal?: string; fees: { delivery?: string; packing?: string; tableware?: string }; kind: 'calculated_quote' | 'display_only' | 'unknown' };
@@ -21,7 +21,7 @@ export interface DiscoveryCoverage {
   note?: string;
 }
 export interface Comparison {
-  requestId: string; requestRevision: number; offers: Offer[];
+  requestId: string; requestRevision: number; offers: ProductOfferSnapshot[];
   merchantGroups: { merchant: SupplyIdentity; offerIds: string[]; channels: string[] }[];
   productMatches: { left: string; right: string; kind: 'same_external_product' | 'same_observed_specification' | 'different' | 'unknown'; evidenceRefs: string[] }[];
   coverage: DiscoveryCoverage[];

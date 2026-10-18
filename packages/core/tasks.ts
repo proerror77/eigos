@@ -21,6 +21,20 @@ export class TaskService {
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
+  describeOntology(p: Principal, input: unknown) {
+    requireScope(p, 'services:read');
+    const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict().parse(input);
+    return this.store.ontology.model.describe(query);
+  }
+  queryOntology(p: Principal, input: unknown) {
+    requireScope(p, 'tasks:read');
+    return this.store.ontology.query(ownerKey(p), input as import('../ontology/object-store.js').ObjectQuery);
+  }
+  evaluateOntology(p: Principal, input: unknown) {
+    requireScope(p, 'tasks:read');
+    return this.store.ontology.evaluate(ownerKey(p), input);
+  }
+
   submit(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = submitSchema.parse(input);

@@ -77,7 +77,7 @@ export interface ResolvedCandidate {
   id: string; binding: ProviderBinding; status: 'ready' | 'needs_input' | 'unavailable'; question?: string;
   input?: Record<string, unknown>; details?: Record<string, unknown>; facts: CandidateFacts;
   evidenceRefs: string[]; requirementChecks: RequirementCheck[]; observedAt: string; expiresAt: string; quote?: Quote;
-  offer?: import('./supply.js').Offer;
+  offer?: import('./supply.js').ProductOfferSnapshot;
   recipe?: import('./actions.js').PreparedStep[];
 }
 export interface ResolutionScope { capabilityRef: Ref; searchedBindingRefs: Ref[]; observedAt: string; realSupply: boolean; coverage?: import('./supply.js').DiscoveryCoverage[] }

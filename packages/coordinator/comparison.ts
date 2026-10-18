@@ -1,8 +1,8 @@
-import type { Comparison, DiscoveryCoverage, Offer } from '../ontology/supply.js';
+import type { Comparison, DiscoveryCoverage, ProductOfferSnapshot } from '../ontology/supply.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import { digest } from '../core/delegation.js';
 
-export function compareOffers(request: ServiceRequest, offers: Offer[], coverage: DiscoveryCoverage[]): Comparison {
+export function compareOffers(request: ServiceRequest, offers: ProductOfferSnapshot[], coverage: DiscoveryCoverage[]): Comparison {
   const groups = new Map<string, Comparison['merchantGroups'][number]>();
   for (const offer of offers) {
     const key = JSON.stringify([offer.merchant.namespace, offer.merchant.id]); const group = groups.get(key) ?? { merchant: offer.merchant, offerIds: [], channels: [] };
