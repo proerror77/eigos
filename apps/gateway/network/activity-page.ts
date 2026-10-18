@@ -8,10 +8,10 @@ export function activityPage(service: NetworkService, memberId: string, spaceId:
     const result = service.memberUpdates(memberId, { version: 1, spaceId, ...(cursor ? { cursor } : {}) });
     const cards = result.items.map(item => {
       const v = item.publication, c = v.content!;
-      const title = c.kind === 'profile' ? c.body.displayName : c.kind === 'message' ? '协作回应' : c.body.title;
-      const text = c.kind === 'profile' ? c.body.summary : c.kind === 'listing' ? c.body.description : c.kind === 'need' ? c.body.safeGoal : c.body.safeText;
+      const title = c.kind === 'profile' ? c.body.displayName : c.kind === 'message' ? '协作回应' : c.kind === 'evidence_card' ? '查询与验收摘要' : c.body.title;
+      const text = c.kind === 'profile' ? c.body.summary : c.kind === 'listing' ? c.body.description : c.kind === 'need' ? c.body.safeGoal : c.kind === 'evidence_card' ? c.body.safeSummary : c.body.safeText;
       const target = c.kind === 'profile' ? `${root}/profiles/${encodeURIComponent(v.profileId!)}` : c.kind === 'listing' ? `${root}/listings/${encodeURIComponent(c.listingId)}`
-        : `${root}/needs/${encodeURIComponent(c.kind === 'need' ? v.need!.id : c.body.postId)}`;
+        : c.kind === 'evidence_card' ? `${root}/evidence/${encodeURIComponent(c.cardId)}` : `${root}/needs/${encodeURIComponent(c.kind === 'need' ? v.need!.id : c.body.postId)}`;
       return `<article><small>${item.kind === 'need_closed' ? '需求已关闭回应' : '获准发布'} · ${escape(item.committedAt)}</small><h2><a href="${target}">${escape(title)}</a></h2><p>${escape(text)}</p></article>`;
     }).join('');
     const next = result.page.cursor ?? result.page.checkpoint!;

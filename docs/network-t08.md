@@ -104,4 +104,4 @@ EIGOS_PAOTUI_ORDERS_ENABLED=false
 
 [验证记录](evidence/network-t08-2026-10-18/README.md) 列出权限、幂等、版本、竞争、回滚、重开数据库及 HTTP/MCP/页面验证。既有 A2A 私有任务流程随全量回归验证，社交消息不会伪装成 A2A Task 或触发 Worker。
 
-T09 的关注/增量动态已由[后续实现](network-t09.md)交付；T10 私有询价转换已由[后续实现](network-t10.md)交付；T11 的结果摘要、真实主体与真实 PA 演练仍分别待实施。消息中的 offer_reference 当前只支持公开服务页，不能引用私有 DeliveryQuote 或不存在的公开报价卡。没有真实报价、订单、预订、付款、外部私信或通知发送。
+T09 的关注/增量动态已由[后续实现](network-t09.md)交付；T10 私有询价转换已由[后续实现](network-t10.md)交付；T11 的结果摘要已由[后续实现](network-t11.md)交付；真实主体与真实 PA 演练仍需独立完成。消息中的 offer_reference 当前只支持公开服务页，不能引用私有 DeliveryQuote 或不存在的公开报价卡。没有真实报价、订单、预订、付款、外部私信或通知发送。

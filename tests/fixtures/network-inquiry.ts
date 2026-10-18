@@ -14,7 +14,7 @@ import { ownerKey } from '../../packages/core/domain.js';
 export const quoteInput = { senderAddressId: 'fixture-a', recipientAddressId: 'fixture-b', goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };
 export const quoteCapability = PAOTUI_READ_CAPABILITIES[1]!;
 export const quoteBinding = { ...PAOTUI_READ_BINDINGS[1]!, configurationDigest: 'synthetic-t10-config' };
-export function inquiryFixture() {
+export function inquiryFixture(options: { receiptEvidenceKind?: 'fixture' | 'live_readonly' } = {}) {
   let reads = 0, alternateReads = 0, allowed = true, price = '16.80'; let duringRead: (() => void) | undefined;
   const f = networkFixture({ withTasks: true, operatorSubjects: ['charlie'], catalogFactory: () => {
     class FixtureRead extends PaotuiReadAdapter { override permitted(_owner: string) { return allowed; } }
@@ -23,7 +23,7 @@ export function inquiryFixture() {
       const business = { source: 'meituan', previewOnly: true, orderCreated: false, goods: { name: '文件', category: '文件', weightKg: 1 }, service: 'ordinary',
         route: { sender: 'PRIVATE_SYNTHETIC_ORIGIN', recipient: 'PRIVATE_SYNTHETIC_DESTINATION' }, quote: { _previewTotal: price } };
       const receipt = ontologyReceiptSchema.parse({ id: randomUUID(), transport: 'mcp-stdio', server: 'eigos-ontology', capabilityRef: quoteCapability.ref, ontologyRef: quoteCapability.ontologyRef,
-        tool: 'ontology_delivery_quote', evidenceKind: 'fixture', inputDigest: digest(quoteInput), resultDigest: digest(business), observedAt: new Date().toISOString(), sourceCalls: ['get_address_info', 'delivery_preview'], readOnly: true });
+        tool: 'ontology_delivery_quote', evidenceKind: options.receiptEvidenceKind ?? 'fixture', inputDigest: digest(quoteInput), resultDigest: digest(business), observedAt: new Date().toISOString(), sourceCalls: ['get_address_info', 'delivery_preview'], readOnly: true });
       return { ...business, ontologyReceipt: receipt };
     } });
     const alternate = { id: 'never-use-alternate', permitted: () => true, prepare: async () => { alternateReads++; throw new Error('An unselected source was called'); }, execute: async () => { throw new Error('Unselected execution'); }, verify: () => ({ accepted: false, reason: 'not selected' }) };

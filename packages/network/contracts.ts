@@ -1,3 +1,4 @@
+import { evidenceSourceSchema, evidenceProjectionSchema, evidencePublicationSchema, evidenceDraftInputSchema } from './evidence-contracts.js';
 import { conversionSchema, selectionSchema, inquiryOperations } from './inquiry-contracts.js';
 import { messagePublicationSchema } from './collaboration-contracts.js';
 import { z } from 'zod';
@@ -9,7 +10,7 @@ export class NetworkError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); }
 }
 export const fail = (code: string, status = 409): never => { throw new NetworkError(code, status); };
-export const commands = ['draft.create', 'draft.edit', 'approval.request', 'publish', 'withdraw_own', 'directory.manage', 'follow.manage', 'inquiry.manage'] as const;
+export const commands = ['draft.create', 'draft.edit', 'approval.request', 'publish', 'withdraw_own', 'directory.manage', 'follow.manage', 'inquiry.manage', 'evidence.manage'] as const;
 const id = z.uuid(), revision = z.number().int().positive();
 const profileBody = z.object({ displayName: z.string().trim().min(1).max(80), summary: z.string().max(500), roleTags: z.array(z.string().min(1).max(40)).max(8) }).strict();
 const needBody = z.object({ title: z.string().trim().min(1).max(120), safeGoal: z.string().trim().min(1).max(2000), category: z.string().min(1).max(80),
@@ -19,8 +20,9 @@ export const contentSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('need'), body: needBody }).strict(),
   listingPublicationSchema,
   messagePublicationSchema,
+  evidencePublicationSchema,
 ]);
-const draftInputSchema = z.discriminatedUnion('kind', [contentSchema.options[0], contentSchema.options[1], listingInputSchema, messagePublicationSchema]);
+const draftInputSchema = z.discriminatedUnion('kind', [contentSchema.options[0], contentSchema.options[1], listingInputSchema, messagePublicationSchema, evidenceDraftInputSchema]);
 export type Content = z.infer<typeof contentSchema>;
 const base = { version: z.literal(1), asProfileId: id, requestId: requestIdSchema };
 export const networkCommandSchema = z.discriminatedUnion('operation', [
@@ -37,6 +39,8 @@ export const networkCommandSchema = z.discriminatedUnion('operation', [
   z.object({ ...base, operation: z.literal('inquiry.request_selection'), input: selectionSchema }).strict(),
   z.object({ ...base, operation: z.literal('inquiry.convert'), choiceId: id }).strict(),
   z.object({ ...base, operation: z.literal('inquiry.select_quote'), choiceId: id }).strict(),
+  z.object({ ...base, operation: z.literal('evidence.prepare'), source: evidenceSourceSchema, projection: evidenceProjectionSchema }).strict(),
+  z.object({ ...base, operation: z.literal('evidence.refresh'), cardId: id, expectedRevision: revision, projection: evidenceProjectionSchema }).strict(),
   ...directoryCommandSchema.options,
 ]);
 const controlBase = { version: z.literal(1), requestId: requestIdSchema };
@@ -52,6 +56,8 @@ export const controlCommandSchema = z.discriminatedUnion('action', [
   ...directoryControlSchema.options,
 ]);
 export const networkQuerySchema = z.discriminatedUnion('kind', [
+  z.object({ version: z.literal(1), kind: z.literal('my_evidence'), asProfileId: id, cardId: id }).strict(),
+  z.object({ version: z.literal(1), kind: z.literal('evidence'), cardId: id, spaceId: id }).strict(),
   z.object({ version: z.literal(1), kind: z.literal('my_inquiry'), postId: id }).strict(),
   z.object({ version: z.literal(1), kind: z.literal('my_choice'), asProfileId: id, choiceId: id }).strict(),
   z.object({ version: z.literal(1), kind: z.literal('my_selection'), selectionId: id }).strict(),
@@ -65,17 +71,17 @@ export const networkQuerySchema = z.discriminatedUnion('kind', [
   z.object({ version: z.literal(1), kind: z.literal('profile'), profileId: id, spaceId: id }).strict(),
   z.object({ version: z.literal(1), kind: z.literal('listing'), listingId: id, spaceId: id }).strict(),
   z.object({ version: z.literal(1), kind: z.literal('my_directory'), asProfileId: id }).strict(),
-  z.object({ version: z.literal(1), kind: z.literal('search'), objectKind: z.enum(['profile', 'listing', 'need']), spaceId: id, search: z.string().max(100).optional(), category: z.string().max(80).optional(), capabilityId: z.string().max(200).optional(), coarseArea: z.string().regex(/^\d{6}$/).optional(), limit: z.number().int().min(1).max(20).default(20), cursor: z.string().max(2048).optional() }).strict(),
+  z.object({ version: z.literal(1), kind: z.literal('search'), objectKind: z.enum(['profile', 'listing', 'need', 'evidence_card']), spaceId: id, search: z.string().max(100).optional(), category: z.string().max(80).optional(), capabilityId: z.string().max(200).optional(), coarseArea: z.string().regex(/^\d{6}$/).optional(), limit: z.number().int().min(1).max(20).default(20), cursor: z.string().max(2048).optional() }).strict(),
 ]);
-export const receiptQuerySchema = z.object({ version: z.literal(1), asProfileId: id, operation: z.enum(['draft.create', 'draft.update', 'publication.request_approval', 'publication.publish', 'publication.withdraw', 'publication.replace', 'need.close', 'follow.set', ...inquiryOperations, ...directoryCommandSchema.options.map(s => s.shape.operation.value)]), requestId: requestIdSchema }).strict();
+export const receiptQuerySchema = z.object({ version: z.literal(1), asProfileId: id, operation: z.enum(['draft.create', 'draft.update', 'publication.request_approval', 'publication.publish', 'publication.withdraw', 'publication.replace', 'need.close', 'follow.set', 'evidence.prepare', 'evidence.refresh', ...inquiryOperations, ...directoryCommandSchema.options.map(s => s.shape.operation.value)]), requestId: requestIdSchema }).strict();
 export interface NetworkActor { owner: string; memberId: string; installationId: string; clientId: string; profileId: string; bindingId: string; bindingRevision: number }
 export interface Profile { id: string; owner: string; memberId: string; displayName: string; revision: number; state?: 'active' | 'suspended' }
 export interface Binding { id: string; owner: string; memberId: string; profileId: string; installationId: string; clientId: string; allowedCommands: string[]; revision: number; revoked: boolean }
 export interface Draft { id: string; owner: string; profileId: string; bindingId: string; bindingRevision: number; content: Content; revision: number; approved: boolean }
 export interface Approval { id: string; owner: string; profileId: string; draftId: string; draftRevision: number; bindingId: string; bindingRevision: number;
   contentDigest: string; recipientMemberIds: string[]; audienceDigest: string; spaceId: string; publishBefore: string; visibleUntil: string; reviewDigest: string; status: 'pending' | 'approved'; grantId?: string; membershipGenerations?: Record<string, number>; publisherGeneration?: number; spaceEpoch?: number; replacementId?: string; replacementRevision?: number }
-export interface Grant extends Omit<Approval, 'status' | 'grantId'> { version: 1; schemaVersion: 'eigos.network.publication@1'; purpose: 'profile_discovery' | 'request_collaboration' | 'service_discovery'; action: 'publish' | 'replace_publication'; allowedFields: string[]; approvedBy: string; approvedAt: string;
+export interface Grant extends Omit<Approval, 'status' | 'grantId'> { version: 1; schemaVersion: 'eigos.network.publication@1'; purpose: 'profile_discovery' | 'request_collaboration' | 'service_discovery' | 'evidence_sharing'; action: 'publish' | 'replace_publication'; allowedFields: string[]; approvedBy: string; approvedAt: string;
   status: 'approved' | 'consumed' | 'revoked'; revision: number; usedPublicationId?: string; revokedAt?: string; maxUses: 1 }
 export interface Publication { id: string; owner: string; memberId: string; profileId: string; draftId: string; grantId: string; content: Content;
   needId?: string; messageId?: string; revision: number; state: 'active' | 'retracted' | 'superseded'; visibleUntil: string; recipientMemberIds: string[] }
-export interface ResultRef { kind: 'inquiry' | 'choice' | 'selection' | 'follow' | 'need' | 'message' | 'profile' | 'binding' | 'draft' | 'approval' | 'grant' | 'publication' | 'space' | 'membership' | 'invitation' | 'representation' | 'listing'; id: string }
+export interface ResultRef { kind: 'evidence' | 'inquiry' | 'choice' | 'selection' | 'follow' | 'need' | 'message' | 'profile' | 'binding' | 'draft' | 'approval' | 'grant' | 'publication' | 'space' | 'membership' | 'invitation' | 'representation' | 'listing'; id: string }

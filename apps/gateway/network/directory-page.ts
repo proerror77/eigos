@@ -9,21 +9,22 @@ const modeNames: Record<string, string> = { introduction_only: '仅介绍 · 尚
 function card(input: unknown, spaceId: string): string {
   const v = input as { profileId: string; content: Content; capabilityState?: { mode: string; representation: string; availableNow: string; candidateEligible: boolean } };
   const c = v.content;
+  if (c.kind === 'evidence_card') return `<article><h2><a href="${spaceUrl(spaceId)}/evidence/${escape(c.cardId)}">查询与验收摘要</a></h2><p>${escape(c.body.safeSummary)}</p><small>记录日期：${escape(c.body.observedOn)}（上海时间）。此卡只包含本人批准的有限摘要，不是商家总评分或未来服务承诺。</small></article>`;
   if (c.kind === 'need') return needCard(input as NetworkQueryResult, spaceId);
   if (c.kind === 'profile') return `<article><h2><a href="${spaceUrl(spaceId)}/profiles/${escape(v.profileId)}">${escape(c.body.displayName)}</a></h2><p>${escape(c.body.summary)}</p><small>自述角色：${escape(c.body.roleTags.join('、')) || '未填写'}。角色标签不代表已核实能力。</small></article>`;
   if (c.kind === 'listing') return `<article><h2><a href="${spaceUrl(spaceId)}/listings/${escape(c.listingId)}">${escape(c.body.title)}</a></h2><p>${escape(c.body.description)}</p><p><span class="tag">代表关系已核实</span><span class="tag">${escape(modeNames[v.capabilityState?.mode ?? 'unavailable'])}</span></p><p>提供主体：${escape(c.body.providerId)} · 角色：${escape(roleNames[c.body.role])}</p><details><summary>查看登记范围</summary><p>服务区域编码：${escape(c.body.coarseAreas.join('、'))}；服务标识：${escape(c.body.capabilityRef.id)}</p></details><small>本次报价、容量与履约可用性仍需核验。此页面不会下单或付款。</small></article>`;
   return '';
 }
-export function directoryBrowserPage(service: NetworkService, memberId: string, spaceId: string, kind: 'profile' | 'listing' | 'need', query: { search?: string; cursor?: string } = {}) {
+export function directoryBrowserPage(service: NetworkService, memberId: string, spaceId: string, kind: 'profile' | 'listing' | 'need' | 'evidence_card', query: { search?: string; cursor?: string } = {}) {
   const result = service.directoryQuery(memberId, { version: 1, kind: 'search', objectKind: kind, spaceId, ...query });
   const spaces = service.directory.spaces(memberId), title = spaces.find(s => s.id === spaceId)?.name ?? '协作圈';
   const params = new URLSearchParams({ kind, ...(query.search !== undefined ? { q: query.search } : {}) });
   const next = result.page?.cursor ? `<a href="${spaceUrl(spaceId)}?${escape(params.toString())}&cursor=${encodeURIComponent(result.page.cursor)}">继续查看</a>` : '';
-  return directoryShell(title, `<nav><a href="${spaceUrl(spaceId)}?kind=profile">Agent 主页</a><a href="${spaceUrl(spaceId)}?kind=listing">服务目录</a><a href="${spaceUrl(spaceId)}?kind=need">需求协作</a><a href="${spaceUrl(spaceId)}/updates">圈内动态</a></nav><form method="get"><input type="hidden" name="kind" value="${kind}"><label>搜索可见内容 <input name="q" maxlength="100" value="${escape(query.search ?? '')}"></label><button>搜索</button></form>${result.items?.map(v => card(v, spaceId)).join('') || '<p>这一页没有可见结果。</p>'}${next}`);
+  return directoryShell(title, `<nav><a href="${spaceUrl(spaceId)}?kind=profile">Agent 主页</a><a href="${spaceUrl(spaceId)}?kind=listing">服务目录</a><a href="${spaceUrl(spaceId)}?kind=need">需求协作</a><a href="${spaceUrl(spaceId)}?kind=evidence_card">查询与验收摘要</a><a href="${spaceUrl(spaceId)}/updates">圈内动态</a></nav><form method="get"><input type="hidden" name="kind" value="${kind}"><label>搜索可见内容 <input name="q" maxlength="100" value="${escape(query.search ?? '')}"></label><button>搜索</button></form>${result.items?.map(v => card(v, spaceId)).join('') || '<p>这一页没有可见结果。</p>'}${next}`);
 }
-export function directoryDetailPage(service: NetworkService, memberId: string, spaceId: string, kind: 'profile' | 'listing', id: string) {
-  const result: NetworkQueryResult = service.directoryQuery(memberId, { version: 1, kind, spaceId, ...(kind === 'profile' ? { profileId: id } : { listingId: id }) });
-  return directoryShell(kind === 'profile' ? 'Agent 主页' : '服务详情', `<a href="${spaceUrl(spaceId)}?kind=${kind}">返回目录</a>${card(result, spaceId)}${kind === 'profile' ? '<h2>对你可见的服务</h2>' + (result.services?.map(v => card(v, spaceId)).join('') || '<p>暂无已发布且对你可见的服务。</p>') : ''}${result.hasMoreServices ? `<a href="${spaceUrl(spaceId)}?kind=listing">查看更多服务</a>` : ''}`);
+export function directoryDetailPage(service: NetworkService, memberId: string, spaceId: string, kind: 'profile' | 'listing' | 'evidence', id: string) {
+  const result: NetworkQueryResult = service.directoryQuery(memberId, { version: 1, kind, spaceId, ...(kind === 'profile' ? { profileId: id } : kind === 'listing' ? { listingId: id } : { cardId: id }) });
+  return directoryShell(kind === 'profile' ? 'Agent 主页' : kind === 'listing' ? '服务详情' : '查询与验收摘要', `<a href="${spaceUrl(spaceId)}?kind=${kind === 'evidence' ? 'evidence_card' : kind}">返回目录</a>${card(result, spaceId)}${kind === 'profile' ? '<h2>对你可见的服务</h2>' + (result.services?.map(v => card(v, spaceId)).join('') || '<p>暂无已发布且对你可见的服务。</p>') : ''}${result.hasMoreServices ? `<a href="${spaceUrl(spaceId)}?kind=listing">查看更多服务</a>` : ''}`);
 }
 export function directoryControls(service: NetworkService, memberId: string, csrf: string): string {
   const p = service.panel(memberId), now = service.store.now();

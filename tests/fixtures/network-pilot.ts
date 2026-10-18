@@ -13,15 +13,15 @@ import { commands } from '../../packages/network/contracts.js';
 import { SCOPES, ownerKey, type Principal } from '../../packages/core/domain.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 
-export function networkFixture(options: { withTasks?: boolean; catalogFactory?: (jobs: JobStore) => ExecutionCatalog; operatorSubjects?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: { maxResponders: number; maxClarificationRounds: number } } = {}) {
+export function networkFixture(options: { identity?: (subject: string) => { issuer: string; subject: string; tenant: string }; allowSandboxActions?: boolean; withTasks?: boolean; catalogFactory?: (jobs: JobStore) => ExecutionCatalog; operatorSubjects?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: { maxResponders: number; maxClarificationRounds: number } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-network-')), path = join(dir, 'business.sqlite');
   const jobs = options.withTasks ? new JobStore(path) : undefined;
   const catalog = options.catalogFactory && jobs ? options.catalogFactory(jobs) : options.catalog ?? (jobs ? createExecutionCatalog({ store: jobs }) : undefined);
-  const tasks = jobs && catalog ? new TaskService(jobs, { catalog }) : undefined;
+  const tasks = jobs && catalog ? new TaskService(jobs, { catalog, allowSandboxActions: options.allowSandboxActions }) : undefined;
   const db = new DatabaseSync(path), members = new MemberStore(join(dir, 'members.sqlite'));
   let now = Date.now();
   const store = jobs?.createNetworkStore(() => now) ?? new NetworkStore(db, () => now);
-  const identity = (subject: string) => ({ issuer: 'https://idp.test', subject, tenant: 'one' });
+  const identity = options.identity ?? ((subject: string) => ({ issuer: 'https://idp.test', subject, tenant: 'one' }));
   const create = (subject: string) => {
     const member = members.login(identity(subject)); members.apply(member.id, { displayName: subject, locale: 'en', timezone: 'UTC', consent: true }, false);
     const p: Principal = { ...identity(subject), clientId: 'connector', scopes: [...SCOPES, 'network:read', 'network:write'] };

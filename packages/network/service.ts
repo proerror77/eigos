@@ -1,3 +1,4 @@
+import { NetworkEvidence } from './evidence.js';
 import { InquiryBridge } from './inquiry.js';
 import type { JobStore } from '../core/store.js';
 import type { TaskService } from '../core/tasks.js';
@@ -23,7 +24,7 @@ function fields(value: unknown, prefix = ''): string[] {
   if (value && typeof value === 'object' && !Array.isArray(value)) return Object.entries(value).flatMap(([key, child]) => fields(child, prefix + '/' + key));
   return [prefix];
 }
-const requiredCommand = { 'inquiry.request_conversion': 'inquiry.manage', 'inquiry.request_selection': 'inquiry.manage', 'inquiry.convert': 'inquiry.manage', 'inquiry.select_quote': 'inquiry.manage', 'follow.set': 'follow.manage', 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
+const requiredCommand = { 'evidence.prepare': 'evidence.manage', 'evidence.refresh': 'evidence.manage', 'inquiry.request_conversion': 'inquiry.manage', 'inquiry.request_selection': 'inquiry.manage', 'inquiry.convert': 'inquiry.manage', 'inquiry.select_quote': 'inquiry.manage', 'follow.set': 'follow.manage', 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
 
 /** No model or supplier calls. Private Task submission shares the transaction; only Worker executes. */
 export class NetworkService {
@@ -32,6 +33,7 @@ export class NetworkService {
   readonly collaboration: NetworkCollaboration;
   readonly activity: NetworkActivity;
   readonly inquiry?: InquiryBridge;
+  readonly evidence?: NetworkEvidence;
   private timer: ReturnType<typeof setInterval>;
   private leaseLost = false;
   private cursorKey = randomBytes(32);
@@ -39,6 +41,7 @@ export class NetworkService {
     this.activity = new NetworkActivity(store, (pub, viewer) => this.publicView(pub, viewer), (profileId, spaceId, memberId) => { this.directoryQuery(memberId, { version: 1, kind: 'profile', profileId, spaceId }); });
     this.collaboration = new NetworkCollaboration(store, (pub, viewer) => !!this.baseView(pub, viewer), options.collaborationLimits);
     if (options.jobs && options.tasks && options.catalog) this.inquiry = new InquiryBridge(store, options.jobs, options.tasks, options.catalog, (memberId, input) => this.directoryQuery(memberId, input), (id, owner) => this.validBinding(id, owner));
+    if (options.jobs && options.catalog) this.evidence = new NetworkEvidence(store, options.jobs, options.catalog);
     store.acquire(this.holder);
     this.directory = new NetworkDirectory(store, id => this.member(id), options.operatorIds ?? [], options.catalog);
     try { this.directory.bootstrap(options.memberIds, id => members.get(id)); } catch (error) { store.release(this.holder); throw error; }
@@ -113,6 +116,7 @@ export class NetworkService {
     if (d.revision !== r.draftRevision || digest(d.content) !== r.contentDigest || b.revision !== r.bindingRevision || d.bindingId !== b.id) fail('REVIEW_STALE');
     this.directory.validAudience(r, b.memberId);
     this.directory.validateContent(d.content, d.owner, d.profileId);
+    this.validateEvidence(d.content, d.owner, d.profileId);
     this.collaboration.validate(d.content, b.memberId, r, r.replacementId ? this.store.get('publication', r.replacementId, r.owner) : undefined);
     if (r.replacementId) this.replacement(d, r.owner, r.spaceId, r.replacementId, r.replacementRevision!);
     else if (d.content.kind !== 'need' && this.activeResource(d, r.spaceId).length) fail('PUBLICATION_EXISTS');
@@ -120,10 +124,12 @@ export class NetworkService {
     return d;
   }
   private resolveContent(input: { kind: string; [key: string]: unknown }, a: NetworkActor): Content {
+    if (input.kind === 'evidence_card') return this.evidenceService().content(a.owner, a.profileId, String(input.cardId), Number(input.cardRevision));
     return input.kind === 'listing' ? this.directory.listingContent(String(input.listingId), Number(input.listingRevision), a.owner, a.profileId) : input as Content;
   }
   private sameResource(content: Content, profileId: string, other: Publication) {
     if (content.kind !== other.content.kind || profileId !== other.profileId) return false;
+    if (content.kind === 'evidence_card' && other.content.kind === 'evidence_card') return content.cardId === other.content.cardId;
     if (content.kind === 'listing' && other.content.kind === 'listing') return content.listingId === other.content.listingId;
     return content.kind === 'profile';
   }
@@ -134,7 +140,7 @@ export class NetworkService {
     const old = this.store.get('publication', id, owner);
     const same = this.sameResource(d.content, d.profileId, old) || d.profileId === old.profileId && this.collaboration.replacement(d.content, old);
     if (!same || this.store.get('grant', old.grantId, owner).spaceId !== spaceId) return fail('INVALID_REPLACEMENT');
-    if (old.state !== 'active' || old.revision !== revision || (d.content.kind === 'profile' || d.content.kind === 'listing') && this.activeResource(d, spaceId).length !== 1) return fail('REVISION_CONFLICT');
+    if (old.state !== 'active' || old.revision !== revision || (d.content.kind === 'profile' || d.content.kind === 'listing' || d.content.kind === 'evidence_card') && this.activeResource(d, spaceId).length !== 1) return fail('REVISION_CONFLICT');
     return old;
   }
   private controlView(memberId: string, owner: string, ref: ResultRef): unknown {
@@ -159,17 +165,31 @@ export class NetworkService {
     }
     return this.ownView(owner, ref);
   }
+  private validateEvidence(content: Content, owner: string, profileId: string) { if (content.kind === 'evidence_card') this.evidenceService().validate(content, owner, profileId); }
+  private evidenceService() { return this.evidence ?? fail('EVIDENCE_UNAVAILABLE', 503); }
+  private evidenceScope(p: Principal, a: NetworkActor) {
+    if (!p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+    if (!this.store.get('binding', a.bindingId, a.owner).allowedCommands.includes('evidence.manage')) fail('ACTOR_NOT_BOUND', 403);
+  }
   private inquiryService() { return this.inquiry ?? fail('INQUIRY_UNAVAILABLE', 503); }
   private inquiryScope(p: Principal) { if (!p.scopes.includes('tasks:write') || !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403); }
   command(p: Principal, token: string, input: unknown) {
     const args = networkCommandSchema.parse(input);
     if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
+    if (args.operation.startsWith('evidence.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
     let actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
     const committed = this.store.once(this.actorKey(actor), args.operation, args.requestId, args, () => {
       if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
+      if (args.operation.startsWith('evidence.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
       actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
+      if ((args.operation === 'draft.create' || args.operation === 'draft.update') && args.content.kind === 'evidence_card') this.evidenceScope(p, actor);
+      if ('draftId' in args && this.boundDraft(actor, args.draftId).content.kind === 'evidence_card') this.evidenceScope(p, actor);
     }, () => {
       const a = actor;
+      if (args.operation === 'evidence.prepare' || args.operation === 'evidence.refresh') {
+        this.evidenceScope(p, a);
+        return args.operation === 'evidence.prepare' ? this.evidenceService().prepare(a, args.source, args.projection) : this.evidenceService().refresh(a, args.cardId, args.expectedRevision, args.projection);
+      }
       if (args.operation === 'inquiry.request_conversion') return this.inquiryService().request(a, 'convert', args.input);
       if (args.operation === 'inquiry.request_selection') return this.inquiryService().request(a, 'select_quote', args.input);
       if (args.operation === 'inquiry.convert' || args.operation === 'inquiry.select_quote') return this.inquiryService().apply(p, a, args.choiceId, args.operation === 'inquiry.convert' ? 'convert' : 'select_quote');
@@ -177,6 +197,7 @@ export class NetworkService {
       if (args.operation === 'need.close') return this.collaboration.close(a, args.postId, args.expectedRevision);
       if (isDirectoryCommand(args)) return this.directory.command(a, args);
       if (args.operation === 'draft.create') {
+        if (args.content.kind === 'evidence_card') this.evidenceScope(p, a);
         this.store.quota('draft', a.owner);
         const d: Draft = { id: randomUUID(), owner: a.owner, profileId: a.profileId, bindingId: a.bindingId, bindingRevision: a.bindingRevision, content: this.resolveContent(args.content, a), revision: 1, approved: false };
         this.collaboration.validate(d.content, a.memberId);
@@ -184,6 +205,7 @@ export class NetworkService {
       }
       if (args.operation === 'draft.update') {
         const d = this.boundDraft(a, args.draftId);
+        if (d.content.kind === 'evidence_card') this.evidenceScope(p, a);
         if (d.revision !== args.expectedRevision) fail('REVISION_CONFLICT');
         if (d.approved) fail('APPROVED_DRAFT_IMMUTABLE');
         if (d.content.kind !== args.content.kind) fail('INVALID_INPUT', 422);
@@ -191,12 +213,14 @@ export class NetworkService {
       }
       if (args.operation === 'publication.request_approval') {
         const d = this.boundDraft(a, args.draftId);
+        if (d.content.kind === 'evidence_card') this.evidenceScope(p, a);
         if (d.revision !== args.expectedRevision) fail('REVISION_CONFLICT');
         if (d.approved) fail('APPROVED_DRAFT_IMMUTABLE');
         this.timeWindow(d, args.publishBefore, args.visibleUntil); this.store.quota('approval', a.owner);
         const spaceId = args.spaceId ?? this.store.spaceId;
         const audience = this.directory.audience(spaceId, a.memberId, args.recipientMemberIds);
         this.directory.validateContent(d.content, d.owner, d.profileId);
+        this.validateEvidence(d.content, d.owner, d.profileId);
         this.collaboration.validate(d.content, a.memberId, { spaceId, recipientMemberIds: args.recipientMemberIds, visibleUntil: args.visibleUntil }, args.replacementId ? this.store.get('publication', args.replacementId, a.owner) : undefined);
         if (!!args.replacementId !== !!args.replacementRevision) fail('INVALID_INPUT', 422);
         if (args.replacementId) this.replacement(d, a.owner, spaceId, args.replacementId, args.replacementRevision!);
@@ -208,6 +232,7 @@ export class NetworkService {
       }
       if (args.operation === 'publication.publish' || args.operation === 'publication.replace') {
         const d = this.boundDraft(a, args.draftId), g = this.store.get('grant', args.grantId, a.owner);
+        if (d.content.kind === 'evidence_card') this.evidenceScope(p, a);
         if (g.status !== 'approved') fail(g.status === 'consumed' ? 'GRANT_CONSUMED' : 'GRANT_REVOKED');
         if (d.revision !== args.expectedRevision || g.draftId !== d.id || g.draftRevision !== d.revision || g.contentDigest !== digest(d.content)) fail('CONTENT_CHANGED');
         if (g.bindingId !== a.bindingId || g.bindingRevision !== a.bindingRevision || g.profileId !== a.profileId) fail('ACTOR_NOT_BOUND', 403);
@@ -230,7 +255,7 @@ export class NetworkService {
       const pub = this.store.get('publication', args.publicationId, a.owner);
       if (pub.profileId !== a.profileId) fail('NOT_FOUND', 404);
       if (pub.revision !== args.expectedRevision) fail('REVISION_CONFLICT');
-      this.collaboration.withdraw(pub); pub.state = 'retracted'; pub.revision++; this.store.put('publication', pub); this.store.event('retracted', pub.id);
+      this.collaboration.withdraw(pub); this.evidence?.withdrawPending(pub); pub.state = 'retracted'; pub.revision++; this.store.put('publication', pub); this.store.event('retracted', pub.id);
       return [{ kind: 'publication', id: pub.id }];
     });
     return { version: 1, requestId: args.requestId, ...committed, result: committed.refs.map(ref => this.ownView(actor.owner, ref)) };
@@ -268,20 +293,21 @@ export class NetworkService {
         const d = this.currentApproval(r);
         if (d.approved) fail('REVIEW_STALE'); this.store.quota('grant', owner);
         const { status: _status, grantId: _grant, ...material } = r;
-        const g: Grant = { ...material, id: randomUUID(), version: 1, schemaVersion: 'eigos.network.publication@1', purpose: d.content.kind === 'profile' ? 'profile_discovery' : d.content.kind === 'listing' ? 'service_discovery' : 'request_collaboration', action: r.replacementId ? 'replace_publication' : 'publish', allowedFields: fields(d.content.body), approvedBy: memberId, approvedAt: iso(this.store.now()), status: 'approved', revision: 1, maxUses: 1 };
+        const g: Grant = { ...material, id: randomUUID(), version: 1, schemaVersion: 'eigos.network.publication@1', purpose: d.content.kind === 'profile' ? 'profile_discovery' : d.content.kind === 'listing' ? 'service_discovery' : d.content.kind === 'evidence_card' ? 'evidence_sharing' : 'request_collaboration', action: r.replacementId ? 'replace_publication' : 'publish', allowedFields: fields(d.content.body), approvedBy: memberId, approvedAt: iso(this.store.now()), status: 'approved', revision: 1, maxUses: 1 };
         r.status = 'approved'; r.grantId = g.id; d.approved = true;
         this.store.put('grant', g); this.store.put('approval', r); this.store.put('draft', d); return [{ kind: 'grant', id: g.id }];
       }
       const g = this.store.get('grant', args.grantId, owner);
       if (g.revision !== args.expectedRevision) fail('REVISION_CONFLICT');
       g.status = 'revoked'; g.revokedAt = iso(this.store.now()); g.revision++; this.store.put('grant', g);
-      if (g.usedPublicationId) { const pub = this.store.get('publication', g.usedPublicationId, owner); this.collaboration.withdraw(pub); pub.state = 'retracted'; pub.revision++; this.store.put('publication', pub); this.store.event('grant_revoked', pub.id); }
+      if (g.usedPublicationId) { const pub = this.store.get('publication', g.usedPublicationId, owner); this.collaboration.withdraw(pub); this.evidence?.withdrawPending(pub); pub.state = 'retracted'; pub.revision++; this.store.put('publication', pub); this.store.event('grant_revoked', pub.id); }
       return [{ kind: 'grant', id: g.id }];
     });
     return { version: 1, requestId: args.requestId, ...committed, result: committed.refs.map(ref => this.controlView(memberId, owner, ref)) };
   }
   private ownView(owner: string, ref: ResultRef): unknown {
     const record = this.store.get(ref.kind, ref.id, owner);
+    if (ref.kind === 'evidence') return this.evidenceService().ownView(owner, ref.id);
     if (ref.kind === 'choice') { const c = this.store.get('choice', ref.id, owner); return { id: c.id, kind: c.kind, status: c.status, revision: c.revision, expiresAt: c.expiresAt, reviewDigest: c.reviewDigest, input: c.input }; }
     if (ref.kind === 'inquiry') return this.inquiryService().inquiryView(owner, ref.id);
     if (ref.kind === 'selection') return this.inquiryService().selectionView(owner, ref.id);
@@ -290,8 +316,8 @@ export class NetworkService {
       const pub = record as Publication, grant = this.store.get('grant', pub.grantId, owner);
       // Never replay content which has since expired or been revoked.
       let available = pub.state === 'active' && grant.status === 'consumed' && grant.usedPublicationId === pub.id && Date.parse(pub.visibleUntil) > this.store.now();
-      if (available && pub.content.kind === 'message') {
-        try { available = this.collaboration.readable(pub, pub.memberId); }
+      if (available && (pub.content.kind === 'message' || pub.content.kind === 'evidence_card')) {
+        try { available = this.collaboration.readable(pub, pub.memberId); this.validateEvidence(pub.content, pub.owner, pub.profileId); }
         catch (error) {
           if (error instanceof NetworkError && error.status < 500 || error instanceof DomainError) available = false;
           else throw error;
@@ -311,12 +337,17 @@ export class NetworkService {
       const inquiry = this.inquiryService().byPost(owner, args.postId) ?? fail('NOT_FOUND', 404);
       return { version: 1, result: this.inquiryService().inquiryView(owner, inquiry.id) };
     }
-    if (['get', 'spaces', 'profile', 'listing', 'search', 'need', 'messages'].includes(args.kind)) {
+    if (['get', 'spaces', 'profile', 'listing', 'search', 'need', 'messages', 'evidence'].includes(args.kind)) {
       const { member } = this.identity(p, token, 'network:read');
       return this.directoryQuery(member.id, args);
     }
-    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory' && args.kind !== 'my_follows' && args.kind !== 'my_choice') return fail('INVALID_INPUT', 422);
+    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory' && args.kind !== 'my_follows' && args.kind !== 'my_choice' && args.kind !== 'my_evidence') return fail('INVALID_INPUT', 422);
     const a = this.actor(p, token, args.asProfileId, 'network:read');
+    if (args.kind === 'my_evidence') {
+      this.evidenceScope(p, a); const card = this.store.get('evidence', args.cardId, a.owner);
+      if (card.profileId !== a.profileId) fail('NOT_FOUND', 404);
+      return { version: 1, result: this.evidenceService().ownView(a.owner, card.id) };
+    }
     if (args.kind === 'my_choice') {
       if (!p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
       const choice = this.store.get('choice', args.choiceId, a.owner);
@@ -333,6 +364,7 @@ export class NetworkService {
     if (args.kind === 'my_directory') return { version: 1, representations: this.store.list('representation', a.owner).filter(r => r.profileId === a.profileId).map(r => this.ownView(a.owner, { kind: 'representation', id: r.id })), listings: this.store.list('listing', a.owner).filter(l => l.profileId === a.profileId).map(l => this.ownView(a.owner, { kind: 'listing', id: l.id })) };
     if (args.kind === 'my_drafts') {
       const rows = this.store.list('draft', a.owner).filter(d => d.profileId === a.profileId && d.bindingId === a.bindingId && d.bindingRevision === a.bindingRevision);
+      if (rows.some(d => d.content.kind === 'evidence_card')) this.evidenceScope(p, a);
       const context = digest([this.actorKey(a), a.bindingRevision, rows.map(d => [d.id, d.revision, d.approved])]);
       const after = this.decodeCursor(args.cursor, context);
       const remaining = rows.filter(d => d.id > after), items: unknown[] = []; let bytes = 0, last = after;
@@ -347,6 +379,7 @@ export class NetworkService {
     }
     const r = this.store.get('approval', args.approvalRequestId, a.owner);
     if (r.profileId !== a.profileId || r.bindingId !== a.bindingId || r.bindingRevision !== a.bindingRevision) fail('NOT_FOUND', 404);
+    if (this.store.get('draft', r.draftId, a.owner).content.kind === 'evidence_card') this.evidenceScope(p, a);
     return { version: 1, result: this.ownView(a.owner, { kind: 'approval', id: r.id }) };
   }
   private baseView(pub: Publication, viewerId: string) {
@@ -355,6 +388,7 @@ export class NetworkService {
       if (pub.state !== 'active' || grant.status !== 'consumed' || grant.usedPublicationId !== pub.id || Date.parse(pub.visibleUntil) <= this.store.now()) return undefined;
       this.directory.profile(pub.profileId, pub.owner); this.directory.mayRead(grant, pub.memberId, viewerId);
       this.directory.validateContent(pub.content, pub.owner, pub.profileId);
+      this.validateEvidence(pub.content, pub.owner, pub.profileId);
       const content = pub.content;
       return { version: 1, ref: { kind: 'publication', id: pub.id, revision: pub.revision }, profileId: pub.profileId, spaceId: grant.spaceId, content, visibleUntil: pub.visibleUntil,
         ...(content.kind === 'listing' ? { capabilityState: this.directory.candidateState(content.listingId, ownerKey({ ...this.member(viewerId), clientId: '', scopes: [] })) } : {}) };
@@ -393,6 +427,11 @@ export class NetworkService {
       }
       const hasMore = rows.length > scanned;
       return { version: 1, items, page: { hasMore, cursor: hasMore ? this.encodeCursor(context, last) : undefined } };
+    }
+    if (args.kind === 'evidence') {
+      this.directory.assertMember(args.spaceId, memberId);
+      const rows = this.store.scan('publication', { 'content.cardId': args.cardId, state: 'active' });
+      return rows.map(p => this.publicView(p, memberId)).find(v => v?.spaceId === args.spaceId) ?? fail('NOT_FOUND', 404);
     }
     if (args.kind === 'spaces') return { version: 1, items: this.directory.spaces(memberId) };
     if (args.kind !== 'profile' && args.kind !== 'listing' && args.kind !== 'search') return fail('INVALID_INPUT', 422);
@@ -444,15 +483,21 @@ export class NetworkService {
     // This internal member-session entry point still requires ownership of a private follow filter.
     if (args.asProfileId) this.directory.profile(args.asProfileId, owner);
     const access = this.directory.assertMember(args.spaceId, memberId);
-    return this.activity.updates(owner, memberId, args, [access.space.epoch, access.membership.generation, this.options.memberIds.slice().sort()]);
+    return this.activity.updates(owner, memberId, args, [access.space.epoch, access.membership.generation, this.options.memberIds.slice().sort(), this.evidence?.policyVersion() ?? 'no-result-projection']);
   }
 
   receipt(p: Principal, token: string, input: unknown) {
     const args = receiptQuerySchema.parse(input);
-    if (args.operation.startsWith('inquiry.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+    if ((args.operation.startsWith('inquiry.') || args.operation.startsWith('evidence.')) && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
     const a = this.actor(p, token, args.asProfileId, 'network:read');
     const r = this.store.receipt(this.actorKey(a), args.operation, args.requestId);
     if (!r) return fail('NOT_FOUND', 404);
+    for (const ref of r.refs) {
+      if (ref.kind === 'evidence'
+        || ref.kind === 'draft' && this.store.get('draft', ref.id, a.owner).content.kind === 'evidence_card'
+        || ref.kind === 'publication' && this.store.get('publication', ref.id, a.owner).content.kind === 'evidence_card'
+        || ref.kind === 'approval' && this.store.get('draft', this.store.get('approval', ref.id, a.owner).draftId, a.owner).content.kind === 'evidence_card') this.evidenceScope(p, a);
+    }
     return { version: 1, refs: r.refs, result: r.refs.map(ref => this.ownView(a.owner, ref)) };
   }
   panel(memberId: string) {

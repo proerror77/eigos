@@ -1,7 +1,7 @@
 import { inquiryFixture, quoteCapability, quoteBinding } from './fixtures/network-inquiry.js';
 import { Coordinator } from '../packages/coordinator/coordinator.js';
 import type { JobStore } from '../packages/core/store.js';
-import type { ExecutionCatalog } from '../packages/core/catalog.js';
+import { ExecutionCatalog } from '../packages/core/catalog.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
@@ -324,5 +324,50 @@ test('T10 HTTP/MCP conversion needs trusted buyer confirmation and continues as 
     assert((await foreign.json()).error);
     const publicFeed = await f.api('updates', { version: 1, spaceId: f.gateway.network!.store.spaceId }, f.b.token); const text = await publicFeed.text();
     assert(!text.includes(taskId)); assert(!text.includes('PRIVATE_HTTP_GOAL')); assert.equal(source.readCount(), 2); assert.equal(source.alternateReadCount(), 0);
+  } finally { await client.close(); await f.close(); source.close(); }
+});
+
+test('T11 HTTP/MCP and member pages expose only approved evidence fields and hide corrected sources', async () => {
+  const source = inquiryFixture();
+  const catalog = new ExecutionCatalog([quoteCapability], [quoteBinding], [source.catalog.binding(quoteBinding.ref, source.owner).adapter]);
+  const f = await fixture(true, false, () => catalog), client = new Client({ name: 't11-fixture', version: '1' });
+  try {
+    const { profileId } = await f.init(), bs = f.gateway.members.createSession(f.bob.id);
+    const task = f.gateway.tasks.submit(f.a.p, { goal: 'PRIVATE_T11_GOAL address@example.invalid CREDENTIAL_CANARY', requestId: randomUUID() });
+    const claim = f.gateway.store.claim(['eigos.delegate'], 15000)!;
+    await new Coordinator(f.gateway.store, source.model, catalog).run(claim, new AbortController().signal);
+    const beforeReads = source.readCount();
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.a.token}` } } }));
+    const prepared = await client.callTool({ name: 'network_command', arguments: { version: 1, asProfileId: profileId, requestId: randomUUID(), operation: 'evidence.prepare', source: { kind: 'task', taskId: task.id }, projection: { kind: 'result' } } });
+    assert(!prepared.isError, JSON.stringify(prepared));
+    const cardId = (prepared.structuredContent as {result:{refs:{id:string}[]}}).result.refs[0]!.id;
+    const d = await f.command(profileId, { operation: 'draft.create', content: { kind: 'evidence_card', cardId, cardRevision: 1 } }); assert.equal(d.status, 200);
+    const draftId = (await d.json()).refs[0].id;
+    const denied = await f.command(profileId, { operation: 'draft.update', draftId, expectedRevision: 1, content: { kind: 'evidence_card', cardId, cardRevision: 1, body: { safeSummary: task.goal, evidenceLevel: 'live_fulfillment' } } }); assert.equal(denied.status, 422);
+    const approvalResponse = await f.command(profileId, { operation: 'publication.request_approval', draftId, expectedRevision: 1, recipientMemberIds: [f.bob.id], publishBefore: new Date(Date.now() + 60000).toISOString(), visibleUntil: new Date(Date.now() + 3600000).toISOString() }); assert.equal(approvalResponse.status, 200);
+    const approval = (await approvalResponse.json()).result[0];
+    const controlPage = await f.call('/members/network', undefined, { Cookie: `__Host-eigos-member=${f.session.token}` }); const reviewHtml = await controlPage.text();
+    assert(reviewHtml.includes('合成验证')); assert(!reviewHtml.includes('PRIVATE_T11_GOAL'));
+    assert.equal((await f.control({ action: 'publication.approve', approvalRequestId: approval.id, expectedDraftRevision: 1, reviewDigest: approval.reviewDigest, _csrf: 'wrong' })).status, 403);
+    const approved = await f.control({ action: 'publication.approve', approvalRequestId: approval.id, expectedDraftRevision: 1, reviewDigest: approval.reviewDigest }); assert.equal(approved.status, 200);
+    const grantId = (await approved.json()).refs[0].id;
+    const published = await f.command(profileId, { operation: 'publication.publish', draftId, expectedRevision: 1, grantId }); assert.equal(published.status, 200);
+    const publicationId = (await published.json()).refs[0].id, spaceId = f.gateway.network!.store.spaceId;
+    const recipient = await f.makeAgent(f.bob, ['network:read']);
+    const shared = await f.api('query', { version: 1, kind: 'evidence', cardId, spaceId }, recipient.token); assert.equal(shared.status, 200); const view = await shared.json();
+    assert.deepEqual(Object.keys(view.content.body).sort(), ['evidenceLevel', 'observedOn', 'outcome', 'resultKind', 'safeSummary', 'serviceKind', 'timeZone']);
+    const page = await f.call(`/members/network/spaces/${spaceId}/evidence/${cardId}`, undefined, { Cookie: `__Host-eigos-member=${bs.token}` }); assert.equal(page.status, 200);
+    const html = await page.text(), update = await f.api('updates', { version: 1, spaceId }, recipient.token), updates = await update.json();
+    for (const marker of [task.id, 'PRIVATE_T11_GOAL', 'address@example.invalid', 'CREDENTIAL_CANARY', 'PRIVATE_SYNTHETIC_ORIGIN', 'PRIVATE_SYNTHETIC_DESTINATION']) {
+      assert(!JSON.stringify([view, updates]).includes(marker)); assert(!html.includes(marker));
+    }
+    assert.equal((await f.call(`/members/network/spaces/${spaceId}/evidence/${cardId}`)).status, 401);
+    const body = { version: 1, kind: 'get', publicationId };
+    const ownerMcp = await client.callTool({ name: 'network_query', arguments: body }); assert(ownerMcp.isError, 'Publisher cannot bypass its recipient-only grant');
+    const job = f.gateway.store.get(ownerKey(f.a.p), task.id); job.delegation!.outcome!.reason = 'CORRECTED_PRIVATE_REASON'; f.gateway.store.save(ownerKey(f.a.p), job);
+    assert.equal((await f.api('query', body, recipient.token)).status, 404);
+    const stale = await f.api('updates', { version: 1, spaceId, cursor: updates.page.checkpoint }, recipient.token); assert.equal(stale.status, 409); assert.equal((await stale.json()).error.details.resetRequired, true);
+    assert.equal((await f.control({ action: 'publication.revoke', grantId, expectedRevision: 2 })).status, 200);
+    assert.equal(source.readCount(), beforeReads, 'Preparing, publishing, reading and revoking evidence performs no provider calls');
   } finally { await client.close(); await f.close(); source.close(); }
 });

@@ -1,3 +1,4 @@
+import type { EvidenceCard } from './evidence-contracts.js';
 import { businessTransaction } from '../core/transaction.js';
 import type { Inquiry, InquiryChoice, QuoteSelection } from './inquiry-contracts.js';
 import type { FollowEdge, NetworkEvent } from './activity-contracts.js';
@@ -8,8 +9,8 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { digest } from '../core/delegation.js';
 import { fail, type Profile, type Binding, type Draft, type Approval, type Grant, type Publication, type ResultRef } from './contracts.js';
 
-export type Records = { inquiry: Inquiry; choice: InquiryChoice; selection: QuoteSelection; follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
-const tables = { inquiry: 'network_inquiries', choice: 'network_inquiry_choices', selection: 'network_quote_selections', follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export type Records = { evidence: EvidenceCard; inquiry: Inquiry; choice: InquiryChoice; selection: QuoteSelection; follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
+const tables = { evidence: 'network_evidence_cards', inquiry: 'network_inquiries', choice: 'network_inquiry_choices', selection: 'network_quote_selections', follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
@@ -23,6 +24,7 @@ export class NetworkStore {
     `);
     for (const table of Object.values(tables)) db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY,owner TEXT NOT NULL,body TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_owner ON ${table}(owner,id);`);
     db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS network_evidence_task ON network_evidence_cards(owner,json_extract(body,'$.taskId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_inquiry_post ON network_inquiries(owner,json_extract(body,'$.postId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_inquiry_task ON network_inquiries(owner,json_extract(body,'$.taskId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_follow_identity ON network_follows(json_extract(body,'$.profileId'),json_extract(body,'$.targetProfileId'));
@@ -58,6 +60,19 @@ export class NetworkStore {
         db.prepare('INSERT INTO network_state VALUES(?,?)').run('activity_events_migrated', '1');
       }
     });
+    // Invalidate shared caches atomically with private corrections; never copy private IDs into events.
+    if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'").get()) {
+      for (const table of ['jobs', 'outcome_feedback', 'action_intents', 'ontology_objects', 'ontology_links']) {
+        const taskMatch = table === 'jobs' ? "AND json_extract(e.body,'$.taskId')=NEW.id" : (table === 'outcome_feedback' || table === 'action_intents') ? "AND json_extract(e.body,'$.taskId')=NEW.job_id" : '';
+        for (const action of ['INSERT', 'UPDATE', 'DELETE']) {
+          const row = action === 'DELETE' ? 'OLD' : 'NEW';
+          db.exec(`CREATE TRIGGER IF NOT EXISTS network_evidence_${table}_${action.toLowerCase()} AFTER ${action} ON ${table}
+            WHEN EXISTS(SELECT 1 FROM network_evidence_cards e WHERE e.owner=${row}.owner ${taskMatch.replaceAll('NEW.', row + '.')})
+            BEGIN UPDATE network_state SET value=CAST(value AS INTEGER)+1 WHERE key='activity_epoch'; END;`);
+        }
+      }
+    }
+
   }
   usesConnection(db: DatabaseSync) { return this.db === db; }
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
@@ -80,7 +95,7 @@ export class NetworkStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 201) return fail('INVALID_INPUT', 422);
     const clauses = ['id>?']; const params: string[] = [after];
     for (const [field, value] of Object.entries(filters)) {
-      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId', 'targetProfileId', 'postId', 'taskId'].includes(field)) return fail('INVALID_INPUT', 422);
+      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'content.cardId', 'representationId', 'targetProfileId', 'postId', 'taskId'].includes(field)) return fail('INVALID_INPUT', 422);
       clauses.push(`json_extract(body,'$.${field}')=?`); params.push(value);
     }
     return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`).all(...params, limit).map(r => JSON.parse(String(r.body)));
@@ -107,7 +122,7 @@ export class NetworkStore {
     const publicationId = this.eventTarget(kind, id);
     this.db.prepare('INSERT INTO network_events(event_id,kind,object_id,at,publication_id,object_revision) VALUES(?,?,?,?,?,?)')
       .run(randomUUID(), kind, id, new Date(this.now()).toISOString(), publicationId ?? null, publicationId ? this.publicationRevision(this.get('publication', publicationId)) : null);
-    if (['retracted', 'superseded', 'grant_revoked', 'binding_revoked', 'profile_changed', 'membership_changed', 'space_changed', 'invitation_changed', 'representation_reviewed', 'listing_changed', 'listing_reviewed', 'access_revoked'].includes(kind))
+    if (['retracted', 'superseded', 'grant_revoked', 'binding_revoked', 'profile_changed', 'membership_changed', 'space_changed', 'invitation_changed', 'representation_reviewed', 'listing_changed', 'listing_reviewed', 'access_revoked', 'evidence_changed'].includes(kind))
       this.db.prepare("UPDATE network_state SET value=CAST(value AS INTEGER)+1 WHERE key='activity_epoch'").run();
   }
   activityKey() {

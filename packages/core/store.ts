@@ -267,6 +267,11 @@ export class JobStore {
       this.db.prepare('INSERT OR IGNORE INTO capability_change_proposals VALUES(?,?,?,?)').run(proposal.id, owner, key, JSON.stringify(proposal));
     }
   }
+  resultFeedback(owner: string, jobId: string): unknown {
+    this.get(owner, jobId);
+    const row = this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND job_id=?').get(owner, jobId);
+    return row ? JSON.parse(String(row.body)) : undefined;
+  }
   providerFeedback(owner: string, bindingRef: { id: string; version: string }): unknown[] {
     return this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND binding_key=?').all(owner, digest(bindingRef)).map(r => JSON.parse(String(r.body)));
   }
