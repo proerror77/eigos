@@ -277,3 +277,18 @@ test('control receipt replay cannot rely on historical storage ownership after m
     assert.throws(() => replacement!.control(f.b.member.id, input), code('NOT_FOUND'));
   } finally { replacement?.close(); f.close(); }
 });
+
+test('upgrading T06 implicit circles preserves existing member fences without blocking other enrolled members', () => {
+  const f = networkFixture({ operatorSubjects: ['bob'] }); let upgraded: NetworkService | undefined;
+  try {
+    f.members.setStatus(f.a.member.id, 'suspended');
+    f.service.close();
+    // The old T06 database had grants/fences, but no explicit circle records yet.
+    f.db.exec('DELETE FROM network_memberships; DELETE FROM network_spaces;');
+    upgraded = new NetworkService(f.store, f.members, { memberIds: [f.a.member.id, f.b.member.id, f.c.member.id], operatorIds: [f.b.member.id] });
+    assert.equal(upgraded.directory.membership(f.store.spaceId, f.a.member.id).state, 'removed');
+    assert.equal(upgraded.directory.assertMember(f.store.spaceId, f.b.member.id).membership.state, 'active');
+    assert.throws(() => upgraded!.actor(f.a.p, f.a.token, f.profileId, 'network:write'), code('NETWORK_MEMBERSHIP_REQUIRED'));
+    assert.equal(upgraded.panel(f.b.member.id).operator, true);
+  } finally { upgraded?.close(); f.close(); }
+});

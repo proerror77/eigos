@@ -28,7 +28,7 @@ export class NetworkService {
   constructor(readonly store: NetworkStore, private members: MemberStore, private options: NetworkOptions) {
     store.acquire(this.holder);
     this.directory = new NetworkDirectory(store, id => this.member(id), options.operatorIds ?? [], options.catalog);
-    try { this.directory.bootstrap(options.memberIds); } catch (error) { store.release(this.holder); throw error; }
+    try { this.directory.bootstrap(options.memberIds, id => members.get(id)); } catch (error) { store.release(this.holder); throw error; }
     this.timer = setInterval(() => { try { store.renew(this.holder); } catch { this.leaseLost = true; } }, 3000);
     this.timer.unref();
     members.setRevocationObserver(change => store.fence(change.memberId, change.kind, change.target));

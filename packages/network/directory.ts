@@ -3,7 +3,7 @@ import { ownerKey } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { bindingDigest, sameRef, type ExecutionCatalog } from '../core/catalog.js';
 import type { Member } from '../members/store.js';
-import { fail, type NetworkActor, type Content, type Approval, type ResultRef } from './contracts.js';
+import { NetworkError, fail, type NetworkActor, type Content, type Approval, type ResultRef } from './contracts.js';
 import type { DirectoryCommand, DirectoryControl, Space, Membership, Representation, Listing } from './directory-contracts.js';
 import { NetworkStore } from './store.js';
 
@@ -13,13 +13,17 @@ const rev = (actual: number, expected: number) => { if (actual !== expected) fai
 /** Network domain operations only. No supplier calls, model runs or task mutations. */
 export class NetworkDirectory {
   constructor(readonly store: NetworkStore, private member: (id: string) => Member, private operatorIds: string[], private catalog?: ExecutionCatalog) {}
-  bootstrap(ids: string[]) {
+  bootstrap(ids: string[], lookup: (id: string) => Member = this.member) {
     this.store.transaction(() => {
       if (this.store.scan('space').some(s => s.id === this.store.spaceId)) return;
-      const members = ids.map(id => this.member(id)); if (!members.length) fail('NETWORK_MEMBERSHIP_REQUIRED', 403);
+      const members = ids.map(lookup); if (!members.length) fail('NETWORK_MEMBERSHIP_REQUIRED', 403);
       const owner = ownerOf(members[0]!);
       this.store.put('space', { id: this.store.spaceId, owner, name: '封闭试点圈', state: 'active', revision: 1, epoch: 1, configured: true });
-      for (const m of members) this.store.put('membership', { id: randomUUID(), owner, spaceId: this.store.spaceId, memberId: m.id, role: 'member', state: 'active', revision: 1, generation: 1 });
+      for (const m of members) {
+        let state: 'active' | 'removed' = 'active';
+        try { this.member(m.id); } catch (error) { if (error instanceof NetworkError && error.status === 403) state = 'removed'; else throw error; }
+        this.store.put('membership', { id: randomUUID(), owner, spaceId: this.store.spaceId, memberId: m.id, role: 'member', state, revision: 1, generation: 1 });
+      }
       this.store.event('space_bootstrapped', this.store.spaceId);
     });
   }
