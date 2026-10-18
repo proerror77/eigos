@@ -16,7 +16,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 旧需求登记、直接执行、跑腿订单和 CSV pilot 的独立业务入口及执行器已经删除。历史记录可以按原归属读取，不自动迁移或恢复执行。当前接口与配置见 [接入指南](docs/integration.md)，各能力与证据边界见 [后端说明](docs/registered-capabilities.md)。
 
-后续实现先按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 统一核心对象、领域状态、动作和事实语义，再推进真实候选方案。[配送查价／商品送达／餐厅预订走查](docs/ontology-scenarios-v0.2-2026-10-18.md) 是设计验证；未实现的契约与新的 N0～N5 门槛列在 [阶段目标](docs/backend-implementation-goals.md)。
+后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[三个场景](docs/ontology-scenarios-v0.2-2026-10-18.md) 当前为作者结构走查，[独立业务问题演练](docs/ontology-drill-questions-v0.2-2026-10-18.md) 尚未运行；未实现契约与 N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
 ## 本地开发
 

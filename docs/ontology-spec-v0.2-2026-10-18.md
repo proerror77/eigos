@@ -1,10 +1,12 @@
 # EIGOS Ontology 规格：v0.2 落地细化
 
-日期：2026-10-18。状态：本轮规格基线，供后续实现与验收；本文中的新增契约尚未实现。代码核对基线为 `29eb3740ae93b728e77b7f8283c785055f5da19b`。
+日期：2026-10-18。状态：按 Palantir 官方建模指南修订的规格基线，供后续实现与验收；新增契约尚未实现。运行代码核对基线为 `29eb3740ae93b728e77b7f8283c785055f5da19b`。初稿 `66d6e1c` 没有逐条核对官方方法，本次补充依据并修正模型，不能将初稿的作者走查视为完整本体验证。
 
 本规格细化 [架构 v0.2](architecture-design-v0.2-2026-10-17.md)，沿用单仓库、Gateway／Worker、共享任务核心及 Ontology + LLM 决策分工。术语由 [CONTEXT.md](../CONTEXT.md) 维护；本文维护对象契约、语义规则和实现要求。原设计中的旧执行架构兼容建议已经撤销：历史记录保留只读，不自动迁移成可执行计划。
 
 这里的 v0.2 是所沿用的架构文档版本，运行内核仍标记 ontology-execution-v3；具体领域定义与绑定各自独立版本，不以文档修订号替代运行契约版本。
+
+建模依据为 Palantir 的[设计原则](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)、[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)及[业务问题验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)。具体对象、接口、主键、属性来源、双向关系和数据映射以配套[对象目录](ontology-model-catalog-v0.2-2026-10-18.md)为准。官方原则与 EIGOS 的实施选择分别标明；采用方法不等于已经接入 Foundry 或实现其全部平台能力。
 
 本轮交付仅为规格、[三个场景的设计验证](ontology-scenarios-v0.2-2026-10-18.md)、代码差距和[新阶段目标](backend-implementation-goals.md)。不调用真实来源、不启动模型业务任务、不改变常驻服务或权限；订单、付款、占位、取消和退款均没有本轮执行授权。场景中的业务数据全部合成。
 
@@ -14,11 +16,13 @@
 
 “取得报价”“商品送达”“预订确认”是三个独立的业务终点。把结果封装为 artifact 是交付方式，不能替代业务终点。一个成功的协议响应或模型回答，也不能直接决定业务状态。
 
-### 1.1 三层结构
+### 1.1 建模顺序与项目组织
+
+先从三个实际业务问题识别实体与事件，再设计属性、关系和接口，接着定义 Functions／Actions 与来源映射，最后验证能否独立查询和决策。执行引擎的表名或 MCP 工具列表不作为本体的生成起点。下列三层是 EIGOS 的组织方式；具体模型由 Object Type、Property、Link Type、Interface、Action Type 和 Function 组成。
 
 | 层 | 维护内容 | 变化方式 |
 | --- | --- | --- |
-| 共用核心 | 需求／成功条件、主体角色、能力与绑定、候选与报价、计划／授权、事实／证据、动作／验收 | 跨领域复用；变更需明确受影响契约和版本 |
+| 共用核心 | 精简委托、主体身份、接口、对象关系、授权和结果规则；执行记录另有支持层 | 跨领域复用；变更需明确受影响契约和版本 |
 | 领域本体 | 配送、商品购买与送达、餐厅预订的对象、属性、状态、谓词和验收器 | 每个领域独立版本；保留领域差异 |
 | 提供者映射 | 源字段、单位、状态、身份、接口和回执如何对应领域契约 | 每个绑定固定输入映射、输出映射和证据校验版本 |
 
@@ -28,11 +32,13 @@
 
 沿用 TypeScript／Zod／JSON Schema、版本化注册表和本地 SQLite。关系先用类型化引用与查询实现；本轮不要求增加图数据库、RDF／OWL、向量库或独立服务。谓词引用受信任的校验函数，不能执行模型生成的表达式或代码。
 
-定义包 `OntologyBundle` 至少包含 `ref`、依赖版本、对象及关系 schema、属性语义、谓词、动作、状态转换、验收规则和定义摘要。该名称表示拟实现的内部契约，不是当前已开放的工具。
+定义包 `OntologyBundle` 至少包含 `ref`、依赖版本、具体对象／属性／双向关系、接口实现、查询／函数、Action 变更集与提交条件、来源映射、权限及验收规则和定义摘要。该名称表示 EIGOS 拟实现的内部打包契约，不是 Palantir 产品接口或当前已开放的工具。
 
 ## 2. 核心对象与身份
 
 所有任务私有实例均有 owner、对象类型、稳定 id、revision 和创建时间；owner 来自认证边界。定义使用不可变的 `id + version + digest`。外部对象使用 `source namespace + external id`，不能用展示名称作为身份。
+
+下表是业务概念与支持记录的职责清单，并非每行都是一个 Object Type。Parcel、OrderLine、Shipment、Venue、Reservation 等具体实体的身份、属性和来源见[对象类型目录](ontology-model-catalog-v0.2-2026-10-18.md#2-对象类型目录)；Offer 是接口，Fact 是证据视图，运行尝试是默认隐藏的技术支持记录。
 
 | 核心对象 | 最小信息与责任 |
 | --- | --- |
@@ -45,11 +51,11 @@
 | ProviderBinding | capability、channel、实际提供者／履约方引用、受控 adapter、映射版本、访问条件和恢复能力 |
 | ServiceEngagement | 一个需求与一个提供者的持续交互；本地／远端任务引用、补问和等待状态。一个需求可有多个 engagement |
 | CandidateOption／RuntimeAvailability | 被发现的对象或服务选项，以及针对本次需求版本、用户、动作和时间的可用性判断 |
-| Offer／Comparison | 带来源与有效性的服务报价；按同一目标比较可比报价，保留覆盖范围、未知项和排除理由 |
+| Offer／Comparison | Offer 接口由三个具体报价类型实现；Comparison 是对象集和比较函数的结果，选定 Proposal 才是需要持久追溯的决策快照 |
 | Proposal／ExecutionPlan | 用户可理解的选择与条款快照；固定输入、动作、依赖、定义／绑定版本和验收目标的执行计划 |
 | Authorization | 来自用户或有效代理的动作、对象、数据、金额／收款方和有效期许可，附撤销版本 |
-| ActionIntent／ExecutionAttempt | 一次业务操作的稳定身份；各次派发、观察、续接和查证记录。技术重试不产生新业务身份 |
-| Observation／Evidence／Fact | 来源返回的观察；可追溯的证据记录；按明确谓词表达、带依据和适用范围的业务事实 |
+| ActionIntent／ExecutionAttempt | 默认隐藏的运行支持记录，保留稳定业务键及各次技术尝试；不要求业务用户从这些记录开始导航 |
+| Observation／Evidence／Fact | 有业务身份的观察可建事件类型；原始响应按权限保留。常规事实属于具体对象属性，来源与推导通过证据视图关联 |
 | OutcomeAssessment／AfterSalesCase | 对固定成功条件逐项判断；关联原业务对象的补救事项，不重写原任务的完成或失败历史 |
 
 Money、Quantity、LocationValue、TimeWindow 等先作为组合值。只有需要独立生命周期或身份时才建立独立对象。例如本人保存地址条目有身份，本次路线保存经确认的地址快照与角色。
@@ -58,22 +64,22 @@ Money、Quantity、LocationValue、TimeWindow 等先作为组合值。只有需�
 
 ```mermaid
 flowchart LR
-  R[ServiceRequest] --> C[Requirement / SuccessCriterion]
-  R --> E[ServiceEngagement]
-  E --> B[ProviderBinding]
-  B --> K[ServiceCapability]
-  B --> P[Provider / Channel]
-  E --> O[CandidateOption / Offer]
-  O --> Q[Comparison / Proposal]
-  Q --> L[ExecutionPlan]
-  A[Authorization] --> L
-  L --> I[ActionIntent / ExecutionAttempt]
-  I --> V[Observation / Evidence]
-  V --> F[Fact]
-  F --> X[OutcomeAssessment]
-  C --> X
-  X --> R
+  R[ServiceRequest] --- Q[DeliveryQuote]
+  Q --- P[Parcel]
+  Q --- RT[DeliveryRoute]
+  R --- O[Order]
+  O --- L[OrderLine]
+  L --- V[ProductVariant]
+  L --- A[DeliveryAllocation]
+  A --- S[Shipment]
+  O --- S
+  R --- B[Reservation]
+  B --- SL[ReservationSlot]
+  SL --- VE[Venue]
+  B --- PAY[Payment]
 ```
+
+这是业务导航关系示意，不是程序执行流水线。每条关系的正反向名称、基数和来源映射见[Link Type 目录](ontology-model-catalog-v0.2-2026-10-18.md#4-link-type-目录)。意图、尝试及租约继续用于后台执行与审计。
 
 | 关系 | 基数及约束 |
 | --- | --- |
@@ -83,7 +89,7 @@ flowchart LR
 | Request → Engagement → Candidate／Offer | 一个需求可询问多个提供者；候选只归属获准的需求与用户范围 |
 | 同一业务标的 → 多个 Offer | 每个 Offer 保留自己的渠道、费用、条款与期限；归组不合并报价 |
 | Proposal → selected Offer → Plan | 选择引用准确报价版本；目标、条款或绑定改变时重新评估计划及授权 |
-| Plan → Intent → Attempt → Observation | 一个计划有多个动作；一个业务意图可有多次技术尝试；观察追加保存 |
+| Shipment → DeliveryAllocation → OrderLine | 通过带数量与证据的关系对象记录部分交付；不能只在订单上写一个 delivered 布尔值 |
 | Evidence → Fact → CriterionAssessment | 一条事实可有多个支持或冲突证据；判断必须列出实际使用的引用 |
 | AfterSalesCase → 原业务对象／新 Request | 售后建立关联需求，原订单、付款和原需求记录保留 |
 
@@ -124,15 +130,17 @@ Money 使用整数 minor 文本和登记的币种精度；不默认为所有币�
 | `reservation.confirmation_effective` | 准确预订的确认及生效条件，结果验收 | 餐厅／授权渠道确认，必要时关联订金到账证据 |
 | `execution.within_authority` | 本次动作、数据、对象、费用与授权，派发前 | 受信任授权记录和策略校验，不能使用模型的同意判断 |
 
-### 4.2 Offer 的共用外壳与领域内容
+### 4.2 Offer 接口与具体报价对象
 
-Offer 的共用部分包含：id／revision、提供者与渠道、bindingRef、领域 kind、业务标的、报价数量、价格及费用覆盖、条款、可用性事实引用、观察／失效时间、失效依据、证据和未知项。价格性质至少区分 `display_price / estimate / firm_quote / unknown`；费用完整性另记 `complete / partial / unknown`，二者不能合并为一个标志。
+Offer 作为接口，约定报价身份、提供者／渠道关系、观察／有效期、价格性质和费用完整性等真实共性。DeliveryQuote、ProductOffer、ReservationOffer 是独立具体对象；商品规格、包裹重量、时段和订金属于对应类型，不集中到一个宽泛可空对象。代码传输层可以用判别联合表达具体类型，但不能把该传输结构当作业务对象模型。
 
-| kind | 领域内容 | 不能强加的字段 |
+价格性质至少区分 `display_price / estimate / firm_quote / unknown`；费用完整性另记 `complete / partial / unknown`。订金不冒充商品或配送总价。接口定义和属性卡见[报价接口目录](ontology-model-catalog-v0.2-2026-10-18.md#3-offer-接口与属性定义卡)。
+
+| 具体 Object Type | 领域内容 | 不能强加的字段 |
 | --- | --- | --- |
-| goods | ProductVariant、OrderLine、商家、规格／数量、商品与交付条款 | 同名商品不能默认同规格或可替代 |
-| parcel_delivery | Parcel、DeliveryRoute、服务等级、申报／计费重量、报价适用范围 | 不需要虚构商品 id、零售门店或餐具费用 |
-| restaurant_reservation | Venue、ReservationSlot、人数、订金／取消／到店条件 | 不用商品库存或商品购买数量代替席位与人数 |
+| ProductOffer | ProductVariant、商家、规格／数量、商品与交付条款 | 同名商品不能默认同规格或可替代 |
+| DeliveryQuote | Parcel、DeliveryRoute、服务等级、申报／计费重量、报价适用范围 | 不需要虚构商品 id、零售门店或餐具费用 |
+| ReservationOffer | Venue、ReservationSlot、人数、订金／取消／到店条件 | 不用商品库存或商品购买数量代替席位与人数 |
 
 缺失实际商家身份的发现结果可以作为待核实候选保存，但不能成为需绑定明确交易对手的可执行购买方案。提供者与收款方身份必须在相应业务动作前明确；聚合渠道可以有被证实的代理角色。
 
@@ -155,7 +163,7 @@ Offer 的共用部分包含：id／revision、提供者与渠道、bindingRef、
 
 ### 5.2 最小事实与证据记录
 
-事实记录至少含 `subjectRef`、`predicateRef`、类型化值、来源种类／来源对象、`observedAt`、可用期限、适用需求／动作／地区范围、`evidenceRefs`、schema／校验规则版本、owner 和数据保留策略。值未知时不填假值。
+常规事实以具体对象的类型化属性表达，附来源及有效性元数据；不要把所有字段拆成通用 Fact 对象。价格变化、交付和确认等有独立业务时间／身份的观察可以建立具体事件类型。证据视图能按 `subjectRef`、属性／谓词、来源、观察时间、有效期、适用范围和 owner 追溯。值未知时不填假值。
 
 证据记录包含来源身份、原生对象／事件 id、接收时间、可保留载荷或受控引用及摘要、绑定／映射版本、证据强度和验证结论。原始私人数据不因成为证据就可进入模型、公开文档或跨用户图谱。
 
@@ -174,7 +182,7 @@ Offer 的共用部分包含：id／revision、提供者与渠道、bindingRef、
 | --- | --- | --- |
 | ServiceRequest 进度 | received → clarifying／planning → awaiting_authorization／executing → accepted／unmet／needs_review；可 canceled | 需求事件与逐条件验收；取消需求不直接取消外部业务 |
 | RuntimeAvailability | available／unavailable／unknown／needs_input／needs_authorization | 固定需求、动作、身份和观察时间下的可执行性；历史成功不替代本次判断 |
-| Offer 有效性 | observed → usable／incomplete／expired／superseded | 必要字段、来源期限及新版报价；旧版本仍可审计 |
+| Offer 实例有效性 | observed → usable／incomplete／expired／superseded | 根据字段、期限、当前时间与新版本派生；不维护一份容易过期的永久 isFresh 布尔值 |
 | ActionIntent | ready → dispatching → awaiting_remote／effect_unknown → effect_confirmed／rejected／needs_review；取消记录 canceled_before_dispatch／canceled_after_dispatch | 稳定业务键与经校验的观察；effect_confirmed 仅代表该动作 |
 | Order | requested → pending → confirmed；随后可能 canceled | 供应方订单回执，订单状态与付款、履约分开 |
 | Payment | not_started → pending／unknown → paid／failed | 支付侧可信结果；无响应不推断 failed 或未扣款 |
@@ -191,23 +199,22 @@ Reservation 的 `held` 是有期限的占位；支付订金不自动变成 confi
 
 ## 7. 动作契约和执行边界
 
-每个 ActionType 定义：业务意图、允许执行角色、输入／输出对象 schema、前置条件、effect、所需授权及数据范围、可能的状态变化、可接受观察、验收器、幂等／查证／取消能力、超时与重试策略、版本。下面是语义动作名，不声明已经新增 MCP 工具或供应方接口。
+先区分对象查询、函数计算、来源同步和决策变更。官方 Action Type 定义的是对象、属性和关系的一组受控变更及提交时的规定副作用；不把所有读取工具都称为同一种本体 Action。[官方 Action 定义](https://www.palantir.com/docs/foundry/action-types/overview)
 
-| 动作 | 关键前置条件 | 输出与能证明的结果 | effect |
-| --- | --- | --- | --- |
-| SearchPublicLocations | 已授权查询范围、城市与关键词 | PublicLocation 及查询证据；不产生 Merchant、Offer 或库存事实 | read |
-| ReadOwnedAddresses | 本人归属及获准字段范围 | 保存地址引用／私有选择；不向无关提供者或规划模型扩散 | read |
-| ReadDeliveryQuote | 已明确路线、物品、重量、服务、报价所需数据许可 | parcel_delivery Offer／报价观察，不创建配送订单 | read |
-| SearchGoodsOffers | 已明确商品规格、数量、区域及获准来源 | goods 候选／报价及覆盖；库存未知需继续获准查询 | read |
-| SearchReservationSlots | 日期、时区、人数、区域／餐厅及访问许可 | 可订时段／报价；查询本身不占位 | read |
-| RevalidateOffer | 固定报价／方案引用、刷新范围许可 | 新观察或新报价 revision；变化触发计划／授权复核 | read |
-| CreateOrder | 适用报价、硬性前置条件通过、准确授权、未知旧操作已查清 | 订单引用与实际 pending／confirmed 状态 | order |
-| RequestReservation | 明确时段／人数／条款、必要授权、查证能力 | pending／held／confirmed 等真实状态，保留期限与所需订金 | reserve |
-| Pay／PayDeposit | 指定业务对象、收款方、金额及独立有效许可 | payment 观察；只有经校验的 paid 证据表明已付 | payment |
-| Observe／Reconcile | 原意图／远端业务对象、只读访问范围 | 原操作的新观察，不创建替代业务 | read |
-| Change／Cancel／Refund | 原业务关联、支持的动作、费用／条款与有效许可 | 对应动作申请及最终观察，不假定同步完成 | change／cancel／refund |
+| 类别 | 本项目例子 | 输出／变化 |
+| --- | --- | --- |
+| Object Set／只读 Function | 查询地点、地址、有效报价、餐厅时段；比较报价、核算未交付数量、核验预订 | 返回获准对象、派生值和证据；不直接修改订单或付款 |
+| 来源读取／规范化管线 | 通过 Ontology MCP 执行 search_poi／delivery_preview，验证并映射结果 | 来源对象及观察更新，保留身份、单位、时间与关联关系 |
+| 决策 Action Type | AmendRequest、SelectOffer、RequestDeliveryQuote、RequestReservation、RequestRefund | 固定一组允许的对象／属性／关系变更和外部操作意图 |
+| 技术运行操作 | dispatch／observe／reconcile、RPC、原键查证 | 支持上述过程的适配器操作；不会自行产生新的业务许可 |
 
-收集输入、比较、生成方案、请求用户授权和执行验收属于协调流程。授权事实由受信任的用户／代理通道产生，不能由“请求授权”动作自行生成批准。
+每个 Action 定义参数、可编辑对象／属性／关系集合、提交条件、执行角色、业务授权与数据范围、预期状态、失败结果、审计和适用版本。提交条件和对象权限分别校验；只读 Function 不能绕过 Action 直接写业务对象。函数支持查询、导航和复用逻辑的依据见 [官方 Functions](https://www.palantir.com/docs/foundry/functions/overview)。
+
+例如 RequestDeliveryQuote 记录对准确 Parcel／Route 的查价决策和待处理意图，来源回执经映射后才形成 DeliveryQuote；SelectOffer 固定选择关系，不改来源报价或声明已授权付款。RequestOrder／RequestReservation 记录业务请求，只有实际来源观察才形成订单或确认状态。准确变更集和来源责任见[Action 定义卡](ontology-model-catalog-v0.2-2026-10-18.md#61-两个具体-action-定义卡)。
+
+现有代码的 ActionType／PlanStep 同时包含 read、local 和外部操作，它们属于当前执行契约。后续应明确区分 Ontology 决策动作与 ProviderOperation，不仅改名称；PA 入口仍提交业务目标，Gateway 不启动模型或来源读取。
+
+授权事实由受信任的用户／代理通道产生，不能由“请求授权”动作自行生成批准。来源同步有自己的写入责任与审计，不套用用户编辑去覆盖支付／库存事实。
 
 继续复用当前 Action Runtime：先落意图及派发记录，网络调用在事务外；观察先保存，再由有效领取者推进任务。未知副作用只查原业务键，禁止自动换提供者重做；没有查证契约时进入人工核对。健康 pending 不计作失败重试，所有循环受次数和时间上限约束。本文不会解除现有真实副作用禁令。
 
@@ -223,6 +230,8 @@ Reservation 的 `held` 是有期限的占位；支付订金不自动变成 confi
 | 解释结果 | 根据验收记录生成用户能理解的说明 | 业务状态和整体完成由证据及验收器确定 |
 
 输入包只包含相关 OntologyBundle、获准需求上下文、有界候选、事实引用、未知／冲突项及已有动作结果。供应方文本作为不可信数据，不能覆盖规则。凭据、隐藏推理、无关地址簿和其他用户对象不进入提示词。
+
+LLM 应能从业务名称和别名找到具体对象类型，通过受控 Object Set 查询、关系导航和 Function 获取事实，再提出 Action。固定流程模板可以支持执行安全，但不能成为识别对象与查明问题的唯一途径；独立验证时不预先给出查询路径。
 
 模型输出采用版本化结构：`clarify / query_facts / propose_plan / replan / no_feasible_plan`，绑定 requestRevision、理由、对象／事实引用及必要参数。`query_facts` 必须指向已登记只读动作与具体待验证条件；不能接受任意 URL、SQL、脚本或新供应方代码。新能力映射只能进入待审核提议，不能在当前任务中直接发布。
 
@@ -254,20 +263,20 @@ Reservation 的 `held` 是有期限的占位；支付订金不自动变成 confi
 
 | 当前位置 | 已有基础／具体缺口 | 后续修改与最近验收 |
 | --- | --- | --- |
-| [execution.ts](../packages/ontology/execution.ts) | Requirement 主要是 quantity／budget／deadline／location／condition；地点仅字符串 ref，事实属性角色不足；ontology 为宽泛 object | 增加领域目标、属性角色、适用阶段和类型化规则引用；验证搜索区域／目的地、申报／实收、估计／承诺互不误用 |
-| [supply.ts](../packages/ontology/supply.ts)、[comparison.ts](../packages/coordinator/comparison.ts) | Offer 强制商品与门店字段；比较围绕商品规格 | 改为共用外壳＋三领域内容，独立价格性质／完整性；按领域可比规则比较并保留身份不确定性 |
-| [paotui-ontology.ts](../packages/capabilities/paotui-ontology.ts) | 对象名和规则文本已有，输入 schema 与动作 ref 已固定；缺统一对象／关系／动作前后条件目录 | 建立版本化定义包，文字说明关联可执行谓词与验收器；按输入输出引用验证定义一致性 |
+| [execution.ts](../packages/ontology/execution.ts) | Requirement 主要是 quantity／budget／deadline／location／condition；地点仅字符串 ref，事实属性角色不足；ontology 为宽泛 object | 建立具体对象／属性／关系／接口定义契约，增加领域目标、角色、阶段及规则引用；版本化注册引用，不仅增加文字描述 |
+| [supply.ts](../packages/ontology/supply.ts)、[comparison.ts](../packages/coordinator/comparison.ts) | Offer 强制商品与门店字段；比较围绕商品规格 | 定义 Offer 接口及 DeliveryQuote／ProductOffer／ReservationOffer 具体类型；共用查询约束、领域比较函数分别实现，独立价格性质／完整性 |
+| [paotui-ontology.ts](../packages/capabilities/paotui-ontology.ts) | 对象名和规则文本已有，输入 schema 与动作 ref 已固定；缺统一对象／关系／动作变更集目录 | 补充主键、标题、属性来源、双向关系、只读函数和决策 Action 定义；技术只读操作与 Action 变更集分开 |
 | [paotui-read.ts](../packages/capabilities/paotui-read.ts)、[paotui-request.ts](../packages/capabilities/paotui-request.ts) | 真地址选择、报价和回执已跑通；引用与摘要保护可复用 | 将路线、重量、估价／费用及有效性映射为领域事实／Offer，保留底层查询原语与用户流程能力的层次 |
 | [paotui-geo-discovery.ts](../packages/capabilities/paotui-geo-discovery.ts) | 精确白名单、回执与来源配置固定已有 | 保留 PublicLocation 查询语义、`realSupply=false`；不得因统一 Offer 而把地点升级为商家供给 |
-| [core/catalog.ts](../packages/core/catalog.ts)、[capabilities/catalog.ts](../packages/capabilities/catalog.ts) | 能力／绑定／来源分离；能力摘要超 16 项即拒绝 | 注册并核验 bundle 依赖及 schema；增加按领域／目标检索，保留身份过滤、上限和覆盖记录 |
+| [core/catalog.ts](../packages/core/catalog.ts)、[capabilities/catalog.ts](../packages/capabilities/catalog.ts) | 能力／绑定／来源分离；能力摘要超 16 项即拒绝 | 注册并核验模型构件及依赖；增加按业务名称／别名检索、对象集查询及关系导航，接口返回实现类型；保留身份过滤、上限和覆盖 |
 | [coordinator.ts](../packages/coordinator/coordinator.ts)、[requirements.ts](../packages/coordinator/requirements.ts)、[delegation.ts](../packages/core/delegation.ts) | 真实解释、规划、原文依据与有界回合已有 | 输出条件角色与阶段；引入受控事实查询提议，记录 inference 与证据引用，禁止改写既有要求 |
 | [resolver.ts](../packages/coordinator/resolver.ts) | 逐条件检查、unknown、来源超时与取消边界已有 | 从按 kind 的通用字段比较逐步转为注册谓词；核对对象角色、来源权限、单位、时效和冲突 |
-| [plan.ts](../packages/coordinator/plan.ts)、[runtime.ts](../packages/coordinator/runtime.ts) | 短 DAG、准备流程、计划固定与动作恢复已有；整体验收主要取最后一步 delivery | 加入对象类型及前后条件检查；按需求成功条件汇总跨步骤证据，缺证据保持 unknown，不能统一写成 unsatisfied；先模板后有限组合 |
+| [plan.ts](../packages/coordinator/plan.ts)、[runtime.ts](../packages/coordinator/runtime.ts) | 短 DAG、准备流程、计划固定与动作恢复已有；整体验收主要取最后一步 delivery | 分开 Ontology Action 与 ProviderOperation，校验对象变更集及提交条件；按需求汇总关联业务对象／证据，缺证据保持 unknown；先模板后有限组合 |
 | [actions.ts](../packages/ontology/actions.ts)、[sandbox-service.ts](../packages/capabilities/sandbox-service.ts) | 订单／付款／履约／退款快照与沙箱动作已有；无独立 Reservation 模型 | 增加 held、确认、生效条件与失效的预订语义；沙箱验证订金已付但未确认、部分交付仍进行等情况 |
-| [store.ts](../packages/core/store.ts)、[tasks.ts](../packages/core/tasks.ts) | 意图、尝试、观察、反馈和私有准备已持久化 | 增加类型化事实／关系及 engagement 所需记录，按 owner 和 revision 查询；原事件去重、迟到保护与未知结果恢复继续回归 |
+| [store.ts](../packages/core/store.ts)、[tasks.ts](../packages/core/tasks.ts) | 意图、尝试、观察、反馈和私有准备已持久化 | 建立具体业务对象的当前属性／来源投影、双向链接、领域事件及派生查询；保留决策历史快照，避免复制多份当前事实；技术记录默认隐藏 |
 | [policy.ts](../packages/core/policy.ts) | 当前真实副作用拒绝、沙箱精确授权和累计预算已有 | 保持拒绝策略；未来将领域对象、Offer 条款、数据范围与现有 grant 校验衔接，不能通过本体扩展获得新权限 |
 | [domain.ts](../packages/core/domain.ts)、[mcp.ts](../apps/gateway/mcp.ts)、[a2a.ts](../apps/gateway/a2a.ts) | 统一任务、身份和 PA 协议入口已有 | 只投影必要的业务目标、事实／验收状态；两协议同任务含义一致，不更改 PA 主交互模式 |
-| [ontology-backend.test.ts](../tests/ontology-backend.test.ts)、[migrated-capabilities.test.ts](../tests/migrated-capabilities.test.ts)、[supply-discovery.test.ts](../tests/supply-discovery.test.ts)、[fulfillment.test.ts](../tests/e2e/fulfillment.test.ts) | 当前内核、比较反例与进程故障回归可复用 | 将场景矩阵转成契约／规则／运行测试；测试夹具、真实模型、真实读取和真实履约分别记账 |
+| [ontology-backend.test.ts](../tests/ontology-backend.test.ts)、[migrated-capabilities.test.ts](../tests/migrated-capabilities.test.ts)、[supply-discovery.test.ts](../tests/supply-discovery.test.ts)、[fulfillment.test.ts](../tests/e2e/fulfillment.test.ts) | 当前内核、比较反例与进程故障回归可复用 | 将 23 个反例转成契约／规则／运行测试；另做非建模者和 Agent 的无路径提示业务问题演练，不能以单元测试或 CI 代替 |
 
 当前 `execution.ts` 中名为 `Quote` 的结构主要承担本地模拟授权报价，应在后续改造时明确为沙箱专用记录；不将其直接当作本规格的通用 Offer。生产价格、用户方案和动作许可分别建模。
 
@@ -275,6 +284,8 @@ Reservation 的 `held` 是有期限的占位；支付订金不自动变成 confi
 
 新的实施顺序是：规格基线 → 类型／事实／规则契约 → LLM 与规则衔接 → 真实只读候选方案 → 三领域动作与验收沙箱 → 获准业务的真实履约。各阶段具体目标及交付门槛维护在 [阶段目标](backend-implementation-goals.md)，已完成的执行内核与 PA 实测继续复用。
 
-本规格的设计验收要求：三个场景共享核心对象且各有明确终点；每个硬条件能找到对应对象、谓词、阶段及证据来源；每个动作具备前置条件、输出、权限与未知结果处理；反例能够得出明确的 fail／unknown／needs_human；代码差距可定位到现有模块。场景走查不冒充自动测试或真实业务完成。
+本规格的结构验收要求：具体类型有身份、属性来源和权限；关系有两侧名称、基数及映射；接口只表达真实共性；三个场景有明确终点和条件证据；每个 Action 有变更集、提交条件及未知结果处理；代码差距可定位到现有模块。
+
+可用性验收另外开展：让非建模者与 Agent 分别依据业务问题在通用对象查询／导航环境中寻找答案，不提供固定路径或专用页面。记录正确性、耗时、导航路径、求助和权限阻塞。本文只完成作者的结构走查；[独立问题集](ontology-drill-questions-v0.2-2026-10-18.md) 已定义，独立人／Agent 演练尚未运行，不把结构走查或 CI 写成其通过证据。[官方验证指导](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)
 
 仍取决于外部契约的事项：真实商品／预订来源能返回哪些字段与身份、报价／占位有效期、写操作防重与查证、数据保留条件、押金和取消规则。这些字段缺失时按本规格保留 unknown 或拒绝相关动作，不预设某平台已经支持。多用户私人渠道授权、跨服务多订单优化、长期偏好和跨用户反馈属于后续独立范围。
