@@ -4,6 +4,16 @@ import { domainResultSchemas, parseDomainParameters, type DomainParameters, type
 export interface DomainCriterion { id: string; result: 'pass' | 'fail' | 'unknown'; reason: string }
 export interface DomainAssessment { status: 'satisfied' | 'unsatisfied' | 'unknown'; criteria: DomainCriterion[]; endpoint: string }
 type Money = { minor: string; currency: string };
+export function quoteRoleCriteria(domain: ServiceDomain, parameters: Record<string, unknown>, option: Record<string, unknown>): DomainCriterion[] {
+  const criteria: DomainCriterion[] = [], commitments = option.commitments as Record<string, string> | undefined;
+  const requiredTimes: Record<string, unknown> = domain === 'ride' ? { pickup: parameters.pickupBy, arrival: parameters.arriveBy } : domain === 'appointment' ? { registration: parameters.registerBy } : domain === 'food' ? { completion: parameters.deliverBy } : {};
+  for (const [role, expected] of Object.entries(requiredTimes)) criteria.push({ id: `${role}_commitment`, result: !commitments?.[role] || !expected ? 'unknown' : Date.parse(commitments[role]) <= Date.parse(String(expected)) ? 'pass' : 'fail', reason: 'Each milestone requires its own source commitment; another deadline cannot stand in for it' });
+  if (domain === 'vehicle') {
+    const amount = option.deposit as Money | undefined, limit = parameters.depositLimit as Money;
+    criteria.push({ id: 'deposit_limit', result: !amount || amount.currency !== limit.currency ? 'unknown' : BigInt(amount.minor) <= BigInt(limit.minor) ? 'pass' : 'fail', reason: 'Compare the actual quoted deposit with its separate cap' });
+  }
+  return criteria;
+}
 export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown, raw: unknown, now: number): DomainAssessment {
   const expected = parseDomainParameters(domain, input), observed = domainResultSchemas[domain].parse(raw) as DomainResults[K];
   const checks: DomainCriterion[] = [];

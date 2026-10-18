@@ -1,0 +1,217 @@
+{
+  "reviewer": "parent agent; reviewed answers against frozen synthetic records and actual query outputs",
+  "participantContext": "fresh independent agent, no inherited modeling conversation or answer path supplied",
+  "scope": "synthetic business investigations; no actual provider or transaction",
+  "cases": [
+    {
+      "caseId": "B01",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Acceptance alone is not arrival; correctly identifies missing destination/time.",
+      "answerSha256": "9494181436cc3d57ca48a2269e310f488b870a9acb223cf94eda2202db66cea9",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 74207
+    },
+    {
+      "caseId": "B02",
+      "verdict": "pass",
+      "expectedDecision": "eligible option-1; option-2 unknown; proposal only",
+      "review": "Uses complete price, rejects partial-fee option and preserves unknown authority.",
+      "answerSha256": "86d93d980e8feccd88ac20ad6b1887746b80c47c9a1872013bca9dfc6e01f13e",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 7,
+      "elapsedMs": 74200
+    },
+    {
+      "caseId": "B03",
+      "verdict": "pass",
+      "expectedDecision": "unsatisfied",
+      "review": "Identifies wrong destination and CNY 50 overrun.",
+      "answerSha256": "6b6aae088c227d9f55438608a53dd82872098e17a7dd8413d7544946f932e2d4",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 74203
+    },
+    {
+      "caseId": "B04",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Separates paid from confirmed and identifies missing confirmation time.",
+      "answerSha256": "8ebd6d635e3126442728701c2695bbb7dd6f4345784910d12cfceaafa6c97255",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 79219
+    },
+    {
+      "caseId": "B05",
+      "verdict": "pass",
+      "expectedDecision": "satisfied",
+      "review": "Traverses hospital, department, practitioner, patient and slot relationships.",
+      "answerSha256": "b90e54574969232802467845e0dde17fc21a818287a72cecba25dc9a366c169b",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 9,
+      "elapsedMs": 79224
+    },
+    {
+      "caseId": "B06",
+      "verdict": "pass",
+      "expectedDecision": "unsatisfied; refund unknown",
+      "review": "Identifies expired hold and refuses to infer refund receipt.",
+      "answerSha256": "c5f373c728248c9ab953a4219cb66a574a975bdefadcfeba32ecd8b76a9c396e",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 5,
+      "elapsedMs": 79216
+    },
+    {
+      "caseId": "B07",
+      "verdict": "pass",
+      "expectedDecision": "unknown; continue awaiting final evidence",
+      "review": "Keeps partial delivery unknown before final delivery; no premature failure.",
+      "answerSha256": "2bbc0e37af8be2fa81ca2f06d930120e13285c7eed14b6a732327f7d73a34828",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 46552
+    },
+    {
+      "caseId": "B08",
+      "verdict": "pass",
+      "expectedDecision": "unsatisfied",
+      "review": "Identifies wrong specification while preserving unknown ingredient status.",
+      "answerSha256": "7e46e13ca529c9260b34e079cceac8eac92b17a30bde70f1d61934ec48fe8302",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 46558
+    },
+    {
+      "caseId": "B09",
+      "verdict": "pass",
+      "expectedDecision": "satisfied",
+      "review": "Uses actual item, destination, time, total and ingredient evidence.",
+      "answerSha256": "6372df3ef3254baf61a9b7da1a5190cb9baf96beeec9517cef8fb68f0405c9f8",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 6,
+      "elapsedMs": 46551
+    },
+    {
+      "caseId": "B10",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Separates supplier reference/payment from effective hotel confirmation.",
+      "answerSha256": "bf52ebc7f0b62bad546f1989c49aec88386a0aa01051d8244ab05d69e9dc964a",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 42179
+    },
+    {
+      "caseId": "B11",
+      "verdict": "pass",
+      "expectedDecision": "reservation satisfied; stay unproven",
+      "review": "Distinguishes confirmed booking from a completed stay.",
+      "answerSha256": "ae452d064c8c24ca97974cd04109cf6d1ce45c9c83856de0c4db2311b041953f",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 6,
+      "elapsedMs": 42182
+    },
+    {
+      "caseId": "B12",
+      "verdict": "pass",
+      "expectedDecision": "unsatisfied",
+      "review": "Compares actual local stay dates and detects one missing night.",
+      "answerSha256": "319209d6bffefd5c126f2ae9fd6d50d7ae581a0237b7389b723bd045b9402bc6",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 42187
+    },
+    {
+      "caseId": "B13",
+      "verdict": "pass",
+      "expectedDecision": "plan satisfied; booking unproven",
+      "review": "Permits plan delivery with disclosed unbooked rail leg.",
+      "answerSha256": "ee473d0ad88921c4cfc468689a3bb0790d1814a643f9c94432379466c84afd00",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 50662
+    },
+    {
+      "caseId": "B14",
+      "verdict": "pass",
+      "expectedDecision": "unsatisfied",
+      "review": "Finds 10-minute gap below the required 20-minute transfer buffer.",
+      "answerSha256": "8b6cd3f5ecd89f1839c8ed99ad282564bae1fdff64c6ed9fc4bb93771d65cea1",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 50669
+    },
+    {
+      "caseId": "B15",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Checks per-leg confirmation despite the overall booked label.",
+      "answerSha256": "45f99bb667a983a9a49154fd801701b65429745fada236a5b835c711db47b767",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 4,
+      "elapsedMs": 50674
+    },
+    {
+      "caseId": "B16",
+      "verdict": "pass",
+      "expectedDecision": "chauffeured confirmation satisfied",
+      "review": "Correctly distinguishes chauffeured booking from self-drive eligibility.",
+      "answerSha256": "306c8a95fd29a5e279e4276700412f10a7f72b999f82a5631e2436ba2410557e",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 5,
+      "elapsedMs": 61025
+    },
+    {
+      "caseId": "B17",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Requires driver eligibility evidence beyond a booking code.",
+      "answerSha256": "7cbdac66d19c455454fce269ce2b71f24aae3ff1f3022f67e71df2c612356c8d",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 6,
+      "elapsedMs": 61018
+    },
+    {
+      "caseId": "B18",
+      "verdict": "pass",
+      "expectedDecision": "unknown",
+      "review": "Requires deposit settlement after vehicle return and inspection.",
+      "answerSha256": "d8989c9746789e2b94b38a3301688e31f09e082b68b5ca1e455c8409b5ee4c8d",
+      "evidenceReferencesObserved": true,
+      "assistanceNeeded": false,
+      "calls": 5,
+      "elapsedMs": 61015
+    }
+  ],
+  "summary": {
+    "passed": 18,
+    "total": 18,
+    "toolCalls": 89,
+    "assistanceReported": 0,
+    "wallMs": 364173,
+    "summedCaseElapsedMs": 1061541
+  },
+  "friction": [
+    "Verbose type metadata was compacted by the participant for terminal display.",
+    "Some auxiliary field descriptions were broad; participant used records and functions to resolve meaning."
+  ]
+}

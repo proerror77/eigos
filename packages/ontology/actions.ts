@@ -6,7 +6,7 @@ export interface InputReference { stepId: string; path: string; targetKey: strin
 export interface PreparedStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef?: Ref; capabilityRef?: Ref;
   input: Record<string, unknown>; inputRefs: InputReference[]; dependsOn: string[];
-  cost?: { minor: string; currency: string; payeeId: string };
+  cost?: { minor: string; currency: string; payeeId: string; purpose?: 'service_total' | 'deposit' };
 }
 export type IntentState = 'ready' | 'dispatching' | 'awaiting_remote' | 'effect_unknown' | 'effect_confirmed' | 'rejected' | 'canceled_before_dispatch' | 'canceled_after_dispatch' | 'needs_review';
 export interface ActionIntent {

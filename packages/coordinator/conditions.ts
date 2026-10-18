@@ -52,9 +52,9 @@ export function groundConditions(request: ServiceRequest, json: string, retrieve
       if (amount.currency !== 'CNY' || !quoted.some(m => scaled(m[1] ?? m[2]!) / 10000n === BigInt(amount.minor))) throw new DomainError('CONFLICT', 'Condition budget differs from its quoted instruction');
     }
     for (const fixed of request.requirements) {
-      if (fixed.kind === 'budget' && id === 'offer.total_within_budget' && (digest(fixed.expected) !== digest(expected.amount) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed budget');
-      if (fixed.kind === 'quantity' && requestedQuantity && (!sameQuantity({ amount: fixed.expected.amount, unit: aliases[fixed.expected.unit] ?? fixed.expected.unit }, requestedQuantity) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed quantity');
-      if (fixed.kind === 'deadline' && id === 'delivery.commitment_covers_deadline' && (Date.parse(fixed.expected.at) !== Date.parse(String(expected.at)) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed deadline');
+      if (fixed.kind === 'budget' && (!fixed.role || fixed.role === 'service_total') && id === 'offer.total_within_budget' && (digest(fixed.expected) !== digest(expected.amount) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed budget');
+      if (fixed.kind === 'quantity' && (!fixed.role || fixed.role === 'item_quantity') && requestedQuantity && (!sameQuantity({ amount: fixed.expected.amount, unit: aliases[fixed.expected.unit] ?? fixed.expected.unit }, requestedQuantity) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed quantity');
+      if (fixed.kind === 'deadline' && (!fixed.role || fixed.role === 'completion' || fixed.role === 'arrival') && id === 'delivery.commitment_covers_deadline' && (Date.parse(fixed.expected.at) !== Date.parse(String(expected.at)) || fixed.strength === 'hard' && c.strength !== 'hard')) throw new DomainError('CONFLICT', 'Condition cannot weaken the fixed deadline');
     }
     const key = (v: BusinessCondition) => digest({ predicate: v.predicateRef.id, subject: v.subject });
     const old = result.conditions?.find(v => v.id === c.id || key(v) === key(c));

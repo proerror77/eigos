@@ -90,6 +90,6 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 
 ## 2026-10-18 六类服务扩展
 
-当前运行契约为 ontology-execution-v5，业务模型为 eigos.business@3。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
+当前运行契约为 ontology-execution-v6，业务模型为 eigos.business@4。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
 
 [六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。本轮不切换常驻服务，不运行真实交易或预约。
