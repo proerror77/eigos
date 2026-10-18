@@ -8,6 +8,7 @@ import { paotuiPublicPlaceSchema } from '../capabilities/paotui-public-locations
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectBatch, type ObjectWrite, type ObjectSource } from './object-store.js';
 import type { ObjectRef } from './model.js';
 import { projectDomainSnapshot } from './domain-projection.js';
+import { projectCheckoutRequest, projectCommerceSnapshot } from './commerce-projection.js';
 
 function upsert(graph: OntologyObjectStore, owner: string, type: string, id: string, values: Record<string, unknown>): ObjectWrite {
   const ref = { type, id }; let expectedRevision: number | undefined;
@@ -48,6 +49,10 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
   const request = read.request;
   if (!read.result || typeof read.result !== 'object') return { state: 'request_only' };
   const result = read.result as Record<string, unknown>;
+  let checkoutRequest: ObjectRef | undefined;
+  if (result.checkoutRequest !== undefined) checkoutRequest = projectCheckoutRequest(graph, owner, request, result.checkoutRequest);
+  if (result.ucpSnapshot !== undefined) return projectCommerceSnapshot(graph, owner, request, read.capabilityId, read.input, result.ucpSnapshot);
+  if (checkoutRequest) return { state: 'typed_result', subject: checkoutRequest };
   if (result.domainSnapshot !== undefined) return projectDomainSnapshot(graph, owner, read.capabilityId, request, read.input, result.domainSnapshot);
   const parsed = ontologyReceiptSchema.safeParse(result.ontologyReceipt);
   if (!parsed.success) return { state: result.ontologyReceipt !== undefined ? 'invalid_source' : 'request_only' };

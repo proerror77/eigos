@@ -61,7 +61,7 @@ try {
   assert.equal(job.state, 'completed'); assert.equal(job.messages[0]!.id, session.requestId);
   assert.equal(job.goal, readFileSync(session.goalFile, 'utf8'));
   const d = job.delegation!;
-  assert.equal(d.backendVersion, 'ontology-execution-v6'); assert.equal(d.request.revision, 1);
+  assert.equal(d.backendVersion, 'ontology-execution-v7'); assert.equal(d.request.revision, 1);
   assert.equal(d.request.messages.length, 1); assert.equal(d.acceptance!.accepted, true);
   assert.deepEqual(d.plan!.capabilityRef, { id: 'geo.search', version: '1' });
   assert.equal(d.plan!.completionTarget, 'artifact'); assert.equal(d.plan!.quote, undefined);
@@ -129,7 +129,7 @@ try {
   }
   assert.equal(hash.digest('hex'), release.buildDigest); assert.equal(release.buildDigest, deployment.release.buildDigest);
   const health = await fetch('http://127.0.0.1:3430/health').then(r => r.json());
-  assert.equal(health.releaseDigest, release.buildDigest); assert.equal(health.backend, 'ontology-execution-v6');
+  assert.equal(health.releaseDigest, release.buildDigest); assert.equal(health.backend, 'ontology-execution-v7');
   const evidence = {
     passed: true, recordedAt: new Date().toISOString(), scope: 'Actual Grok/Monk PA via A2A, real Codex interpretation/planning, allowlisted DiscoverySource through Ontology MCP, persisted public location artifact read back by PA',
     taskId: job.id, requestId: session.requestId, query: expected, createdAt: job.createdAt, completedAt: job.updatedAt,

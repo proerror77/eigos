@@ -3,7 +3,7 @@ import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
 import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import { proposePlan, validatePlan } from '../coordinator/plan.js';
 import { checkRequirements } from '../coordinator/resolver.js';
-import { authorizationRequest, createSandboxGrant } from './policy.js';
+import { authorizationRequest, createSandboxGrant, requiredEffects } from './policy.js';
 import { createActionIntents } from '../coordinator/runtime.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -160,7 +160,7 @@ export class TaskService {
       if (!plan || !this.options.catalog) throw new DomainError('CONFLICT', 'No fixed plan to authorize');
       if (args.action === 'approve_plan') {
         const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
-        if (!this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox' || plan.quote || permit.planDigest !== plan.digest || permit.allowedEffects.some(e => !plan.steps.some(s => s.effect === e)) || permit.payeeIds.some(payee => !plan.steps.some(s => s.cost?.payeeId === payee))) throw new DomainError('FORBIDDEN', 'Permit is outside this exact sandbox plan');
+        if (!this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox' || plan.quote || permit.planDigest !== plan.digest || permit.allowedEffects.some(e => !plan.steps.some(s => requiredEffects(s).includes(e))) || permit.payeeIds.some(payee => !plan.steps.some(s => s.cost?.payeeId === payee))) throw new DomainError('FORBIDDEN', 'Permit is outside this exact sandbox plan');
         validatePlan(this.options.catalog, owner, d.request, plan);
         validatePlanningSnapshot(this.store.ontology, owner, d.request, plan.ontologyPlanning, true);
         this.store.grant(owner, createSandboxGrant(owner, id, plan, permit)); d.phase = 'executing'; d.nextAt = 0;
@@ -231,7 +231,7 @@ export class TaskService {
       if (prepared.recipe.some(s => !capability.actions.some(a => a.ref.id === s.actionTypeRef.id && a.ref.version === s.actionTypeRef.version && [args.action, 'read'].includes(a.effect)))) throw new DomainError('FORBIDDEN', 'Remediation cannot introduce other business effects');
       const candidate = { id: randomUUID(), binding, status: 'ready' as const, input: prepared.input, details: { ...prepared.details, originalPlanDigest: d.plan.digest, originalIntentId: operation.id }, facts: prepared.facts, evidenceRefs: prepared.evidenceRefs, requirementChecks: checkRequirements(ctx.request, prepared.facts, prepared.evidenceRefs), observedAt: prepared.observedAt, expiresAt: prepared.expiresAt, recipe: prepared.recipe };
       const plan = proposePlan(catalog, owner, ctx.request, capability, candidate, { kind: 'propose_plan', requestRevision: 1, candidateId: candidate.id, message: 'Bound to the owned original operation', steps: prepared.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) }, templatePlanning(ctx.request));
-      validatePlan(catalog, owner, ctx.request, plan); job.delegation.plan = plan; job.delegation.authorizationRequest = authorizationRequest(plan, plan.steps.map(s => s.effect));
+      validatePlan(catalog, owner, ctx.request, plan); job.delegation.plan = plan; job.delegation.authorizationRequest = authorizationRequest(plan, plan.steps.flatMap(requiredEffects));
       job.question = '售后任务已建立；须批准准确的沙箱动作和金额。受理不等于退款或取消完成。';
       this.store.save(owner, job); createActionIntents(this.store, owner, job, prepared.privateData);
       this.store.createAfterSales(owner, { id: caseId, owner, originalJobId: original.id, remedyJobId: job.id, action: args.action, state: 'requested', remoteRef: operation.remoteRef, createdAt: now, updatedAt: now });

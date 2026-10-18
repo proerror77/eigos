@@ -19,6 +19,18 @@ function request(text: string): ServiceRequest { return { id: 'roles-request', r
 const extracted = (requirement: RequirementInput, quote: string) => ({ requirement, messageId: 'message', quote });
 const budget = (id: string, role: 'service_total' | 'deposit', minor: string): RequirementInput => ({ id, kind: 'budget', role, strength: 'hard', expected: { minor, currency: 'CNY' } });
 
+test('an unchanged structured foreign-currency budget survives redundant model extraction without weakening its provenance', () => {
+  const r = request('预算已通过结构化最小货币单位字段提供。');
+  const constraint: RequirementInput = { id: 'service-budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '10000', currency: 'USD' } };
+  r.requirements.push({ ...constraint, provenance: { source: 'pa', interpretation: 'structured', messageId: 'message', receivedAt: r.messages[0]!.receivedAt } });
+  const output = groundRequirements(r, JSON.stringify([extracted(constraint, r.originalGoal)]), [], domainRequirementRoles.vehicle);
+  assert.deepEqual(output.requirements, r.requirements);
+  const changed = { ...constraint, expected: { minor: '20000', currency: 'USD' } };
+  assert.throws(() => groundRequirements(r, JSON.stringify([extracted(changed, r.originalGoal)]), [], domainRequirementRoles.vehicle), /fixed requirement/);
+  const empty = request(r.originalGoal);
+  assert.throws(() => groundRequirements(empty, JSON.stringify([extracted(constraint, r.originalGoal)]), [], domainRequirementRoles.vehicle), /Non-CNY/);
+});
+
 test('same-kind constraints retain independent business roles and their exact message provenance', () => {
   const r = request('服务费预算500元，押金上限2000元，2人，从A取车，到B还车');
   const fixed = groundRequirements(r, JSON.stringify([

@@ -1,0 +1,105 @@
+{
+  "scope": "Official local UCP reference merchant over signed HTTP; no live merchant, actual user PA, real payment or deployment",
+  "backendVersion": "ontology-execution-v7",
+  "model": {
+    "id": "eigos.business",
+    "version": "5",
+    "digest": "5fea5768d1e597e3bfafc3d001a326fe5cfd396cb1a3cf4d2b94a86b91253a90"
+  },
+  "sourceInputs": {
+    "baseCommit": "70aaa12337db1257221977616fe629bb694bb9f2",
+    "recordedAt": "2026-10-18T10:36:22.071034+00:00",
+    "sourceSha256": {
+      "examples/ucp-reference-merchant.py": "fb351c6ab940cc2b91275f795621a2073fe61da1f6d120bc7d92527da8e5e0f5",
+      "examples/verify-pa-public-geo-e2e.ts": "b9e5532124cbe0ed577ca21331bdfcaeafb5ad6fd1268ba41497ac9c14dc6644",
+      "examples/verify-ucp-reference.ts": "55163e9b4abbc029f5fc0c238dae81029791080a1ec117f4084583a9a85c6c4e",
+      "packages/capabilities/catalog.ts": "aed5d49004f7dfe012f6c152515f8f8add0b44da9d5df4a51d23b0e356b212fc",
+      "packages/capabilities/ucp/adapter.ts": "8f908828d0bb5ff9fab09e2fc7a205de5e9c001d6b140ac18014561206d7991b",
+      "packages/capabilities/ucp/client.ts": "eef3b30bb28b15fdfc9c3a4299dd60aeb4b6cffcbcf6f260e95a2732a039aa25",
+      "packages/capabilities/ucp/contracts.ts": "9904489ea973109ecbc1414cb840a749a88c370bf0f4b455f1d00df27aed81f2",
+      "packages/capabilities/ucp/snapshot.ts": "2171911648c2372d48f946111415bd0b5da337b6e6d730ca3496731e6d5ed803",
+      "packages/coordinator/coordinator.ts": "5e4d6bc8012dd7c9cc102485dd3b0d83fa0e36911fa87f61f89e58ddd3cb592e",
+      "packages/coordinator/plan.ts": "505fbf8e9139daec737e3af3830f3f8e281c93e24b272bfa3e2a01d132e67e4b",
+      "packages/coordinator/planning-session.ts": "205aecd9703ccf1e05fa268133cda53d581004b1a5c4b7225a40bbf0d702519f",
+      "packages/coordinator/requirements.ts": "38d39fb91ae317e905d839e353e60f6a1d4b07efec20b98bda57b32c13fcabb1",
+      "packages/coordinator/runtime.ts": "4738375f494de6286d9b9b960acdfab5acf9e4f33438bf8c7166d33c00c9972c",
+      "packages/core/delegation.ts": "5dae4eeabffd1c7e8a77cbc4d037215c32513c1249b8e67174e17832c36e9d28",
+      "packages/core/policy.ts": "acaf5d19dc2d37095b2ab2b43d98a5cbd819d923f8329de74e8e3972d3b4bd98",
+      "packages/core/store.ts": "69ac7d405965b7c1f6409886d94c029579f3db3feb086d6f143c23893fd028fa",
+      "packages/core/tasks.ts": "69c8a5c0048d15422fef6411f210165b7276cd5bfd3851abb0c1b88b2c725ac9",
+      "packages/ontology/actions.ts": "0ecdbd8ac96642581f99e9b51badd7e010248714a4479651b7cd0968004b0179",
+      "packages/ontology/business-model.ts": "c93efe89cbd600f15ceb1894c7f6ad8f4f01ec73987c6e403b5be150d5fded42",
+      "packages/ontology/commerce-functions.ts": "6ed0170cf380f115eb2e2317adda0ca08742fcf79422c30d92fe602ba7d5ee39",
+      "packages/ontology/commerce-projection.ts": "f8abbdd31ea626669208b5aeca5e17aa1d68ce675e0945863af2279eee86f3b5",
+      "packages/ontology/commerce.ts": "cce34f6c04fa00b3acf6d244a7e2ee2f78011097158b342464b96ac7208dcddd",
+      "packages/ontology/execution.ts": "81bad1ab96086e050daf6db36e8c2f5e071108b3035c4a80aa42380a2645aa23",
+      "packages/ontology/object-evidence.ts": "7b1754aa21c923f41f87ec1a80deb66cac1cd588b22ec31c4b4455d4ed91d0b8",
+      "packages/ontology/object-functions.ts": "bf8cb83b1e6319dd58d3725606f00bf43f7cce2909ba18c7ee26d4e0f275ca08",
+      "packages/ontology/task-projection.ts": "91b8545c8ac39ff903a0dd68f93ba33a2e0714366058d4f8f439e5fef8110476"
+    },
+    "officialReferenceCommit": "b7d7a5496d61650e0780f4d1f87684e10f811562",
+    "referenceDependencyLockSha256": "12a6485c744b59ca1f93f56fdc4182006ada2370f5788192f53d4c4a2877813e",
+    "before": {
+      "checkouts": 4,
+      "orders": 2,
+      "rosesInventory": 996
+    }
+  },
+  "realModel": {
+    "tasks": [
+      {
+        "phase": "prepare",
+        "taskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+        "state": "completed",
+        "approved": true,
+        "protocolMatch": true,
+        "parametersMatch": true,
+        "modelRuns": 4,
+        "ontologyReads": 5
+      },
+      {
+        "phase": "confirm",
+        "taskId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+        "state": "completed",
+        "approved": true,
+        "protocolMatch": true,
+        "parametersMatch": true,
+        "modelRuns": 5,
+        "ontologyReads": 7
+      }
+    ],
+    "modelCalls": 9,
+    "ontologyReads": 12,
+    "checkoutReadinessCalledByModel": true,
+    "parametersMatch": true,
+    "protocolMatch": true
+  },
+  "automatedChecks": {
+    "typecheck": "passed",
+    "tests": {
+      "passed": 304,
+      "total": 304
+    },
+    "build": "passed",
+    "processE2E": {
+      "passed": 7,
+      "total": 7
+    },
+    "diffCheck": "passed"
+  },
+  "merchantReadback": {
+    "newCheckouts": 1,
+    "newOrders": 1,
+    "inventoryDelta": -2,
+    "unsignedRequestStatus": 401,
+    "operationIdentityMatched": true
+  },
+  "remaining": [
+    "No production UCP merchant or Shopify MCP binding",
+    "No AHA integration",
+    "No actual user PA run",
+    "No live authorization, real payment, refund/cancel execution or deployment",
+    "Shipping confirmation and a fulfilled counter do not establish delivery",
+    "Unsupported post-purchase adjustments remain unknown"
+  ]
+}

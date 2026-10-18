@@ -5,6 +5,8 @@ import type { JobStore } from './store.js';
 import type { ExecutionPlan, PlanStep } from '../ontology/execution.js';
 import type { ActionIntent, EffectClass, PlanGrant } from '../ontology/actions.js';
 
+export const requiredEffects = (step: Pick<PlanStep, 'effect' | 'additionalEffects'>): EffectClass[] => [...new Set([step.effect, ...(step.additionalEffects ?? [])])];
+
 export function effectFor(catalog: import('./catalog.js').ExecutionCatalog, step: PlanStep): EffectClass {
   const action = catalog.capability(step.capabilityRef).actions.find(a => sameRef(a.ref, step.actionTypeRef));
   if (!action) throw new DomainError('FORBIDDEN', 'Unknown business action'); return action.effect;
@@ -17,7 +19,7 @@ export function authorizationRequest(plan: ExecutionPlan, effects: EffectClass[]
 export function authorizeDispatch(store: JobStore, owner: string, plan: ExecutionPlan, step: PlanStep, intent: ActionIntent, adapter: RegisteredAdapter, allowSandbox: boolean, now = Date.now()): PlanGrant | undefined {
   if (intent.effect === 'local' || intent.effect === 'read') return;
   if (!allowSandbox || !isActionAdapter(adapter) || adapter.environment !== 'sandbox' || store.get(owner, intent.jobId).delegation?.request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Real business side effects are disabled; only explicitly requested and configured sandbox actions may dispatch');
-  const grant = store.grants(owner, intent.jobId).find(g => !g.revoked && g.planDigest === plan.digest && g.environment === 'sandbox' && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => sameRef(r, step.bindingRef)) && g.allowedEffects.includes(intent.effect));
+  const grant = store.grants(owner, intent.jobId).find(g => !g.revoked && g.planDigest === plan.digest && g.environment === 'sandbox' && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => sameRef(r, step.bindingRef)) && requiredEffects(step).every(e => g.allowedEffects.includes(e)));
   if (!grant || (step.cost && (!grant.payeeIds.includes(step.cost.payeeId) || grant.maxAmount.currency !== step.cost.currency))) throw new DomainError('FORBIDDEN', 'No current owner-bound permit for this exact action and payee');
   if (step.cost && BigInt(step.cost.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Action amount exceeds the exact permit');
   if (step.cost && intent.effect !== 'refund') store.reserveBudget(owner, intent.id, grant, step.cost);

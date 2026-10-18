@@ -90,6 +90,10 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 
 ## 2026-10-18 六类服务扩展
 
-当前运行契约为 ontology-execution-v6，业务模型为 eigos.business@4。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
+当前运行契约为 ontology-execution-v7，业务模型为 eigos.business@5。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
+
+## UCP 官方本地测试商家
+
+显式 `createExecutionCatalog({ store, ucpSandbox })` 可登记 `commerce.ucp.prepare.sandbox@1` 和 `commerce.ucp.confirm.sandbox@1`。连接限定 127.0.0.1 和官方模拟支付处理器；前者完成会话准备，后者需 order/payment 两种准确许可并独立读取原订单。复用现有执行账本和授权预算，默认关闭。协议版本、对象映射、恢复规则、实际模型及官方商家证据见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。
 
 [六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。本轮不切换常驻服务，不运行真实交易或预约。

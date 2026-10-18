@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DomainError, ReplanRequired, type Job } from '../core/domain.js';
 import type { JobStore, WorkClaim } from '../core/store.js';
 import { isActionAdapter, type ExecutionCatalog, type Delivery } from '../core/catalog.js';
-import { digest } from '../core/delegation.js';
+import { actionOperationKey, digest } from '../core/delegation.js';
 import { authorizeDispatch } from '../core/policy.js';
 import { BACKEND_VERSION, type ExecutionPlan, type PlanStep } from '../ontology/execution.js';
 import type { ActionContext, ActionIntent, ActionResult, ExecutionAttempt, OutcomeAssessment } from '../ontology/actions.js';
@@ -16,7 +16,7 @@ export function createActionIntents(store: JobStore, owner: string, job: Job, pr
   const plan = job.delegation!.plan!; const ids: string[] = [];
   for (const step of plan.steps) {
     const id = randomUUID();
-    ids.push(store.createIntent(owner, { id, owner, jobId: job.id, stepId: step.id, businessOperationKey: digest({ owner, requestId: job.delegation!.request.businessScopeId ?? plan.requestId, operationId: step.operationId }),
+    ids.push(store.createIntent(owner, { id, owner, jobId: job.id, stepId: step.id, businessOperationKey: actionOperationKey(owner, step.operationScope ?? job.delegation!.request.businessScopeId ?? plan.requestId, step.operationId),
       planDigest: plan.digest, bindingRef: step.bindingRef, inputDigest: digest({ input: step.input, inputRefs: step.inputRefs }), privateDigest: digest(privateData ?? null), privateData: privateData ?? null,
       effect: step.effect, state: 'ready', nextAt: Date.now(), createdAt: new Date().toISOString() }));
   }
@@ -136,9 +136,9 @@ export class ActionRuntime {
       result = { kind: 'unknown', eventId: `${attempt!.id}:unknown`, sourceVersion: intent.latestVersion ?? 0, evidenceRefs: [], message: 'Operation result unknown; query the original business operation before any further effect.' }; verified = true;
     }
     const recorded = this.store.recordObservation(claim.owner, intent.id, attempt!.id, result, verified);
-    if (recorded.applied && verified && result.kind !== 'unknown' && result.output?.domainSnapshot !== undefined) {
+    if (recorded.applied && verified && result.kind !== 'unknown' && (result.output?.domainSnapshot !== undefined || result.output?.ucpSnapshot !== undefined)) {
       if (!this.store.checkpoint(claim, () => {
-        const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: { domainSnapshot: result.output!.domainSnapshot } });
+        const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: result.output!.ucpSnapshot !== undefined ? { ucpSnapshot: result.output!.ucpSnapshot } : { domainSnapshot: result.output!.domainSnapshot } });
         if (projection.state !== 'typed_result') throw new DomainError('CONFLICT', 'Verified domain observation could not be projected');
       })) return false;
     }

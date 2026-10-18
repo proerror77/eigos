@@ -1,0 +1,75 @@
+{
+  "before": {
+    "checkouts": 4,
+    "orders": 2,
+    "rosesInventory": 996
+  },
+  "after": {
+    "checkouts": 5,
+    "orders": 3,
+    "rosesInventory": 994
+  },
+  "orderId": "228e37be-efab-4d67-a879-5853f5cae114",
+  "checkoutId": "aa7bf67b-b8d8-4dee-a693-644b335258ff",
+  "checkoutState": "completed",
+  "currency": "USD",
+  "totals": [
+    {
+      "type": "subtotal",
+      "amount": 7000
+    },
+    {
+      "type": "fulfillment",
+      "amount": 0
+    },
+    {
+      "type": "total",
+      "amount": 7000
+    }
+  ],
+  "items": [
+    {
+      "lineId": "2008e8bb-4ca3-47fb-8586-b20862ef2c5b",
+      "itemId": "bouquet_roses",
+      "quantity": {
+        "total": 2,
+        "fulfilled": 0
+      }
+    }
+  ],
+  "destinationMatchesConfiguredTestProfile": true,
+  "unsignedRead": {
+    "status": 401,
+    "body": {
+      "ucp": {
+        "version": "2026-04-08",
+        "status": "error"
+      },
+      "messages": [
+        {
+          "type": "error",
+          "code": "signature_missing",
+          "content": "Request signature is required",
+          "severity": "unrecoverable"
+        }
+      ]
+    }
+  },
+  "operationIdentityChecks": [
+    {
+      "phase": "prepare",
+      "taskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+      "writeCount": 1,
+      "sameKeyInLedgerHttpMerchant": true,
+      "idempotencyKey": "28f7c98e87b8629393997ae380595f2644ceabac0973233d794ed215da342081"
+    },
+    {
+      "phase": "confirm",
+      "taskId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+      "writeCount": 1,
+      "sameKeyInLedgerHttpMerchant": true,
+      "idempotencyKey": "53ed50840fec2d510f9483e741179214d3bcf00fceea5221a602e27db69a3188"
+    }
+  ],
+  "rawReadbackSha256": "aa42ced0504576a066d3889237d6017b4886b92b9b1ec66588d7fc4e3a2742f8"
+}

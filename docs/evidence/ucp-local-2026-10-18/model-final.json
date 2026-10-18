@@ -1,0 +1,1627 @@
+{
+  "scope": "Official local UCP reference merchant over signed HTTP; no live merchant, actual user PA, real payment or deployment",
+  "reasoning": "codex-exec",
+  "backendVersion": "ontology-execution-v7",
+  "model": {
+    "id": "eigos.business",
+    "version": "5",
+    "digest": "5fea5768d1e597e3bfafc3d001a326fe5cfd396cb1a3cf4d2b94a86b91253a90"
+  },
+  "failures": [],
+  "sourceReceipts": [
+    {
+      "id": "ec90c128-e99e-4161-8982-43c43d1c5157",
+      "method": "GET",
+      "path": "/.well-known/ucp",
+      "startedAt": "2026-10-18T10:36:49.267Z",
+      "receivedAt": "2026-10-18T10:36:49.280Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "f328481a2200e382ab0573c661b12e907d159a3aa2fab19e522469f5a2f23809",
+      "environment": "sandbox"
+    },
+    {
+      "id": "84605ed0-97cf-4774-bcc2-489b9e3c87be",
+      "method": "GET",
+      "path": "/.well-known/ucp",
+      "startedAt": "2026-10-18T10:37:15.924Z",
+      "receivedAt": "2026-10-18T10:37:15.927Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "f328481a2200e382ab0573c661b12e907d159a3aa2fab19e522469f5a2f23809",
+      "environment": "sandbox"
+    },
+    {
+      "id": "5a1fb393-8e26-4f73-98bb-3581e0b05fd2",
+      "method": "POST",
+      "path": "/checkout-sessions",
+      "startedAt": "2026-10-18T10:37:15.928Z",
+      "receivedAt": "2026-10-18T10:37:15.987Z",
+      "status": 201,
+      "inputDigest": "cffd95c80e939ecf5a2acc43f48aa4831b9ca8434a4dd2e8cccd55da797093e4",
+      "responseSha256": "4c2c8105c6137136c82d8a182185779aea5473e535df2b07926c7da8f40ba7cf",
+      "environment": "sandbox",
+      "idempotencyKey": "28f7c98e87b8629393997ae380595f2644ceabac0973233d794ed215da342081"
+    },
+    {
+      "id": "5f478402-3279-46b4-a8b9-f1aeba997a2c",
+      "method": "GET",
+      "path": "/.well-known/ucp",
+      "startedAt": "2026-10-18T10:37:42.501Z",
+      "receivedAt": "2026-10-18T10:37:42.505Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "f328481a2200e382ab0573c661b12e907d159a3aa2fab19e522469f5a2f23809",
+      "environment": "sandbox"
+    },
+    {
+      "id": "91c21ad0-cba4-41bf-89f0-7865789705d3",
+      "method": "GET",
+      "path": "/checkout-sessions/aa7bf67b-b8d8-4dee-a693-644b335258ff",
+      "startedAt": "2026-10-18T10:37:42.507Z",
+      "receivedAt": "2026-10-18T10:37:42.512Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "4c2c8105c6137136c82d8a182185779aea5473e535df2b07926c7da8f40ba7cf",
+      "environment": "sandbox"
+    },
+    {
+      "id": "3a048ae5-5653-45e2-b7b5-e824e4cab618",
+      "method": "GET",
+      "path": "/.well-known/ucp",
+      "startedAt": "2026-10-18T10:38:23.436Z",
+      "receivedAt": "2026-10-18T10:38:23.441Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "f328481a2200e382ab0573c661b12e907d159a3aa2fab19e522469f5a2f23809",
+      "environment": "sandbox"
+    },
+    {
+      "id": "51b41804-699a-4f65-8217-9a1983ea23fb",
+      "method": "GET",
+      "path": "/checkout-sessions/aa7bf67b-b8d8-4dee-a693-644b335258ff",
+      "startedAt": "2026-10-18T10:38:23.442Z",
+      "receivedAt": "2026-10-18T10:38:23.458Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "4c2c8105c6137136c82d8a182185779aea5473e535df2b07926c7da8f40ba7cf",
+      "environment": "sandbox"
+    },
+    {
+      "id": "6709b23f-ea5c-4b2a-979e-c5a109cb9218",
+      "method": "POST",
+      "path": "/checkout-sessions/aa7bf67b-b8d8-4dee-a693-644b335258ff/complete",
+      "startedAt": "2026-10-18T10:38:23.459Z",
+      "receivedAt": "2026-10-18T10:38:23.471Z",
+      "status": 200,
+      "inputDigest": "8ce49e9c51262d757a208025bc129d3479ccab1117c1380ea614479aee9476a3",
+      "responseSha256": "39bc1c05acff350d32f189909696ff56989356f766f2002db3ee53ceba180e56",
+      "environment": "sandbox",
+      "idempotencyKey": "53ed50840fec2d510f9483e741179214d3bcf00fceea5221a602e27db69a3188"
+    },
+    {
+      "id": "6112d690-a220-4770-aeeb-fede9ea54e16",
+      "method": "GET",
+      "path": "/orders/228e37be-efab-4d67-a879-5853f5cae114",
+      "startedAt": "2026-10-18T10:38:23.473Z",
+      "receivedAt": "2026-10-18T10:38:23.478Z",
+      "status": 200,
+      "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "responseSha256": "722ed340efa1af8416f37944cca370ebe3a27f9d6edf07c84251de727c668a7e",
+      "environment": "sandbox"
+    }
+  ],
+  "modelOutputs": [
+    {
+      "phase": "prepare",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"checkout\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"b6dcdca5-2989-4b2f-8482-835cc5ce43b4\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      },
+      "evidence": {
+        "id": "770ff6db-689a-45b1-bd5e-c90b1fb61669",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:36:22.651Z",
+        "completedAt": "2026-10-18T10:36:34.274Z",
+        "outputSha256": "98f6c3b4a580c000ec463c5dfe643496f02df17517bd564020e69716930a601a",
+        "threadId": "01a14e95-8020-7c93-abde-4cadfd7cf962",
+        "usage": {
+          "input_tokens": 40585,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 130,
+          "reasoning_output_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": "prepare",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"commerce.ucp.prepare.sandbox\",\"version\":\"1\"},\"message\":\"匹配官方本地测试商家沙箱结账准备能力：商品 bouquet_roses 数量2件，使用 office 测试收货资料；目标仅为创建会话并取得商家报价，不下单或付款。\",\"inputJson\":\"{\\\"items\\\":[{\\\"id\\\":\\\"bouquet_roses\\\",\\\"quantity\\\":2}],\\\"fulfillmentProfile\\\":\\\"office\\\"}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"checkout-prepared\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"ucp.checkout.prepared\\\"}},\\\"messageId\\\":\\\"60703517-5c0a-4d55-b199-836080da1946\\\",\\\"quote\\\":\\\"只取得会话和商家报价，不下单或付款\\\"}]\",\"conditionsJson\":\"[]\"}"
+      },
+      "evidence": {
+        "id": "bc786bea-2791-4579-83a1-af807888ac5f",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:36:34.285Z",
+        "completedAt": "2026-10-18T10:36:49.259Z",
+        "outputSha256": "87aeb2c19cc0fd87efab6b6d4a3c07e241ef60749e5a7faa26c89eb6d8e2ab3a",
+        "threadId": "01a14e95-acb7-7a31-b33c-ed0dcaaf0f7c",
+        "usage": {
+          "input_tokens": 44468,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 335,
+          "reasoning_output_tokens": 59
+        }
+      }
+    },
+    {
+      "phase": "prepare",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Checkout\",\"limit\":5,\"includeSchemas\":true}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"CheckoutRequest\",\"id\":\"b6dcdca5-2989-4b2f-8482-835cc5ce43b4:r1\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"110b7c8b-7ef0-471a-8be5-7892f726e1eb\",\"subject\":{\"type\":\"CheckoutRequest\",\"id\":\"b6dcdca5-2989-4b2f-8482-835cc5ce43b4:r1\"},\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      },
+      "evidence": {
+        "id": "495768be-92f5-4ff0-9453-8b93748ca7b2",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:36:49.289Z",
+        "completedAt": "2026-10-18T10:37:00.581Z",
+        "outputSha256": "2632606faf276e952092850a8ee4cd326e9791025adbca3483720885702a7fd5",
+        "threadId": "01a14e95-e74d-7fa1-804e-150dc26eada3",
+        "usage": {
+          "input_tokens": 31052,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 229,
+          "reasoning_output_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": "prepare",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"110b7c8b-7ef0-471a-8be5-7892f726e1eb\",\"message\":\"建议采用官方本地测试商家的 ready 沙箱候选，事实有效期至 2026-10-18T10:41:49.283Z。已读取注册定义和所属 CheckoutRequest：操作为 prepare，商品为 bouquet_roses、数量2；候选使用 office 测试资料。硬要求检查和 precondition 评估均无检查项，未返回失败或未知条件。simulated 来源适用于本次明确的沙箱演练，realSupply=false 不代表实物供应。以下仅提案，不执行或授予权限；仅创建结账会话并取得报价，不下单或付款。ucp.checkout.prepared 结果条件明确延后至执行后的独立观察验证，当前不声称完成。\",\"steps\":[{\"id\":\"checkout\",\"actionTypeRef\":{\"id\":\"ucp.checkout.create\",\"version\":\"1\"},\"bindingRef\":{\"id\":\"ucp.official-flower-shop.prepare\",\"version\":\"1\"},\"inputJson\":\"{\\\"items\\\":[{\\\"id\\\":\\\"bouquet_roses\\\",\\\"quantity\\\":2}],\\\"fulfillmentProfile\\\":\\\"office\\\"}\",\"dependsOn\":[]}]}"
+      },
+      "evidence": {
+        "id": "7f62a80f-82d1-4e74-9439-20d031107a0e",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:37:00.594Z",
+        "completedAt": "2026-10-18T10:37:15.548Z",
+        "outputSha256": "d0f3a3cbda7f972ec6289e5d87e465325e9cd8894d9573472da36d0b84979184",
+        "threadId": "01a14e96-1379-77c3-9df6-b1db89f98b07",
+        "usage": {
+          "input_tokens": 39015,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 370,
+          "reasoning_output_tokens": 45
+        }
+      }
+    },
+    {
+      "phase": "confirm",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"checkout\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"e0c73044-7f6e-48ef-bfd6-adcee7104b6e\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      },
+      "evidence": {
+        "id": "b3d7eb2c-d66c-4bce-b835-29e83db03622",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:37:16.936Z",
+        "completedAt": "2026-10-18T10:37:26.694Z",
+        "outputSha256": "ebdd68f3aaa8a01bafce868ad28490b29afae37c0a53bc901153f29a0206c73b",
+        "threadId": "01a14e96-5355-7771-9806-42f280895600",
+        "usage": {
+          "input_tokens": 40846,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 129,
+          "reasoning_output_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": "confirm",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"commerce.ucp.confirm.sandbox\",\"version\":\"1\"},\"message\":\"匹配官方本地沙箱结账确认能力，保留原商品、数量、收货资料和报价，预算为 USD 10000 最小货币单位。目标仅为订单确认；此解析不执行结账，也不证明真实购买、付款到账或送达。\",\"inputJson\":\"{\\\"preparationTaskId\\\":\\\"b6dcdca5-2989-4b2f-8482-835cc5ce43b4\\\",\\\"budget\\\":{\\\"minor\\\":\\\"10000\\\",\\\"currency\\\":\\\"USD\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"service-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"role\\\":\\\"service_total\\\",\\\"expected\\\":{\\\"minor\\\":\\\"10000\\\",\\\"currency\\\":\\\"USD\\\"}},\\\"messageId\\\":\\\"308e900f-239e-4b35-b712-9c6384b4f707\\\",\\\"quote\\\":\\\"预算已通过结构化最小货币单位字段提供。\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"order-confirmation-outcome\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"ucp.order.confirmed\\\"}},\\\"messageId\\\":\\\"308e900f-239e-4b35-b712-9c6384b4f707\\\",\\\"quote\\\":\\\"目标只到订单确认\\\"}]\",\"conditionsJson\":\"[]\"}"
+      },
+      "evidence": {
+        "id": "b22a7c01-3bac-4888-a16a-a54e2ccc5f90",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:37:26.704Z",
+        "completedAt": "2026-10-18T10:37:42.493Z",
+        "outputSha256": "fbd5d655ae168c6482ec9cab10fc100253e0fb09400c1735ca5d4de315f60bc4",
+        "threadId": "01a14e96-7975-7963-96fb-e16c7a8b822e",
+        "usage": {
+          "input_tokens": 44743,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 521,
+          "reasoning_output_tokens": 82
+        }
+      }
+    },
+    {
+      "phase": "confirm",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Checkout\",\"limit\":5,\"includeSchemas\":true}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"CheckoutSession\",\"id\":\"2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"a2122d96-7d9b-403b-b4fd-1799229bf7ec\",\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      },
+      "evidence": {
+        "id": "251e86f4-a702-4891-8747-2c151562f653",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:37:42.522Z",
+        "completedAt": "2026-10-18T10:37:57.406Z",
+        "outputSha256": "06744d678b385d48d13b3394ea91873bf209b7e9574d9ff7909365d7dfbb1418",
+        "threadId": "01a14e96-b753-7eb2-8fb1-b9f967f948c2",
+        "usage": {
+          "input_tokens": 31785,
+          "cached_input_tokens": 31616,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 197,
+          "reasoning_output_tokens": 0
+        }
+      }
+    },
+    {
+      "phase": "confirm",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"a2122d96-7d9b-403b-b4fd-1799229bf7ec\",\"subject\":{\"type\":\"CheckoutSession\",\"id\":\"2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117\"},\"phase\":\"precondition\"}"
+          },
+          {
+            "tool": "evaluate_ontology",
+            "argumentsJson": "{\"function\":\"checkoutReadiness\",\"object\":{\"type\":\"CheckoutSession\",\"id\":\"2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117\"}}"
+          }
+        ],
+        "finalJson": ""
+      },
+      "evidence": {
+        "id": "0703aad3-145f-468b-a625-8fcbb136ac22",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:37:57.420Z",
+        "completedAt": "2026-10-18T10:38:07.865Z",
+        "outputSha256": "22bd5766e3cf721748a51bc6a78d5307668f79a34e7ec0857d0cb01164556a12",
+        "threadId": "01a14e96-f177-7752-aae8-47c387959b62",
+        "usage": {
+          "input_tokens": 40534,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 194,
+          "reasoning_output_tokens": 10
+        }
+      }
+    },
+    {
+      "phase": "confirm",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"a2122d96-7d9b-403b-b4fd-1799229bf7ec\",\"message\":\"建议采用该沙箱候选：已读取所属结账会话及注册定义，checkoutReadiness 为 satisfied，会话为 ready_for_complete；原玫瑰花束数量为 2，总额 7000 USD 最小货币单位，低于预算 10000，报价摘要与候选一致。候选有效期至 2026-10-18T10:42:42.514Z。assess_conditions 未返回额外条件且不授予权限。来源为 synthetic，仅适用于本次明确要求的本地沙箱演练；realSupply=false 不代表真实商业供给。本提案保留准备任务、商品、数量、收货资料及报价，不执行或授予 order/payment 权限。ucp.order.confirmed 留待执行后独立读取原订单核验，目前未证明订单确认、付款到账或送达。\",\"steps\":[{\"id\":\"checkout\",\"actionTypeRef\":{\"id\":\"ucp.checkout.complete\",\"version\":\"1\"},\"bindingRef\":{\"id\":\"ucp.official-flower-shop.confirm\",\"version\":\"1\"},\"inputJson\":\"{\\\"preparationTaskId\\\":\\\"b6dcdca5-2989-4b2f-8482-835cc5ce43b4\\\",\\\"budget\\\":{\\\"minor\\\":\\\"10000\\\",\\\"currency\\\":\\\"USD\\\"}}\",\"dependsOn\":[]}]}"
+      },
+      "evidence": {
+        "id": "8a0350fd-a740-4139-ab14-dab73df21ed3",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T10:38:07.876Z",
+        "completedAt": "2026-10-18T10:38:22.528Z",
+        "outputSha256": "0e5002f0660c46f8d4593fd8605a677c8dc58bdc8307837192ace5761314f45e",
+        "threadId": "01a14e97-1a4c-7672-9f8f-42449550bdba",
+        "usage": {
+          "input_tokens": 40939,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 398,
+          "reasoning_output_tokens": 26
+        }
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "phase": "prepare",
+      "taskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+      "state": "completed",
+      "approved": true,
+      "protocolMatch": true,
+      "parametersMatch": true,
+      "modelRuns": 4,
+      "ontologyReads": 5,
+      "goal": "这是明确获准的官方本地测试商家演练，使用沙箱。请为商品 bouquet_roses 数量2件创建结账会话，使用 office 测试收货资料。只取得会话和商家报价，不下单或付款；商品件数是会话输入，不是本次要求交付实物。",
+      "request": {
+        "id": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+        "revision": 1,
+        "originalGoal": "这是明确获准的官方本地测试商家演练，使用沙箱。请为商品 bouquet_roses 数量2件创建结账会话，使用 office 测试收货资料。只取得会话和商家报价，不下单或付款；商品件数是会话输入，不是本次要求交付实物。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "60703517-5c0a-4d55-b199-836080da1946",
+            "text": "这是明确获准的官方本地测试商家演练，使用沙箱。请为商品 bouquet_roses 数量2件创建结账会话，使用 office 测试收货资料。只取得会话和商家报价，不下单或付款；商品件数是会话输入，不是本次要求交付实物。",
+            "receivedAt": "2026-10-18T10:36:22.580Z"
+          }
+        ],
+        "requirements": [],
+        "successCriteria": [
+          {
+            "id": "checkout-prepared",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "ucp.checkout.prepared"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "60703517-5c0a-4d55-b199-836080da1946",
+              "receivedAt": "2026-10-18T10:36:22.580Z",
+              "quote": "只取得会话和商家报价，不下单或付款"
+            }
+          }
+        ]
+      },
+      "plan": {
+        "id": "e0bc9056-6cd5-4a91-af00-5db45c24ee61",
+        "version": "7",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "5",
+            "digest": "5fea5768d1e597e3bfafc3d001a326fe5cfd396cb1a3cf4d2b94a86b91253a90"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "reads": [
+            {
+              "id": "33786533-96d2-4ec0-8f00-0a7ceb619b46",
+              "at": "2026-10-18T10:37:00.589Z",
+              "tool": "describe_ontology",
+              "inputDigest": "7e8d424755464e90d5a3ec88ff8a5836223be3d94b9a6063c7caa45174c1803d",
+              "outputDigest": "d114bff0a3da23ced42412d3978e0e93a8390e487779a6502a79cf3912579b43",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "f4c52313-3f46-4bb2-8080-766f6a8efb89",
+              "at": "2026-10-18T10:37:00.591Z",
+              "tool": "query_ontology",
+              "inputDigest": "d383e1c7051244e2a99b8ebe89cc67800518888e3403637eb7d393fe746dfdfc",
+              "outputDigest": "60c5a157b2dafacb343c1f3dad4a350edda25335f9a4ef0b68e24f1f32821887",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "CheckoutRequest",
+                    "id": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4:r1"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "43dc33032f6acb9ac090276c1198ced605912eeead15fe8676c213be1f7309e8",
+                  "linksDigest": "86ea91fbc5dc88423b92f03aff26483372a75f8e1825553ecdeb55aae006db7a"
+                }
+              ]
+            },
+            {
+              "id": "2b62ecf2-1b67-4f02-b907-7f83c6337da6",
+              "at": "2026-10-18T10:37:00.592Z",
+              "tool": "assess_conditions",
+              "inputDigest": "298ff7ab24cfc286bc6646a96038138aab83776f42b6ec0296a64b1f854a95bd",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "CheckoutRequest",
+                "id": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4:r1"
+              },
+              "revision": 1,
+              "propertiesDigest": "43dc33032f6acb9ac090276c1198ced605912eeead15fe8676c213be1f7309e8",
+              "linksDigest": "86ea91fbc5dc88423b92f03aff26483372a75f8e1825553ecdeb55aae006db7a"
+            }
+          ],
+          "conditionChecks": [],
+          "actionProposals": [],
+          "digest": "e4b6ddd68bdd1e477ae1e74434a4d547af6ed49f0ef4938aa9e452b61dfd2aa3"
+        },
+        "requestId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+        "requestRevision": 1,
+        "requestDigest": "fe937d263327e59d6421675460241d838e21200a12422e65ad8c607b3cc53540",
+        "capabilityRef": {
+          "id": "commerce.ucp.prepare.sandbox",
+          "version": "1"
+        },
+        "ontologyRef": {
+          "id": "eigos.commerce.ucp",
+          "version": "1"
+        },
+        "candidateId": "110b7c8b-7ef0-471a-8be5-7892f726e1eb",
+        "bindingRef": {
+          "id": "ucp.official-flower-shop.prepare",
+          "version": "1"
+        },
+        "verifierRef": {
+          "id": "ucp.independent",
+          "version": "1"
+        },
+        "steps": [
+          {
+            "id": "checkout",
+            "operationId": "prepare-checkout",
+            "actionTypeRef": {
+              "id": "ucp.checkout.create",
+              "version": "1"
+            },
+            "bindingRef": {
+              "id": "ucp.official-flower-shop.prepare",
+              "version": "1"
+            },
+            "capabilityRef": {
+              "id": "commerce.ucp.prepare.sandbox",
+              "version": "1"
+            },
+            "effect": "reserve",
+            "input": {
+              "items": [
+                {
+                  "id": "bouquet_roses",
+                  "quantity": 2
+                }
+              ],
+              "fulfillmentProfile": "office"
+            },
+            "inputRefs": [],
+            "dependsOn": [],
+            "cost": {
+              "minor": "0",
+              "currency": "USD",
+              "payeeId": "official-flower-shop",
+              "purpose": "service_total"
+            }
+          }
+        ],
+        "details": {
+          "environment": "sandbox",
+          "realOperationsAllowed": false,
+          "merchantId": "official-flower-shop",
+          "protocolVersion": "2026-04-08",
+          "operation": "prepare",
+          "sourceReceipt": "ec90c128-e99e-4161-8982-43c43d1c5157",
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "7309f4fe0b0c67b97977a3ddf02a292cd87ae601205ab015a3b320522016d8e1",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "artifact",
+        "requirementChecks": [],
+        "expiresAt": "2026-10-18T10:41:49.283Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "commerce.ucp.prepare.sandbox",
+              "version": "1"
+            },
+            "digest": "301b0d774a1234ca1e7b84109db7168ec0bb642bb41de908568ad3e609de0114"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "ucp.official-flower-shop.prepare",
+              "version": "1"
+            },
+            "digest": "7309f4fe0b0c67b97977a3ddf02a292cd87ae601205ab015a3b320522016d8e1"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "2ab2b0d5cdacf577c8c3a55d53497dd715447220faf789d3037202dff560bb13"
+      },
+      "authorizationRequest": {
+        "planDigest": "2ab2b0d5cdacf577c8c3a55d53497dd715447220faf789d3037202dff560bb13",
+        "effects": [
+          "reserve"
+        ],
+        "maxAmount": {
+          "minor": "0",
+          "currency": "USD"
+        },
+        "payeeIds": [
+          "official-flower-shop"
+        ],
+        "environment": "sandbox",
+        "realOperationsAllowed": false
+      },
+      "authorizationBudget": [
+        {
+          "minor": "0",
+          "currency": "USD",
+          "state": "held",
+          "intentId": "0f15ce55-1b00-4002-9746-39fac905a15a"
+        }
+      ],
+      "acceptance": {
+        "accepted": true,
+        "reason": "The exact local UCP business endpoint was independently verified; real operations and delivery are not implied",
+        "checks": [
+          {
+            "requirementId": "checkout-prepared",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "5a1fb393-8e26-4f73-98bb-3581e0b05fd2"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "5a1fb393-8e26-4f73-98bb-3581e0b05fd2"
+        ],
+        "at": "2026-10-18T10:37:15.998Z"
+      },
+      "artifact": {
+        "id": "6f647df766defcce90277e1ffb63285c8c71d39cda462982f748cbdab8bab2a0",
+        "name": "ucp-prepare-result.json",
+        "data": {
+          "goal": "这是明确获准的官方本地测试商家演练，使用沙箱。请为商品 bouquet_roses 数量2件创建结账会话，使用 office 测试收货资料。只取得会话和商家报价，不下单或付款；商品件数是会话输入，不是本次要求交付实物。",
+          "deliverable": "官方本地测试商家的结账会话已准备；没有下单或付款。",
+          "execution": "completed",
+          "result": {
+            "environment": "sandbox",
+            "ucpSnapshot": {
+              "environment": "sandbox",
+              "merchantId": "official-flower-shop",
+              "merchantOrigin": "http://127.0.0.1:61827",
+              "protocolVersion": "2026-04-08",
+              "requestId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+              "requestRevision": 1,
+              "preparationTaskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+              "operation": "prepare",
+              "inputDigest": "cdcd8e0fd93cd251336f5222241bb11bebe936bf1d9840b3230728a28b97760b",
+              "configurationDigest": "0fd2672c9d73ee1b1417f88d50c2526a850492b7ffda22276763d4ad94f0bbd4",
+              "expectedItems": [
+                {
+                  "id": "bouquet_roses",
+                  "quantity": 2
+                }
+              ],
+              "checkout": {
+                "id": "aa7bf67b-b8d8-4dee-a693-644b335258ff",
+                "state": "ready_for_complete",
+                "items": [
+                  {
+                    "id": "bouquet_roses",
+                    "lineId": "2008e8bb-4ca3-47fb-8586-b20862ef2c5b",
+                    "title": "Bouquet of Red Roses",
+                    "quantity": 2,
+                    "unitPrice": {
+                      "minor": "3500",
+                      "currency": "USD"
+                    }
+                  }
+                ],
+                "total": {
+                  "minor": "7000",
+                  "currency": "USD"
+                },
+                "quoteDigest": "986c410145237c6e572ea1257fa2da68f040f07a94cb87ecdeb77a50c260e780",
+                "fulfillmentDigest": "e93b64c435bf4a5bacd4c1692cd7fab5e39c5b06885b6b870630936caf525dc7",
+                "buyerDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "destinationDigest": "44e9bdaa4e80231db6d8f965aea2de5d51c9dccd795c4c587abf38c184dec431",
+                "messageCodes": [],
+                "receipt": {
+                  "id": "5a1fb393-8e26-4f73-98bb-3581e0b05fd2",
+                  "method": "POST",
+                  "path": "/checkout-sessions",
+                  "startedAt": "2026-10-18T10:37:15.928Z",
+                  "receivedAt": "2026-10-18T10:37:15.987Z",
+                  "status": 201,
+                  "inputDigest": "cffd95c80e939ecf5a2acc43f48aa4831b9ca8434a4dd2e8cccd55da797093e4",
+                  "responseSha256": "4c2c8105c6137136c82d8a182185779aea5473e535df2b07926c7da8f40ba7cf",
+                  "environment": "sandbox",
+                  "idempotencyKey": "28f7c98e87b8629393997ae380595f2644ceabac0973233d794ed215da342081"
+                }
+              }
+            },
+            "assessment": {
+              "status": "satisfied",
+              "criteria": [
+                {
+                  "id": "checkout_items",
+                  "result": "pass",
+                  "reason": "The merchant must return the exact requested item identities and quantities"
+                },
+                {
+                  "id": "business_errors",
+                  "result": "pass",
+                  "reason": "Business error messages require resolution; HTTP success alone is insufficient"
+                },
+                {
+                  "id": "checkout_exists",
+                  "result": "pass",
+                  "reason": "Preparing a checkout does not place an order or prove delivery"
+                }
+              ],
+              "endpoint": "checkout_prepared"
+            }
+          }
+        }
+      },
+      "error": null,
+      "modelReceipts": [
+        {
+          "id": "770ff6db-689a-45b1-bd5e-c90b1fb61669",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:36:22.651Z",
+          "completedAt": "2026-10-18T10:36:34.274Z",
+          "outputSha256": "98f6c3b4a580c000ec463c5dfe643496f02df17517bd564020e69716930a601a",
+          "threadId": "01a14e95-8020-7c93-abde-4cadfd7cf962",
+          "usage": {
+            "input_tokens": 40585,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 130,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "bc786bea-2791-4579-83a1-af807888ac5f",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:36:34.285Z",
+          "completedAt": "2026-10-18T10:36:49.259Z",
+          "outputSha256": "87aeb2c19cc0fd87efab6b6d4a3c07e241ef60749e5a7faa26c89eb6d8e2ab3a",
+          "threadId": "01a14e95-acb7-7a31-b33c-ed0dcaaf0f7c",
+          "usage": {
+            "input_tokens": 44468,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 335,
+            "reasoning_output_tokens": 59
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "495768be-92f5-4ff0-9453-8b93748ca7b2",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:36:49.289Z",
+          "completedAt": "2026-10-18T10:37:00.581Z",
+          "outputSha256": "2632606faf276e952092850a8ee4cd326e9791025adbca3483720885702a7fd5",
+          "threadId": "01a14e95-e74d-7fa1-804e-150dc26eada3",
+          "usage": {
+            "input_tokens": 31052,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 229,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "7f62a80f-82d1-4e74-9439-20d031107a0e",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:37:00.594Z",
+          "completedAt": "2026-10-18T10:37:15.548Z",
+          "outputSha256": "d0f3a3cbda7f972ec6289e5d87e465325e9cd8894d9573472da36d0b84979184",
+          "threadId": "01a14e96-1379-77c3-9df6-b1db89f98b07",
+          "usage": {
+            "input_tokens": 39015,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 370,
+            "reasoning_output_tokens": 45
+          },
+          "purpose": "planning"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "a69358b2-674b-4346-ad57-9686786387c2",
+          "at": "2026-10-18T10:36:34.281Z",
+          "tool": "describe_ontology",
+          "inputDigest": "d1c9d59ee2bc13dd9a4af2f6592781321ba155140b2b7fa32058deea32f826d9",
+          "outputDigest": "6235bf1f77647d65d2b082c5bfca4d8d05802a19b028d9dc8d3f0a365bc7b19e",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "6b6e81fb-5121-47c1-8434-31f0460e4a58",
+          "at": "2026-10-18T10:36:34.283Z",
+          "tool": "query_ontology",
+          "inputDigest": "5bb54fede84976158d81cd6d2b2ddaed0ff530defecc17f16575974487384792",
+          "outputDigest": "bbcfc3f270ca573ab17ecb02b9a247f7a30e9a51b6c3d2956d76468e811db749",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4"
+              },
+              "revision": 2,
+              "propertiesDigest": "3f85efe3d97e9461f5d6a07d8ceab0fc975f45b707232750bb00b202c1432ba6",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "33786533-96d2-4ec0-8f00-0a7ceb619b46",
+          "at": "2026-10-18T10:37:00.589Z",
+          "tool": "describe_ontology",
+          "inputDigest": "7e8d424755464e90d5a3ec88ff8a5836223be3d94b9a6063c7caa45174c1803d",
+          "outputDigest": "d114bff0a3da23ced42412d3978e0e93a8390e487779a6502a79cf3912579b43",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "f4c52313-3f46-4bb2-8080-766f6a8efb89",
+          "at": "2026-10-18T10:37:00.591Z",
+          "tool": "query_ontology",
+          "inputDigest": "d383e1c7051244e2a99b8ebe89cc67800518888e3403637eb7d393fe746dfdfc",
+          "outputDigest": "60c5a157b2dafacb343c1f3dad4a350edda25335f9a4ef0b68e24f1f32821887",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "CheckoutRequest",
+                "id": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4:r1"
+              },
+              "revision": 1,
+              "propertiesDigest": "43dc33032f6acb9ac090276c1198ced605912eeead15fe8676c213be1f7309e8",
+              "linksDigest": "86ea91fbc5dc88423b92f03aff26483372a75f8e1825553ecdeb55aae006db7a"
+            }
+          ]
+        },
+        {
+          "id": "2b62ecf2-1b67-4f02-b907-7f83c6337da6",
+          "at": "2026-10-18T10:37:00.592Z",
+          "tool": "assess_conditions",
+          "inputDigest": "298ff7ab24cfc286bc6646a96038138aab83776f42b6ec0296a64b1f854a95bd",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+        "status": {
+          "state": "TASK_STATE_COMPLETED",
+          "message": {
+            "messageId": "67922f8a-86af-407b-bdaf-f150390a8b67",
+            "contextId": "af11e702-f402-4a66-84fa-f042805e694d",
+            "taskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "官方本地测试商家的结账会话已准备；没有下单或付款。"
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T10:37:15.998Z"
+        },
+        "artifactIds": [
+          "6f647df766defcce90277e1ffb63285c8c71d39cda462982f748cbdab8bab2a0"
+        ]
+      }
+    },
+    {
+      "phase": "confirm",
+      "taskId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+      "state": "completed",
+      "approved": true,
+      "protocolMatch": true,
+      "parametersMatch": true,
+      "modelRuns": 5,
+      "ontologyReads": 7,
+      "goal": "这是明确获准的官方本地测试商家演练，使用沙箱。请确认准备任务 b6dcdca5-2989-4b2f-8482-835cc5ce43b4 的结账，保持原商品、数量、收货资料和报价。预算已通过结构化最小货币单位字段提供。目标只到订单确认，不要求现在送达；不要声称真实购买或付款到账。",
+      "request": {
+        "id": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+        "revision": 1,
+        "originalGoal": "这是明确获准的官方本地测试商家演练，使用沙箱。请确认准备任务 b6dcdca5-2989-4b2f-8482-835cc5ce43b4 的结账，保持原商品、数量、收货资料和报价。预算已通过结构化最小货币单位字段提供。目标只到订单确认，不要求现在送达；不要声称真实购买或付款到账。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "308e900f-239e-4b35-b712-9c6384b4f707",
+            "text": "这是明确获准的官方本地测试商家演练，使用沙箱。请确认准备任务 b6dcdca5-2989-4b2f-8482-835cc5ce43b4 的结账，保持原商品、数量、收货资料和报价。预算已通过结构化最小货币单位字段提供。目标只到订单确认，不要求现在送达；不要声称真实购买或付款到账。",
+            "receivedAt": "2026-10-18T10:37:16.928Z"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "service-budget",
+            "strength": "hard",
+            "kind": "budget",
+            "role": "service_total",
+            "expected": {
+              "minor": "10000",
+              "currency": "USD"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "structured",
+              "messageId": "308e900f-239e-4b35-b712-9c6384b4f707",
+              "receivedAt": "2026-10-18T10:37:16.928Z"
+            }
+          }
+        ],
+        "successCriteria": [
+          {
+            "id": "order-confirmation-outcome",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "ucp.order.confirmed"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "308e900f-239e-4b35-b712-9c6384b4f707",
+              "receivedAt": "2026-10-18T10:37:16.928Z",
+              "quote": "目标只到订单确认"
+            }
+          }
+        ]
+      },
+      "plan": {
+        "id": "95a56554-0e90-4032-91f4-f7f1242605bd",
+        "version": "7",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "5",
+            "digest": "5fea5768d1e597e3bfafc3d001a326fe5cfd396cb1a3cf4d2b94a86b91253a90"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "reads": [
+            {
+              "id": "74d52909-20e9-477a-8728-c95ed0a910ad",
+              "at": "2026-10-18T10:37:57.413Z",
+              "tool": "describe_ontology",
+              "inputDigest": "7e8d424755464e90d5a3ec88ff8a5836223be3d94b9a6063c7caa45174c1803d",
+              "outputDigest": "d114bff0a3da23ced42412d3978e0e93a8390e487779a6502a79cf3912579b43",
+              "datasetRevision": 15,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "92e3d60d-82be-42d4-961d-af6e91cb774f",
+              "at": "2026-10-18T10:37:57.417Z",
+              "tool": "query_ontology",
+              "inputDigest": "21cd8e0856bdd5fb4eb8edf511093ce1a1156d30b5ead771bf9914729af65037",
+              "outputDigest": "6948e2eb7c570d23377b21336bd95a4f7b027dce52f9549a5b52c049ddd69d35",
+              "datasetRevision": 15,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "CheckoutSession",
+                    "id": "2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117"
+                  },
+                  "revision": 2,
+                  "propertiesDigest": "8b75795aaea2cd6037b5cb0eeaa7c4dd0ff3f88cb9b22bdf10fb7ee119c5bc15",
+                  "linksDigest": "8e0fca981703419325d885488e76dec7d7d843d4529df2b34d71efd1163fe4cf"
+                }
+              ]
+            },
+            {
+              "id": "07df95e3-16ce-4c65-9b37-f47d3951cec1",
+              "at": "2026-10-18T10:37:57.418Z",
+              "tool": "assess_conditions",
+              "inputDigest": "67f47c83a8e01630dd35765d73d7be536525a459aac1e23e643570fadad06bb2",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 15,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "fc278a1e-cba2-479b-bb21-c20c2d4cec9f",
+              "at": "2026-10-18T10:38:07.869Z",
+              "tool": "assess_conditions",
+              "inputDigest": "17a3469e3984022d648b4975e244e070d13418f83c402c907087982acdb2b05a",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 15,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "604744ef-8f8a-4ec9-ae85-174f2cc4c8b9",
+              "at": "2026-10-18T10:38:07.874Z",
+              "tool": "evaluate_ontology",
+              "inputDigest": "31f4d2d4d718ff387e9dbbb6dcdcf5653c72440f893f50f653cbb6345c9afe09",
+              "outputDigest": "468daf4d2fcbe5528a947b26d98bfc763dddc110153da736c31a58fc7bdfca44",
+              "datasetRevision": 15,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "SourceReceipt",
+                    "id": "41b540b7306dadcd3c094162fc856fd9c2e9a593646733a326db89099f0a86c8"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "98bff935b9ff4cab20f630052ab1c62d97eaf51c5c57ec6ed52185efbaa1fada",
+                  "linksDigest": "5947b52d92f321bbf5fe60e7ca5546771cd148fac21f2fbc402d94e8a29dd682"
+                }
+              ]
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "CheckoutSession",
+                "id": "2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117"
+              },
+              "revision": 2,
+              "propertiesDigest": "8b75795aaea2cd6037b5cb0eeaa7c4dd0ff3f88cb9b22bdf10fb7ee119c5bc15",
+              "linksDigest": "8e0fca981703419325d885488e76dec7d7d843d4529df2b34d71efd1163fe4cf"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "41b540b7306dadcd3c094162fc856fd9c2e9a593646733a326db89099f0a86c8"
+              },
+              "revision": 1,
+              "propertiesDigest": "98bff935b9ff4cab20f630052ab1c62d97eaf51c5c57ec6ed52185efbaa1fada",
+              "linksDigest": "5947b52d92f321bbf5fe60e7ca5546771cd148fac21f2fbc402d94e8a29dd682"
+            }
+          ],
+          "conditionChecks": [],
+          "actionProposals": [],
+          "digest": "0b5745bec69b45620c70fb936ddc7bd24e4e126b5bbb163ce9cd005bd50cd087"
+        },
+        "requestId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+        "requestRevision": 1,
+        "requestDigest": "84e27bdf15f6baa46523cb52aa357108ad3e03bedf48f8ebaa0327fe714cd361",
+        "capabilityRef": {
+          "id": "commerce.ucp.confirm.sandbox",
+          "version": "1"
+        },
+        "ontologyRef": {
+          "id": "eigos.commerce.ucp",
+          "version": "1"
+        },
+        "candidateId": "a2122d96-7d9b-403b-b4fd-1799229bf7ec",
+        "bindingRef": {
+          "id": "ucp.official-flower-shop.confirm",
+          "version": "1"
+        },
+        "verifierRef": {
+          "id": "ucp.independent",
+          "version": "1"
+        },
+        "steps": [
+          {
+            "id": "checkout",
+            "operationId": "complete-checkout",
+            "operationScope": "ucp-checkout:386be0f29bca22ff20e068c04f95e41884be6fd8290b5d07ae9fe1c75a83076d",
+            "actionTypeRef": {
+              "id": "ucp.checkout.complete",
+              "version": "1"
+            },
+            "bindingRef": {
+              "id": "ucp.official-flower-shop.confirm",
+              "version": "1"
+            },
+            "capabilityRef": {
+              "id": "commerce.ucp.confirm.sandbox",
+              "version": "1"
+            },
+            "effect": "order",
+            "additionalEffects": [
+              "payment"
+            ],
+            "input": {
+              "preparationTaskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+              "budget": {
+                "minor": "10000",
+                "currency": "USD"
+              }
+            },
+            "inputRefs": [],
+            "dependsOn": [],
+            "cost": {
+              "minor": "7000",
+              "currency": "USD",
+              "payeeId": "official-flower-shop",
+              "purpose": "service_total"
+            }
+          }
+        ],
+        "details": {
+          "environment": "sandbox",
+          "realOperationsAllowed": false,
+          "merchantId": "official-flower-shop",
+          "protocolVersion": "2026-04-08",
+          "operation": "confirm",
+          "sourceReceipt": "5f478402-3279-46b4-a8b9-f1aeba997a2c",
+          "checkoutId": "aa7bf67b-b8d8-4dee-a693-644b335258ff",
+          "total": {
+            "minor": "7000",
+            "currency": "USD"
+          },
+          "quoteDigest": "986c410145237c6e572ea1257fa2da68f040f07a94cb87ecdeb77a50c260e780",
+          "requiresOrderAndPaymentAuthority": true,
+          "fulfillment": "not_started",
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "6d3a46cd16133597d6cf4e332ee60193c72535b166b40f329e4b1bab404b108b",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "order",
+        "requirementChecks": [
+          {
+            "requirementId": "service-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "5f478402-3279-46b4-a8b9-f1aeba997a2c",
+              "91c21ad0-cba4-41bf-89f0-7865789705d3"
+            ]
+          }
+        ],
+        "expiresAt": "2026-10-18T10:42:42.514Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "commerce.ucp.confirm.sandbox",
+              "version": "1"
+            },
+            "digest": "1643e0a73eb0119c4f559694232cb671065cf290a631fe49d101cdb4b8c79b74"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "ucp.official-flower-shop.confirm",
+              "version": "1"
+            },
+            "digest": "6d3a46cd16133597d6cf4e332ee60193c72535b166b40f329e4b1bab404b108b"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "8792bcb5ce9caabfb9299ec8dd60a62de4bf14aa836b11aab32b9d6994cf854b"
+      },
+      "authorizationRequest": {
+        "planDigest": "8792bcb5ce9caabfb9299ec8dd60a62de4bf14aa836b11aab32b9d6994cf854b",
+        "effects": [
+          "order",
+          "payment"
+        ],
+        "maxAmount": {
+          "minor": "7000",
+          "currency": "USD"
+        },
+        "payeeIds": [
+          "official-flower-shop"
+        ],
+        "environment": "sandbox",
+        "realOperationsAllowed": false
+      },
+      "authorizationBudget": [
+        {
+          "minor": "7000",
+          "currency": "USD",
+          "state": "held",
+          "intentId": "9860fdb5-7a1f-421e-81de-42fd2f9bffa7"
+        }
+      ],
+      "acceptance": {
+        "accepted": true,
+        "reason": "The exact local UCP business endpoint was independently verified; real operations and delivery are not implied",
+        "checks": [
+          {
+            "requirementId": "service-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "6709b23f-ea5c-4b2a-979e-c5a109cb9218",
+              "6112d690-a220-4770-aeeb-fede9ea54e16"
+            ]
+          },
+          {
+            "requirementId": "order-confirmation-outcome",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "6709b23f-ea5c-4b2a-979e-c5a109cb9218",
+              "6112d690-a220-4770-aeeb-fede9ea54e16"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "6709b23f-ea5c-4b2a-979e-c5a109cb9218",
+          "6112d690-a220-4770-aeeb-fede9ea54e16"
+        ],
+        "at": "2026-10-18T10:38:23.507Z"
+      },
+      "artifact": {
+        "id": "d0696ce196f7d4cb834c660f26f3c0a678063cc4cfd1bdff6b3fda5638cfe88b",
+        "name": "ucp-confirm-result.json",
+        "data": {
+          "goal": "这是明确获准的官方本地测试商家演练，使用沙箱。请确认准备任务 b6dcdca5-2989-4b2f-8482-835cc5ce43b4 的结账，保持原商品、数量、收货资料和报价。预算已通过结构化最小货币单位字段提供。目标只到订单确认，不要求现在送达；不要声称真实购买或付款到账。",
+          "deliverable": "官方本地测试商家的原订单已独立核对；不代表真实购买、付款到账或配送完成。",
+          "execution": "completed",
+          "result": {
+            "environment": "sandbox",
+            "ucpSnapshot": {
+              "environment": "sandbox",
+              "merchantId": "official-flower-shop",
+              "merchantOrigin": "http://127.0.0.1:61827",
+              "protocolVersion": "2026-04-08",
+              "requestId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+              "requestRevision": 1,
+              "preparationTaskId": "b6dcdca5-2989-4b2f-8482-835cc5ce43b4",
+              "operation": "confirm",
+              "inputDigest": "78a721152ed6822fe75389a37f5f8449f6a1dc804a44ebad56c6b06518e82937",
+              "configurationDigest": "0fd2672c9d73ee1b1417f88d50c2526a850492b7ffda22276763d4ad94f0bbd4",
+              "expectedItems": [
+                {
+                  "id": "bouquet_roses",
+                  "quantity": 2
+                }
+              ],
+              "budget": {
+                "minor": "10000",
+                "currency": "USD"
+              },
+              "checkout": {
+                "id": "aa7bf67b-b8d8-4dee-a693-644b335258ff",
+                "state": "completed",
+                "items": [
+                  {
+                    "id": "bouquet_roses",
+                    "lineId": "2008e8bb-4ca3-47fb-8586-b20862ef2c5b",
+                    "title": "Bouquet of Red Roses",
+                    "quantity": 2,
+                    "unitPrice": {
+                      "minor": "3500",
+                      "currency": "USD"
+                    }
+                  }
+                ],
+                "total": {
+                  "minor": "7000",
+                  "currency": "USD"
+                },
+                "quoteDigest": "986c410145237c6e572ea1257fa2da68f040f07a94cb87ecdeb77a50c260e780",
+                "fulfillmentDigest": "e93b64c435bf4a5bacd4c1692cd7fab5e39c5b06885b6b870630936caf525dc7",
+                "buyerDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                "destinationDigest": "44e9bdaa4e80231db6d8f965aea2de5d51c9dccd795c4c587abf38c184dec431",
+                "orderId": "228e37be-efab-4d67-a879-5853f5cae114",
+                "messageCodes": [],
+                "receipt": {
+                  "id": "6709b23f-ea5c-4b2a-979e-c5a109cb9218",
+                  "method": "POST",
+                  "path": "/checkout-sessions/aa7bf67b-b8d8-4dee-a693-644b335258ff/complete",
+                  "startedAt": "2026-10-18T10:38:23.459Z",
+                  "receivedAt": "2026-10-18T10:38:23.471Z",
+                  "status": 200,
+                  "inputDigest": "8ce49e9c51262d757a208025bc129d3479ccab1117c1380ea614479aee9476a3",
+                  "responseSha256": "39bc1c05acff350d32f189909696ff56989356f766f2002db3ee53ceba180e56",
+                  "environment": "sandbox",
+                  "idempotencyKey": "53ed50840fec2d510f9483e741179214d3bcf00fceea5221a602e27db69a3188"
+                }
+              },
+              "order": {
+                "id": "228e37be-efab-4d67-a879-5853f5cae114",
+                "checkoutId": "aa7bf67b-b8d8-4dee-a693-644b335258ff",
+                "items": [
+                  {
+                    "id": "bouquet_roses",
+                    "lineId": "2008e8bb-4ca3-47fb-8586-b20862ef2c5b",
+                    "title": "Bouquet of Red Roses",
+                    "quantity": 2,
+                    "unitPrice": {
+                      "minor": "3500",
+                      "currency": "USD"
+                    }
+                  }
+                ],
+                "total": {
+                  "minor": "7000",
+                  "currency": "USD"
+                },
+                "permalinkUrl": "http://127.0.0.1:61827/orders/228e37be-efab-4d67-a879-5853f5cae114",
+                "fulfillment": "pending",
+                "events": [],
+                "destinationDigest": "44e9bdaa4e80231db6d8f965aea2de5d51c9dccd795c4c587abf38c184dec431",
+                "adjustmentCount": 0,
+                "receipt": {
+                  "id": "6112d690-a220-4770-aeeb-fede9ea54e16",
+                  "method": "GET",
+                  "path": "/orders/228e37be-efab-4d67-a879-5853f5cae114",
+                  "startedAt": "2026-10-18T10:38:23.473Z",
+                  "receivedAt": "2026-10-18T10:38:23.478Z",
+                  "status": 200,
+                  "inputDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+                  "responseSha256": "722ed340efa1af8416f37944cca370ebe3a27f9d6edf07c84251de727c668a7e",
+                  "environment": "sandbox"
+                }
+              }
+            },
+            "assessment": {
+              "status": "satisfied",
+              "criteria": [
+                {
+                  "id": "checkout_items",
+                  "result": "pass",
+                  "reason": "The merchant must return the exact requested item identities and quantities"
+                },
+                {
+                  "id": "business_errors",
+                  "result": "pass",
+                  "reason": "Business error messages require resolution; HTTP success alone is insufficient"
+                },
+                {
+                  "id": "checkout_completed",
+                  "result": "pass",
+                  "reason": "An accepted completion can remain asynchronous"
+                },
+                {
+                  "id": "same_order",
+                  "result": "pass",
+                  "reason": "Read the original order independently and bind it to the original checkout"
+                },
+                {
+                  "id": "order_items",
+                  "result": "pass",
+                  "reason": "Final order items must preserve the requested identities and quantities"
+                },
+                {
+                  "id": "order_total",
+                  "result": "pass",
+                  "reason": "The final order total must match the approved checkout total"
+                },
+                {
+                  "id": "order_destination",
+                  "result": "pass",
+                  "reason": "Every ordered item must retain the selected shipping destination"
+                },
+                {
+                  "id": "post_purchase_changes",
+                  "result": "pass",
+                  "reason": "Returns, cancellation, refunds and edits need their own semantics and must not be silently ignored"
+                },
+                {
+                  "id": "budget",
+                  "result": "pass",
+                  "reason": "All charges use the merchant total and the explicitly fixed currency"
+                }
+              ],
+              "endpoint": "order_confirmed"
+            }
+          }
+        }
+      },
+      "error": null,
+      "modelReceipts": [
+        {
+          "id": "b3d7eb2c-d66c-4bce-b835-29e83db03622",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:37:16.936Z",
+          "completedAt": "2026-10-18T10:37:26.694Z",
+          "outputSha256": "ebdd68f3aaa8a01bafce868ad28490b29afae37c0a53bc901153f29a0206c73b",
+          "threadId": "01a14e96-5355-7771-9806-42f280895600",
+          "usage": {
+            "input_tokens": 40846,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 129,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "b22a7c01-3bac-4888-a16a-a54e2ccc5f90",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:37:26.704Z",
+          "completedAt": "2026-10-18T10:37:42.493Z",
+          "outputSha256": "fbd5d655ae168c6482ec9cab10fc100253e0fb09400c1735ca5d4de315f60bc4",
+          "threadId": "01a14e96-7975-7963-96fb-e16c7a8b822e",
+          "usage": {
+            "input_tokens": 44743,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 521,
+            "reasoning_output_tokens": 82
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "251e86f4-a702-4891-8747-2c151562f653",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:37:42.522Z",
+          "completedAt": "2026-10-18T10:37:57.406Z",
+          "outputSha256": "06744d678b385d48d13b3394ea91873bf209b7e9574d9ff7909365d7dfbb1418",
+          "threadId": "01a14e96-b753-7eb2-8fb1-b9f967f948c2",
+          "usage": {
+            "input_tokens": 31785,
+            "cached_input_tokens": 31616,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 197,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "0703aad3-145f-468b-a625-8fcbb136ac22",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:37:57.420Z",
+          "completedAt": "2026-10-18T10:38:07.865Z",
+          "outputSha256": "22bd5766e3cf721748a51bc6a78d5307668f79a34e7ec0857d0cb01164556a12",
+          "threadId": "01a14e96-f177-7752-aae8-47c387959b62",
+          "usage": {
+            "input_tokens": 40534,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 194,
+            "reasoning_output_tokens": 10
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "8a0350fd-a740-4139-ab14-dab73df21ed3",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T10:38:07.876Z",
+          "completedAt": "2026-10-18T10:38:22.528Z",
+          "outputSha256": "0e5002f0660c46f8d4593fd8605a677c8dc58bdc8307837192ace5761314f45e",
+          "threadId": "01a14e97-1a4c-7672-9f8f-42449550bdba",
+          "usage": {
+            "input_tokens": 40939,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 398,
+            "reasoning_output_tokens": 26
+          },
+          "purpose": "planning"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "b4905dad-4f31-4da4-bcf7-3903b76b6003",
+          "at": "2026-10-18T10:37:26.700Z",
+          "tool": "describe_ontology",
+          "inputDigest": "d1c9d59ee2bc13dd9a4af2f6592781321ba155140b2b7fa32058deea32f826d9",
+          "outputDigest": "6235bf1f77647d65d2b082c5bfca4d8d05802a19b028d9dc8d3f0a365bc7b19e",
+          "datasetRevision": 12,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "fffb4e76-e43a-45aa-a099-200379faf434",
+          "at": "2026-10-18T10:37:26.702Z",
+          "tool": "query_ontology",
+          "inputDigest": "6678c9b0d7e3406bb98b58a37f3da7271a8f8bb26aff371dc4102e00763b60e6",
+          "outputDigest": "f6076deb228ee9c88a0b27709cc0363119b191febe9df8f1b3cf08a3569afaf1",
+          "datasetRevision": 12,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e"
+              },
+              "revision": 2,
+              "propertiesDigest": "b04d72d6999a44956ec7ba9db199d3f555b04c60ef7072fb1bf5daabe129aa6e",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "74d52909-20e9-477a-8728-c95ed0a910ad",
+          "at": "2026-10-18T10:37:57.413Z",
+          "tool": "describe_ontology",
+          "inputDigest": "7e8d424755464e90d5a3ec88ff8a5836223be3d94b9a6063c7caa45174c1803d",
+          "outputDigest": "d114bff0a3da23ced42412d3978e0e93a8390e487779a6502a79cf3912579b43",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "92e3d60d-82be-42d4-961d-af6e91cb774f",
+          "at": "2026-10-18T10:37:57.417Z",
+          "tool": "query_ontology",
+          "inputDigest": "21cd8e0856bdd5fb4eb8edf511093ce1a1156d30b5ead771bf9914729af65037",
+          "outputDigest": "6948e2eb7c570d23377b21336bd95a4f7b027dce52f9549a5b52c049ddd69d35",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "CheckoutSession",
+                "id": "2e59679382e22f49ffa6c46d9b9b42f16428325c1919bf1b01198ae3d1307117"
+              },
+              "revision": 2,
+              "propertiesDigest": "8b75795aaea2cd6037b5cb0eeaa7c4dd0ff3f88cb9b22bdf10fb7ee119c5bc15",
+              "linksDigest": "8e0fca981703419325d885488e76dec7d7d843d4529df2b34d71efd1163fe4cf"
+            }
+          ]
+        },
+        {
+          "id": "07df95e3-16ce-4c65-9b37-f47d3951cec1",
+          "at": "2026-10-18T10:37:57.418Z",
+          "tool": "assess_conditions",
+          "inputDigest": "67f47c83a8e01630dd35765d73d7be536525a459aac1e23e643570fadad06bb2",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "fc278a1e-cba2-479b-bb21-c20c2d4cec9f",
+          "at": "2026-10-18T10:38:07.869Z",
+          "tool": "assess_conditions",
+          "inputDigest": "17a3469e3984022d648b4975e244e070d13418f83c402c907087982acdb2b05a",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "604744ef-8f8a-4ec9-ae85-174f2cc4c8b9",
+          "at": "2026-10-18T10:38:07.874Z",
+          "tool": "evaluate_ontology",
+          "inputDigest": "31f4d2d4d718ff387e9dbbb6dcdcf5653c72440f893f50f653cbb6345c9afe09",
+          "outputDigest": "468daf4d2fcbe5528a947b26d98bfc763dddc110153da736c31a58fc7bdfca44",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "41b540b7306dadcd3c094162fc856fd9c2e9a593646733a326db89099f0a86c8"
+              },
+              "revision": 1,
+              "propertiesDigest": "98bff935b9ff4cab20f630052ab1c62d97eaf51c5c57ec6ed52185efbaa1fada",
+              "linksDigest": "5947b52d92f321bbf5fe60e7ca5546771cd148fac21f2fbc402d94e8a29dd682"
+            }
+          ]
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+        "status": {
+          "state": "TASK_STATE_COMPLETED",
+          "message": {
+            "messageId": "54b81fe8-ec42-4963-bad1-682c411d2e1c",
+            "contextId": "7b10be75-a26e-494b-bc70-d64d6cc09927",
+            "taskId": "e0c73044-7f6e-48ef-bfd6-adcee7104b6e",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "官方本地测试商家的原订单已独立核对；不代表真实购买、付款到账或配送完成。"
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T10:38:23.507Z"
+        },
+        "artifactIds": [
+          "d0696ce196f7d4cb834c660f26f3c0a678063cc4cfd1bdff6b3fda5638cfe88b"
+        ]
+      }
+    }
+  ],
+  "rawReadbackSha256": "d303a9c21303b9ac51eac60f979b2a4a665091dc4062f5619f59bb156e6c35d7",
+  "sourceInputs": {
+    "baseCommit": "70aaa12337db1257221977616fe629bb694bb9f2",
+    "recordedAt": "2026-10-18T10:36:22.071034+00:00",
+    "sourceSha256": {
+      "examples/ucp-reference-merchant.py": "fb351c6ab940cc2b91275f795621a2073fe61da1f6d120bc7d92527da8e5e0f5",
+      "examples/verify-pa-public-geo-e2e.ts": "b9e5532124cbe0ed577ca21331bdfcaeafb5ad6fd1268ba41497ac9c14dc6644",
+      "examples/verify-ucp-reference.ts": "55163e9b4abbc029f5fc0c238dae81029791080a1ec117f4084583a9a85c6c4e",
+      "packages/capabilities/catalog.ts": "aed5d49004f7dfe012f6c152515f8f8add0b44da9d5df4a51d23b0e356b212fc",
+      "packages/capabilities/ucp/adapter.ts": "8f908828d0bb5ff9fab09e2fc7a205de5e9c001d6b140ac18014561206d7991b",
+      "packages/capabilities/ucp/client.ts": "eef3b30bb28b15fdfc9c3a4299dd60aeb4b6cffcbcf6f260e95a2732a039aa25",
+      "packages/capabilities/ucp/contracts.ts": "9904489ea973109ecbc1414cb840a749a88c370bf0f4b455f1d00df27aed81f2",
+      "packages/capabilities/ucp/snapshot.ts": "2171911648c2372d48f946111415bd0b5da337b6e6d730ca3496731e6d5ed803",
+      "packages/coordinator/coordinator.ts": "5e4d6bc8012dd7c9cc102485dd3b0d83fa0e36911fa87f61f89e58ddd3cb592e",
+      "packages/coordinator/plan.ts": "505fbf8e9139daec737e3af3830f3f8e281c93e24b272bfa3e2a01d132e67e4b",
+      "packages/coordinator/planning-session.ts": "205aecd9703ccf1e05fa268133cda53d581004b1a5c4b7225a40bbf0d702519f",
+      "packages/coordinator/requirements.ts": "38d39fb91ae317e905d839e353e60f6a1d4b07efec20b98bda57b32c13fcabb1",
+      "packages/coordinator/runtime.ts": "4738375f494de6286d9b9b960acdfab5acf9e4f33438bf8c7166d33c00c9972c",
+      "packages/core/delegation.ts": "5dae4eeabffd1c7e8a77cbc4d037215c32513c1249b8e67174e17832c36e9d28",
+      "packages/core/policy.ts": "acaf5d19dc2d37095b2ab2b43d98a5cbd819d923f8329de74e8e3972d3b4bd98",
+      "packages/core/store.ts": "69ac7d405965b7c1f6409886d94c029579f3db3feb086d6f143c23893fd028fa",
+      "packages/core/tasks.ts": "69c8a5c0048d15422fef6411f210165b7276cd5bfd3851abb0c1b88b2c725ac9",
+      "packages/ontology/actions.ts": "0ecdbd8ac96642581f99e9b51badd7e010248714a4479651b7cd0968004b0179",
+      "packages/ontology/business-model.ts": "c93efe89cbd600f15ceb1894c7f6ad8f4f01ec73987c6e403b5be150d5fded42",
+      "packages/ontology/commerce-functions.ts": "6ed0170cf380f115eb2e2317adda0ca08742fcf79422c30d92fe602ba7d5ee39",
+      "packages/ontology/commerce-projection.ts": "f8abbdd31ea626669208b5aeca5e17aa1d68ce675e0945863af2279eee86f3b5",
+      "packages/ontology/commerce.ts": "cce34f6c04fa00b3acf6d244a7e2ee2f78011097158b342464b96ac7208dcddd",
+      "packages/ontology/execution.ts": "81bad1ab96086e050daf6db36e8c2f5e071108b3035c4a80aa42380a2645aa23",
+      "packages/ontology/object-evidence.ts": "7b1754aa21c923f41f87ec1a80deb66cac1cd588b22ec31c4b4455d4ed91d0b8",
+      "packages/ontology/object-functions.ts": "bf8cb83b1e6319dd58d3725606f00bf43f7cce2909ba18c7ee26d4e0f275ca08",
+      "packages/ontology/task-projection.ts": "91b8545c8ac39ff903a0dd68f93ba33a2e0714366058d4f8f439e5fef8110476"
+    },
+    "officialReferenceCommit": "b7d7a5496d61650e0780f4d1f87684e10f811562",
+    "referenceDependencyLockSha256": "12a6485c744b59ca1f93f56fdc4182006ada2370f5788192f53d4c4a2877813e",
+    "before": {
+      "checkouts": 4,
+      "orders": 2,
+      "rosesInventory": 996
+    }
+  }
+}

@@ -10,7 +10,7 @@ import { CapabilityResolver, type Resolution } from './resolver.js';
 import { proposePlan, validatePlan } from './plan.js';
 import { groundRequirements } from './requirements.js';
 import { ActionRuntime, createActionIntents } from './runtime.js';
-import { authorizationRequest } from '../core/policy.js';
+import { authorizationRequest, requiredEffects } from '../core/policy.js';
 import { businessConditionSchema } from '../ontology/business-model.js';
 import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
@@ -120,7 +120,7 @@ export class Coordinator {
       job.delegation!.reasoning = { summary: proposal.message, evidenceRef: planned.evidence.id };
       job.delegation!.phase = plan.quote || requiresPermit ? 'awaiting_authorization' : 'executing';
       job.delegation!.events.push({ at: job.updatedAt, event: 'ontology_plan_validated', evidence: plan.digest });
-      if (requiresPermit) job.delegation!.authorizationRequest = authorizationRequest(plan, plan.steps.map(s => s.effect));
+      if (requiresPermit) job.delegation!.authorizationRequest = authorizationRequest(plan, plan.steps.flatMap(requiredEffects));
       createActionIntents(this.store, claim.owner, job, resolution.privateData.get(candidate.id));
       if (plan.quote) {
         job.state = 'auth-required'; job.question = `已准备本地模拟方案。请通过授权接口确认准确的 quoteId / quoteDigest；模拟金额 ${plan.quote.amount.minor} 分 ${plan.quote.amount.currency}。无真实付款。`;

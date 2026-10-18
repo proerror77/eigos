@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v6' as const;
+export const BACKEND_VERSION = 'ontology-execution-v7' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -34,7 +34,7 @@ export interface ServiceRequest {
   businessScopeId?: string;
   executionEnvironment?: 'live' | 'sandbox';
 }
-export interface ActionType { ref: Ref; effect: import('./actions.js').EffectClass }
+export interface ActionType { ref: Ref; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[] }
 export interface ServiceCapability {
   ref: Ref;
   ontologyRef: Ref;
@@ -95,13 +95,15 @@ export interface ResolvedCandidate {
 export interface ResolutionScope { capabilityRef: Ref; searchedBindingRefs: Ref[]; observedAt: string; realSupply: boolean; coverage?: import('./supply.js').DiscoveryCoverage[] }
 export interface PlanStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef: Ref; capabilityRef: Ref;
+  operationScope?: string;
   effect: import('./actions.js').EffectClass;
+  additionalEffects?: import('./actions.js').EffectClass[];
   input: Record<string, unknown>; inputRefs: import('./actions.js').InputReference[]; dependsOn: string[];
   cost?: { minor: string; currency: string; payeeId: string; purpose?: typeof amountRoles[number] };
 }
 export interface ExecutionPlan {
   id: string;
-  version: '6';
+  version: '7';
   ontologyPlanning: import('./planning-contract.js').PlanningSnapshot;
   requestId: string;
   requestRevision: number;

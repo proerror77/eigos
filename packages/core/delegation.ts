@@ -13,6 +13,7 @@ export function canonical(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 export const digest = (value: unknown) => createHash('sha256').update(canonical(value)).digest('hex');
+export const actionOperationKey = (owner: string, scope: string, operationId: string) => digest({ owner, requestId: scope, operationId });
 export function validPlanDigest(plan: ExecutionPlan): boolean { const { digest: expected, ...body } = plan; return digest(body) === expected; }
 
 export const groundingSchema = z.object({

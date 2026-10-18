@@ -5,6 +5,7 @@ export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | '
 export interface InputReference { stepId: string; path: string; targetKey: string }
 export interface PreparedStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef?: Ref; capabilityRef?: Ref;
+  operationScope?: string;
   input: Record<string, unknown>; inputRefs: InputReference[]; dependsOn: string[];
   cost?: { minor: string; currency: string; payeeId: string; purpose?: 'service_total' | 'deposit' };
 }
