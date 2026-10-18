@@ -21,7 +21,7 @@ export function memberPage(input: { member?: Member; csrf?: string; connections?
     ${loginAvailable ? '<a class="button primary" href="/members/login">登录 / 注册</a><p class="muted">在登录服务中验证身份，再回来完成会员开通。</p>' : '<div class="notice">会员登录暂未开放。请联系服务管理员完成登录配置后再试。</div>'}</div>
     <aside><h2>由你决定访问范围</h2><p>个人助手在你同意的范围内查看服务、创建和查询任务。你可以随时在这里停用连接。</p><h2>重要操作另行确认</h2><p>连接助手不等于同意购买、付款或对外发送。具体业务操作仍需要相应授权。</p></aside>`
     : `<section><div class="section-heading"><div><p class="eyebrow">会员资料</p><h1>${escape(member.displayName)}</h1></div><span class="status">${member.status === 'pending' && invitationOnly ? '等待邀请' : statuses[member.status]}</span></div>
-      ${input.networkAccess ? '<p><a href="/members/network">管理身份与发布权限</a></p>' : ''}
+      ${input.networkAccess ? '<p><a href="/members/network/workbench">打开我的工作台</a> · <a href="/members/network">管理身份与发布权限</a></p>' : ''}
       ${member.email ? `<p class="muted">已验证邮箱 · ${escape(member.email)}</p>` : ''}
       ${member.status === 'new' ? form('apply', `${fields(member)}<label class="consent"><input type="checkbox" name="consent" value="true" required><span>我同意 EIGOS 保存以上会员资料，并接受个人助手在我授予的 OAuth 权限内调用服务。购买、付款与对外发送需另行授权。</span></label><button class="primary" type="submit">${manualApproval ? '提交会员申请' : '开通会员'}</button>`)
         : `${member.status === 'pending' ? invitationOnly ? '<div class="notice">申请已登记，正在等待邀请。获得邀请后可在下方兑换，或让你的助手兑换。</div>' : '<div class="notice">申请已保存。审核通过后，你的个人助手即可调用服务。</div>' : member.status === 'suspended' ? '<div class="notice">会员已停用，个人助手暂时无法调用服务。请联系管理员处理。</div>' : '<p>会员已开通。请在个人助手中连接 EIGOS，并完成它发起的服务授权。</p>'}

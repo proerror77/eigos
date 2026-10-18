@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { NetworkEvidence } from './evidence.js';
 import { InquiryBridge } from './inquiry.js';
 import type { JobStore } from '../core/store.js';
@@ -500,6 +501,51 @@ export class NetworkService {
     }
     return { version: 1, refs: r.refs, result: r.refs.map(ref => this.ownView(a.owner, ref)) };
   }
+  /** Browser control-plane identity is derived solely from the authenticated member session.
+   * It is never accepted as an MCP/A2A credential or an installation actor. */
+  private sessionPrincipal(memberId: string, write = false): Principal {
+    const m = this.member(memberId);
+    return { issuer: m.issuer, tenant: m.tenant, subject: m.subject, clientId: 'member-control-plane', scopes: ['tasks:read', ...(write ? ['tasks:write'] : [])] };
+  }
+  memberTask(memberId: string, taskId: string) {
+    const tasks = this.options.tasks ?? fail('INQUIRY_UNAVAILABLE', 503);
+    return tasks.get(this.sessionPrincipal(memberId), taskId);
+  }
+  memberTaskSummary(memberId: string, taskId: string) {
+    const owner = ownerKey(this.sessionPrincipal(memberId));
+    // Keep this read-only: opening a task never creates an EvidenceCard or publication.
+    try { return this.evidenceService().resultSummary(owner, taskId); }
+    catch (error) {
+      if (error instanceof NetworkError && ['RESULT_NOT_READY', 'EVIDENCE_SOURCE_UNSUPPORTED'].includes(error.code)) return undefined;
+      throw error;
+    }
+  }
+  memberTaskReply(memberId: string, input: unknown) {
+    const args = z.object({ taskId: z.uuid(), requestId: z.uuid(), expectedRevision: z.number().int().positive(), expectedUpdatedAt: z.iso.datetime(), answer: z.string().trim().min(1).max(500) }).strict().parse(input);
+    const p = this.sessionPrincipal(memberId, true), tasks = this.options.tasks ?? fail('INQUIRY_UNAVAILABLE', 503);
+    const job = tasks.get(p, args.taskId);
+    // A stale page cannot answer a different question. Reply never approves an execution plan.
+    if (job.revision !== args.expectedRevision || job.updatedAt !== args.expectedUpdatedAt) return fail('REVISION_CONFLICT');
+    return tasks.reply(p, { taskId: args.taskId, requestId: args.requestId, answer: args.answer }, undefined, { revision: args.expectedRevision, updatedAt: args.expectedUpdatedAt });
+  }
+  memberInquiry(memberId: string, id: string) {
+    const owner = ownerKey(this.sessionPrincipal(memberId));
+    return { inquiry: this.inquiryService().inquiryView(owner, id), selections: this.store.list('selection', owner).filter(s => s.inquiryId === id).map(s => this.inquiryService().selectionView(owner, s.id)) };
+  }
+  workbench(memberId: string, offset = 0) {
+    const p = this.sessionPrincipal(memberId), owner = ownerKey(p);
+    const tasks = this.options.tasks?.list(p, { limit: 20, offset });
+    return { spaces: this.directory.spaces(memberId), tasks,
+      drafts: this.store.list('draft', owner).map(d => ({ id: d.id, revision: d.revision, content: d.content })),
+      publications: this.store.list('publication', owner).map(pub => {
+        const grant = this.store.get('grant', pub.grantId, owner);
+        const visible = grant.recipientMemberIds.some(id => !!this.publicView(pub, id));
+        return { id: pub.id, contentKind: pub.content.kind, state: pub.state, visible, visibleUntil: pub.visibleUntil };
+      }),
+      inquiries: this.inquiry ? this.store.list('inquiry', owner).map(i => this.inquiry!.inquiryView(owner, i.id)) : [],
+      evidence: this.evidence ? this.store.list('evidence', owner).map(e => this.evidence!.ownView(owner, e.id)) : [],
+    };
+  }
   panel(memberId: string) {
     const m = this.member(memberId), owner = ownerKey({ ...m, clientId: '', scopes: [] });
     const spaces = this.directory.spaces(memberId), operator = this.directory.isOperator(memberId);
@@ -510,7 +556,12 @@ export class NetworkService {
       representations: this.directory.isOperator(memberId) ? this.store.scan('representation') : this.store.list('representation', owner),
       listings: this.directory.isOperator(memberId) ? this.store.scan('listing') : this.store.list('listing', owner),
       profiles: this.store.list('profile', owner), bindings: this.store.list('binding', owner), grants: this.store.list('grant', owner),
-      approvals: this.store.list('approval', owner).map(r => ({ ...r, content: this.store.get('draft', r.draftId, owner).content })),
+      approvals: this.store.list('approval', owner).map(r => {
+        let current = false;
+        try { this.currentApproval(r); current = true; }
+        catch (error) { if (!(error instanceof NetworkError && error.status < 500 || error instanceof DomainError)) throw error; }
+        return { ...r, current, content: this.store.get('draft', r.draftId, owner).content };
+      }),
       installations: this.members.agents.list(memberId).filter(r => !r.revoked),
       recipients: this.options.memberIds.filter(id => operator || knownMembers.has(id)).flatMap(id => { try { const member = this.member(id); return [{ id, displayName: member.displayName }]; } catch { return []; } }), spaceId: this.store.spaceId };
   }

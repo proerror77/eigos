@@ -1,65 +1,16 @@
+import { networkGatewayFixture as fixture } from './fixtures/network-gateway.js';
 import { inquiryFixture, quoteCapability, quoteBinding } from './fixtures/network-inquiry.js';
 import { Coordinator } from '../packages/coordinator/coordinator.js';
-import type { JobStore } from '../packages/core/store.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { randomUUID, randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import { generateKeyPair, exportJWK, createLocalJWKSet, SignJWT } from 'jose';
+import { randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { MemberStore } from '../packages/members/store.js';
-import { SCOPES, ownerKey, type Principal } from '../packages/core/domain.js';
-import { readConfig, type Config } from '../packages/core/config.js';
+import { SCOPES, ownerKey } from '../packages/core/domain.js';
 import { commands } from '../packages/network/contracts.js';
-import { createApp } from '../apps/gateway/app.js';
-import { jwtVerifier, protectedResourceMetadata } from '../apps/gateway/auth.js';
+import { protectedResourceMetadata } from '../apps/gateway/auth.js';
 
-async function fixture(enabled = true, directory = false, catalogFactory?: (store: JobStore) => ExecutionCatalog) {
-  const dir = mkdtempSync(join(tmpdir(), 'eigos-network-http-')), memberPath = join(dir, 'members.sqlite');
-  const seed = new MemberStore(memberPath);
-  const identity = { issuer: 'https://issuer.test', tenant: 't1', subject: 'alice' };
-  const alice = seed.login(identity), bob = seed.login({ ...identity, subject: 'bob' });
-  for (const m of [alice, bob]) seed.apply(m.id, { displayName: m.subject, locale: 'en', timezone: 'UTC', consent: true }, false);
-  seed.close();
-  const server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const address = server.address(); assert(address && typeof address !== 'string');
-  const http = `http://127.0.0.1:${address.port}`, origin = http.replace('http:', 'https:');
-  const config: Config = { ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(dir, 'tasks.sqlite') }),
-    EIGOS_AUTH_MODE: 'jwt', OAUTH_ISSUER: identity.issuer, OAUTH_AUDIENCE: origin, OAUTH_JWKS_URL: identity.issuer + '/jwks', PUBLIC_URL: origin,
-    OIDC_CLIENT_ID: 'browser', OIDC_AGENT_CLIENT_ID: 'connector', MEMBERSHIP_DATABASE_PATH: memberPath,
-    EIGOS_NETWORK_ENABLED: enabled ? 'true' : 'false', EIGOS_NETWORK_MEMBER_IDS: [alice.id, bob.id], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: directory ? [bob.id] : [] };
-  const keys = await generateKeyPair('ES256'), jwk = { ...await exportJWK(keys.publicKey), kid: 'test', alg: 'ES256' };
-  const gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })), catalogFactory);
-  server.on('request', gateway.app);
-  const makeAgent = async (member = alice, scopes = [...SCOPES, 'network:read', 'network:write']) => {
-    const p: Principal = { issuer: member.issuer, tenant: member.tenant, subject: member.subject, clientId: 'connector', scopes };
-    const token = await new SignJWT({ tenant_id: p.tenant, client_id: p.clientId, scope: scopes.join(' ') }).setProtectedHeader({ alg: 'ES256', kid: 'test', typ: 'at+jwt' })
-      .setIssuer(p.issuer).setAudience(origin).setSubject(p.subject).setIssuedAt().setExpirationTime('5m').setJti(randomUUID()).sign(keys.privateKey);
-    const id = randomUUID(), credential = randomBytes(32).toString('base64url');
-    gateway.members.agents.create({ registrationId: id, displayName: member.subject + ' agent' }, credential);
-    gateway.members.agents.bind(id, credential, p, member.id, token, Date.now() + 300000, Date.now(), true);
-    gateway.members.authorize(p);
-    return { id, token, p };
-  };
-  const a = await makeAgent(), a2 = await makeAgent(), b = await makeAgent(bob);
-  const session = gateway.members.createSession(alice.id);
-  const call = (path: string, body?: unknown, headers: Record<string, string> = {}) => fetch(http + path, { method: body === undefined ? 'GET' : 'POST', redirect: 'manual', headers: { ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}), ...headers }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-  const control = (action: object, headers?: Record<string, string>) => call('/members/network/commands', { version: 1, requestId: randomUUID(), _csrf: session.csrf, ...action }, { Cookie: `__Host-eigos-member=${session.token}`, Origin: origin, ...headers });
-  const api = (path: string, body: unknown, token = a.token) => call('/network/v1/' + path, body, { Authorization: `Bearer ${token}` });
-  const init = async () => {
-    const pr = await control({ action: 'profile.create', displayName: 'Test PA' }); assert.equal(pr.status, 200); const profileId = (await pr.json()).refs[0].id as string;
-    const br = await control({ action: 'profile.bind_installation', profileId, installationId: a.id, allowedCommands: [...commands] }); assert.equal(br.status, 200);
-    return { profileId, bindingId: (await br.json()).refs[0].id as string };
-  };
-  const command = (profileId: string, args: object, token = a.token) => api('commands', { version: 1, asProfileId: profileId, requestId: randomUUID(), ...args }, token);
-  return { dir, http, origin, config, gateway, alice, bob, a, a2, b, session, call, api, control, init, command, makeAgent,
-    close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close(); rmSync(dir, { recursive: true, force: true }); } };
-}
 
 test('HTTP: controller cookie/CSRF is required, bearer scopes never approve; legacy task reads remain owner-based', async () => {
   const f = await fixture(); try {
@@ -276,7 +227,7 @@ test('T09 HTTP/MCP updates share private follow filtering, checkpoints and revoc
   } finally { await client.close(); await f.close(); }
 });
 
-test('T10 HTTP/MCP conversion needs trusted buyer confirmation and continues as an owner-isolated A2A Task', async () => {
+test('T13 synthetic joint chain: confirmed inquiry, same A2A Task, UI quote selection, approved evidence and withdrawal', async () => {
   const source = inquiryFixture(), f = await fixture(true, true, () => source.catalog);
   const client = new Client({ name: 't10-fixture', version: '1' });
   try {
@@ -324,6 +275,43 @@ test('T10 HTTP/MCP conversion needs trusted buyer confirmation and continues as 
     assert((await foreign.json()).error);
     const publicFeed = await f.api('updates', { version: 1, spaceId: f.gateway.network!.store.spaceId }, f.b.token); const text = await publicFeed.text();
     assert(!text.includes(taskId)); assert(!text.includes('PRIVATE_HTTP_GOAL')); assert.equal(source.readCount(), 2); assert.equal(source.alternateReadCount(), 0);
+    // T13 combined synthetic chain: same task -> quote decision -> approved summary -> withdrawal.
+    const ownerCookie = { Cookie: `__Host-eigos-member=${f.session.token}` }, recipientCookie = { Cookie: `__Host-eigos-member=${bs.token}` };
+    const inquiryId = http.refs[0].id;
+    const iq = await f.call(`/members/network/inquiries/${inquiryId}`, undefined, ownerCookie);
+    assert.equal(iq.status, 200); const iqHtml = await iq.text(); assert(iqHtml.includes(taskId)); assert(iqHtml.includes('报价报告已就绪'));
+    assert.equal((await f.call(`/members/network/inquiries/${inquiryId}`, undefined, recipientCookie)).status, 404);
+    const taskPage = await f.call(`/members/network/tasks/${taskId}`, undefined, ownerCookie), taskHtml = await taskPage.text();
+    assert(taskHtml.includes('合成验证')); assert(taskHtml.includes('PRIVATE_HTTP_GOAL')); assert(taskHtml.includes('本任务交付物'));
+    const job = f.gateway.tasks.get(f.a.p, taskId), quoteId = (job.artifact!.data.result as { ontologyReceipt: { id: string } }).ontologyReceipt.id;
+    const selectRequest = await f.command(profileId, { operation: 'inquiry.request_selection', input: { inquiryId, expectedRequestRevision: 1, quote: { type: 'DeliveryQuote', id: quoteId, revision: 1 }, selectionKind: 'reviewed' } });
+    assert.equal(selectRequest.status, 200); const selectedChoice = (await selectRequest.json()).result[0];
+    const beforeConfirmation = await f.command(profileId, { operation: 'inquiry.select_quote', choiceId: selectedChoice.id }); assert.equal(beforeConfirmation.status, 403);
+    // Submit the exact form rendered by the controller page (including its stable request id).
+    const reviewPage = await f.call('/members/network', undefined, ownerCookie), reviewHtml = await reviewPage.text();
+    const decode = (v: string) => v.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    const form = [...reviewHtml.matchAll(/<form[^>]*>([\s\S]*?)<\/form>/g)].find(m => m[1]!.includes(selectedChoice.id)); assert(form);
+    const inputs = new URLSearchParams(); for (const match of form[1]!.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)) inputs.set(match[1]!, decode(match[2]!));
+    const confirmed = await fetch(f.http + '/members/network/commands', { method: 'POST', redirect: 'manual', headers: { ...ownerCookie, Origin: f.origin, 'Content-Type': 'application/x-www-form-urlencoded' }, body: inputs }); assert.equal(confirmed.status, 303);
+    const selected = await f.command(profileId, { operation: 'inquiry.select_quote', choiceId: selectedChoice.id }); assert.equal(selected.status, 200);
+    const selectionId = (await selected.json()).refs[0].id;
+    const selectionMcp = await client.callTool({ name: 'network_query', arguments: { version: 1, kind: 'my_selection', selectionId } }); assert(!selectionMcp.isError);
+    assert((selectionMcp.structuredContent as { result: { result: { current: boolean } } }).result.result.current);
+    assert((await (await f.call(`/members/network/inquiries/${inquiryId}`, undefined, ownerCookie)).text()).includes('当前版本有效'));
+    const prep = await f.command(profileId, { operation: 'evidence.prepare', source: { kind: 'inquiry', inquiryId }, projection: { kind: 'result' } }); assert.equal(prep.status, 200); const cardId = (await prep.json()).refs[0].id;
+    const evidencePub = await publish({ kind: 'evidence_card', cardId, cardRevision: 1 });
+    const publicBody = { version: 1, kind: 'evidence', spaceId: f.gateway.network!.store.spaceId, cardId };
+    const shared = await f.api('query', publicBody, f.b.token); assert.equal(shared.status, 200); const sharedData = await shared.json(); assert.equal(sharedData.content.body.evidenceLevel, 'synthetic_validation');
+    const publicPage = await f.call(`/members/network/spaces/${publicBody.spaceId}/evidence/${cardId}`, undefined, recipientCookie); const publicHtml = await publicPage.text(); assert.equal(publicPage.status, 200); assert(publicHtml.includes('合成验证'));
+    for (const canary of [taskId, 'PRIVATE_HTTP_GOAL', 'PRIVATE_SYNTHETIC_ORIGIN', 'PRIVATE_SYNTHETIC_DESTINATION']) { assert(!JSON.stringify(sharedData).includes(canary)); assert(!publicHtml.includes(canary)); }
+    const duplicate = await f.command(profileId, { operation: 'evidence.prepare', source: { kind: 'task', taskId }, projection: { kind: 'result' } }); assert.equal((await duplicate.json()).refs[0].id, cardId);
+    const pub = f.gateway.network!.store.get('publication', evidencePub), grant = f.gateway.network!.store.get('grant', pub.grantId);
+    assert.equal((await f.control({ action: 'publication.revoke', grantId: grant.id, expectedRevision: grant.revision })).status, 200);
+    assert.equal((await f.api('query', publicBody, f.b.token)).status, 404);
+    assert.equal((await f.call(`/members/network/spaces/${publicBody.spaceId}/evidence/${cardId}`, undefined, recipientCookie)).status, 404);
+    const ownerWorkbench = await f.call('/members/network/workbench', undefined, ownerCookie); assert((await ownerWorkbench.text()).includes('已撤回'));
+    assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 20, offset: 0 }).total, 1); assert.equal(source.readCount(), 2);
+
   } finally { await client.close(); await f.close(); source.close(); }
 });
 

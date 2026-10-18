@@ -176,6 +176,9 @@ export class NetworkEvidence {
       grant.status = 'revoked'; grant.revokedAt = new Date(this.store.now()).toISOString(); grant.revision++; this.store.put('grant', grant);
     }
   }
+  resultSummary(owner: string, taskId: string): EvidenceBody {
+    return this.material(owner, taskId, { kind: 'result' }).body;
+  }
   ownView(owner: string, id: string) {
     const card = this.store.get('evidence', id, owner); let current = false;
     try { this.content(owner, card.profileId, id, card.revision); current = true; } catch { /* Historical private preview is never a current shared card. */ }

@@ -62,14 +62,17 @@ Shopify 生产接口的 [匿名商品验证工具](shopify-readonly-admission-20
 
 ## 邀请制网络接口（默认关闭）
 
-T06–T11 的协作功能复用 JWT/会员身份，另需明确网络准入和 `network:read` / `network:write`。网络写入还需控制者将具体安装绑定到稳定 profile；有任务权限不自动获得网络权限。批准只接受会员会话、同源 Origin 和 CSRF，不提供 bearer/MCP 批准动作。
+T06–T12 的协作功能复用 JWT/会员身份，另需明确网络准入和 `network:read` / `network:write`。网络写入还需控制者将具体安装绑定到稳定 profile；有任务权限不自动获得网络权限。批准只接受会员会话、同源 Origin 和 CSRF，不提供 bearer/MCP 批准动作。
 
 HTTP：`POST /network/v1/query`、`/commands`、`/receipts/get`；MCP：`network_query`、`network_command`、`network_get_command`。需求、结构化回应和一跳服务推荐共用草稿→精确批准→发布，关闭需求使用 `need.close`。查询使用 need/messages/search 判别输入，具体字段和版本规则见 [T08 接口](network-t08.md)。
 
-这些记录不进入 A2A Task，不调用模型或服务商，也不更改私有要求和授权；从网络线索转换为私有询价属于后续 T10。圈内页面沿用相同受众过滤。网络开关默认 false，本轮未部署或开放真实交易。
+这些记录不进入 A2A Task，不调用模型或服务商，也不更改私有要求和授权；从网络线索转换为私有询价使用下述 T10 的独立确认。圈内页面沿用相同受众过滤。网络开关默认 false，本轮未部署或开放真实交易。
 
 T09 增加 `POST /network/v1/updates` / MCP `network_updates`，返回当前授权动态与分页 cursor/增量 checkpoint。`follow.set` 需要新的安装绑定权限 `follow.manage`，`my_follows` 仅本人可读。关注不扩大受众，游标失效返回 CURSOR_STALE 和 resetRequired；恢复、去重、15 分钟有效期与缓存清理规则见 [T09 接口](network-t09.md)。动态读取不启动模型或业务动作。
 
 T10 增加 inquiry.request_conversion/convert 与 inquiry.request_selection/select_quote，要求 inquiry.manage 安装权限、网络与任务 scopes，并消费会员会话确认的准确 choice。my_inquiry 按 owner 恢复 Task，my_selection 只读本人选择快照。来源只限已审核且实际获权的既有只读报价绑定；普通回复、社交推荐和模型方案都不能授予转换或交易权限。完整参数、确认界面、恢复与报价限制见 [T10 说明](network-t10.md)。
 
 T11 增加 evidence.prepare/refresh 与 my_evidence，使用新的 evidence.manage 绑定权限和 tasks:read，从本人已有结果生成固定字段卡片。draft.create 的 evidence_card 只接受 cardId/cardRevision，复用原精确发布许可；证据等级与正文不能由客户端填写。圈内 evidence/search/updates 只返回获准字段，源变更使旧卡与游标失效。隐私边界、去重和等级门槛见 [T11 说明](network-t11.md)。
+
+
+T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿和发布状态。`/members/network/inquiries/:id` 与 `/members/network/tasks/:id` 复用原对象与 TaskService，会员会话只能读自己的记录。网页可在 CSRF／Origin 和显示版本校验后回复原任务补问；不会批准执行或把 cookie 当作 MCP/A2A 凭据。Agent 继续使用已有任务工具与原 taskId。详情及 T13 未完成的实测门槛见 [T12](network-t12.md)／[T13](network-t13.md)。

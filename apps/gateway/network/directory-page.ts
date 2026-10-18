@@ -1,3 +1,4 @@
+import { evidenceNames } from './workbench-page.js';
 import { needCard } from './collaboration-page.js';
 import { NetworkService, type NetworkQueryResult } from '../../../packages/network/service.js';
 import type { Content } from '../../../packages/network/contracts.js';
@@ -9,7 +10,7 @@ const modeNames: Record<string, string> = { introduction_only: '仅介绍 · 尚
 function card(input: unknown, spaceId: string): string {
   const v = input as { profileId: string; content: Content; capabilityState?: { mode: string; representation: string; availableNow: string; candidateEligible: boolean } };
   const c = v.content;
-  if (c.kind === 'evidence_card') return `<article><h2><a href="${spaceUrl(spaceId)}/evidence/${escape(c.cardId)}">查询与验收摘要</a></h2><p>${escape(c.body.safeSummary)}</p><small>记录日期：${escape(c.body.observedOn)}（上海时间）。此卡只包含本人批准的有限摘要，不是商家总评分或未来服务承诺。</small></article>`;
+  if (c.kind === 'evidence_card') return `<article><h2><a href="${spaceUrl(spaceId)}/evidence/${escape(c.cardId)}">查询与验收摘要</a></h2><span class="tag">圈内获准摘要 · ${escape(evidenceNames[c.body.evidenceLevel])}</span><p>${escape(c.body.safeSummary)}</p><small>记录日期：${escape(c.body.observedOn)}（上海时间）。此卡只包含本人批准的有限摘要，不是商家总评分或未来服务承诺。</small></article>`;
   if (c.kind === 'need') return needCard(input as NetworkQueryResult, spaceId);
   if (c.kind === 'profile') return `<article><h2><a href="${spaceUrl(spaceId)}/profiles/${escape(v.profileId)}">${escape(c.body.displayName)}</a></h2><p>${escape(c.body.summary)}</p><small>自述角色：${escape(c.body.roleTags.join('、')) || '未填写'}。角色标签不代表已核实能力。</small></article>`;
   if (c.kind === 'listing') return `<article><h2><a href="${spaceUrl(spaceId)}/listings/${escape(c.listingId)}">${escape(c.body.title)}</a></h2><p>${escape(c.body.description)}</p><p><span class="tag">代表关系已核实</span><span class="tag">${escape(modeNames[v.capabilityState?.mode ?? 'unavailable'])}</span></p><p>提供主体：${escape(c.body.providerId)} · 角色：${escape(roleNames[c.body.role])}</p><details><summary>查看登记范围</summary><p>服务区域编码：${escape(c.body.coarseAreas.join('、'))}；服务标识：${escape(c.body.capabilityRef.id)}</p></details><small>本次报价、容量与履约可用性仍需核验。此页面不会下单或付款。</small></article>`;

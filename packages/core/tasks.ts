@@ -71,7 +71,7 @@ export class TaskService {
     return submitted;
   }
 
-  reply(p: Principal, input: unknown, contextId?: string): Job {
+  reply(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }): Job {
     requireScope(p, 'tasks:write');
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
@@ -82,6 +82,8 @@ export class TaskService {
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
+      // The browser's displayed question must still be current under the write lock.
+      if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
