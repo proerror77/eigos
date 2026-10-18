@@ -1,5 +1,21 @@
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
+import { publicGeoQuerySchema } from '../capabilities/paotui-contracts.js';
+
+const publicGeoQueries = z.string().max(16384).transform((value, ctx) => {
+  let input: unknown;
+  try { input = JSON.parse(value); }
+  catch {
+    ctx.addIssue({ code: 'custom', message: 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES must contain a valid JSON array' });
+    return z.NEVER;
+  }
+  const parsed = z.array(publicGeoQuerySchema).max(16).safeParse(input);
+  if (!parsed.success) {
+    ctx.addIssue({ code: 'custom', message: 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES must contain at most 16 strict public city/keyword queries' });
+    return z.NEVER;
+  }
+  return parsed.data;
+});
 
 const schema = z.object({
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
@@ -8,6 +24,7 @@ const schema = z.object({
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
+  EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
@@ -65,6 +82,10 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (new URL(origin).origin !== origin) throw new Error('ALLOWED_ORIGINS must contain exact origins, without trailing slashes');
   }
   if (c.EIGOS_PAOTUI_SKILL_DIR && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal Paotui credentials are restricted to local development');
+  if (c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length && (!c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production'
+    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) {
+    throw new Error('Public-location discovery requires configured personal Paotui in non-production loopback development');
+  }
   if (c.EIGOS_ONTOLOGY_AUDIT_PATH && (!c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_ONTOLOGY_AUDIT_PATH))) throw new Error('Ontology audit requires configured Paotui and an absolute private path');
   if (c.EIGOS_ACTION_SANDBOX === 'true' && (c.EIGOS_COORDINATOR !== 'codex' || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Action sandbox requires the local ontology backend');
   if (!!c.EIGOS_SANDBOX_PROVIDER_URL !== !!c.EIGOS_SANDBOX_TOKEN_FILE) throw new Error('Sandbox provider requires both endpoint and private token file');

@@ -16,6 +16,7 @@ export function createWorker(config: Config, overrides: {
     const catalog = createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
+      publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
     const worker = new Worker(store, { coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
       { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });

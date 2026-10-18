@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import type { ProviderBinding, ServiceCapability } from '../ontology/execution.js';
-import { paotuiPreviewSchema } from './paotui-contracts.js';
-const geoInput = z.object({ keyword: z.string().trim().min(1).max(100), city: z.string().trim().min(1).max(50) }).strict();
+import { paotuiPreviewSchema, publicGeoQuerySchema } from './paotui-contracts.js';
 const deliveryInput = paotuiPreviewSchema.omit({ action: true }); const addressInput = z.object({}).strict();
 export const paotuiReadDefinitions = [
-  { id: 'geo.search', name: 'Search public locations', description: 'Read-only POI address search through the configured personal Meituan channel. Requires city and keyword. Returns locations, not menu/product search, stock, merchant reliability, delivery or purchase fulfillment.', schema: geoInput, kind: 'geo' },
+  { id: 'geo.search', name: 'Search public locations', description: 'Read-only POI address search through the configured personal Meituan channel. Requires city and keyword. Returns locations, not menu/product search, stock, merchant reliability, delivery or purchase fulfillment.', schema: publicGeoQuerySchema, kind: 'geo' },
   { id: 'delivery.quote', name: 'Read a parcel delivery quote', description: 'Read-only Meituan Paotui fee preview using two existing owned same-city address IDs and explicit goods/weight/service. No order, payment or cancellation. Quoted service time is an estimate, not proof of delivery. Ask for necessary saved-address IDs; never invent them.', schema: deliveryInput, kind: 'quote' },
   { id: 'address.book.read', name: 'Read owned saved addresses', description: 'Read this local user\'s existing Meituan address book, with masked phones. Only select when the requester needs their address list. Never disclose it to another tenant or provider, and never claim a purchase.', schema: addressInput, kind: 'addresses' },
 ] as const;
