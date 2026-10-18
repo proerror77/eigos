@@ -2,6 +2,8 @@
 
 2026-10-17。当前通用委托使用 `ontology-execution-v3`。Personal Agent、MCP/A2A、身份和会员接入保留；v1/v2 执行计划只读，不迁移、不恢复，也不回退到旧执行器。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
+本文描述当前运行实现；后续目标见 [2026-10-18 Ontology 规格](ontology-spec-v0.2-2026-10-18.md) 和 [N0～N5 阶段](backend-implementation-goals.md)。新规格中的三领域 Offer、事实契约和预订状态尚待实现，不计入下方当前能力。
+
 ## 主路径
 
 ```mermaid
