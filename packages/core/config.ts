@@ -26,6 +26,8 @@ const schema = z.object({
   EIGOS_NETWORK_ENABLED: z.enum(['false', 'true']).default('false'),
   EIGOS_NETWORK_MEMBER_IDS: networkMembers,
   EIGOS_NETWORK_OPERATOR_MEMBER_IDS: networkMembers,
+  EIGOS_NETWORK_MAX_RESPONDERS: z.coerce.number().int().min(1).max(10).default(3),
+  EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: z.coerce.number().int().min(1).max(10).default(2),
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),

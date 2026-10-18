@@ -1,11 +1,12 @@
+import type { NeedPost, EngagementMessage } from './collaboration-contracts.js';
 import type { Space, Membership, Invitation, Representation, Listing } from './directory-contracts.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../core/delegation.js';
 import { fail, type Profile, type Binding, type Draft, type Approval, type Grant, type Publication, type ResultRef } from './contracts.js';
 
-export type Records = { space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
-const tables = { space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export type Records = { need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
+const tables = { need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
@@ -25,6 +26,12 @@ export class NetworkStore {
       CREATE INDEX IF NOT EXISTS network_publication_profile ON network_publications(json_extract(body,'$.profileId'),json_extract(body,'$.content.kind'),json_extract(body,'$.state'),id);
       CREATE INDEX IF NOT EXISTS network_publication_listing ON network_publications(json_extract(body,'$.content.listingId'),json_extract(body,'$.state'),id);
     `);
+    // Upgrade T06/T07 need publications without changing content, grants or audience.
+    db.exec(`INSERT OR IGNORE INTO network_needs SELECT id,owner,json_object(
+      'id',id,'owner',owner,'memberId',json_extract(body,'$.memberId'),'profileId',json_extract(body,'$.profileId'),
+      'currentPublicationId',id,'revision',1,'contentRevision',1,'state',CASE WHEN json_extract(body,'$.state')='active' THEN 'open' ELSE 'withdrawn' END,
+      'responderMemberIds',json('[]'),'questionCounts',json('{}')) FROM network_publications WHERE json_extract(body,'$.content.kind')='need' AND json_extract(body,'$.needId') IS NULL;
+      CREATE INDEX IF NOT EXISTS network_message_post ON network_publications(json_extract(body,'$.content.body.postId'),id);`);
     db.prepare('INSERT OR IGNORE INTO network_state VALUES(?,?)').run('space_id', randomUUID());
   }
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
@@ -49,7 +56,7 @@ export class NetworkStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 201) return fail('INVALID_INPUT', 422);
     const clauses = ['id>?']; const params: string[] = [after];
     for (const [field, value] of Object.entries(filters)) {
-      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'representationId'].includes(field)) return fail('INVALID_INPUT', 422);
+      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId'].includes(field)) return fail('INVALID_INPUT', 422);
       clauses.push(`json_extract(body,'$.${field}')=?`); params.push(value);
     }
     return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`).all(...params, limit).map(r => JSON.parse(String(r.body)));

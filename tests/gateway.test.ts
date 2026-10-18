@@ -47,7 +47,7 @@ before(async () => {
   assert(address && typeof address !== 'string');
   base = `http://127.0.0.1:${address.port}`;
   // The test listener is loopback; the injected verifier still enforces HTTPS issuer/audience.
-  const config: Config = { EIGOS_NETWORK_ENABLED: 'false', EIGOS_NETWORK_MEMBER_IDS: [], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: [],
+  const config: Config = { EIGOS_NETWORK_ENABLED: 'false', EIGOS_NETWORK_MEMBER_IDS: [], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: [], EIGOS_NETWORK_MAX_RESPONDERS: 3, EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: 2,
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
