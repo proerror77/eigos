@@ -22,7 +22,7 @@ async function until<T>(read: () => Promise<T> | T, accept: (value: T) => boolea
   const deadline = Date.now() + 8000;
   while (true) {
     const value = await read(); if (accept(value)) return value;
-    if (Date.now() >= deadline) throw new Error('Timed out waiting for observable state');
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for observable state: ${JSON.stringify(value)}`);
     await pause(25);
   }
 }
@@ -73,7 +73,7 @@ test('Worker configuration needs no Gateway token or OAuth secrets', () => {
   assert.throws(() => readWorkerConfig({ EIGOS_PAOTUI_SKILL_DIR: '/tmp/skill' }), /restricted/);
 });
 
-test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, isolation and late cancellation', { timeout: 20000 }, async () => {
+test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, isolation and late cancellation', { timeout: 45000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-processes-')); const path = join(dir, 'tasks.sqlite');
   const token = 'process-test-token-'.repeat(3);
   const config = readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, DATABASE_PATH: path, EIGOS_EXECUTOR: 'codex', EIGOS_CODEX_BIN: '/must-not-run-in-gateway' });
@@ -89,7 +89,18 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   const children: ChildProcess[] = []; const events: { event: string; taskId?: string; pid?: number }[] = [];
   function launch() {
     const child = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/worker.ts'], { cwd: process.cwd(), env: { PATH: process.env.PATH, HOME: process.env.HOME, DATABASE_PATH: path }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
-    child.on('message', message => events.push({ ...(message as { event: string; taskId?: string }), pid: child.pid })); children.push(child); return child;
+    children.push(child); child.stdout!.resume();
+    let stderr = ''; child.stderr!.on('data', data => { stderr = (stderr + data.toString()).slice(-4000); });
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Worker startup deadline exceeded: ${stderr}`)), 15000);
+      const failed = (code: number | null) => { clearTimeout(timer); reject(new Error(`Worker exited before readiness (${code}): ${stderr}`)); };
+      child.once('exit', failed);
+      child.on('message', message => {
+        const value = message as { event: string; taskId?: string }; events.push({ ...value, pid: child.pid });
+        if (value.event === 'ready') { clearTimeout(timer); child.removeListener('exit', failed); resolve(); }
+      });
+      child.once('error', error => { clearTimeout(timer); reject(error); });
+    });
   }
   try {
     await connect();
@@ -100,7 +111,7 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     gateway = createApp(config); server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
     client = new Client({ name: 'process-test-restart', version: '1' }); await connect();
     assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted');
-    launch(); launch();
+    await Promise.all([launch(), launch()]);
     const asked = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'input-required');
     assert.equal(asked.runs?.filter(r => r.purpose === 'document').length, 1); assert.equal(asked.question, 'Fixture question?');
     await call('submit_task', input); assert.equal(events.filter(e => e.event === 'started' && e.taskId === submitted.id).length, 1);
@@ -120,7 +131,8 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     assert.equal((await call('get_task', { taskId: slow.id })).state, 'working');
     await call('cancel_task', { taskId: slow.id });
     await until(() => events, value => value.some(e => e.event === 'aborted' && e.taskId === slow.id));
-    await pause(550);
+    for (const child of children) child.send({ event: 'release', taskId: slow.id });
+    await until(() => events, value => value.some(e => e.event === 'returned' && e.taskId === slow.id));
     const canceled = await call('get_task', { taskId: slow.id }); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.artifact, undefined);
     assert.equal(events.filter(e => e.event === 'started' && e.taskId === slow.id).length, 1);
     const interrupted = await call('submit_task', { service: 'eigos.delegate', goal: 'slow', requestId: 'crash' });
