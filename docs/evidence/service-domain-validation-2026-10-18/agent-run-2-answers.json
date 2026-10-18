@@ -1,0 +1,326 @@
+[
+  {
+    "caseId": "B01",
+    "startedAt": "2026-10-18T09:03:46.333Z",
+    "completedAt": "2026-10-18T09:04:33.833Z",
+    "elapsedMs": 47500,
+    "calls": 5,
+    "answer": "截至数据时点 2026-10-18T09:03:05.829Z，不能结案。合成记录只有 accepted（司机接单），还没有完成乘车的证据。固定要求是从 synthetic-home 到 synthetic-office，2 人、standard 车型，最晚 10:03:05.829Z 上车、11:03:05.829Z 到达，完整费用上限人民币 500.00 元。结果中的出发地、2 人及车型匹配；记录完整车费人民币 18.50 元，在预算内。实际目的地、pickedUpAt、arrivedAt 均缺失，因此无法确认按时到达或先上车后到达。rideOutcome 返回 unknown，不能把接单当作用户目标完成，也不能据此认定最终失败。",
+    "evidence": [
+      "RideRequest:request-B01:r1:ride",
+      "RideTrip:request-B01:219b344408708f5da02510a457f7692a254ee87e2596d907384cc3f07d8442ac",
+      "SourceReceipt:d0e3acffbf1247a43a94826c285cea6e2962d7980369c47f84ee676e1e4f2b3b"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "缺实际目的地及上车、到达时间和已完成状态的来源证据；所有记录为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B02",
+    "startedAt": "2026-10-18T09:04:33.835Z",
+    "completedAt": "2026-10-18T09:05:07.442Z",
+    "elapsedMs": 33607,
+    "calls": 8,
+    "answer": "在 2026-10-18T09:03:05.829Z 的合成数据中，option-1 满足当前候选条件，可提出选择该方案的叫车决策；option-2 暂不能选。两者都对应 synthetic-home→synthetic-office、2 人、standard，承诺上车及到达均为 09:13:05.829Z，满足最晚 10:03 上车、11:03 到达要求，报价在 09:33:05.829Z 前有效。option-1 完整总价人民币 18.50 元，在人民币 500.00 元预算内，rideEligibility=satisfied。option-2 显示人民币 12.00 元，但 feesComplete=false，必需费用未齐，完整总额未知，rideEligibility=unknown，不能仅因显示价格更低就认定符合预算。已分别提出 RequestRide 提案：option-1 的 eligible_option 通过；option-2 为 unknown。两份提案的 within_authority 均 unknown，executionAllowed=false，因此只有决策提案，没有实际叫车或业务完成。",
+    "evidence": [
+      "RideRequest:request-B02:r1:ride",
+      "ServiceRequest:request-B02",
+      "RideOption:request-B02:option-1",
+      "RideOption:request-B02:option-2",
+      "SourceReceipt:0e82b0bf25a3455c804aca0df57f4b6bc6b4c9d6a097978c65aadc249206f6d4",
+      "SourceReceipt:11e2240839c6e7dbc3e316d056605d96aee780e1a844b11873216dc0461e6ddf"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "第二份方案的完整费用未知；业务执行权限未被证实，所有操作仅为只读评估及提案，所有记录为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B03",
+    "startedAt": "2026-10-18T09:05:07.444Z",
+    "completedAt": "2026-10-18T09:05:29.930Z",
+    "elapsedMs": 22486,
+    "calls": 4,
+    "answer": "不能以来源 state=completed 判定用户目标已满足。合成记录的两项明确不符是：实际目的地 synthetic-wrong-stop，而委托要求 synthetic-office；完整最终车费人民币 550.00 元，超过人民币 500.00 元预算 50.00 元。出发地 synthetic-home、2 人、standard 车型匹配；08:43:05.829Z 上车、09:02:05.829Z 到达，符合最晚 10:03:05.829Z 上车及 11:03:05.829Z 到达，并且到达晚于上车。rideOutcome=unsatisfied，失败项为 destination 和 final_fare，因此不能按原委托成功结案。",
+    "evidence": [
+      "RideRequest:request-B03:r1:ride",
+      "RideTrip:request-B03:219b344408708f5da02510a457f7692a254ee87e2596d907384cc3f07d8442ac",
+      "SourceReceipt:65cc4279938a2f1722c92521b295742bfba3c570bc8bfe76e04a5bbfd964ca44"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "结论仅基于数据时点的合成记录；未取得用户接受改目的地或追加预算的依据。"
+    ]
+  },
+  {
+    "caseId": "B04",
+    "startedAt": "2026-10-18T09:05:18.376Z",
+    "completedAt": "2026-10-18T09:05:50.973Z",
+    "elapsedMs": 32597,
+    "calls": 4,
+    "answer": "不能告知就诊人已经挂好号。合成挂号结果 state=pending，虽 paymentState=paid、费用人民币 35.00 元且资格已验证，但没有 confirmedAt，appointmentOutcome 返回 unknown，业务确认状态及确认截止条件未被证实。当前记录的 synthetic-campus 院区、synthetic-department 科室、synthetic-practitioner 医生、匿名就诊人 patient-alias-A、2026-10-19T09:03:05.829Z（Asia/Shanghai 为 10 月 19 日 17:03:05.829）的时段均与固定要求一致；费用低于人民币 500.00 元预算。还需来源提供有效确认状态和实际确认时刻，并确认在 2026-10-18T10:03:05.829Z 挂号截止前有效；如涉及保留期，还需确认未失效。缴费成功本身不是挂号成功。",
+    "evidence": [
+      "AppointmentRequest:request-B04:r1:appointment",
+      "MedicalAppointment:request-B04:44990c976f003e4f5ca4ef2bbd162a2088317a4e9f1914a6386a2151e95aa38e",
+      "SourceReceipt:9b685579065787c7d1d3398adda2164a54d7e45f45ba31102a5f8c9a0a98974b"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "有效确认状态、confirmedAt 及保留有效期未见依据；未推断诊疗适宜性，所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B05",
+    "startedAt": "2026-10-18T09:05:35.871Z",
+    "completedAt": "2026-10-18T09:06:11.055Z",
+    "elapsedMs": 35184,
+    "calls": 9,
+    "answer": "本次合成挂号对应：合成医院院区（synthetic-campus，地址 synthetic-campus-address）、合成门诊科室（synthetic-department）、合成医师（synthetic-practitioner）、匿名就诊人 patient-alias-A。时段为 2026-10-19T09:03:05.829Z，即 Asia/Shanghai 2026 年 10 月 19 日 17:03:05.829。已沿固定要求的院区、科室、医生、患者与号源关系核对其标识一致。预约状态 confirmed，实际确认时刻为 2026-10-18T09:02:05.829Z，早于 10:03:05.829Z 挂号截止；资格 verified，人民币 35.00 元费用 paid，低于人民币 500.00 元预算。appointmentOutcome=satisfied，故截至数据时点有效挂号确认已被证实。号源剩余 1 个本身不作成功依据，确认结论来自对应挂号结果及其来源回执。",
+    "evidence": [
+      "AppointmentRequest:request-B05:r1:appointment",
+      "MedicalAppointment:request-B05:44990c976f003e4f5ca4ef2bbd162a2088317a4e9f1914a6386a2151e95aa38e",
+      "Hospital:synthetic-domain-provider:synthetic-campus",
+      "MedicalDepartment:synthetic-domain-provider:synthetic-department",
+      "Practitioner:synthetic-domain-provider:synthetic-practitioner",
+      "PatientProfile:synthetic-domain-provider:patient-alias-A",
+      "AppointmentSlot:synthetic-domain-provider:AppointmentSlot-synthetic",
+      "SourceReceipt:008b981f2d4ea157ce702699e1a91b9f91332c89a88249ad3249bf04f68a987f"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "仅证明合成数据中的挂号确认，不证明真实挂号、到诊或诊疗完成。"
+    ]
+  },
+  {
+    "caseId": "B06",
+    "startedAt": "2026-10-18T09:06:11.055Z",
+    "completedAt": "2026-10-18T09:06:43.635Z",
+    "elapsedMs": 32580,
+    "calls": 6,
+    "answer": "目前不能说预约有效。合成挂号状态仍是 held，保留截止为 2026-10-18T08:58:05.829Z，早于数据时点 09:03:05.829Z 五分钟，且没有 confirmedAt。appointmentOutcome=unsatisfied，hold_expired 明确失败；院区、科室、医生、匿名就诊人及预约时段虽然与要求匹配，人民币 35.00 元费用已 paid、资格已验证，也不能使已过期且未确认的保留重新有效。尚无退费完成依据：现有付款状态仍为 paid，查询 Refund 类型未返回任何记录，不能把保留失效推定为退款到账。应取得重新有效确认或后续处置的来源记录；若退款，还需明确退款状态、金额及资金到账证据。",
+    "evidence": [
+      "AppointmentRequest:request-B06:r1:appointment",
+      "MedicalAppointment:request-B06:44990c976f003e4f5ca4ef2bbd162a2088317a4e9f1914a6386a2151e95aa38e",
+      "SourceReceipt:1128e697e7edeb994545dfda38a9405cfe6764253bc4c7fe50d790cbf0b11e00"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "Refund 查询结果为空，仅能表述当前可见数据没有退款完成依据；未证明真实世界没有退款。所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B07",
+    "startedAt": "2026-10-18T09:06:30.338Z",
+    "completedAt": "2026-10-18T09:07:03.257Z",
+    "elapsedMs": 32919,
+    "calls": 4,
+    "answer": "目前不能结案，也不足以认定最终失败，应保持未解决并继续等待后续配送证据。合成委托要求 synthetic-kitchen 的 meal-A、large-no-peanuts 规格 2 份，送至 synthetic-office，截止 2026-10-18T10:03:05.829Z，忌口 peanuts。现有记录仅同规格 1 份，尚差 1 份；state=partial、finalDelivery=false，且无 deliveredAt。在数据时点 09:03:05.829Z 截止尚未到来，未见最终配送终态，因此 foodOutcome=unknown，items 和 delivery_deadline 均未决。商家、地点、忌口验证已匹配，完整总额人民币 68.40 元在人民币 500.00 元预算内。还需剩余数量到齐、实际送达时间和最终配送状态的来源记录，才能判断是否完成；若后续最终配送仍短缺或到期未达，应据新证据判断不满足。",
+    "evidence": [
+      "FoodRequest:request-B07:r1:food",
+      "FoodDelivery:request-B07:51dbf461fe8e0a4ee4af83dabdebfad2cdf713cb7e6e232b83600751b8304964",
+      "SourceReceipt:94c15e318ce1e4c76131e842cb5da3449297655802929cd5e5c3a77f9c1a41a9"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "缺 1 份配送及实际送达、最终配送终态证据；所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B08",
+    "startedAt": "2026-10-18T09:06:51.250Z",
+    "completedAt": "2026-10-18T09:07:20.087Z",
+    "elapsedMs": 28837,
+    "calls": 4,
+    "answer": "不满足原委托，不能成功结案。数量虽然为 meal-A 2 份，最终配送状态 delivered、finalDelivery=true，但实际规格是 small-standard，原要求为 large-no-peanuts，属于明确规格不符。原要求排除 peanuts，现有 ingredientCheck=unknown，因此忌口是否满足未知，不能声称无花生。商家 synthetic-kitchen、目的地 synthetic-office 与要求相符，实际送达为 2026-10-18T09:02:05.829Z，早于 10:03:05.829Z 截止。费用为完整总额人民币 68.40 元，低于人民币 500.00 元预算。foodOutcome=unsatisfied，其中 items=fail、excluded_ingredients=unknown；总数量齐全不足以抵销规格错误或忌口证据缺失。",
+    "evidence": [
+      "FoodRequest:request-B08:r1:food",
+      "FoodDelivery:request-B08:51dbf461fe8e0a4ee4af83dabdebfad2cdf713cb7e6e232b83600751b8304964",
+      "SourceReceipt:778d777479bc6b38f8fa2f317282ac9cc2a30a23a671585f28f2cd3bc4d76f42"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "实际食品是否含花生未知，不能由规格名或送达状态推断；所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B09",
+    "startedAt": "2026-10-18T09:07:08.808Z",
+    "completedAt": "2026-10-18T09:07:47.292Z",
+    "elapsedMs": 38484,
+    "calls": 7,
+    "answer": "截至数据时点，此合成外卖委托已满足用户目标，可按合成证据结案。商家为合成餐厅（synthetic-kitchen，商家地址 synthetic-kitchen-address）；实送菜品 meal-A、large-no-peanuts 规格 2 份，与固定要求一致。目的地 synthetic-office；实际送达为 2026-10-18T09:02:05.829Z，早于要求的 10:03:05.829Z 截止，且早于数据时点。state=delivered、finalDelivery=true，忌口 peanuts 的 ingredientCheck=verified；关联菜单亦记录规格 large-no-peanuts、成分已知。费用依据为对应 FoodDelivery 的 total=6840 CNY 最小货币单位，即人民币 68.40 元，feesComplete=true，低于人民币 500.00 元预算；结果绑定来源回执 event-B09。foodOutcome=satisfied，各项条件通过。",
+    "evidence": [
+      "FoodRequest:request-B09:r1:food",
+      "FoodDelivery:request-B09:51dbf461fe8e0a4ee4af83dabdebfad2cdf713cb7e6e232b83600751b8304964",
+      "FoodMerchant:synthetic-domain-provider:synthetic-kitchen",
+      "MenuItem:synthetic-domain-provider:meal-A",
+      "SourceReceipt:f0e19a995e09fd8e1321255cf49b3c16462cd813653eb9193389445973e688b5"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "只证明合成数据中此次外卖目标满足，不构成真实下单、付款或配送声明。"
+    ]
+  },
+  {
+    "caseId": "B10",
+    "startedAt": "2026-10-18T09:07:47.293Z",
+    "completedAt": "2026-10-18T09:08:12.331Z",
+    "elapsedMs": 25038,
+    "calls": 4,
+    "answer": "现在不能告诉用户已经订妥。合成 HotelReservation 的 paymentState=paid，供应方业务编号为 synthetic-hotel-record，但 state=pending，confirmationCode 与 confirmedAt 均未提供；hotelOutcome=unknown，hotel_confirmation 未被证实。委托的终点是 confirmed，安排为 synthetic-hotel 的 synthetic-twin，Asia/Shanghai 2026-10-19 入住、2026-10-21 退房，1 间、2 人、flexible-v1 取消政策；结果中的这些安排与要求相符。完整总价人民币 398.00 元，低于人民币 500.00 元预算，付款证据不能代替酒店有效确认。还需要酒店或获授权预订来源对上述安排的有效确认编号、确认状态及确认时间，并保持与此委托和来源回执的绑定。",
+    "evidence": [
+      "HotelRequest:request-B10:r1:hotel",
+      "HotelReservation:request-B10:e709eb196fe2a9df37de6aab7ff4d3011359818d7c41a83aa91495f38e0b8c4c",
+      "SourceReceipt:40cd58d695121df55a1f943bdf410f88b518c26a7bcb41043525a7d32cb25cd0"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "缺有效酒店确认编号、确认状态与实际确认时刻；不把供应方业务编号视为订妥证明，所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B11",
+    "startedAt": "2026-10-18T09:07:57.744Z",
+    "completedAt": "2026-10-18T09:08:35.774Z",
+    "elapsedMs": 38030,
+    "calls": 7,
+    "answer": "本次要求的酒店预订确认服务已经完成，但不能同时声称用户已完成住宿。具体安排是合成酒店（synthetic-hotel，地址 synthetic-hotel-address）的合成双床房（synthetic-twin，twin，容量 2 人），1 间、2 位客人，Asia/Shanghai 2026-10-19 入住、2026-10-21 退房，共 2 晚，取消政策标识 flexible-v1。完整总额人民币 398.00 元，低于人民币 500.00 元预算。结果 state=confirmed、确认编号 synthetic-hotel-confirmation、实际确认时刻 2026-10-18T09:02:05.829Z；paymentState=not_required，不能称已付款。上述安排与原要求相符，原 endpoint=confirmed，hotelOutcome=satisfied、endpoint=hotel_confirmed。因此可按合成证据结束订妥委托。计划入住日期仍在数据时点之后，且无 checkedInAt/checkedOutAt，住宿完成未被证实。",
+    "evidence": [
+      "HotelRequest:request-B11:r1:hotel",
+      "HotelReservation:request-B11:e709eb196fe2a9df37de6aab7ff4d3011359818d7c41a83aa91495f38e0b8c4c",
+      "HotelProperty:synthetic-domain-provider:synthetic-hotel",
+      "RoomType:synthetic-domain-provider:synthetic-twin",
+      "RoomInventory:synthetic-domain-provider:RoomInventory-synthetic",
+      "SourceReceipt:2ea0aec43ac502dec08e1f7a63c2ef25d6cf5e33b2dfe8487b5386701e6bde9c"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "取消条款只核对到 flexible-v1 标识一致，未取得具体条款文本；无实际入住退房证据，所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B12",
+    "startedAt": "2026-10-18T09:08:35.776Z",
+    "completedAt": "2026-10-18T09:09:01.209Z",
+    "elapsedMs": 25433,
+    "calls": 4,
+    "answer": "不满足用户要求的完整住宿，不能仅凭 checked_out 状态结案。原 endpoint=stay_completed，计划按 Asia/Shanghai 于 2026-10-15 入住、2026-10-17 退房，共 2 晚。结果的计划 checkIn/checkOut 字段仍写 10 月 15 日至 17 日，但实际 checkedInAt=2026-10-15T15:00:00+08:00、checkedOutAt=2026-10-16T11:00:00+08:00，实际次日已退房，比计划退房日期提前 1 天，仅跨 1 晚。两次实际事件先后顺序成立且均已发生，却没有覆盖原要求的日期。hotelOutcome=unsatisfied，actual_stay_dates=fail。酒店、房型、1 间 2 人、取消政策及人民币 398.00 元完整总额等条件匹配，也不能补足缺失的住宿日期。",
+    "evidence": [
+      "HotelRequest:request-B12:r1:hotel",
+      "HotelReservation:request-B12:e709eb196fe2a9df37de6aab7ff4d3011359818d7c41a83aa91495f38e0b8c4c",
+      "SourceReceipt:0d3df4aa158455b915a689fc6a7b5ed1512c576c88afcb66854c78b208693733"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "未见用户同意缩短住宿的变更依据；所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B13",
+    "startedAt": "2026-10-18T09:08:47.207Z",
+    "completedAt": "2026-10-18T09:09:23.143Z",
+    "elapsedMs": 35936,
+    "calls": 4,
+    "answer": "这份合成行程方案可以作为方案交付；不能称预订已完成。原委托 endpoint=plan，结果 state=validated，2026-10-18T09:02:05.829Z 已验证，itineraryOutcome=satisfied、endpoint=itinerary_planned。两人行程包含 leg-1：2026-10-19T10:03:05.829Z 至 11:03:05.829Z，rail，synthetic-station→synthetic-hotel，需要预订但 bookingState=unbooked；leg-2：11:43:05.829Z 至 12:13:05.829Z，walk，synthetic-hotel→synthetic-venue，bookingState=not_required。没有任何项目已被证实预订成功；步行项无需预订，不能算作已预订。两段地点衔接，间隔 40 分钟满足 20 分钟缓冲，均在整体时间窗内，可行性 verified。完整费用人民币 236.00 元在人民币 500.00 元预算内；unbookedDisclosed=true 已明确披露 rail 未预订，故方案完成与预订完成应分别表述。",
+    "evidence": [
+      "ItineraryRequest:request-B13:r1:itinerary",
+      "Itinerary:request-B13:6fe4e4ecf9400f98b2116017b94850fa5bf3834131aee56fa3da4230b2998ef8",
+      "SourceReceipt:f21bdf079d5e089dbddb2be82fbe2abd0f97125750b0c1aa3397cb8026ba3ce4"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "rail 尚未预订，未取得任何实际预订或出行完成证据；所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B14",
+    "startedAt": "2026-10-18T09:09:09.270Z",
+    "completedAt": "2026-10-18T09:09:44.980Z",
+    "elapsedMs": 35710,
+    "calls": 4,
+    "answer": "当前方案不能作为符合要求的可行行程交付。前后地点能接上：leg-1 synthetic-station→synthetic-hotel，leg-2 synthetic-hotel→synthetic-venue；两段也都落在整体 2026-10-19T09:03:05.829Z 至 21:03:05.829Z 时间窗内。但 leg-1 于 11:03:05.829Z 结束，leg-2 于 11:13:05.829Z 开始，只有 10 分钟衔接，而明确 transferMinutes=20，少了 10 分钟缓冲。固定要求自身也保存了这一冲突时间，不能仅复制时间或凭 state=validated、单段 feasibility=verified 就称整体可行。itineraryOutcome=unsatisfied，connections=fail。应调整原安排，使第二段最早 11:23:05.829Z 开始，或第一段至少提前 10 分钟结束，并重新核对各段耗时及整体时间窗；这需要同步形成明确的修订要求，再验证方案。费用完整为人民币 236.00 元、在人民币 500.00 元预算内，rail 未预订已披露，这些不能弥补缓冲不足。",
+    "evidence": [
+      "ItineraryRequest:request-B14:r1:itinerary",
+      "Itinerary:request-B14:6fe4e4ecf9400f98b2116017b94850fa5bf3834131aee56fa3da4230b2998ef8",
+      "SourceReceipt:9fa98b14fd93c9f5c349d4ac5630ec87cc13e7d578695324eb0aa17393d808cb"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "建议为调整方向，未更改时间或预订；新时间的交通可行性需重新核对，所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B15",
+    "startedAt": "2026-10-18T09:09:29.597Z",
+    "completedAt": "2026-10-18T09:10:11.979Z",
+    "elapsedMs": 42382,
+    "calls": 4,
+    "answer": "不是每项必需预订都已确认，本次要求订妥的委托不能结案。原 endpoint=booked，虽然总记录 state=booked，但唯一 bookingRequired=true 的 leg-1（rail，synthetic-station→synthetic-hotel，2026-10-19T10:03:05.829Z 至 11:03:05.829Z）仍为 bookingState=held，未见确认编号或有效确认记录。leg-2 是 synthetic-hotel→synthetic-venue 的步行安排，bookingRequired=false、bookingState=not_required，只代表无需预订。逐项核对后 itineraryOutcome=unknown，booking_endpoint=unknown；完整费用人民币 236.00 元、地点衔接、40 分钟间隔满足 20 分钟缓冲以及可行性均通过，仍不能替代 leg-1 确认。应取得该必需项目有效预订确认后再评估。",
+    "evidence": [
+      "ItineraryRequest:request-B15:r1:itinerary",
+      "Itinerary:request-B15:6fe4e4ecf9400f98b2116017b94850fa5bf3834131aee56fa3da4230b2998ef8",
+      "SourceReceipt:ec470eae1ec295a2dfa9d43bc7fc53a177dfd0d1e5539dadd15cc52bd2856bd7"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "leg-1 保留是否转为确认、保留有效期及确认编号未知；所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B16",
+    "startedAt": "2026-10-18T09:09:52.509Z",
+    "completedAt": "2026-10-18T09:10:37.356Z",
+    "elapsedMs": 44847,
+    "calls": 7,
+    "answer": "不会因为缺少用户驾驶人引用而不能成立。本次 mode=chauffeured，是带司机的预约用车；本体明确 driverKey 用于自驾资格绑定，带司机模式无需用户驾照引用。安排为 synthetic-depot 取车/上车，同地 returnLocation，2026-10-19T09:03:05.829Z 至 2026-10-20T09:03:05.829Z（Asia/Shanghai 10 月 19 日 17:03 至 20 日 17:03），24 小时，compact 合成紧凑车型、自动挡、容量 4 人，本次 2 人。state=confirmed，确认编号 synthetic-vehicle-confirmation，确认时刻 2026-10-18T09:02:05.829Z，资格来源验证为 true。完整服务费人民币 288.00 元，低于人民币 500.00 元预算；押金人民币 1,000.00 元，低于单独的人民币 2,000.00 元押金上限。vehicleOutcome=satisfied，达到原 endpoint=confirmed 的预约确认目标。押金与服务费分别核对，不能把押金当成服务费，也不能据此声称已经使用完车辆。",
+    "evidence": [
+      "VehicleRequest:request-B16:r1:vehicle",
+      "VehicleBooking:request-B16:5c9bdf12a2b481b23ded5eecb40090a9ee9f1a486fb38812b7846602fe992c50",
+      "VehicleClass:synthetic-domain-provider:compact",
+      "RentalPolicy:synthetic-domain-provider:RentalPolicy-synthetic",
+      "SourceReceipt:997f4979a4bb5d40b2ac92a1355aa7fad180c96474241f1dc1611d02df96e00d"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "本题只证明合成预约确认，未取得实际用车、付款、归还或押金结清证据。"
+    ]
+  },
+  {
+    "caseId": "B17",
+    "startedAt": "2026-10-18T09:10:37.359Z",
+    "completedAt": "2026-10-18T09:11:03.386Z",
+    "elapsedMs": 26027,
+    "calls": 7,
+    "answer": "尚不能认定已满足本次自驾租车委托。虽然 state=confirmed，确认编号 synthetic-vehicle-confirmation、确认时刻 2026-10-18T09:02:05.829Z 均有记录，但 eligibilityVerified 缺失，vehicleOutcome=unknown、eligibility=unknown。driverKey=driver-alias-A 只证明绑定的匿名驾驶人一致，不能替代驾车资格经来源核验的证据。其他核对项匹配：self_drive，自 synthetic-depot 取车并同地归还；租期 2026-10-19T09:03:05.829Z 至 2026-10-20T09:03:05.829Z，Asia/Shanghai 为 19 日 17:03 至 20 日 17:03，共 24 小时；compact 合成紧凑车型、自动挡、容量 4 人，本次 2 人。完整费用人民币 288.00 元低于人民币 500.00 元预算；押金人民币 1,000.00 元低于人民币 2,000.00 元押金上限。关联政策只提供 synthetic-eligibility-rule 规则引用，并没有证明该驾驶人已通过。取得绑定本次驾驶人与委托的资格验证后，才能重新判断预约确认目标。",
+    "evidence": [
+      "VehicleRequest:request-B17:r1:vehicle",
+      "VehicleBooking:request-B17:5c9bdf12a2b481b23ded5eecb40090a9ee9f1a486fb38812b7846602fe992c50",
+      "VehicleClass:synthetic-domain-provider:compact",
+      "RentalPolicy:synthetic-domain-provider:RentalPolicy-synthetic",
+      "SourceReceipt:b6e38e2f9d7ee9e9bcf3c7e60374a12afe2c122498438e64e06853e978756643"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "自驾资格是否验证通过未知；不能从驾驶人引用或确认编号推断。所有记录均为合成数据。"
+    ]
+  },
+  {
+    "caseId": "B18",
+    "startedAt": "2026-10-18T09:11:03.396Z",
+    "completedAt": "2026-10-18T09:11:44.879Z",
+    "elapsedMs": 41483,
+    "calls": 7,
+    "answer": "这件租车服务暂不能整体关闭。原委托 endpoint=completed，合成记录已 returned，实际取车 2026-10-18T06:33:05.829Z、归还 08:53:05.829Z，先后顺序成立，处于约定 06:03:05.829Z 至 09:33:05.829Z 的用车窗口内；returnAccepted=true，关联归还验车记录于 08:53:05.829Z accepted=true。自驾模式、driver-alias-A、资格验证、compact 车型、2 人及 synthetic-depot 取还地点均匹配。完整服务费人民币 288.00 元在人民币 500.00 元预算内，押金人民币 1,000.00 元在人民币 2,000.00 元限额内。但 depositState=pending，押金尚无结清依据，因此 vehicleOutcome=unknown，deposit_settled=unknown；归还与验车接受不能替代资金结清。下一步应核对押金释放/退款或合法抵扣的金额与最终状态、相关来源回执，并确认是否存在待处理扣款或争议；不能把 pending 说成 settled，也不能说成已经 disputed。现有数据只足以说明车辆已被接受归还，整体关闭条件仍未满足。",
+    "evidence": [
+      "VehicleRequest:request-B18:r1:vehicle",
+      "VehicleBooking:request-B18:5c9bdf12a2b481b23ded5eecb40090a9ee9f1a486fb38812b7846602fe992c50",
+      "VehicleInspection:synthetic-domain-provider:VehicleInspection-synthetic",
+      "SourceReceipt:da590173d50c9ece34f915ed289c27ac42592fd15c06e55f223d41b1dc58b086"
+    ],
+    "assistanceNeeded": false,
+    "limitations": [
+      "押金结清、释放/到账金额及是否存在扣款或争议尚无依据；所有记录均为合成数据，未发生真实租车或资金操作。"
+    ]
+  }
+]

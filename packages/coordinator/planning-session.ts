@@ -9,6 +9,7 @@ import { planningSnapshot, type PlanningReadReceipt, type ObjectSnapshot, type D
 import type { ResolvedCandidate, ServiceRequest } from '../ontology/execution.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { serviceDomains } from '../ontology/service-domains.js';
+import { businessConditionSchema } from '../ontology/business-model.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
 
 const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), includeSchemas: z.boolean().optional().describe('Request full property value schemas; default returns concise names, semantics and links') }).strict();
@@ -40,7 +41,7 @@ export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: stri
   }
   const bound = { ...request, conditions: request.conditions?.map(c => {
     const subject = snapshot.conditionChecks.find(check => check.conditionId === c.id)?.subject;
-    return subject ? { ...c, subject: { ...c.subject, object: subject } } : c;
+    return subject ? businessConditionSchema.parse({ ...c, subject: { ...c.subject, object: subject } }) : c;
   }) };
   if (!hardConditionsPass(assessConditions(graph, owner, bound, undefined, 'precondition'), 'precondition')) throw new DomainError('CONFLICT', 'Business precondition evidence expired or changed before dispatch');
 }

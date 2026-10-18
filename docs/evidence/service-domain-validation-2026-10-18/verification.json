@@ -1,0 +1,98 @@
+{
+  "scope": "Real Codex reasoning plus independent-agent ontology investigation on synthetic business data; no actual PA, live provider, transaction or deployment",
+  "backendVersion": "ontology-execution-v6",
+  "model": {
+    "id": "eigos.business",
+    "version": "4",
+    "digest": "ba711381570f904c6f7884532ce89d9e30712f6d5a00e8995df5a8abd0eb6979"
+  },
+  "sourceInputs": {
+    "baseCommit": "2bbf16e66b89333fb33d3fae4da25eccaac71c5f",
+    "sourceSha256": {
+      "packages/ontology/execution.ts": "63eeac8331c1a3f649b7d7072eec6addd9dfe5b2bbb6a9931327202aebcc25de",
+      "packages/ontology/actions.ts": "57e1c81913b8bf82e9be04fb0ba48b62be9f5502916300ba145c34aab69d454e",
+      "packages/ontology/quantity.ts": "ee8816f9150d4ca7135054601e2fc9793e03b1ec2c197ab412ce293462770c52",
+      "packages/ontology/service-domains.ts": "3fdd48c3a92b0514ed63137e15d34146b72379944f2b31b066fc1983172fa232",
+      "packages/ontology/domain-rules.ts": "0428b047c5e563901f6e7ec7984ad1306510172ea84128cc1ea69afa5abb7a21",
+      "packages/ontology/domain-functions.ts": "c57518a281b2d8a3df1b9705ed512f725264ba98cf413e78b5bd434832ba3697",
+      "packages/ontology/domain-projection.ts": "df4ad0d6056d7550a87edf3ec5876796ac3392d0992043e462c03d4f8ae8e0b2",
+      "packages/ontology/business-model.ts": "b6f2aacff05171051ac4eb79593914078b22fe3b5311db7dad4e792306610386",
+      "packages/coordinator/coordinator.ts": "a38fc52c31c0dbfb59ef3303751b806f33e8b4f4aa75743e1d0a5676f1c8d4c8",
+      "packages/coordinator/requirements.ts": "ddb6688bef9c1fc2f0f709b1484a955e4dc57596e118717dc7876e4488cf15ed",
+      "packages/coordinator/resolver.ts": "b64b47f7158e975ed1b65ef3f1cc7548c22d67e63e7ba647ccc27c05611b21a2",
+      "packages/coordinator/plan.ts": "c77b82351643cc862c4690b8c1d15292115c722bbafd474d1f53ef03895669ac",
+      "packages/coordinator/planning-session.ts": "f9dcd22865876c06ebe4ace4b825cd28d4922e48cf3c52d3746079100619e771",
+      "packages/coordinator/reasoning-loop.ts": "1f5816731a3085f8057ae815c92582e5904d4774e18b3da0bbd50f81129c12c2",
+      "packages/coordinator/conditions.ts": "95fcff17b6fe0ff6d64cf97601b2a5d246df1f61e7d9627d50a5365df44a25bc",
+      "packages/core/catalog.ts": "a22643534e799bb152e579593c6d5fb361b20d245a88121fec6c1717f6cf83f4",
+      "packages/capabilities/domain-service.ts": "dae4433d27cb992b17b9cd483fbfa4ffe0e3492f8351c7c346ccce88fecf9a76",
+      "packages/capabilities/executor.ts": "2c919af5f412eafe4d0f30a8a09c2f44a80f57b4fc4576f46c8f5d1f2409eeb7",
+      "examples/ontology-drill.ts": "32280ae38fc29877550c37ef042dd3bf321643db1f6e7ea02bb0be769aceb285",
+      "examples/service-domain-drill.ts": "9d4ba2e5c4c5d4bc5f3a1ceb5c89ebb5e6b86b4804e0e0a433668689dc959950",
+      "examples/verify-service-domain-planning.ts": "84b9282f452bef27b45a2271f84cf731ae331d1dfeec5d679794b712964da334",
+      "tests/fixtures/service-domain-drill.ts": "7a5209a4763f93d3b8c288cbd74ed858306781bae341340fec7e5fb31a137910",
+      "tests/fixtures/service-domains.ts": "21fbb6d960ba90e25707c97635b726a3c578db77c6b1f0331be415ab430ed24e"
+    }
+  },
+  "automatedChecks": {
+    "typecheck": "passed",
+    "tests": {
+      "passed": 288,
+      "total": 288
+    },
+    "build": "passed",
+    "processE2E": {
+      "passed": 7,
+      "total": 7
+    },
+    "diffCheck": "passed"
+  },
+  "realModel": {
+    "round1": {
+      "completed": 3,
+      "total": 6,
+      "calls": 27,
+      "failedDomains": [
+        "ride",
+        "hotel",
+        "vehicle"
+      ],
+      "failure": "Model attempted to replace a fixed requirement"
+    },
+    "round2": {
+      "completed": 6,
+      "total": 6,
+      "calls": 38,
+      "ontologyReads": 59,
+      "eachDomainFunctionReadProven": true,
+      "parametersMatch": true,
+      "mcpA2AArtifactsMatch": true,
+      "independentAcceptance": true
+    }
+  },
+  "independentDrills": {
+    "1": {
+      "passed": 18,
+      "total": 18,
+      "toolCalls": 89,
+      "assistanceReported": 0,
+      "wallMs": 364173,
+      "summedCaseElapsedMs": 1061541
+    },
+    "2": {
+      "passed": 18,
+      "total": 18,
+      "toolCalls": 99,
+      "assistanceReported": 0,
+      "wallMs": 478546,
+      "summedCaseElapsedMs": 619080
+    }
+  },
+  "remaining": [
+    "Human non-modeler drill not run",
+    "No real providers for the six domains",
+    "Actual user PA not exercised in this validation",
+    "N3 unified real-offer comparison, remaining N4 operations and N5 real fulfillment remain separate",
+    "No persistent deployment changed"
+  ]
+}

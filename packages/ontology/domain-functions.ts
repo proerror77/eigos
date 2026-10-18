@@ -4,7 +4,7 @@ import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 import type { Computation } from './object-functions.js';
 import { sourceProof } from './object-evidence.js';
-import { assessDomain, type DomainAssessment } from './domain-rules.js';
+import { assessDomain, quoteRoleCriteria, type DomainAssessment } from './domain-rules.js';
 import { parseDomainParameters, serviceDomains } from './service-domains.js';
 
 export function evaluateDomainFunction(store: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
@@ -48,6 +48,7 @@ export function evaluateDomainFunction(store: OntologyObjectStore, owner: string
     { id: 'complete_price', result: p.feesComplete !== true || !price?.minor || price.currency !== maximum.currency ? 'unknown' : BigInt(price.minor) <= BigInt(maximum.minor) ? 'pass' : 'fail', reason: 'All mandatory fees in the requested currency' },
     { id: 'terms', result: p.termsMatch === true ? 'pass' : 'unknown', reason: 'The fixed cancellation, service and data terms must be covered' },
   ];
+  criteria.push(...quoteRoleCriteria(definition.id, parameters, p));
   const value: DomainAssessment = { status: criteria.some(c => c.result === 'fail') ? 'unsatisfied' : criteria.some(c => c.result === 'unknown') ? 'unknown' : 'satisfied', criteria, endpoint: 'eligible_option' };
   return { status: 'known', value, evidenceRefs: refs, evidenceLevels: levels };
 }

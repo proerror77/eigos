@@ -11,14 +11,19 @@ import { z } from 'zod';
 import { drillCase, DRILL_QUESTIONS } from '../tests/fixtures/ontology-drill.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { OntologyPlanningSession, planningToolCatalog } from '../packages/coordinator/planning-session.js';
+import type { ServiceRequest } from '../packages/ontology/execution.js';
 
 const answerSchema = z.object({ answer: z.string().min(1).max(20000), evidence: z.array(z.string().min(1).max(500)).max(100), assistanceNeeded: z.boolean(), limitations: z.array(z.string().max(1000)).max(20) }).strict();
-export async function createDrillHost(directory: string) {
+export interface DrillDataset { id: string; question: string; asOf: string; datasetVersion: string; datasetDigest: string; request: ServiceRequest; initialize(graph: OntologyObjectStore, owner: string): void }
+export async function createDrillHost(directory: string, datasets: (asOf: number) => DrillDataset[] = asOf => DRILL_QUESTIONS.map(([id]) => {
+  const data = drillCase(id, asOf);
+  return { ...data, id, initialize: (graph: OntologyObjectStore, owner: string) => graph.ingest(owner, data.batch, data.source) };
+})) {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const token = randomBytes(32).toString('hex'), asOf = Date.now(), sessions = new Map<string, { session: OntologyPlanningSession; database: DatabaseSync; firstAt?: string; calls: number }>();
-  const cases = DRILL_QUESTIONS.map(([id]) => {
-    const data = drillCase(id, asOf), database = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(database, undefined, () => asOf);
-    graph.ingest(id, data.batch, data.source);
+  const cases = datasets(asOf).map(data => {
+    const id = data.id, database = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(database, undefined, () => asOf);
+    data.initialize(graph, id);
     sessions.set(id, { database, session: new OntologyPlanningSession(graph, id, data.request), calls: 0 });
     return { id, question: data.question, asOf: data.asOf, datasetVersion: data.datasetVersion, datasetDigest: data.datasetDigest };
   });

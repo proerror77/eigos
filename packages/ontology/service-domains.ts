@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
+import type { RequirementRoleDefinition } from './execution.js';
 
 const text = z.string().trim().min(1).max(500);
 const instant = z.iso.datetime({ offset: true });
@@ -11,6 +12,18 @@ const foodLine = z.object({ sku: text, quantity: count, specification: text }).s
 const leg = z.object({ id: text, origin: text, destination: text, startsAt: instant, endsAt: instant, mode: text, transferMinutes: z.number().int().min(0).max(1440), bookingRequired: z.boolean() }).strict();
 export const domainNames = ['ride', 'appointment', 'food', 'hotel', 'itinerary', 'vehicle'] as const;
 export type ServiceDomain = typeof domainNames[number];
+const role = (kind: RequirementRoleDefinition['kind'], role: string, description: string): RequirementRoleDefinition => ({ kind, role, description });
+const totalRole = role('budget', 'service_total', 'All mandatory service fees; a refundable deposit is separate');
+const completionRole = role('deadline', 'completion', 'The requested business endpoint deadline, not each scheduled time in the input');
+export const domainRequirementRoles: Record<ServiceDomain, RequirementRoleDefinition[]> = {
+  ride: [role('quantity', 'passenger_count', 'People riding'), totalRole, completionRole, role('deadline', 'pickup', 'Latest actual pickup'), role('deadline', 'arrival', 'Latest actual arrival'), role('location', 'origin', 'Actual pickup origin'), role('location', 'destination', 'Actual trip destination')],
+  appointment: [role('quantity', 'patient_count', 'Explicit number of patients; do not infer a new count constraint'), totalRole, completionRole, role('deadline', 'registration', 'Latest effective registration confirmation'), role('location', 'venue', 'Exact hospital campus identity')],
+  food: [role('quantity', 'item_quantity', 'Meal portions; preserve individual SKU quantities in input'), totalRole, completionRole, role('location', 'destination', 'Actual food delivery destination')],
+  hotel: [role('quantity', 'room_count', 'Rooms, not people'), role('quantity', 'guest_count', 'Guests, not rooms'), totalRole, completionRole, role('location', 'venue', 'Exact hotel identity; check-in/out dates remain typed schedule fields')],
+  itinerary: [role('quantity', 'traveler_count', 'Travelers; leg counts stay in typed input'), totalRole, completionRole, role('location', 'destination', 'Final planned destination; intermediate endpoints stay on each leg')],
+  vehicle: [role('quantity', 'passenger_count', 'People using the vehicle'), totalRole, role('budget', 'deposit', 'Maximum deposit separately from service charges'), completionRole, role('location', 'pickup', 'Vehicle pickup location'), role('location', 'return', 'Vehicle return location; scheduled rental times remain typed input')],
+};
+export const domainCommitmentsSchema = z.object({ completion: instant.optional(), pickup: instant.optional(), arrival: instant.optional(), registration: instant.optional() }).strict();
 export const domainParameterSchemas = {
   ride: z.object({ origin: text, destination: text, passengers: count, serviceClass: text, pickupBy: instant, arriveBy: instant, budget: money }).strict(),
   appointment: z.object({ hospitalId: text, departmentId: text, practitionerId: text, patientKey: text, startsAt: instant, timeZone: zone, registerBy: instant, budget: money }).strict(),
@@ -102,8 +115,9 @@ const auxiliaryFields: Record<string, Record<string, z.ZodType>> = {
 };
 for (const d of serviceDomains) {
   domainObjects.push(object(d.requestType, `${d.name}要求`, { ...d.parameters.shape, requestRevision: z.number().int().positive(), capturedAt: instant }));
-  domainObjects.push(object(d.candidateType, `${d.name}候选方案`, { parametersDigest: z.string().regex(/^[a-f0-9]{64}$/), offeredParameters: d.parameters, requestRevision: z.number().int().positive(), availability: z.enum(['available', 'unavailable', 'unknown']), eligibility: z.enum(['verified', 'ineligible', 'unknown']), observedAt: instant, expiresAt: instant, total: money, feesComplete: z.boolean(), commitmentBy: instant.optional(), termsMatch: z.boolean() }, true));
+  domainObjects.push(object(d.candidateType, `${d.name}候选方案`, { parametersDigest: z.string().regex(/^[a-f0-9]{64}$/), offeredParameters: d.parameters, commitments: domainCommitmentsSchema.optional(), ...(d.id === 'vehicle' ? { deposit: money } : {}), requestRevision: z.number().int().positive(), availability: z.enum(['available', 'unavailable', 'unknown']), eligibility: z.enum(['verified', 'ineligible', 'unknown']), observedAt: instant, expiresAt: instant, total: money, feesComplete: z.boolean(), commitmentBy: instant.optional(), termsMatch: z.boolean() }, true));
   domainObjects.push(object(d.resultType, `${d.name}结果`, { ...d.result.shape, requestRevision: z.number().int().positive(), sourceVersion: z.number().int().positive() }, true));
+  domainObjects.find(o => o.id === d.candidateType)!.version = '2';
   for (const type of [d.requestType, d.candidateType, d.resultType]) link(`${type}Request`, type, 'request', 'ServiceRequest', `${d.id}${type === d.requestType ? 'Requirements' : type === d.candidateType ? 'Options' : 'Results'}`);
   for (const type of [d.candidateType, d.resultType]) {
     link(`${type}Requirements`, type, 'requirements', d.requestType, type === d.candidateType ? 'options' : 'results');
@@ -146,12 +160,12 @@ for (const d of serviceDomains) for (const o of domainObjects.filter(o => [d.req
 }
 export const domainActions: ActionDefinition[] = serviceDomains.map(d => ({ id: d.action, description: `${d.name}的版本化业务决策。${d.endpoint}。提交决策更新委托进度及沟通记录；来源回执另行产生业务结果。真实连接器尚未接通，模型调用只提案。`, inputs: { request: 'ServiceRequest', requirements: d.requestType, option: d.candidateType }, changes: ['ServiceRequest.progress', 'ServiceEngagement'], submissionCriteria: ['same_owner', 'current_request_revision', 'same_request', 'current_requirements', 'eligible_option', 'within_authority'], providerOperation: `domain.${d.id}.submit` }));
 export const domainFunctions: FunctionDefinition[] = serviceDomains.flatMap(d => [
-  { id: d.eligibleFunction, version: '1', inputTypes: [d.candidateType], description: `${d.name}候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行` },
+  { id: d.eligibleFunction, version: '2', inputTypes: [d.candidateType], description: `${d.name}候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行` },
   { id: d.outcomeFunction, version: '1', inputTypes: [d.resultType], description: d.endpoint },
 ]);
 export const domainFunctionCallSchemas = serviceDomains.flatMap(d => [d.eligibleFunction, d.outcomeFunction].map(name => z.object({ function: z.literal(name), object: objectRefSchema }).strict()));
 export const domainConditionSchemas = serviceDomains.flatMap(d => (['precondition', 'result'] as const).map(phase => z.object({
-  id: z.string().min(1).max(100), predicateRef: z.object({ id: z.literal(`domain.${d.id}.${phase === 'result' ? 'complete' : 'eligible'}`), version: z.literal('1') }).strict(),
+  id: z.string().min(1).max(100), predicateRef: z.object({ id: z.literal(`domain.${d.id}.${phase === 'result' ? 'complete' : 'eligible'}`), version: z.literal(phase === 'precondition' ? '2' : '1') }).strict(),
   subject: z.object({ type: z.literal(phase === 'result' ? d.resultType : d.candidateType), role: z.literal(phase === 'result' ? 'domain_outcome' : 'domain_option'), object: objectRefSchema.optional() }).strict(),
   phase: z.literal(phase), strength: z.enum(['hard', 'preference']), operator: z.literal('eq'), expected: objectRefSchema.extend({ type: z.literal(d.requestType) }),
   source: z.object({ messageId: z.string().min(1).max(200), quote: z.string().min(1).max(2000) }).strict(),

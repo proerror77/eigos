@@ -1,0 +1,4047 @@
+{
+  "scope": "Actual Codex reasoning, synthetic domain sources, local A2A/MCP observer; not actual user PA or real business execution",
+  "backendVersion": "ontology-execution-v5",
+  "model": {
+    "id": "eigos.business",
+    "version": "3",
+    "digest": "21b0e293f4b8353b9723d2a4f3e65e3943e33296ff657ed6d305d9bdfec3e27a"
+  },
+  "requestedDomains": [
+    "ride",
+    "appointment",
+    "food",
+    "hotel",
+    "itinerary",
+    "vehicle"
+  ],
+  "failures": [
+    {
+      "domain": "ride",
+      "taskId": "a930f796-8c91-4236-9ca7-03514483b1cc",
+      "message": "Model attempted to replace a fixed requirement"
+    },
+    {
+      "domain": "hotel",
+      "taskId": "2ce31189-226b-4a2f-945d-8b2c11474c85",
+      "message": "Model attempted to replace a fixed requirement"
+    },
+    {
+      "domain": "vehicle",
+      "taskId": "f29665fa-2247-4ccb-be06-d3878f2395f7",
+      "message": "Model attempted to replace a fixed requirement"
+    }
+  ],
+  "rawReadbackSha256": "f0379d0c6abb39612f5688797c5d1990bed8661c396f19d35cf099439c9a69b8",
+  "sourceInputs": {
+    "baseCommit": "2bbf16e66b89333fb33d3fae4da25eccaac71c5f",
+    "sourceSha256": {
+      "packages/ontology/service-domains.ts": "485fca992e69553c4c73d16a8a80bd62fe7511a0efc0a71a84a770d56dc7dd16",
+      "packages/ontology/domain-rules.ts": "9c66dc6e011302ec9bc644e93d63217c24039264995288c0c092bb759425476e",
+      "packages/ontology/domain-functions.ts": "95ba592e18456903733c7aa2ea560d2b5607c93458b3bee32bbe3b44a504b747",
+      "packages/ontology/domain-projection.ts": "a44700301704f44809f6066ca6d8ad6022ec5274ed01b2636228d8dfa3b3aafa",
+      "packages/ontology/business-model.ts": "d50599fc976500e027860972655a547919632a95bc32868219ffd2786e5d3356",
+      "packages/coordinator/coordinator.ts": "e88c27a4065250a340adc408bc542cb6e4c9b6e854458928d7d7cc84d0245a75",
+      "packages/coordinator/planning-session.ts": "8e610c0a8d378dc93c26f169ddb8e1ae73329a964b03f51fe69a90228ca947f6",
+      "packages/coordinator/reasoning-loop.ts": "1f5816731a3085f8057ae815c92582e5904d4774e18b3da0bbd50f81129c12c2",
+      "packages/capabilities/domain-service.ts": "22c12b80ffdbe297bbc86e288bb436e5ea41bd9f0e350db4eb0135e4d39b5c51",
+      "packages/capabilities/executor.ts": "2c919af5f412eafe4d0f30a8a09c2f44a80f57b4fc4576f46c8f5d1f2409eeb7",
+      "examples/ontology-drill.ts": "32280ae38fc29877550c37ef042dd3bf321643db1f6e7ea02bb0be769aceb285",
+      "examples/service-domain-drill.ts": "9d4ba2e5c4c5d4bc5f3a1ceb5c89ebb5e6b86b4804e0e0a433668689dc959950",
+      "examples/verify-service-domain-planning.ts": "24d9c93555a8049f510f92915df18736e0d9f6d64813144b5cb490d00507cd2e",
+      "tests/fixtures/service-domain-drill.ts": "79b89793e8bbb5219872dc1fe1e77ba1d0ef7de9e950a229adad160894f3cf5b",
+      "tests/fixtures/service-domains.ts": "e1d38e3ecf32e85257024e36cd8a553140a5171697a32525d7c56348b404623f"
+    }
+  },
+  "tasks": [
+    {
+      "domain": "ride",
+      "taskId": "a930f796-8c91-4236-9ca7-03514483b1cc",
+      "state": "failed",
+      "modelRuns": 3,
+      "ontologyReads": 3,
+      "sourceCalls": {
+        "submits": 0,
+        "lookups": 0
+      },
+      "approved": false,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人安排从 synthetic-home 到 synthetic-office 的打车服务，车型 standard，最晚 2026-10-18T09:37:52.737Z 上车，2026-10-18T10:37:52.737Z 前到达，全部费用预算500元。要求终点为乘车服务完成。",
+      "request": {
+        "id": "a930f796-8c91-4236-9ca7-03514483b1cc",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人安排从 synthetic-home 到 synthetic-office 的打车服务，车型 standard，最晚 2026-10-18T09:37:52.737Z 上车，2026-10-18T10:37:52.737Z 前到达，全部费用预算500元。要求终点为乘车服务完成。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "02303996-9817-4337-88ed-09416896dcdd",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人安排从 synthetic-home 到 synthetic-office 的打车服务，车型 standard，最晚 2026-10-18T09:37:52.737Z 上车，2026-10-18T10:37:52.737Z 前到达，全部费用预算500元。要求终点为乘车服务完成。",
+            "receivedAt": "2026-10-18T08:37:52.791Z"
+          }
+        ],
+        "requirements": []
+      },
+      "plan": null,
+      "authorizationRequest": null,
+      "acceptance": null,
+      "artifact": null,
+      "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+      "modelReceipts": [
+        {
+          "id": "5aa07ddb-21ee-45f3-a94b-6c335cbcd81b",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:37:52.857Z",
+          "completedAt": "2026-10-18T08:38:03.236Z",
+          "outputSha256": "5e9ed3cc15338cd9f37fb3a88e2314ccaf376bcf5ed7e6b1a0266de3b589ac77",
+          "threadId": "01a14e29-03bc-74d2-8a96-e8e1c4530eaf",
+          "usage": {
+            "input_tokens": 44527,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 96,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "45075717-2b43-43d0-92f5-c5a38bec22b4",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:38:03.246Z",
+          "completedAt": "2026-10-18T08:38:14.372Z",
+          "outputSha256": "7e1f7125af0d27cbf15572f6582affa484604931093b3cf7acbfc95c2af150dc",
+          "threadId": "01a14e29-2b35-7492-b9ed-260d133f65f3",
+          "usage": {
+            "input_tokens": 49878,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 112,
+            "reasoning_output_tokens": 28
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "68e1b364-fae7-49b8-afc2-6bcdc190bcdc",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:38:14.378Z",
+          "completedAt": "2026-10-18T08:38:41.343Z",
+          "outputSha256": "9e87fd574782306e1e5674acaf3e4166976b7cedf3bde7b9dcaaa6259c074cda",
+          "threadId": "01a14e29-56b7-74a0-a0bb-d8f6542cb153",
+          "usage": {
+            "input_tokens": 50024,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1333,
+            "reasoning_output_tokens": 134
+          },
+          "purpose": "grounding"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "44e4f32c-9941-4176-9e05-59c7bd858175",
+          "at": "2026-10-18T08:38:03.242Z",
+          "tool": "describe_ontology",
+          "inputDigest": "fdfe93c693d7f4a124b9d7896f8336a2e47d6f96e3edbc5b0f77e6305b9a8113",
+          "outputDigest": "4c36405df1ae01279e0820a6635e2477e00506e6efcb05d768da914999432eb5",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "98c1a4a2-3eda-4c2b-84df-f7638a083ef6",
+          "at": "2026-10-18T08:38:03.245Z",
+          "tool": "query_ontology",
+          "inputDigest": "6d89f524314cf249b700cb1efad74fdeadf1922c84222caca58ccc765b988d84",
+          "outputDigest": "e58317bd09cb512a316b7ae27fb6be50906335603d0920b668ac414be9a9b235",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "a930f796-8c91-4236-9ca7-03514483b1cc"
+              },
+              "revision": 2,
+              "propertiesDigest": "cc4592969436859ce050371f6e726f46e205d087e7e2a028a72420d859f2932c",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "92710ac0-d529-42cf-b2df-2f1c359f5d47",
+          "at": "2026-10-18T08:38:14.376Z",
+          "tool": "query_ontology",
+          "inputDigest": "9734a4acd870e2e839828e9b21c69a5455f7e8f0a967a2bbbece03bfeff9f687",
+          "outputDigest": "ad62839bede127c694bf9918cb698c6b7274f6ea2adc7cc8def0c86064d3f7fa",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "a930f796-8c91-4236-9ca7-03514483b1cc",
+        "status": {
+          "state": "TASK_STATE_FAILED",
+          "message": {
+            "messageId": "bf6565d1-eb93-4758-837f-4c12f45e8864",
+            "contextId": "2f7ffa2d-a332-4eb5-9b1b-f36603b7859e",
+            "taskId": "a930f796-8c91-4236-9ca7-03514483b1cc",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "Ontology backend could not validate a supported plan. No business action was dispatched."
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:38:41.352Z"
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "domain": "appointment",
+      "taskId": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+      "state": "completed",
+      "modelRuns": 6,
+      "ontologyReads": 10,
+      "sourceCalls": {
+        "submits": 1,
+        "lookups": 0
+      },
+      "approved": true,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为匿名就诊人引用 patient-alias-A 挂号：医院院区 synthetic-campus，科室 synthetic-department，医生 synthetic-practitioner，就诊时刻 2026-10-19T08:37:52.737Z，时区 Asia/Shanghai。请在 2026-10-18T09:37:52.737Z 前取得有效挂号确认，挂号费预算500元。",
+      "request": {
+        "id": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为匿名就诊人引用 patient-alias-A 挂号：医院院区 synthetic-campus，科室 synthetic-department，医生 synthetic-practitioner，就诊时刻 2026-10-19T08:37:52.737Z，时区 Asia/Shanghai。请在 2026-10-18T09:37:52.737Z 前取得有效挂号确认，挂号费预算500元。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "041a6d67-8073-475f-981c-53f38597a220",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为匿名就诊人引用 patient-alias-A 挂号：医院院区 synthetic-campus，科室 synthetic-department，医生 synthetic-practitioner，就诊时刻 2026-10-19T08:37:52.737Z，时区 Asia/Shanghai。请在 2026-10-18T09:37:52.737Z 前取得有效挂号确认，挂号费预算500元。",
+            "receivedAt": "2026-10-18T08:38:42.107Z"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "registration-budget",
+            "strength": "hard",
+            "kind": "budget",
+            "expected": {
+              "minor": "50000",
+              "currency": "CNY"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "041a6d67-8073-475f-981c-53f38597a220",
+              "receivedAt": "2026-10-18T08:38:42.107Z",
+              "quote": "挂号费预算500元"
+            }
+          },
+          {
+            "id": "registration-deadline",
+            "strength": "hard",
+            "kind": "deadline",
+            "expected": {
+              "at": "2026-10-18T09:37:52.737Z",
+              "timezone": "Asia/Shanghai",
+              "original": "2026-10-18T09:37:52.737Z 前取得有效挂号确认"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "041a6d67-8073-475f-981c-53f38597a220",
+              "receivedAt": "2026-10-18T08:38:42.107Z",
+              "quote": "2026-10-18T09:37:52.737Z 前取得有效挂号确认"
+            }
+          },
+          {
+            "id": "hospital-campus",
+            "strength": "hard",
+            "kind": "location",
+            "expected": {
+              "ref": "synthetic-campus"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "041a6d67-8073-475f-981c-53f38597a220",
+              "receivedAt": "2026-10-18T08:38:42.107Z",
+              "quote": "医院院区 synthetic-campus"
+            }
+          }
+        ],
+        "successCriteria": [
+          {
+            "id": "appointment-confirmation",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "domain.appointment.complete"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "041a6d67-8073-475f-981c-53f38597a220",
+              "receivedAt": "2026-10-18T08:38:42.107Z",
+              "quote": "取得有效挂号确认"
+            }
+          }
+        ]
+      },
+      "plan": {
+        "id": "3f73303e-e3ee-439b-bd51-ba29f3a52069",
+        "version": "5",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "3",
+            "digest": "21b0e293f4b8353b9723d2a4f3e65e3943e33296ff657ed6d305d9bdfec3e27a"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "reads": [
+            {
+              "id": "296fb81f-8221-47a3-9903-d73a3b69bbff",
+              "at": "2026-10-18T08:39:39.512Z",
+              "tool": "describe_ontology",
+              "inputDigest": "27e083142c8b0fc4bc3c252f7a334da7881e6f06dbea37e4f6e3547a7d86a07f",
+              "outputDigest": "dfaf0325a8bd20c4a1af0a2e19c97255f24d861284d75457ee288421c72c8fa5",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "97dc44e2-ccc6-4696-8426-b2da86943e39",
+              "at": "2026-10-18T08:39:39.514Z",
+              "tool": "query_ontology",
+              "inputDigest": "4ee417fabd469efb9ef0c389bc6054b3b44638f58e4ec81dce0d20f03819fce6",
+              "outputDigest": "0097e2d9ffe5f5389950521d99f7873820ae6eb18bfaf9d79502cda1f901acde",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "AppointmentOption",
+                    "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:option-1"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "46f2b9da5f143511e4965bb2caa741842cdce1fc61bc7d9ca0a6cff3a91b0c12",
+                  "linksDigest": "07b0028908f8d41f2a22d8c1240fef9628d0a0a02dea8e90806dc27ddfdcd987"
+                }
+              ]
+            },
+            {
+              "id": "cd8d842c-373e-46c7-900b-7706249b85ec",
+              "at": "2026-10-18T08:39:39.516Z",
+              "tool": "assess_conditions",
+              "inputDigest": "b2c2edcdd64395baa309c5d3026edaec1c08b2ba532a85192b1854cf668baf35",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "14ddad32-e783-4a32-b867-e9dcb9ef6022",
+              "at": "2026-10-18T08:39:51.782Z",
+              "tool": "assess_conditions",
+              "inputDigest": "8b6e868d8fec1e8df4bbb9c699611b061c6f374ed2a60b84ba137edd86e5dc63",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "633cf8aa-ee72-4ee7-b65d-0ff125e4d9b8",
+              "at": "2026-10-18T08:39:51.790Z",
+              "tool": "evaluate_ontology",
+              "inputDigest": "978a2a3edb2fb8fc0a20023afd88d5c7835f685fc623465669092efe222f4725",
+              "outputDigest": "926881eada1f576f85f2c920c3c8dd011e5d497f8ddd9243223b121c7ddf390e",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "SourceReceipt",
+                    "id": "94d45822aaf544d4c30f8415bd891ce156fe763b0279b75d6214a6dfcbf976bc"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "52cf8b604de329a02e42436e0bb8feb76b7123096becc0a76f6df9822320bccb",
+                  "linksDigest": "8e61988e2b8f99db68a4304bbe893cce5e93601e503cdd28c2ffeab64a7dff1c"
+                },
+                {
+                  "ref": {
+                    "type": "AppointmentRequest",
+                    "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:r1:appointment"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "cd5e6063f6db5438872fe0854accca43d8fb9135877bb0c3f4393fbe61dcf4c1",
+                  "linksDigest": "b85a13ad81a9ac2f77cd230b4a4a95939a1307ef37f8e3ffe4008fcf7f45df4b"
+                },
+                {
+                  "ref": {
+                    "type": "ServiceRequest",
+                    "id": "e14e64ab-753e-4b0e-958e-9875106f72f2"
+                  },
+                  "revision": 3,
+                  "propertiesDigest": "a88940cc24812182c0f6bfdf82adeaf81adf00bcd6f392ca5846ceabd02834e7",
+                  "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+                }
+              ]
+            },
+            {
+              "id": "ab95f0e9-dc27-439e-bb0a-c84d3cfd1f33",
+              "at": "2026-10-18T08:39:51.791Z",
+              "tool": "query_ontology",
+              "inputDigest": "14cbe216c9bdcd399c79eab916d7b9fb7ce4bc6432ef0665ac92217575e418f6",
+              "outputDigest": "72e0d0d5d796d13ea2c967ecf1e2035fe20c1aa680a0ed32e6408090fb2e2794",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "f483d9f2-dedd-4646-95b0-c6cc7c6be7b5",
+              "at": "2026-10-18T08:39:51.792Z",
+              "tool": "query_ontology",
+              "inputDigest": "565f1975c8c1cadbc38ea20edfa9d1462d31333c44a4fe4a62576aa7bd8b0f5c",
+              "outputDigest": "9143566332f688a1cdc046bc07346c97be40dc687e45b0dab8c44b57ebc8bba0",
+              "datasetRevision": 7,
+              "status": "ok",
+              "objects": []
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "AppointmentOption",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "46f2b9da5f143511e4965bb2caa741842cdce1fc61bc7d9ca0a6cff3a91b0c12",
+              "linksDigest": "07b0028908f8d41f2a22d8c1240fef9628d0a0a02dea8e90806dc27ddfdcd987"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "94d45822aaf544d4c30f8415bd891ce156fe763b0279b75d6214a6dfcbf976bc"
+              },
+              "revision": 1,
+              "propertiesDigest": "52cf8b604de329a02e42436e0bb8feb76b7123096becc0a76f6df9822320bccb",
+              "linksDigest": "8e61988e2b8f99db68a4304bbe893cce5e93601e503cdd28c2ffeab64a7dff1c"
+            },
+            {
+              "ref": {
+                "type": "AppointmentRequest",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:r1:appointment"
+              },
+              "revision": 1,
+              "propertiesDigest": "cd5e6063f6db5438872fe0854accca43d8fb9135877bb0c3f4393fbe61dcf4c1",
+              "linksDigest": "b85a13ad81a9ac2f77cd230b4a4a95939a1307ef37f8e3ffe4008fcf7f45df4b"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2"
+              },
+              "revision": 3,
+              "propertiesDigest": "a88940cc24812182c0f6bfdf82adeaf81adf00bcd6f392ca5846ceabd02834e7",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ],
+          "conditionChecks": [],
+          "actionProposals": [],
+          "digest": "2acc15aa3fe2fd4662b2b1d32afa75826ea478ebd1726512690cb53a6f2bce90"
+        },
+        "requestId": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+        "requestRevision": 1,
+        "requestDigest": "ea01085698b2ceb8bdc61c18cf2fce8bdf69369862c3d71f1056bb8ecf6e6465",
+        "capabilityRef": {
+          "id": "service.appointment.sandbox",
+          "version": "1"
+        },
+        "ontologyRef": {
+          "id": "eigos.appointment",
+          "version": "1"
+        },
+        "candidateId": "0b6f65c4-132c-4985-9f74-d5dc37720bbc",
+        "bindingRef": {
+          "id": "domain.appointment.synthetic-domain-provider",
+          "version": "1"
+        },
+        "verifierRef": {
+          "id": "domain.appointment.independent",
+          "version": "1"
+        },
+        "steps": [
+          {
+            "id": "domain-service",
+            "operationId": "appointment-business-operation",
+            "actionTypeRef": {
+              "id": "domain.appointment.submit",
+              "version": "1"
+            },
+            "bindingRef": {
+              "id": "domain.appointment.synthetic-domain-provider",
+              "version": "1"
+            },
+            "capabilityRef": {
+              "id": "service.appointment.sandbox",
+              "version": "1"
+            },
+            "effect": "reserve",
+            "input": {
+              "hospitalId": "synthetic-campus",
+              "departmentId": "synthetic-department",
+              "practitionerId": "synthetic-practitioner",
+              "patientKey": "patient-alias-A",
+              "startsAt": "2026-10-19T08:37:52.737Z",
+              "timeZone": "Asia/Shanghai",
+              "registerBy": "2026-10-18T09:37:52.737Z",
+              "budget": {
+                "minor": "50000",
+                "currency": "CNY"
+              }
+            },
+            "inputRefs": [],
+            "dependsOn": [],
+            "cost": {
+              "minor": "0",
+              "currency": "CNY",
+              "payeeId": "synthetic-domain-provider"
+            }
+          }
+        ],
+        "details": {
+          "domain": "appointment",
+          "environment": "sandbox",
+          "realSourceConnected": false,
+          "endpoint": "指定就诊人、院区、科室、医生、时段的有效挂号确认；候补、支付或号源列表不是挂号成功",
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "bf6e5f0aab784bfedfe32ee34635ee824f988e6cf61ad3d0ac3d28e3c4e73cb5",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "domain",
+        "requirementChecks": [
+          {
+            "requirementId": "registration-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:23e9cd5f245038b699389fd2cf2c15030bf093bea2b6630f231dbb1f3425ce60"
+            ]
+          },
+          {
+            "requirementId": "registration-deadline",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:23e9cd5f245038b699389fd2cf2c15030bf093bea2b6630f231dbb1f3425ce60"
+            ]
+          },
+          {
+            "requirementId": "hospital-campus",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:23e9cd5f245038b699389fd2cf2c15030bf093bea2b6630f231dbb1f3425ce60"
+            ]
+          }
+        ],
+        "expiresAt": "2026-10-18T09:07:52.737Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "service.appointment.sandbox",
+              "version": "1"
+            },
+            "digest": "d51aedac1dbbc582c2091c2e4dd073f070168ed1827f6eeb3a80443481438a21"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "domain.appointment.synthetic-domain-provider",
+              "version": "1"
+            },
+            "digest": "bf6e5f0aab784bfedfe32ee34635ee824f988e6cf61ad3d0ac3d28e3c4e73cb5"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "aaea34649d8ab38b90797866e3088ffd576acc8bf5c44a0f68aa5fbbffea171f"
+      },
+      "authorizationRequest": {
+        "planDigest": "aaea34649d8ab38b90797866e3088ffd576acc8bf5c44a0f68aa5fbbffea171f",
+        "effects": [
+          "reserve"
+        ],
+        "maxAmount": {
+          "minor": "0",
+          "currency": "CNY"
+        },
+        "payeeIds": [
+          "synthetic-domain-provider"
+        ],
+        "environment": "sandbox",
+        "realOperationsAllowed": false
+      },
+      "acceptance": {
+        "accepted": true,
+        "reason": "All fixed domain criteria independently verified against synthetic source evidence",
+        "checks": [
+          {
+            "requirementId": "registration-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203"
+            ]
+          },
+          {
+            "requirementId": "registration-deadline",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203"
+            ]
+          },
+          {
+            "requirementId": "hospital-campus",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203"
+            ]
+          },
+          {
+            "requirementId": "appointment-confirmation",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "synthetic:domain:af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203"
+        ],
+        "at": "2026-10-18T08:40:08.699Z"
+      },
+      "artifact": {
+        "id": "af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203",
+        "name": "appointment-sandbox-result.json",
+        "data": {
+          "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为匿名就诊人引用 patient-alias-A 挂号：医院院区 synthetic-campus，科室 synthetic-department，医生 synthetic-practitioner，就诊时刻 2026-10-19T08:37:52.737Z，时区 Asia/Shanghai。请在 2026-10-18T09:37:52.737Z 前取得有效挂号确认，挂号费预算500元。",
+          "deliverable": "医院挂号合成流程已核验；真实接口未接通，没有实际下单、付款或预约。",
+          "execution": "completed",
+          "result": {
+            "environment": "sandbox",
+            "domainSnapshot": {
+              "domain": "appointment",
+              "environment": "sandbox",
+              "requestId": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+              "requestRevision": 1,
+              "parameters": {
+                "hospitalId": "synthetic-campus",
+                "departmentId": "synthetic-department",
+                "practitionerId": "synthetic-practitioner",
+                "patientKey": "patient-alias-A",
+                "startsAt": "2026-10-19T08:37:52.737Z",
+                "timeZone": "Asia/Shanghai",
+                "registerBy": "2026-10-18T09:37:52.737Z",
+                "budget": {
+                  "minor": "50000",
+                  "currency": "CNY"
+                }
+              },
+              "option": {
+                "id": "option-1",
+                "providerId": "synthetic-domain-provider",
+                "parametersDigest": "a0b0c4ee1d60484e9f5396b4a8657685e6750bb872950104f6346675ccc09ce2",
+                "offeredParameters": {
+                  "hospitalId": "synthetic-campus",
+                  "departmentId": "synthetic-department",
+                  "practitionerId": "synthetic-practitioner",
+                  "patientKey": "patient-alias-A",
+                  "startsAt": "2026-10-19T08:37:52.737Z",
+                  "timeZone": "Asia/Shanghai",
+                  "registerBy": "2026-10-18T09:37:52.737Z",
+                  "budget": {
+                    "minor": "50000",
+                    "currency": "CNY"
+                  }
+                },
+                "availability": "available",
+                "eligibility": "verified",
+                "observedAt": "2026-10-18T08:35:52.737Z",
+                "expiresAt": "2026-10-18T09:07:52.737Z",
+                "total": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "feesComplete": true,
+                "commitmentBy": "2026-10-18T08:47:52.737Z",
+                "termsMatch": true
+              },
+              "sourceId": "synthetic-domain-provider",
+              "sourceEventId": "44d241f1b4b978df50cbf4f79b939d5f30214d55b53e5a1fb3cda5c4b384ccb4:1",
+              "sourceVersion": 1,
+              "entities": [
+                {
+                  "type": "Hospital",
+                  "id": "synthetic-campus",
+                  "title": "Hospital 合成对象",
+                  "properties": {
+                    "sourceId": "synthetic-campus",
+                    "sourceRevision": "1",
+                    "campusName": "合成医院院区",
+                    "address": "synthetic-campus-address",
+                    "timeZone": "Asia/Shanghai"
+                  }
+                },
+                {
+                  "type": "MedicalDepartment",
+                  "id": "synthetic-department",
+                  "title": "MedicalDepartment 合成对象",
+                  "properties": {
+                    "sourceId": "synthetic-department",
+                    "sourceRevision": "1",
+                    "hospitalId": "synthetic-campus",
+                    "departmentName": "合成门诊科室"
+                  }
+                },
+                {
+                  "type": "Practitioner",
+                  "id": "synthetic-practitioner",
+                  "title": "Practitioner 合成对象",
+                  "properties": {
+                    "sourceId": "synthetic-practitioner",
+                    "sourceRevision": "1",
+                    "hospitalId": "synthetic-campus",
+                    "departmentId": "synthetic-department",
+                    "practitionerName": "合成医师"
+                  }
+                },
+                {
+                  "type": "PatientProfile",
+                  "id": "patient-alias-A",
+                  "title": "PatientProfile 合成对象",
+                  "properties": {
+                    "sourceId": "patient-alias-A",
+                    "sourceRevision": "1",
+                    "patientAlias": "patient-alias-A",
+                    "eligibility": "verified"
+                  }
+                },
+                {
+                  "type": "AppointmentSlot",
+                  "id": "AppointmentSlot-synthetic",
+                  "title": "AppointmentSlot 合成对象",
+                  "properties": {
+                    "sourceId": "AppointmentSlot-synthetic",
+                    "sourceRevision": "1",
+                    "hospitalId": "synthetic-campus",
+                    "departmentId": "synthetic-department",
+                    "practitionerId": "synthetic-practitioner",
+                    "startsAt": "2026-10-19T08:37:52.737Z",
+                    "timeZone": "Asia/Shanghai",
+                    "availableCount": 1,
+                    "expiresAt": "2026-10-18T09:07:52.737Z"
+                  }
+                }
+              ],
+              "relationships": [
+                {
+                  "type": "DepartmentHospital",
+                  "fromId": "synthetic-department",
+                  "toId": "synthetic-campus"
+                },
+                {
+                  "type": "PractitionerDepartment",
+                  "fromId": "synthetic-practitioner",
+                  "toId": "synthetic-department"
+                },
+                {
+                  "type": "AppointmentSlotPractitioner",
+                  "fromId": "AppointmentSlot-synthetic",
+                  "toId": "synthetic-practitioner"
+                }
+              ],
+              "observation": {
+                "providerReference": "synthetic-appointment-record",
+                "observedAt": "2026-10-18T08:37:52.137Z",
+                "requestDigest": "a0b0c4ee1d60484e9f5396b4a8657685e6750bb872950104f6346675ccc09ce2",
+                "state": "confirmed",
+                "hospitalId": "synthetic-campus",
+                "departmentId": "synthetic-department",
+                "practitionerId": "synthetic-practitioner",
+                "patientKey": "patient-alias-A",
+                "startsAt": "2026-10-19T08:37:52.737Z",
+                "timeZone": "Asia/Shanghai",
+                "confirmedAt": "2026-10-18T08:36:52.737Z",
+                "fee": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "paymentState": "paid",
+                "eligibilityVerified": true
+              }
+            },
+            "assessment": {
+              "status": "satisfied",
+              "criteria": [
+                {
+                  "id": "business_state",
+                  "result": "pass",
+                  "reason": "Required domain state is evidenced"
+                },
+                {
+                  "id": "hospitalId",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "departmentId",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "practitionerId",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "patientKey",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "startsAt",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "timeZone",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "confirmation_deadline",
+                  "result": "pass",
+                  "reason": "Actual occurrence time is required; estimates and future timestamps do not establish completion"
+                },
+                {
+                  "id": "patient_eligibility",
+                  "result": "pass",
+                  "reason": "Administrative eligibility must come from the appointment source; no diagnosis or clinical suitability is inferred"
+                },
+                {
+                  "id": "registration_payment",
+                  "result": "pass",
+                  "reason": "Confirmation and any required fee must both be evidenced"
+                },
+                {
+                  "id": "registration_fee",
+                  "result": "pass",
+                  "reason": "Requires a complete scoped amount in the requested currency"
+                }
+              ],
+              "endpoint": "appointment_confirmed"
+            }
+          }
+        }
+      },
+      "error": null,
+      "modelReceipts": [
+        {
+          "id": "b836fe86-4958-4d8b-8a17-1e46a311507a",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:38:42.183Z",
+          "completedAt": "2026-10-18T08:38:51.878Z",
+          "outputSha256": "1413f8e93c7946ad5e548eebfffeb5dea6006432bd72582b3805cedb689fbbe2",
+          "threadId": "01a14e29-c36a-7f52-addf-39a8b6b2dfbd",
+          "usage": {
+            "input_tokens": 44605,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 128,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "ef0a1e90-e3b9-426f-a01c-2abb648846ff",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:38:51.888Z",
+          "completedAt": "2026-10-18T08:39:03.529Z",
+          "outputSha256": "a8bde0f767d156c784ebadd14bff0ed34ca9614f2fcc7ba377289b812562c12f",
+          "threadId": "01a14e29-e942-7f60-bc70-8716622c372d",
+          "usage": {
+            "input_tokens": 50585,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 117,
+            "reasoning_output_tokens": 31
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "3594ae2b-4fd0-4a6a-9434-3272a7c379d6",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:39:03.536Z",
+          "completedAt": "2026-10-18T08:39:28.719Z",
+          "outputSha256": "9655b9503c7bf64e497d2769caeca30f31ee18cb336a1817b4738d369cce0f1a",
+          "threadId": "01a14e2a-16b6-7f21-9b8d-aa7fe793c1df",
+          "usage": {
+            "input_tokens": 50731,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 919,
+            "reasoning_output_tokens": 144
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "a57bee1d-1c7e-4cbd-932c-e0942e658ef0",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:39:28.757Z",
+          "completedAt": "2026-10-18T08:39:39.506Z",
+          "outputSha256": "0bd460f56baec1d8ee15ff44d6afb76b23ea4215a874d045972bd22bb3773c8c",
+          "threadId": "01a14e2a-7940-7431-885c-6ffc2a5f3c54",
+          "usage": {
+            "input_tokens": 32604,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 187,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "4fee16f1-6720-4f00-9d83-ed9a862ba892",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:39:39.518Z",
+          "completedAt": "2026-10-18T08:39:51.779Z",
+          "outputSha256": "a0806a02994d94370bc8dbbbac7e1ec0b1310cb134c012571d4c19939f23fcde",
+          "threadId": "01a14e2a-a348-7b40-bd61-0c3fa95dc2ef",
+          "usage": {
+            "input_tokens": 38677,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 306,
+            "reasoning_output_tokens": 13
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "ad5f0dec-8c63-447f-a63f-9d1bf77271a4",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:39:51.794Z",
+          "completedAt": "2026-10-18T08:40:08.285Z",
+          "outputSha256": "075b2b944e98ac632c9776f3534e7336be0a9eb74c6b1797fc5ff28f7993d391",
+          "threadId": "01a14e2a-d33a-77a1-b022-88b77f4edf16",
+          "usage": {
+            "input_tokens": 40125,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 481,
+            "reasoning_output_tokens": 37
+          },
+          "purpose": "planning"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "64a3b1ab-d01b-4342-bd7c-8d07c5a5f088",
+          "at": "2026-10-18T08:38:51.885Z",
+          "tool": "describe_ontology",
+          "inputDigest": "27e083142c8b0fc4bc3c252f7a334da7881e6f06dbea37e4f6e3547a7d86a07f",
+          "outputDigest": "dfaf0325a8bd20c4a1af0a2e19c97255f24d861284d75457ee288421c72c8fa5",
+          "datasetRevision": 5,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "44f23932-cb46-497e-8d6f-3099e89295a3",
+          "at": "2026-10-18T08:38:51.886Z",
+          "tool": "query_ontology",
+          "inputDigest": "d9f058562ba1e5136171e03ef42af8016afbccacf17242544027e68e0c800cec",
+          "outputDigest": "222cede89666ea7184e3dcb461f8efc70dc3ff7eeda72f7f387a39335e3482b4",
+          "datasetRevision": 5,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2"
+              },
+              "revision": 2,
+              "propertiesDigest": "11213c9f5658d813135d165755f32b69ee8d60ae71d2267d54dbda23ca90cb38",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "60d203c3-405f-4f76-ad04-56fe2c9509aa",
+          "at": "2026-10-18T08:39:03.533Z",
+          "tool": "query_ontology",
+          "inputDigest": "f62577dd154aea2354d8d1a2f43600a8df6922ffa5d840cdc7419b7a04826bb2",
+          "outputDigest": "6dbf9a5fadecbc5057c9b5d1fe80dd93c3f6b501f1b215d18f401d91d036514a",
+          "datasetRevision": 5,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "296fb81f-8221-47a3-9903-d73a3b69bbff",
+          "at": "2026-10-18T08:39:39.512Z",
+          "tool": "describe_ontology",
+          "inputDigest": "27e083142c8b0fc4bc3c252f7a334da7881e6f06dbea37e4f6e3547a7d86a07f",
+          "outputDigest": "dfaf0325a8bd20c4a1af0a2e19c97255f24d861284d75457ee288421c72c8fa5",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "97dc44e2-ccc6-4696-8426-b2da86943e39",
+          "at": "2026-10-18T08:39:39.514Z",
+          "tool": "query_ontology",
+          "inputDigest": "4ee417fabd469efb9ef0c389bc6054b3b44638f58e4ec81dce0d20f03819fce6",
+          "outputDigest": "0097e2d9ffe5f5389950521d99f7873820ae6eb18bfaf9d79502cda1f901acde",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "AppointmentOption",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "46f2b9da5f143511e4965bb2caa741842cdce1fc61bc7d9ca0a6cff3a91b0c12",
+              "linksDigest": "07b0028908f8d41f2a22d8c1240fef9628d0a0a02dea8e90806dc27ddfdcd987"
+            }
+          ]
+        },
+        {
+          "id": "cd8d842c-373e-46c7-900b-7706249b85ec",
+          "at": "2026-10-18T08:39:39.516Z",
+          "tool": "assess_conditions",
+          "inputDigest": "b2c2edcdd64395baa309c5d3026edaec1c08b2ba532a85192b1854cf668baf35",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "14ddad32-e783-4a32-b867-e9dcb9ef6022",
+          "at": "2026-10-18T08:39:51.782Z",
+          "tool": "assess_conditions",
+          "inputDigest": "8b6e868d8fec1e8df4bbb9c699611b061c6f374ed2a60b84ba137edd86e5dc63",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "633cf8aa-ee72-4ee7-b65d-0ff125e4d9b8",
+          "at": "2026-10-18T08:39:51.790Z",
+          "tool": "evaluate_ontology",
+          "inputDigest": "978a2a3edb2fb8fc0a20023afd88d5c7835f685fc623465669092efe222f4725",
+          "outputDigest": "926881eada1f576f85f2c920c3c8dd011e5d497f8ddd9243223b121c7ddf390e",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "94d45822aaf544d4c30f8415bd891ce156fe763b0279b75d6214a6dfcbf976bc"
+              },
+              "revision": 1,
+              "propertiesDigest": "52cf8b604de329a02e42436e0bb8feb76b7123096becc0a76f6df9822320bccb",
+              "linksDigest": "8e61988e2b8f99db68a4304bbe893cce5e93601e503cdd28c2ffeab64a7dff1c"
+            },
+            {
+              "ref": {
+                "type": "AppointmentRequest",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2:r1:appointment"
+              },
+              "revision": 1,
+              "propertiesDigest": "cd5e6063f6db5438872fe0854accca43d8fb9135877bb0c3f4393fbe61dcf4c1",
+              "linksDigest": "b85a13ad81a9ac2f77cd230b4a4a95939a1307ef37f8e3ffe4008fcf7f45df4b"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "e14e64ab-753e-4b0e-958e-9875106f72f2"
+              },
+              "revision": 3,
+              "propertiesDigest": "a88940cc24812182c0f6bfdf82adeaf81adf00bcd6f392ca5846ceabd02834e7",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "ab95f0e9-dc27-439e-bb0a-c84d3cfd1f33",
+          "at": "2026-10-18T08:39:51.791Z",
+          "tool": "query_ontology",
+          "inputDigest": "14cbe216c9bdcd399c79eab916d7b9fb7ce4bc6432ef0665ac92217575e418f6",
+          "outputDigest": "72e0d0d5d796d13ea2c967ecf1e2035fe20c1aa680a0ed32e6408090fb2e2794",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "f483d9f2-dedd-4646-95b0-c6cc7c6be7b5",
+          "at": "2026-10-18T08:39:51.792Z",
+          "tool": "query_ontology",
+          "inputDigest": "565f1975c8c1cadbc38ea20edfa9d1462d31333c44a4fe4a62576aa7bd8b0f5c",
+          "outputDigest": "9143566332f688a1cdc046bc07346c97be40dc687e45b0dab8c44b57ebc8bba0",
+          "datasetRevision": 7,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+        "status": {
+          "state": "TASK_STATE_COMPLETED",
+          "message": {
+            "messageId": "14f65489-1293-4c20-a5aa-9ac3f867a321",
+            "contextId": "46a9bc39-7837-4513-992b-c75ac7cff957",
+            "taskId": "e14e64ab-753e-4b0e-958e-9875106f72f2",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "医院挂号合成流程已核验；真实接口未接通，没有实际下单、付款或预约。"
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:40:08.699Z"
+        },
+        "artifacts": [
+          {
+            "artifactId": "af69dc45ff5d4b91f57db7f7da7831a730916b9d059f06e1f87ea1b0b7d6d203",
+            "name": "appointment-sandbox-result.json"
+          }
+        ]
+      }
+    },
+    {
+      "domain": "food",
+      "taskId": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+      "state": "completed",
+      "modelRuns": 6,
+      "ontologyReads": 9,
+      "sourceCalls": {
+        "submits": 1,
+        "lookups": 0
+      },
+      "approved": true,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。",
+      "request": {
+        "id": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "fc21194b-4db3-47b9-9966-6e9717906726",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。",
+            "receivedAt": "2026-10-18T08:40:09.672Z"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "food-quantity",
+            "strength": "hard",
+            "kind": "quantity",
+            "expected": {
+              "amount": "2",
+              "unit": "份"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "fc21194b-4db3-47b9-9966-6e9717906726",
+              "receivedAt": "2026-10-18T08:40:09.672Z",
+              "quote": "数量2份"
+            }
+          },
+          {
+            "id": "food-budget",
+            "strength": "hard",
+            "kind": "budget",
+            "expected": {
+              "minor": "50000",
+              "currency": "CNY"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "fc21194b-4db3-47b9-9966-6e9717906726",
+              "receivedAt": "2026-10-18T08:40:09.672Z",
+              "quote": "全部费用预算500元"
+            }
+          },
+          {
+            "id": "food-deadline",
+            "strength": "hard",
+            "kind": "deadline",
+            "expected": {
+              "at": "2026-10-18T09:37:52.738Z",
+              "timezone": "UTC",
+              "original": "在 2026-10-18T09:37:52.738Z 前送达"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "fc21194b-4db3-47b9-9966-6e9717906726",
+              "receivedAt": "2026-10-18T08:40:09.672Z",
+              "quote": "在 2026-10-18T09:37:52.738Z 前送达"
+            }
+          },
+          {
+            "id": "food-destination",
+            "strength": "hard",
+            "kind": "location",
+            "expected": {
+              "ref": "synthetic-office"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "fc21194b-4db3-47b9-9966-6e9717906726",
+              "receivedAt": "2026-10-18T08:40:09.672Z",
+              "quote": "送到 synthetic-office"
+            }
+          }
+        ],
+        "successCriteria": [
+          {
+            "id": "food-exact-completion",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "domain.food.complete"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "fc21194b-4db3-47b9-9966-6e9717906726",
+              "receivedAt": "2026-10-18T08:40:09.672Z",
+              "quote": "请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。"
+            }
+          }
+        ]
+      },
+      "plan": {
+        "id": "a28f104a-902d-4a98-b66a-0447b822d6eb",
+        "version": "5",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "3",
+            "digest": "21b0e293f4b8353b9723d2a4f3e65e3943e33296ff657ed6d305d9bdfec3e27a"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "reads": [
+            {
+              "id": "cd942415-9d55-4d10-b9e6-fbe83a72e1c3",
+              "at": "2026-10-18T08:41:12.278Z",
+              "tool": "describe_ontology",
+              "inputDigest": "65090ef3298420276890ee1ce6932ac12ac31afcc6be7f7a895180f0f1409d56",
+              "outputDigest": "231c04d53002d3276af9cb769374e60aaadceef354e4854ce8de5a61d115d961",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "36004ac3-808f-4707-9929-299c6d227d33",
+              "at": "2026-10-18T08:41:12.280Z",
+              "tool": "query_ontology",
+              "inputDigest": "47046b17ea63e9f4b6c254897a247e98347784515bd21204f45a2066feb00531",
+              "outputDigest": "e6dd42a1f721b3bf3fe61693b9786e5c6a66ccb6321fcdd7ce058f9889aca030",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "FoodOption",
+                    "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:option-1"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "f2a66d53e054f5c1667f2eed343c7c0977703178bc3e3109a37e12ec84ea9b25",
+                  "linksDigest": "db08b2b256f9860cff84941f22d920c523021ff57cbe70052a519a7eb8894f39"
+                }
+              ]
+            },
+            {
+              "id": "3777d3a5-18e1-4512-a203-41a7a22eb78c",
+              "at": "2026-10-18T08:41:12.280Z",
+              "tool": "assess_conditions",
+              "inputDigest": "5b7d73c3a492b1e89536ea921ecffb7be79b080c0546c5ecb93b1339caf1f74d",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "1e27bca4-1124-48cf-ac92-f5db0921b95d",
+              "at": "2026-10-18T08:41:27.562Z",
+              "tool": "evaluate_ontology",
+              "inputDigest": "d64c126708177ec4201bdccd3ed249c24fd54c03a088729b313756416ef70254",
+              "outputDigest": "87d165f48376e3740c699fb856554f7bca2f05a0db16c323e4381976e01818e6",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "SourceReceipt",
+                    "id": "03aa4fb23adb8242e55c77e752cf3879f3ad402cf63de0c4ddec1e4cb447e03b"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "6360dabb15c015b688b23dc7dd87ea95cdab5e57cc9aef6e05ccf84ce0949b3c",
+                  "linksDigest": "15fe024a6328dfb9765079d7d26fbc2955d2a92dfaa2d2d6f339226da9be6c33"
+                },
+                {
+                  "ref": {
+                    "type": "FoodRequest",
+                    "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:r1:food"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "4309a28e2a2d5108cb3fb668fffb80365bb95c94110b374401b951cefb6105d0",
+                  "linksDigest": "c15ec10ef5bf9b25f8e5bf3315fbbef905d2ac541589472fc83a255662e7d588"
+                },
+                {
+                  "ref": {
+                    "type": "ServiceRequest",
+                    "id": "7203028f-fc2e-4e86-8119-0e76cf223a64"
+                  },
+                  "revision": 3,
+                  "propertiesDigest": "8c642381ec4b9dd6738dbfd7b025b8ae9ddea7f3810f604aa3763465b5bea8fb",
+                  "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+                }
+              ]
+            },
+            {
+              "id": "2947faf0-d9a6-4670-817b-283480c51e45",
+              "at": "2026-10-18T08:41:27.563Z",
+              "tool": "query_ontology",
+              "inputDigest": "c4c97708f181c670ff5020666a8c930a7d865cdb1777b68de704c3f9d6fab153",
+              "outputDigest": "d8afb28e78398bc0be45cf4c2b3ee605e1188d5e57f3a296a59aeb71d3a9b992",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "453ef300-6cfc-4ebb-a07f-064d14d6c0f0",
+              "at": "2026-10-18T08:41:27.564Z",
+              "tool": "query_ontology",
+              "inputDigest": "64153b4ceb49e32371bdea40a36d21e0ee20a64efb2db705ec5be4425f0f24c6",
+              "outputDigest": "005ccefa60bef3ff8c82268b66741b1c255fa1be2830f8ae40a70a21df9f9b8c",
+              "datasetRevision": 17,
+              "status": "ok",
+              "objects": []
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "FoodOption",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "f2a66d53e054f5c1667f2eed343c7c0977703178bc3e3109a37e12ec84ea9b25",
+              "linksDigest": "db08b2b256f9860cff84941f22d920c523021ff57cbe70052a519a7eb8894f39"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "03aa4fb23adb8242e55c77e752cf3879f3ad402cf63de0c4ddec1e4cb447e03b"
+              },
+              "revision": 1,
+              "propertiesDigest": "6360dabb15c015b688b23dc7dd87ea95cdab5e57cc9aef6e05ccf84ce0949b3c",
+              "linksDigest": "15fe024a6328dfb9765079d7d26fbc2955d2a92dfaa2d2d6f339226da9be6c33"
+            },
+            {
+              "ref": {
+                "type": "FoodRequest",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:r1:food"
+              },
+              "revision": 1,
+              "propertiesDigest": "4309a28e2a2d5108cb3fb668fffb80365bb95c94110b374401b951cefb6105d0",
+              "linksDigest": "c15ec10ef5bf9b25f8e5bf3315fbbef905d2ac541589472fc83a255662e7d588"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64"
+              },
+              "revision": 3,
+              "propertiesDigest": "8c642381ec4b9dd6738dbfd7b025b8ae9ddea7f3810f604aa3763465b5bea8fb",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ],
+          "conditionChecks": [],
+          "actionProposals": [],
+          "digest": "2c429d1de0f3943fee9b8ee94adacf0f1e306c1a1a057879bfdd2ea036dcc68b"
+        },
+        "requestId": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+        "requestRevision": 1,
+        "requestDigest": "10a04248a88ceb1dde891e0dcfbfa885d9c7676ae254ec7aefd674e22990f068",
+        "capabilityRef": {
+          "id": "service.food.sandbox",
+          "version": "1"
+        },
+        "ontologyRef": {
+          "id": "eigos.food",
+          "version": "1"
+        },
+        "candidateId": "0a57b568-7082-4933-9025-62f71b7ead77",
+        "bindingRef": {
+          "id": "domain.food.synthetic-domain-provider",
+          "version": "1"
+        },
+        "verifierRef": {
+          "id": "domain.food.independent",
+          "version": "1"
+        },
+        "steps": [
+          {
+            "id": "domain-service",
+            "operationId": "food-business-operation",
+            "actionTypeRef": {
+              "id": "domain.food.submit",
+              "version": "1"
+            },
+            "bindingRef": {
+              "id": "domain.food.synthetic-domain-provider",
+              "version": "1"
+            },
+            "capabilityRef": {
+              "id": "service.food.sandbox",
+              "version": "1"
+            },
+            "effect": "order",
+            "input": {
+              "merchantId": "synthetic-kitchen",
+              "items": [
+                {
+                  "sku": "meal-A",
+                  "quantity": 2,
+                  "specification": "large-no-peanuts"
+                }
+              ],
+              "destination": "synthetic-office",
+              "deliverBy": "2026-10-18T09:37:52.738Z",
+              "excludedIngredients": [
+                "peanuts"
+              ],
+              "budget": {
+                "minor": "50000",
+                "currency": "CNY"
+              }
+            },
+            "inputRefs": [],
+            "dependsOn": [],
+            "cost": {
+              "minor": "0",
+              "currency": "CNY",
+              "payeeId": "synthetic-domain-provider"
+            }
+          }
+        ],
+        "details": {
+          "domain": "food",
+          "environment": "sandbox",
+          "realSourceConnected": false,
+          "endpoint": "指定商家、菜品规格与数量送达指定地点和期限，核对完整费用及已约定忌口",
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "6cf9fe1d4510ae602a6ae9ea188bded3cb656787bbd4c0f204d17ecae2374889",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "domain",
+        "requirementChecks": [
+          {
+            "requirementId": "food-quantity",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ff30e8995bbbdbb7f73a51cf92f39a763b46494590aba664d8841c6b08146e41"
+            ]
+          },
+          {
+            "requirementId": "food-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ff30e8995bbbdbb7f73a51cf92f39a763b46494590aba664d8841c6b08146e41"
+            ]
+          },
+          {
+            "requirementId": "food-deadline",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ff30e8995bbbdbb7f73a51cf92f39a763b46494590aba664d8841c6b08146e41"
+            ]
+          },
+          {
+            "requirementId": "food-destination",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ff30e8995bbbdbb7f73a51cf92f39a763b46494590aba664d8841c6b08146e41"
+            ]
+          }
+        ],
+        "expiresAt": "2026-10-18T09:07:52.738Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "service.food.sandbox",
+              "version": "1"
+            },
+            "digest": "3b6af6b2cb37ec18e4f0d379f47e295820a60660efd4e6ab1e2cda9489969f98"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "domain.food.synthetic-domain-provider",
+              "version": "1"
+            },
+            "digest": "6cf9fe1d4510ae602a6ae9ea188bded3cb656787bbd4c0f204d17ecae2374889"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "a5983056505846fea58f0e2167d0d9a0441250441ee45529f0609f45e6388d2f"
+      },
+      "authorizationRequest": {
+        "planDigest": "a5983056505846fea58f0e2167d0d9a0441250441ee45529f0609f45e6388d2f",
+        "effects": [
+          "order"
+        ],
+        "maxAmount": {
+          "minor": "0",
+          "currency": "CNY"
+        },
+        "payeeIds": [
+          "synthetic-domain-provider"
+        ],
+        "environment": "sandbox",
+        "realOperationsAllowed": false
+      },
+      "acceptance": {
+        "accepted": true,
+        "reason": "All fixed domain criteria independently verified against synthetic source evidence",
+        "checks": [
+          {
+            "requirementId": "food-quantity",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+            ]
+          },
+          {
+            "requirementId": "food-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+            ]
+          },
+          {
+            "requirementId": "food-deadline",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+            ]
+          },
+          {
+            "requirementId": "food-destination",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+            ]
+          },
+          {
+            "requirementId": "food-exact-completion",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "synthetic:domain:ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46"
+        ],
+        "at": "2026-10-18T08:41:45.552Z"
+      },
+      "artifact": {
+        "id": "ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46",
+        "name": "food-sandbox-result.json",
+        "data": {
+          "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。",
+          "deliverable": "外卖合成流程已核验；真实接口未接通，没有实际下单、付款或预约。",
+          "execution": "completed",
+          "result": {
+            "environment": "sandbox",
+            "domainSnapshot": {
+              "domain": "food",
+              "environment": "sandbox",
+              "requestId": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+              "requestRevision": 1,
+              "parameters": {
+                "merchantId": "synthetic-kitchen",
+                "items": [
+                  {
+                    "sku": "meal-A",
+                    "quantity": 2,
+                    "specification": "large-no-peanuts"
+                  }
+                ],
+                "destination": "synthetic-office",
+                "deliverBy": "2026-10-18T09:37:52.738Z",
+                "excludedIngredients": [
+                  "peanuts"
+                ],
+                "budget": {
+                  "minor": "50000",
+                  "currency": "CNY"
+                }
+              },
+              "option": {
+                "id": "option-1",
+                "providerId": "synthetic-domain-provider",
+                "parametersDigest": "9bfea8c0bd8b36203d6c72a7315f430339ceaff908a452e89d863f964c5323f1",
+                "offeredParameters": {
+                  "merchantId": "synthetic-kitchen",
+                  "items": [
+                    {
+                      "sku": "meal-A",
+                      "quantity": 2,
+                      "specification": "large-no-peanuts"
+                    }
+                  ],
+                  "destination": "synthetic-office",
+                  "deliverBy": "2026-10-18T09:37:52.738Z",
+                  "excludedIngredients": [
+                    "peanuts"
+                  ],
+                  "budget": {
+                    "minor": "50000",
+                    "currency": "CNY"
+                  }
+                },
+                "availability": "available",
+                "eligibility": "verified",
+                "observedAt": "2026-10-18T08:35:52.738Z",
+                "expiresAt": "2026-10-18T09:07:52.738Z",
+                "total": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "feesComplete": true,
+                "commitmentBy": "2026-10-18T08:47:52.738Z",
+                "termsMatch": true
+              },
+              "sourceId": "synthetic-domain-provider",
+              "sourceEventId": "48659f017caf4b8f3b3f829ff213ae665fcf30d8c857023bad2d68123fd1e8d8:1",
+              "sourceVersion": 1,
+              "entities": [
+                {
+                  "type": "FoodMerchant",
+                  "id": "synthetic-kitchen",
+                  "title": "FoodMerchant 合成对象",
+                  "properties": {
+                    "sourceId": "synthetic-kitchen",
+                    "sourceRevision": "1",
+                    "merchantName": "合成餐厅",
+                    "address": "synthetic-kitchen-address"
+                  }
+                },
+                {
+                  "type": "MenuItem",
+                  "id": "meal-A",
+                  "title": "MenuItem 合成对象",
+                  "properties": {
+                    "sourceId": "meal-A",
+                    "sourceRevision": "1",
+                    "sku": "meal-A",
+                    "specification": "large-no-peanuts",
+                    "ingredients": [
+                      "rice"
+                    ],
+                    "ingredientsKnown": true
+                  }
+                }
+              ],
+              "relationships": [
+                {
+                  "type": "MenuItemMerchant",
+                  "fromId": "meal-A",
+                  "toId": "synthetic-kitchen"
+                }
+              ],
+              "observation": {
+                "providerReference": "synthetic-food-record",
+                "observedAt": "2026-10-18T08:37:52.138Z",
+                "requestDigest": "9bfea8c0bd8b36203d6c72a7315f430339ceaff908a452e89d863f964c5323f1",
+                "state": "delivered",
+                "merchantId": "synthetic-kitchen",
+                "deliveredItems": [
+                  {
+                    "sku": "meal-A",
+                    "quantity": 2,
+                    "specification": "large-no-peanuts"
+                  }
+                ],
+                "destination": "synthetic-office",
+                "deliveredAt": "2026-10-18T08:36:52.738Z",
+                "total": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "feesComplete": true,
+                "ingredientCheck": "verified",
+                "finalDelivery": true
+              }
+            },
+            "assessment": {
+              "status": "satisfied",
+              "criteria": [
+                {
+                  "id": "business_state",
+                  "result": "pass",
+                  "reason": "Required domain state is evidenced"
+                },
+                {
+                  "id": "merchant",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "destination",
+                  "result": "pass",
+                  "reason": "Compare the observed business value with the fixed request"
+                },
+                {
+                  "id": "items",
+                  "result": "pass",
+                  "reason": "Partial delivery stays unresolved until final delivery is evidenced; duplicate or substituted lines never count as success"
+                },
+                {
+                  "id": "delivery_deadline",
+                  "result": "pass",
+                  "reason": "Actual occurrence time is required; estimates and future timestamps do not establish completion"
+                },
+                {
+                  "id": "complete_total",
+                  "result": "pass",
+                  "reason": "Requires a complete scoped amount in the requested currency"
+                },
+                {
+                  "id": "excluded_ingredients",
+                  "result": "pass",
+                  "reason": "Only source-backed verification of the stated ingredient constraints is accepted"
+                }
+              ],
+              "endpoint": "food_delivered"
+            }
+          }
+        }
+      },
+      "error": null,
+      "modelReceipts": [
+        {
+          "id": "2ff2ee28-14f8-489d-8422-ddb821cc01a3",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:40:09.695Z",
+          "completedAt": "2026-10-18T08:40:19.697Z",
+          "outputSha256": "e95d1b2a8173e33594ddae0f9da45574932453fb0416e1067fb4471db5a8892e",
+          "threadId": "01a14e2b-192f-7e83-a8a1-201fafb0cb21",
+          "usage": {
+            "input_tokens": 44550,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 134,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "7f28e3d8-b15b-4649-a939-de9f9265e2d5",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:40:19.707Z",
+          "completedAt": "2026-10-18T08:40:32.452Z",
+          "outputSha256": "c70265cbc44f1a9fbd082014aa9d5b24f5cf81c1099fa0b18afbe2c3ab0dd334",
+          "threadId": "01a14e2b-4041-71d1-a6c3-9babf4169842",
+          "usage": {
+            "input_tokens": 49893,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 100,
+            "reasoning_output_tokens": 15
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "a2c4c0ac-a369-417a-9a63-f3f22eded87d",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:40:32.458Z",
+          "completedAt": "2026-10-18T08:40:59.908Z",
+          "outputSha256": "cb35fc0cf2f025f578cdcc18b79ec35367c552ff1b57b2ab7717afca0de75527",
+          "threadId": "01a14e2b-7286-7203-a912-25c2f5e7f284",
+          "usage": {
+            "input_tokens": 50042,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1058,
+            "reasoning_output_tokens": 115
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "c08ef947-3f02-437b-ac7e-5d277daed519",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:40:59.943Z",
+          "completedAt": "2026-10-18T08:41:12.270Z",
+          "outputSha256": "3e243eab995e7a70a6cc011c16c358dfef10e301f9a62088c531f234c9d808e7",
+          "threadId": "01a14e2b-de10-7e92-b5ae-3895bdae5051",
+          "usage": {
+            "input_tokens": 32711,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 218,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "e5e4312a-94ab-4a9b-8f57-866baeff0e3a",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:41:12.284Z",
+          "completedAt": "2026-10-18T08:41:27.555Z",
+          "outputSha256": "859f7f1c36fee5e8dab4b9cb062813490898dc49f456cc1242fb00a2746a1e25",
+          "threadId": "01a14e2c-0e79-7210-91d7-c656362ac2ed",
+          "usage": {
+            "input_tokens": 38186,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 265,
+            "reasoning_output_tokens": 14
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "c9661b93-156c-4234-b718-43fa706a3466",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:41:27.567Z",
+          "completedAt": "2026-10-18T08:41:44.763Z",
+          "outputSha256": "9701b0c6ccc891efe82d5044756c839ea2d3bead36353516ca8efb697bee34ed",
+          "threadId": "01a14e2c-4982-7260-b849-25b9152701be",
+          "usage": {
+            "input_tokens": 39504,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 448,
+            "reasoning_output_tokens": 19
+          },
+          "purpose": "planning"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "b10fecf5-cfe7-4d7e-929c-e182cc30f424",
+          "at": "2026-10-18T08:40:19.704Z",
+          "tool": "describe_ontology",
+          "inputDigest": "65090ef3298420276890ee1ce6932ac12ac31afcc6be7f7a895180f0f1409d56",
+          "outputDigest": "231c04d53002d3276af9cb769374e60aaadceef354e4854ce8de5a61d115d961",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "8f862896-412d-4789-b944-88fc825c6eb9",
+          "at": "2026-10-18T08:40:19.705Z",
+          "tool": "query_ontology",
+          "inputDigest": "5de28dfe4b3d87162517b9c3b2fa4cd82a4ca06ee7efca83e0e1d449cac3f3dd",
+          "outputDigest": "5ce2d4acb403f13ae6082f8320df2c82198659c81bb2e41d81b95757810cd932",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64"
+              },
+              "revision": 2,
+              "propertiesDigest": "3c014e4b781cf69e458138816faf532e5b7e468b08d225bf86c4cb4960695161",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "3973f9ec-dcfa-48e1-86ac-f85ac828bfb6",
+          "at": "2026-10-18T08:40:32.455Z",
+          "tool": "query_ontology",
+          "inputDigest": "ddb59019e66b4b2fc9badda1ee3f60cbad2cebf25cd5f69a8cd92e998b2a9a84",
+          "outputDigest": "7cf6c4c1bae4d4e5c5740420e3f4a3e241fdec8c70c2d68d16ec8a358b29ef6c",
+          "datasetRevision": 15,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "cd942415-9d55-4d10-b9e6-fbe83a72e1c3",
+          "at": "2026-10-18T08:41:12.278Z",
+          "tool": "describe_ontology",
+          "inputDigest": "65090ef3298420276890ee1ce6932ac12ac31afcc6be7f7a895180f0f1409d56",
+          "outputDigest": "231c04d53002d3276af9cb769374e60aaadceef354e4854ce8de5a61d115d961",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "36004ac3-808f-4707-9929-299c6d227d33",
+          "at": "2026-10-18T08:41:12.280Z",
+          "tool": "query_ontology",
+          "inputDigest": "47046b17ea63e9f4b6c254897a247e98347784515bd21204f45a2066feb00531",
+          "outputDigest": "e6dd42a1f721b3bf3fe61693b9786e5c6a66ccb6321fcdd7ce058f9889aca030",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "FoodOption",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "f2a66d53e054f5c1667f2eed343c7c0977703178bc3e3109a37e12ec84ea9b25",
+              "linksDigest": "db08b2b256f9860cff84941f22d920c523021ff57cbe70052a519a7eb8894f39"
+            }
+          ]
+        },
+        {
+          "id": "3777d3a5-18e1-4512-a203-41a7a22eb78c",
+          "at": "2026-10-18T08:41:12.280Z",
+          "tool": "assess_conditions",
+          "inputDigest": "5b7d73c3a492b1e89536ea921ecffb7be79b080c0546c5ecb93b1339caf1f74d",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "1e27bca4-1124-48cf-ac92-f5db0921b95d",
+          "at": "2026-10-18T08:41:27.562Z",
+          "tool": "evaluate_ontology",
+          "inputDigest": "d64c126708177ec4201bdccd3ed249c24fd54c03a088729b313756416ef70254",
+          "outputDigest": "87d165f48376e3740c699fb856554f7bca2f05a0db16c323e4381976e01818e6",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "03aa4fb23adb8242e55c77e752cf3879f3ad402cf63de0c4ddec1e4cb447e03b"
+              },
+              "revision": 1,
+              "propertiesDigest": "6360dabb15c015b688b23dc7dd87ea95cdab5e57cc9aef6e05ccf84ce0949b3c",
+              "linksDigest": "15fe024a6328dfb9765079d7d26fbc2955d2a92dfaa2d2d6f339226da9be6c33"
+            },
+            {
+              "ref": {
+                "type": "FoodRequest",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64:r1:food"
+              },
+              "revision": 1,
+              "propertiesDigest": "4309a28e2a2d5108cb3fb668fffb80365bb95c94110b374401b951cefb6105d0",
+              "linksDigest": "c15ec10ef5bf9b25f8e5bf3315fbbef905d2ac541589472fc83a255662e7d588"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "7203028f-fc2e-4e86-8119-0e76cf223a64"
+              },
+              "revision": 3,
+              "propertiesDigest": "8c642381ec4b9dd6738dbfd7b025b8ae9ddea7f3810f604aa3763465b5bea8fb",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "2947faf0-d9a6-4670-817b-283480c51e45",
+          "at": "2026-10-18T08:41:27.563Z",
+          "tool": "query_ontology",
+          "inputDigest": "c4c97708f181c670ff5020666a8c930a7d865cdb1777b68de704c3f9d6fab153",
+          "outputDigest": "d8afb28e78398bc0be45cf4c2b3ee605e1188d5e57f3a296a59aeb71d3a9b992",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "453ef300-6cfc-4ebb-a07f-064d14d6c0f0",
+          "at": "2026-10-18T08:41:27.564Z",
+          "tool": "query_ontology",
+          "inputDigest": "64153b4ceb49e32371bdea40a36d21e0ee20a64efb2db705ec5be4425f0f24c6",
+          "outputDigest": "005ccefa60bef3ff8c82268b66741b1c255fa1be2830f8ae40a70a21df9f9b8c",
+          "datasetRevision": 17,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+        "status": {
+          "state": "TASK_STATE_COMPLETED",
+          "message": {
+            "messageId": "d0e03309-0141-4241-ada0-80da32e198a7",
+            "contextId": "7a29a20d-37e1-4ed9-855a-80131ef4039a",
+            "taskId": "7203028f-fc2e-4e86-8119-0e76cf223a64",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "外卖合成流程已核验；真实接口未接通，没有实际下单、付款或预约。"
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:41:45.552Z"
+        },
+        "artifacts": [
+          {
+            "artifactId": "ad94e2170e4bc11e75ee7c4d959bd0481c8b671bf89dcdb9ce7bf17b37ff0d46",
+            "name": "food-sandbox-result.json"
+          }
+        ]
+      }
+    },
+    {
+      "domain": "hotel",
+      "taskId": "2ce31189-226b-4a2f-945d-8b2c11474c85",
+      "state": "failed",
+      "modelRuns": 3,
+      "ontologyReads": 3,
+      "sourceCalls": {
+        "submits": 0,
+        "lookups": 0
+      },
+      "approved": false,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请订酒店 synthetic-hotel，房型 synthetic-twin，2026-10-19 入住，2026-10-21 退房，酒店时区 Asia/Shanghai，1间房、2人，取消条款引用 flexible-v1，全部费用预算500元。目标是预订已确认，不要求现在已经完成住宿。",
+      "request": {
+        "id": "2ce31189-226b-4a2f-945d-8b2c11474c85",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请订酒店 synthetic-hotel，房型 synthetic-twin，2026-10-19 入住，2026-10-21 退房，酒店时区 Asia/Shanghai，1间房、2人，取消条款引用 flexible-v1，全部费用预算500元。目标是预订已确认，不要求现在已经完成住宿。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "98c8b492-3c0c-47b7-b896-f98ed5e1fd8b",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请订酒店 synthetic-hotel，房型 synthetic-twin，2026-10-19 入住，2026-10-21 退房，酒店时区 Asia/Shanghai，1间房、2人，取消条款引用 flexible-v1，全部费用预算500元。目标是预订已确认，不要求现在已经完成住宿。",
+            "receivedAt": "2026-10-18T08:41:46.485Z"
+          }
+        ],
+        "requirements": []
+      },
+      "plan": null,
+      "authorizationRequest": null,
+      "acceptance": null,
+      "artifact": null,
+      "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+      "modelReceipts": [
+        {
+          "id": "8489eee1-9e35-40cf-bd2c-b11e3e0b83d5",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:41:46.558Z",
+          "completedAt": "2026-10-18T08:41:58.143Z",
+          "outputSha256": "cbd58f171e81d6750e9c1bae3914edd55841acc957cbe40dc04d12c76ab01612",
+          "threadId": "01a14e2c-9391-7c11-a61d-4837b95a12dc",
+          "usage": {
+            "input_tokens": 44543,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 136,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "b46fb9a0-47a5-4300-b4fe-df74e17d1f14",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:41:58.154Z",
+          "completedAt": "2026-10-18T08:42:08.320Z",
+          "outputSha256": "2f0eb8cff6b67111cba19ef4dc6a543eae69cfe203064f3dc9a5e53398c8d1e9",
+          "threadId": "01a14e2c-c0e4-7aa3-bea3-863b3d2973a1",
+          "usage": {
+            "input_tokens": 50357,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 105,
+            "reasoning_output_tokens": 19
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "4951c24a-0ff0-487c-bd7e-a710f0f9750d",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:42:08.327Z",
+          "completedAt": "2026-10-18T08:42:34.125Z",
+          "outputSha256": "42c4ace31fa8df7ec32782d878d3acfc98709dc51b250e335dfb7340c1c46741",
+          "threadId": "01a14e2c-e8a2-7c51-9d47-2f1a4ca274bf",
+          "usage": {
+            "input_tokens": 50505,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 906,
+            "reasoning_output_tokens": 136
+          },
+          "purpose": "grounding"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "6235ae95-4929-4168-a1f9-d302684b362e",
+          "at": "2026-10-18T08:41:58.150Z",
+          "tool": "describe_ontology",
+          "inputDigest": "54722f59d9a2c7c3745f87445df18c4afa202bbdb1b0e8af13e741960ab5ce79",
+          "outputDigest": "908a067d52dce38700aa92a7e60e2f8a8258bf5579d5ffacd65f33584de69293",
+          "datasetRevision": 25,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "b63bd4f8-8fc2-4390-833f-d6a974ead496",
+          "at": "2026-10-18T08:41:58.152Z",
+          "tool": "query_ontology",
+          "inputDigest": "83c93773e1dd99ec4fec48857abb4bbc5d87d0157c30bbcc84e8972cbaae00ec",
+          "outputDigest": "0e0fceaffdf27fe8517e4e312b106211dcc03d27724650f20c531348a9055ab3",
+          "datasetRevision": 25,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "2ce31189-226b-4a2f-945d-8b2c11474c85"
+              },
+              "revision": 2,
+              "propertiesDigest": "4dddd40ed65275328db889de09639ced42a6d4fdc6caa7fc8b9b93ec70705380",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "b2a50661-1167-46b8-884a-70ed17b2d4ee",
+          "at": "2026-10-18T08:42:08.324Z",
+          "tool": "query_ontology",
+          "inputDigest": "a28ae796384810db05a075551f606c3a2ffe852ceb2ab2dae0e53aeda6d43819",
+          "outputDigest": "fbb7b81c2c87688ea812d9d740f5b1768a90914ff507c7fa2deeb3a6e55b37dd",
+          "datasetRevision": 25,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "2ce31189-226b-4a2f-945d-8b2c11474c85",
+        "status": {
+          "state": "TASK_STATE_FAILED",
+          "message": {
+            "messageId": "dd99732e-faa5-41f9-a82f-21b6fb333552",
+            "contextId": "eee3f3fc-43cb-430e-b586-3ef26d822b7f",
+            "taskId": "2ce31189-226b-4a2f-945d-8b2c11474c85",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "Ontology backend could not validate a supported plan. No business action was dispatched."
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:42:34.127Z"
+        },
+        "artifacts": []
+      }
+    },
+    {
+      "domain": "itinerary",
+      "taskId": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+      "state": "completed",
+      "modelRuns": 6,
+      "ontologyReads": 9,
+      "sourceCalls": {
+        "submits": 1,
+        "lookups": 0
+      },
+      "approved": false,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人整理并验证行程方案，行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai，全部费用预算500元。第一段标识 leg-1：从 synthetic-station 到 synthetic-hotel，2026-10-19T09:37:52.738Z 出发、2026-10-19T10:37:52.738Z 结束，方式 rail，此前缓冲0分钟，需要预订。第二段标识 leg-2：从 synthetic-hotel 到 synthetic-venue，2026-10-19T11:17:52.738Z 出发、2026-10-19T11:47:52.738Z 结束，方式 walk，转乘缓冲20分钟，不需要预订。目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。",
+      "request": {
+        "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人整理并验证行程方案，行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai，全部费用预算500元。第一段标识 leg-1：从 synthetic-station 到 synthetic-hotel，2026-10-19T09:37:52.738Z 出发、2026-10-19T10:37:52.738Z 结束，方式 rail，此前缓冲0分钟，需要预订。第二段标识 leg-2：从 synthetic-hotel 到 synthetic-venue，2026-10-19T11:17:52.738Z 出发、2026-10-19T11:47:52.738Z 结束，方式 walk，转乘缓冲20分钟，不需要预订。目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "45763e15-15ea-454c-b171-c76386cd7a2d",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人整理并验证行程方案，行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai，全部费用预算500元。第一段标识 leg-1：从 synthetic-station 到 synthetic-hotel，2026-10-19T09:37:52.738Z 出发、2026-10-19T10:37:52.738Z 结束，方式 rail，此前缓冲0分钟，需要预订。第二段标识 leg-2：从 synthetic-hotel 到 synthetic-venue，2026-10-19T11:17:52.738Z 出发、2026-10-19T11:47:52.738Z 结束，方式 walk，转乘缓冲20分钟，不需要预订。目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。",
+            "receivedAt": "2026-10-18T08:42:34.823Z"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "travelers",
+            "strength": "hard",
+            "kind": "quantity",
+            "expected": {
+              "amount": "2",
+              "unit": "person"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "45763e15-15ea-454c-b171-c76386cd7a2d",
+              "receivedAt": "2026-10-18T08:42:34.823Z",
+              "quote": "为2人整理并验证行程方案"
+            }
+          },
+          {
+            "id": "total-budget",
+            "strength": "hard",
+            "kind": "budget",
+            "expected": {
+              "minor": "50000",
+              "currency": "CNY"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "45763e15-15ea-454c-b171-c76386cd7a2d",
+              "receivedAt": "2026-10-18T08:42:34.823Z",
+              "quote": "全部费用预算500元"
+            }
+          },
+          {
+            "id": "itinerary-window-end",
+            "strength": "hard",
+            "kind": "deadline",
+            "expected": {
+              "at": "2026-10-19T20:37:52.738Z",
+              "timezone": "Asia/Shanghai",
+              "original": "行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "45763e15-15ea-454c-b171-c76386cd7a2d",
+              "receivedAt": "2026-10-18T08:42:34.823Z",
+              "quote": "行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai"
+            }
+          }
+        ],
+        "successCriteria": [
+          {
+            "id": "feasible-plan-unbooked-disclosure",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "domain.itinerary.complete"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "45763e15-15ea-454c-b171-c76386cd7a2d",
+              "receivedAt": "2026-10-18T08:42:34.823Z",
+              "quote": "目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。"
+            }
+          }
+        ]
+      },
+      "plan": {
+        "id": "859a3033-c380-4762-9f0c-e49d4283b481",
+        "version": "5",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "3",
+            "digest": "21b0e293f4b8353b9723d2a4f3e65e3943e33296ff657ed6d305d9bdfec3e27a"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "reads": [
+            {
+              "id": "157d235b-7cb1-4b30-8fda-5dec962a9893",
+              "at": "2026-10-18T08:43:35.476Z",
+              "tool": "describe_ontology",
+              "inputDigest": "7616d79ba202199145c5c1eff213dccac1494182b6716306afb433c3390b5404",
+              "outputDigest": "a7d30e160d5f285c55c195baed6bb875270a55fc9c8711ae8893f0b92ed44a9a",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "7d399f29-eb36-475d-896d-5309e691d2bc",
+              "at": "2026-10-18T08:43:35.478Z",
+              "tool": "query_ontology",
+              "inputDigest": "a20021ea8eef428f6f72ca55b21dae19230c1e94966c7d63befd220284bf4042",
+              "outputDigest": "3b63d40d7143b2e5f5ce01ca63d6217b8342c514cc010753d365a39241e9dce7",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "ItineraryOption",
+                    "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "64b43649a120f864dd1b0a8863ce1b225c34882957e153f4660ea896964ea8e1",
+                  "linksDigest": "664b529e066d882ac73d400b2732cbb18a733ca32d7de88c633902890e701e69"
+                }
+              ]
+            },
+            {
+              "id": "08901c1f-a35d-4c1d-8308-253f151793e5",
+              "at": "2026-10-18T08:43:35.478Z",
+              "tool": "assess_conditions",
+              "inputDigest": "ceddea05db94d570a1dc25c5611ac1a6a85ea7e510a2374fe95b004a7a4b932c",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "97c0ed45-c95b-4fbb-b585-5c5140b5d975",
+              "at": "2026-10-18T08:43:47.199Z",
+              "tool": "evaluate_ontology",
+              "inputDigest": "ce67e6d45752f0612238f9eb21142c4765d09c2f9996236c288defe6291710a8",
+              "outputDigest": "d0c9e645b9bcb79c6845bf4a3f2028d2191076d61e45f820d99047a9a33fe5a6",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "SourceReceipt",
+                    "id": "15173e56e75098cacbdefb7931c88ec26d89572a5558f8bb488039118c515afe"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "909ce18dc9057cc69def046db66a35f7af3296ae6bf2b085be32bab4c241cf71",
+                  "linksDigest": "464845223c3f87793d004ce3784a938474eab31508f45ffe2d06f23fcb416400"
+                },
+                {
+                  "ref": {
+                    "type": "ItineraryRequest",
+                    "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:r1:itinerary"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "2dbed7d74b18290fa1b08bca28e96a0ce092c0b1ecfec72083b8a7411ddafd7c",
+                  "linksDigest": "788eb2fb57fcb7cd558b97cd4e604c9c488ff455d68f02d9daa2e13fff65c2e7"
+                },
+                {
+                  "ref": {
+                    "type": "ServiceRequest",
+                    "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86"
+                  },
+                  "revision": 3,
+                  "propertiesDigest": "ec55c30d8c00cb26818024e564a8f1c3c10df9ea3e9c5db8b56e6c77d131448e",
+                  "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+                }
+              ]
+            },
+            {
+              "id": "136c2915-58b4-4d76-b190-d5201effaef1",
+              "at": "2026-10-18T08:43:47.199Z",
+              "tool": "assess_conditions",
+              "inputDigest": "f9f36f7a2c76023556b4f57e3130b7721ba656ed89f5b3005d8991bb9cc17d8d",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "0803b987-3a13-483e-8c5d-823b3050bd63",
+              "at": "2026-10-18T08:43:47.200Z",
+              "tool": "query_ontology",
+              "inputDigest": "a1982f09cbbd624e1e35c571a724cb26cde683d6901aa60d259709dab880005c",
+              "outputDigest": "617a824def328240a30fe2952b0290d5ca4b53900c5201b238754907311e1bb5",
+              "datasetRevision": 30,
+              "status": "ok",
+              "objects": []
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "ItineraryOption",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "64b43649a120f864dd1b0a8863ce1b225c34882957e153f4660ea896964ea8e1",
+              "linksDigest": "664b529e066d882ac73d400b2732cbb18a733ca32d7de88c633902890e701e69"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "15173e56e75098cacbdefb7931c88ec26d89572a5558f8bb488039118c515afe"
+              },
+              "revision": 1,
+              "propertiesDigest": "909ce18dc9057cc69def046db66a35f7af3296ae6bf2b085be32bab4c241cf71",
+              "linksDigest": "464845223c3f87793d004ce3784a938474eab31508f45ffe2d06f23fcb416400"
+            },
+            {
+              "ref": {
+                "type": "ItineraryRequest",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:r1:itinerary"
+              },
+              "revision": 1,
+              "propertiesDigest": "2dbed7d74b18290fa1b08bca28e96a0ce092c0b1ecfec72083b8a7411ddafd7c",
+              "linksDigest": "788eb2fb57fcb7cd558b97cd4e604c9c488ff455d68f02d9daa2e13fff65c2e7"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86"
+              },
+              "revision": 3,
+              "propertiesDigest": "ec55c30d8c00cb26818024e564a8f1c3c10df9ea3e9c5db8b56e6c77d131448e",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ],
+          "conditionChecks": [],
+          "actionProposals": [],
+          "digest": "b13353197d73d27d749ff5336abce59b67b6777f6ccd31dc13ddc18ac030a780"
+        },
+        "requestId": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+        "requestRevision": 1,
+        "requestDigest": "a3b7819764f90004ad1b279fc49041bba0f22c8e38eb4b480204289fb1309ee6",
+        "capabilityRef": {
+          "id": "service.itinerary.sandbox",
+          "version": "1"
+        },
+        "ontologyRef": {
+          "id": "eigos.itinerary",
+          "version": "1"
+        },
+        "candidateId": "d167f7a3-2feb-471c-b982-9a9a6e5b1ea4",
+        "bindingRef": {
+          "id": "domain.itinerary.synthetic-domain-provider",
+          "version": "1"
+        },
+        "verifierRef": {
+          "id": "domain.itinerary.independent",
+          "version": "1"
+        },
+        "steps": [
+          {
+            "id": "domain-service",
+            "operationId": "itinerary-business-operation",
+            "actionTypeRef": {
+              "id": "domain.itinerary.submit",
+              "version": "1"
+            },
+            "bindingRef": {
+              "id": "domain.itinerary.synthetic-domain-provider",
+              "version": "1"
+            },
+            "capabilityRef": {
+              "id": "service.itinerary.sandbox",
+              "version": "1"
+            },
+            "effect": "local",
+            "input": {
+              "startsAt": "2026-10-19T08:37:52.738Z",
+              "endsAt": "2026-10-19T20:37:52.738Z",
+              "timeZone": "Asia/Shanghai",
+              "travelers": 2,
+              "legs": [
+                {
+                  "id": "leg-1",
+                  "origin": "synthetic-station",
+                  "destination": "synthetic-hotel",
+                  "startsAt": "2026-10-19T09:37:52.738Z",
+                  "endsAt": "2026-10-19T10:37:52.738Z",
+                  "mode": "rail",
+                  "transferMinutes": 0,
+                  "bookingRequired": true
+                },
+                {
+                  "id": "leg-2",
+                  "origin": "synthetic-hotel",
+                  "destination": "synthetic-venue",
+                  "startsAt": "2026-10-19T11:17:52.738Z",
+                  "endsAt": "2026-10-19T11:47:52.738Z",
+                  "mode": "walk",
+                  "transferMinutes": 20,
+                  "bookingRequired": false
+                }
+              ],
+              "endpoint": "plan",
+              "budget": {
+                "minor": "50000",
+                "currency": "CNY"
+              }
+            },
+            "inputRefs": [],
+            "dependsOn": []
+          }
+        ],
+        "details": {
+          "domain": "itinerary",
+          "environment": "sandbox",
+          "realSourceConnected": false,
+          "endpoint": "方案满足时间、衔接、费用与可行性并披露未预订项；要求订妥时逐项核对确认",
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "71601595d2e9a173a396f47c61b30cae5ec90a83a1200b3d26e7937daf8e311f",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "domain",
+        "requirementChecks": [
+          {
+            "requirementId": "travelers",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:9c7954191bee52f7b3c331c9dc9d748042c229b901cb5f9ecf647da0896657ef"
+            ]
+          },
+          {
+            "requirementId": "total-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:9c7954191bee52f7b3c331c9dc9d748042c229b901cb5f9ecf647da0896657ef"
+            ]
+          },
+          {
+            "requirementId": "itinerary-window-end",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:9c7954191bee52f7b3c331c9dc9d748042c229b901cb5f9ecf647da0896657ef"
+            ]
+          }
+        ],
+        "expiresAt": "2026-10-18T09:07:52.738Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "service.itinerary.sandbox",
+              "version": "1"
+            },
+            "digest": "33774fdda766bef6bf84b295724b33ea80f24d7a8dd1c10dfd8ac3ced952f049"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "domain.itinerary.synthetic-domain-provider",
+              "version": "1"
+            },
+            "digest": "71601595d2e9a173a396f47c61b30cae5ec90a83a1200b3d26e7937daf8e311f"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "17cf208f48bf74f982916d38b80a3a4c801cda489f953c0268af86fa25b4a723"
+      },
+      "authorizationRequest": null,
+      "acceptance": {
+        "accepted": true,
+        "reason": "All fixed domain criteria independently verified against synthetic source evidence",
+        "checks": [
+          {
+            "requirementId": "travelers",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5"
+            ]
+          },
+          {
+            "requirementId": "total-budget",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5"
+            ]
+          },
+          {
+            "requirementId": "itinerary-window-end",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5"
+            ]
+          },
+          {
+            "requirementId": "feasible-plan-unbooked-disclosure",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "synthetic:domain:5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "synthetic:domain:5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5"
+        ],
+        "at": "2026-10-18T08:44:03.661Z"
+      },
+      "artifact": {
+        "id": "5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5",
+        "name": "itinerary-sandbox-result.json",
+        "data": {
+          "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请为2人整理并验证行程方案，行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai，全部费用预算500元。第一段标识 leg-1：从 synthetic-station 到 synthetic-hotel，2026-10-19T09:37:52.738Z 出发、2026-10-19T10:37:52.738Z 结束，方式 rail，此前缓冲0分钟，需要预订。第二段标识 leg-2：从 synthetic-hotel 到 synthetic-venue，2026-10-19T11:17:52.738Z 出发、2026-10-19T11:47:52.738Z 结束，方式 walk，转乘缓冲20分钟，不需要预订。目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。",
+          "deliverable": "行程安排合成流程已核验；真实接口未接通，没有实际下单、付款或预约。",
+          "execution": "completed",
+          "result": {
+            "environment": "sandbox",
+            "domainSnapshot": {
+              "domain": "itinerary",
+              "environment": "sandbox",
+              "requestId": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+              "requestRevision": 1,
+              "parameters": {
+                "startsAt": "2026-10-19T08:37:52.738Z",
+                "endsAt": "2026-10-19T20:37:52.738Z",
+                "timeZone": "Asia/Shanghai",
+                "travelers": 2,
+                "legs": [
+                  {
+                    "id": "leg-1",
+                    "origin": "synthetic-station",
+                    "destination": "synthetic-hotel",
+                    "startsAt": "2026-10-19T09:37:52.738Z",
+                    "endsAt": "2026-10-19T10:37:52.738Z",
+                    "mode": "rail",
+                    "transferMinutes": 0,
+                    "bookingRequired": true
+                  },
+                  {
+                    "id": "leg-2",
+                    "origin": "synthetic-hotel",
+                    "destination": "synthetic-venue",
+                    "startsAt": "2026-10-19T11:17:52.738Z",
+                    "endsAt": "2026-10-19T11:47:52.738Z",
+                    "mode": "walk",
+                    "transferMinutes": 20,
+                    "bookingRequired": false
+                  }
+                ],
+                "endpoint": "plan",
+                "budget": {
+                  "minor": "50000",
+                  "currency": "CNY"
+                }
+              },
+              "option": {
+                "id": "option-1",
+                "providerId": "synthetic-domain-provider",
+                "parametersDigest": "035702763f8a88b7d1410b9161d541acf4cb01684de91d5cf70a5181f3808c88",
+                "offeredParameters": {
+                  "startsAt": "2026-10-19T08:37:52.738Z",
+                  "endsAt": "2026-10-19T20:37:52.738Z",
+                  "timeZone": "Asia/Shanghai",
+                  "travelers": 2,
+                  "legs": [
+                    {
+                      "id": "leg-1",
+                      "origin": "synthetic-station",
+                      "destination": "synthetic-hotel",
+                      "startsAt": "2026-10-19T09:37:52.738Z",
+                      "endsAt": "2026-10-19T10:37:52.738Z",
+                      "mode": "rail",
+                      "transferMinutes": 0,
+                      "bookingRequired": true
+                    },
+                    {
+                      "id": "leg-2",
+                      "origin": "synthetic-hotel",
+                      "destination": "synthetic-venue",
+                      "startsAt": "2026-10-19T11:17:52.738Z",
+                      "endsAt": "2026-10-19T11:47:52.738Z",
+                      "mode": "walk",
+                      "transferMinutes": 20,
+                      "bookingRequired": false
+                    }
+                  ],
+                  "endpoint": "plan",
+                  "budget": {
+                    "minor": "50000",
+                    "currency": "CNY"
+                  }
+                },
+                "availability": "available",
+                "eligibility": "verified",
+                "observedAt": "2026-10-18T08:35:52.738Z",
+                "expiresAt": "2026-10-18T09:07:52.738Z",
+                "total": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "feesComplete": true,
+                "commitmentBy": "2026-10-18T08:47:52.738Z",
+                "termsMatch": true
+              },
+              "sourceId": "synthetic-domain-provider",
+              "sourceEventId": "3ae661976e8b18932f4a63c26cf7caed7d953f819ec0d22fadaf21b72e4a2bf9:1",
+              "sourceVersion": 1,
+              "entities": [
+                {
+                  "type": "ItineraryItem",
+                  "id": "ItineraryItem-synthetic",
+                  "title": "ItineraryItem 合成对象",
+                  "properties": {
+                    "sourceId": "ItineraryItem-synthetic",
+                    "sourceRevision": "1",
+                    "startsAt": "2026-10-19T09:37:52.738Z",
+                    "endsAt": "2026-10-19T10:37:52.738Z",
+                    "location": "synthetic-hotel",
+                    "bookingRequired": true
+                  }
+                },
+                {
+                  "type": "TravelLeg",
+                  "id": "leg-1",
+                  "title": "TravelLeg 合成对象",
+                  "properties": {
+                    "sourceId": "leg-1",
+                    "sourceRevision": "1",
+                    "id": "leg-1",
+                    "origin": "synthetic-station",
+                    "destination": "synthetic-hotel",
+                    "startsAt": "2026-10-19T09:37:52.738Z",
+                    "endsAt": "2026-10-19T10:37:52.738Z",
+                    "mode": "rail",
+                    "transferMinutes": 0,
+                    "bookingRequired": true,
+                    "feasibility": "verified"
+                  }
+                }
+              ],
+              "relationships": [
+                {
+                  "type": "ItineraryItemLeg",
+                  "fromId": "ItineraryItem-synthetic",
+                  "toId": "leg-1"
+                }
+              ],
+              "observation": {
+                "providerReference": "synthetic-itinerary-record",
+                "observedAt": "2026-10-18T08:37:52.138Z",
+                "requestDigest": "035702763f8a88b7d1410b9161d541acf4cb01684de91d5cf70a5181f3808c88",
+                "state": "validated",
+                "validatedAt": "2026-10-18T08:36:52.738Z",
+                "legs": [
+                  {
+                    "id": "leg-1",
+                    "origin": "synthetic-station",
+                    "destination": "synthetic-hotel",
+                    "startsAt": "2026-10-19T09:37:52.738Z",
+                    "endsAt": "2026-10-19T10:37:52.738Z",
+                    "mode": "rail",
+                    "transferMinutes": 0,
+                    "bookingRequired": true,
+                    "feasibility": "verified",
+                    "bookingState": "unbooked"
+                  },
+                  {
+                    "id": "leg-2",
+                    "origin": "synthetic-hotel",
+                    "destination": "synthetic-venue",
+                    "startsAt": "2026-10-19T11:17:52.738Z",
+                    "endsAt": "2026-10-19T11:47:52.738Z",
+                    "mode": "walk",
+                    "transferMinutes": 20,
+                    "bookingRequired": false,
+                    "feasibility": "verified",
+                    "bookingState": "not_required"
+                  }
+                ],
+                "total": {
+                  "minor": "12000",
+                  "currency": "CNY"
+                },
+                "feesComplete": true,
+                "unbookedDisclosed": true
+              }
+            },
+            "assessment": {
+              "status": "satisfied",
+              "criteria": [
+                {
+                  "id": "business_state",
+                  "result": "pass",
+                  "reason": "Required domain state is evidenced"
+                },
+                {
+                  "id": "leg_coverage",
+                  "result": "pass",
+                  "reason": "Every fixed leg and dependency must be represented without substitutions"
+                },
+                {
+                  "id": "time_windows",
+                  "result": "pass",
+                  "reason": "Each leg must fit the absolute itinerary window"
+                },
+                {
+                  "id": "connections",
+                  "result": "pass",
+                  "reason": "Adjacent endpoints and transfer buffers must connect"
+                },
+                {
+                  "id": "feasibility",
+                  "result": "pass",
+                  "reason": "Scheduling alone does not prove transportation feasibility"
+                },
+                {
+                  "id": "booking_endpoint",
+                  "result": "pass",
+                  "reason": "Planning may finish with disclosed unbooked legs; a booked itinerary requires every confirmation"
+                },
+                {
+                  "id": "itinerary_total",
+                  "result": "pass",
+                  "reason": "Requires a complete scoped amount in the requested currency"
+                }
+              ],
+              "endpoint": "itinerary_planned"
+            }
+          }
+        }
+      },
+      "error": null,
+      "modelReceipts": [
+        {
+          "id": "10cd2f11-6907-4dbc-b64e-7da4bb94fcc2",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:42:34.860Z",
+          "completedAt": "2026-10-18T08:42:46.043Z",
+          "outputSha256": "e5a69b5071df2e39f0e4d3fa5b3f31f62285059b5b02586e76829d84f5f97503",
+          "threadId": "01a14e2d-50c4-7e93-8c10-64400622ea46",
+          "usage": {
+            "input_tokens": 45100,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 129,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "71167704-a47f-46e8-9191-e27f848bac69",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:42:46.052Z",
+          "completedAt": "2026-10-18T08:42:56.020Z",
+          "outputSha256": "e827bbed5583b6594ff90d769b5cdc083df9d3f2b1a5e0c67687ca78227c0e65",
+          "threadId": "01a14e2d-7c0f-7740-b155-ddc14919e10d",
+          "usage": {
+            "input_tokens": 50732,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 113,
+            "reasoning_output_tokens": 27
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "618696dd-10c3-4cfa-89e4-4770adc1323b",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:42:56.027Z",
+          "completedAt": "2026-10-18T08:43:22.750Z",
+          "outputSha256": "f5cebc64e649aaf85135f562b85adfd712e0387c766b50051971ac67d594d8dc",
+          "threadId": "01a14e2d-a2ec-7ef0-85f2-0fb0b114537f",
+          "usage": {
+            "input_tokens": 50880,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1150,
+            "reasoning_output_tokens": 127
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "75d7cefb-ba9b-4489-a3e6-19e48182626d",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:43:22.772Z",
+          "completedAt": "2026-10-18T08:43:35.466Z",
+          "outputSha256": "cc2c4468d5782b330f7d1649881fc58377a9eab431840ea637cd21bbee8ca21f",
+          "threadId": "01a14e2e-0b6f-73b1-a34c-4a2579fa4063",
+          "usage": {
+            "input_tokens": 33962,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 191,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "bb4c2059-5337-4638-9d24-25b5b74ba6eb",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:43:35.481Z",
+          "completedAt": "2026-10-18T08:43:47.195Z",
+          "outputSha256": "2b1922a09159e975f9e92e27430c11aed36fef14ee5158574193a7bc518a2433",
+          "threadId": "01a14e2e-3d0f-7f03-ba05-79909dff18f1",
+          "usage": {
+            "input_tokens": 39691,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 244,
+            "reasoning_output_tokens": 12
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "496a6d97-5eb4-44cd-aa62-902f03583dc8",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:43:47.201Z",
+          "completedAt": "2026-10-18T08:44:03.635Z",
+          "outputSha256": "5c1044c0038cc2fc4ae4d41c9ac46a5934431e88bb7a5360702892a5342f8c50",
+          "threadId": "01a14e2e-6ad3-7c91-9f8c-ba4de9ff4d8f",
+          "usage": {
+            "input_tokens": 40718,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 683,
+            "reasoning_output_tokens": 18
+          },
+          "purpose": "planning"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "a5063585-0dc8-4990-906d-eae65c518e05",
+          "at": "2026-10-18T08:42:46.050Z",
+          "tool": "describe_ontology",
+          "inputDigest": "7616d79ba202199145c5c1eff213dccac1494182b6716306afb433c3390b5404",
+          "outputDigest": "a7d30e160d5f285c55c195baed6bb875270a55fc9c8711ae8893f0b92ed44a9a",
+          "datasetRevision": 28,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "32024116-99c8-4c27-90d9-50d3740ba4a1",
+          "at": "2026-10-18T08:42:46.051Z",
+          "tool": "query_ontology",
+          "inputDigest": "abc7497b9e3bca83f6a12e4f5bebee6fce2f4120b64c62125804041760cabcde",
+          "outputDigest": "541a5e969c64c4ad2fa3d24de1ce482d9412c16d1b56407bde5e474316c0aebf",
+          "datasetRevision": 28,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86"
+              },
+              "revision": 2,
+              "propertiesDigest": "3a81aaa5484cdbbf92caf9fe4291ad3c4260733bad5e72f01b4e9a11e38572b1",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "99b8229f-5c12-4dd0-b062-d141236488ab",
+          "at": "2026-10-18T08:42:56.025Z",
+          "tool": "query_ontology",
+          "inputDigest": "4d3a22b02e4218df3df3ec3c9d5cb0d5513f8c1b4b6ef28ef1e0ede70e992a0f",
+          "outputDigest": "6e36ba1d267baad5a8ba40f6692c4112771b74dfdb178ac16fe8c5301557fc08",
+          "datasetRevision": 28,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "157d235b-7cb1-4b30-8fda-5dec962a9893",
+          "at": "2026-10-18T08:43:35.476Z",
+          "tool": "describe_ontology",
+          "inputDigest": "7616d79ba202199145c5c1eff213dccac1494182b6716306afb433c3390b5404",
+          "outputDigest": "a7d30e160d5f285c55c195baed6bb875270a55fc9c8711ae8893f0b92ed44a9a",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "7d399f29-eb36-475d-896d-5309e691d2bc",
+          "at": "2026-10-18T08:43:35.478Z",
+          "tool": "query_ontology",
+          "inputDigest": "a20021ea8eef428f6f72ca55b21dae19230c1e94966c7d63befd220284bf4042",
+          "outputDigest": "3b63d40d7143b2e5f5ce01ca63d6217b8342c514cc010753d365a39241e9dce7",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ItineraryOption",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1"
+              },
+              "revision": 1,
+              "propertiesDigest": "64b43649a120f864dd1b0a8863ce1b225c34882957e153f4660ea896964ea8e1",
+              "linksDigest": "664b529e066d882ac73d400b2732cbb18a733ca32d7de88c633902890e701e69"
+            }
+          ]
+        },
+        {
+          "id": "08901c1f-a35d-4c1d-8308-253f151793e5",
+          "at": "2026-10-18T08:43:35.478Z",
+          "tool": "assess_conditions",
+          "inputDigest": "ceddea05db94d570a1dc25c5611ac1a6a85ea7e510a2374fe95b004a7a4b932c",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "97c0ed45-c95b-4fbb-b585-5c5140b5d975",
+          "at": "2026-10-18T08:43:47.199Z",
+          "tool": "evaluate_ontology",
+          "inputDigest": "ce67e6d45752f0612238f9eb21142c4765d09c2f9996236c288defe6291710a8",
+          "outputDigest": "d0c9e645b9bcb79c6845bf4a3f2028d2191076d61e45f820d99047a9a33fe5a6",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "15173e56e75098cacbdefb7931c88ec26d89572a5558f8bb488039118c515afe"
+              },
+              "revision": 1,
+              "propertiesDigest": "909ce18dc9057cc69def046db66a35f7af3296ae6bf2b085be32bab4c241cf71",
+              "linksDigest": "464845223c3f87793d004ce3784a938474eab31508f45ffe2d06f23fcb416400"
+            },
+            {
+              "ref": {
+                "type": "ItineraryRequest",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:r1:itinerary"
+              },
+              "revision": 1,
+              "propertiesDigest": "2dbed7d74b18290fa1b08bca28e96a0ce092c0b1ecfec72083b8a7411ddafd7c",
+              "linksDigest": "788eb2fb57fcb7cd558b97cd4e604c9c488ff455d68f02d9daa2e13fff65c2e7"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86"
+              },
+              "revision": 3,
+              "propertiesDigest": "ec55c30d8c00cb26818024e564a8f1c3c10df9ea3e9c5db8b56e6c77d131448e",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "136c2915-58b4-4d76-b190-d5201effaef1",
+          "at": "2026-10-18T08:43:47.199Z",
+          "tool": "assess_conditions",
+          "inputDigest": "f9f36f7a2c76023556b4f57e3130b7721ba656ed89f5b3005d8991bb9cc17d8d",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "0803b987-3a13-483e-8c5d-823b3050bd63",
+          "at": "2026-10-18T08:43:47.200Z",
+          "tool": "query_ontology",
+          "inputDigest": "a1982f09cbbd624e1e35c571a724cb26cde683d6901aa60d259709dab880005c",
+          "outputDigest": "617a824def328240a30fe2952b0290d5ca4b53900c5201b238754907311e1bb5",
+          "datasetRevision": 30,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+        "status": {
+          "state": "TASK_STATE_COMPLETED",
+          "message": {
+            "messageId": "a4f6f8f2-86e0-44bb-80b8-7a354a5377cc",
+            "contextId": "73dd31a2-fc92-475f-94d4-0e4ca924b064",
+            "taskId": "1c2ea9c6-f50e-478b-bc37-98ca8cabbe86",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "行程安排合成流程已核验；真实接口未接通，没有实际下单、付款或预约。"
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:44:03.661Z"
+        },
+        "artifacts": [
+          {
+            "artifactId": "5f61f965c8a5a0c90ec5c23cf3eded244a1525f626d4e1cf7c02ddc9c70327f5",
+            "name": "itinerary-sandbox-result.json"
+          }
+        ]
+      }
+    },
+    {
+      "domain": "vehicle",
+      "taskId": "f29665fa-2247-4ccb-be06-d3878f2395f7",
+      "state": "failed",
+      "modelRuns": 3,
+      "ontologyReads": 3,
+      "sourceCalls": {
+        "submits": 0,
+        "lookups": 0
+      },
+      "approved": false,
+      "protocolMatch": true,
+      "goal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请确认一项自驾租车预订：驾驶人引用 driver-alias-A，车型 compact，2人，取车地点 synthetic-depot，还车地点 synthetic-depot，租期从 2026-10-19T08:37:52.738Z 到 2026-10-20T08:37:52.738Z，时区 Asia/Shanghai。服务全部费用预算500元，另有押金上限2000元。目标仅为租车预订确认，不要求现在已取车、还车或押金结清。",
+      "request": {
+        "id": "f29665fa-2247-4ccb-be06-d3878f2395f7",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请确认一项自驾租车预订：驾驶人引用 driver-alias-A，车型 compact，2人，取车地点 synthetic-depot，还车地点 synthetic-depot，租期从 2026-10-19T08:37:52.738Z 到 2026-10-20T08:37:52.738Z，时区 Asia/Shanghai。服务全部费用预算500元，另有押金上限2000元。目标仅为租车预订确认，不要求现在已取车、还车或押金结清。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a",
+            "text": "这是明确获准的本地合成业务演练，所给标识和记录都是合成数据。只使用沙箱，不实际下单、付款或预约。请确认一项自驾租车预订：驾驶人引用 driver-alias-A，车型 compact，2人，取车地点 synthetic-depot，还车地点 synthetic-depot，租期从 2026-10-19T08:37:52.738Z 到 2026-10-20T08:37:52.738Z，时区 Asia/Shanghai。服务全部费用预算500元，另有押金上限2000元。目标仅为租车预订确认，不要求现在已取车、还车或押金结清。",
+            "receivedAt": "2026-10-18T08:44:04.518Z"
+          }
+        ],
+        "requirements": []
+      },
+      "plan": null,
+      "authorizationRequest": null,
+      "acceptance": null,
+      "artifact": null,
+      "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+      "modelReceipts": [
+        {
+          "id": "3170228f-338f-4e21-8a46-c61db49c244b",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:44:04.590Z",
+          "completedAt": "2026-10-18T08:44:15.531Z",
+          "outputSha256": "e90559852a5e68261298b72ef94ae979d166668aa327e591615156810071e621",
+          "threadId": "01a14e2e-aee2-7242-b099-49055fdb29a0",
+          "usage": {
+            "input_tokens": 44729,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 111,
+            "reasoning_output_tokens": 15
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "53b31cf6-4964-4d64-b0e0-acbff5592ea3",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:44:15.540Z",
+          "completedAt": "2026-10-18T08:44:25.988Z",
+          "outputSha256": "f6504c800a5dc42fc3c46200d6dcb3bbd746b9e841af826acb7ed5d2cf4e88c4",
+          "threadId": "01a14e2e-d982-7e12-9d03-76bebf9a5fb9",
+          "usage": {
+            "input_tokens": 50973,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 75,
+            "reasoning_output_tokens": 25
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "e30cc71f-e6cd-49c4-a6e1-00bff04bfa6f",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T08:44:25.993Z",
+          "completedAt": "2026-10-18T08:44:53.252Z",
+          "outputSha256": "7ff58fba0f352e056bbe086108d38d54ddc577af74e8df4612c2725b9d909957",
+          "threadId": "01a14e2f-025e-7cb3-943c-e61a9049d2bf",
+          "usage": {
+            "input_tokens": 51083,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1154,
+            "reasoning_output_tokens": 125
+          },
+          "purpose": "grounding"
+        }
+      ],
+      "ontologyReadReceipts": [
+        {
+          "id": "b6d98403-300f-42f0-8eee-f6eb9f888b5a",
+          "at": "2026-10-18T08:44:15.536Z",
+          "tool": "describe_ontology",
+          "inputDigest": "677e21d3f2a417fb00bb088f1535bc0656f4355937ec390b5d857e793c35b2a3",
+          "outputDigest": "0b63074da970407b6cb018f68f40cd4763073a4a2c3a73a15f2eb00e0eaa8a7c",
+          "datasetRevision": 35,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "effd450d-2617-4dd6-9611-c4968fcef64a",
+          "at": "2026-10-18T08:44:15.539Z",
+          "tool": "query_ontology",
+          "inputDigest": "9027916168735573895b3ed25b710f9f95a9f66b01180e912aaf4de843ae6f77",
+          "outputDigest": "ddcfc59b27d5cc11629bf025ceee55e450d5fdf133e107b86d4875219d9b21c1",
+          "datasetRevision": 35,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "f29665fa-2247-4ccb-be06-d3878f2395f7"
+              },
+              "revision": 2,
+              "propertiesDigest": "6ce0caf12397e972dd16cc77e20470e4b3a5fceac77e2a77c1986809af3e249b",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            }
+          ]
+        },
+        {
+          "id": "a79de593-aa6a-4b86-90ec-6d3706077e2c",
+          "at": "2026-10-18T08:44:25.991Z",
+          "tool": "query_ontology",
+          "inputDigest": "7ebd3556efad8e5b7b8806b2bfbee8358240996e076f48fe182e40a8ce1f885a",
+          "outputDigest": "449b11b75f229427e0bc35a62eba67d7673effe0dfce486b21881571efb3fbac",
+          "datasetRevision": 35,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "a2aReadback": {
+        "taskId": "f29665fa-2247-4ccb-be06-d3878f2395f7",
+        "status": {
+          "state": "TASK_STATE_FAILED",
+          "message": {
+            "messageId": "f74f8694-0205-4b16-ac88-91f59471e087",
+            "contextId": "43043ffa-5853-4818-b4bc-262a728064c0",
+            "taskId": "f29665fa-2247-4ccb-be06-d3878f2395f7",
+            "role": "ROLE_AGENT",
+            "parts": [
+              {
+                "text": "Ontology backend could not validate a supported plan. No business action was dispatched."
+              }
+            ]
+          },
+          "timestamp": "2026-10-18T08:44:53.258Z"
+        },
+        "artifacts": []
+      }
+    }
+  ],
+  "modelOutputs": [
+    {
+      "domain": "ride",
+      "evidence": {
+        "id": "5aa07ddb-21ee-45f3-a94b-6c335cbcd81b",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:37:52.857Z",
+        "completedAt": "2026-10-18T08:38:03.236Z",
+        "outputSha256": "5e9ed3cc15338cd9f37fb3a88e2314ccaf376bcf5ed7e6b1a0266de3b589ac77",
+        "threadId": "01a14e29-03bc-74d2-8a96-e8e1c4530eaf",
+        "usage": {
+          "input_tokens": 44527,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 96,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Ride\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"a930f796-8c91-4236-9ca7-03514483b1cc\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "ride",
+      "evidence": {
+        "id": "45075717-2b43-43d0-92f5-c5a38bec22b4",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:38:03.246Z",
+        "completedAt": "2026-10-18T08:38:14.372Z",
+        "outputSha256": "7e1f7125af0d27cbf15572f6582affa484604931093b3cf7acbfc95c2af150dc",
+        "threadId": "01a14e29-2b35-7492-b9ed-260d133f65f3",
+        "usage": {
+          "input_tokens": 49878,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 112,
+          "reasoning_output_tokens": 28
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ServiceRequest\",\"id\":\"a930f796-8c91-4236-9ca7-03514483b1cc\"},\"link\":\"rideRequirements\",\"where\":[],\"limit\":10}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "ride",
+      "evidence": {
+        "id": "68e1b364-fae7-49b8-afc2-6bcdc190bcdc",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:38:14.378Z",
+        "completedAt": "2026-10-18T08:38:41.343Z",
+        "outputSha256": "9e87fd574782306e1e5674acaf3e4166976b7cedf3bde7b9dcaaa6259c074cda",
+        "threadId": "01a14e29-56b7-74a0-a0bb-d8f6542cb153",
+        "usage": {
+          "input_tokens": 50024,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1333,
+          "reasoning_output_tokens": 134
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.ride.sandbox\",\"version\":\"1\"},\"message\":\"匹配打车沙箱验证能力，仅用于合成演练，不实际下单、付款或预约。终点要求为乘车服务完成；此处仅解析请求，不表示服务已完成。当前尚无关联的 RideRequest 对象，未虚构类型化条件引用。\",\"inputJson\":\"{\\\"origin\\\":\\\"synthetic-home\\\",\\\"destination\\\":\\\"synthetic-office\\\",\\\"passengers\\\":2,\\\"serviceClass\\\":\\\"standard\\\",\\\"pickupBy\\\":\\\"2026-10-18T09:37:52.737Z\\\",\\\"arriveBy\\\":\\\"2026-10-18T10:37:52.737Z\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"passengers\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"2\\\",\\\"unit\\\":\\\"person\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"2人\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"origin\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-home\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"synthetic-home\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"destination\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-office\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"synthetic-office\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"pickup-deadline\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"deadline\\\",\\\"expected\\\":{\\\"at\\\":\\\"2026-10-18T09:37:52.737Z\\\",\\\"timezone\\\":\\\"UTC\\\",\\\"original\\\":\\\"最晚 2026-10-18T09:37:52.737Z 上车\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"最晚 2026-10-18T09:37:52.737Z 上车\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"arrival-deadline\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"deadline\\\",\\\"expected\\\":{\\\"at\\\":\\\"2026-10-18T10:37:52.737Z\\\",\\\"timezone\\\":\\\"UTC\\\",\\\"original\\\":\\\"2026-10-18T10:37:52.737Z 前到达\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"2026-10-18T10:37:52.737Z 前到达\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"total-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"全部费用预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"service-class\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.ride.complete\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"车型 standard\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"ride-completion\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.ride.complete\\\"}},\\\"messageId\\\":\\\"02303996-9817-4337-88ed-09416896dcdd\\\",\\\"quote\\\":\\\"要求终点为乘车服务完成\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "b836fe86-4958-4d8b-8a17-1e46a311507a",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:38:42.183Z",
+        "completedAt": "2026-10-18T08:38:51.878Z",
+        "outputSha256": "1413f8e93c7946ad5e548eebfffeb5dea6006432bd72582b3805cedb689fbbe2",
+        "threadId": "01a14e29-c36a-7f52-addf-39a8b6b2dfbd",
+        "usage": {
+          "input_tokens": 44605,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 128,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Appointment\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "ef0a1e90-e3b9-426f-a01c-2abb648846ff",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:38:51.888Z",
+        "completedAt": "2026-10-18T08:39:03.529Z",
+        "outputSha256": "a8bde0f767d156c784ebadd14bff0ed34ca9614f2fcc7ba377289b812562c12f",
+        "threadId": "01a14e29-e942-7f60-bc70-8716622c372d",
+        "usage": {
+          "input_tokens": 50585,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 117,
+          "reasoning_output_tokens": 31
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ServiceRequest\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2\"},\"link\":\"appointmentRequirements\",\"where\":[],\"limit\":20}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "3594ae2b-4fd0-4a6a-9434-3272a7c379d6",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:39:03.536Z",
+        "completedAt": "2026-10-18T08:39:28.719Z",
+        "outputSha256": "9655b9503c7bf64e497d2769caeca30f31ee18cb336a1817b4738d369cce0f1a",
+        "threadId": "01a14e2a-16b6-7f21-9b8d-aa7fe793c1df",
+        "usage": {
+          "input_tokens": 50731,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 919,
+          "reasoning_output_tokens": 144
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.appointment.sandbox\",\"version\":\"1\"},\"message\":\"已匹配医院挂号沙箱验证；仅处理合成演练，不进行真实下单、付款或预约。有效挂号确认是待验证的结果，尚未取得。当前没有可引用的 AppointmentRequest 对象，未虚构领域条件引用。\",\"inputJson\":\"{\\\"hospitalId\\\":\\\"synthetic-campus\\\",\\\"departmentId\\\":\\\"synthetic-department\\\",\\\"practitionerId\\\":\\\"synthetic-practitioner\\\",\\\"patientKey\\\":\\\"patient-alias-A\\\",\\\"startsAt\\\":\\\"2026-10-19T08:37:52.737Z\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"registerBy\\\":\\\"2026-10-18T09:37:52.737Z\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"registration-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"041a6d67-8073-475f-981c-53f38597a220\\\",\\\"quote\\\":\\\"挂号费预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"registration-deadline\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"deadline\\\",\\\"expected\\\":{\\\"at\\\":\\\"2026-10-18T09:37:52.737Z\\\",\\\"timezone\\\":\\\"Asia/Shanghai\\\",\\\"original\\\":\\\"2026-10-18T09:37:52.737Z 前取得有效挂号确认\\\"}},\\\"messageId\\\":\\\"041a6d67-8073-475f-981c-53f38597a220\\\",\\\"quote\\\":\\\"2026-10-18T09:37:52.737Z 前取得有效挂号确认\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"hospital-campus\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-campus\\\"}},\\\"messageId\\\":\\\"041a6d67-8073-475f-981c-53f38597a220\\\",\\\"quote\\\":\\\"医院院区 synthetic-campus\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"appointment-confirmation\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.appointment.complete\\\"}},\\\"messageId\\\":\\\"041a6d67-8073-475f-981c-53f38597a220\\\",\\\"quote\\\":\\\"取得有效挂号确认\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "a57bee1d-1c7e-4cbd-932c-e0942e658ef0",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:39:28.757Z",
+        "completedAt": "2026-10-18T08:39:39.506Z",
+        "outputSha256": "0bd460f56baec1d8ee15ff44d6afb76b23ea4215a874d045972bd22bb3773c8c",
+        "threadId": "01a14e2a-7940-7431-885c-6ffc2a5f3c54",
+        "usage": {
+          "input_tokens": 32604,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 187,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Appointment\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"AppointmentOption\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2:option-1\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"0b6f65c4-132c-4985-9f74-d5dc37720bbc\",\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "4fee16f1-6720-4f00-9d83-ed9a862ba892",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:39:39.518Z",
+        "completedAt": "2026-10-18T08:39:51.779Z",
+        "outputSha256": "a0806a02994d94370bc8dbbbac7e1ec0b1310cb134c012571d4c19939f23fcde",
+        "threadId": "01a14e2a-a348-7b40-bd61-0c3fa95dc2ef",
+        "usage": {
+          "input_tokens": 38677,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 306,
+          "reasoning_output_tokens": 13
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"0b6f65c4-132c-4985-9f74-d5dc37720bbc\",\"subject\":{\"type\":\"AppointmentOption\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2:option-1\"},\"phase\":\"precondition\"}"
+          },
+          {
+            "tool": "evaluate_ontology",
+            "argumentsJson": "{\"function\":\"appointmentEligibility\",\"object\":{\"type\":\"AppointmentOption\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2:option-1\"}}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"AppointmentOption\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2:option-1\"},\"link\":\"requirements\",\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"AppointmentOption\",\"id\":\"e14e64ab-753e-4b0e-958e-9875106f72f2:option-1\"},\"link\":\"sourceReceipts\",\"where\":[],\"limit\":5}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "appointment",
+      "evidence": {
+        "id": "ad5f0dec-8c63-447f-a63f-9d1bf77271a4",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:39:51.794Z",
+        "completedAt": "2026-10-18T08:40:08.285Z",
+        "outputSha256": "075b2b944e98ac632c9776f3534e7336be0a9eb74c6b1797fc5ff28f7993d391",
+        "threadId": "01a14e2a-d33a-77a1-b022-88b77f4edf16",
+        "usage": {
+          "input_tokens": 40125,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 481,
+          "reasoning_output_tokens": 37
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"0b6f65c4-132c-4985-9f74-d5dc37720bbc\",\"message\":\"建议采用该沙箱合成候选：固定就诊参数一致，完整费用120元低于500元预算，承诺确认时间2026-10-18T08:47:52.737Z早于截止时间；候选有效至2026-10-18T09:07:52.737Z，当前来源观察未过期。硬要求检查全部通过，appointmentEligibility为satisfied；assess_conditions未返回附加检查，亦不授予权限。synthetic来源仅适用于本次明确的合成演练，realSupply=false不代表真实挂号供应。以下完整保留准备好的单步配方；仅提出计划，不执行或声称完成。有效挂号确认这一未来结果条件延后至执行后由domain.appointment.independent独立观察验证。\",\"steps\":[{\"id\":\"domain-service\",\"actionTypeRef\":{\"id\":\"domain.appointment.submit\",\"version\":\"1\"},\"bindingRef\":{\"id\":\"domain.appointment.synthetic-domain-provider\",\"version\":\"1\"},\"inputJson\":\"{\\\"hospitalId\\\":\\\"synthetic-campus\\\",\\\"departmentId\\\":\\\"synthetic-department\\\",\\\"practitionerId\\\":\\\"synthetic-practitioner\\\",\\\"patientKey\\\":\\\"patient-alias-A\\\",\\\"startsAt\\\":\\\"2026-10-19T08:37:52.737Z\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"registerBy\\\":\\\"2026-10-18T09:37:52.737Z\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"dependsOn\":[]}]}"
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "2ff2ee28-14f8-489d-8422-ddb821cc01a3",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:40:09.695Z",
+        "completedAt": "2026-10-18T08:40:19.697Z",
+        "outputSha256": "e95d1b2a8173e33594ddae0f9da45574932453fb0416e1067fb4471db5a8892e",
+        "threadId": "01a14e2b-192f-7e83-a8a1-201fafb0cb21",
+        "usage": {
+          "input_tokens": 44550,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 134,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Food\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "7f28e3d8-b15b-4649-a939-de9f9265e2d5",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:40:19.707Z",
+        "completedAt": "2026-10-18T08:40:32.452Z",
+        "outputSha256": "c70265cbc44f1a9fbd082014aa9d5b24f5cf81c1099fa0b18afbe2c3ab0dd334",
+        "threadId": "01a14e2b-4041-71d1-a6c3-9babf4169842",
+        "usage": {
+          "input_tokens": 49893,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 100,
+          "reasoning_output_tokens": 15
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ServiceRequest\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64\"},\"link\":\"foodRequirements\",\"where\":[],\"limit\":10}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "a2c4c0ac-a369-417a-9a63-f3f22eded87d",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:40:32.458Z",
+        "completedAt": "2026-10-18T08:40:59.908Z",
+        "outputSha256": "cb35fc0cf2f025f578cdcc18b79ec35367c552ff1b57b2ab7717afca0de75527",
+        "threadId": "01a14e2b-7286-7203-a912-25c2f5e7f284",
+        "usage": {
+          "input_tokens": 50042,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1058,
+          "reasoning_output_tokens": 115
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.food.sandbox\",\"version\":\"1\"},\"message\":\"匹配外卖沙箱验证，目标为按指定商家、商品、规格、数量、忌口、地点、期限及全部费用预算完成合成送达，不接受替换。仅限沙箱；此解析不执行业务，也不表示已送达。\",\"inputJson\":\"{\\\"merchantId\\\":\\\"synthetic-kitchen\\\",\\\"items\\\":[{\\\"sku\\\":\\\"meal-A\\\",\\\"quantity\\\":2,\\\"specification\\\":\\\"large-no-peanuts\\\"}],\\\"destination\\\":\\\"synthetic-office\\\",\\\"deliverBy\\\":\\\"2026-10-18T09:37:52.738Z\\\",\\\"excludedIngredients\\\":[\\\"peanuts\\\"],\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"food-quantity\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"2\\\",\\\"unit\\\":\\\"份\\\"}},\\\"messageId\\\":\\\"fc21194b-4db3-47b9-9966-6e9717906726\\\",\\\"quote\\\":\\\"数量2份\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"food-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"fc21194b-4db3-47b9-9966-6e9717906726\\\",\\\"quote\\\":\\\"全部费用预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"food-deadline\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"deadline\\\",\\\"expected\\\":{\\\"at\\\":\\\"2026-10-18T09:37:52.738Z\\\",\\\"timezone\\\":\\\"UTC\\\",\\\"original\\\":\\\"在 2026-10-18T09:37:52.738Z 前送达\\\"}},\\\"messageId\\\":\\\"fc21194b-4db3-47b9-9966-6e9717906726\\\",\\\"quote\\\":\\\"在 2026-10-18T09:37:52.738Z 前送达\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"food-destination\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-office\\\"}},\\\"messageId\\\":\\\"fc21194b-4db3-47b9-9966-6e9717906726\\\",\\\"quote\\\":\\\"送到 synthetic-office\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"food-exact-completion\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.food.complete\\\"}},\\\"messageId\\\":\\\"fc21194b-4db3-47b9-9966-6e9717906726\\\",\\\"quote\\\":\\\"请从商家 synthetic-kitchen 订外卖，商品 SKU meal-A，规格 large-no-peanuts，数量2份，明确排除的食材为 peanuts。送到 synthetic-office，在 2026-10-18T09:37:52.738Z 前送达，全部费用预算500元。请完成送达，不接受商品替换。\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "c08ef947-3f02-437b-ac7e-5d277daed519",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:40:59.943Z",
+        "completedAt": "2026-10-18T08:41:12.270Z",
+        "outputSha256": "3e243eab995e7a70a6cc011c16c358dfef10e301f9a62088c531f234c9d808e7",
+        "threadId": "01a14e2b-de10-7e92-b5ae-3895bdae5051",
+        "usage": {
+          "input_tokens": 32711,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 218,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Food\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"FoodOption\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64:option-1\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"0a57b568-7082-4933-9025-62f71b7ead77\",\"subject\":{\"type\":\"FoodOption\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64:option-1\"},\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "e5e4312a-94ab-4a9b-8f57-866baeff0e3a",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:41:12.284Z",
+        "completedAt": "2026-10-18T08:41:27.555Z",
+        "outputSha256": "859f7f1c36fee5e8dab4b9cb062813490898dc49f456cc1242fb00a2746a1e25",
+        "threadId": "01a14e2c-0e79-7210-91d7-c656362ac2ed",
+        "usage": {
+          "input_tokens": 38186,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 265,
+          "reasoning_output_tokens": 14
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "evaluate_ontology",
+            "argumentsJson": "{\"function\":\"foodEligibility\",\"object\":{\"type\":\"FoodOption\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64:option-1\"}}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"FoodOption\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64:option-1\"},\"link\":\"requirements\",\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"FoodOption\",\"id\":\"7203028f-fc2e-4e86-8119-0e76cf223a64:option-1\"},\"link\":\"sourceReceipts\",\"where\":[],\"limit\":5}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "food",
+      "evidence": {
+        "id": "c9661b93-156c-4234-b718-43fa706a3466",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:41:27.567Z",
+        "completedAt": "2026-10-18T08:41:44.763Z",
+        "outputSha256": "9701b0c6ccc891efe82d5044756c839ea2d3bead36353516ca8efb697bee34ed",
+        "threadId": "01a14e2c-4982-7260-b849-25b9152701be",
+        "usage": {
+          "input_tokens": 39504,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 448,
+          "reasoning_output_tokens": 19
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"0a57b568-7082-4933-9025-62f71b7ead77\",\"message\":\"建议采用此沙箱候选：固定商家、SKU、规格、2份数量、排除 peanuts 和目的地均匹配；完整费用120元低于500元，承诺送达时间08:47:52.738Z早于截止时间。全部硬要求检查通过，foodEligibility 为 satisfied；候选有效至2026-10-18T09:07:52.738Z，当前观察未过期。已检查前置条件，未返回额外检查项。来源明确为 synthetic，仅适用于本次明确要求的合成沙箱演练，realSupply=false不构成真实供应证明。以下仅为计划提案，不执行或新增授权；实际送达、最终完整费用、忌口及无替换等结果条件仍待执行后的独立验证，不宣称完成。\",\"steps\":[{\"id\":\"domain-service\",\"actionTypeRef\":{\"id\":\"domain.food.submit\",\"version\":\"1\"},\"bindingRef\":{\"id\":\"domain.food.synthetic-domain-provider\",\"version\":\"1\"},\"inputJson\":\"{\\\"merchantId\\\":\\\"synthetic-kitchen\\\",\\\"items\\\":[{\\\"sku\\\":\\\"meal-A\\\",\\\"quantity\\\":2,\\\"specification\\\":\\\"large-no-peanuts\\\"}],\\\"destination\\\":\\\"synthetic-office\\\",\\\"deliverBy\\\":\\\"2026-10-18T09:37:52.738Z\\\",\\\"excludedIngredients\\\":[\\\"peanuts\\\"],\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"dependsOn\":[]}]}"
+      }
+    },
+    {
+      "domain": "hotel",
+      "evidence": {
+        "id": "8489eee1-9e35-40cf-bd2c-b11e3e0b83d5",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:41:46.558Z",
+        "completedAt": "2026-10-18T08:41:58.143Z",
+        "outputSha256": "cbd58f171e81d6750e9c1bae3914edd55841acc957cbe40dc04d12c76ab01612",
+        "threadId": "01a14e2c-9391-7c11-a61d-4837b95a12dc",
+        "usage": {
+          "input_tokens": 44543,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 136,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"hotel\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"2ce31189-226b-4a2f-945d-8b2c11474c85\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "hotel",
+      "evidence": {
+        "id": "b46fb9a0-47a5-4300-b4fe-df74e17d1f14",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:41:58.154Z",
+        "completedAt": "2026-10-18T08:42:08.320Z",
+        "outputSha256": "2f0eb8cff6b67111cba19ef4dc6a543eae69cfe203064f3dc9a5e53398c8d1e9",
+        "threadId": "01a14e2c-c0e4-7aa3-bea3-863b3d2973a1",
+        "usage": {
+          "input_tokens": 50357,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 105,
+          "reasoning_output_tokens": 19
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ServiceRequest\",\"id\":\"2ce31189-226b-4a2f-945d-8b2c11474c85\"},\"link\":\"hotelRequirements\",\"where\":[],\"limit\":10}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "hotel",
+      "evidence": {
+        "id": "4951c24a-0ff0-487c-bd7e-a710f0f9750d",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:42:08.327Z",
+        "completedAt": "2026-10-18T08:42:34.125Z",
+        "outputSha256": "42c4ace31fa8df7ec32782d878d3acfc98709dc51b250e335dfb7340c1c46741",
+        "threadId": "01a14e2c-e8a2-7c51-9d47-2f1a4ca274bf",
+        "usage": {
+          "input_tokens": 50505,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 906,
+          "reasoning_output_tokens": 136
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.hotel.sandbox\",\"version\":\"1\"},\"message\":\"已匹配酒店沙箱验证，目标为预订确认；仅进行合成演练，不实际下单、付款或预约。此解析不表示预订已确认。\",\"inputJson\":\"{\\\"hotelId\\\":\\\"synthetic-hotel\\\",\\\"roomTypeId\\\":\\\"synthetic-twin\\\",\\\"checkIn\\\":\\\"2026-10-19\\\",\\\"checkOut\\\":\\\"2026-10-21\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"rooms\\\":1,\\\"guests\\\":2,\\\"cancellationPolicyRef\\\":\\\"flexible-v1\\\",\\\"endpoint\\\":\\\"confirmed\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"rooms\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"1\\\",\\\"unit\\\":\\\"间房\\\"}},\\\"messageId\\\":\\\"98c8b492-3c0c-47b7-b896-f98ed5e1fd8b\\\",\\\"quote\\\":\\\"1间房\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"guests\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"2\\\",\\\"unit\\\":\\\"人\\\"}},\\\"messageId\\\":\\\"98c8b492-3c0c-47b7-b896-f98ed5e1fd8b\\\",\\\"quote\\\":\\\"2人\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"total-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"98c8b492-3c0c-47b7-b896-f98ed5e1fd8b\\\",\\\"quote\\\":\\\"全部费用预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"hotel-confirmation\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.hotel.complete\\\"}},\\\"messageId\\\":\\\"98c8b492-3c0c-47b7-b896-f98ed5e1fd8b\\\",\\\"quote\\\":\\\"请订酒店 synthetic-hotel，房型 synthetic-twin，2026-10-19 入住，2026-10-21 退房，酒店时区 Asia/Shanghai，1间房、2人，取消条款引用 flexible-v1，全部费用预算500元。目标是预订已确认，不要求现在已经完成住宿。\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "10cd2f11-6907-4dbc-b64e-7da4bb94fcc2",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:42:34.860Z",
+        "completedAt": "2026-10-18T08:42:46.043Z",
+        "outputSha256": "e5a69b5071df2e39f0e4d3fa5b3f31f62285059b5b02586e76829d84f5f97503",
+        "threadId": "01a14e2d-50c4-7e93-8c10-64400622ea46",
+        "usage": {
+          "input_tokens": 45100,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 129,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Itinerary\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "71167704-a47f-46e8-9191-e27f848bac69",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:42:46.052Z",
+        "completedAt": "2026-10-18T08:42:56.020Z",
+        "outputSha256": "e827bbed5583b6594ff90d769b5cdc083df9d3f2b1a5e0c67687ca78227c0e65",
+        "threadId": "01a14e2d-7c0f-7740-b155-ddc14919e10d",
+        "usage": {
+          "input_tokens": 50732,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 113,
+          "reasoning_output_tokens": 27
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ServiceRequest\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86\"},\"link\":\"itineraryRequirements\",\"where\":[],\"limit\":10}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "618696dd-10c3-4cfa-89e4-4770adc1323b",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:42:56.027Z",
+        "completedAt": "2026-10-18T08:43:22.750Z",
+        "outputSha256": "f5cebc64e649aaf85135f562b85adfd712e0387c766b50051971ac67d594d8dc",
+        "threadId": "01a14e2d-a2ec-7ef0-85f2-0fb0b114537f",
+        "usage": {
+          "input_tokens": 50880,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1150,
+          "reasoning_output_tokens": 127
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.itinerary.sandbox\",\"version\":\"1\"},\"message\":\"匹配行程方案沙箱验证；终点为可行方案及未预订项披露，不包含实际预订。尚未执行或确认方案验证成功。\",\"inputJson\":\"{\\\"startsAt\\\":\\\"2026-10-19T08:37:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T20:37:52.738Z\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"travelers\\\":2,\\\"legs\\\":[{\\\"id\\\":\\\"leg-1\\\",\\\"origin\\\":\\\"synthetic-station\\\",\\\"destination\\\":\\\"synthetic-hotel\\\",\\\"startsAt\\\":\\\"2026-10-19T09:37:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T10:37:52.738Z\\\",\\\"mode\\\":\\\"rail\\\",\\\"transferMinutes\\\":0,\\\"bookingRequired\\\":true},{\\\"id\\\":\\\"leg-2\\\",\\\"origin\\\":\\\"synthetic-hotel\\\",\\\"destination\\\":\\\"synthetic-venue\\\",\\\"startsAt\\\":\\\"2026-10-19T11:17:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T11:47:52.738Z\\\",\\\"mode\\\":\\\"walk\\\",\\\"transferMinutes\\\":20,\\\"bookingRequired\\\":false}],\\\"endpoint\\\":\\\"plan\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"travelers\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"2\\\",\\\"unit\\\":\\\"person\\\"}},\\\"messageId\\\":\\\"45763e15-15ea-454c-b171-c76386cd7a2d\\\",\\\"quote\\\":\\\"为2人整理并验证行程方案\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"total-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"45763e15-15ea-454c-b171-c76386cd7a2d\\\",\\\"quote\\\":\\\"全部费用预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"itinerary-window-end\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"deadline\\\",\\\"expected\\\":{\\\"at\\\":\\\"2026-10-19T20:37:52.738Z\\\",\\\"timezone\\\":\\\"Asia/Shanghai\\\",\\\"original\\\":\\\"行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai\\\"}},\\\"messageId\\\":\\\"45763e15-15ea-454c-b171-c76386cd7a2d\\\",\\\"quote\\\":\\\"行程窗口 2026-10-19T08:37:52.738Z 至 2026-10-19T20:37:52.738Z，时区 Asia/Shanghai\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"feasible-plan-unbooked-disclosure\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.itinerary.complete\\\"}},\\\"messageId\\\":\\\"45763e15-15ea-454c-b171-c76386cd7a2d\\\",\\\"quote\\\":\\\"目标是交付可行方案并披露尚未预订的项目，不要求替我完成预订。\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "75d7cefb-ba9b-4489-a3e6-19e48182626d",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:43:22.772Z",
+        "completedAt": "2026-10-18T08:43:35.466Z",
+        "outputSha256": "cc2c4468d5782b330f7d1649881fc58377a9eab431840ea637cd21bbee8ca21f",
+        "threadId": "01a14e2e-0b6f-73b1-a34c-4a2579fa4063",
+        "usage": {
+          "input_tokens": 33962,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 191,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Itinerary\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ItineraryOption\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"d167f7a3-2feb-471c-b982-9a9a6e5b1ea4\",\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "bb4c2059-5337-4638-9d24-25b5b74ba6eb",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:43:35.481Z",
+        "completedAt": "2026-10-18T08:43:47.195Z",
+        "outputSha256": "2b1922a09159e975f9e92e27430c11aed36fef14ee5158574193a7bc518a2433",
+        "threadId": "01a14e2e-3d0f-7f03-ba05-79909dff18f1",
+        "usage": {
+          "input_tokens": 39691,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 244,
+          "reasoning_output_tokens": 12
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "evaluate_ontology",
+            "argumentsJson": "{\"function\":\"itineraryEligibility\",\"object\":{\"type\":\"ItineraryOption\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1\"}}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"d167f7a3-2feb-471c-b982-9a9a6e5b1ea4\",\"subject\":{\"type\":\"ItineraryOption\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1\"},\"phase\":\"precondition\"}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"ItineraryOption\",\"id\":\"1c2ea9c6-f50e-478b-bc37-98ca8cabbe86:option-1\"},\"link\":\"requirements\",\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "itinerary",
+      "evidence": {
+        "id": "496a6d97-5eb4-44cd-aa62-902f03583dc8",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:43:47.201Z",
+        "completedAt": "2026-10-18T08:44:03.635Z",
+        "outputSha256": "5c1044c0038cc2fc4ae4d41c9ac46a5934431e88bb7a5360702892a5342f8c50",
+        "threadId": "01a14e2e-6ad3-7c91-9f8c-ba4de9ff4d8f",
+        "usage": {
+          "input_tokens": 40718,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 683,
+          "reasoning_output_tokens": 18
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"d167f7a3-2feb-471c-b982-9a9a6e5b1ea4\",\"message\":\"建议采用该沙箱合成候选：ready，人数2人、完整费用120元低于500元预算，固定行程参数一致，全部硬要求检查通过；itineraryEligibility 为 satisfied。按本次观察时点，证据尚未超过2026-10-18T09:07:52.738Z有效期。两段均在窗口内，衔接间隔40分钟满足20分钟缓冲。来源为 synthetic，仅适用于本次明确的合成演练；realSupply=false不构成真实商业供应证明。assess_conditions返回空检查集，不授予权限。leg-1需要预订，方案须披露其尚未预订；leg-2无需预订。本提案不表示已执行或已完成验证，方案可行性、费用完整性及未预订披露等结果条件须待执行后由独立验证器观察核验。\",\"steps\":[{\"id\":\"domain-service\",\"actionTypeRef\":{\"id\":\"domain.itinerary.submit\",\"version\":\"1\"},\"bindingRef\":{\"id\":\"domain.itinerary.synthetic-domain-provider\",\"version\":\"1\"},\"inputJson\":\"{\\\"startsAt\\\":\\\"2026-10-19T08:37:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T20:37:52.738Z\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"travelers\\\":2,\\\"legs\\\":[{\\\"id\\\":\\\"leg-1\\\",\\\"origin\\\":\\\"synthetic-station\\\",\\\"destination\\\":\\\"synthetic-hotel\\\",\\\"startsAt\\\":\\\"2026-10-19T09:37:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T10:37:52.738Z\\\",\\\"mode\\\":\\\"rail\\\",\\\"transferMinutes\\\":0,\\\"bookingRequired\\\":true},{\\\"id\\\":\\\"leg-2\\\",\\\"origin\\\":\\\"synthetic-hotel\\\",\\\"destination\\\":\\\"synthetic-venue\\\",\\\"startsAt\\\":\\\"2026-10-19T11:17:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-19T11:47:52.738Z\\\",\\\"mode\\\":\\\"walk\\\",\\\"transferMinutes\\\":20,\\\"bookingRequired\\\":false}],\\\"endpoint\\\":\\\"plan\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"dependsOn\":[]}]}"
+      }
+    },
+    {
+      "domain": "vehicle",
+      "evidence": {
+        "id": "3170228f-338f-4e21-8a46-c61db49c244b",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:44:04.590Z",
+        "completedAt": "2026-10-18T08:44:15.531Z",
+        "outputSha256": "e90559852a5e68261298b72ef94ae979d166668aa327e591615156810071e621",
+        "threadId": "01a14e2e-aee2-7242-b099-49055fdb29a0",
+        "usage": {
+          "input_tokens": 44729,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 111,
+          "reasoning_output_tokens": 15
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"Vehicle\",\"limit\":5}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"ServiceRequest\",\"id\":\"f29665fa-2247-4ccb-be06-d3878f2395f7\"},\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "vehicle",
+      "evidence": {
+        "id": "53b31cf6-4964-4d64-b0e0-acbff5592ea3",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:44:15.540Z",
+        "completedAt": "2026-10-18T08:44:25.988Z",
+        "outputSha256": "f6504c800a5dc42fc3c46200d6dcb3bbd746b9e841af826acb7ed5d2cf4e88c4",
+        "threadId": "01a14e2e-d982-7e12-9d03-76bebf9a5fb9",
+        "usage": {
+          "input_tokens": 50973,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 75,
+          "reasoning_output_tokens": 25
+        }
+      },
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"type\":\"VehicleRequest\",\"where\":[],\"limit\":20}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "domain": "vehicle",
+      "evidence": {
+        "id": "e30cc71f-e6cd-49c4-a6e1-00bff04bfa6f",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T08:44:25.993Z",
+        "completedAt": "2026-10-18T08:44:53.252Z",
+        "outputSha256": "7ff58fba0f352e056bbe086108d38d54ddc577af74e8df4612c2725b9d909957",
+        "threadId": "01a14e2f-025e-7cb3-943c-e61a9049d2bf",
+        "usage": {
+          "input_tokens": 51083,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1154,
+          "reasoning_output_tokens": 125
+        }
+      },
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"service.vehicle.sandbox\",\"version\":\"1\"},\"message\":\"匹配自驾租车沙箱验证，终点为预订确认。保留服务费用与押金的独立上限；不执行真实预约，也不声明预订已确认。\",\"inputJson\":\"{\\\"mode\\\":\\\"self_drive\\\",\\\"pickup\\\":\\\"synthetic-depot\\\",\\\"returnLocation\\\":\\\"synthetic-depot\\\",\\\"startsAt\\\":\\\"2026-10-19T08:37:52.738Z\\\",\\\"endsAt\\\":\\\"2026-10-20T08:37:52.738Z\\\",\\\"timeZone\\\":\\\"Asia/Shanghai\\\",\\\"vehicleClass\\\":\\\"compact\\\",\\\"passengers\\\":2,\\\"driverKey\\\":\\\"driver-alias-A\\\",\\\"endpoint\\\":\\\"confirmed\\\",\\\"budget\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"},\\\"depositLimit\\\":{\\\"minor\\\":\\\"200000\\\",\\\"currency\\\":\\\"CNY\\\"}}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"passengers\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"2\\\",\\\"unit\\\":\\\"人\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"2人\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"service-total-budget\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"50000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"服务全部费用预算500元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"deposit-limit\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"budget\\\",\\\"expected\\\":{\\\"minor\\\":\\\"200000\\\",\\\"currency\\\":\\\"CNY\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"押金上限2000元\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"pickup-location\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-depot\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"取车地点 synthetic-depot\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"return-location\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"location\\\",\\\"expected\\\":{\\\"ref\\\":\\\"synthetic-depot\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"还车地点 synthetic-depot\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"vehicle-confirmation-outcome\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"domain.vehicle.complete\\\"}},\\\"messageId\\\":\\\"ee5cb9b4-5c84-4b18-9c5f-d8fb99b8f69a\\\",\\\"quote\\\":\\\"目标仅为租车预订确认，不要求现在已取车、还车或押金结清。\\\"}]\",\"conditionsJson\":\"[]\"}"
+      }
+    }
+  ]
+}

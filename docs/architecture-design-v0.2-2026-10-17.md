@@ -4,7 +4,7 @@ Architecture Design v0.2 · 2026-10-17 · **设计方案，不是本轮实现或
 
 实施更新：用户随后明确要求后端全部采用新架构，不做旧执行架构兼容；前端 Agent 接入可保留。当前实施与证据以 [后端阶段目标](backend-implementation-goals.md) 和 [后端说明](registered-capabilities.md) 为准。下文是原设计基线，其中旧计划迁移建议已被这项要求取代，不能据此自动恢复旧业务执行。
 
-2026-10-18 规格细化：[Ontology 规格](ontology-spec-v0.2-2026-10-18.md) 在本 v0.2 基线上明确共用核心、领域本体、提供者映射、事实与动作语义；[三个场景走查](ontology-scenarios-v0.2-2026-10-18.md) 验证配送查价、商品送达、餐厅预订。后续新增实现按该规格和阶段目标推进；以下设计历史保留。文档版本 v0.2 与运行内核分别编号；当前六类扩展代码为 ontology-execution-v5／eigos.business@3，详见[完整设计核对](ontology-design-completion-v0.2-2026-10-18.md)。
+2026-10-18 规格细化：[Ontology 规格](ontology-spec-v0.2-2026-10-18.md) 在本 v0.2 基线上明确共用核心、领域本体、提供者映射、事实与动作语义；[三个场景走查](ontology-scenarios-v0.2-2026-10-18.md) 验证配送查价、商品送达、餐厅预订。后续新增实现按该规格和阶段目标推进；以下设计历史保留。文档版本 v0.2 与运行内核分别编号；当前六类扩展代码为 ontology-execution-v6／eigos.business@4，详见[完整设计核对](ontology-design-completion-v0.2-2026-10-18.md)。
 
 同日方法修订：按用户要求核对 Palantir 官方建模指南，补充[具体对象、属性、接口、双向关系及来源目录](ontology-model-catalog-v0.2-2026-10-18.md)。作者结构走查、独立 Agent 和人工业务问题演练分别验收；后续 N2 独立 Agent 已完成，人工演练单列待进行。执行日志、来源查询与本体决策 Action 不再混为同一类建模构件。
 

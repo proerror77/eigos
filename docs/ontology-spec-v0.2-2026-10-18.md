@@ -4,7 +4,7 @@
 
 本规格细化 [架构 v0.2](architecture-design-v0.2-2026-10-17.md)，沿用单仓库、Gateway／Worker、共享任务核心及 Ontology + LLM 决策分工。术语由 [CONTEXT.md](../CONTEXT.md) 维护；本文维护对象契约、语义规则和实现要求。原设计中的旧执行架构兼容建议已经撤销：历史记录保留只读，不自动迁移成可执行计划。
 
-这里的 v0.2 是所沿用的架构文档版本；N2 历史交付为 ontology-execution-v4／eigos.business@2，后续六类服务扩展的当前代码为 ontology-execution-v5／eigos.business@3；具体领域定义与绑定各自独立版本，不以文档修订号替代运行契约版本。
+这里的 v0.2 是所沿用的架构文档版本；N2 历史交付为 ontology-execution-v4／eigos.business@2，后续六类服务扩展的当前代码为 ontology-execution-v6／eigos.business@4；具体领域定义与绑定各自独立版本，不以文档修订号替代运行契约版本。
 
 建模依据为 Palantir 的[设计原则](https://www.palantir.com/docs/foundry/ontology/ontology-best-practices)、[结构指导](https://www.palantir.com/docs/foundry/ontology/ontology-structural-guidance)及[业务问题验证方法](https://www.palantir.com/docs/foundry/ontology/ontology-design-validation)。具体对象、接口、主键、属性来源、双向关系和数据映射以配套[对象目录](ontology-model-catalog-v0.2-2026-10-18.md)为准。官方原则与 EIGOS 的实施选择分别标明；采用方法不等于已经接入 Foundry 或实现其全部平台能力。
 

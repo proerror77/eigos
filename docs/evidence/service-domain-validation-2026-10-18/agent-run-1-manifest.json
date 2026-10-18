@@ -1,0 +1,131 @@
+{
+  "scope": "synthetic",
+  "cases": [
+    {
+      "id": "B01",
+      "question": "司机已经接单，这次乘车服务可以结案了吗？请核对目的地、人数、时间及车费，并说明还缺什么。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "7b3fe0c312cf862208c9c3c5c6a6d26321d3a97719fd97a74a486a688fb2672b"
+    },
+    {
+      "id": "B02",
+      "question": "当前可见的两份乘车方案中，哪份满足这次委托，哪份还不能选？请说明费用与未知项，并提出相应业务决策；不要实际叫车。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "3f93d0e418142909f8db1a9f5c3dcefe31017fc90a7fba8540077817b5eee6ac"
+    },
+    {
+      "id": "B03",
+      "question": "来源把行程记为已完成。这是否代表本次用户目标已经满足？请找出具体不符之处。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "64cab880f1e21bfefb38d3c687399d8ddbce2ab50920bea2badaca4073a19f7f"
+    },
+    {
+      "id": "B04",
+      "question": "这次挂号已显示缴费成功，是否可以告诉就诊人已经挂好号？请说明确认状态和还需核对的事项。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "0077e0c440835fa5133a2fde38dc9c92814ec87abf3c81c406de3e33bf295d10"
+    },
+    {
+      "id": "B05",
+      "question": "请查明这次挂号对应哪个院区、科室、医生、匿名就诊人和时段，并判断预约是否已有效确认。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "0d6104ca078e752e24046aa5bb4c72f0035272d6688ffdcfb59bf61e2b47327c"
+    },
+    {
+      "id": "B06",
+      "question": "这次号源曾被保留且已缴费，目前还能说预约有效吗？又是否已有退费完成的依据？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "2eb81ac861382264a4054c30db10df29bded71ab00e3e16b7b566b44a994dd57"
+    },
+    {
+      "id": "B07",
+      "question": "这份外卖委托目前可以结案吗？如果数量还不够，应继续等待还是已经可以认定最终失败？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "df20575df63ac92beda362917d98cf28741bbc5178e4c835e8f9ddeb27031bd8"
+    },
+    {
+      "id": "B08",
+      "question": "配送记录显示数量齐了。请核对商品规格、忌口、目的地和费用，判断是否满足原委托。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "5d7c8aa8af6459fff936ec3b3fc6195414575f5f0cec8d2e655ee41288906c4b"
+    },
+    {
+      "id": "B09",
+      "question": "请说明这次外卖是否已完成用户目标，列出商家、实际菜品规格与数量、送达地点和时间、费用依据。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "cef6ce278ef696a7ef63654b0f4b6c596e842222f3c9647da89eaf5c640684a3"
+    },
+    {
+      "id": "B10",
+      "question": "酒店款项已支付且有供应方业务编号，现在能否告诉用户已经订妥？还需要哪些证据？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "1bab494ec7ac9f2535e167a620a138f905ddc6887dda15ecfd858c8cc6f91d4f"
+    },
+    {
+      "id": "B11",
+      "question": "这次酒店委托的具体入住安排是什么，要求的服务是否已完成？能否同时声称用户已完成住宿？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "aee56ff14611ffe2de008d6f244811bb9629d9c98c856f4603a97fb82d1f961e"
+    },
+    {
+      "id": "B12",
+      "question": "酒店记录显示已经退房。请判断它是否满足用户要求的完整住宿，核对计划日期与实际入住退房时间。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "1616e8f8fe7806ec62e8da503c14f09f46a1a431ccaf701fd1914d5f5a18d8a7"
+    },
+    {
+      "id": "B13",
+      "question": "这份行程方案可以交付了吗？哪些安排已经预订，哪些还没有？请区分方案完成和预订完成。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "9dd27d3973491a70e898a7ae05cbe5095f54c861776fb69931e1f197e003e11b"
+    },
+    {
+      "id": "B14",
+      "question": "请检查这份行程是否可行，尤其是前后地点、时间和换乘缓冲；若不符合原要求，说明需要调整什么。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "7643d4095947b4ea2daee9fdd111b1767d860e08f3801ac0a382a56d8303953b"
+    },
+    {
+      "id": "B15",
+      "question": "总记录被标为已订妥，是否每项需要预订的服务都已确认？这次委托能否结案？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "2b5e0509f92c1dc5dce590c9e66a29357b9160003b24ecab85bb99e28c426cc3"
+    },
+    {
+      "id": "B16",
+      "question": "这次预约用车没有用户驾驶人引用。是否因此不能成立？请查明用车模式、安排、确认状态与费用。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "0e3fb5121393e4955e91d6ac5f0335da705f76450cdba59c1695bb5a08564709"
+    },
+    {
+      "id": "B17",
+      "question": "自驾租车已有确认编号，是否已经满足本次委托？请核对资格、租期、车型、人数、费用和押金。",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "f7822f92f50bb6f6bfbb842b3d960a391b8017cb029c098fde44e4c8d1bb8ff3"
+    },
+    {
+      "id": "B18",
+      "question": "车已经归还，验车也已接受，这件租车服务能否关闭？还应核对哪些资金或业务状态？",
+      "asOf": "2026-10-18T08:35:02.544Z",
+      "datasetVersion": "service-domain-drill-1",
+      "datasetDigest": "58cf732b8b75b5502cb5a50f8546045ac1a340e8f2a1bb5aa390769c937dd73f"
+    }
+  ]
+}

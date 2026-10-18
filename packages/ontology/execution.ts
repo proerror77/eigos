@@ -1,16 +1,21 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v5' as const;
+export const BACKEND_VERSION = 'ontology-execution-v6' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
 export const moneySchema = z.object({ minor: integer, currency: z.string().regex(/^[A-Z]{3}$/) }).strict();
 const base = { id: z.string().min(1).max(100), strength: z.enum(['hard', 'preference']) };
+export const quantityRoles = ['item_quantity', 'passenger_count', 'room_count', 'guest_count', 'traveler_count', 'patient_count'] as const;
+export const amountRoles = ['service_total', 'deposit'] as const;
+export const deadlineRoles = ['completion', 'pickup', 'arrival', 'registration'] as const;
+export const locationRoles = ['origin', 'destination', 'pickup', 'return', 'venue'] as const;
+export interface RequirementRoleDefinition { kind: 'quantity' | 'budget' | 'deadline' | 'location'; role: string; description: string }
 export const requirementSchema = z.discriminatedUnion('kind', [
-  z.object({ ...base, kind: z.literal('quantity'), expected: z.object({ amount: integer, unit: z.string().min(1).max(80) }).strict() }).strict(),
-  z.object({ ...base, kind: z.literal('budget'), expected: moneySchema }).strict(),
-  z.object({ ...base, kind: z.literal('deadline'), expected: z.object({ at: z.iso.datetime({ offset: true }), timezone: z.string().min(1).max(100), original: z.string().min(1).max(500) }).strict() }).strict(),
-  z.object({ ...base, kind: z.literal('location'), expected: z.object({ ref: z.string().min(1).max(500) }).strict() }).strict(),
+  z.object({ ...base, kind: z.literal('quantity'), role: z.enum(quantityRoles).optional(), expected: z.object({ amount: integer, unit: z.string().min(1).max(80) }).strict() }).strict(),
+  z.object({ ...base, kind: z.literal('budget'), role: z.enum(amountRoles).optional(), expected: moneySchema }).strict(),
+  z.object({ ...base, kind: z.literal('deadline'), role: z.enum(deadlineRoles).optional(), expected: z.object({ at: z.iso.datetime({ offset: true }), timezone: z.string().min(1).max(100), original: z.string().min(1).max(500) }).strict() }).strict(),
+  z.object({ ...base, kind: z.literal('location'), role: z.enum(locationRoles).optional(), expected: z.object({ ref: z.string().min(1).max(500) }).strict() }).strict(),
   z.object({ ...base, kind: z.literal('condition'), expected: z.object({ predicate: z.string().min(1).max(200) }).strict() }).strict(),
 ]);
 export const requirementsSchema = z.array(requirementSchema).max(40).refine(items => new Set(items.map(i => i.id)).size === items.length, 'Requirement IDs must be unique');
@@ -43,6 +48,7 @@ export interface ServiceCapability {
   verifierRef: Ref;
   completion?: 'artifact' | 'delivery' | 'order' | 'refund' | 'domain';
   outcomePredicates?: string[];
+  requirementRoles?: RequirementRoleDefinition[];
   environment?: 'local' | 'live' | 'sandbox';
   locationSemantics?: 'search_area' | 'destination';
 }
@@ -63,9 +69,13 @@ export interface ProviderBinding {
 // Facts come from registered adapters, never a model's plan or authorization claim.
 export interface CandidateFacts {
   quantity?: { amount: string; unit: string };
+  quantities?: Partial<Record<typeof quantityRoles[number], { amount: string; unit: string }>>;
   totalPrice?: z.infer<typeof moneySchema>;
+  amounts?: Partial<Record<typeof amountRoles[number], z.infer<typeof moneySchema>>>;
   deliveryBy?: string;
+  deadlines?: Partial<Record<typeof deadlineRoles[number], string>>;
   locationRef?: string;
+  locations?: Partial<Record<typeof locationRoles[number], string>>;
   conditions?: string[];
   searchArea?: { city: string; keyword: string };
 }
@@ -87,11 +97,11 @@ export interface PlanStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef: Ref; capabilityRef: Ref;
   effect: import('./actions.js').EffectClass;
   input: Record<string, unknown>; inputRefs: import('./actions.js').InputReference[]; dependsOn: string[];
-  cost?: { minor: string; currency: string; payeeId: string };
+  cost?: { minor: string; currency: string; payeeId: string; purpose?: typeof amountRoles[number] };
 }
 export interface ExecutionPlan {
   id: string;
-  version: '5';
+  version: '6';
   ontologyPlanning: import('./planning-contract.js').PlanningSnapshot;
   requestId: string;
   requestRevision: number;

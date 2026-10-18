@@ -4,9 +4,9 @@ import { DomainError } from '../core/domain.js';
 import type { ActionAdapter, AdapterContext, Delivery, Preparation } from '../core/catalog.js';
 import type { ActionContext, ActionResult } from '../ontology/actions.js';
 import type { CandidateFacts, ExecutionPlan, PlanStep, ProviderBinding, ServiceCapability } from '../ontology/execution.js';
-import { assessDomain } from '../ontology/domain-rules.js';
+import { assessDomain, quoteRoleCriteria } from '../ontology/domain-rules.js';
 import { domainCapabilityId, domainOptionSchema, domainSnapshotSchema, publicDomainEntities, type DomainSnapshot } from '../ontology/domain-projection.js';
-import { domainResultSchemas, parseDomainParameters, serviceDomain, type ServiceDomain } from '../ontology/service-domains.js';
+import { domainRequirementRoles, domainResultSchemas, parseDomainParameters, serviceDomain, type ServiceDomain } from '../ontology/service-domains.js';
 
 const operationSchema = z.object({ key: z.string().min(1).max(200), inputDigest: z.string().regex(/^[a-f0-9]{64}$/), eventId: z.string().min(1).max(200), version: z.number().int().positive(), observation: z.record(z.string(), z.unknown()) }).strict();
 export type DomainOperation = z.infer<typeof operationSchema>;
@@ -22,7 +22,7 @@ function domainFacts(domain: ServiceDomain, snapshot: DomainSnapshot, quantityUn
   const p = snapshot.parameters, r = snapshot.observation, actual = r ?? p;
   const defaultUnit = domain === 'food' ? '份' : domain === 'hotel' ? '间' : '人';
   const unit = quantityUnit ?? defaultUnit;
-  const people = ['人', 'person', 'persons'].includes(unit), rooms = ['间', 'room', 'rooms'].includes(unit), meals = ['份', 'meal', 'meals'].includes(unit);
+  const people = ['人', 'person', 'persons'].includes(unit), rooms = ['间', '间房', 'room', 'rooms'].includes(unit), meals = ['份', 'meal', 'meals'].includes(unit);
   let amount: unknown;
   if (people) amount = domain === 'appointment' ? 1 : domain === 'hotel' ? actual.guests : domain === 'itinerary' ? p.travelers : actual.passengers;
   if (rooms && domain === 'hotel') amount = actual.rooms;
@@ -33,14 +33,28 @@ function domainFacts(domain: ServiceDomain, snapshot: DomainSnapshot, quantityUn
   const price = !r ? snapshot.option.total : domain === 'ride' ? r.finalFare : domain === 'appointment' ? r.fee : r.total;
   const deadline = !r ? snapshot.option.commitmentBy : domain === 'ride' ? r.arrivedAt : domain === 'appointment' ? r.confirmedAt : domain === 'food' ? r.deliveredAt : domain === 'hotel' ? p.endpoint === 'stay_completed' ? r.checkedOutAt : r.confirmedAt : domain === 'vehicle' ? p.endpoint === 'completed' ? r.returnedAt : r.confirmedAt : r.validatedAt;
   const location = domain === 'appointment' ? actual.hospitalId : domain === 'hotel' ? actual.hotelId : domain === 'vehicle' ? actual.returnLocation : domain === 'itinerary' ? ((actual.legs as { destination: string }[] | undefined)?.at(-1)?.destination) : actual.destination;
-  return { ...(typeof amount === 'number' && Number.isSafeInteger(amount) ? { quantity: { amount: String(amount), unit } } : {}), ...(price ? { totalPrice: price as CandidateFacts['totalPrice'] } : {}), ...(typeof deadline === 'string' ? { deliveryBy: deadline } : {}), ...(typeof location === 'string' ? { locationRef: location } : {}) };
+  const quantities: NonNullable<CandidateFacts['quantities']> = {}, amounts: NonNullable<CandidateFacts['amounts']> = {}, deadlines: NonNullable<CandidateFacts['deadlines']> = {}, locations: NonNullable<CandidateFacts['locations']> = {};
+  const addCount = (role: keyof typeof quantities, value: unknown, unit: string) => { if (typeof value === 'number' && Number.isSafeInteger(value)) quantities[role] = { amount: String(value), unit }; };
+  const addTime = (role: keyof typeof deadlines, value: unknown) => { if (typeof value === 'string') deadlines[role] = value; };
+  const addPlace = (role: keyof typeof locations, value: unknown) => { if (typeof value === 'string') locations[role] = value; };
+  if (price) amounts.service_total = price as NonNullable<CandidateFacts['totalPrice']>;
+  addTime('completion', r ? deadline : snapshot.option.commitments?.completion);
+  if (domain === 'ride') {
+    addCount('passenger_count', actual.passengers, 'person'); addPlace('origin', actual.origin); addPlace('destination', actual.destination);
+    addTime('pickup', r ? r.pickedUpAt : snapshot.option.commitments?.pickup); addTime('arrival', r ? r.arrivedAt : snapshot.option.commitments?.arrival);
+  } else if (domain === 'appointment') { addCount('patient_count', 1, 'person'); addPlace('venue', actual.hospitalId); addTime('registration', r ? r.confirmedAt : snapshot.option.commitments?.registration); }
+  else if (domain === 'food') { const items = (r ? r.deliveredItems : p.items) as { quantity: number }[] | undefined; addCount('item_quantity', items?.reduce((n, i) => n + i.quantity, 0), 'meal'); addPlace('destination', actual.destination); }
+  else if (domain === 'hotel') { addCount('room_count', actual.rooms, 'room'); addCount('guest_count', actual.guests, 'person'); addPlace('venue', actual.hotelId); }
+  else if (domain === 'itinerary') { addCount('traveler_count', p.travelers, 'person'); addPlace('destination', location); }
+  else { addCount('passenger_count', actual.passengers, 'person'); addPlace('pickup', actual.pickup); addPlace('return', actual.returnLocation); const deposit = r ? r.deposit : snapshot.option.deposit; if (deposit) amounts.deposit = deposit as NonNullable<CandidateFacts['totalPrice']>; }
+  return { quantities, amounts, deadlines, locations, ...(typeof amount === 'number' && Number.isSafeInteger(amount) ? { quantity: { amount: String(amount), unit } } : {}), ...(price ? { totalPrice: price as CandidateFacts['totalPrice'] } : {}), ...(typeof deadline === 'string' ? { deliveryBy: deadline } : {}), ...(typeof location === 'string' ? { locationRef: location } : {}) };
 }
 export function domainCapability(domain: ServiceDomain): ServiceCapability {
   const d = serviceDomain(domain);
-  return { ref: { id: domainCapabilityId(domain), version: '1' }, ontologyRef: { id: `eigos.${domain}`, version: '1' }, name: `${d.name}沙箱验证`, description: `${d.name}仅合成来源验证。${d.endpoint}。真实接口未接通；不得选择用于真实下单、付款或预约。`, tags: [domain, 'sandbox'], inputSchema: z.toJSONSchema(d.parameters), ontology: { objects: [d.requestType, d.candidateType, d.resultType, ...d.objects], decisionAction: d.action, eligibilityFunction: d.eligibleFunction, outcomeFunction: d.outcomeFunction, noLiveProvider: true }, actions: [{ ref: { id: `domain.${domain}.submit`, version: '1' }, effect: d.effect }], predicates: [{ id: `domain.${domain}.complete`, description: d.endpoint }], outcomePredicates: [`domain.${domain}.complete`], verifierRef: { id: `domain.${domain}.independent`, version: '1' }, completion: 'domain', environment: 'sandbox' };
+  return { ref: { id: domainCapabilityId(domain), version: '2' }, ontologyRef: { id: `eigos.${domain}`, version: '2' }, name: `${d.name}沙箱验证`, description: `${d.name}仅合成来源验证。${d.endpoint}。真实接口未接通；不得选择用于真实下单、付款或预约。`, tags: [domain, 'sandbox'], inputSchema: z.toJSONSchema(d.parameters), ontology: { objects: [d.requestType, d.candidateType, d.resultType, ...d.objects], decisionAction: d.action, eligibilityFunction: d.eligibleFunction, outcomeFunction: d.outcomeFunction, noLiveProvider: true }, actions: [{ ref: { id: `domain.${domain}.submit`, version: '1' }, effect: d.effect }], predicates: [{ id: `domain.${domain}.complete`, description: d.endpoint }], outcomePredicates: [`domain.${domain}.complete`], requirementRoles: domainRequirementRoles[domain], verifierRef: { id: `domain.${domain}.independent`, version: '1' }, completion: 'domain', environment: 'sandbox' };
 }
 export function domainBinding(provider: DomainSandboxProvider): ProviderBinding {
-  return { ref: { id: `domain.${provider.domain}.${provider.id}`, version: '1' }, capabilityRef: domainCapability(provider.domain).ref, providerId: provider.id, channelId: 'domain-sandbox', adapterId: `domain.${provider.domain}.${provider.id}`, configurationDigest: provider.configurationDigest, protocol: 'local', enabled: true, verification: { level: 'simulated', evidenceRefs: ['tests/service-domains.test.ts'] }, recovery: { idempotency: 'provider_key', lookup: true } };
+  return { ref: { id: `domain.${provider.domain}.${provider.id}`, version: '2' }, capabilityRef: domainCapability(provider.domain).ref, providerId: provider.id, channelId: 'domain-sandbox', adapterId: `domain.${provider.domain}.${provider.id}`, configurationDigest: provider.configurationDigest, protocol: 'local', enabled: true, verification: { level: 'simulated', evidenceRefs: ['tests/service-domains.test.ts'] }, recovery: { idempotency: 'provider_key', lookup: true } };
 }
 export class DomainServiceAdapter implements ActionAdapter {
   readonly environment = 'sandbox' as const;
@@ -56,10 +70,12 @@ export class DomainServiceAdapter implements ActionAdapter {
     const parameters = parseDomainParameters(this.provider.domain, input), prepared = await this.provider.prepare(parameters, signal); signal.throwIfAborted();
     const option = domainOptionSchema.parse(prepared.option);
     if (option.providerId !== this.provider.id || option.parametersDigest !== digest(parameters) || digest(parseDomainParameters(this.provider.domain, option.offeredParameters)) !== digest(parameters)) throw new DomainError('CONFLICT', 'Domain source changed the requested parameters');
+    const roleChecks = quoteRoleCriteria(this.provider.domain, parameters, option);
+    if (roleChecks.some(c => c.result !== 'pass')) return { kind: 'unavailable', reason: '来源尚未证明各业务角色对应的时间或金额条件。', details: { roleChecks } };
     if (option.availability !== 'available' || option.eligibility !== 'verified' || !option.termsMatch || !option.feesComplete || option.total.currency !== parameters.budget.currency || BigInt(option.total.minor) > BigInt(parameters.budget.minor) || Date.parse(option.expiresAt) <= Date.now() || Date.parse(option.observedAt) > Date.now()) return { kind: 'unavailable', reason: '领域候选的资格、可用性、完整费用、条款或时效尚未通过核验。', details: { environment: 'sandbox', realSourceConnected: false } };
     const snapshot = domainSnapshotSchema.parse({ domain: this.provider.domain, environment: 'sandbox', requestId: ctx.request.id, requestRevision: ctx.request.revision, parameters, option, sourceId: this.provider.id, sourceEventId: option.id, sourceVersion: 1, entities: prepared.entities ?? [], relationships: prepared.relationships ?? [] });
     const d = serviceDomain(this.provider.domain);
-    const quantityUnit = ctx.request.requirements.find(r => r.kind === 'quantity')?.expected as { unit?: string } | undefined;
+    const quantityUnit = ctx.request.requirements.find(r => r.kind === 'quantity' && !r.role)?.expected as { unit?: string } | undefined;
     return { kind: 'ready', input: parameters, details: { domain: d.id, environment: 'sandbox', realSourceConnected: false, endpoint: d.endpoint }, facts: domainFacts(d.id, snapshot, quantityUnit?.unit), evidenceRefs: [`synthetic:domain:${digest(snapshot)}`], observedAt: option.observedAt, expiresAt: option.expiresAt, privateData: { result: { domainSnapshot: snapshot }, configurationDigest: this.provider.configurationDigest, quantityUnit: quantityUnit?.unit } satisfies PrivateData,
       recipe: [{ id: 'domain-service', operationId: `${d.id}-business-operation`, actionTypeRef: { id: `domain.${d.id}.submit`, version: '1' }, input: parameters, inputRefs: [], dependsOn: [], ...(d.effect === 'local' ? {} : { cost: { minor: '0', currency: option.total.currency, payeeId: this.provider.id } }) }] };
   }
