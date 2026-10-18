@@ -20,22 +20,41 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   if (job.delegation?.backendVersion !== BACKEND_VERSION || job.service !== 'eigos.delegate') return;
   const request = job.delegation.request;
   const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
-  const values = { originalGoal: request.originalGoal, revision: request.revision, requestedOutcome: job.delegation.plan?.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
-  const source: ObjectSource = { kind: 'task', id: job.id, observedAt: job.updatedAt };
-  const saveRequest = (projectionState: string) => graph.ingest(owner, { objects: [upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState })] }, source);
+  if (job.delegation.outcome?.status === 'unknown' || job.delegation.outcome?.status === 'needs_human') progress.failed = 'needs_review';
+  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
+  const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
+  const saveRequest = (projectionState: string) => {
+    const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });
+    // Recording a reasoning receipt does not change a business request or invalidate its cursor.
+    if (object.expectedRevision && digest(graph.read(owner, object.ref).properties) === digest(object.properties)) return;
+    graph.ingest(owner, { objects: [object] }, source);
+  };
   let previousProjection = 'request_only';
-  try { previousProjection = String(graph.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState ?? 'request_only'); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+  try { previousProjection = String(graph.read(owner, { type: 'ServiceRequest', id: request.id }).properties.projectionState ?? 'request_only'); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   saveRequest(previousProjection);
   if (job.state !== 'completed' || !job.artifact?.data.result) return;
-  const result = job.artifact.data.result as Record<string, unknown>;
+  const plan = job.delegation.plan;
+  const projected = projectReadResult(graph, owner, { request, capabilityId: plan?.capabilityRef.id ?? '', input: plan?.steps[0]?.input ?? {}, preparedReceipt: plan?.details.ontologyReceipt, result: job.artifact.data.result });
+  if (projected.state !== 'request_only') saveRequest(projected.state);
+}
+
+export interface PreparedObjectRead {
+  request: { id: string; revision: number }; capabilityId: string; input: Record<string, unknown>;
+  preparedReceipt: unknown; result: unknown;
+}
+/** A verified read can inform planning before any business decision or completion. */
+export function projectReadResult(graph: OntologyObjectStore, owner: string, read: PreparedObjectRead): { state: 'request_only' | 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+  const request = read.request;
+  if (!read.result || typeof read.result !== 'object') return { state: 'request_only' };
+  const result = read.result as Record<string, unknown>;
   const parsed = ontologyReceiptSchema.safeParse(result.ontologyReceipt);
-  if (!parsed.success) { if (result.ontologyReceipt !== undefined) saveRequest('invalid_source'); return; }
+  if (!parsed.success) return { state: result.ontologyReceipt !== undefined ? 'invalid_source' : 'request_only' };
   const receipt = parsed.data, { ontologyReceipt: _receipt, ...business } = result;
-  if (!['geo.search', 'delivery.quote'].includes(receipt.capabilityRef.id)) return;
-  const plan = job.delegation.plan, prepared = ontologyReceiptSchema.safeParse(plan?.details.ontologyReceipt);
-  if (!plan || plan.requestRevision !== request.revision || plan.capabilityRef.id !== receipt.capabilityRef.id || !prepared.success
+  if (!['geo.search', 'delivery.quote'].includes(receipt.capabilityRef.id)) return { state: 'request_only' };
+  const prepared = ontologyReceiptSchema.safeParse(read.preparedReceipt);
+  if (read.capabilityId !== receipt.capabilityRef.id || !prepared.success
       || prepared.data.inputDigest !== receipt.inputDigest || prepared.data.evidenceKind !== receipt.evidenceKind || !/^[a-f0-9]{64}$/.test(receipt.inputDigest)
-      || receipt.resultDigest !== digest(business) || receipt.tool !== (receipt.capabilityRef.id === 'geo.search' ? 'ontology_geo_search' : 'ontology_delivery_quote')) { saveRequest('invalid_source'); return; }
+      || receipt.resultDigest !== digest(business) || receipt.tool !== (receipt.capabilityRef.id === 'geo.search' ? 'ontology_geo_search' : 'ontology_delivery_quote')) { return { state: 'invalid_source' }; }
   const objects: ObjectWrite[] = [], links: NonNullable<ObjectBatch['links']> = [], evidenceSubjects: { object: ObjectRef; digest: string }[] = [];
   const receiptRef = { type: 'SourceReceipt', id: receipt.id };
   const evidenceLevel = receipt.evidenceKind === 'fixture' ? 'synthetic' : 'live_readonly';
@@ -64,9 +83,9 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
         }, true);
       }
     } else {
-      const quote = z.object({ source: z.literal('meituan'), previewOnly: z.literal(true), orderCreated: z.literal(false), goods: z.object({ name: z.string(), category: z.string(), weightKg: z.number().positive() }), service: z.enum(['ordinary', 'express']), route: z.object({ sender: z.string().min(1), recipient: z.string().min(1) }), quote: z.object({ _previewTotal: z.string().regex(/^\d+(?:\.\d{1,2})?$/) }) }).parse(business);
+      const quote = z.object({ source: z.literal('meituan'), previewOnly: z.literal(true), orderCreated: z.literal(false), goods: z.object({ name: z.string(), category: z.string(), weightKg: z.number().positive() }), service: z.enum(['ordinary', 'express']), route: z.object({ sender: z.string().min(1), recipient: z.string().min(1) }), quote: z.object({ _previewTotal: z.union([z.string(), z.number().finite().nonnegative()]).transform(String).pipe(z.string().regex(/^\d+(?:\.\d{1,2})?$/)) }) }).parse(business);
       if (!receipt.sourceCalls.includes('delivery_preview') || receipt.sourceCalls.some(c => !['get_address_info', 'get_address_list', 'delivery_preview'].includes(c))) throw new DomainError('INVALID_INPUT', 'Invalid quote read');
-      const input = job.delegation.plan?.steps[0]?.input;
+      const input = read.input;
       const parcel = add('Parcel', `parcel-${receipt.id}`, { contentsCategory: quote.goods.category, declaredContents: quote.goods.name, ...(typeof input?.weightKg === 'number' ? { declaredWeight: { amount: String(input.weightKg), unit: 'kg' } } : {}) });
       routeRef = add('DeliveryRoute', `route-${receipt.id}`, { originSnapshot: { text: quote.route.sender }, destinationSnapshot: { text: quote.route.recipient }, selectedAt: receipt.observedAt });
       const provider = add('Provider', 'meituan-paotui', { name: '美团跑腿' }), channel = add('Channel', 'meituan', { name: '美团个人只读渠道', accessScope: ['read'], supportedOperationRefs: ['delivery_preview'] });
@@ -74,23 +93,23 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
       quoteRef = add('DeliveryQuote', receipt.id, { observedAt: receipt.observedAt, expiresAt: new Date(Date.parse(receipt.observedAt) + 300000).toISOString(), validityBasis: 'local_refresh_limit', priceKind: 'estimate', pricingCompleteness: 'unknown', serviceLevel: quote.service, quotedWeight: { amount: String(quote.goods.weightKg), unit: 'kg' }, requestRevision: request.revision,
         parcelRevision: projectedRevision(parcel), routeRevision: projectedRevision(routeRef),
         pricingTerms: { total: { minor: (BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'))).toString(), currency: 'CNY' }, scope: 'unknown', components: [] } }, true);
-      for (const [type, from, to] of [['ParcelRequest', parcel, { type: 'ServiceRequest', id: job.id }], ['RouteRequest', routeRef, { type: 'ServiceRequest', id: job.id }], ['QuoteParcel', quoteRef, parcel], ['QuoteRoute', quoteRef, routeRef], ['OfferRequest', quoteRef, { type: 'ServiceRequest', id: job.id }], ['OfferProvider', quoteRef, provider], ['OfferChannel', quoteRef, channel]] as const) links.push({ type, from, to });
+      for (const [type, from, to] of [['ParcelRequest', parcel, { type: 'ServiceRequest', id: request.id }], ['RouteRequest', routeRef, { type: 'ServiceRequest', id: request.id }], ['QuoteParcel', quoteRef, parcel], ['QuoteRoute', quoteRef, routeRef], ['OfferRequest', quoteRef, { type: 'ServiceRequest', id: request.id }], ['OfferProvider', quoteRef, provider], ['OfferChannel', quoteRef, channel]] as const) links.push({ type, from, to });
     }
-    add('SourceReceipt', receipt.id, { sourceIdentity: receipt.server, sourceEventId: receipt.id, observedAt: receipt.observedAt, evidenceLevel, scope: receipt.capabilityRef.id === 'geo.search' ? 'public_locations' : 'delivery_quote', contentDigest: receipt.resultDigest, subjects: evidenceSubjects.map(s => ({ ...s, linksDigest: linkSnapshotDigest(s.object, links) })), safeSummary: `已校验 ${receipt.tool} 只读回执` });
-    links.push({ type: 'ReceiptRequest', from: receiptRef, to: { type: 'ServiceRequest', id: job.id } });
+    add('SourceReceipt', receipt.id, { sourceIdentity: receipt.server, sourceEventId: receipt.id, observedAt: receipt.observedAt, evidenceLevel, scope: receipt.capabilityRef.id === 'geo.search' ? 'public_locations' : 'delivery_quote', ...(receipt.capabilityRef.id === 'geo.search' && digest(read.input) === receipt.inputDigest ? { queryScope: { city: read.input.city, keyword: read.input.keyword } } : {}), contentDigest: receipt.resultDigest, subjects: evidenceSubjects.map(s => ({ ...s, linksDigest: linkSnapshotDigest(s.object, links) })), safeSummary: `已校验 ${receipt.tool} 只读回执` });
+    links.push({ type: 'ReceiptRequest', from: receiptRef, to: { type: 'ServiceRequest', id: request.id } });
     const removeLinks: NonNullable<ObjectBatch['links']> = [];
     if (routeRef) {
-      for (const previous of graph.related(owner, { type: 'ServiceRequest', id: job.id }, 'selectedRoute', { remaining: 1000 }) ?? []) {
-        if (previous.ref.id !== routeRef.id) removeLinks.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: job.id }, to: previous.ref });
+      for (const previous of graph.related(owner, { type: 'ServiceRequest', id: request.id }, 'selectedRoute', { remaining: 1000 }) ?? []) {
+        if (previous.ref.id !== routeRef.id) removeLinks.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: request.id }, to: previous.ref });
       }
-      links.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: job.id }, to: routeRef });
+      links.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: request.id }, to: routeRef });
     }
     graph.ingest(owner, { objects, links, removeLinks }, readSource);
-    saveRequest('typed_result');
+    return { state: 'typed_result', ...(quoteRef ? { subject: quoteRef } : {}) };
   } catch (error) {
     // Preserve the independently verified task artifact. A rejected projection is
     // explicit and contributes no fabricated business objects or successful reads.
     if (!(error instanceof z.ZodError || error instanceof DomainError && error.code === 'INVALID_INPUT')) throw error;
-    saveRequest('invalid_source');
+    return { state: 'invalid_source' };
   }
 }

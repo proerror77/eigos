@@ -19,6 +19,7 @@ export const groundingSchema = z.object({
   kind: z.enum(['clarify', 'resolve', 'unsupported']), requestRevision: z.number().int().positive(),
   capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
   requirementsJson: z.string().max(16000),
+  conditionsJson: z.string().max(24000),
 }).strict();
 export type Grounding = z.infer<typeof groundingSchema>;
 export const proposalSchema = z.object({
@@ -38,6 +39,9 @@ export interface Delegation {
   manualReconciliation?: string;
   resolution?: { candidates: ResolvedCandidate[]; scope: ResolutionScope; comparison?: import('../ontology/supply.js').Comparison };
   reasoning?: { summary: string; evidenceRef: string };
+  ontologyReads?: import('../ontology/planning-contract.js').PlanningReadReceipt[];
+  ontologyReadScope?: 'owner' | 'request';
+  conditionChecks?: import('../ontology/planning-contract.js').ConditionCheck[];
   intentId?: string;
   intentIds?: string[];
   recoveryPending?: boolean;

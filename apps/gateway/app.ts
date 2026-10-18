@@ -23,6 +23,7 @@ import { mountMemberRoutes } from './members/routes.js';
 import type { LoginProvider } from './members/oidc.js';
 import { mountAgentRoutes } from './members/agent-routes.js';
 import { AgentAccessError } from '../../packages/members/agents.js';
+import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
@@ -79,7 +80,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: 'ontology-execution-v3', releaseDigest: config.EIGOS_RELEASE_DIGEST }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;

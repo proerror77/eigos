@@ -4,15 +4,17 @@ import { readWorkerConfig } from '../../packages/core/config.js';
 import type { Reasoner } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { SANDBOX_CAPABILITY } from '../../packages/capabilities/sandbox-service.js';
+import { observePlanning } from '../backend-fixture.js';
 const evidence = () => ({ id: randomUUID(), runtime: 'e2e-model-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'synthetic-decision' });
 const reasoner: Reasoner = {
   ground: async (request, capabilities) => {
     const value = JSON.parse(request.originalGoal) as { sandbox: boolean; quantity: number; unit: string; deadline?: string };
     const supported = value.sandbox === true && capabilities.some(c => c.ref.id === SANDBOX_CAPABILITY.ref.id);
     return { decision: { kind: supported ? 'resolve' : 'unsupported', capabilityRef: SANDBOX_CAPABILITY.ref, requestRevision: request.revision, message: 'Explicit sandbox test only',
-      inputJson: JSON.stringify({ quantity: value.quantity, unit: value.unit, ...(value.deadline ? { deadline: value.deadline } : {}) }), requirementsJson: '[]' }, evidence: evidence() };
+      inputJson: JSON.stringify({ quantity: value.quantity, unit: value.unit, ...(value.deadline ? { deadline: value.deadline } : {}) }), requirementsJson: '[]', conditionsJson: '[]' }, evidence: evidence() };
   },
-  plan: async context => {
+  plan: async (context, _signal, access) => {
+    observePlanning(context, access);
     const candidate = context.resolution.candidates.find(c => c.status === 'ready' && c.requirementChecks.every(r => r.result === 'pass'));
     if (!candidate?.recipe) return { decision: { kind: 'no_feasible_plan', requestRevision: context.request.revision, candidateId: '', message: 'No verified sandbox candidate', steps: [] }, evidence: evidence() };
     return { decision: { kind: 'propose_plan', requestRevision: context.request.revision, candidateId: candidate.id, message: 'Fixed sandbox business steps from observed quote',

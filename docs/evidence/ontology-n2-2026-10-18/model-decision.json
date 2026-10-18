@@ -1,0 +1,2844 @@
+{
+  "scope": "Real model, synthetic data, decision proposal only; no graph mutation or external effect",
+  "asOf": "2026-10-18T06:11:08.571Z",
+  "datasetDigest": "43ad285e5b93ce873dff52599d1f1aa4c107316819664eed4df2182c59532346",
+  "model": {
+    "id": "eigos.business",
+    "version": "2",
+    "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+  },
+  "result": {
+    "decision": "proposed",
+    "selectedOffer": {
+      "type": "ProductOffer",
+      "id": "offer-G"
+    },
+    "summary": "Selected synthetic offer-G through the registered SelectOffer proposal, binding request G revision 1 and offer-G revision 1. Its 20 cups of 350 ml standard-milk latte, destination B, complete firm total of CNY 465, and delivery commitment by 2026-10-19T11:00:00.000Z satisfy the fixed comparison constraints. Registered matching, freshness and all four hard precondition checks passed. The cheaper offer-X has unknown capacity; offer-Y has incomplete fee coverage. Inspected the returned proposed changes: Proposal, Proposal.selectedOffer and ServiceRequest.selectedProposal. All five submission checks passed. The provider participation records a synthetic fulfiller role; seller identity and the participation’s association with the selected channel remain unverified. Execution permission remains unknown and is not granted by this proposal. The host returned proposal_only and executionAllowed=false. Nothing executed; all supporting evidence is synthetic and establishes no real supply, payment or fulfillment."
+  },
+  "receipts": [
+    {
+      "id": "ce90929d-f3dc-446e-8880-c1dd7d0828a8",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:11:08.608Z",
+      "completedAt": "2026-10-18T06:11:20.355Z",
+      "outputSha256": "60cfd901647a8c66850cf7b01a856031ce086f2458bd35e84b9cedd159f5a65c",
+      "threadId": "01a14da2-abd3-7022-af19-c0a6b88d6f8b",
+      "usage": {
+        "input_tokens": 28117,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 118,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "222b51d6-a87d-4ab5-b0be-086f2e941e9f",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:11:20.364Z",
+      "completedAt": "2026-10-18T06:11:33.389Z",
+      "outputSha256": "a7bce13bf4f86da48768c7fc2aa65721b327831339daf23572474f2ad8604052",
+      "threadId": "01a14da2-d900-72c3-91db-6f17b986e10c",
+      "usage": {
+        "input_tokens": 32814,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 133,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "ba0d074d-5b3e-4547-b06f-3cd2c33bc5b1",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:11:33.400Z",
+      "completedAt": "2026-10-18T06:11:43.962Z",
+      "outputSha256": "95d6e5d1f6edbddaf437f2b2f1fea3ecb7349a25f14ef6e58dc9cba20f7c5bdb",
+      "threadId": "01a14da3-0be4-7370-a34e-1522dfde5de1",
+      "usage": {
+        "input_tokens": 37960,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 181,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "0d7af749-b3f6-4892-83f5-eebf75f6775f",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:11:43.979Z",
+      "completedAt": "2026-10-18T06:11:58.440Z",
+      "outputSha256": "b206a6ceb56149b4ec35e5266f289db40269b0efbce7e232d3359ae98174d38b",
+      "threadId": "01a14da3-3530-76d3-a4ab-b30bc96e4d04",
+      "usage": {
+        "input_tokens": 40069,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 302,
+        "reasoning_output_tokens": 25
+      }
+    },
+    {
+      "id": "c9ed7027-7d19-4366-a7d9-78db26146d56",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:11:58.450Z",
+      "completedAt": "2026-10-18T06:12:09.248Z",
+      "outputSha256": "ef7879a62e78b43e5f6821ab01787ea818db7c8d24350dcf1076ecf52238a7e1",
+      "threadId": "01a14da3-6dd0-71f0-a736-4a38b116e947",
+      "usage": {
+        "input_tokens": 40883,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 177,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "f019ebcb-abc3-43e9-af6f-51b560e14aae",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-18T06:12:09.259Z",
+      "completedAt": "2026-10-18T06:12:22.373Z",
+      "outputSha256": "f575caff39f2bf0e4f227911ac08e51b8aa2066394ffa18a8edd7285b305d962",
+      "threadId": "01a14da3-97f6-7052-8e49-4d8a95c9cec2",
+      "usage": {
+        "input_tokens": 41372,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 280,
+        "reasoning_output_tokens": 40
+      }
+    }
+  ],
+  "queries": [
+    {
+      "tool": "describe_ontology",
+      "input": {
+        "limit": 5,
+        "includeSchemas": true
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "types": [
+          {
+            "kind": "object",
+            "id": "AfterSalesCase",
+            "version": "1",
+            "name": "售后事项",
+            "aliases": [
+              "售后事项",
+              "AfterSalesCase"
+            ],
+            "description": "售后事项",
+            "primaryKey": "caseId",
+            "titleKey": "displayTitle",
+            "interfaces": [],
+            "properties": {
+              "caseId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "requestedRemedy": {
+                "description": "Requested remedy",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "cancel",
+                    "refund",
+                    "redelivery"
+                  ]
+                }
+              },
+              "progress": {
+                "description": "Remedy state",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "requested",
+                    "processing",
+                    "resolved",
+                    "rejected",
+                    "unknown"
+                  ]
+                }
+              },
+              "originalBusinessReference": {
+                "description": "Original owned business reference",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "RefundCase",
+                "name": "refunds",
+                "target": "Refund",
+                "many": true,
+                "required": false,
+                "description": "Refund.case ↔ AfterSalesCase.refunds"
+              },
+              {
+                "id": "CaseOrder",
+                "name": "order",
+                "target": "Order",
+                "many": false,
+                "required": false,
+                "description": "AfterSalesCase.order ↔ Order.afterSalesCases"
+              },
+              {
+                "id": "CaseReservation",
+                "name": "reservation",
+                "target": "Reservation",
+                "many": false,
+                "required": false,
+                "description": "AfterSalesCase.reservation ↔ Reservation.afterSalesCases"
+              }
+            ]
+          },
+          {
+            "kind": "object",
+            "id": "Authorization",
+            "version": "1",
+            "name": "业务许可记录",
+            "aliases": [
+              "业务许可记录",
+              "Authorization"
+            ],
+            "description": "业务许可记录",
+            "primaryKey": "authorizationId",
+            "titleKey": "displayTitle",
+            "interfaces": [],
+            "properties": {
+              "authorizationId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "actor": {
+                "description": "Authenticated approving actor",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "allowedActions": {
+                "description": "Allowed actions",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "dataScope": {
+                "description": "Permitted data scope",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "limits": {
+                "description": "Maximum permitted amount",
+                "kind": "struct",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "minor": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d{0,17})$"
+                    },
+                    "currency": {
+                      "type": "string",
+                      "enum": [
+                        "CNY",
+                        "USD",
+                        "EUR"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "minor",
+                    "currency"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "expiresAt": {
+                "description": "Grant expiry",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "revoked": {
+                "description": "Revocation state",
+                "kind": "boolean",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "boolean"
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "AuthorizationProposal",
+                "name": "proposal",
+                "target": "Proposal",
+                "many": false,
+                "required": true,
+                "description": "Authorization.proposal ↔ Proposal.authorizations"
+              }
+            ]
+          },
+          {
+            "kind": "object",
+            "id": "Channel",
+            "version": "1",
+            "name": "服务渠道",
+            "aliases": [
+              "服务渠道",
+              "Channel"
+            ],
+            "description": "服务渠道",
+            "primaryKey": "channelId",
+            "titleKey": "name",
+            "interfaces": [],
+            "properties": {
+              "channelId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "name": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "accessScope": {
+                "description": "Verified access scope",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "supportedOperationRefs": {
+                "description": "Registered provider operations",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "maxItems": 40,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "ParticipationChannel",
+                "name": "participations",
+                "target": "ChannelParticipation",
+                "many": true,
+                "required": false,
+                "description": "ChannelParticipation.channel ↔ Channel.participations"
+              },
+              {
+                "id": "OfferChannel",
+                "name": "offers",
+                "target": "Offer",
+                "many": true,
+                "required": false,
+                "description": "Offer.channel ↔ Channel.offers"
+              }
+            ]
+          },
+          {
+            "kind": "object",
+            "id": "ChannelParticipation",
+            "version": "1",
+            "name": "渠道主体关系",
+            "aliases": [
+              "渠道主体关系",
+              "ChannelParticipation"
+            ],
+            "description": "渠道主体关系",
+            "primaryKey": "participationId",
+            "titleKey": "displayTitle",
+            "interfaces": [],
+            "properties": {
+              "participationId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "role": {
+                "description": "Role in this channel",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "seller",
+                    "fulfiller",
+                    "aggregator",
+                    "booking_agent"
+                  ]
+                }
+              },
+              "validFrom": {
+                "description": "Role valid from",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "validUntil": {
+                "description": "Role valid until",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "verificationRef": {
+                "description": "Role verification reference",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "ParticipationProvider",
+                "name": "provider",
+                "target": "Provider",
+                "many": false,
+                "required": true,
+                "description": "ChannelParticipation.provider ↔ Provider.participations"
+              },
+              {
+                "id": "ParticipationChannel",
+                "name": "channel",
+                "target": "Channel",
+                "many": false,
+                "required": true,
+                "description": "ChannelParticipation.channel ↔ Channel.participations"
+              }
+            ]
+          },
+          {
+            "kind": "object",
+            "id": "DeliveryAllocation",
+            "version": "1",
+            "name": "交付数量分配",
+            "aliases": [
+              "交付数量分配",
+              "DeliveryAllocation"
+            ],
+            "description": "交付数量分配",
+            "primaryKey": "allocationId",
+            "titleKey": "displayTitle",
+            "interfaces": [
+              {
+                "id": "EvidenceBacked"
+              }
+            ],
+            "properties": {
+              "allocationId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "deliveredQuantity": {
+                "description": "Quantity allocated to an order line",
+                "kind": "struct",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d{0,14})(?:\\.\\d{1,6})?$"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "kg",
+                        "g",
+                        "piece",
+                        "cup",
+                        "person"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "amount",
+                    "unit"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "acceptedSpecificationRef": {
+                "description": "Verified delivered specification",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "verificationState": {
+                "description": "Independent allocation verification",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "accepted",
+                    "rejected",
+                    "revoked"
+                  ]
+                }
+              },
+              "evidenceRef": {
+                "description": "Source evidence reference",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "AllocationShipment",
+                "name": "shipment",
+                "target": "Shipment",
+                "many": false,
+                "required": true,
+                "description": "DeliveryAllocation.shipment ↔ Shipment.allocations"
+              },
+              {
+                "id": "AllocationOrderLine",
+                "name": "orderLine",
+                "target": "OrderLine",
+                "many": false,
+                "required": true,
+                "description": "DeliveryAllocation.orderLine ↔ OrderLine.allocations"
+              },
+              {
+                "id": "AllocationEvent",
+                "name": "deliveryEvent",
+                "target": "DeliveryEvent",
+                "many": false,
+                "required": true,
+                "description": "DeliveryAllocation.deliveryEvent ↔ DeliveryEvent.allocations"
+              },
+              {
+                "id": "DeliveryAllocationEvidence",
+                "name": "sourceReceipts",
+                "target": "SourceReceipt",
+                "many": true,
+                "required": true,
+                "description": "DeliveryAllocation.sourceReceipts ↔ SourceReceipt.deliveryAllocations"
+              }
+            ]
+          }
+        ],
+        "functions": [
+          {
+            "id": "offerFreshness",
+            "version": "1",
+            "inputTypes": [
+              "Offer"
+            ],
+            "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
+          },
+          {
+            "id": "remainingQuantity",
+            "version": "1",
+            "inputTypes": [
+              "OrderLine"
+            ],
+            "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
+          },
+          {
+            "id": "actualArrival",
+            "version": "1",
+            "inputTypes": [
+              "Shipment"
+            ],
+            "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
+          },
+          {
+            "id": "reservationStatus",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
+          },
+          {
+            "id": "deliveryQuoteMatches",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote"
+            ],
+            "description": "Match quote to request, selected route, parcel versions, weight and service"
+          },
+          {
+            "id": "withinBudget",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote",
+              "ProductOffer",
+              "ReservationOffer"
+            ],
+            "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
+          },
+          {
+            "id": "reservationMatches",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Check effective confirmation for the exact venue, time, timezone and party size"
+          },
+          {
+            "id": "productOfferMatches",
+            "version": "2",
+            "inputTypes": [
+              "ProductOffer"
+            ],
+            "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
+          },
+          {
+            "id": "slotAvailability",
+            "version": "1",
+            "inputTypes": [
+              "ReservationSlot"
+            ],
+            "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
+          }
+        ],
+        "actions": [
+          {
+            "id": "RequestDeliveryQuote",
+            "description": "Record the decision to request a quote; does not create a price or order",
+            "inputs": {
+              "request": "ServiceRequest",
+              "parcel": "Parcel",
+              "route": "DeliveryRoute"
+            },
+            "changes": [
+              "ServiceRequest.progress",
+              "ServiceRequest.selectedRoute"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "current_request_revision",
+              "explicit_read_scope",
+              "complete_route_and_parcel"
+            ],
+            "providerOperation": "delivery_preview",
+            "execution": "definition_only"
+          },
+          {
+            "id": "SelectOffer",
+            "description": "Record a version-bound choice; grants no payment or order authority",
+            "inputs": {
+              "request": "ServiceRequest",
+              "offer": "Offer"
+            },
+            "changes": [
+              "Proposal",
+              "Proposal.selectedOffer",
+              "ServiceRequest.selectedProposal"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "same_request",
+              "current_request_revision",
+              "fresh_offer",
+              "hard_preconditions_pass"
+            ],
+            "execution": "definition_only"
+          }
+        ],
+        "hasMore": true,
+        "next": "DeliveryAllocation",
+        "schemaDetail": "full"
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "object": {
+          "type": "ServiceRequest",
+          "id": "G"
+        },
+        "where": [],
+        "limit": 1
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "ServiceRequest",
+              "id": "G"
+            },
+            "revision": 1,
+            "properties": {
+              "requestId": "G",
+              "displayTitle": "合成 G",
+              "originalGoal": "明确的合成数据评审：根据以下原始约束选择一份供进一步评审的报价，用系统支持的业务决策提案表达选择，保留角色身份及执行许可的未知项。只做比较和提案，不要求或声称真实购买、交付。原始约束：20杯350毫升标准奶拿铁，送到合成收件地址B，总费用不超过500元，2026-10-19T11:00:00.000Z前送达",
+              "revision": 1,
+              "requestedOutcome": "goods_delivery",
+              "conditions": [
+                {
+                  "id": "goods.variant_matches",
+                  "predicateRef": {
+                    "id": "goods.variant_matches",
+                    "version": "1"
+                  },
+                  "subject": {
+                    "type": "ProductOffer",
+                    "role": "product_variant"
+                  },
+                  "phase": "precondition",
+                  "strength": "hard",
+                  "operator": "eq",
+                  "expected": {
+                    "type": "ProductVariant",
+                    "id": "variant"
+                  },
+                  "source": {
+                    "messageId": "synthetic-user-message",
+                    "quote": "合成场景中明确提出的条件"
+                  }
+                },
+                {
+                  "id": "goods.capacity_covers_quantity",
+                  "predicateRef": {
+                    "id": "goods.capacity_covers_quantity",
+                    "version": "1"
+                  },
+                  "subject": {
+                    "type": "ProductOffer",
+                    "role": "capacity"
+                  },
+                  "phase": "precondition",
+                  "strength": "hard",
+                  "operator": "gte",
+                  "expected": {
+                    "amount": "20",
+                    "unit": "cup"
+                  },
+                  "source": {
+                    "messageId": "synthetic-user-message",
+                    "quote": "合成场景中明确提出的条件"
+                  }
+                },
+                {
+                  "id": "offer.total_within_budget",
+                  "predicateRef": {
+                    "id": "offer.total_within_budget",
+                    "version": "1"
+                  },
+                  "subject": {
+                    "type": "ProductOffer",
+                    "role": "total_price"
+                  },
+                  "phase": "precondition",
+                  "strength": "hard",
+                  "operator": "lte",
+                  "expected": {
+                    "amount": {
+                      "minor": "50000",
+                      "currency": "CNY"
+                    },
+                    "priceBasis": "firm_quote",
+                    "scope": "all_mandatory_fees"
+                  },
+                  "source": {
+                    "messageId": "synthetic-user-message",
+                    "quote": "合成场景中明确提出的条件"
+                  }
+                },
+                {
+                  "id": "delivery-deadline",
+                  "predicateRef": {
+                    "id": "delivery.commitment_covers_deadline",
+                    "version": "1"
+                  },
+                  "subject": {
+                    "type": "ProductOffer",
+                    "role": "delivery_commitment"
+                  },
+                  "phase": "precondition",
+                  "strength": "hard",
+                  "operator": "lte",
+                  "expected": {
+                    "at": "2026-10-19T11:00:00.000Z",
+                    "timeZone": "Asia/Shanghai",
+                    "originalText": "指定日期19:00前"
+                  },
+                  "source": {
+                    "messageId": "synthetic-user-message",
+                    "quote": "指定日期19:00前"
+                  }
+                }
+              ],
+              "progress": "executing",
+              "createdAt": "2026-10-18T06:11:07.571Z"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 1,
+          "scanned": 1,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "describe_ontology",
+      "input": {
+        "search": "ProductOffer",
+        "includeSchemas": true,
+        "limit": 5
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "types": [
+          {
+            "kind": "object",
+            "id": "ProductOffer",
+            "version": "2",
+            "name": "商品报价",
+            "aliases": [
+              "商品报价",
+              "ProductOffer"
+            ],
+            "description": "商品报价",
+            "primaryKey": "offerId",
+            "titleKey": "displayTitle",
+            "interfaces": [
+              {
+                "id": "Offer",
+                "propertyMap": {
+                  "offerId": "offerId"
+                }
+              }
+            ],
+            "properties": {
+              "offerId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                }
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "observedAt": {
+                "description": "Source observation time",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "expiresAt": {
+                "description": "Expiry or explicit local refresh limit",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "validityBasis": {
+                "description": "Authority for the validity window",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "provider_expiry",
+                    "local_refresh_limit",
+                    "unknown"
+                  ]
+                }
+              },
+              "priceKind": {
+                "description": "Price commitment semantics",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "display_price",
+                    "estimate",
+                    "firm_quote",
+                    "unknown"
+                  ]
+                }
+              },
+              "pricingCompleteness": {
+                "description": "Coverage of required fees",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "unknown"
+                  ]
+                }
+              },
+              "isFresh": {
+                "description": "Freshness evaluated at query time",
+                "kind": "boolean",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "derived": "offerFreshness",
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "boolean"
+                }
+              },
+              "offeredQuantity": {
+                "description": "Quoted product quantity",
+                "kind": "struct",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "string",
+                      "pattern": "^(0|[1-9]\\d{0,14})(?:\\.\\d{1,6})?$"
+                    },
+                    "unit": {
+                      "type": "string",
+                      "enum": [
+                        "kg",
+                        "g",
+                        "piece",
+                        "cup",
+                        "person"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "amount",
+                    "unit"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "pricingTerms": {
+                "description": "Scoped product and delivery price",
+                "kind": "struct",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "total": {
+                      "type": "object",
+                      "properties": {
+                        "minor": {
+                          "type": "string",
+                          "pattern": "^(0|[1-9]\\d{0,17})$"
+                        },
+                        "currency": {
+                          "type": "string",
+                          "enum": [
+                            "CNY",
+                            "USD",
+                            "EUR"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "minor",
+                        "currency"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "all_mandatory_fees",
+                        "partial",
+                        "unknown"
+                      ]
+                    },
+                    "components": {
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "role": {
+                            "type": "string",
+                            "enum": [
+                              "service",
+                              "goods",
+                              "delivery",
+                              "packing",
+                              "tax",
+                              "deposit",
+                              "discount"
+                            ]
+                          },
+                          "amount": {
+                            "type": "object",
+                            "properties": {
+                              "minor": {
+                                "type": "string",
+                                "pattern": "^(0|[1-9]\\d{0,17})$"
+                              },
+                              "currency": {
+                                "type": "string",
+                                "enum": [
+                                  "CNY",
+                                  "USD",
+                                  "EUR"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "minor",
+                              "currency"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "required": [
+                          "role",
+                          "amount"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "scope",
+                    "components"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "capacityObservationRef": {
+                "description": "Capacity observation reference",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              },
+              "capacity": {
+                "description": "Current evidenced capacity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "enum": [
+                    "confirmed",
+                    "unavailable",
+                    "unknown"
+                  ]
+                }
+              },
+              "deliveryDestination": {
+                "description": "Selected address value with explicit role at the containing property",
+                "kind": "struct",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "city": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100
+                    },
+                    "sourceRevision": {
+                      "type": "string",
+                      "maxLength": 200
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "estimatedArrival": {
+                "description": "Provider estimate; not a commitment",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "deliveryCommitment": {
+                "description": "Provider commitment, not an ETA",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                }
+              },
+              "variantRevision": {
+                "description": "Product specification object revision actually quoted",
+                "kind": "integer",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false,
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 1000000
+                }
+              }
+            },
+            "links": [
+              {
+                "id": "OfferRequest",
+                "name": "request",
+                "target": "ServiceRequest",
+                "many": false,
+                "required": true,
+                "description": "Offer.request ↔ ServiceRequest.offers"
+              },
+              {
+                "id": "OfferProvider",
+                "name": "provider",
+                "target": "Provider",
+                "many": false,
+                "required": true,
+                "description": "报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。"
+              },
+              {
+                "id": "OfferChannel",
+                "name": "channel",
+                "target": "Channel",
+                "many": false,
+                "required": true,
+                "description": "Offer.channel ↔ Channel.offers"
+              },
+              {
+                "id": "ProposalOffer",
+                "name": "proposals",
+                "target": "Proposal",
+                "many": true,
+                "required": false,
+                "description": "Proposal.selectedOffer ↔ Offer.proposals"
+              },
+              {
+                "id": "ProductOfferVariant",
+                "name": "productVariant",
+                "target": "ProductVariant",
+                "many": false,
+                "required": true,
+                "description": "ProductOffer.productVariant ↔ ProductVariant.offers"
+              },
+              {
+                "id": "ProductOfferEvidence",
+                "name": "sourceReceipts",
+                "target": "SourceReceipt",
+                "many": true,
+                "required": true,
+                "description": "ProductOffer.sourceReceipts ↔ SourceReceipt.productOffers"
+              }
+            ]
+          }
+        ],
+        "functions": [
+          {
+            "id": "offerFreshness",
+            "version": "1",
+            "inputTypes": [
+              "Offer"
+            ],
+            "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
+          },
+          {
+            "id": "remainingQuantity",
+            "version": "1",
+            "inputTypes": [
+              "OrderLine"
+            ],
+            "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
+          },
+          {
+            "id": "actualArrival",
+            "version": "1",
+            "inputTypes": [
+              "Shipment"
+            ],
+            "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
+          },
+          {
+            "id": "reservationStatus",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
+          },
+          {
+            "id": "deliveryQuoteMatches",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote"
+            ],
+            "description": "Match quote to request, selected route, parcel versions, weight and service"
+          },
+          {
+            "id": "withinBudget",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote",
+              "ProductOffer",
+              "ReservationOffer"
+            ],
+            "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
+          },
+          {
+            "id": "reservationMatches",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Check effective confirmation for the exact venue, time, timezone and party size"
+          },
+          {
+            "id": "productOfferMatches",
+            "version": "2",
+            "inputTypes": [
+              "ProductOffer"
+            ],
+            "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
+          },
+          {
+            "id": "slotAvailability",
+            "version": "1",
+            "inputTypes": [
+              "ReservationSlot"
+            ],
+            "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
+          }
+        ],
+        "actions": [
+          {
+            "id": "RequestDeliveryQuote",
+            "description": "Record the decision to request a quote; does not create a price or order",
+            "inputs": {
+              "request": "ServiceRequest",
+              "parcel": "Parcel",
+              "route": "DeliveryRoute"
+            },
+            "changes": [
+              "ServiceRequest.progress",
+              "ServiceRequest.selectedRoute"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "current_request_revision",
+              "explicit_read_scope",
+              "complete_route_and_parcel"
+            ],
+            "providerOperation": "delivery_preview",
+            "execution": "definition_only"
+          },
+          {
+            "id": "SelectOffer",
+            "description": "Record a version-bound choice; grants no payment or order authority",
+            "inputs": {
+              "request": "ServiceRequest",
+              "offer": "Offer"
+            },
+            "changes": [
+              "Proposal",
+              "Proposal.selectedOffer",
+              "ServiceRequest.selectedProposal"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "same_request",
+              "current_request_revision",
+              "fresh_offer",
+              "hard_preconditions_pass"
+            ],
+            "execution": "definition_only"
+          }
+        ],
+        "hasMore": false,
+        "schemaDetail": "full"
+      }
+    },
+    {
+      "tool": "describe_ontology",
+      "input": {
+        "search": "ServiceRequest",
+        "limit": 5
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "types": [
+          {
+            "kind": "object",
+            "id": "ServiceRequest",
+            "version": "2",
+            "name": "服务委托",
+            "aliases": [
+              "服务委托",
+              "ServiceRequest"
+            ],
+            "description": "服务委托",
+            "primaryKey": "requestId",
+            "titleKey": "originalGoal",
+            "interfaces": [],
+            "properties": {
+              "requestId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false
+              },
+              "originalGoal": {
+                "description": "Original PA goal",
+                "kind": "string",
+                "source": "Authenticated user or PA message",
+                "required": true,
+                "restricted": false
+              },
+              "revision": {
+                "description": "Business request revision",
+                "kind": "integer",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              },
+              "requestedOutcome": {
+                "description": "Requested business outcome",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              },
+              "conditions": {
+                "description": "Versioned conditions with subject, role, phase, typed value, unit and quoted instruction; no inferred authority",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              },
+              "progress": {
+                "description": "Request progress, not provider state",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              },
+              "projectionState": {
+                "description": "Coverage of this read projection; never business completion",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              },
+              "createdAt": {
+                "description": "Received time",
+                "kind": "timestamp",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              }
+            },
+            "links": [
+              {
+                "id": "EngagementRequest",
+                "name": "engagements",
+                "target": "ServiceEngagement",
+                "many": true,
+                "required": false,
+                "description": "ServiceEngagement.request ↔ ServiceRequest.engagements"
+              },
+              {
+                "id": "ParcelRequest",
+                "name": "parcels",
+                "target": "Parcel",
+                "many": true,
+                "required": false,
+                "description": "Parcel.request ↔ ServiceRequest.parcels"
+              },
+              {
+                "id": "RouteRequest",
+                "name": "routes",
+                "target": "DeliveryRoute",
+                "many": true,
+                "required": false,
+                "description": "DeliveryRoute.request ↔ ServiceRequest.routes"
+              },
+              {
+                "id": "SelectedRoute",
+                "name": "selectedRoute",
+                "target": "DeliveryRoute",
+                "many": false,
+                "required": false,
+                "description": "ServiceRequest.selectedRoute ↔ DeliveryRoute.selectedForRequest"
+              },
+              {
+                "id": "OfferRequest",
+                "name": "offers",
+                "target": "Offer",
+                "many": true,
+                "required": false,
+                "description": "Offer.request ↔ ServiceRequest.offers"
+              },
+              {
+                "id": "ReceiptRequest",
+                "name": "sourceReceipts",
+                "target": "SourceReceipt",
+                "many": true,
+                "required": false,
+                "description": "SourceReceipt.request ↔ ServiceRequest.sourceReceipts"
+              },
+              {
+                "id": "ProposalRequest",
+                "name": "proposals",
+                "target": "Proposal",
+                "many": true,
+                "required": false,
+                "description": "Proposal.request ↔ ServiceRequest.proposals"
+              },
+              {
+                "id": "SelectedProposal",
+                "name": "selectedProposal",
+                "target": "Proposal",
+                "many": false,
+                "required": false,
+                "description": "ServiceRequest.selectedProposal ↔ Proposal.selectedForRequest"
+              },
+              {
+                "id": "AssessmentRequest",
+                "name": "assessments",
+                "target": "OutcomeAssessment",
+                "many": true,
+                "required": false,
+                "description": "OutcomeAssessment.request ↔ ServiceRequest.assessments"
+              },
+              {
+                "id": "OrderRequest",
+                "name": "orders",
+                "target": "Order",
+                "many": true,
+                "required": false,
+                "description": "Order.request ↔ ServiceRequest.orders"
+              },
+              {
+                "id": "ReservationRequest",
+                "name": "reservations",
+                "target": "Reservation",
+                "many": true,
+                "required": false,
+                "description": "Reservation.request ↔ ServiceRequest.reservations"
+              }
+            ]
+          }
+        ],
+        "functions": [
+          {
+            "id": "offerFreshness",
+            "version": "1",
+            "inputTypes": [
+              "Offer"
+            ],
+            "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
+          },
+          {
+            "id": "remainingQuantity",
+            "version": "1",
+            "inputTypes": [
+              "OrderLine"
+            ],
+            "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
+          },
+          {
+            "id": "actualArrival",
+            "version": "1",
+            "inputTypes": [
+              "Shipment"
+            ],
+            "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
+          },
+          {
+            "id": "reservationStatus",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
+          },
+          {
+            "id": "deliveryQuoteMatches",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote"
+            ],
+            "description": "Match quote to request, selected route, parcel versions, weight and service"
+          },
+          {
+            "id": "withinBudget",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote",
+              "ProductOffer",
+              "ReservationOffer"
+            ],
+            "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
+          },
+          {
+            "id": "reservationMatches",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Check effective confirmation for the exact venue, time, timezone and party size"
+          },
+          {
+            "id": "productOfferMatches",
+            "version": "2",
+            "inputTypes": [
+              "ProductOffer"
+            ],
+            "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
+          },
+          {
+            "id": "slotAvailability",
+            "version": "1",
+            "inputTypes": [
+              "ReservationSlot"
+            ],
+            "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
+          }
+        ],
+        "actions": [
+          {
+            "id": "RequestDeliveryQuote",
+            "description": "Record the decision to request a quote; does not create a price or order",
+            "inputs": {
+              "request": "ServiceRequest",
+              "parcel": "Parcel",
+              "route": "DeliveryRoute"
+            },
+            "changes": [
+              "ServiceRequest.progress",
+              "ServiceRequest.selectedRoute"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "current_request_revision",
+              "explicit_read_scope",
+              "complete_route_and_parcel"
+            ],
+            "providerOperation": "delivery_preview",
+            "execution": "definition_only"
+          },
+          {
+            "id": "SelectOffer",
+            "description": "Record a version-bound choice; grants no payment or order authority",
+            "inputs": {
+              "request": "ServiceRequest",
+              "offer": "Offer"
+            },
+            "changes": [
+              "Proposal",
+              "Proposal.selectedOffer",
+              "ServiceRequest.selectedProposal"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "same_request",
+              "current_request_revision",
+              "fresh_offer",
+              "hard_preconditions_pass"
+            ],
+            "execution": "definition_only"
+          }
+        ],
+        "hasMore": false,
+        "schemaDetail": "summary"
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "type": "ProductOffer",
+        "where": [],
+        "limit": 50
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-G",
+              "displayTitle": "合成 offer-G",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "complete",
+              "offeredQuantity": {
+                "amount": "20",
+                "unit": "cup"
+              },
+              "pricingTerms": {
+                "total": {
+                  "minor": "46500",
+                  "currency": "CNY"
+                },
+                "scope": "all_mandatory_fees",
+                "components": []
+              },
+              "capacityObservationRef": "synthetic-capacity",
+              "capacity": "confirmed",
+              "deliveryDestination": {
+                "text": "合成收件地址 B",
+                "city": "北京市",
+                "sourceRevision": "1"
+              },
+              "deliveryCommitment": "2026-10-19T11:00:00.000Z",
+              "variantRevision": 1
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-X"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-X",
+              "displayTitle": "合成报价 offer-X",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "complete",
+              "offeredQuantity": {
+                "amount": "20",
+                "unit": "cup"
+              },
+              "pricingTerms": {
+                "total": {
+                  "minor": "41000",
+                  "currency": "CNY"
+                },
+                "scope": "all_mandatory_fees",
+                "components": []
+              },
+              "capacityObservationRef": "synthetic-capacity",
+              "capacity": "unknown",
+              "deliveryDestination": {
+                "text": "合成收件地址 B",
+                "city": "北京市",
+                "sourceRevision": "1"
+              },
+              "deliveryCommitment": "2026-10-19T11:00:00.000Z",
+              "variantRevision": 1
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-Y"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-Y",
+              "displayTitle": "合成报价 offer-Y",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "partial",
+              "offeredQuantity": {
+                "amount": "20",
+                "unit": "cup"
+              },
+              "pricingTerms": {
+                "total": {
+                  "minor": "40900",
+                  "currency": "CNY"
+                },
+                "scope": "partial",
+                "components": []
+              },
+              "capacityObservationRef": "synthetic-capacity",
+              "capacity": "confirmed",
+              "deliveryDestination": {
+                "text": "合成收件地址 B",
+                "city": "北京市",
+                "sourceRevision": "1"
+              },
+              "deliveryCommitment": "2026-10-19T11:00:00.000Z",
+              "variantRevision": 1
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "scanned": 3,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "from": {
+          "type": "ServiceRequest",
+          "id": "G"
+        },
+        "link": "offers",
+        "where": [],
+        "limit": 50
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-G",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "complete"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-X"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-X",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "complete"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "offer-Y"
+            },
+            "revision": 1,
+            "properties": {
+              "offerId": "offer-Y",
+              "observedAt": "2026-10-18T06:11:07.571Z",
+              "expiresAt": "2026-10-18T06:16:08.571Z",
+              "validityBasis": "provider_expiry",
+              "priceKind": "firm_quote",
+              "pricingCompleteness": "partial"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "scanned": 3,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "from": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        },
+        "link": "productVariant",
+        "where": [],
+        "limit": 1
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "ProductVariant",
+              "id": "variant"
+            },
+            "revision": 1,
+            "properties": {
+              "variantId": "variant",
+              "displayTitle": "合成 variant",
+              "name": "合成350毫升拿铁",
+              "sourceProductRef": {
+                "namespace": "synthetic",
+                "id": "latte-350"
+              },
+              "specification": [
+                {
+                  "name": "volumeMl",
+                  "value": "350"
+                },
+                {
+                  "name": "milk",
+                  "value": "standard"
+                }
+              ],
+              "specificationRevision": "spec-1"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 1,
+          "scanned": 1,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "assess_conditions",
+      "input": {
+        "subject": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        },
+        "phase": "precondition"
+      },
+      "output": {
+        "checks": [
+          {
+            "conditionId": "goods.variant_matches",
+            "phase": "precondition",
+            "strength": "hard",
+            "result": "pass",
+            "reason": "Registered function evaluated the fixed condition",
+            "evidenceRefs": [
+              {
+                "type": "ProductOffer",
+                "id": "offer-G"
+              },
+              {
+                "type": "SourceReceipt",
+                "id": "receipt-offer-G"
+              }
+            ],
+            "evidenceLevels": [
+              "synthetic"
+            ],
+            "subject": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            }
+          },
+          {
+            "conditionId": "goods.capacity_covers_quantity",
+            "phase": "precondition",
+            "strength": "hard",
+            "result": "pass",
+            "reason": "Registered function evaluated the fixed condition",
+            "evidenceRefs": [
+              {
+                "type": "ProductOffer",
+                "id": "offer-G"
+              },
+              {
+                "type": "SourceReceipt",
+                "id": "receipt-offer-G"
+              }
+            ],
+            "evidenceLevels": [
+              "synthetic"
+            ],
+            "subject": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            }
+          },
+          {
+            "conditionId": "offer.total_within_budget",
+            "phase": "precondition",
+            "strength": "hard",
+            "result": "pass",
+            "reason": "Registered function evaluated the fixed condition",
+            "evidenceRefs": [
+              {
+                "type": "ProductOffer",
+                "id": "offer-G"
+              },
+              {
+                "type": "SourceReceipt",
+                "id": "receipt-offer-G"
+              }
+            ],
+            "evidenceLevels": [
+              "synthetic"
+            ],
+            "subject": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            }
+          },
+          {
+            "conditionId": "delivery-deadline",
+            "phase": "precondition",
+            "strength": "hard",
+            "result": "pass",
+            "reason": "Registered function evaluated the fixed condition",
+            "evidenceRefs": [
+              {
+                "type": "ProductOffer",
+                "id": "offer-G"
+              },
+              {
+                "type": "SourceReceipt",
+                "id": "receipt-offer-G"
+              }
+            ],
+            "evidenceLevels": [
+              "synthetic"
+            ],
+            "subject": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            }
+          }
+        ],
+        "grantsAuthority": false
+      }
+    },
+    {
+      "tool": "describe_ontology",
+      "input": {
+        "search": "Provider",
+        "limit": 5
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "types": [
+          {
+            "kind": "object",
+            "id": "Provider",
+            "version": "2",
+            "name": "服务主体",
+            "aliases": [
+              "服务主体",
+              "Provider"
+            ],
+            "description": "服务参与主体。报价提供者可能只是履约方或代理，不能据此认定销售商家；在对应 ChannelParticipation 中核对 seller、fulfiller 或代理角色及其证据。",
+            "primaryKey": "providerId",
+            "titleKey": "name",
+            "interfaces": [],
+            "properties": {
+              "providerId": {
+                "description": "Stable object identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false
+              },
+              "displayTitle": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false
+              },
+              "name": {
+                "description": "Human-readable display title; never used as identity",
+                "kind": "string",
+                "source": "Versioned owner-scoped source mapping",
+                "required": true,
+                "restricted": false
+              },
+              "verifiedIdentityRefs": {
+                "description": "Verified identity mappings; not name similarity",
+                "kind": "array",
+                "source": "Versioned owner-scoped source mapping",
+                "required": false,
+                "restricted": false
+              }
+            },
+            "links": [
+              {
+                "id": "EngagementProvider",
+                "name": "engagements",
+                "target": "ServiceEngagement",
+                "many": true,
+                "required": false,
+                "description": "ServiceEngagement.provider ↔ Provider.engagements"
+              },
+              {
+                "id": "ParticipationProvider",
+                "name": "participations",
+                "target": "ChannelParticipation",
+                "many": true,
+                "required": false,
+                "description": "ChannelParticipation.provider ↔ Provider.participations"
+              },
+              {
+                "id": "OfferProvider",
+                "name": "offers",
+                "target": "Offer",
+                "many": true,
+                "required": false,
+                "description": "报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。"
+              },
+              {
+                "id": "VenueProvider",
+                "name": "venues",
+                "target": "Venue",
+                "many": true,
+                "required": false,
+                "description": "Venue.provider ↔ Provider.venues"
+              }
+            ]
+          }
+        ],
+        "functions": [
+          {
+            "id": "offerFreshness",
+            "version": "1",
+            "inputTypes": [
+              "Offer"
+            ],
+            "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
+          },
+          {
+            "id": "remainingQuantity",
+            "version": "1",
+            "inputTypes": [
+              "OrderLine"
+            ],
+            "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
+          },
+          {
+            "id": "actualArrival",
+            "version": "1",
+            "inputTypes": [
+              "Shipment"
+            ],
+            "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
+          },
+          {
+            "id": "reservationStatus",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
+          },
+          {
+            "id": "deliveryQuoteMatches",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote"
+            ],
+            "description": "Match quote to request, selected route, parcel versions, weight and service"
+          },
+          {
+            "id": "withinBudget",
+            "version": "1",
+            "inputTypes": [
+              "DeliveryQuote",
+              "ProductOffer",
+              "ReservationOffer"
+            ],
+            "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
+          },
+          {
+            "id": "reservationMatches",
+            "version": "1",
+            "inputTypes": [
+              "Reservation"
+            ],
+            "description": "Check effective confirmation for the exact venue, time, timezone and party size"
+          },
+          {
+            "id": "productOfferMatches",
+            "version": "2",
+            "inputTypes": [
+              "ProductOffer"
+            ],
+            "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
+          },
+          {
+            "id": "slotAvailability",
+            "version": "1",
+            "inputTypes": [
+              "ReservationSlot"
+            ],
+            "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
+          }
+        ],
+        "actions": [
+          {
+            "id": "RequestDeliveryQuote",
+            "description": "Record the decision to request a quote; does not create a price or order",
+            "inputs": {
+              "request": "ServiceRequest",
+              "parcel": "Parcel",
+              "route": "DeliveryRoute"
+            },
+            "changes": [
+              "ServiceRequest.progress",
+              "ServiceRequest.selectedRoute"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "current_request_revision",
+              "explicit_read_scope",
+              "complete_route_and_parcel"
+            ],
+            "providerOperation": "delivery_preview",
+            "execution": "definition_only"
+          },
+          {
+            "id": "SelectOffer",
+            "description": "Record a version-bound choice; grants no payment or order authority",
+            "inputs": {
+              "request": "ServiceRequest",
+              "offer": "Offer"
+            },
+            "changes": [
+              "Proposal",
+              "Proposal.selectedOffer",
+              "ServiceRequest.selectedProposal"
+            ],
+            "submissionCriteria": [
+              "same_owner",
+              "same_request",
+              "current_request_revision",
+              "fresh_offer",
+              "hard_preconditions_pass"
+            ],
+            "execution": "definition_only"
+          }
+        ],
+        "hasMore": false,
+        "schemaDetail": "summary"
+      }
+    },
+    {
+      "tool": "evaluate_ontology",
+      "input": {
+        "function": "productOfferMatches",
+        "object": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        },
+        "variant": {
+          "type": "ProductVariant",
+          "id": "variant"
+        },
+        "quantity": {
+          "amount": "20",
+          "unit": "cup"
+        },
+        "budget": {
+          "minor": "50000",
+          "currency": "CNY"
+        },
+        "deadline": "2026-10-19T11:00:00.000Z",
+        "destination": {
+          "text": "合成收件地址 B",
+          "city": "北京市",
+          "sourceRevision": "1"
+        }
+      },
+      "output": {
+        "status": "known",
+        "value": "pass",
+        "evidenceRefs": [
+          {
+            "type": "ProductOffer",
+            "id": "offer-G"
+          },
+          {
+            "type": "ProductVariant",
+            "id": "variant"
+          },
+          {
+            "type": "SourceReceipt",
+            "id": "receipt-offer-G"
+          }
+        ],
+        "evidenceLevels": [
+          "synthetic"
+        ],
+        "functionRef": {
+          "id": "productOfferMatches",
+          "version": "2"
+        },
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        }
+      }
+    },
+    {
+      "tool": "evaluate_ontology",
+      "input": {
+        "function": "offerFreshness",
+        "object": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        }
+      },
+      "output": {
+        "status": "known",
+        "value": true,
+        "evidenceRefs": [
+          {
+            "type": "ProductOffer",
+            "id": "offer-G"
+          },
+          {
+            "type": "SourceReceipt",
+            "id": "receipt-offer-G"
+          }
+        ],
+        "evidenceLevels": [
+          "synthetic"
+        ],
+        "functionRef": {
+          "id": "offerFreshness",
+          "version": "1"
+        },
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        }
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "from": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        },
+        "link": "provider",
+        "where": [],
+        "limit": 1
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "Provider",
+              "id": "provider"
+            },
+            "revision": 1,
+            "properties": {
+              "providerId": "provider",
+              "displayTitle": "合成 provider",
+              "name": "合成服务主体",
+              "verifiedIdentityRefs": [
+                "synthetic:provider"
+              ]
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 1,
+          "scanned": 1,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "from": {
+          "type": "ProductOffer",
+          "id": "offer-G"
+        },
+        "link": "channel",
+        "where": [],
+        "limit": 1
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "Channel",
+              "id": "channel"
+            },
+            "revision": 1,
+            "properties": {
+              "channelId": "channel",
+              "displayTitle": "合成 channel",
+              "name": "合成渠道",
+              "accessScope": [
+                "synthetic-only"
+              ],
+              "supportedOperationRefs": [
+                "synthetic-read"
+              ]
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 1,
+          "scanned": 1,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "query_ontology",
+      "input": {
+        "from": {
+          "type": "Provider",
+          "id": "provider"
+        },
+        "link": "participations",
+        "where": [],
+        "limit": 50
+      },
+      "output": {
+        "model": {
+          "id": "eigos.business",
+          "version": "2",
+          "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+        },
+        "items": [
+          {
+            "ref": {
+              "type": "ChannelParticipation",
+              "id": "participation"
+            },
+            "revision": 1,
+            "properties": {
+              "participationId": "participation",
+              "displayTitle": "合成 participation",
+              "role": "fulfiller",
+              "validFrom": "2026-10-18T06:11:07.571Z",
+              "validUntil": "2026-10-18T06:16:08.571Z",
+              "verificationRef": "synthetic-role-proof"
+            },
+            "source": {
+              "kind": "synthetic",
+              "id": "n1-three-scenarios",
+              "observedAt": "2026-10-18T06:11:07.571Z"
+            },
+            "createdAt": "2026-10-18T06:11:08.571Z"
+          }
+        ],
+        "page": {
+          "limit": 50,
+          "scanned": 1,
+          "hasMore": false
+        },
+        "datasetRevision": 1
+      }
+    },
+    {
+      "tool": "propose_action",
+      "input": {
+        "action": "SelectOffer",
+        "inputs": [
+          {
+            "name": "request",
+            "object": {
+              "type": "ServiceRequest",
+              "id": "G"
+            },
+            "revision": 1
+          },
+          {
+            "name": "offer",
+            "object": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            },
+            "revision": 1
+          }
+        ]
+      },
+      "output": {
+        "action": "SelectOffer",
+        "definitionDigest": "1738a95c504a3c5d0e6ce518ef93de63f77a9bc71340a8e1a728577edf725dd9",
+        "inputs": {
+          "request": {
+            "object": {
+              "type": "ServiceRequest",
+              "id": "G"
+            },
+            "revision": 1
+          },
+          "offer": {
+            "object": {
+              "type": "ProductOffer",
+              "id": "offer-G"
+            },
+            "revision": 1
+          }
+        },
+        "changes": [
+          "Proposal",
+          "Proposal.selectedOffer",
+          "ServiceRequest.selectedProposal"
+        ],
+        "checks": [
+          {
+            "criterion": "same_owner",
+            "result": "pass"
+          },
+          {
+            "criterion": "same_request",
+            "result": "pass"
+          },
+          {
+            "criterion": "current_request_revision",
+            "result": "pass"
+          },
+          {
+            "criterion": "fresh_offer",
+            "result": "pass"
+          },
+          {
+            "criterion": "hard_preconditions_pass",
+            "result": "pass"
+          }
+        ],
+        "execution": "proposal_only",
+        "executionAllowed": false
+      }
+    }
+  ],
+  "beforeRevision": 1,
+  "afterRevision": 1
+}

@@ -21,7 +21,7 @@ const condition = (predicate: string, types: [string, ...string[]], role: string
 // reinterprets an old generic requirement or lets a condition grant authority.
 export const businessConditionSchema = z.union([
   condition('geo.query_scope_matches', ['Place'], 'search_area', ['result'], 'eq', z.object({ city: z.string().min(1).max(100), keyword: z.string().min(1).max(200) }).strict()),
-  condition('parcel.quote_matches_request', ['DeliveryQuote'], 'parcel_quote', ['result'], 'eq', z.object({ weight: quantitySchema.refine(v => ['kg', 'g'].includes(v.unit)), serviceLevel: z.enum(['ordinary', 'express']), parcel: objectRefSchema.extend({ type: z.literal('Parcel') }), route: objectRefSchema.extend({ type: z.literal('DeliveryRoute') }) }).strict()),
+  condition('parcel.quote_matches_request', ['DeliveryQuote'], 'parcel_quote', ['result'], 'eq', z.object({ weight: quantitySchema.refine(v => ['kg', 'g'].includes(v.unit)), serviceLevel: z.enum(['ordinary', 'express']), parcel: objectRefSchema.extend({ type: z.literal('Parcel') }).optional(), route: objectRefSchema.extend({ type: z.literal('DeliveryRoute') }).optional() }).strict()),
   condition('offer.total_within_budget', ['DeliveryQuote', 'ProductOffer'], 'total_price', ['precondition'], 'lte', z.object({ amount: moneyValueSchema, priceBasis: z.enum(['estimate', 'firm_quote']), scope: z.literal('all_mandatory_fees') }).strict()),
   condition('goods.variant_matches', ['ProductOffer', 'OrderLine'], 'product_variant', ['precondition', 'result'], 'eq', objectRefSchema.extend({ type: z.literal('ProductVariant') })),
   condition('goods.capacity_covers_quantity', ['ProductOffer'], 'capacity', ['precondition'], 'gte', quantitySchema),
@@ -33,6 +33,7 @@ export const businessConditionSchema = z.union([
 ]).superRefine((value, ctx) => {
   if (value.subject.object && value.subject.object.type !== value.subject.type) ctx.addIssue({ code: 'custom', message: 'Condition subject type mismatch' });
 });
+export type BusinessCondition = z.infer<typeof businessConditionSchema>;
 const source = 'Versioned owner-scoped source mapping';
 const p = (kind: P['kind'], schema: z.ZodType, description: string, extra: Partial<P> = {}): P => ({ kind, schema, description, source, ...extra });
 const str = (description: string, max = 500, extra: Partial<P> = {}) => p('string', z.string().min(1).max(max), description, extra);
@@ -94,6 +95,17 @@ const objects: ObjectTypeDefinition[] = [
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
   type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'order', 'delivery', 'reservation', 'payment', 'refund'], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
+// Only changed definitions advance. Historical object fingerprints are never rewritten.
+objects.find(o => o.id === 'ServiceRequest')!.version = '2';
+const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
+receiptType.version = '2';
+receiptType.properties.queryScope = p('struct', z.object({ city: z.string().min(1).max(100), keyword: z.string().min(1).max(200) }).strict(), 'Actual public query scope, bound to the validated source input digest');
+const productOfferType = objects.find(o => o.id === 'ProductOffer')!;
+productOfferType.version = '2';
+productOfferType.properties.variantRevision = integer('Product specification object revision actually quoted');
+const providerType = objects.find(o => o.id === 'Provider')!;
+providerType.version = '2';
+providerType.description = '服务参与主体。报价提供者可能只是履约方或代理，不能据此认定销售商家；在对应 ChannelParticipation 中核对 seller、fulfiller 或代理角色及其证据。';
 
 const links: LinkDefinition[] = [];
 const link = (idName: string, fromType: string, fromName: string, fromMany: boolean, toType: string, toName: string, toMany: boolean, required = false, reverseRequired = false) => links.push({ id: idName, description: `${fromType}.${fromName} ↔ ${toType}.${toName}`, from: { type: fromType, name: fromName, many: fromMany, required }, to: { type: toType, name: toName, many: toMany, required: reverseRequired } });
@@ -138,8 +150,9 @@ link('RefundCase', 'Refund', 'case', false, 'AfterSalesCase', 'refunds', true, t
 link('CaseOrder', 'AfterSalesCase', 'order', false, 'Order', 'afterSalesCases', true);
 link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', 'afterSalesCases', true);
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
+links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '1', objects, links,
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '2', objects, links,
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
@@ -156,7 +169,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'deliveryQuoteMatches', version: '1', inputTypes: ['DeliveryQuote'], description: 'Match quote to request, selected route, parcel versions, weight and service' },
     { id: 'withinBudget', version: '1', inputTypes: ['DeliveryQuote', 'ProductOffer', 'ReservationOffer'], description: 'Compare a complete scoped total and price basis; a reservation deposit is not a total' },
     { id: 'reservationMatches', version: '1', inputTypes: ['Reservation'], description: 'Check effective confirmation for the exact venue, time, timezone and party size' },
-    { id: 'productOfferMatches', version: '1', inputTypes: ['ProductOffer'], description: 'Check product variant, quantity, capacity, complete total, destination and commitment' },
+    { id: 'productOfferMatches', version: '2', inputTypes: ['ProductOffer'], description: 'Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment' },
     { id: 'slotAvailability', version: '1', inputTypes: ['ReservationSlot'], description: 'Check current evidenced slot eligibility for venue, time, timezone and party size' },
   ],
 };

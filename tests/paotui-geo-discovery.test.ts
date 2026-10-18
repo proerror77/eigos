@@ -1,3 +1,4 @@
+import { templatePlanning } from '../packages/ontology/planning-contract.js';
 // Every provider response in this file is synthetic. No personal CLI, credential,
 // model, public POI endpoint, or live service is invoked by these tests.
 import assert from 'node:assert/strict';
@@ -49,7 +50,7 @@ async function resolvedPlan(h: ReturnType<typeof harness>, ctx = context()) {
   const candidate = resolution.candidates[0]!;
   assert.equal(candidate?.status, 'ready');
   const plan = proposePlan(h.catalog, ctx.owner, ctx.request, capability, candidate,
-    proposal({ request: ctx.request, capability, resolution }));
+    proposal({ request: ctx.request, capability, resolution }), templatePlanning(ctx.request));
   return { ctx, resolution, candidate, plan, privateData: resolution.privateData.get(candidate.id) };
 }
 
@@ -283,7 +284,7 @@ test('a synthetic public-query task completes and its exact evidence survives du
   const fixture = response(); const h = harness(fixture);
   const runner = backend(h.catalog, reasoner(request => ({
     kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
-    message: 'Synthetic public-query grounding', inputJson: JSON.stringify(publicQuery), requirementsJson: '[]',
+    message: 'Synthetic public-query grounding', inputJson: JSON.stringify(publicQuery), requirementsJson: '[]', conditionsJson: '[]',
   })), new JobStore(path));
   let opened = runner.store;
   try {

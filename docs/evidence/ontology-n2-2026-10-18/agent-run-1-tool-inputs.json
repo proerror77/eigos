@@ -1,0 +1,12 @@
+{
+  "packages/ontology/model.ts": "472c7c67aa74731b224331a3e4aacdd965e37066d14bc7361f768ca67147ab8d",
+  "packages/ontology/business-model.ts": "2bd2f8d83a602c89d7efafbaa20c5e8a3b94677680eaabfedc3200336d832a06",
+  "packages/ontology/object-store.ts": "5b39576c2be7d72b046d3ee67f3ce4a41e60dc2756893d1109285c621d9d7086",
+  "packages/ontology/object-functions.ts": "f9de465cf5953de6a3e892ba8070f9f9791c78e0b61d4dc7a877aa8bc9374721",
+  "packages/ontology/planning-contract.ts": "a8bac954eb76fb25fefb143893ddbabe7896b58a1bc457075e663fc8347f29a6",
+  "packages/coordinator/planning-session.ts": "fb3e0106067e0c225f5c18a254bb08bca53bfd30e6295b430034aad6db509e78",
+  "packages/coordinator/conditions.ts": "f483203544025f3394260f7f3b64014227cf1901f344b73aa46464745e601f82",
+  "tests/fixtures/ontology-objects.ts": "2f3c227451969c12b091efcbc947ed10f1814fdceeeb20949c13be5161278642",
+  "tests/fixtures/ontology-drill.ts": "1870afa49092ae6b5697b9d06ea526de31aae38fef32557be9370fd88bb7e33f",
+  "examples/ontology-drill.ts": "7cecf76141142bf5f2f65c7f80c6afe7888bca0d0051bf00cc2108cf625ffa8b"
+}

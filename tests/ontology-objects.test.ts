@@ -93,8 +93,12 @@ test('N1 private fields cannot be read, selected, filtered or used as an existen
       assert.throws(() => f.graph.query('alice', { type: 'SavedAddress', where: [{ property, op: 'eq', value: 'PRIVATE_CONTACT_MARKER' }] }), /Restricted/);
     }
     assert(!JSON.stringify(f.graph.query('alice', { type: 'SourceReceipt' })).includes('PRIVATE_RECEIPT'));
+    assert(!JSON.stringify(f.graph.query('alice', { object: f.ids['address-A']! })).includes('PRIVATE_'));
+    assert.throws(() => f.graph.query('alice', { object: f.ids['address-A']!, select: ['contactInstructions'] }), /Restricted/);
+    assert.throws(() => f.graph.query('bob', { object: f.ids['address-A']! }), /not found/);
     assert.deepEqual(f.graph.query('alice', { type: 'Provider', where: [{ property: 'name', op: 'eq', value: "x' OR 1=1 --" }] }).items, []);
     assert.throws(() => f.graph.query('alice', { type: 'Provider', where: [{ property: '__proto__', op: 'eq', value: 'x' }] }));
+    assert.throws(() => f.graph.query('alice', { type: 'Provider', where: [{ property: 'toString', op: 'eq', value: 'x' }] }), /registered property/);
   } finally { f.db.close(); }
 });
 

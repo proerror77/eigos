@@ -6,6 +6,7 @@ import { digest } from '../core/delegation.js';
 import { moneySchema, type CandidateFacts, type Ref, type RequirementCheck, type ServiceRequest, type ResolvedCandidate, type ResolutionScope } from '../ontology/execution.js';
 import type { Comparison, DiscoveryCoverage, ProductOfferSnapshot } from '../ontology/supply.js';
 import { compareOffers } from './comparison.js';
+import { equivalentQuantities } from '../ontology/quantity.js';
 export type { ResolvedCandidate } from '../ontology/execution.js';
 
 class DiscoveryTimeout extends Error {
@@ -45,7 +46,11 @@ export function checkRequirements(request: ServiceRequest, facts: CandidateFacts
   return request.requirements.map(requirement => {
     let pass: boolean | undefined;
     switch (requirement.kind) {
-      case 'quantity': if (facts.quantity && /^(0|[1-9]\d*)$/.test(facts.quantity.amount)) pass = facts.quantity.unit === requirement.expected.unit && facts.quantity.amount === requirement.expected.amount; break;
+      case 'quantity': {
+        if (facts.quantity) pass = equivalentQuantities(facts.quantity, requirement.expected)
+          ?? (/^(0|[1-9]\d*)$/.test(facts.quantity.amount) ? facts.quantity.unit === requirement.expected.unit && facts.quantity.amount === requirement.expected.amount : undefined);
+        break;
+      }
       case 'budget': {
         const price = moneySchema.safeParse(facts.totalPrice);
         if (price.success && price.data.currency === requirement.expected.currency) pass = BigInt(price.data.minor) <= BigInt(requirement.expected.minor);

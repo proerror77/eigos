@@ -1,0 +1,2502 @@
+{
+  "evidenceScope": "Real Codex reasoning; all source data synthetic; protocol observer, not an actual user Personal Agent; no real transaction or deployment",
+  "task": {
+    "id": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+    "contextId": "ebf7975f-c388-4678-9b63-676f4fdedc7e",
+    "status": {
+      "state": "TASK_STATE_COMPLETED",
+      "message": {
+        "messageId": "7d24cfb4-9a6f-403b-9bb3-10ef2e33419e",
+        "contextId": "ebf7975f-c388-4678-9b63-676f4fdedc7e",
+        "taskId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "只读结果已取得；不代表订单、支付或履约完成。"
+          }
+        ]
+      },
+      "timestamp": "2026-10-18T06:10:32.797Z"
+    },
+    "artifacts": [
+      {
+        "artifactId": "5216d19c-65eb-4672-bc22-39e822f39cab",
+        "name": "delivery.quote.json",
+        "parts": [
+          {
+            "data": {
+              "goal": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+              "deliverable": "只读结果已取得；不代表订单、支付或履约完成。",
+              "execution": "completed",
+              "result": {
+                "source": "meituan",
+                "previewOnly": true,
+                "orderCreated": false,
+                "goods": {
+                  "name": "文件",
+                  "category": "文件",
+                  "weightKg": 1
+                },
+                "service": "ordinary",
+                "route": {
+                  "sender": "合成住处",
+                  "recipient": "合成办公室"
+                },
+                "quote": {
+                  "_previewTotal": "19.40"
+                },
+                "ontologyReceipt": {
+                  "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb",
+                  "transport": "mcp-stdio",
+                  "server": "eigos-ontology",
+                  "capabilityRef": {
+                    "id": "delivery.quote",
+                    "version": "1"
+                  },
+                  "ontologyRef": {
+                    "id": "locations-and-parcel-quotes",
+                    "version": "1"
+                  },
+                  "tool": "ontology_delivery_quote",
+                  "evidenceKind": "fixture",
+                  "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+                  "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+                  "observedAt": "2026-10-18T06:10:32.789Z",
+                  "sourceCalls": [
+                    "get_address_info",
+                    "delivery_preview"
+                  ],
+                  "readOnly": true
+                }
+              }
+            },
+            "mediaType": "application/json"
+          }
+        ]
+      }
+    ],
+    "history": [
+      {
+        "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+        "contextId": "ebf7975f-c388-4678-9b63-676f4fdedc7e",
+        "taskId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "role": "ROLE_USER",
+        "parts": [
+          {
+            "text": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。"
+          }
+        ]
+      },
+      {
+        "messageId": "7d24cfb4-9a6f-403b-9bb3-10ef2e33419e",
+        "contextId": "ebf7975f-c388-4678-9b63-676f4fdedc7e",
+        "taskId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "role": "ROLE_AGENT",
+        "parts": [
+          {
+            "text": "只读结果已取得；不代表订单、支付或履约完成。"
+          }
+        ]
+      }
+    ],
+    "metadata": {
+      "service": "eigos.delegate",
+      "delegation": {
+        "backendVersion": "ontology-execution-v4",
+        "ontologyReadScope": "owner",
+        "request": {
+          "id": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+          "revision": 1,
+          "originalGoal": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+          "executionEnvironment": "sandbox",
+          "messages": [
+            {
+              "id": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+              "text": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+              "receivedAt": "2026-10-18T06:09:04.177Z"
+            }
+          ],
+          "requirements": [
+            {
+              "id": "parcel-weight",
+              "strength": "hard",
+              "kind": "quantity",
+              "expected": {
+                "amount": "1",
+                "unit": "kg"
+              },
+              "provenance": {
+                "source": "pa",
+                "interpretation": "quoted_text",
+                "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+                "receivedAt": "2026-10-18T06:09:04.177Z",
+                "quote": "1公斤文件"
+              }
+            },
+            {
+              "id": "read-only",
+              "strength": "hard",
+              "kind": "condition",
+              "expected": {
+                "predicate": "execution.no_order"
+              },
+              "provenance": {
+                "source": "pa",
+                "interpretation": "quoted_text",
+                "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+                "receivedAt": "2026-10-18T06:09:04.177Z",
+                "quote": "只查价，不下单、不付款。"
+              }
+            }
+          ],
+          "conditions": [
+            {
+              "id": "synthetic-quote-applicability",
+              "predicateRef": {
+                "id": "parcel.quote_matches_request",
+                "version": "1"
+              },
+              "subject": {
+                "type": "DeliveryQuote",
+                "role": "parcel_quote"
+              },
+              "phase": "result",
+              "strength": "hard",
+              "operator": "eq",
+              "expected": {
+                "weight": {
+                  "amount": "1",
+                  "unit": "kg"
+                },
+                "serviceLevel": "ordinary"
+              },
+              "source": {
+                "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+                "quote": "成功条件是合成报价适用于这1公斤文件和普通送"
+              }
+            }
+          ]
+        },
+        "phase": "accepted",
+        "events": [
+          {
+            "at": "2026-10-18T06:09:04.177Z",
+            "event": "delegation_received"
+          },
+          {
+            "at": "2026-10-18T06:09:15.799Z",
+            "event": "request_interpreted",
+            "evidence": "f167759d-a563-4e79-b1a3-b13fba666ec0"
+          },
+          {
+            "at": "2026-10-18T06:09:25.887Z",
+            "event": "request_interpreted",
+            "evidence": "498af03c-7e12-40b1-bed1-2c1006191ca4"
+          },
+          {
+            "at": "2026-10-18T06:09:42.965Z",
+            "event": "request_interpreted",
+            "evidence": "e42ddcff-6148-4a02-bac7-8b5f14efb848"
+          },
+          {
+            "at": "2026-10-18T06:09:53.673Z",
+            "event": "plan_proposed",
+            "evidence": "bbe53043-1d1a-49d7-a625-87ed858b1527"
+          },
+          {
+            "at": "2026-10-18T06:10:05.184Z",
+            "event": "plan_proposed",
+            "evidence": "d97e87bf-3fb9-4594-86cc-38165f1d9dd9"
+          },
+          {
+            "at": "2026-10-18T06:10:17.313Z",
+            "event": "plan_proposed",
+            "evidence": "cfbc9880-be21-4aa1-899c-87524012440d"
+          },
+          {
+            "at": "2026-10-18T06:10:32.775Z",
+            "event": "plan_proposed",
+            "evidence": "26fcc86a-b02e-4704-9717-d08382fa9995"
+          },
+          {
+            "at": "2026-10-18T06:10:32.784Z",
+            "event": "ontology_plan_validated",
+            "evidence": "0c0076700106adbb4cd770b2a1ed148d1d7ef313ffcc34b95405b12a8917da04"
+          },
+          {
+            "at": "2026-10-18T06:10:32.788Z",
+            "event": "action_dispatch_started",
+            "evidence": "11423ca9-b37f-4c16-a90d-ca4e62132b90"
+          }
+        ],
+        "ontologyReads": [
+          {
+            "id": "7e26b500-c398-4c41-8404-c765d854d9c1",
+            "at": "2026-10-18T06:09:15.803Z",
+            "tool": "describe_ontology",
+            "inputDigest": "cce5353eade8eb2a4f7dfc8db9f05a3a3fe09568b786a2dde7f5877421bfc65c",
+            "outputDigest": "20899ca8bd2bf0ecb7874380efc2b4c34d2bebfa9f732f165c54b060e9012277",
+            "datasetRevision": 2,
+            "status": "ok",
+            "objects": []
+          },
+          {
+            "id": "7ba41fa0-f4ed-4086-a3e4-81e938183be7",
+            "at": "2026-10-18T06:09:25.889Z",
+            "tool": "query_ontology",
+            "inputDigest": "4b99ef853fddf13bd5e32aac96b1920e974cdf4eef59c131363f0395bb177fa6",
+            "outputDigest": "652863d5ff85bb0f04bb731dc08717eb1cdbc7d9339438dd04c23a69c9e09890",
+            "datasetRevision": 2,
+            "status": "ok",
+            "objects": []
+          },
+          {
+            "id": "9bde1af0-f237-4a81-9106-08f0bfaf2add",
+            "at": "2026-10-18T06:09:53.675Z",
+            "tool": "describe_ontology",
+            "inputDigest": "a442cbb7986580e236d17ad4e9e9533c85e52039a6338b10608466cdbb2906ce",
+            "outputDigest": "f7a364008cc9d9dabd1b2e775db6186bb623731415313e72335ed788ceb27aa6",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": []
+          },
+          {
+            "id": "aaa9337a-28e6-449d-b66e-08afbe7839e2",
+            "at": "2026-10-18T06:09:53.677Z",
+            "tool": "query_ontology",
+            "inputDigest": "4bc9252d8806f2d4a9327fe0f665c732a4451591c626c024befa9766643c91f2",
+            "outputDigest": "88750bfa334f7087fab026c9636cfe7dd9835543d8b5a68f1440fd967fae7e00",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": [
+              {
+                "ref": {
+                  "type": "DeliveryQuote",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+                "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+              }
+            ]
+          },
+          {
+            "id": "2ae0f9ed-627a-4d79-bfe3-7bbe9df03c68",
+            "at": "2026-10-18T06:09:53.677Z",
+            "tool": "assess_conditions",
+            "inputDigest": "916570f29c41a937112532d61f429fc9e864604de253954183189d0c458f0baf",
+            "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": []
+          },
+          {
+            "id": "588f0ee1-5b7c-4e1a-b94e-9e11260f8f25",
+            "at": "2026-10-18T06:10:05.188Z",
+            "tool": "evaluate_ontology",
+            "inputDigest": "11e019ead936dd443589e87c2d8fbb2e4c828e0a1e050fffcf5dd2ac7fcd6d3c",
+            "outputDigest": "0c11b81b121bc648539b664339ce16a71800f00a3f5d7f96f1dd77c51ab26e3e",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": [
+              {
+                "ref": {
+                  "type": "SourceReceipt",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+                "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+              }
+            ]
+          },
+          {
+            "id": "99b1775d-9484-448a-871f-aaee664b0e84",
+            "at": "2026-10-18T06:10:05.196Z",
+            "tool": "assess_conditions",
+            "inputDigest": "b2f814c2b2fb679176e012c39867d2a580ee2aa1001edfb16070ee06b3ec2c96",
+            "outputDigest": "788ab378f8caa8690602b8d5e472dc0b6bfc495350b5ae1f0f406bc6e2c15675",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": [
+              {
+                "ref": {
+                  "type": "ServiceRequest",
+                  "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                },
+                "revision": 3,
+                "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+                "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+              },
+              {
+                "ref": {
+                  "type": "Parcel",
+                  "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+                "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+              },
+              {
+                "ref": {
+                  "type": "DeliveryRoute",
+                  "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+                "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+              }
+            ]
+          },
+          {
+            "id": "a71550e3-8081-43a1-843d-b487521e404d",
+            "at": "2026-10-18T06:10:05.197Z",
+            "tool": "query_ontology",
+            "inputDigest": "2f1f2bfff89a1884fccbc75087eb27c09cd419161989c89c3dda394c5f2aa6dd",
+            "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+            "datasetRevision": 4,
+            "status": "rejected",
+            "objects": []
+          },
+          {
+            "id": "a299bc90-371d-4dd4-aa9d-a7c4550b4247",
+            "at": "2026-10-18T06:10:05.198Z",
+            "tool": "query_ontology",
+            "inputDigest": "89905dfaef04d2c1aae6656404d739b4c71c8819842980201d576197cbc1e35f",
+            "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+            "datasetRevision": 4,
+            "status": "rejected",
+            "objects": []
+          },
+          {
+            "id": "97c48cd7-484f-4836-a676-27fa1f111c2e",
+            "at": "2026-10-18T06:10:17.315Z",
+            "tool": "query_ontology",
+            "inputDigest": "72f0dee86292b099e08a704f7c599465ad60ba5a573ac20f0c1b43014bc0d19b",
+            "outputDigest": "8999abac8b36253e3225f633055d25011e0bbf448d5c7de6f62d10298b42ac95",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": []
+          },
+          {
+            "id": "da8727d1-cb46-4d92-9b18-b1ce84fe9570",
+            "at": "2026-10-18T06:10:17.316Z",
+            "tool": "query_ontology",
+            "inputDigest": "34d9ad8b886246109ace54327cf6fd269c549cce621ace3b2b2b08f1c039ded0",
+            "outputDigest": "80b6cc51f351c59a420f068bf959e0f8540f6196e9e1d27ad78c2cac41b37f2b",
+            "datasetRevision": 4,
+            "status": "ok",
+            "objects": []
+          }
+        ],
+        "resolution": {
+          "candidates": [
+            {
+              "id": "1bbf36d2-16bc-4cc1-a24e-3f9152128d2e",
+              "binding": {
+                "ref": {
+                  "id": "meituan:delivery.quote",
+                  "version": "2"
+                },
+                "capabilityRef": {
+                  "id": "delivery.quote",
+                  "version": "2"
+                },
+                "providerId": "meituan-paotui",
+                "channelId": "meituan",
+                "adapterId": "meituan:delivery.quote.request",
+                "protocol": "mcp",
+                "enabled": true,
+                "verification": {
+                  "level": "simulated",
+                  "evidenceRefs": [
+                    "synthetic-n2-source"
+                  ]
+                },
+                "recovery": {
+                  "idempotency": "none",
+                  "lookup": false
+                }
+              },
+              "status": "ready",
+              "input": {
+                "sender": "合成住处",
+                "recipient": "合成办公室",
+                "goodsName": "文件",
+                "category": "文件",
+                "weightKg": 1,
+                "service": "ordinary"
+              },
+              "details": {
+                "readOnly": true,
+                "queryKind": "preview",
+                "evidenceKind": "fixture",
+                "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+                "ontologyReceipt": {
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06",
+                  "transport": "mcp-stdio",
+                  "server": "eigos-ontology",
+                  "capabilityRef": {
+                    "id": "delivery.quote",
+                    "version": "1"
+                  },
+                  "ontologyRef": {
+                    "id": "locations-and-parcel-quotes",
+                    "version": "1"
+                  },
+                  "tool": "ontology_delivery_quote",
+                  "evidenceKind": "fixture",
+                  "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+                  "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+                  "observedAt": "2026-10-18T06:09:42.972Z",
+                  "sourceCalls": [
+                    "get_address_info",
+                    "delivery_preview"
+                  ],
+                  "readOnly": true
+                },
+                "addressSelectionDigest": "96ffe1008c36ba71f0c7bd9981572312788211536220602bda9b5217b3b22215",
+                "addressReadReceipt": {
+                  "id": "b881c110-e520-4ebf-8884-395d1cda6a13",
+                  "transport": "mcp-stdio",
+                  "server": "eigos-ontology",
+                  "capabilityRef": {
+                    "id": "address.book.read",
+                    "version": "1"
+                  },
+                  "ontologyRef": {
+                    "id": "locations-and-parcel-quotes",
+                    "version": "1"
+                  },
+                  "tool": "ontology_address_book_read",
+                  "evidenceKind": "fixture",
+                  "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "resultDigest": "bd2fee96415905e2ec708d25de476395464d064ab4b1ae090b0e2b6b8766d8d1",
+                  "observedAt": "2026-10-18T06:09:42.969Z",
+                  "sourceCalls": [
+                    "get_address_list"
+                  ],
+                  "readOnly": true
+                },
+                "operationalEvidence": {
+                  "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+                  "definitionDigest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc",
+                  "sampleCount": 0,
+                  "outcomeCounts": {},
+                  "taskStateCounts": {},
+                  "evidenceLevelCounts": {},
+                  "goalKindCounts": {},
+                  "firstObservedAt": null,
+                  "lastObservedAt": null,
+                  "includesUnknownAndCanceled": true,
+                  "availabilityProof": false,
+                  "automaticPromotion": false
+                }
+              },
+              "facts": {
+                "totalPrice": {
+                  "minor": "1940",
+                  "currency": "CNY"
+                },
+                "quantity": {
+                  "amount": "1",
+                  "unit": "公斤"
+                },
+                "conditions": [
+                  "execution.no_order"
+                ]
+              },
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ],
+              "requirementChecks": [
+                {
+                  "requirementId": "parcel-weight",
+                  "result": "pass",
+                  "reason": "Observed fact meets the fixed requirement",
+                  "evidenceRefs": [
+                    "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+                  ]
+                },
+                {
+                  "requirementId": "read-only",
+                  "result": "pass",
+                  "reason": "Observed fact meets the fixed requirement",
+                  "evidenceRefs": [
+                    "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+                  ]
+                }
+              ],
+              "observedAt": "2026-10-18T06:09:42.972Z",
+              "expiresAt": "2026-10-18T06:14:42.972Z",
+              "ontologySubject": {
+                "type": "DeliveryQuote",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              }
+            }
+          ],
+          "scope": {
+            "capabilityRef": {
+              "id": "delivery.quote",
+              "version": "2"
+            },
+            "searchedBindingRefs": [
+              {
+                "id": "meituan:delivery.quote",
+                "version": "2"
+              }
+            ],
+            "observedAt": "2026-10-18T06:09:42.972Z",
+            "realSupply": false,
+            "coverage": []
+          }
+        },
+        "plan": {
+          "id": "c639a494-0e21-4b5b-a319-d686af88f8ef",
+          "version": "4",
+          "ontologyPlanning": {
+            "mode": "model_queries",
+            "model": {
+              "id": "eigos.business",
+              "version": "2",
+              "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+            },
+            "requestRevision": 1,
+            "conditionsDigest": "10be53d26c0de682190e81e4cd19be5d42b73668f08e4bc9e96524aad8f6fff2",
+            "reads": [
+              {
+                "id": "9bde1af0-f237-4a81-9106-08f0bfaf2add",
+                "at": "2026-10-18T06:09:53.675Z",
+                "tool": "describe_ontology",
+                "inputDigest": "a442cbb7986580e236d17ad4e9e9533c85e52039a6338b10608466cdbb2906ce",
+                "outputDigest": "f7a364008cc9d9dabd1b2e775db6186bb623731415313e72335ed788ceb27aa6",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": []
+              },
+              {
+                "id": "aaa9337a-28e6-449d-b66e-08afbe7839e2",
+                "at": "2026-10-18T06:09:53.677Z",
+                "tool": "query_ontology",
+                "inputDigest": "4bc9252d8806f2d4a9327fe0f665c732a4451591c626c024befa9766643c91f2",
+                "outputDigest": "88750bfa334f7087fab026c9636cfe7dd9835543d8b5a68f1440fd967fae7e00",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": [
+                  {
+                    "ref": {
+                      "type": "DeliveryQuote",
+                      "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+                    "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+                  }
+                ]
+              },
+              {
+                "id": "2ae0f9ed-627a-4d79-bfe3-7bbe9df03c68",
+                "at": "2026-10-18T06:09:53.677Z",
+                "tool": "assess_conditions",
+                "inputDigest": "916570f29c41a937112532d61f429fc9e864604de253954183189d0c458f0baf",
+                "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": []
+              },
+              {
+                "id": "588f0ee1-5b7c-4e1a-b94e-9e11260f8f25",
+                "at": "2026-10-18T06:10:05.188Z",
+                "tool": "evaluate_ontology",
+                "inputDigest": "11e019ead936dd443589e87c2d8fbb2e4c828e0a1e050fffcf5dd2ac7fcd6d3c",
+                "outputDigest": "0c11b81b121bc648539b664339ce16a71800f00a3f5d7f96f1dd77c51ab26e3e",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": [
+                  {
+                    "ref": {
+                      "type": "SourceReceipt",
+                      "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+                    "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+                  }
+                ]
+              },
+              {
+                "id": "99b1775d-9484-448a-871f-aaee664b0e84",
+                "at": "2026-10-18T06:10:05.196Z",
+                "tool": "assess_conditions",
+                "inputDigest": "b2f814c2b2fb679176e012c39867d2a580ee2aa1001edfb16070ee06b3ec2c96",
+                "outputDigest": "788ab378f8caa8690602b8d5e472dc0b6bfc495350b5ae1f0f406bc6e2c15675",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": [
+                  {
+                    "ref": {
+                      "type": "ServiceRequest",
+                      "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                    },
+                    "revision": 3,
+                    "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+                    "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+                  },
+                  {
+                    "ref": {
+                      "type": "Parcel",
+                      "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+                    "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+                  },
+                  {
+                    "ref": {
+                      "type": "DeliveryRoute",
+                      "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+                    "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+                  }
+                ]
+              },
+              {
+                "id": "a71550e3-8081-43a1-843d-b487521e404d",
+                "at": "2026-10-18T06:10:05.197Z",
+                "tool": "query_ontology",
+                "inputDigest": "2f1f2bfff89a1884fccbc75087eb27c09cd419161989c89c3dda394c5f2aa6dd",
+                "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+                "datasetRevision": 4,
+                "status": "rejected",
+                "objects": []
+              },
+              {
+                "id": "a299bc90-371d-4dd4-aa9d-a7c4550b4247",
+                "at": "2026-10-18T06:10:05.198Z",
+                "tool": "query_ontology",
+                "inputDigest": "89905dfaef04d2c1aae6656404d739b4c71c8819842980201d576197cbc1e35f",
+                "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+                "datasetRevision": 4,
+                "status": "rejected",
+                "objects": []
+              },
+              {
+                "id": "97c48cd7-484f-4836-a676-27fa1f111c2e",
+                "at": "2026-10-18T06:10:17.315Z",
+                "tool": "query_ontology",
+                "inputDigest": "72f0dee86292b099e08a704f7c599465ad60ba5a573ac20f0c1b43014bc0d19b",
+                "outputDigest": "8999abac8b36253e3225f633055d25011e0bbf448d5c7de6f62d10298b42ac95",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": []
+              },
+              {
+                "id": "da8727d1-cb46-4d92-9b18-b1ce84fe9570",
+                "at": "2026-10-18T06:10:17.316Z",
+                "tool": "query_ontology",
+                "inputDigest": "34d9ad8b886246109ace54327cf6fd269c549cce621ace3b2b2b08f1c039ded0",
+                "outputDigest": "80b6cc51f351c59a420f068bf959e0f8540f6196e9e1d27ad78c2cac41b37f2b",
+                "datasetRevision": 4,
+                "status": "ok",
+                "objects": []
+              }
+            ],
+            "objects": [
+              {
+                "ref": {
+                  "type": "DeliveryQuote",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+                "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+              },
+              {
+                "ref": {
+                  "type": "SourceReceipt",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+                "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+              },
+              {
+                "ref": {
+                  "type": "ServiceRequest",
+                  "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                },
+                "revision": 3,
+                "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+                "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+              },
+              {
+                "ref": {
+                  "type": "Parcel",
+                  "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+                "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+              },
+              {
+                "ref": {
+                  "type": "DeliveryRoute",
+                  "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                "revision": 1,
+                "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+                "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+              }
+            ],
+            "conditionChecks": [
+              {
+                "conditionId": "synthetic-quote-applicability",
+                "phase": "result",
+                "strength": "hard",
+                "result": "pass",
+                "reason": "Registered function evaluated the fixed condition",
+                "evidenceRefs": [
+                  {
+                    "type": "DeliveryQuote",
+                    "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  {
+                    "type": "ServiceRequest",
+                    "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                  },
+                  {
+                    "type": "Parcel",
+                    "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  {
+                    "type": "DeliveryRoute",
+                    "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  {
+                    "type": "SourceReceipt",
+                    "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  }
+                ],
+                "evidenceLevels": [
+                  "synthetic"
+                ],
+                "subject": {
+                  "type": "DeliveryQuote",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                }
+              }
+            ],
+            "actionProposals": [],
+            "digest": "1be25b7ae6ecf0127b23f4a742ab8346e86f57997824e21b6d87c1a32e03a268"
+          },
+          "requestId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+          "requestRevision": 1,
+          "requestDigest": "7af58085a3e9c1da781748dbbcd7beb95a27a7970878b205f0913cc932834ca3",
+          "capabilityRef": {
+            "id": "delivery.quote",
+            "version": "2"
+          },
+          "ontologyRef": {
+            "id": "saved-address-delivery-quote",
+            "version": "1"
+          },
+          "candidateId": "1bbf36d2-16bc-4cc1-a24e-3f9152128d2e",
+          "bindingRef": {
+            "id": "meituan:delivery.quote",
+            "version": "2"
+          },
+          "verifierRef": {
+            "id": "delivery.quote.receipt",
+            "version": "2"
+          },
+          "steps": [
+            {
+              "id": "quote",
+              "operationId": "primary",
+              "actionTypeRef": {
+                "id": "delivery.quote.read",
+                "version": "2"
+              },
+              "bindingRef": {
+                "id": "meituan:delivery.quote",
+                "version": "2"
+              },
+              "capabilityRef": {
+                "id": "delivery.quote",
+                "version": "2"
+              },
+              "effect": "read",
+              "input": {
+                "sender": "合成住处",
+                "recipient": "合成办公室",
+                "goodsName": "文件",
+                "category": "文件",
+                "weightKg": 1,
+                "service": "ordinary"
+              },
+              "inputRefs": [],
+              "dependsOn": []
+            }
+          ],
+          "details": {
+            "readOnly": true,
+            "queryKind": "preview",
+            "evidenceKind": "fixture",
+            "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+            "ontologyReceipt": {
+              "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06",
+              "transport": "mcp-stdio",
+              "server": "eigos-ontology",
+              "capabilityRef": {
+                "id": "delivery.quote",
+                "version": "1"
+              },
+              "ontologyRef": {
+                "id": "locations-and-parcel-quotes",
+                "version": "1"
+              },
+              "tool": "ontology_delivery_quote",
+              "evidenceKind": "fixture",
+              "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+              "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+              "observedAt": "2026-10-18T06:09:42.972Z",
+              "sourceCalls": [
+                "get_address_info",
+                "delivery_preview"
+              ],
+              "readOnly": true
+            },
+            "addressSelectionDigest": "96ffe1008c36ba71f0c7bd9981572312788211536220602bda9b5217b3b22215",
+            "addressReadReceipt": {
+              "id": "b881c110-e520-4ebf-8884-395d1cda6a13",
+              "transport": "mcp-stdio",
+              "server": "eigos-ontology",
+              "capabilityRef": {
+                "id": "address.book.read",
+                "version": "1"
+              },
+              "ontologyRef": {
+                "id": "locations-and-parcel-quotes",
+                "version": "1"
+              },
+              "tool": "ontology_address_book_read",
+              "evidenceKind": "fixture",
+              "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "resultDigest": "bd2fee96415905e2ec708d25de476395464d064ab4b1ae090b0e2b6b8766d8d1",
+              "observedAt": "2026-10-18T06:09:42.969Z",
+              "sourceCalls": [
+                "get_address_list"
+              ],
+              "readOnly": true
+            },
+            "operationalEvidence": {
+              "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+              "definitionDigest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc",
+              "sampleCount": 0,
+              "outcomeCounts": {},
+              "taskStateCounts": {},
+              "evidenceLevelCounts": {},
+              "goalKindCounts": {},
+              "firstObservedAt": null,
+              "lastObservedAt": null,
+              "includesUnknownAndCanceled": true,
+              "availabilityProof": false,
+              "automaticPromotion": false
+            }
+          },
+          "completionTarget": "artifact",
+          "requirementChecks": [
+            {
+              "requirementId": "parcel-weight",
+              "result": "pass",
+              "reason": "Observed fact meets the fixed requirement",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            },
+            {
+              "requirementId": "read-only",
+              "result": "pass",
+              "reason": "Observed fact meets the fixed requirement",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            }
+          ],
+          "expiresAt": "2026-10-18T06:14:42.972Z",
+          "definitionDigests": [
+            {
+              "ref": {
+                "id": "delivery.quote",
+                "version": "2"
+              },
+              "digest": "7bc02a51e1ab14e927b2f1e22b08dcda65abea61d8d9397fe3cb470a07edb0fa"
+            }
+          ],
+          "bindingDigests": [
+            {
+              "ref": {
+                "id": "meituan:delivery.quote",
+                "version": "2"
+              },
+              "digest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc"
+            }
+          ],
+          "bindingSnapshots": [],
+          "digest": "0c0076700106adbb4cd770b2a1ed148d1d7ef313ffcc34b95405b12a8917da04"
+        },
+        "reasoning": {
+          "summary": "建议采用此候选进行只读合成查价：已查阅的路线为合成住处至合成办公室，包裹为1公斤文件，服务为普通送；两项硬要求均通过，前置条件检查无额外条件，注册函数确认当前证据未过期。现有合成预估价为人民币19.40元，费用完整性及覆盖范围未知，未提供费用分项，故各项费用及是否另有必需费用仍未知。证据为本地合成数据，符合此次sandbox演练；realSupply=false不影响该演练，但不能据此认定真实商业报价。现有观察的适用性检查已通过；本次拟议步骤执行后的报价适用性仍待独立观察验证。此方案不执行、不授予授权，也不代表已完成查价，不含下单或付款。",
+          "evidenceRef": "26fcc86a-b02e-4704-9717-d08382fa9995"
+        },
+        "intentIds": [
+          "cd50671d-7de6-4f75-b336-9244a47c56ab"
+        ],
+        "intentId": "cd50671d-7de6-4f75-b336-9244a47c56ab",
+        "outcome": {
+          "requestId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+          "requestRevision": 1,
+          "status": "satisfied",
+          "criterionResults": [
+            {
+              "requirementId": "parcel-weight",
+              "status": "satisfied",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            },
+            {
+              "requirementId": "read-only",
+              "status": "satisfied",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            },
+            {
+              "requirementId": "synthetic-quote-applicability",
+              "status": "satisfied",
+              "evidenceRefs": [
+                "{\"type\":\"DeliveryQuote\",\"id\":\"3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+                "{\"type\":\"ServiceRequest\",\"id\":\"ca085dfc-2ecb-4582-9e97-f92078a68189\"}",
+                "{\"type\":\"Parcel\",\"id\":\"parcel-3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+                "{\"type\":\"DeliveryRoute\",\"id\":\"route-3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+                "{\"type\":\"SourceReceipt\",\"id\":\"3a5219ac-08a6-41d9-8bba-53f481df01fb\"}"
+              ]
+            },
+            {
+              "requirementId": "independent_verifier",
+              "status": "satisfied",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            },
+            {
+              "requirementId": "goal.artifact",
+              "status": "satisfied",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            }
+          ],
+          "reason": "Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted",
+          "evidenceRefs": [
+            "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+          ],
+          "assessedAt": "2026-10-18T06:10:32.797Z"
+        },
+        "acceptance": {
+          "accepted": true,
+          "reason": "Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted",
+          "checks": [
+            {
+              "requirementId": "parcel-weight",
+              "result": "pass",
+              "reason": "Observed fact meets the fixed requirement",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            },
+            {
+              "requirementId": "read-only",
+              "result": "pass",
+              "reason": "Observed fact meets the fixed requirement",
+              "evidenceRefs": [
+                "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+              ]
+            }
+          ],
+          "evidenceRefs": [
+            "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+          ],
+          "at": "2026-10-18T06:10:32.797Z"
+        },
+        "conditionChecks": [
+          {
+            "conditionId": "synthetic-quote-applicability",
+            "phase": "result",
+            "strength": "hard",
+            "result": "pass",
+            "reason": "Registered function evaluated the fixed condition",
+            "evidenceRefs": [
+              {
+                "type": "DeliveryQuote",
+                "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+              },
+              {
+                "type": "ServiceRequest",
+                "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+              },
+              {
+                "type": "Parcel",
+                "id": "parcel-3a5219ac-08a6-41d9-8bba-53f481df01fb"
+              },
+              {
+                "type": "DeliveryRoute",
+                "id": "route-3a5219ac-08a6-41d9-8bba-53f481df01fb"
+              },
+              {
+                "type": "SourceReceipt",
+                "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+              }
+            ],
+            "evidenceLevels": [
+              "synthetic"
+            ],
+            "subject": {
+              "type": "DeliveryQuote",
+              "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+            }
+          }
+        ],
+        "recoveryPending": false,
+        "actions": [
+          {
+            "id": "cd50671d-7de6-4f75-b336-9244a47c56ab",
+            "stepId": "quote",
+            "state": "effect_confirmed",
+            "latestObservationId": "29030fbb-00bb-42e8-a89f-3df64db78ae5"
+          }
+        ],
+        "businessFacts": [],
+        "authorizationBudget": []
+      },
+      "runs": [
+        {
+          "id": "f167759d-a563-4e79-b1a3-b13fba666ec0",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:09:04.265Z",
+          "completedAt": "2026-10-18T06:09:15.797Z",
+          "outputSha256": "34e46be1bbeb8abfb308cf55594012e707ead2312ccc3a7b6b5421bc58555731",
+          "threadId": "01a14da0-c65c-7a73-be43-7259ded06eb5",
+          "usage": {
+            "input_tokens": 34266,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 63,
+            "reasoning_output_tokens": 13
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "498af03c-7e12-40b1-bed1-2c1006191ca4",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:09:15.805Z",
+          "completedAt": "2026-10-18T06:09:25.886Z",
+          "outputSha256": "48c6018aedd43bd95bdf48535cb96abeb02d0ac07f8bf74215692004c98f31f9",
+          "threadId": "01a14da0-f26a-7d72-91d6-0b92e598b7c7",
+          "usage": {
+            "input_tokens": 39517,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 94,
+            "reasoning_output_tokens": 11
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "e42ddcff-6148-4a02-bac7-8b5f14efb848",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:09:25.890Z",
+          "completedAt": "2026-10-18T06:09:42.964Z",
+          "outputSha256": "5cfb6d0bafe31a8fc5cc72a01de820213f5bfeb11a01ebf68a5e9e2672104261",
+          "threadId": "01a14da1-19db-7ae2-8371-35138e5c581b",
+          "usage": {
+            "input_tokens": 39619,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 670,
+            "reasoning_output_tokens": 34
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "bbe53043-1d1a-49d7-a625-87ed858b1527",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:09:42.985Z",
+          "completedAt": "2026-10-18T06:09:53.673Z",
+          "outputSha256": "d3e4266b79a53d92f32d4161b3a776c95c3e3fd1b269198f89351903b91920ac",
+          "threadId": "01a14da1-5c91-7ac0-9c93-c377ea3bb0b0",
+          "usage": {
+            "input_tokens": 30628,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 181,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "d97e87bf-3fb9-4594-86cc-38165f1d9dd9",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:09:53.678Z",
+          "completedAt": "2026-10-18T06:10:05.182Z",
+          "outputSha256": "d01e65ad8cd1f618ec5b7408c660d00654125f63bf3e6fb6ee05f6b4e81fdb52",
+          "threadId": "01a14da1-8653-7e20-866b-8459dee92d36",
+          "usage": {
+            "input_tokens": 33803,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 252,
+            "reasoning_output_tokens": 15
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "cfbc9880-be21-4aa1-899c-87524012440d",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:10:05.199Z",
+          "completedAt": "2026-10-18T06:10:17.311Z",
+          "outputSha256": "7988f7c3e2d59f76ff737ed8b1110d62f747302cd30736130d1f43554b00187d",
+          "threadId": "01a14da1-b363-7ab1-b0fe-c90be3e1c709",
+          "usage": {
+            "input_tokens": 34449,
+            "cached_input_tokens": 21376,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 195,
+            "reasoning_output_tokens": 17
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "26fcc86a-b02e-4704-9717-d08382fa9995",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-18T06:10:17.319Z",
+          "completedAt": "2026-10-18T06:10:32.774Z",
+          "outputSha256": "f0c0db795ec4a182fde4723f1a8e4c8c65a6e937f4ce45a7a77cb0e15dfb5b43",
+          "threadId": "01a14da1-e2b2-7bb0-b59b-628e63adede8",
+          "usage": {
+            "input_tokens": 35126,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 409,
+            "reasoning_output_tokens": 30
+          },
+          "purpose": "planning"
+        }
+      ]
+    }
+  },
+  "readback": {
+    "id": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+    "contextId": "ebf7975f-c388-4678-9b63-676f4fdedc7e",
+    "service": "eigos.delegate",
+    "goal": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+    "state": "completed",
+    "messages": [
+      {
+        "id": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+        "role": "user",
+        "text": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+        "at": "2026-10-18T06:09:04.177Z"
+      },
+      {
+        "id": "7d24cfb4-9a6f-403b-9bb3-10ef2e33419e",
+        "role": "agent",
+        "text": "只读结果已取得；不代表订单、支付或履约完成。",
+        "at": "2026-10-18T06:10:32.797Z"
+      }
+    ],
+    "createdAt": "2026-10-18T06:09:04.177Z",
+    "updatedAt": "2026-10-18T06:10:32.797Z",
+    "revision": 1,
+    "runs": [
+      {
+        "id": "f167759d-a563-4e79-b1a3-b13fba666ec0",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:09:04.265Z",
+        "completedAt": "2026-10-18T06:09:15.797Z",
+        "outputSha256": "34e46be1bbeb8abfb308cf55594012e707ead2312ccc3a7b6b5421bc58555731",
+        "threadId": "01a14da0-c65c-7a73-be43-7259ded06eb5",
+        "usage": {
+          "input_tokens": 34266,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 63,
+          "reasoning_output_tokens": 13
+        },
+        "purpose": "grounding"
+      },
+      {
+        "id": "498af03c-7e12-40b1-bed1-2c1006191ca4",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:09:15.805Z",
+        "completedAt": "2026-10-18T06:09:25.886Z",
+        "outputSha256": "48c6018aedd43bd95bdf48535cb96abeb02d0ac07f8bf74215692004c98f31f9",
+        "threadId": "01a14da0-f26a-7d72-91d6-0b92e598b7c7",
+        "usage": {
+          "input_tokens": 39517,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 94,
+          "reasoning_output_tokens": 11
+        },
+        "purpose": "grounding"
+      },
+      {
+        "id": "e42ddcff-6148-4a02-bac7-8b5f14efb848",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:09:25.890Z",
+        "completedAt": "2026-10-18T06:09:42.964Z",
+        "outputSha256": "5cfb6d0bafe31a8fc5cc72a01de820213f5bfeb11a01ebf68a5e9e2672104261",
+        "threadId": "01a14da1-19db-7ae2-8371-35138e5c581b",
+        "usage": {
+          "input_tokens": 39619,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 670,
+          "reasoning_output_tokens": 34
+        },
+        "purpose": "grounding"
+      },
+      {
+        "id": "bbe53043-1d1a-49d7-a625-87ed858b1527",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:09:42.985Z",
+        "completedAt": "2026-10-18T06:09:53.673Z",
+        "outputSha256": "d3e4266b79a53d92f32d4161b3a776c95c3e3fd1b269198f89351903b91920ac",
+        "threadId": "01a14da1-5c91-7ac0-9c93-c377ea3bb0b0",
+        "usage": {
+          "input_tokens": 30628,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 181,
+          "reasoning_output_tokens": 0
+        },
+        "purpose": "planning"
+      },
+      {
+        "id": "d97e87bf-3fb9-4594-86cc-38165f1d9dd9",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:09:53.678Z",
+        "completedAt": "2026-10-18T06:10:05.182Z",
+        "outputSha256": "d01e65ad8cd1f618ec5b7408c660d00654125f63bf3e6fb6ee05f6b4e81fdb52",
+        "threadId": "01a14da1-8653-7e20-866b-8459dee92d36",
+        "usage": {
+          "input_tokens": 33803,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 252,
+          "reasoning_output_tokens": 15
+        },
+        "purpose": "planning"
+      },
+      {
+        "id": "cfbc9880-be21-4aa1-899c-87524012440d",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:10:05.199Z",
+        "completedAt": "2026-10-18T06:10:17.311Z",
+        "outputSha256": "7988f7c3e2d59f76ff737ed8b1110d62f747302cd30736130d1f43554b00187d",
+        "threadId": "01a14da1-b363-7ab1-b0fe-c90be3e1c709",
+        "usage": {
+          "input_tokens": 34449,
+          "cached_input_tokens": 21376,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 195,
+          "reasoning_output_tokens": 17
+        },
+        "purpose": "planning"
+      },
+      {
+        "id": "26fcc86a-b02e-4704-9717-d08382fa9995",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-18T06:10:17.319Z",
+        "completedAt": "2026-10-18T06:10:32.774Z",
+        "outputSha256": "f0c0db795ec4a182fde4723f1a8e4c8c65a6e937f4ce45a7a77cb0e15dfb5b43",
+        "threadId": "01a14da1-e2b2-7bb0-b59b-628e63adede8",
+        "usage": {
+          "input_tokens": 35126,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 409,
+          "reasoning_output_tokens": 30
+        },
+        "purpose": "planning"
+      }
+    ],
+    "executionMode": "worker",
+    "delegation": {
+      "backendVersion": "ontology-execution-v4",
+      "ontologyReadScope": "owner",
+      "request": {
+        "id": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "revision": 1,
+        "originalGoal": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+        "executionEnvironment": "sandbox",
+        "messages": [
+          {
+            "id": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+            "text": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+            "receivedAt": "2026-10-18T06:09:04.177Z"
+          }
+        ],
+        "requirements": [
+          {
+            "id": "parcel-weight",
+            "strength": "hard",
+            "kind": "quantity",
+            "expected": {
+              "amount": "1",
+              "unit": "kg"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+              "receivedAt": "2026-10-18T06:09:04.177Z",
+              "quote": "1公斤文件"
+            }
+          },
+          {
+            "id": "read-only",
+            "strength": "hard",
+            "kind": "condition",
+            "expected": {
+              "predicate": "execution.no_order"
+            },
+            "provenance": {
+              "source": "pa",
+              "interpretation": "quoted_text",
+              "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+              "receivedAt": "2026-10-18T06:09:04.177Z",
+              "quote": "只查价，不下单、不付款。"
+            }
+          }
+        ],
+        "conditions": [
+          {
+            "id": "synthetic-quote-applicability",
+            "predicateRef": {
+              "id": "parcel.quote_matches_request",
+              "version": "1"
+            },
+            "subject": {
+              "type": "DeliveryQuote",
+              "role": "parcel_quote"
+            },
+            "phase": "result",
+            "strength": "hard",
+            "operator": "eq",
+            "expected": {
+              "weight": {
+                "amount": "1",
+                "unit": "kg"
+              },
+              "serviceLevel": "ordinary"
+            },
+            "source": {
+              "messageId": "1473cb6c-0dc7-4f1b-8010-e4ac72d0a951",
+              "quote": "成功条件是合成报价适用于这1公斤文件和普通送"
+            }
+          }
+        ]
+      },
+      "phase": "accepted",
+      "events": [
+        {
+          "at": "2026-10-18T06:09:04.177Z",
+          "event": "delegation_received"
+        },
+        {
+          "at": "2026-10-18T06:09:15.799Z",
+          "event": "request_interpreted",
+          "evidence": "f167759d-a563-4e79-b1a3-b13fba666ec0"
+        },
+        {
+          "at": "2026-10-18T06:09:25.887Z",
+          "event": "request_interpreted",
+          "evidence": "498af03c-7e12-40b1-bed1-2c1006191ca4"
+        },
+        {
+          "at": "2026-10-18T06:09:42.965Z",
+          "event": "request_interpreted",
+          "evidence": "e42ddcff-6148-4a02-bac7-8b5f14efb848"
+        },
+        {
+          "at": "2026-10-18T06:09:53.673Z",
+          "event": "plan_proposed",
+          "evidence": "bbe53043-1d1a-49d7-a625-87ed858b1527"
+        },
+        {
+          "at": "2026-10-18T06:10:05.184Z",
+          "event": "plan_proposed",
+          "evidence": "d97e87bf-3fb9-4594-86cc-38165f1d9dd9"
+        },
+        {
+          "at": "2026-10-18T06:10:17.313Z",
+          "event": "plan_proposed",
+          "evidence": "cfbc9880-be21-4aa1-899c-87524012440d"
+        },
+        {
+          "at": "2026-10-18T06:10:32.775Z",
+          "event": "plan_proposed",
+          "evidence": "26fcc86a-b02e-4704-9717-d08382fa9995"
+        },
+        {
+          "at": "2026-10-18T06:10:32.784Z",
+          "event": "ontology_plan_validated",
+          "evidence": "0c0076700106adbb4cd770b2a1ed148d1d7ef313ffcc34b95405b12a8917da04"
+        },
+        {
+          "at": "2026-10-18T06:10:32.788Z",
+          "event": "action_dispatch_started",
+          "evidence": "11423ca9-b37f-4c16-a90d-ca4e62132b90"
+        }
+      ],
+      "ontologyReads": [
+        {
+          "id": "7e26b500-c398-4c41-8404-c765d854d9c1",
+          "at": "2026-10-18T06:09:15.803Z",
+          "tool": "describe_ontology",
+          "inputDigest": "cce5353eade8eb2a4f7dfc8db9f05a3a3fe09568b786a2dde7f5877421bfc65c",
+          "outputDigest": "20899ca8bd2bf0ecb7874380efc2b4c34d2bebfa9f732f165c54b060e9012277",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "7ba41fa0-f4ed-4086-a3e4-81e938183be7",
+          "at": "2026-10-18T06:09:25.889Z",
+          "tool": "query_ontology",
+          "inputDigest": "4b99ef853fddf13bd5e32aac96b1920e974cdf4eef59c131363f0395bb177fa6",
+          "outputDigest": "652863d5ff85bb0f04bb731dc08717eb1cdbc7d9339438dd04c23a69c9e09890",
+          "datasetRevision": 2,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "9bde1af0-f237-4a81-9106-08f0bfaf2add",
+          "at": "2026-10-18T06:09:53.675Z",
+          "tool": "describe_ontology",
+          "inputDigest": "a442cbb7986580e236d17ad4e9e9533c85e52039a6338b10608466cdbb2906ce",
+          "outputDigest": "f7a364008cc9d9dabd1b2e775db6186bb623731415313e72335ed788ceb27aa6",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "aaa9337a-28e6-449d-b66e-08afbe7839e2",
+          "at": "2026-10-18T06:09:53.677Z",
+          "tool": "query_ontology",
+          "inputDigest": "4bc9252d8806f2d4a9327fe0f665c732a4451591c626c024befa9766643c91f2",
+          "outputDigest": "88750bfa334f7087fab026c9636cfe7dd9835543d8b5a68f1440fd967fae7e00",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "DeliveryQuote",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+              "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+            }
+          ]
+        },
+        {
+          "id": "2ae0f9ed-627a-4d79-bfe3-7bbe9df03c68",
+          "at": "2026-10-18T06:09:53.677Z",
+          "tool": "assess_conditions",
+          "inputDigest": "916570f29c41a937112532d61f429fc9e864604de253954183189d0c458f0baf",
+          "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "588f0ee1-5b7c-4e1a-b94e-9e11260f8f25",
+          "at": "2026-10-18T06:10:05.188Z",
+          "tool": "evaluate_ontology",
+          "inputDigest": "11e019ead936dd443589e87c2d8fbb2e4c828e0a1e050fffcf5dd2ac7fcd6d3c",
+          "outputDigest": "0c11b81b121bc648539b664339ce16a71800f00a3f5d7f96f1dd77c51ab26e3e",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+              "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+            }
+          ]
+        },
+        {
+          "id": "99b1775d-9484-448a-871f-aaee664b0e84",
+          "at": "2026-10-18T06:10:05.196Z",
+          "tool": "assess_conditions",
+          "inputDigest": "b2f814c2b2fb679176e012c39867d2a580ee2aa1001edfb16070ee06b3ec2c96",
+          "outputDigest": "788ab378f8caa8690602b8d5e472dc0b6bfc495350b5ae1f0f406bc6e2c15675",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+              },
+              "revision": 3,
+              "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+              "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+            },
+            {
+              "ref": {
+                "type": "Parcel",
+                "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+              "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+            },
+            {
+              "ref": {
+                "type": "DeliveryRoute",
+                "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+              "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+            }
+          ]
+        },
+        {
+          "id": "a71550e3-8081-43a1-843d-b487521e404d",
+          "at": "2026-10-18T06:10:05.197Z",
+          "tool": "query_ontology",
+          "inputDigest": "2f1f2bfff89a1884fccbc75087eb27c09cd419161989c89c3dda394c5f2aa6dd",
+          "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+          "datasetRevision": 4,
+          "status": "rejected",
+          "objects": []
+        },
+        {
+          "id": "a299bc90-371d-4dd4-aa9d-a7c4550b4247",
+          "at": "2026-10-18T06:10:05.198Z",
+          "tool": "query_ontology",
+          "inputDigest": "89905dfaef04d2c1aae6656404d739b4c71c8819842980201d576197cbc1e35f",
+          "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+          "datasetRevision": 4,
+          "status": "rejected",
+          "objects": []
+        },
+        {
+          "id": "97c48cd7-484f-4836-a676-27fa1f111c2e",
+          "at": "2026-10-18T06:10:17.315Z",
+          "tool": "query_ontology",
+          "inputDigest": "72f0dee86292b099e08a704f7c599465ad60ba5a573ac20f0c1b43014bc0d19b",
+          "outputDigest": "8999abac8b36253e3225f633055d25011e0bbf448d5c7de6f62d10298b42ac95",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        },
+        {
+          "id": "da8727d1-cb46-4d92-9b18-b1ce84fe9570",
+          "at": "2026-10-18T06:10:17.316Z",
+          "tool": "query_ontology",
+          "inputDigest": "34d9ad8b886246109ace54327cf6fd269c549cce621ace3b2b2b08f1c039ded0",
+          "outputDigest": "80b6cc51f351c59a420f068bf959e0f8540f6196e9e1d27ad78c2cac41b37f2b",
+          "datasetRevision": 4,
+          "status": "ok",
+          "objects": []
+        }
+      ],
+      "resolution": {
+        "candidates": [
+          {
+            "id": "1bbf36d2-16bc-4cc1-a24e-3f9152128d2e",
+            "binding": {
+              "ref": {
+                "id": "meituan:delivery.quote",
+                "version": "2"
+              },
+              "capabilityRef": {
+                "id": "delivery.quote",
+                "version": "2"
+              },
+              "providerId": "meituan-paotui",
+              "channelId": "meituan",
+              "adapterId": "meituan:delivery.quote.request",
+              "protocol": "mcp",
+              "enabled": true,
+              "verification": {
+                "level": "simulated",
+                "evidenceRefs": [
+                  "synthetic-n2-source"
+                ]
+              },
+              "recovery": {
+                "idempotency": "none",
+                "lookup": false
+              }
+            },
+            "status": "ready",
+            "input": {
+              "sender": "合成住处",
+              "recipient": "合成办公室",
+              "goodsName": "文件",
+              "category": "文件",
+              "weightKg": 1,
+              "service": "ordinary"
+            },
+            "details": {
+              "readOnly": true,
+              "queryKind": "preview",
+              "evidenceKind": "fixture",
+              "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+              "ontologyReceipt": {
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06",
+                "transport": "mcp-stdio",
+                "server": "eigos-ontology",
+                "capabilityRef": {
+                  "id": "delivery.quote",
+                  "version": "1"
+                },
+                "ontologyRef": {
+                  "id": "locations-and-parcel-quotes",
+                  "version": "1"
+                },
+                "tool": "ontology_delivery_quote",
+                "evidenceKind": "fixture",
+                "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+                "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+                "observedAt": "2026-10-18T06:09:42.972Z",
+                "sourceCalls": [
+                  "get_address_info",
+                  "delivery_preview"
+                ],
+                "readOnly": true
+              },
+              "addressSelectionDigest": "96ffe1008c36ba71f0c7bd9981572312788211536220602bda9b5217b3b22215",
+              "addressReadReceipt": {
+                "id": "b881c110-e520-4ebf-8884-395d1cda6a13",
+                "transport": "mcp-stdio",
+                "server": "eigos-ontology",
+                "capabilityRef": {
+                  "id": "address.book.read",
+                  "version": "1"
+                },
+                "ontologyRef": {
+                  "id": "locations-and-parcel-quotes",
+                  "version": "1"
+                },
+                "tool": "ontology_address_book_read",
+                "evidenceKind": "fixture",
+                "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                "resultDigest": "bd2fee96415905e2ec708d25de476395464d064ab4b1ae090b0e2b6b8766d8d1",
+                "observedAt": "2026-10-18T06:09:42.969Z",
+                "sourceCalls": [
+                  "get_address_list"
+                ],
+                "readOnly": true
+              },
+              "operationalEvidence": {
+                "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+                "definitionDigest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc",
+                "sampleCount": 0,
+                "outcomeCounts": {},
+                "taskStateCounts": {},
+                "evidenceLevelCounts": {},
+                "goalKindCounts": {},
+                "firstObservedAt": null,
+                "lastObservedAt": null,
+                "includesUnknownAndCanceled": true,
+                "availabilityProof": false,
+                "automaticPromotion": false
+              }
+            },
+            "facts": {
+              "totalPrice": {
+                "minor": "1940",
+                "currency": "CNY"
+              },
+              "quantity": {
+                "amount": "1",
+                "unit": "公斤"
+              },
+              "conditions": [
+                "execution.no_order"
+              ]
+            },
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ],
+            "requirementChecks": [
+              {
+                "requirementId": "parcel-weight",
+                "result": "pass",
+                "reason": "Observed fact meets the fixed requirement",
+                "evidenceRefs": [
+                  "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+                ]
+              },
+              {
+                "requirementId": "read-only",
+                "result": "pass",
+                "reason": "Observed fact meets the fixed requirement",
+                "evidenceRefs": [
+                  "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+                ]
+              }
+            ],
+            "observedAt": "2026-10-18T06:09:42.972Z",
+            "expiresAt": "2026-10-18T06:14:42.972Z",
+            "ontologySubject": {
+              "type": "DeliveryQuote",
+              "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+            }
+          }
+        ],
+        "scope": {
+          "capabilityRef": {
+            "id": "delivery.quote",
+            "version": "2"
+          },
+          "searchedBindingRefs": [
+            {
+              "id": "meituan:delivery.quote",
+              "version": "2"
+            }
+          ],
+          "observedAt": "2026-10-18T06:09:42.972Z",
+          "realSupply": false,
+          "coverage": []
+        }
+      },
+      "plan": {
+        "id": "c639a494-0e21-4b5b-a319-d686af88f8ef",
+        "version": "4",
+        "ontologyPlanning": {
+          "mode": "model_queries",
+          "model": {
+            "id": "eigos.business",
+            "version": "2",
+            "digest": "99ad4a3200b2d62c3724413be882735943834cf2e064966789eb7820ee16e140"
+          },
+          "requestRevision": 1,
+          "conditionsDigest": "10be53d26c0de682190e81e4cd19be5d42b73668f08e4bc9e96524aad8f6fff2",
+          "reads": [
+            {
+              "id": "9bde1af0-f237-4a81-9106-08f0bfaf2add",
+              "at": "2026-10-18T06:09:53.675Z",
+              "tool": "describe_ontology",
+              "inputDigest": "a442cbb7986580e236d17ad4e9e9533c85e52039a6338b10608466cdbb2906ce",
+              "outputDigest": "f7a364008cc9d9dabd1b2e775db6186bb623731415313e72335ed788ceb27aa6",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "aaa9337a-28e6-449d-b66e-08afbe7839e2",
+              "at": "2026-10-18T06:09:53.677Z",
+              "tool": "query_ontology",
+              "inputDigest": "4bc9252d8806f2d4a9327fe0f665c732a4451591c626c024befa9766643c91f2",
+              "outputDigest": "88750bfa334f7087fab026c9636cfe7dd9835543d8b5a68f1440fd967fae7e00",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "DeliveryQuote",
+                    "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+                  "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+                }
+              ]
+            },
+            {
+              "id": "2ae0f9ed-627a-4d79-bfe3-7bbe9df03c68",
+              "at": "2026-10-18T06:09:53.677Z",
+              "tool": "assess_conditions",
+              "inputDigest": "916570f29c41a937112532d61f429fc9e864604de253954183189d0c458f0baf",
+              "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "588f0ee1-5b7c-4e1a-b94e-9e11260f8f25",
+              "at": "2026-10-18T06:10:05.188Z",
+              "tool": "evaluate_ontology",
+              "inputDigest": "11e019ead936dd443589e87c2d8fbb2e4c828e0a1e050fffcf5dd2ac7fcd6d3c",
+              "outputDigest": "0c11b81b121bc648539b664339ce16a71800f00a3f5d7f96f1dd77c51ab26e3e",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "SourceReceipt",
+                    "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+                  "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+                }
+              ]
+            },
+            {
+              "id": "99b1775d-9484-448a-871f-aaee664b0e84",
+              "at": "2026-10-18T06:10:05.196Z",
+              "tool": "assess_conditions",
+              "inputDigest": "b2f814c2b2fb679176e012c39867d2a580ee2aa1001edfb16070ee06b3ec2c96",
+              "outputDigest": "788ab378f8caa8690602b8d5e472dc0b6bfc495350b5ae1f0f406bc6e2c15675",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": [
+                {
+                  "ref": {
+                    "type": "ServiceRequest",
+                    "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                  },
+                  "revision": 3,
+                  "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+                  "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+                },
+                {
+                  "ref": {
+                    "type": "Parcel",
+                    "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+                  "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+                },
+                {
+                  "ref": {
+                    "type": "DeliveryRoute",
+                    "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                  },
+                  "revision": 1,
+                  "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+                  "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+                }
+              ]
+            },
+            {
+              "id": "a71550e3-8081-43a1-843d-b487521e404d",
+              "at": "2026-10-18T06:10:05.197Z",
+              "tool": "query_ontology",
+              "inputDigest": "2f1f2bfff89a1884fccbc75087eb27c09cd419161989c89c3dda394c5f2aa6dd",
+              "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+              "datasetRevision": 4,
+              "status": "rejected",
+              "objects": []
+            },
+            {
+              "id": "a299bc90-371d-4dd4-aa9d-a7c4550b4247",
+              "at": "2026-10-18T06:10:05.198Z",
+              "tool": "query_ontology",
+              "inputDigest": "89905dfaef04d2c1aae6656404d739b4c71c8819842980201d576197cbc1e35f",
+              "outputDigest": "8c1f4d201a42c9324d37a6f4b89db013c4b08e7e07e6824ec20c96d9fe389585",
+              "datasetRevision": 4,
+              "status": "rejected",
+              "objects": []
+            },
+            {
+              "id": "97c48cd7-484f-4836-a676-27fa1f111c2e",
+              "at": "2026-10-18T06:10:17.315Z",
+              "tool": "query_ontology",
+              "inputDigest": "72f0dee86292b099e08a704f7c599465ad60ba5a573ac20f0c1b43014bc0d19b",
+              "outputDigest": "8999abac8b36253e3225f633055d25011e0bbf448d5c7de6f62d10298b42ac95",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            },
+            {
+              "id": "da8727d1-cb46-4d92-9b18-b1ce84fe9570",
+              "at": "2026-10-18T06:10:17.316Z",
+              "tool": "query_ontology",
+              "inputDigest": "34d9ad8b886246109ace54327cf6fd269c549cce621ace3b2b2b08f1c039ded0",
+              "outputDigest": "80b6cc51f351c59a420f068bf959e0f8540f6196e9e1d27ad78c2cac41b37f2b",
+              "datasetRevision": 4,
+              "status": "ok",
+              "objects": []
+            }
+          ],
+          "objects": [
+            {
+              "ref": {
+                "type": "DeliveryQuote",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "5e183e07f9a81ce09fda4569897e9d07eef347591513e57eb0be3a608a72e23c",
+              "linksDigest": "b5e68a97767572049f6697a375ae9bde057b1360d68c9ce12cab5e59044b20e6"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "71008839954d00b655843c60ff7d2c9fc74edbcd2baf35fe08cfb5dc34ac3b65",
+              "linksDigest": "ad201926299030975fc69fc57f11da15353bc1ae61c1d236c29993a3c97628ed"
+            },
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+              },
+              "revision": 3,
+              "propertiesDigest": "88c47b2aa15b9479ce4d2cfd3e880db9a34e837668e351d43424b86ca5b78bcc",
+              "linksDigest": "9f2d970828e80b65031f1faed11db4dd4df66b87e8b8939669838364f3a928f7"
+            },
+            {
+              "ref": {
+                "type": "Parcel",
+                "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "ade6d8398fc03b6e3bc248ac26b8e52cadef79e3768d87ef64eb5d564b26a187",
+              "linksDigest": "0f6776fa507e78507a8aea22f6e259ab98fc1e3b4cac25d1b65fe567bc3b11fe"
+            },
+            {
+              "ref": {
+                "type": "DeliveryRoute",
+                "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              },
+              "revision": 1,
+              "propertiesDigest": "7a59886c736f797b26cfe7be03f218efd1fff6f237e11f1ae743131746183715",
+              "linksDigest": "41b485dfdb2c8bfd6b43151b05a22fc0e853c7df9339410059685fb53a5a7f82"
+            }
+          ],
+          "conditionChecks": [
+            {
+              "conditionId": "synthetic-quote-applicability",
+              "phase": "result",
+              "strength": "hard",
+              "result": "pass",
+              "reason": "Registered function evaluated the fixed condition",
+              "evidenceRefs": [
+                {
+                  "type": "DeliveryQuote",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                {
+                  "type": "ServiceRequest",
+                  "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+                },
+                {
+                  "type": "Parcel",
+                  "id": "parcel-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                {
+                  "type": "DeliveryRoute",
+                  "id": "route-051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                },
+                {
+                  "type": "SourceReceipt",
+                  "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+                }
+              ],
+              "evidenceLevels": [
+                "synthetic"
+              ],
+              "subject": {
+                "type": "DeliveryQuote",
+                "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06"
+              }
+            }
+          ],
+          "actionProposals": [],
+          "digest": "1be25b7ae6ecf0127b23f4a742ab8346e86f57997824e21b6d87c1a32e03a268"
+        },
+        "requestId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "requestRevision": 1,
+        "requestDigest": "7af58085a3e9c1da781748dbbcd7beb95a27a7970878b205f0913cc932834ca3",
+        "capabilityRef": {
+          "id": "delivery.quote",
+          "version": "2"
+        },
+        "ontologyRef": {
+          "id": "saved-address-delivery-quote",
+          "version": "1"
+        },
+        "candidateId": "1bbf36d2-16bc-4cc1-a24e-3f9152128d2e",
+        "bindingRef": {
+          "id": "meituan:delivery.quote",
+          "version": "2"
+        },
+        "verifierRef": {
+          "id": "delivery.quote.receipt",
+          "version": "2"
+        },
+        "steps": [
+          {
+            "id": "quote",
+            "operationId": "primary",
+            "actionTypeRef": {
+              "id": "delivery.quote.read",
+              "version": "2"
+            },
+            "bindingRef": {
+              "id": "meituan:delivery.quote",
+              "version": "2"
+            },
+            "capabilityRef": {
+              "id": "delivery.quote",
+              "version": "2"
+            },
+            "effect": "read",
+            "input": {
+              "sender": "合成住处",
+              "recipient": "合成办公室",
+              "goodsName": "文件",
+              "category": "文件",
+              "weightKg": 1,
+              "service": "ordinary"
+            },
+            "inputRefs": [],
+            "dependsOn": []
+          }
+        ],
+        "details": {
+          "readOnly": true,
+          "queryKind": "preview",
+          "evidenceKind": "fixture",
+          "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+          "ontologyReceipt": {
+            "id": "051a6d58-7dd2-4ea4-bcf7-56469836fc06",
+            "transport": "mcp-stdio",
+            "server": "eigos-ontology",
+            "capabilityRef": {
+              "id": "delivery.quote",
+              "version": "1"
+            },
+            "ontologyRef": {
+              "id": "locations-and-parcel-quotes",
+              "version": "1"
+            },
+            "tool": "ontology_delivery_quote",
+            "evidenceKind": "fixture",
+            "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+            "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+            "observedAt": "2026-10-18T06:09:42.972Z",
+            "sourceCalls": [
+              "get_address_info",
+              "delivery_preview"
+            ],
+            "readOnly": true
+          },
+          "addressSelectionDigest": "96ffe1008c36ba71f0c7bd9981572312788211536220602bda9b5217b3b22215",
+          "addressReadReceipt": {
+            "id": "b881c110-e520-4ebf-8884-395d1cda6a13",
+            "transport": "mcp-stdio",
+            "server": "eigos-ontology",
+            "capabilityRef": {
+              "id": "address.book.read",
+              "version": "1"
+            },
+            "ontologyRef": {
+              "id": "locations-and-parcel-quotes",
+              "version": "1"
+            },
+            "tool": "ontology_address_book_read",
+            "evidenceKind": "fixture",
+            "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+            "resultDigest": "bd2fee96415905e2ec708d25de476395464d064ab4b1ae090b0e2b6b8766d8d1",
+            "observedAt": "2026-10-18T06:09:42.969Z",
+            "sourceCalls": [
+              "get_address_list"
+            ],
+            "readOnly": true
+          },
+          "operationalEvidence": {
+            "scope": "Task outcomes for this owner and exact binding version; unresolved tasks remain in the denominator",
+            "definitionDigest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc",
+            "sampleCount": 0,
+            "outcomeCounts": {},
+            "taskStateCounts": {},
+            "evidenceLevelCounts": {},
+            "goalKindCounts": {},
+            "firstObservedAt": null,
+            "lastObservedAt": null,
+            "includesUnknownAndCanceled": true,
+            "availabilityProof": false,
+            "automaticPromotion": false
+          }
+        },
+        "completionTarget": "artifact",
+        "requirementChecks": [
+          {
+            "requirementId": "parcel-weight",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          },
+          {
+            "requirementId": "read-only",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          }
+        ],
+        "expiresAt": "2026-10-18T06:14:42.972Z",
+        "definitionDigests": [
+          {
+            "ref": {
+              "id": "delivery.quote",
+              "version": "2"
+            },
+            "digest": "7bc02a51e1ab14e927b2f1e22b08dcda65abea61d8d9397fe3cb470a07edb0fa"
+          }
+        ],
+        "bindingDigests": [
+          {
+            "ref": {
+              "id": "meituan:delivery.quote",
+              "version": "2"
+            },
+            "digest": "7d7c668d40e3228425286a9bcfe7a164acf66f3264cf4327bea075c10eba31fc"
+          }
+        ],
+        "bindingSnapshots": [],
+        "digest": "0c0076700106adbb4cd770b2a1ed148d1d7ef313ffcc34b95405b12a8917da04"
+      },
+      "reasoning": {
+        "summary": "建议采用此候选进行只读合成查价：已查阅的路线为合成住处至合成办公室，包裹为1公斤文件，服务为普通送；两项硬要求均通过，前置条件检查无额外条件，注册函数确认当前证据未过期。现有合成预估价为人民币19.40元，费用完整性及覆盖范围未知，未提供费用分项，故各项费用及是否另有必需费用仍未知。证据为本地合成数据，符合此次sandbox演练；realSupply=false不影响该演练，但不能据此认定真实商业报价。现有观察的适用性检查已通过；本次拟议步骤执行后的报价适用性仍待独立观察验证。此方案不执行、不授予授权，也不代表已完成查价，不含下单或付款。",
+        "evidenceRef": "26fcc86a-b02e-4704-9717-d08382fa9995"
+      },
+      "intentIds": [
+        "cd50671d-7de6-4f75-b336-9244a47c56ab"
+      ],
+      "intentId": "cd50671d-7de6-4f75-b336-9244a47c56ab",
+      "outcome": {
+        "requestId": "ca085dfc-2ecb-4582-9e97-f92078a68189",
+        "requestRevision": 1,
+        "status": "satisfied",
+        "criterionResults": [
+          {
+            "requirementId": "parcel-weight",
+            "status": "satisfied",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          },
+          {
+            "requirementId": "read-only",
+            "status": "satisfied",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          },
+          {
+            "requirementId": "synthetic-quote-applicability",
+            "status": "satisfied",
+            "evidenceRefs": [
+              "{\"type\":\"DeliveryQuote\",\"id\":\"3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+              "{\"type\":\"ServiceRequest\",\"id\":\"ca085dfc-2ecb-4582-9e97-f92078a68189\"}",
+              "{\"type\":\"Parcel\",\"id\":\"parcel-3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+              "{\"type\":\"DeliveryRoute\",\"id\":\"route-3a5219ac-08a6-41d9-8bba-53f481df01fb\"}",
+              "{\"type\":\"SourceReceipt\",\"id\":\"3a5219ac-08a6-41d9-8bba-53f481df01fb\"}"
+            ]
+          },
+          {
+            "requirementId": "independent_verifier",
+            "status": "satisfied",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          },
+          {
+            "requirementId": "goal.artifact",
+            "status": "satisfied",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          }
+        ],
+        "reason": "Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted",
+        "evidenceRefs": [
+          "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+        ],
+        "assessedAt": "2026-10-18T06:10:32.797Z"
+      },
+      "acceptance": {
+        "accepted": true,
+        "reason": "Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted",
+        "checks": [
+          {
+            "requirementId": "parcel-weight",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          },
+          {
+            "requirementId": "read-only",
+            "result": "pass",
+            "reason": "Observed fact meets the fixed requirement",
+            "evidenceRefs": [
+              "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+            ]
+          }
+        ],
+        "evidenceRefs": [
+          "meituan:read:c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8"
+        ],
+        "at": "2026-10-18T06:10:32.797Z"
+      },
+      "conditionChecks": [
+        {
+          "conditionId": "synthetic-quote-applicability",
+          "phase": "result",
+          "strength": "hard",
+          "result": "pass",
+          "reason": "Registered function evaluated the fixed condition",
+          "evidenceRefs": [
+            {
+              "type": "DeliveryQuote",
+              "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+            },
+            {
+              "type": "ServiceRequest",
+              "id": "ca085dfc-2ecb-4582-9e97-f92078a68189"
+            },
+            {
+              "type": "Parcel",
+              "id": "parcel-3a5219ac-08a6-41d9-8bba-53f481df01fb"
+            },
+            {
+              "type": "DeliveryRoute",
+              "id": "route-3a5219ac-08a6-41d9-8bba-53f481df01fb"
+            },
+            {
+              "type": "SourceReceipt",
+              "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+            }
+          ],
+          "evidenceLevels": [
+            "synthetic"
+          ],
+          "subject": {
+            "type": "DeliveryQuote",
+            "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb"
+          }
+        }
+      ],
+      "recoveryPending": false,
+      "actions": [
+        {
+          "id": "cd50671d-7de6-4f75-b336-9244a47c56ab",
+          "stepId": "quote",
+          "state": "effect_confirmed",
+          "latestObservationId": "29030fbb-00bb-42e8-a89f-3df64db78ae5"
+        }
+      ],
+      "businessFacts": [],
+      "authorizationBudget": []
+    },
+    "artifact": {
+      "id": "5216d19c-65eb-4672-bc22-39e822f39cab",
+      "name": "delivery.quote.json",
+      "data": {
+        "goal": "这是明确获准的本地合成数据演练，不要求真实报价。请查从合成住处寄到合成办公室，1公斤文件，普通送的合成价格。成功条件是合成报价适用于这1公斤文件和普通送；请说明费用性质及仍未知的费用。只查价，不下单、不付款。",
+        "deliverable": "只读结果已取得；不代表订单、支付或履约完成。",
+        "execution": "completed",
+        "result": {
+          "source": "meituan",
+          "previewOnly": true,
+          "orderCreated": false,
+          "goods": {
+            "name": "文件",
+            "category": "文件",
+            "weightKg": 1
+          },
+          "service": "ordinary",
+          "route": {
+            "sender": "合成住处",
+            "recipient": "合成办公室"
+          },
+          "quote": {
+            "_previewTotal": "19.40"
+          },
+          "ontologyReceipt": {
+            "id": "3a5219ac-08a6-41d9-8bba-53f481df01fb",
+            "transport": "mcp-stdio",
+            "server": "eigos-ontology",
+            "capabilityRef": {
+              "id": "delivery.quote",
+              "version": "1"
+            },
+            "ontologyRef": {
+              "id": "locations-and-parcel-quotes",
+              "version": "1"
+            },
+            "tool": "ontology_delivery_quote",
+            "evidenceKind": "fixture",
+            "inputDigest": "1b05a9a1dbab2b0c0dd4cb59b91d2957b38dd47cb2f1fe0302b4777c4179a85a",
+            "resultDigest": "c105442f78f4ba1a91a26e794b2bb9ca02d50c943da80dde5bffda4274a34bb8",
+            "observedAt": "2026-10-18T06:10:32.789Z",
+            "sourceCalls": [
+              "get_address_info",
+              "delivery_preview"
+            ],
+            "readOnly": true
+          }
+        }
+      }
+    }
+  },
+  "sourceCalls": [
+    {
+      "action": "addresses"
+    },
+    {
+      "action": "preview",
+      "senderAddressId": "synthetic-origin",
+      "recipientAddressId": "synthetic-destination",
+      "goodsName": "文件",
+      "category": "文件",
+      "weightKg": 1,
+      "service": "ordinary"
+    },
+    {
+      "action": "preview",
+      "senderAddressId": "synthetic-origin",
+      "recipientAddressId": "synthetic-destination",
+      "goodsName": "文件",
+      "category": "文件",
+      "weightKg": 1,
+      "service": "ordinary"
+    }
+  ],
+  "modelResponses": [
+    {
+      "evidenceId": "f167759d-a563-4e79-b1a3-b13fba666ec0",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"delivery\",\"limit\":5,\"includeSchemas\":true}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "evidenceId": "498af03c-7e12-40b1-bed1-2c1006191ca4",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"type\":\"DeliveryQuote\",\"where\":[],\"limit\":10}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "evidenceId": "e42ddcff-6148-4a02-bac7-8b5f14efb848",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"resolve\",\"requestRevision\":1,\"capabilityRef\":{\"id\":\"delivery.quote\",\"version\":\"2\"},\"message\":\"匹配本地合成报价演练能力：查询合成住处至合成办公室的1公斤文件普通送价格，并说明费用性质及仍未知的费用。报价适用性须在取得合成报价后核验；仅查价，不下单、不付款。\",\"inputJson\":\"{\\\"sender\\\":\\\"合成住处\\\",\\\"recipient\\\":\\\"合成办公室\\\",\\\"goodsName\\\":\\\"文件\\\",\\\"category\\\":\\\"文件\\\",\\\"weightKg\\\":1,\\\"service\\\":\\\"ordinary\\\"}\",\"requirementsJson\":\"[{\\\"requirement\\\":{\\\"id\\\":\\\"parcel-weight\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"quantity\\\",\\\"expected\\\":{\\\"amount\\\":\\\"1\\\",\\\"unit\\\":\\\"kg\\\"}},\\\"messageId\\\":\\\"1473cb6c-0dc7-4f1b-8010-e4ac72d0a951\\\",\\\"quote\\\":\\\"1公斤文件\\\"},{\\\"requirement\\\":{\\\"id\\\":\\\"read-only\\\",\\\"strength\\\":\\\"hard\\\",\\\"kind\\\":\\\"condition\\\",\\\"expected\\\":{\\\"predicate\\\":\\\"execution.no_order\\\"}},\\\"messageId\\\":\\\"1473cb6c-0dc7-4f1b-8010-e4ac72d0a951\\\",\\\"quote\\\":\\\"只查价，不下单、不付款。\\\"}]\",\"conditionsJson\":\"[{\\\"id\\\":\\\"synthetic-quote-applicability\\\",\\\"predicateRef\\\":{\\\"id\\\":\\\"parcel.quote_matches_request\\\",\\\"version\\\":\\\"1\\\"},\\\"subject\\\":{\\\"type\\\":\\\"DeliveryQuote\\\",\\\"role\\\":\\\"parcel_quote\\\"},\\\"phase\\\":\\\"result\\\",\\\"strength\\\":\\\"hard\\\",\\\"operator\\\":\\\"eq\\\",\\\"expected\\\":{\\\"weight\\\":{\\\"amount\\\":\\\"1\\\",\\\"unit\\\":\\\"kg\\\"},\\\"serviceLevel\\\":\\\"ordinary\\\"},\\\"source\\\":{\\\"messageId\\\":\\\"1473cb6c-0dc7-4f1b-8010-e4ac72d0a951\\\",\\\"quote\\\":\\\"成功条件是合成报价适用于这1公斤文件和普通送\\\"}}]\"}"
+      }
+    },
+    {
+      "evidenceId": "bbe53043-1d1a-49d7-a625-87ed858b1527",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "describe_ontology",
+            "argumentsJson": "{\"search\":\"DeliveryQuote\",\"limit\":5,\"includeSchemas\":true}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"object\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"},\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"1bbf36d2-16bc-4cc1-a24e-3f9152128d2e\",\"phase\":\"precondition\"}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "evidenceId": "d97e87bf-3fb9-4594-86cc-38165f1d9dd9",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "evaluate_ontology",
+            "argumentsJson": "{\"function\":\"offerFreshness\",\"object\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"}}"
+          },
+          {
+            "tool": "assess_conditions",
+            "argumentsJson": "{\"candidateId\":\"1bbf36d2-16bc-4cc1-a24e-3f9152128d2e\",\"phase\":\"result\"}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"},\"link\":\"QuoteParcel\",\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"},\"link\":\"OfferRequest\",\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "evidenceId": "cfbc9880-be21-4aa1-899c-87524012440d",
+      "output": {
+        "kind": "read",
+        "calls": [
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"},\"link\":\"parcel\",\"where\":[],\"limit\":1}"
+          },
+          {
+            "tool": "query_ontology",
+            "argumentsJson": "{\"from\":{\"type\":\"DeliveryQuote\",\"id\":\"051a6d58-7dd2-4ea4-bcf7-56469836fc06\"},\"link\":\"route\",\"where\":[],\"limit\":1}"
+          }
+        ],
+        "finalJson": ""
+      }
+    },
+    {
+      "evidenceId": "26fcc86a-b02e-4704-9717-d08382fa9995",
+      "output": {
+        "kind": "final",
+        "calls": [],
+        "finalJson": "{\"kind\":\"propose_plan\",\"requestRevision\":1,\"candidateId\":\"1bbf36d2-16bc-4cc1-a24e-3f9152128d2e\",\"message\":\"建议采用此候选进行只读合成查价：已查阅的路线为合成住处至合成办公室，包裹为1公斤文件，服务为普通送；两项硬要求均通过，前置条件检查无额外条件，注册函数确认当前证据未过期。现有合成预估价为人民币19.40元，费用完整性及覆盖范围未知，未提供费用分项，故各项费用及是否另有必需费用仍未知。证据为本地合成数据，符合此次sandbox演练；realSupply=false不影响该演练，但不能据此认定真实商业报价。现有观察的适用性检查已通过；本次拟议步骤执行后的报价适用性仍待独立观察验证。此方案不执行、不授予授权，也不代表已完成查价，不含下单或付款。\",\"steps\":[{\"id\":\"quote\",\"actionTypeRef\":{\"id\":\"delivery.quote.read\",\"version\":\"2\"},\"bindingRef\":{\"id\":\"meituan:delivery.quote\",\"version\":\"2\"},\"inputJson\":\"{\\\"sender\\\":\\\"合成住处\\\",\\\"recipient\\\":\\\"合成办公室\\\",\\\"goodsName\\\":\\\"文件\\\",\\\"category\\\":\\\"文件\\\",\\\"weightKg\\\":1,\\\"service\\\":\\\"ordinary\\\"}\",\"dependsOn\":[]}]}"
+      }
+    }
+  ],
+  "failures": []
+}

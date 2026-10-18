@@ -15,6 +15,8 @@ import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalo
 import { CodexReasoner } from '../packages/coordinator/coordinator.js';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
 import { CapabilityResolver } from '../packages/coordinator/resolver.js';
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+import type { RunEvidence } from '../packages/capabilities/executor.js';
 import { proposePlan } from '../packages/coordinator/plan.js';
 
 if (!process.argv.includes('--live')) throw new Error('Live model calls require --live');
@@ -101,10 +103,13 @@ try {
     ] };
   const resolution = await new CapabilityResolver(catalog).resolve({ owner: 'fixture', request }, capability.ref, {}, new AbortController().signal);
   console.log(JSON.stringify({ scenario: 'providers', progress: 'planning' }));
-  const planned = await new CodexReasoner(new CodexExecutor(config.EIGOS_CODEX_BIN, 120000)).plan({ request, capability, resolution: { candidates: resolution.candidates, scope: resolution.scope } }, new AbortController().signal);
+  gateway.store.ontology.ingest('fixture', { objects: [{ ref: { type: 'ServiceRequest', id: request.id }, properties: { requestId: request.id, displayTitle: 'Synthetic planning request', originalGoal: request.originalGoal, revision: request.revision } }] }, { kind: 'synthetic', id: 'planning-example', observedAt: now });
+  const session = new OntologyPlanningSession(gateway.store.ontology, 'fixture', request, resolution.candidates);
+  const receipts: RunEvidence[] = [];
+  const planned = await new CodexReasoner(new CodexExecutor(config.EIGOS_CODEX_BIN, 120000)).plan({ request, capability, resolution: { candidates: resolution.candidates, scope: resolution.scope } }, new AbortController().signal, { session, maxTurns: 6, record: evidence => { receipts.push(evidence); } });
   const selected = resolution.candidates.find(c => c.id === planned.decision.candidateId); assert(selected);
-  const plan = proposePlan(catalog, 'fixture', request, capability, selected, planned.decision); assert.equal(plan.bindingRef.id, 'fixture.on-time');
-  const row = { scenario: 'providers', state: 'PLAN_VALIDATED', bindingRef: plan.bindingRef, modelRuns: 1, receipts: [planned.evidence], summary: planned.decision.message };
+  const plan = proposePlan(catalog, 'fixture', request, capability, selected, planned.decision, session.finish(selected)); assert.equal(plan.bindingRef.id, 'fixture.on-time');
+  const row = { scenario: 'providers', state: 'PLAN_VALIDATED', bindingRef: plan.bindingRef, modelRuns: receipts.length, receipts, summary: planned.decision.message };
   summary.push(row); transcript.push({ scenario: 'providers', request, candidates: resolution.candidates, proposal: planned.decision, plan }); console.log(JSON.stringify(row));
 } finally {
   const text = JSON.stringify({ backendVersion: BACKEND_VERSION, evidenceScope: 'Live Codex decisions, synthetic CSV, local adapters; no real merchant, payment, deployment or fulfillment', summary, transcript }, null, 2);

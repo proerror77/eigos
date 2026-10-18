@@ -35,7 +35,7 @@ export function syntheticOntology(now = Date.now()) {
   add('DeliveryQuote', 'quote-D', { ...common, priceKind: 'estimate', validityBasis: 'local_refresh_limit', serviceLevel: 'ordinary', quotedWeight: { amount: '1000', unit: 'g' }, pricingTerms: pricing('1680'), requestRevision: 1, parcelRevision: 1, routeRevision: 1 });
   edge('QuoteParcel', 'quote-D', 'parcel'); edge('QuoteRoute', 'quote-D', 'route'); evidence('quote-D', 'delivery_quote');
   add('ProductVariant', 'variant', { name: '合成350毫升拿铁', sourceProductRef: { namespace: 'synthetic', id: 'latte-350' }, specification: [{ name: 'volumeMl', value: '350' }, { name: 'milk', value: 'standard' }], specificationRevision: 'spec-1' });
-  add('ProductOffer', 'offer-G', { ...common, offeredQuantity: { amount: '20', unit: 'cup' }, pricingTerms: pricing('48000'), capacity: 'confirmed', capacityObservationRef: 'synthetic-capacity', deliveryDestination: destination, deliveryCommitment: startsAt });
+  add('ProductOffer', 'offer-G', { ...common, variantRevision: 1, offeredQuantity: { amount: '20', unit: 'cup' }, pricingTerms: pricing('48000'), capacity: 'confirmed', capacityObservationRef: 'synthetic-capacity', deliveryDestination: destination, deliveryCommitment: startsAt });
   edge('ProductOfferVariant', 'offer-G', 'variant'); evidence('offer-G', 'goods_offer');
   add('Order', 'order', { providerOrderReference: 'synthetic-order', orderState: 'confirmed', createdAt: time }); edge('OrderRequest', 'order', 'G'); evidence('order', 'order');
   add('OrderLine', 'line', { quantityOrdered: { amount: '20', unit: 'cup' }, agreedSpecificationRef: 'spec-1', agreedPriceRef: 'offer-G' }); edge('OrderLineOrder', 'line', 'order'); edge('OrderLineVariant', 'line', 'variant');

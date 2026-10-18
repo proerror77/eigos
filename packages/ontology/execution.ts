@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v3' as const;
+export const BACKEND_VERSION = 'ontology-execution-v4' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -23,6 +23,7 @@ export interface ServiceRequest {
   requestedDeliverable?: string;
   requirements: Requirement[];
   successCriteria?: Requirement[];
+  conditions?: import('./business-model.js').BusinessCondition[];
   messages: { id: string; text: string; receivedAt: string }[];
   outcome?: 'refund' | 'cancel';
   businessScopeId?: string;
@@ -78,6 +79,7 @@ export interface ResolvedCandidate {
   input?: Record<string, unknown>; details?: Record<string, unknown>; facts: CandidateFacts;
   evidenceRefs: string[]; requirementChecks: RequirementCheck[]; observedAt: string; expiresAt: string; quote?: Quote;
   offer?: import('./supply.js').ProductOfferSnapshot;
+  ontologySubject?: import('./model.js').ObjectRef;
   recipe?: import('./actions.js').PreparedStep[];
 }
 export interface ResolutionScope { capabilityRef: Ref; searchedBindingRefs: Ref[]; observedAt: string; realSupply: boolean; coverage?: import('./supply.js').DiscoveryCoverage[] }
@@ -89,7 +91,8 @@ export interface PlanStep {
 }
 export interface ExecutionPlan {
   id: string;
-  version: '3';
+  version: '4';
+  ontologyPlanning: import('./planning-contract.js').PlanningSnapshot;
   requestId: string;
   requestRevision: number;
   requestDigest: string;
