@@ -1,3 +1,4 @@
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -35,35 +36,35 @@ async function stop(child: ChildProcess) {
 test('two database connections: exclusive claims, durable queue, expiry fencing and no replay', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-queue-')); const path = join(dir, 'tasks.sqlite');
   const a = new JobStore(path), b = new JobStore(path);
-  const tasks = new TaskService(a, { agent: true });
+  const tasks = new TaskService(a, { catalog: createExecutionCatalog() });
   try {
-    const job = tasks.submit(principal, { service: 'agent.execute', goal: 'fixture', requestId: 'one' });
-    const claim = a.claim(['agent.execute'], 100, 1000)!; assert(claim);
-    assert.equal(b.claim(['agent.execute'], 100, 1001), undefined);
+    const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'one' });
+    const claim = a.claim(['eigos.delegate'], 100, 1000)!; assert(claim);
+    assert.equal(b.claim(['eigos.delegate'], 100, 1001), undefined);
     // Expired started work becomes unknown/failed rather than being run again.
-    assert.equal(b.claim(['agent.execute'], 100, 1101), undefined);
+    assert.equal(b.claim(['eigos.delegate'], 100, 1101), undefined);
     assert.equal(tasks.get(principal, job.id).state, 'failed');
     assert.equal(a.finish(claim, current => { current.state = 'completed'; }, 1102), false);
     assert.equal(a.renew(claim, 100, 1102), false);
     assert.equal(tasks.get(principal, job.id).artifact, undefined);
-    const queued = tasks.submit(principal, { service: 'agent.execute', goal: 'queued', requestId: 'two' });
-    assert.equal(b.get(ownerKey(principal), queued.id).state, 'working');
-    assert.equal(b.claim(['agent.execute'], 100, 1200)?.job.id, queued.id);
-    tasks.submit(principal, { service: 'agent.execute', goal: 'second slot', requestId: 'three' });
-    tasks.submit(principal, { service: 'agent.execute', goal: 'waiting', requestId: 'four' });
-    assert(a.claim(['agent.execute'], 100, 1201));
-    assert.equal(b.claim(['agent.execute'], 100, 1202), undefined);
+    const queued = tasks.submit(principal, { service: 'eigos.delegate', goal: 'queued', requestId: 'two' });
+    assert.equal(b.get(ownerKey(principal), queued.id).state, 'submitted');
+    assert.equal(b.claim(['eigos.delegate'], 100, 1200)?.job.id, queued.id);
+    tasks.submit(principal, { service: 'eigos.delegate', goal: 'second slot', requestId: 'three' });
+    tasks.submit(principal, { service: 'eigos.delegate', goal: 'waiting', requestId: 'four' });
+    assert(a.claim(['eigos.delegate'], 100, 1201));
+    assert.equal(b.claim(['eigos.delegate'], 100, 1202), undefined);
 
   } finally { a.close(); b.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('migration never automatically replays legacy in-flight work', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-migration-')); const path = join(dir, 'tasks.sqlite');
-  const a = new JobStore(path); const tasks = new TaskService(a, { agent: true });
-  const job = tasks.submit(principal, { service: 'agent.execute', goal: 'legacy', requestId: 'one' }); a.close();
+  const a = new JobStore(path); const tasks = new TaskService(a, { catalog: createExecutionCatalog() });
+  const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'legacy', requestId: 'one' }); job.service = 'retired.service'; job.state = 'working'; delete job.delegation; a.save(ownerKey(principal), job); a.close();
   const legacy = new DatabaseSync(path); legacy.exec('DROP TABLE work_claims'); legacy.close();
   const migrated = new JobStore(path);
-  try { assert.equal(migrated.get(ownerKey(principal), job.id).state, 'failed'); assert.equal(migrated.claim(['agent.execute'], 100), undefined); }
+  try { assert.equal(migrated.get(ownerKey(principal), job.id).state, 'working'); assert.equal(migrated.claim(['eigos.delegate'], 100), undefined); }
   finally { migrated.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -92,24 +93,24 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   }
   try {
     await connect();
-    const input = { service: 'agent.execute', goal: 'document', requestId: 'queued' };
+    const input = { service: 'eigos.delegate', goal: 'document', requestId: 'queued' };
     const submitted = await call('submit_task', input);
-    await pause(100); assert.equal((await call('get_task', { taskId: submitted.id })).state, 'working'); // Gateway never executes.
+    await pause(100); assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted'); // Gateway never executes.
     await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close(); await pause(75);
     gateway = createApp(config); server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
     client = new Client({ name: 'process-test-restart', version: '1' }); await connect();
-    assert.equal((await call('get_task', { taskId: submitted.id })).state, 'working');
+    assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted');
     launch(); launch();
     const asked = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'input-required');
-    assert.equal(asked.runs?.length, 1); assert.equal(asked.question, 'Fixture question?');
+    assert.equal(asked.runs?.filter(r => r.purpose === 'document').length, 1); assert.equal(asked.question, 'Fixture question?');
     await call('submit_task', input); assert.equal(events.filter(e => e.event === 'started' && e.taskId === submitted.id).length, 1);
     const reply = { messageId: 'answer', taskId: submitted.id, role: 'ROLE_USER', parts: [{ text: '90 minutes' }] };
     const response = await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply }); assert(!response.error, JSON.stringify(response));
     await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply });
     const done = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'completed');
-    assert.equal(done.runs?.length, 2); assert.equal(done.artifact?.data.markdown, '# Fixture document');
+    assert.equal(done.runs?.filter(r => r.purpose === 'document').length, 2); assert.equal(done.artifact?.data.markdown, '# Fixture document');
     const remote = await rpc('GetTask', { id: submitted.id }); assert.equal(remote.result.artifacts[0].parts[0].text, done.artifact!.data.markdown);
-    const slow = await call('submit_task', { service: 'agent.execute', goal: 'slow', requestId: 'slow' });
+    const slow = await call('submit_task', { service: 'eigos.delegate', goal: 'slow', requestId: 'slow' });
     await until(() => events, value => value.some(e => e.event === 'started' && e.taskId === slow.id));
     assert.throws(() => gateway.tasks.get({ ...principal, subject: 'other' }, slow.id), /not found/);
     // Restarting only Gateway must preserve a live Worker's claim.
@@ -122,13 +123,13 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     await pause(550);
     const canceled = await call('get_task', { taskId: slow.id }); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.artifact, undefined);
     assert.equal(events.filter(e => e.event === 'started' && e.taskId === slow.id).length, 1);
-    const interrupted = await call('submit_task', { service: 'agent.execute', goal: 'slow', requestId: 'crash' });
+    const interrupted = await call('submit_task', { service: 'eigos.delegate', goal: 'slow', requestId: 'crash' });
     await until(() => events, value => value.some(e => e.event === 'started' && e.taskId === interrupted.id));
     const pid = events.find(e => e.event === 'started' && e.taskId === interrupted.id)!.pid;
     const crashed = children.find(child => child.pid === pid)!;
     const exited = once(crashed, 'exit'); crashed.kill('SIGKILL'); await exited;
-    const failed = await until(() => call('get_task', { taskId: interrupted.id }), job => job.state === 'failed');
-    assert.match(failed.error!, /outcome is unknown/);
+    const failed = await until(() => call('get_task', { taskId: interrupted.id }), job => job.state === 'input-required');
+    assert.match(failed.question!, /无法回查/);
     assert.equal(events.filter(e => e.event === 'started' && e.taskId === interrupted.id).length, 1);
 
   } finally {

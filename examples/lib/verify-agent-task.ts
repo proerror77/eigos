@@ -29,7 +29,7 @@ export async function verifyAgentTask(options: { base: string; issuer: string; a
   const marker = `eigos-auth0-${randomUUID()}`;
   const goal = `[${marker}] 请根据以下已提供信息，生成一份中文会议议程：6 人参加、总时长 30 分钟、主题是项目需求澄清；包含三个议题、每个议题的分钟数与预期产出。只生成文档，不执行任何外部业务。`;
   save('request.json', { marker, goal, startedAt });
-  const prompt = `你是用户的 Personal Agent，真实调用已授权的 EIGOS 服务。只使用提供的 eigos MCP 工具。先发现服务；确认 agent.execute 已启用后，创建且只创建一个任务，goal 原文为：${goal}\n请求 ID 保持稳定，查询只能用实际返回的 taskId。用 get_task 读到 completed、failed 或需要用户输入的状态；working 时继续查询，最多 30 次。若失败或超时，报告实际状态，不创建替代任务。若补问，仅能依据以上已给信息答复，不编造信息。完成后再次读取交付物，输出真实 taskId 和完整 Markdown 议程。`;
+  const prompt = `你是用户的 Personal Agent，真实调用已授权的 EIGOS 服务。只使用提供的 eigos MCP 工具。先发现服务；确认 eigos.delegate 已启用后，创建且只创建一个任务，goal 原文为：${goal}\n请求 ID 保持稳定，查询只能用实际返回的 taskId。用 get_task 读到 completed、failed 或需要用户输入的状态；working 时继续查询，最多 30 次。若失败或超时，报告实际状态，不创建替代任务。若补问，仅能依据以上已给信息答复，不编造信息。完成后再次读取交付物，输出真实 taskId 和完整 Markdown 议程。`;
   const temp = mkdtempSync(join(tmpdir(), 'eigos-member-agent-'));
   const events: { type: string; item?: { type: string; server?: string; tool?: string; status?: string; result?: unknown }; thread_id?: string }[] = [];
   try {
@@ -75,7 +75,7 @@ export async function verifyAgentTask(options: { base: string; issuer: string; a
       const matching = store.list(ownerKey(principal), { limit: 100, offset: 0 }).jobs.filter(job => job.goal === goal);
       assert.equal(matching.length, 1, 'Expected exactly one model-created task with this run marker'); job = matching[0]!;
     } finally { store.close(); }
-    assert.equal(job.state, 'completed'); assert.equal(job.service, 'agent.execute'); assert(job.artifact?.data.markdown);
+    assert.equal(job.state, 'completed'); assert.equal(job.service, 'eigos.delegate'); assert(job.artifact?.data.markdown);
     assert(job.runs?.length && job.runs.every(run => run.runtime === 'codex-exec' && run.threadId));
     const response = await fetch(base + '/a2a', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'A2A-Version': '1.0', 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'GetTask', params: { id: job.id } }) });
     assert(response.ok); const a2a = (await response.json()).result;

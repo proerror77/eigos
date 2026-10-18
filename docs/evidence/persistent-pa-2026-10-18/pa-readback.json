@@ -1,0 +1,17 @@
+{
+  "source": "Actual PA-created A2A GetTask files; address options redacted from this excerpt",
+  "taskId": "79c95389-b5f2-4828-b677-55b800e465e2",
+  "before": {
+    "state": "TASK_STATE_INPUT_REQUIRED",
+    "artifacts": 0
+  },
+  "after": {
+    "state": "TASK_STATE_COMPLETED",
+    "accepted": true,
+    "capabilityRef": {
+      "id": "delivery.quote",
+      "version": "2"
+    }
+  },
+  "paReply": "1 寄到 2，还是 1 公斤文件、普通送，只查价格，不下单、不付款。"
+}

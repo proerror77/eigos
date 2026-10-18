@@ -1,3 +1,4 @@
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 // Real MCP/A2A transports with synthetic model decisions, no live merchant or payment.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -50,7 +51,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
     assert.equal((await f.approve(ready, { quoteDigest: '0'.repeat(64) })).status, 409);
     assert.equal((await f.approve(ready)).status, 200); assert.equal((await f.approve(ready)).status, 200);
     const done = await f.wait(id, 'completed'); assert.equal(done.runs!.length, 3); assert.equal(done.delegation!.request.revision, 2);
-    assert.equal(done.delegation!.phase, 'accepted'); assert.equal(done.pilot, undefined); assert(done.delegation!.acceptance!.accepted);
+    assert.equal(done.delegation!.phase, 'accepted');  assert(done.delegation!.acceptance!.accepted);
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${f.token}` } } }));
     const response = await mcp.callTool({ name: 'get_task', arguments: { taskId: id } }); assert(!response.isError);
     assert.deepEqual((response.structuredContent as { result: Job }).result.artifact, done.artifact);
@@ -92,8 +93,8 @@ test('blocking A2A stops at clarification/authorization and active waits reject 
     const first = await f.send('审计 CSV', undefined, false); assert.equal(first.result.task.status.state, 'TASK_STATE_INPUT_REQUIRED');
     const next = await f.send('sample.csv', first.result.task.id, false); assert.equal(next.result.task.status.state, 'TASK_STATE_AUTH_REQUIRED');
   } finally { await f.close(); }
-  const store = new JobStore(':memory:'); const tasks = new TaskService(store, { agent: true, waitTimeoutMs: 10 });
-  try { const j = tasks.submit(principal, { service: 'agent.execute', goal: 'fixture', requestId: 'wait' }); await assert.rejects(tasks.wait(principal, j.id), /Blocking task wait/); await tasks.close(); await assert.rejects(tasks.wait(principal, j.id), /Blocking task wait/); }
+  const store = new JobStore(':memory:'); const tasks = new TaskService(store, { catalog: createExecutionCatalog(), waitTimeoutMs: 10 });
+  try { const j = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'wait' }); await assert.rejects(tasks.wait(principal, j.id), /Blocking task wait/); await tasks.close(); await assert.rejects(tasks.wait(principal, j.id), /Blocking task wait/); }
   finally { store.close(); }
 });
 

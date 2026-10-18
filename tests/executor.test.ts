@@ -13,24 +13,15 @@ function result(decision: 'ask_user' | 'complete'): ExecutionResult {
     evidence: { id: randomUUID(), runtime: 'test-fixture', startedAt: '2026-01-01T00:00:00Z', completedAt: '2026-01-01T00:00:01Z', outputSha256: 'test-only' } };
 }
 
-test('real executor must be explicitly enabled; reference brief remains separate', () => {
-  const store = new JobStore(':memory:');
-  try {
-    const tasks = new TaskService(store);
-    assert.throws(() => tasks.submit(p, { service: 'agent.execute', goal: 'test', requestId: '1' }), /not configured/);
-    assert.equal(tasks.list(p, { limit: 10, offset: 0 }).total, 0);
-  } finally { store.close(); }
-});
-
 test('async model decisions persist; retry does not run again; reply carries full history', async () => {
   const seen: Job[] = [];
   const executor: Executor = { run: async job => { seen.push(job); return result(seen.length === 1 ? 'ask_user' : 'complete'); } };
   const store = new JobStore(':memory:');
   const tasks = new TaskService(store, executor);
   try {
-    const input = { service: 'agent.execute', goal: 'Create agenda', requestId: 'submit' };
+    const input = { service: 'eigos.delegate', goal: 'Create agenda', requestId: 'submit' };
     const submitted = tasks.submit(p, input);
-    assert.equal(submitted.state, 'working');
+    assert.equal(submitted.state, 'submitted');
     tasks.submit(p, input);
     const waiting = await tasks.wait(p, submitted.id);
     assert.equal(waiting.state, 'input-required');
@@ -45,7 +36,7 @@ test('async model decisions persist; retry does not run again; reply carries ful
     assert.equal(seen[1]?.messages.at(-1)?.text, answer.answer);
     assert.equal(seen[1]?.messages[0]?.text, input.goal);
     assert.equal(completed.state, 'completed');
-    assert.equal(completed.runs?.length, 2);
+    assert.equal(completed.runs?.filter(r => r.purpose === 'document').length, 2);
     assert.equal(completed.artifact?.data.markdown, '# Fixture output');
     assert.equal(completed.artifact?.data.execution, 'completed');
   } finally { await tasks.close(); store.close(); }
@@ -57,8 +48,8 @@ test('cancel aborts execution and late model results cannot complete canceled ta
   const executor: Executor = { run: async (_job, s) => { signal = s; return new Promise(resolve => { release = resolve; }); } };
   const store = new JobStore(':memory:'); const tasks = new TaskService(store, executor);
   try {
-    const job = tasks.submit(p, { service: 'agent.execute', goal: 'test', requestId: 'x' });
-    await Promise.resolve();
+    const job = tasks.submit(p, { service: 'eigos.delegate', goal: 'test', requestId: 'x' });
+    for (let i=0; i<100 && !signal; i++) await new Promise(r=>setTimeout(r,10));
     tasks.cancel(p, job.id);
     await new Promise(resolve => setTimeout(resolve, 150));
     assert(signal.aborted);
@@ -73,10 +64,10 @@ test('failed execution is visible and never silently replaced with a template', 
   const store = new JobStore(':memory:');
   const tasks = new TaskService(store, { run: async () => { throw new Error('Test provider unavailable'); } });
   try {
-    const job = tasks.submit(p, { service: 'agent.execute', goal: 'test', requestId: 'x' });
+    const job = tasks.submit(p, { service: 'eigos.delegate', goal: 'test', requestId: 'x' });
     const failed = await tasks.wait(p, job.id);
-    assert.equal(failed.state, 'failed'); assert.equal(failed.artifact, undefined);
-    assert.match(failed.error!, /provider availability/);
+    assert.equal(failed.state, 'input-required'); assert.equal(failed.artifact, undefined);
+    assert.match(failed.question!, /无法回查/); assert(!JSON.stringify(failed).includes('Test provider unavailable'));
   } finally { await tasks.close(); store.close(); }
 });
 

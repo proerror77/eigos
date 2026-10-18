@@ -1,100 +1,85 @@
-// Opt-in live harness. It observes a real PA submission; it never submits on the PA's behalf.
+// Read-only acceptance observer for the actual persistent PA workflow. Never submits the business goal.
 import assert from 'node:assert/strict';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync, readdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { join, resolve, isAbsolute } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import type { Job } from '../packages/core/domain.js';
-import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { digest } from '../packages/core/delegation.js';
-import { paotuiPreviewSchema } from '../packages/capabilities/paotui-contracts.js';
+import type { Job } from '../packages/core/domain.js';
 import { ontologyReceiptSchema } from '../packages/capabilities/paotui-mcp-server.js';
 
-if (!process.argv.includes('--live')) throw new Error('Live PA and personal Meituan reads require --live');
-const queryFile = process.env.EIGOS_PAOTUI_E2E_QUERY_FILE;
-const skill = process.env.EIGOS_PAOTUI_SKILL_DIR;
-if (!queryFile || !isAbsolute(queryFile) || !skill || !isAbsolute(skill)) throw new Error('Set absolute EIGOS_PAOTUI_E2E_QUERY_FILE and EIGOS_PAOTUI_SKILL_DIR');
-const query = paotuiPreviewSchema.parse(JSON.parse(readFileSync(queryFile, 'utf8')));
-const directory = join(homedir(), '.local/share/eigos/pa-paotui-e2e', new Date().toISOString().replaceAll(':', '-'));
-mkdirSync(directory, { recursive: true, mode: 0o700 });
-const privateJson = (name: string, value: unknown) => writeFileSync(join(directory, name), JSON.stringify(value, null, 2), { mode: 0o600 });
-const token = randomUUID() + randomUUID(); const tokenPath = join(directory, 'gateway.token');
-writeFileSync(tokenPath, token, { mode: 0o600 });
-const children: ChildProcess[] = [];
-let stopping = false;
-process.once('SIGTERM', () => { stopping = true; }); process.once('SIGINT', () => { stopping = true; });
-async function start(name: string, env: NodeJS.ProcessEnv) {
-  const child = spawn(process.execPath, [resolve(`dist/tests/fixtures/${name}.js`)], { env: { PATH: process.env.PATH, HOME: process.env.HOME, USER: process.env.USER, TMPDIR: process.env.TMPDIR, NODE_NO_WARNINGS: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] }); children.push(child);
-  let diagnostics = ''; child.stderr!.on('data', data => { diagnostics = (diagnostics + data.toString()).slice(-8000); });
-  return new Promise<{ port?: number }>((done, reject) => {
-    const timer = setTimeout(() => reject(new Error('Live process readiness deadline exceeded')), 15000); let buffer = '';
-    child.stdout!.on('data', data => { buffer += data; const lines = buffer.split('\n'); buffer = lines.pop()!; for (const line of lines) { try { const value = JSON.parse(line); clearTimeout(timer); done(value); } catch { /* Non-JSON diagnostics are not readiness. */ } } });
-    child.once('exit', code => { clearTimeout(timer); if (code) reject(new Error(`Live process failed (${code}); inspect private diagnostics`)); privateJson(name + '-diagnostics.json', { diagnostics }); });
-  });
-}
-const sourceFiles = (path: string): string[] => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? sourceFiles(join(path, e.name)) : e.name.endsWith('.ts') ? [join(path, e.name)] : []);
-const files = [...sourceFiles('apps'), ...sourceFiles('packages'), 'tests/fixtures/ontology-gateway.ts', 'tests/fixtures/live-worker.ts'].sort();
-const implementationSnapshot = { capturedAt: new Date().toISOString(), fileCount: files.length, digest: digest(files.map(path => ({ path: 'dist/' + path.replace(/\.ts$/, '.js'), digest: digest(readFileSync('dist/' + path.replace(/\.ts$/, '.js'), 'utf8')) }))) };
-const watcher = new Client({ name: 'eigos-live-e2e-observer', version: '1' });
+if (!process.argv.includes('--live')) throw new Error('Use --live to inspect the authorized persistent PA test');
+const argument = (key: string) => { const i = process.argv.indexOf(key); if (i < 0 || !process.argv[i + 1]) throw new Error(`Missing ${key}`); return resolve(process.argv[i + 1]!); };
+const directory = argument('--session-dir'), expectedPath = argument('--expected-query');
+const runtime = join(homedir(), '.local/share/eigos/grok-life');
+const read = (path: string) => JSON.parse(readFileSync(path, 'utf8'));
+const session = read(join(directory, 'session.json'));
+const profile = read(join(runtime, 'profile.json'));
+assert.equal(profile.cardUrl, 'http://127.0.0.1:3430/.well-known/agent-card.json'); assert.equal(profile.defaultService, 'eigos.delegate'); assert.deepEqual(profile.allowedServices, ['eigos.delegate']);
+const stat = lstatSync(profile.tokenFile); assert(stat.isFile() && !stat.isSymbolicLink() && (stat.mode & 0o077) === 0);
+const token = readFileSync(profile.tokenFile, 'utf8').trim();
+const received = read(join(directory, 'pa-received.json')); const peer = received.task ?? received;
+const asked = read(join(directory, 'pa-address-question.json')); const question = asked.task ?? asked;
+const client = new Client({ name: 'persistent-pa-e2e-observer', version: '1' });
 try {
-  const env = { EIGOS_AUTH_MODE: 'development', HOST: '127.0.0.1', EIGOS_COORDINATOR: 'codex', EIGOS_EXECUTOR: 'disabled', EIGOS_PAOTUI_ORDERS_ENABLED: 'false', EIGOS_PAOTUI_SKILL_DIR: skill, EIGOS_ONTOLOGY_AUDIT_PATH: join(directory, 'ontology-reads.jsonl'), DATABASE_PATH: join(directory, 'tasks.sqlite'), EIGOS_CODEX_BIN: process.env.EIGOS_CODEX_BIN ?? 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: '120000', EIGOS_AUDIT_PATH: join(directory, 'gateway-audit.jsonl') };
-  const gateway = await start('ontology-gateway', { ...env, GATEWAY_TOKEN_FILE: tokenPath }); const base = `http://127.0.0.1:${gateway.port}`;
-  await start('live-worker', { ...env, PUBLIC_URL: base });
-  privateJson('profile.json', { cardUrl: base + '/.well-known/agent-card.json', tokenFile: tokenPath, allowLoopbackHttp: true, allowedServices: ['eigos.delegate'], defaultService: 'eigos.delegate' });
-  copyFileSync('integrations/grok/eigos-delegate/scripts/eigos_a2a.py', join(directory, 'eigos_a2a.py'));
-  copyFileSync('integrations/grok/eigos-delegate/SKILL.md', join(directory, 'SKILL.md'));
-  const requestId = 'pa-paotui-' + randomUUID();
-  const goal = `请通过 EIGOS 查询美团跑腿当前配送价格。使用本人已保存、此前只读测试使用过的同城地址：senderAddressId=${query.senderAddressId}，recipientAddressId=${query.recipientAddressId}。物品：${query.goodsName}；分类：${query.category}；重量：${query.weightKg} 公斤；服务：${query.service}。只查价格，不创建订单、不下单、不付款；送达时间只是估计。请返回真实查询结果。`;
-  privateJson('task-input.json', { service: 'eigos.delegate', goal, requirements: [{ id: 'read_only', kind: 'condition', strength: 'hard', expected: { predicate: 'execution.no_order' } }] });
-  privateJson('session.json', { directory, base, requestId, implementationSnapshot });
-  console.log(JSON.stringify({ readyForPA: true, directory, base, requestId }));
-  await watcher.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
-  let job: Job | undefined;
-  const deadline = Date.now() + 1200000;
-  while (Date.now() < deadline) {
-    assert(!stopping, 'Live test stopped');
-    const response = await watcher.callTool({ name: 'list_tasks', arguments: {} });
-    const jobs = (response.structuredContent as { result: { jobs: Job[] } }).result;
-    const list = jobs.jobs;
-    job = list?.find(j => j.delegation?.request.originalGoal === goal);
-    if (job && !['submitted', 'working', 'input-required'].includes(job.state)) break;
-    await new Promise(r => setTimeout(r, 1500));
+  await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3430/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+  const response = await client.callTool({ name: 'get_task', arguments: { taskId: peer.id } }); assert(!response.isError);
+  const job = (response.structuredContent as { result: Job }).result;
+  assert.equal(job.id, question.id); assert.equal(question.status.state, 'TASK_STATE_INPUT_REQUIRED'); assert.equal(question.artifacts?.length ?? 0, 0);
+  assert.equal(job.state, 'completed'); assert.equal(peer.status.state, 'TASK_STATE_COMPLETED'); assert.equal(job.delegation!.acceptance!.accepted, true);
+  assert.equal(job.messages[0]!.id, session.requestId); assert.equal(job.goal, readFileSync(session.goalFile, 'utf8'));
+  assert.equal(job.delegation!.request.revision, 2); assert.equal(job.delegation!.request.messages.length, 2);
+  assert.deepEqual(job.delegation!.plan!.capabilityRef, { id: 'delivery.quote', version: '2' });
+  assert.equal(digest(peer.artifacts[0].parts[0].data), digest(job.artifact!.data));
+  const result = job.artifact!.data.result as Record<string, any>;
+  assert.equal(result.previewOnly, true); assert.equal(result.orderCreated, false); assert.equal(result.source, 'meituan');
+  assert.equal(result.goods.weightKg, 1); assert.equal(result.service, 'ordinary');
+  assert((job.runs?.length ?? 0) >= 3 && job.runs!.every(r => r.runtime === 'codex-exec' && r.threadId));
+  const db = new DatabaseSync(join(runtime, 'tasks.sqlite'), { readOnly: true });
+  let context: any; let sameRequestTasks: number;
+  try {
+    const owner = JSON.stringify(['local-development', 'local', 'developer']);
+    const row = db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=?').get(owner, job.id); assert(row); context = JSON.parse(String(row.body));
+    sameRequestTasks = db.prepare('SELECT body FROM jobs WHERE owner=?').all(owner).map(r => JSON.parse(String(r.body))).filter(j => j.messages[0]?.id === session.requestId).length;
+  } finally { db.close(); }
+  assert.equal(sameRequestTasks, 1);
+  const expected = read(expectedPath);
+  const sender = context.addresses.find((a: any) => a.addressId === expected.senderAddressId); const recipient = context.addresses.find((a: any) => a.addressId === expected.recipientAddressId);
+  assert(sender && recipient); assert.equal(result.route.sender, sender.address); assert.equal(result.route.recipient, recipient.address);
+  const modelInputs = JSON.stringify([job.delegation!.request, job.delegation!.plan!.steps.map(s => s.input)]);
+  assert(!modelInputs.includes(expected.senderAddressId) && !modelInputs.includes(expected.recipientAddressId));
+  const prepared = job.delegation!.resolution!.candidates[0]!.details!;
+  const receipts = [context.receipt, prepared.addressReadReceipt, prepared.ontologyReceipt, result.ontologyReceipt].map(r => ontologyReceiptSchema.parse(r));
+  const audit = readFileSync(join(runtime, 'ontology-reads.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(new Set(receipts.map(r => r.id)).size, 4); assert(receipts.every(r => r.evidenceKind === 'live_readonly' && audit.some(a => digest(a) === digest(r))));
+  assert.deepEqual(receipts.map(r => r.tool), ['ontology_address_book_read', 'ontology_address_book_read', 'ontology_delivery_quote', 'ontology_delivery_quote']);
+  assert(receipts.every(r => r.sourceCalls.every(c => ['get_address_list', 'get_address_info', 'delivery_preview'].includes(c))));
+  const before = read(join(directory, 'restart-before.json')), after = read(join(directory, 'restart-after.json'));
+  assert.equal(before.taskId, job.id); assert.equal(after.taskId, job.id); assert.equal(after.questionSha256, before.questionSha256); assert.equal(after.contextSha256, before.contextSha256); assert.equal(after.state, 'input-required');
+  const release = read(join(runtime, 'release.json')); const hash = createHash('sha256');
+  for (const path of release.files as string[]) { const deployed = readFileSync(join(release.release, path)); assert(deployed.equals(readFileSync(resolve(path))), `Deployed build differs: ${path}`); hash.update(path + '\0'); hash.update(deployed); }
+  assert.equal(hash.digest('hex'), release.buildDigest);
+  const health = await fetch('http://127.0.0.1:3430/health').then(r => r.json()); assert.equal(health.releaseDigest, release.buildDigest);
+  const card = await fetch(profile.cardUrl).then(r => r.json()); assert.deepEqual(card.skills.map((s: any) => s.id), ['eigos.delegate']);
+  const retired = ['brief.prepare', 'agent.execute', 'life.request', 'meituan.paotui.read', 'meituan.paotui.order', 'data.quality.audit.simulated'];
+  for (const service of retired) {
+    const rejected = await client.callTool({ name: 'submit_task', arguments: { service, goal: 'retired-entry-rejection-check', requestId: randomUUID() } }); assert.equal(rejected.isError, true, `${service} must be rejected`);
   }
-  assert(job, 'No actual PA submission observed before deadline');
-  privateJson('task.json', job);
-  assert.equal(job.state, 'completed', 'PA task did not complete; inspect original task and private evidence');
-  assert.equal(job.delegation!.backendVersion, BACKEND_VERSION); assert.equal(job.delegation!.plan!.capabilityRef.id, 'delivery.quote');
-  assert.equal(job.delegation!.acceptance!.accepted, true); assert.equal(job.delegation!.resolution!.scope.realSupply, true);
-  const result = job.artifact!.data.result as Record<string, unknown>;
-  assert.equal(result.source, 'meituan'); assert.equal(result.orderCreated, false); assert.equal(result.previewOnly, true);
-  const receipt = ontologyReceiptSchema.parse(result.ontologyReceipt); assert.equal(receipt.evidenceKind, 'live_readonly');
-  assert(receipt.sourceCalls.includes('delivery_preview')); assert(receipt.sourceCalls.every(c => ['get_address_list', 'get_address_info', 'delivery_preview'].includes(c)));
-  const receipts = readFileSync(join(directory, 'ontology-reads.jsonl'), 'utf8').trim().split('\n').map(line => ontologyReceiptSchema.parse(JSON.parse(line)));
-  assert(receipts.some(r => r.id === receipt.id)); assert(receipts.length >= 2);
-  const a2a = await fetch(base + '/a2a', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'GetTask', params: { id: job.id } }) }).then(r => r.json());
-  const task = a2a.result.task ?? a2a.result; assert.equal(task.status.state, 'TASK_STATE_COMPLETED'); assert.equal(digest(task.artifacts[0].parts[0].data), digest(job.artifact!.data));
-  privateJson('verification.json', { status: 'backend_passed_await_pa_readback', backendVersion: BACKEND_VERSION, implementationSnapshot,
-    taskId: job.id, state: job.state, capabilityRef: job.delegation!.plan!.capabilityRef, bindingRef: job.delegation!.plan!.bindingRef, planDigest: job.delegation!.plan!.digest, realSupply: true, modelReceipts: job.runs, quote: result.quote, receipts,
-    protocolArtifactDigestsMatch: true, orderCreated: false, paymentsMade: false, paInitiation: 'Submitted externally by the actual PA; harness only observes. PA UI/client readback must be archived separately.' });
-  console.log(JSON.stringify({ backendPassed: true, taskId: job.id, directory, quote: result.quote }));
-  // Keep the same task reachable so the PA can poll/get its actual completed delivery.
-  const readbackDeadline = Date.now() + 600000;
-  let peerDigest: string | undefined;
-  while (Date.now() < readbackDeadline) {
-    assert(!stopping, 'Live test stopped');
-    try {
-      const received = JSON.parse(readFileSync(join(directory, 'pa-received.json'), 'utf8')); const peer = received.task ?? received;
-      if (peer.id === job.id && peer.status?.state === 'TASK_STATE_COMPLETED') { peerDigest = digest(peer.artifacts[0].parts[0].data); break; }
-    } catch { /* PA has not saved its readback yet. */ }
-    await new Promise(r => setTimeout(r, 1500));
-  }
-  assert.equal(peerDigest, digest(job.artifact!.data), 'Actual PA must save the same completed delivery before E2E can pass');
-  const verification = JSON.parse(readFileSync(join(directory, 'verification.json'), 'utf8'));
-  privateJson('verification.json', { ...verification, status: 'passed', paReceivedArtifactDigest: peerDigest });
-  console.log(JSON.stringify({ passed: true, taskId: job.id, directory }));
-} finally {
-  await watcher.close().catch(() => {});
-  for (const child of children.reverse()) if (child.exitCode === null && child.signalCode === null) { const exit = new Promise<void>(r => child.once('exit', () => r())); child.kill('SIGTERM'); await exit; }
-}
+  const evidence = { passed: true, recordedAt: new Date().toISOString(), scope: 'Actual Grok PA on the persistent loopback service, natural goal, real owned address choices, same-task continuation after restart, actual Codex and real Meituan reads only',
+    taskId: job.id, requestId: session.requestId, capabilityRef: job.delegation!.plan!.capabilityRef, originalGoalHadNoAddressIds: true, sameTaskAfterReply: true, onlyOneBusinessTask: true,
+    restart: { questionUnchanged: true, privateChoicesUnchanged: true, priorReleaseDigest: before.release, activeReleaseDigest: release.buildDigest },
+    modelReceipts: job.runs, ontologyReceipts: receipts, quote: result.quote, weightKg: result.goods.weightKg, service: result.service,
+    acceptance: job.delegation!.acceptance, paArtifactDigest: digest(peer.artifacts[0].parts[0].data), mcpArtifactDigest: digest(job.artifact!.data),
+    selectedRouteMatchesPreviousAuthorizedTest: true, orderCreated: false, paymentsMade: false, retiredEntriesRejected: retired,
+    paClientSha256: createHash('sha256').update(readFileSync(join(runtime, 'eigos_a2a.py'))).digest('hex'),
+    paReceivedFileSha256: createHash('sha256').update(readFileSync(join(directory, 'pa-received.json'))).digest('hex'),
+    sourceProgramSha256: createHash('sha256').update(readFileSync(join(process.env.EIGOS_PAOTUI_SKILL_DIR ?? join(homedir(), '.codex/skills/meituan-paotui'), 'paotui.js'))).digest('hex'),
+    runtime: { origin: 'http://127.0.0.1:3430', defaultService: 'eigos.delegate', buildDigest: release.buildDigest, active: true },
+  };
+  const serialized = JSON.stringify(evidence, null, 2) + '\n';
+  assert(![token, expected.senderAddressId, expected.recipientAddressId, sender.address, recipient.address].some(v => v && serialized.includes(v)));
+  writeFileSync(join(directory, 'verification.json'), serialized, { mode: 0o600 });
+  console.log(JSON.stringify({ passed: true, taskId: job.id, quote: result.quote, modelCalls: job.runs!.length, ontologyReads: receipts.length, buildDigest: release.buildDigest }));
+} finally { await client.close(); }

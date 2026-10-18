@@ -3,26 +3,15 @@ import { z } from 'zod';
 import type { ExecutionAdapter, Preparation, AdapterContext, Delivery } from '../core/catalog.js';
 import type { ServiceCapability, ProviderBinding, ExecutionPlan } from '../ontology/execution.js';
 import type { Job } from '../core/domain.js';
-import { SERVICE_CATALOG } from '../core/services.js';
 
 const inputSchema = z.object({ goal: z.string().trim().min(1).max(10000), deliverable: z.string().trim().min(1).max(4000) }).strict();
-export function prepareBrief(job: Job): void {
-  if (!job.deliverable) {
-    job.question = 'What deliverable and acceptance criteria should this task brief record?';
-    job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); return;
-  }
-  delete job.question;
-  job.state = 'completed';
-  job.artifact = { id: randomUUID(), name: 'task-brief.json', data: { goal: job.goal, deliverable: job.deliverable, execution: 'not_started' } };
-  job.messages.push({ id: randomUUID(), role: 'agent', text: 'Task brief prepared. The underlying business goal has not been executed.', at: job.updatedAt });
-}
 export function verifyBrief(artifact: NonNullable<Job['artifact']>, input: { goal: string; deliverable: string }): boolean {
   return artifact.name === 'task-brief.json' && artifact.data.goal === input.goal &&
     artifact.data.deliverable === input.deliverable && artifact.data.execution === 'not_started';
 }
 export const BRIEF_CAPABILITY: ServiceCapability = {
     ref: { id: 'brief.prepare', version: '2' }, ontologyRef: { id: 'task-brief', version: '2' },
-    name: 'Prepare a task brief', description: SERVICE_CATALOG['brief.prepare']!.description + ' Only choose this when a brief itself is the requested outcome. Required input: goal, deliverable.', tags: ['brief', 'requirements'],
+    name: 'Prepare a task brief', description: 'Produce a task brief with execution=not_started; never execute the underlying business. ' + ' Only choose this when a brief itself is the requested outcome. Required input: goal, deliverable.', tags: ['brief', 'requirements'],
     inputSchema: z.toJSONSchema(inputSchema), actions: [{ ref: { id: 'prepare_brief', version: '2' }, effect: 'local' }], verifierRef: { id: 'brief.exact', version: '2' },
     predicates: [{ id: 'brief.json', description: 'The brief is delivered as a JSON artifact' }, { id: 'execution.none', description: 'Only prepare the brief; do not perform the underlying business goal or external actions' }],
     ontology: {

@@ -3,7 +3,7 @@ import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/ser
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { DomainError, SERVICES, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
+import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 
 export class AgentUser implements User {
@@ -37,11 +37,11 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.intake ? { intake: job.intake } : {}), ...(job.pilot ? { pilot: job.pilot } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 
-export function agentCard(c: Config, services = SERVICES): AgentCard {
+export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
     description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
@@ -107,7 +107,7 @@ export class A2AGateway implements A2ARequestHandler {
         input = parts[0].content.value;
       } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
         const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text } : { goal: text, service: this.tasks.services().some(s => s.id === 'eigos.delegate') ? 'eigos.delegate' : this.tasks.services().some(s => s.id === 'life.request') ? 'life.request' : this.tasks.services().some(s => s.id === 'agent.execute') ? 'agent.execute' : 'brief.prepare' };
+        input = message.taskId ? { answer: text } : { goal: text, service: 'eigos.delegate' };
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
       if (message.taskId) {

@@ -1,3 +1,6 @@
+import { Worker } from '../apps/worker/worker.js';
+import { Coordinator } from '../packages/coordinator/coordinator.js';
+import { briefReasoner } from './local-tasks.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
@@ -108,6 +111,7 @@ async function fixture(manualApproval: boolean | 'invite-only' = false, tenantCl
   };
   const login = oidcLoginProvider(async () => oidc.discovery(new URL(issuer), clientId, { id_token_signed_response_alg: 'ES256' }, oidc.None(), { execute: [oidc.allowInsecureRequests] }), base + '/members/callback', tenantClaim);
   const gateway = createApp(config, jwtVerifier(issuer, audience, createLocalJWKSet({ keys: [jwk] }), tenantClaim), undefined, login);
+  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();
   server.on('request', gateway.app);
   const browserCookies = new Map<string, string>();
   async function browser(path: string, options: RequestInit = {}) {
@@ -147,7 +151,7 @@ async function fixture(manualApproval: boolean | 'invite-only' = false, tenantCl
     close: async () => {
       server.closeAllConnections(); provider.closeAllConnections();
       await Promise.all([new Promise<void>(resolve => server.close(() => resolve())), new Promise<void>(resolve => provider.close(() => resolve()))]);
-      await gateway.close(); rmSync(dir, { recursive: true, force: true });
+      await worker.close(); await gateway.close(); rmSync(dir, { recursive: true, force: true });
     },
   };
 }
@@ -169,7 +173,8 @@ test('signed OIDC + PKCE login, explicit membership application, MCP/A2A continu
     mcp = new Client({ name: 'member-personal-agent', version: '1' });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${accessToken}` } } }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my service brief', requestId: randomUUID() } });
-    const job = (submitted.structuredContent as { result: Job }).result; assert.equal(job.state, 'input-required');
+    const job = (submitted.structuredContent as { result: Job }).result;
+    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:Job}).result.state==='input-required') break;await new Promise(r=>setTimeout(r,10));}
     const response = await f.protectedCall('/a2a', accessToken, { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } });
     const task = (await response.json()).result.task; assert.equal(task.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } });

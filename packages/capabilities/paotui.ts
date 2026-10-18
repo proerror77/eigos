@@ -1,8 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, isAbsolute } from 'node:path';
-import { createHash } from 'node:crypto';
-import type { PreparedOrder, ProviderOrder, PaotuiOrderProvider } from './paotui-orders.js';
 
 const exec = promisify(execFile);
 const clientId = 'ac76c22d257c4c6d9164719eea64ed4b';
@@ -12,8 +10,8 @@ export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 
 // Official CLI has a personal credential/cache. Restrict this adapter to one local
 // development identity; it is not a multi-user token broker or a payment executor.
-export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
-  constructor(private skillDir: string, private ordersEnabled = false, private onCommand?: (command: string) => void) {
+export class LocalPaotuiReader implements PaotuiReader {
+  constructor(private skillDir: string, private onCommand?: (command: string) => void) {
     if (!isAbsolute(skillDir)) throw new Error('Paotui skill directory must be absolute');
   }
   private async token(signal: AbortSignal): Promise<string> {
@@ -34,7 +32,7 @@ export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
       return data;
     } catch { throw new Error('Meituan operation failed; inspect provider account before retrying.'); }
   }
-  async prepare(input: PaotuiQuery, signal: AbortSignal): Promise<PreparedOrder> {
+  private async preview(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     const q = paotuiPreviewSchema.parse(input);
     const token = await this.token(signal);
     const book = await this.command(['get_address_list'], token, signal);
@@ -57,34 +55,16 @@ export class LocalPaotuiReader implements PaotuiReader, PaotuiOrderProvider {
       if (!Number.isSafeInteger(fen)) throw new Error('Invalid quote amount');
       return fen;
     };
-    const amountFen = money(preview._previewTotal), rawFen = money(preview._deliveryFee);
-    if (amountFen > rawFen || typeof preview.orderToken !== 'string' || !preview.orderToken) throw new Error('Invalid quote');
-    const submissionArgs = [...common, '--order-token', preview.orderToken, '--delivery-fee', String(preview._deliveryFee), '--preview-total', String(preview._previewTotal)];
-    if (preview._couponViewId) submissionArgs.push('--coupon-view-id', String(preview._couponViewId));
-    return { amountFen, credentialHash: createHash('sha256').update(token).digest('hex'), submissionArgs,
-      summary: { route: { sender: sender.address, recipient: recipient.address }, goods: { name: q.goodsName, category: q.category, weightKg: q.weightKg }, service: q.service,
-        quote: Object.fromEntries(['feeDisplay', 'estimateTime', 'distance', 'serviceType', 'deliveryServiceType', '_deliveryFee', '_previewTotal'].filter(k => preview[k] !== undefined).map(k => [k, preview[k]])) } };
-  }
-  async submit(prepared: PreparedOrder, signal: AbortSignal): Promise<ProviderOrder> {
-    if (!this.ordersEnabled) throw new Error('Real orders disabled');
-    const token = await this.token(signal);
-    if (createHash('sha256').update(token).digest('hex') !== prepared.credentialHash) throw new Error('Authorization changed; obtain a new preview');
-    const data = await this.command(['submit_order', ...prepared.submissionArgs], token, signal);
-    if (![data.orderId, data.tradeNo, data.payToken].every(v => typeof v === 'string' && v.length)) throw new Error('Incomplete order result');
-    return { orderId: data.orderId, tradeNo: data.tradeNo, payToken: data.payToken };
-  }
-  async paymentLinks(order: ProviderOrder, signal: AbortSignal): Promise<{ mobilePayUrl: string; pcPayUrl: string }> {
-    if (!this.ordersEnabled) throw new Error('Payment links disabled');
-    const data = await this.command(['get_pay_url', '--trade-no', order.tradeNo, '--pay-token', order.payToken, '--order-id', order.orderId], await this.token(signal), signal);
-    if (typeof data.mobilePayUrl !== 'string' || typeof data.pcPayUrl !== 'string') throw new Error('Payment links unavailable');
-    return { mobilePayUrl: data.mobilePayUrl, pcPayUrl: data.pcPayUrl };
+    money(preview._previewTotal); money(preview._deliveryFee);
+    return  { route: { sender: sender.address, recipient: recipient.address }, goods: { name: q.goodsName, category: q.category, weightKg: q.weightKg }, service: q.service,
+        quote: Object.fromEntries(['feeDisplay', 'estimateTime', 'distance', 'serviceType', 'deliveryServiceType', '_deliveryFee', '_previewTotal'].filter(k => preview[k] !== undefined).map(k => [k, preview[k]])) };
   }
   async query(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     const q = paotuiQuerySchema.parse(input);
     try {
       if (q.action === 'preview') {
-        const prepared = await this.prepare(q, signal);
-        return { source: 'meituan', previewOnly: true, orderCreated: false, ...prepared.summary };
+        const summary = await this.preview(q, signal);
+        return { source: 'meituan', previewOnly: true, orderCreated: false, ...summary };
       }
       const args = q.action === 'authorization' ? ['confirm_auth'] : q.action === 'addresses' ? ['get_address_list'] : ['search_poi', '--keyword', q.keyword, '--city', q.city];
       const data = await this.command(args, await this.token(signal), signal);

@@ -19,12 +19,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('list_services', {
-    description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional intake-only life.request. Dedicated prototype services are available only in the separate prototype mode.',
+    description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. life.request saves an intake-only receipt and does not execute. Discover the current scope first. Reuse requestId for identical retries.',
-    inputSchema: tasks.services().some(s => s.id === 'eigos.delegate') ? ontologySubmitSchema : submitSchema,
+    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. Discover the current scope first. Reuse requestId for identical retries.',
+    inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => tasks.submit(principal, args)));
   server.registerTool('get_task', {
@@ -37,12 +37,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     annotations: read,
   }, args => result(() => tasks.list(principal, args)));
   server.registerTool('reply_to_task', {
-    description: 'Add information to an open life.request without starting execution, or answer an owned task waiting for input. For CSV simulation, confirmation requires action=confirm_simulated_payment, quoteId and quoteDigest; plain answer cannot approve payment. Reuse requestId only for identical retries.',
+    description: 'Answer an owned ontology task waiting for input. A reply never grants business authorization. Reuse requestId only for identical retries.',
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));
   server.registerTool('cancel_task', {
-    description: 'Cancel an owned open task or life.request registration. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
+    description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: true, idempotentHint: true, openWorldHint: false },
   }, ({ taskId }) => result(() => tasks.cancel(principal, taskId)));

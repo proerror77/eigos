@@ -33,9 +33,7 @@ export class JobStore {
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
     this.transaction(() => {
-      const legacy = !this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='work_claims'").get();
       this.db.exec(`
-        CREATE TABLE IF NOT EXISTS pilot_ledger (key TEXT PRIMARY KEY, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS jobs (
           id TEXT PRIMARY KEY, owner TEXT NOT NULL, context_id TEXT NOT NULL,
           state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, body TEXT NOT NULL
@@ -73,33 +71,25 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS capability_claims (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_verifications (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_change_proposals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
-      if (legacy) {
-        const rows = this.db.prepare("SELECT owner,body FROM jobs WHERE state='working'").all();
-        for (const row of rows) {
-          const job = JSON.parse(String(row.body)) as Job;
-          if (job.service === 'eigos.delegate' && job.delegation?.backendVersion !== BACKEND_VERSION) continue;
-          if (job.service === 'data.quality.audit.simulated') continue;
-          job.state = 'failed'; job.error = 'Legacy execution interrupted by Gateway/Worker migration; inspect external outcome before retrying.';
-          job.updatedAt = new Date().toISOString(); this.save(String(row.owner), job);
-        }
-      }
     });
   }
 
-  // Local simulation ledger only; no payment credentials or external calls.
-  pilotRead<T>(key: string): T | undefined {
-    const row = this.db.prepare('SELECT body FROM pilot_ledger WHERE key=?').get(key);
+  close(): void { this.db.close(); }
+
+  preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
+    this.get(owner, jobId);
+    const row = this.db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=? AND key=?').get(owner, jobId, key);
     return row ? JSON.parse(String(row.body)) as T : undefined;
   }
-  pilotWrite(key: string, value: unknown): void {
-    this.db.prepare('INSERT INTO pilot_ledger VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET body=excluded.body').run(key, JSON.stringify(value));
+  savePreparationContext(owner: string, jobId: string, key: string, value: unknown): void {
+    const job = this.get(owner, jobId);
+    if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION || !['working', 'submitted'].includes(job.state)) throw new DomainError('CONFLICT', 'Preparation task is no longer active');
+    const body = JSON.stringify(value);
+    if (body.length > 200000) throw new DomainError('INVALID_INPUT', 'Preparation context limit exceeded');
+    this.db.prepare('INSERT INTO preparation_contexts VALUES(?,?,?,?) ON CONFLICT(owner,job_id,key) DO UPDATE SET body=excluded.body').run(owner, jobId, key, body);
   }
-  pilotJobs(): { owner: string; job: Job }[] {
-    return this.db.prepare("SELECT owner,body FROM jobs WHERE json_extract(body,'$.pilot') IS NOT NULL").all()
-      .map(r => ({ owner: String(r.owner), job: JSON.parse(String(r.body)) as Job }));
-  }
-  close(): void { this.db.close(); }
 
   // Called inside the same fenced checkpoint that saves the fixed plan.
   createIntent(owner: string, intent: ActionIntent): string {
@@ -294,7 +284,7 @@ export class JobStore {
       JOIN jobs j ON j.id=c.job_id WHERE c.expires_at<=?`).all(now);
     for (const row of rows) {
       const job = JSON.parse(String(row.body)) as Job;
-      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion !== BACKEND_VERSION) continue;
+      if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
       if (job.delegation?.plan && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
@@ -319,7 +309,7 @@ export class JobStore {
       const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
-        AND (json_extract(body,'$.service')!='eigos.delegate' OR json_extract(body,'$.delegation.backendVersion')=?)
+        AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
       if (!row) return;

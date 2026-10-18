@@ -1,6 +1,5 @@
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
-import { PilotCommands } from '../../packages/capabilities/pilot/commands.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
@@ -40,21 +39,10 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const principals = new WeakMap<Request, Principal>();
   const store = new JobStore(config.DATABASE_PATH);
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
-  const pilot = config.EIGOS_CSV_PILOT === 'true' && config.EIGOS_COORDINATOR !== 'codex' ? new PilotCommands() : undefined;
-  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
-  const tasks = new TaskService(store, {
-    catalog,
-    coordinator: config.EIGOS_COORDINATOR === 'codex',
-    allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true',
-    lifeIntake: config.EIGOS_LIFE_INTAKE === 'true',
-    csvInputDirectory: config.EIGOS_CSV_INPUT_DIR,
-    agent: config.EIGOS_EXECUTOR === 'codex',
-    paotui: !!config.EIGOS_PAOTUI_SKILL_DIR,
-    paotuiOrders: !!config.EIGOS_PAOTUI_SKILL_DIR,
-    pilot,
-  });
+  const tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
@@ -84,7 +72,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0' }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: 'ontology-execution-v3', releaseDigest: config.EIGOS_RELEASE_DIGEST }));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;

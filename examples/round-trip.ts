@@ -12,9 +12,16 @@ try {
   await mcp.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
   }));
-  const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Compare three workshop venues', requestId: randomUUID() } });
+  const submitted = await mcp.callTool({ name: 'submit_task', arguments: { service: 'eigos.delegate', goal: 'Prepare only a task brief for comparing workshop venues; ask me for the required deliverable. Do not perform venue research or booking.', requestId: randomUUID() } });
   if (submitted.isError) throw new Error(JSON.stringify(submitted.content));
-  const job = (submitted.structuredContent as { result: Job }).result;
+  let job = (submitted.structuredContent as { result: Job }).result;
+  const deadline = Date.now() + 180000;
+  while (['submitted','working'].includes(job.state) && Date.now() < deadline) {
+    await new Promise(r=>setTimeout(r,1000));
+    const read = await mcp.callTool({name:'get_task', arguments:{taskId:job.id}});
+    if (read.isError) throw new Error('Task read failed'); job=(read.structuredContent as {result:Job}).result;
+  }
+  if (job.state !== 'input-required') throw new Error('Inspect the original task; expected a clarification before replying');
   console.log('MCP submitted:', job.id, job.state, job.question);
 
   const a2a = await new ClientFactory().createFromUrl(base);

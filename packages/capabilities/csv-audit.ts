@@ -4,9 +4,9 @@ import { DomainError } from '../core/domain.js';
 import type { AdapterContext, Delivery, ExecutionAdapter, Preparation } from '../core/catalog.js';
 import type { ExecutionPlan, ProviderBinding, ServiceCapability } from '../ontology/execution.js';
 import { CSV_CHECKS } from '../ontology/csv-audit.js';
-import { FILE_RULES, loadCsvFile, bytesHash, type CsvSnapshot } from './pilot/csv-file.js';
-import { produceFile, renderFile } from './pilot/file-report.js';
-import { acceptFile } from './pilot/file-acceptance.js';
+import { FILE_RULES, loadCsvFile, bytesHash, type CsvSnapshot } from './csv/csv-file.js';
+import { produceFile, renderFile } from './csv/file-report.js';
+import { acceptFile } from './csv/file-acceptance.js';
 
 const checks = z.array(z.enum(CSV_CHECKS)).length(CSV_CHECKS.length).refine(v => new Set(v).size === CSV_CHECKS.length, 'This service supports full audits only; subset checks are not supported');
 const inputSchema = z.object({ fileName: z.string().min(1).max(200), checks }).strict();

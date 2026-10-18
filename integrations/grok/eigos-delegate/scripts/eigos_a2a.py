@@ -218,9 +218,6 @@ class Client:
         while True:
             task = self.rpc('GetTask', {'id': task_id}, endpoint)
             state = task['status']['state']
-            intake = task.get('metadata', {}).get('intake', {})
-            if state == 'TASK_STATE_SUBMITTED' and intake.get('status') == 'waiting_provider':
-                return {'task': task, 'resumeRequired': False, 'handoffAccepted': True, 'businessCompleted': False}
             if state in TERMINAL or state in ('TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED'):
                 return {'task': task, 'resumeRequired': False}
             if state not in ('TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'):

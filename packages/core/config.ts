@@ -2,11 +2,11 @@ import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 
 const schema = z.object({
-  EIGOS_COORDINATOR: z.enum(['disabled', 'codex']).default('disabled'),
-  EIGOS_LIFE_INTAKE: z.enum(['false', 'true']).default('false'),
+  EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
-  EIGOS_PAOTUI_ORDERS_ENABLED: z.enum(['false', 'true']).optional(),
+  EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),

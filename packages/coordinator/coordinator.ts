@@ -23,7 +23,7 @@ export class CodexReasoner implements Reasoner {
   async ground(request: ServiceRequest, capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal) {
     const prompt = [
       'You are the EIGOS ontology-grounded request interpreter. You have no tools or authority to execute, approve or declare business completion. Select only an exact supplied capability ref matching the ACTUAL requested outcome. Never replace an external purchase, delivery or research task with a brief about doing it. A full-audit-only service cannot satisfy an explicit subset audit.',
-      'Return kind=clarify for necessary missing input; unsupported if no capability can deliver the actual outcome; resolve otherwise. Preserve requestRevision. inputJson is the selected capability input object as JSON text. For clarify/unsupported use capabilityRef={id:"none",version:"none"} and inputJson="{}".',
+      'When a capability explicitly supports gathering missing business inputs, resolve it with its documented null fields so its adapter can obtain real options and ask the user. Do not preempt that workflow by asking for technical IDs. Otherwise return kind=clarify for necessary missing input; unsupported if no capability can deliver the actual outcome; resolve otherwise. Preserve requestRevision. inputJson is the selected capability input object as JSON text. For clarify/unsupported use capabilityRef={id:"none",version:"none"} and inputJson="{}".',
       'requirementsJson is a JSON array of {requirement, messageId, quote}. Extract explicit quantity, budget, deadline, location and conditions for the ACTUAL requested outcome, with an EXACT substring quote and its request message id. Details to record inside a brief are brief input, not requirements that the brief provider deliver physical goods. Do not invent constraints or weaken/remove existing ones. Prefer existing structured requirements; do not duplicate them. Extract CNY budgets in integer minor units; ask for structured minor units for other currencies. Relative deadlines use the message receivedAt and explicit timezone; ask if ambiguous. Preserve the original deadline quote. Requirement schema:',
       JSON.stringify(z.toJSONSchema(requirementSchema)),
       'For condition requirements, expected.predicate must use the relevant capability\'s registered predicate id, never a paraphrase of the user text. Preserve the original wording in quote. If a condition has no compatible registered predicate, retain it as an unresolved predicate and clarify; do not pretend it is supported. Input schema fields such as the audit checks array are not item-quantity requirements.',
@@ -75,6 +75,10 @@ export class Coordinator {
       job.delegation!.request = request; job.delegation!.resolution = { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison };
       job.delegation!.phase = 'planning'; job.updatedAt = new Date().toISOString();
     })) return;
+    // A provider's bounded business question goes directly to the owner. In particular,
+    // saved address choices must not enter a planning-model prompt or become a completed task.
+    const clarification = resolution.candidates.length === 1 && resolution.candidates[0]?.status === 'needs_input' ? resolution.candidates[0].question : undefined;
+    if (clarification) { this.pause(claim, request, true, clarification); return; }
     if ((this.store.get(claim.owner, claim.job.id).runs?.length ?? 0) >= 12) throw new Error('Maximum reasoning turns reached');
     const planned = await this.reasoner.plan({ request: structuredClone(request), capability, resolution: { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison } }, signal);
     signal.throwIfAborted();

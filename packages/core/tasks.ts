@@ -5,42 +5,20 @@ import { proposePlan, validatePlan } from '../coordinator/plan.js';
 import { checkRequirements } from '../coordinator/resolver.js';
 import { authorizationRequest, createSandboxGrant } from './policy.js';
 import { createActionIntents } from '../coordinator/runtime.js';
-import { prepareBrief } from '../capabilities/brief.js';
-import { SERVICE_CATALOG } from './services.js';
-import { loadCsvFile } from '../capabilities/pilot/csv-file.js';
-import { PILOT } from '../capabilities/pilot/contracts.js';
-import type { PilotCommands } from '../capabilities/pilot/commands.js';
-import { orderQuerySchema, paotuiQuerySchema } from '../capabilities/paotui-contracts.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, ownerKey, replySchema, requireScope, submitSchema, taskIdSchema, remediationSchema, type Job, type Principal } from './domain.js';
 import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { LIFE_INTAKE, receiveLifeRequest, refreshLifeReceipt } from '../capabilities/life-intake.js';
 
-export interface TaskOptions { catalog?: ExecutionCatalog; coordinator?: boolean; allowSandboxActions?: boolean; lifeIntake?: boolean; waitTimeoutMs?: number; csvInputDirectory?: string; agent?: boolean; paotui?: boolean; paotuiOrders?: boolean; pilot?: PilotCommands }
+export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
 export class TaskService {
   private stopping = false;
-  constructor(private store: JobStore, private options: TaskOptions = {}) {
-    if (options.coordinator && !options.catalog) throw new Error('Ontology backend requires an execution catalogue');
-  }
+  constructor(private store: JobStore, private options: TaskOptions) {}
 
   services() {
-    if (this.options.coordinator && this.options.catalog) return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Request a separate, linked refund/cancellation task for an owned verified operation. Actual results require provider readback; no real business side effects are enabled.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : []), ...(this.options.lifeIntake ? [structuredClone(SERVICE_CATALOG[LIFE_INTAKE]!)] : [])];
-    const ids = ['brief.prepare'];
-    if (this.options.lifeIntake) ids.push(LIFE_INTAKE);
-
-    if (this.options.agent) ids.push('agent.execute');
-    if (this.options.paotui) ids.push('meituan.paotui.read');
-    if (this.options.paotuiOrders) ids.push('meituan.paotui.order');
-    if (this.options.pilot) ids.push(PILOT);
-    return ids.map(id => structuredClone(SERVICE_CATALOG[id]!));
-  }
-
-  private ensureAgentConfigured(): void {
-    if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
-    if (!this.options.agent) throw new DomainError('INVALID_INPUT', 'agent.execute is not configured');
+    return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
   submit(p: Principal, input: unknown, contextId?: string): Job {
@@ -49,23 +27,7 @@ export class TaskService {
     if (contextId) taskIdSchema.parse(contextId);
     const owner = ownerKey(p);
     if (args.service === 'eigos.aftersales') { if (contextId && this.store.get(owner, args.originalTaskId).contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match original task'); const { service, ...remedy } = args; return this.requestRemediation(p, remedy); }
-    if (this.options.coordinator && args.service !== DELEGATE && args.service !== LIFE_INTAKE) throw new DomainError('INVALID_INPUT', 'Use eigos.delegate in the ontology backend; dedicated prototype services are not execution fallbacks');
-    if ('requirements' in args && args.requirements && args.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
-    if (args.service === LIFE_INTAKE && !this.options.lifeIntake) throw new DomainError('INVALID_INPUT', 'Life request intake is not configured');
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
-    if (args.service === 'meituan.paotui.read' || args.service === 'meituan.paotui.order') {
-      if (args.service === 'meituan.paotui.order' ? !this.options.paotuiOrders : !this.options.paotui) throw new DomainError('INVALID_INPUT', 'Paotui is not configured');
-      if (p.issuer !== 'local-development' || p.tenant !== 'local' || p.subject !== 'developer') throw new DomainError('FORBIDDEN', 'Personal Paotui queries require the local development identity');
-      try { (args.service === 'meituan.paotui.order' ? orderQuerySchema : paotuiQuerySchema).parse(JSON.parse(args.goal)); } catch { throw new DomainError('INVALID_INPUT', 'goal must be a supported read-only Paotui JSON query'); }
-      if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
-    }
-    if (args.service === PILOT && 'fileName' in args && (p.issuer !== 'local-development' || p.tenant !== 'local' || p.subject !== 'developer')) throw new DomainError('FORBIDDEN', 'Local CSV files require the local development identity');
-    if (args.service === PILOT && !this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
-    if (args.service === DELEGATE) {
-      if (!this.options.coordinator || !this.options.catalog) throw new DomainError('INVALID_INPUT', 'Coordinator is not configured');
-
-    }
-    if (args.service === 'agent.execute') this.ensureAgentConfigured();
     const submitted = this.store.once(owner, 'submit', args.requestId, JSON.stringify([args, contextId]), () => {
       if (contextId && !this.store.hasContext(owner, contextId)) throw new DomainError('NOT_FOUND', 'Context not found');
       const now = new Date().toISOString();
@@ -75,9 +37,6 @@ export class TaskService {
         messages: [{ id: args.requestId, role: 'user', text: args.goal, at: now }],
         createdAt: now, updatedAt: now,
       };
-      if (args.service === LIFE_INTAKE) {
-        receiveLifeRequest(job, args.domain);
-      } else if (args.service === DELEGATE) {
         job.state = 'submitted'; job.revision = 1; job.runs = [];
         job.executionMode = 'worker';
         job.delegation = { backendVersion: BACKEND_VERSION, request: { id: job.id, revision: 1, originalGoal: args.goal,
@@ -85,14 +44,6 @@ export class TaskService {
           requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
-      } else if (args.service === PILOT) {
-        const snapshot = 'fileName' in args ? loadCsvFile(this.options.csvInputDirectory, args.fileName) : undefined;
-        job.executionMode = 'capability';
-        this.options.pilot!.create(job, 'datasetId' in args ? args.datasetId : undefined, snapshot);
-        if (snapshot) this.store.pilotWrite(`input:${job.pilot!.orderId}`, snapshot);
-      }
-      else if (job.service === 'agent.execute' || job.service === 'meituan.paotui.read' || job.service === 'meituan.paotui.order') { job.state = 'working'; job.revision = 1; job.runs = []; }
-      else prepareBrief(job);
       this.store.save(owner, job);
       return job;
     });
@@ -104,28 +55,12 @@ export class TaskService {
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
     const current = this.store.get(owner, args.taskId);
-    if (this.options.coordinator && current.service !== DELEGATE && current.service !== LIFE_INTAKE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
+    if (current.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
     if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
     if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
-    if (current.service === PILOT) {
-      if (!this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
-      return this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
-        const job = this.store.get(owner, args.taskId); this.options.pilot!.confirm(job, args); this.store.save(owner, job); return job;
-      });
-    }
-    if (!('answer' in args)) throw new DomainError('INVALID_INPUT', 'Simulation confirmation requires a simulation task');
-    if (current.service === 'agent.execute') this.ensureAgentConfigured();
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
-      if (job.service === LIFE_INTAKE) {
-        if (job.state !== 'submitted' || job.intake?.status !== 'waiting_provider') throw new DomainError('CONFLICT', 'Life request is not open for updates');
-        job.updatedAt = new Date().toISOString();
-        job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
-        refreshLifeReceipt(job);
-        this.store.save(owner, job);
-        return job;
-      }
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
       job.updatedAt = new Date().toISOString();
@@ -151,9 +86,7 @@ export class TaskService {
         }
         if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
         job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
-      } else if (job.service === 'agent.execute') {
-        job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
-      } else { job.deliverable = args.answer; prepareBrief(job); }
+      }
       this.store.save(owner, job);
       return job;
     });
@@ -182,22 +115,15 @@ export class TaskService {
     taskIdSchema.parse(id);
     const canceled = this.store.once(owner, `cancel:${id}`, id, id, () => {
       const job = this.store.get(owner, id);
-      if (this.options.coordinator && job.service !== DELEGATE && job.service !== LIFE_INTAKE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
+      if (job.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
       if (job.service === DELEGATE && job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
-      if (job.service !== DELEGATE && job.pilot) {
-        if (!this.options.pilot) throw new DomainError('INVALID_INPUT', 'Simulation pilot is not configured');
-        this.options.pilot.cancel(job); if (job.delegation) job.delegation.phase = 'canceled'; this.store.save(owner, job); return job;
-      }
-      if (job.service === 'meituan.paotui.order') throw new DomainError('CONFLICT', 'Order workflow tasks cannot cancel provider orders; use order_state to inspect the outcome');
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
       job.state = 'canceled';
       if (job.delegation?.plan) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
-      if (job.intake) { job.intake.status = 'canceled'; job.intake.nextAction = 'none'; }
       if (job.delegation) job.delegation.phase = 'canceled';
       if (job.delegation?.plan) this.store.recordFeedback(owner, job, 'unverified', false);
       delete job.question;
       job.updatedAt = new Date().toISOString();
-      if (job.intake) refreshLifeReceipt(job);
       job.messages.push({ id: randomUUID(), role: 'agent', text: 'Task canceled.', at: job.updatedAt });
       this.store.save(owner, job);
       return job;
@@ -263,7 +189,7 @@ export class TaskService {
   requestRemediation(p: Principal, input: unknown): Job {
     requireScope(p, 'tasks:write'); const args = remediationSchema.parse(input); const owner = ownerKey(p); const catalog = this.options.catalog;
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
-    if (!this.options.coordinator || !catalog) throw new DomainError('CONFLICT', 'Ontology backend is required for after-sales');
+    if (!catalog) throw new DomainError('CONFLICT', 'Ontology backend is required for after-sales');
     return this.store.once(owner, `aftersales:${args.originalTaskId}`, args.requestId, JSON.stringify(args), () => {
       const original = this.store.get(owner, args.originalTaskId); const d = original.delegation;
       if (d?.backendVersion !== BACKEND_VERSION || !d.plan) throw new DomainError('CONFLICT', 'Original task has no current owned business plan');
@@ -312,7 +238,7 @@ export class TaskService {
     const owner = ownerKey(p);
     const deadline = Date.now() + (this.options.waitTimeoutMs ?? 300000);
     let job = this.store.get(owner, id);
-    while ((job.state === 'working' || job.state === 'submitted') && job.executionMode !== 'intake') {
+    while ((job.state === 'working' || job.state === 'submitted') && job.delegation?.backendVersion === BACKEND_VERSION) {
       if (this.stopping || Date.now() >= deadline) throw new Error('Blocking task wait interrupted; query the existing task or retry the same message with returnImmediately=true');
       await delay(50);
       job = this.store.get(owner, id);

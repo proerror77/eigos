@@ -121,7 +121,7 @@ test('CSV full-audit contract rejects subsets; approval, snapshot and independen
     const adapter = new CsvAuditAdapter(dir);
     await assert.rejects(adapter.prepare({ owner, request: { id: 'test', revision: 1, originalGoal: 'audit', requirements: [], messages: [] } }, { fileName: 'sample.csv', checks: ['invalid_email'] }), /all five/);
     b.submit({ goal: 'Audit sample.csv' }); const ready = await b.run(); const plan = ready.delegation!.plan!;
-    assert.equal(ready.state, 'auth-required'); assert.equal(ready.pilot, undefined); assert.equal(ready.artifact, undefined); assert(!JSON.stringify(plan).includes('base64'));
+    assert.equal(ready.state, 'auth-required');  assert.equal(ready.artifact, undefined); assert(!JSON.stringify(plan).includes('base64'));
     const approval = { requestId: 'approve', action: 'confirm_simulated_payment', quoteId: plan.quote!.id, quoteDigest: plan.quote!.digest };
     assert.throws(() => b.tasks.authorize(principal, ready.id, { ...approval, quoteDigest: '0'.repeat(64) }), /Exact/);
     b.tasks.authorize(principal, ready.id, approval); b.tasks.authorize(principal, ready.id, approval);
@@ -168,7 +168,7 @@ test('new backend does not advertise or accept legacy direct-execution fallbacks
   const b = backend(createExecutionCatalog());
   try {
     assert.deepEqual(b.tasks.services().map(s => s.id), ['eigos.delegate']);
-    for (const service of ['brief.prepare', 'agent.execute', 'meituan.paotui.read']) assert.throws(() => b.tasks.submit(principal, { service, goal: 'fixture', requestId: randomUUID() }), /not execution fallbacks/);
+    for (const service of ['brief.prepare', 'agent.execute', 'meituan.paotui.read']) assert.throws(() => b.tasks.submit(principal, { service, goal: 'fixture', requestId: randomUUID() }), /Invalid input/);
     const old = b.submit(); old.service = 'brief.prepare'; old.state = 'input-required'; delete old.delegation; b.store.save(owner, old);
     assert.throws(() => b.tasks.reply(principal, { taskId: old.id, answer: 'continue', requestId: 'old-reply' }), /read-only/);
     assert.throws(() => b.tasks.cancel(principal, old.id), /read-only/);

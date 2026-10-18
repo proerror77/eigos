@@ -1,3 +1,7 @@
+import { Worker } from '../apps/worker/worker.js';
+import { Coordinator } from '../packages/coordinator/coordinator.js';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import { briefReasoner } from './local-tasks.js';
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { createServer, request } from 'node:http';
@@ -24,6 +28,7 @@ const verify = jwtVerifier(issuer, audience, jwks);
 const directory = mkdtempSync(join(tmpdir(), 'eigos-tests-'));
 let base: string;
 let gateway: ReturnType<typeof createApp>;
+let worker: Worker;
 const server = createServer();
 const mcpVersions = new Set<string>();
 
@@ -46,10 +51,11 @@ before(async () => {
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
-    EIGOS_COORDINATOR: 'disabled', EIGOS_ACTION_SANDBOX: 'false', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
-    EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_LIFE_INTAKE: 'false',
+    EIGOS_COORDINATOR: 'codex', EIGOS_ACTION_SANDBOX: 'false', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
+    EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_PAOTUI_ORDERS_ENABLED: 'false',
   };
   gateway = createApp(config, verify);
+  worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();
   for (const [tenant, subject] of [['org-a', 'alice'], ['org-a', 'bob'], ['org-b', 'alice'], ['org-a', 'invalid-input-tests']]) {
     const member = gateway.members.login({ issuer, tenant: tenant!, subject: subject! });
     gateway.members.apply(member.id, { displayName: subject, locale: 'zh-CN', timezone: 'Asia/Shanghai', consent: true }, false);
@@ -60,6 +66,7 @@ before(async () => {
   server.on('request', gateway.app);
 });
 after(async () => {
+  await worker.close();
   server.closeAllConnections();
   await new Promise<void>(resolve => server.close(() => resolve()));
   await gateway.close();
@@ -86,7 +93,11 @@ async function tool(client: Client, name: string, args: Record<string, unknown>)
   const result = await client.callTool({ name, arguments: args });
   assert(!result.isError, JSON.stringify(result));
   assert(result.structuredContent);
-  return (result.structuredContent as { result: Job }).result;
+  let job = (result.structuredContent as { result: Job }).result;
+  if (name === 'submit_task' || name === 'reply_to_task') for (let i=0; i<200 && ['submitted','working'].includes(job.state); i++) {
+    await new Promise(r=>setTimeout(r,10)); const read=await client.callTool({name:'get_task',arguments:{taskId:job.id}}); job=(read.structuredContent as {result:Job}).result;
+  }
+  return job;
 }
 
 test('public discovery is accurate and authenticated endpoints reject missing credentials', async () => {
@@ -94,7 +105,7 @@ test('public discovery is accurate and authenticated endpoints reject missing cr
   assert.equal(card.supportedInterfaces[0].protocolVersion, '1.0');
   assert.equal(card.supportedInterfaces[0].url, `${base}/a2a`);
   assert.equal(card.capabilities.streaming ?? false, false);
-  assert.equal(card.skills[0].id, 'brief.prepare');
+  assert.equal(card.skills[0].id, 'eigos.delegate');
   const metadata = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
   assert.equal(metadata.resource, audience);
   assert.deepEqual(metadata.authorization_servers, [issuer]);
@@ -110,7 +121,7 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 6);
+    assert.equal(catalog.tools.length, 8);
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });
     assert.equal(job.state, 'input-required');
     assert(job.question);
@@ -259,19 +270,22 @@ test('MCP legacy stateless handshake remains available without session IDs', asy
   assert.match(await tools.text(), /submit_task/);
 });
 
-test('SQLite tasks and idempotency receipts survive reopening', () => {
+test('SQLite tasks and idempotency receipts survive reopening', async () => {
   const path = join(directory, 'restart.sqlite');
   const principal: Principal = { issuer, tenant: 'org-persist', subject: 'alice', clientId: 'test-client', scopes: [...SCOPES] };
   const input = { goal: 'Persist this', requestId: randomUUID() };
   let store = new JobStore(path);
-  const created = new TaskService(store).submit(principal, input);
+  const created = new TaskService(store, { catalog: createExecutionCatalog() }).submit(principal, input);
+  await new Coordinator(store, briefReasoner(), createExecutionCatalog()).run(store.claim(['eigos.delegate'],15000)!, new AbortController().signal);
   store.close();
   store = new JobStore(path);
   try {
-    const tasks = new TaskService(store);
+    const tasks = new TaskService(store, { catalog: createExecutionCatalog() });
     assert.equal(tasks.get(principal, created.id).state, 'input-required');
     assert.equal(tasks.submit(principal, input).id, created.id);
-    assert.equal(tasks.reply(principal, { taskId: created.id, requestId: randomUUID(), answer: 'One brief' }).state, 'completed');
+    tasks.reply(principal, { taskId: created.id, requestId: randomUUID(), answer: 'One brief' });
+    await new Coordinator(store, briefReasoner(), createExecutionCatalog()).run(store.claim(['eigos.delegate'],15000)!, new AbortController().signal);
+    assert.equal(tasks.get(principal, created.id).state, 'completed');
     assert.throws(() => tasks.get({ ...principal, tenant: 'other' }, created.id), DomainError);
   } finally { store.close(); }
 });

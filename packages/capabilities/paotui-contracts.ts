@@ -9,11 +9,3 @@ export const paotuiQuerySchema = z.discriminatedUnion('action', [
 ]);
 export type PaotuiQuery = z.infer<typeof paotuiQuerySchema>;
 export interface PaotuiReader { query(input: PaotuiQuery, signal: AbortSignal): Promise<object> }
-
-export const previewInputSchema = paotuiPreviewSchema;
-export const orderQuerySchema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('prepare_order'), intentId: z.string().min(1).max(128), preview: previewInputSchema }).strict(),
-  z.object({ action: z.literal('confirm_order'), previewId: z.uuid(), digest: z.string().regex(/^[a-f0-9]{64}$/), amountFen: z.number().int().nonnegative(), confirmation: z.literal('确认下单') }).strict(),
-  z.object({ action: z.literal('payment_links'), previewId: z.uuid() }).strict(),
-  z.object({ action: z.literal('order_state'), previewId: z.uuid() }).strict(),
-]);

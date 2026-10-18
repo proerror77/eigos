@@ -1,3 +1,6 @@
+import { Worker } from '../apps/worker/worker.js';
+import { Coordinator } from '../packages/coordinator/coordinator.js';
+import { briefReasoner } from './local-tasks.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
@@ -69,6 +72,7 @@ async function fixture(policy: AdmissionPolicy = 'self-service') {
   const config: Config = { ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(directory, 'tasks.sqlite') }),
     EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: base, OAUTH_JWKS_URL: issuer + '/jwks', OIDC_AGENT_CLIENT_ID: 'connector', EIGOS_MEMBERSHIP_APPROVAL: policy };
   const gateway = createApp(config, jwtVerifier(issuer, base, createLocalJWKSet({ keys: [jwk] }))); server.on('request', gateway.app);
+  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();
   let exchanges = 0, refreshes = 0, failRefresh = false;
   const sign = (subject = 'alice', enroll = true, scopes: string[] = [...SCOPES, MEMBERSHIP_SCOPE], expires = 300) => new SignJWT({ tenant_id: 'one', client_id: 'connector', scope: scopes.join(' '), [enrollmentClaim(base)]: enroll })
     .setProtectedHeader({ alg: 'ES256', kid: jwk.kid, typ: 'at+jwt' }).setIssuer(issuer).setAudience(base).setSubject(subject).setJti(randomUUID()).setIssuedAt().setExpirationTime(Math.floor(Date.now() / 1000) + expires).sign(keys.privateKey);
@@ -93,7 +97,7 @@ async function fixture(policy: AdmissionPolicy = 'self-service') {
   const call = (path: string, init?: RequestInit) => fetch(http + path, init);
   const request = (path: string, secret: string, token?: string, body?: unknown) => call(path, { method: body === undefined ? 'GET' : 'POST', headers: { 'X-EIGOS-Registration-Token': secret, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   return { directory, gateway, base, call, request, fetcher, sign, counts: () => ({ exchanges, refreshes }), failRefresh: () => { failRefresh = true; },
-    close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close(); rmSync(directory, { recursive: true, force: true }); } };
+    close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await worker.close(); await gateway.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 test('non-members can register and query admission; invitation gate protects both protocols and rejects scope/identity escalation', async () => {
@@ -155,6 +159,7 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my onboarding brief', requestId: randomUUID() } });
     const job = (submitted.structuredContent as { result: { id: string } }).result;
+    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required') break;await new Promise(r=>setTimeout(r,10));}
     const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
     assert.equal((await reply.json()).result.task.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } }); assert.equal((readback.structuredContent as { result: { state: string } }).result.state, 'completed');

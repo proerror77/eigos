@@ -1,69 +1,29 @@
-# 美团跑腿只读接入（2026-10-15）
+# 本人美团跑腿：地址选择与真实查价
 
-EIGOS 增加 `meituan.paotui.read`，通过已有 MCP/A2A 任务入口调用官方个人跑腿 CLI。仅允许 loopback 开发模式的固定开发身份，默认不启用；不适用于公网、多用户或商业生产环境。个人授权不得共享给其他会员。
+当前公共入口为 `eigos.delegate`，业务本体为 `delivery.quote@2`。PA 可以提交“帮我查1公斤文件普通送运费，先让我选择寄件和收件地址”。不要求预先提供地址 ID 或 JSON 查询。
 
-## 开启与调用
+## 同一任务中的流程
 
-先安装美团官方 [跑腿工具](https://github.com/meituan/MT-Paotui-For-Client)及其随附 pt-passport CLI，按官方流程完成本人美团账号授权。此次本机安装版本来源 commit `05ead232ae2b94b9b55b2a1e126e039a1cb6db00`，pt-passport 1.0.5。
+1. 实际协调模型选择报价本体，缺少的业务输入留为空。
+2. Worker 经独立 stdio Ontology MCP 读取本人美团地址簿。EIGOS 向任务所有者展示有编号的地址，补问寄件／收件及缺少的物品、分类、重量、服务。
+3. PA 转述真实选项，得到用户明确选择后在原 taskId 回复自然语言。
+4. 系统只匹配当前任务中真实且无歧义的选项，核对不同地址、同城及计价参数，再取得真实报价；模型根据事实提出受约束的计划，执行时复查报价并独立验收。
+5. PA 读回同一任务的完成状态、accepted 验收和报价交付物。查价完成不表示下单、支付或配送。
 
-在本机开发 `.env` 设置（要求原有 `EIGOS_AUTH_MODE=development` 与 loopback 绑定）：
+地址选项按 owner、taskId、配置摘要保存于私有 preparation_contexts；不进入规划模型提示词。重启和地址簿排序变化不重排已显示的编号。地址或门牌变化会产生新选项并拒绝旧编号。不得把“1公斤”等数字误当地址选择，未知或含糊地址不能用第一个候选代替。
 
-```dotenv
-EIGOS_PAOTUI_SKILL_DIR=/Users/proerror/.codex/skills/meituan-paotui
-```
+## 内部 MCP 与配置
 
-重启本地 EIGOS 后 `list_services` / Agent Card 会公布服务。MCP `submit_task` 参数：
+Gateway／Worker 使用相同的 `EIGOS_PAOTUI_SKILL_DIR`。Gateway 只登记能力；Worker 在调用时启动 `apps/ontology-mcp/main`，先核验 `ontology_definition`，再调用 `ontology_address_book_read` 或 `ontology_delivery_quote`。内部原语 `delivery.quote@1` 使用明确的源地址引用；只有后端在选择后解析它，PA 不接触这些技术 ID。
 
-```json
-{"service":"meituan.paotui.read","goal":"{\"action\":\"authorization\"}","requestId":"unique-query-id"}
-```
+MCP 服务没有 HTTP 监听，不开放订单、支付或取消工具。美团凭据由原有 pt-passport／官方查询程序内部读取，真实手机号只用于进程内费用预览，不返回给 PA。地址与门牌是完成选择所需的本人数据，只向任务所有者展示。
 
-也支持 `{"action":"addresses"}` 和 `{"action":"search_address","keyword":"上海虹桥站","city":"上海"}`，作为 JSON 字符串传入 goal。A2A SendMessage 使用单个 data part，传同样的 service/goal；messageId 充当幂等键。MCP 返回 working 后用 get_task 查询；A2A 可等待结果或 returnImmediately 后查询。
+每次成功读取产生能力／本体版本、输入／结果摘要、时间及调用名称的回执。可用绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH` 保存不含地址、电话和令牌的元数据。`geo.search@1` 和 `address.book.read@1` 可单独用于对应读取目标，不作为报价目标的替代完成。
 
-返回 artifact.data.result 是只读业务结果。地址簿包含个人地址和姓名，只保存在本机用户拥有的任务库；电话脱敏。美团授权 Token 从官方本地缓存读取，不写入 EIGOS .env、任务、提示词、日志或输出；子进程错误统一处理，避免把原始凭据输出带入异常。
+真实下单程序和支付链接执行器已从项目删除；`EIGOS_PAOTUI_ORDERS_ENABLED=true` 会在启动时报错。只读绑定仍限固定本人 loopback 开发身份，多用户凭据代理尚未实现。
 
-## 当前边界
+## 验收
 
-- 操作白名单只有授权状态、地址簿、POI 地址搜索和费用预览。预览按地址簿 ID 在进程内解析联系人电话，不把真实手机号或预览 orderToken 返回给 Agent。
-- 不向 Agent 开放真实手机号查询、提交订单、支付链接生成、支付或取消订单。
-- 地址搜索不是餐厅菜单/商品搜索。
-- agent.execute 仍为文档执行器；客户 Agent 需显式选择本服务，不能据此声称模型已获得任意外部工具。
-- 非默认配置、已部署服务及公网实例没有被自动更新。
+自动测试覆盖选项归属、持久恢复、排序变化、失效选项、歧义／跨城／虚构选择、重量约束、原任务续接与无订单边界。工程模型／提供方 fixtures 不替代真实读取。
 
-## 验证
-
-`npm run check`、`npm test`、`npm run build`。
-
-显式运行真实只读验证（临时 loopback 服务、内存任务库，无订单）：
-
-```sh
-EIGOS_PAOTUI_SKILL_DIR=/Users/proerror/.codex/skills/meituan-paotui node --import tsx examples/paotui-read.ts
-```
-
-2026-10-15 实际返回：授权获取成功；官方地址簿返回 10 条（未将明文地址归档为证据）；MCP 授权查询通过；A2A 上海虹桥站 POI 查询返回 20 条。真实订单 0，支付 0。上述证明只读接口及 EIGOS 链路可用，不证明下单、支付或履约能力已验证。
-
-## 费用预览（2026-10-15）
-
-通过同一服务提交以下 JSON 查询（作为 goal 字符串）：
-
-```json
-{"action":"preview","senderAddressId":"地址簿ID","recipientAddressId":"地址簿ID","goodsName":"文件","category":"文件","weightKg":1,"service":"ordinary"}
-```
-
-category 支持文件、快递、餐饮；service 支持 ordinary / express。仅接受授权地址簿中的同城地址。物品重量必须大于0、不超过50公斤。地址不存在、电话不可用、跨城或报价失败时返回失败，不会改为下单。
-
-2026-10-15 本地 127.0.0.1:3000 已启动更新后的构建，使用实际 MCP Agent 客户端经过 submit_task/get_task 验证：授权成功，POI 搜索20条；两处本人同城保存地址、1公斤文件普通送报价52.5元、23.5公里。报价仅代表当时路线/时段，无订单、无支付。私有验证回执在 data/paotui-agent-verification.json（不进入Git）。实际25项测试、类型检查与构建通过。
-
-## 后续订单准备
-
-2026-10-15 已实现单独的待启用订单服务，当前生产下单与支付链接均关闭。见 [订单流程与验证边界](meituan-paotui-orders.md)。原 read 服务仍然只有查询/预览，不通过追加字段变成下单入口。
-
-## 新后端的 Ontology MCP（2026-10-17）
-
-上面的 `meituan.paotui.read` 和独立验证脚本描述历史专用原型。启用 `EIGOS_COORDINATOR=codex` 时，PA 统一委托给 `eigos.delegate`，模型根据版本化本体和真实候选形成计划。后端读取通过 Worker → 独立 stdio Ontology MCP → 既有官方美团程序执行；不回退到专用原型。
-
-`EIGOS_PAOTUI_SKILL_DIR` 在 Gateway／Worker 保持一致。Gateway 只注册定义；Worker 在调用时启动 `apps/ontology-mcp/main`，先读取并校验 `ontology_definition`，再调用 `ontology_delivery_quote`、`ontology_geo_search` 或 `ontology_address_book_read`。该 MCP 没有 HTTP 监听，不开放订单、支付或取消工具，官方授权仍只在查询进程内部取得。
-
-每次成功读取带有能力／本体版本、输入与完整结果摘要、时间、来源调用名称和 `live_readonly` 回执；可将这些不含地址／电话的元数据记录到绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH`。报价候选映射实际适用重量（公斤）、总价和只读事实；重量是计价参数，不表示已称重或配送。执行前复查价格、路线和服务，显示用的预计送达时间更新不触发无意义重规划。
-
-实际 PA 接入与真实查询需一起按 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 验收。`npm run test:e2e:run` 的工程提供方和模型替身不算真实美团来源。当前仍只查价格，不下单、不付款。
+2026-10-17 的 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 使用预先给定的地址 ID 和临时实例，报价52.5元、23.5公里。它是历史结果，当前完整自然语言流程按本轮常驻 PA 的新证据验收，价格以各次真实回执为准。

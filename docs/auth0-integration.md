@@ -62,7 +62,7 @@ node --env-file=data/auth0-live/gateway.env scripts/run-local.mjs --built
 npm run verify:member-agent
 ```
 
-工具将授权 URL 写入私有 `agent-login.json`，等待用户在浏览器确认。回调完成后验证真实提供方的 ID／Access Token 与已开通会员绑定，再启动实际 Codex Personal Agent；它自行发现服务、创建唯一 `agent.execute` 任务并读取交付物。EIGOS Worker 再调用独立的真实模型生成文档。工具不会替模型预先提交任务，也不会以模拟令牌回退。
+工具将授权 URL 写入私有 `agent-login.json`，等待用户在浏览器确认。回调完成后验证真实提供方的 ID／Access Token 与已开通会员绑定，再启动实际 Codex Personal Agent；它自行发现服务、创建唯一 `eigos.delegate` 任务并读取交付物。EIGOS Worker 再调用独立的真实模型生成文档。工具不会替模型预先提交任务，也不会以模拟令牌回退。
 
 本轮受控客户端使用 Auth0 的 `audience` 授权参数。要支持不同外部 MCP 客户端的自动 OAuth，仍需按其实际行为核验 Auth0 的 Resource Parameter Compatibility Profile、客户端登记和 `resource` 参数；不能把一个预登记客户端成功推广为所有客户端兼容。
 
@@ -86,7 +86,7 @@ npm run verify:member-agent
 
 本地 88 项测试、类型检查、构建和差异空白检查通过，覆盖新版连接接口的分页、增量启用、失败回读、重复游标，以及会员表单的 Origin／Referrer-Policy 和校验重试。真实 Chrome 提交发现的 `Origin: null` 问题已修复，来源校验与 CSRF 防护保持启用。
 
-**真实会员到 Agent 链路已在私有 HTTPS 联调环境验收通过**：2026-10-16 16:10（Asia/Shanghai），真实会员自助开通后完成独立 Agent OAuth consent。Personal Agent 自行发现服务、提交唯一 `agent.execute` 任务并读取完成交付物；独立 Worker 模型生成会议议程。任务 `93a908f6-7713-40c5-95db-00c670cadf74` 的 MCP、A2A 和 SQLite 回读字节一致，详细证据见 [本次验收](evidence/auth0-member-2026-10-16/README.md)。
+**真实会员到 Agent 链路已在私有 HTTPS 联调环境验收通过**：2026-10-16 16:10（Asia/Shanghai），真实会员自助开通后完成独立 Agent OAuth consent。Personal Agent 自行发现服务、提交唯一 `eigos.delegate` 任务并读取完成交付物；独立 Worker 模型生成会议议程。任务 `93a908f6-7713-40c5-95db-00c670cadf74` 的 MCP、A2A 和 SQLite 回读字节一致，详细证据见 [本次验收](evidence/auth0-member-2026-10-16/README.md)。
 
 本机凭据、会员库和原始截图位于忽略目录 `data/auth0-live/`，不纳入 Git。当前结论限于本机私有 HTTPS、预登记参考客户端和文档任务；公网生产部署、任意外部 MCP 客户端自动 OAuth 及真实商业履约另行核验。
 

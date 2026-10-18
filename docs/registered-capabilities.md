@@ -51,10 +51,10 @@ LLM 没有工具、数据库、凭据或授权能力。它先读取最多16项�
 | `brief.prepare@2` | 本地说明生成与精确验收 | 说明完成，底层 execution=not_started |
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
-| `geo.search@1`、`address.book.read@1`、`delivery.quote@1` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |
 
-CSV 只支持完整五项审计，子集或重复检查明确拒绝，不静默扩大范围。文档、跑腿读取已走新后端；独立历史原型仅保留其原有测试模式，不作为新后端执行 fallback。
+CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、跑腿读取均走新后端；旧独立原型入口和状态机已删除。delivery.quote@2 支持同任务真实地址读取、选项保存、自然语言选择与价格查询。
 
 个人美团凭据仅限 loopback 开发身份，不共享给 JWT 多用户。新后端由 Worker 通过内部 stdio Ontology MCP 读取版本化能力定义，再调用对应只读工具；Gateway 不运行查询程序。见 [美团接入说明](meituan-paotui-integration.md)。
 
@@ -84,4 +84,4 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝，不静默�
 
 运行 `npm run check`、`npm test`、`npm run test:e2e`、`git diff --check`。E2E 使用独立 Gateway、两个竞争 Worker、独立持久测试提供方，覆盖接单/扣款后崩溃、取消/撤销竞态、部分交付和退款读回。
 
-真实 PA／模型／美团只读来源另行运行 `node dist/examples/verify-pa-paotui-e2e.js --live`（先构建并设置私有测试输入）。该观察器不代替 PA 提交；需实际 PA 发现 Card、委托任务并读回同一交付物才通过。见 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md)。不部署，不创建现实商家订单或支付。
+真实 PA／模型／美团只读来源在本人常驻服务上验收。PA 发起自然语言目标、收到真实地址选项、在原任务选择并读回报价后，运行 `node dist/examples/verify-pa-paotui-e2e.js --live --session-dir /private/session --expected-query /private/expected-route.json` 只读核对证据。观察器不代替 PA 提交、选择或查询供应商。实际记录见 [本轮常驻验收](evidence/persistent-pa-2026-10-18/README.md)；[前轮临时实例](evidence/service-network-e2e-2026-10-17/README.md) 保留为历史证据。

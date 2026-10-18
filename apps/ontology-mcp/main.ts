@@ -8,7 +8,7 @@ const directory = process.env.EIGOS_PAOTUI_SKILL_DIR;
 const audit = process.env.EIGOS_ONTOLOGY_AUDIT_PATH;
 if (!directory || !isAbsolute(directory) || (audit && !isAbsolute(audit))) throw new Error('Ontology MCP requires absolute private local paths');
 const calls: string[] = [];
-const reader = new LocalPaotuiReader(directory, false, command => calls.push(command));
+const reader = new LocalPaotuiReader(directory, command => calls.push(command));
 const server = createPaotuiOntologyServer(reader, {
   evidenceKind: 'live_readonly', sourceCalls: () => calls.splice(0),
   record: audit ? receipt => {
