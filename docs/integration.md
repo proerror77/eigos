@@ -38,6 +38,8 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 UCP 本地测试接入也使用原 `eigos.delegate`。`commerce.ucp.prepare.sandbox@1` 只完成结账准备；`commerce.ucp.confirm.sandbox@1` 引用本用户的准备任务，并要求准确的 order/payment 双重模拟许可。两项操作分别返回准确终点，不把准备会话当成购买。正式 HTTP、原键查证、跨任务防重、对象回写和未开放项见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。生产配置中没有自动启用这些能力的开关。
 
+Shopify 生产接口的 [匿名商品验证工具](shopify-readonly-admission-2026-10-18.md) 独立于上述沙箱交易适配器，仅允许 `search_catalog`、`get_product`、`lookup_catalog`。它核对 Global Catalog 的商家／变体与真实店铺回读；尚未注册到 `eigos.delegate`，不改变 MCP／A2A 的任务、权限或本体投影。公开读取通过不代表商家合作授权、库存保留或履约承诺。
+
 ## A2A
 
 `/a2a` 实现 A2A 1.0 JSON-RPC 的 SendMessage、GetTask、ListTasks、CancelTask。请求携带 `Authorization: Bearer …`、`Content-Type: application/json`、`A2A-Version: 1.0`。普通 text parts 默认进入 `eigos.delegate`：
