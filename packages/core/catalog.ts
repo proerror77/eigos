@@ -41,6 +41,9 @@ export interface DiscoverySource {
   readonly capabilityRefs: Ref[];
   readonly adapterId: string;
   readonly channelId: string;
+  readonly configurationDigest?: string;
+  // Source semantics for fallback coverage when discovery cannot return a result.
+  readonly realSupply?: boolean;
   permitted(owner: string): boolean;
   discover(ctx: AdapterContext, input: unknown, signal: AbortSignal): Promise<{
     candidates: { binding: DiscoveredBinding; preparation: Preparation; offer?: Offer }[];
@@ -93,6 +96,7 @@ export class ExecutionCatalog {
   registerDiscovered(ctx: AdapterContext, binding: DiscoveredBinding): void {
     const source = this.sources.find(s => s.id === binding.discovery.sourceId && s.adapterId === binding.adapterId && s.channelId === binding.channelId && s.capabilityRefs.some(r => sameRef(r, binding.capabilityRef)));
     if (!source?.permitted(ctx.owner) || binding.discovery.requestId !== ctx.request.id || binding.discovery.requestRevision !== ctx.request.revision || !binding.discovery.evidenceRefs.length) throw new DomainError('FORBIDDEN', 'Discovered binding has invalid source, identity or request provenance');
+    if (source.configurationDigest !== undefined && binding.configurationDigest !== source.configurationDigest) throw new DomainError('CONFLICT', 'Pinned discovery source configuration has changed');
     const id = JSON.stringify([ctx.owner, ctx.request.id, key(binding.ref)]); const previous = this.discovered.get(id);
     if (previous && bindingDigest(previous) !== bindingDigest(binding)) throw new DomainError('CONFLICT', 'A pinned discovered provider identity cannot change');
     this.discovered.set(id, structuredClone(binding));

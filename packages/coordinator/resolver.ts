@@ -126,7 +126,7 @@ export class CapabilityResolver {
         for (const discovered of result.candidates) { this.catalog.registerDiscovered(ctx, discovered.binding); append(discovered.binding, discovered.preparation, discovered.offer); }
       } catch (error) {
         signal.throwIfAborted(); if (error instanceof DomainError && error.code === 'INVALID_INPUT') throw error;
-        coverage.push({ sourceId: source.id, status: error instanceof DiscoveryTimeout ? 'timeout' : error instanceof DomainError && error.code === 'FORBIDDEN' ? 'needs_authorization' : 'unavailable', queriedAt: new Date().toISOString(), returnedStores: 0, queriedStores: 0, hasMore: false, realSupply: true });
+        coverage.push({ sourceId: source.id, status: error instanceof DiscoveryTimeout ? 'timeout' : error instanceof DomainError && error.code === 'FORBIDDEN' ? 'needs_authorization' : 'unavailable', queriedAt: new Date().toISOString(), returnedStores: 0, queriedStores: 0, hasMore: false, realSupply: source.realSupply ?? true });
       }
     }
     const offers = candidates.flatMap(c => c.offer ? [c.offer] : []);
