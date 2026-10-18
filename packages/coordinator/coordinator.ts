@@ -1,3 +1,4 @@
+import { inquiryCatalog } from './inquiry-scope.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, type Job } from '../core/domain.js';
@@ -60,10 +61,14 @@ export class CodexReasoner implements Reasoner {
 export class Coordinator {
   private resolver: CapabilityResolver;
   private runtime: ActionRuntime;
-  constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, options: { allowSandbox?: boolean; maxTaskMs?: number } = {}) {
+  constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, private options: { allowSandbox?: boolean; maxTaskMs?: number } = {}, private inquiryScoped = false) {
     this.resolver = new CapabilityResolver(catalog, (owner, ref, fingerprint) => store.providerEvidenceView(owner, ref, fingerprint)); this.runtime = new ActionRuntime(store, catalog, options);
   }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
+    if (!this.inquiryScoped) {
+      const scoped = inquiryCatalog(this.store, claim.owner, claim.job.id, this.catalog);
+      if (scoped) return new Coordinator(this.store, this.reasoner, scoped, this.options, true).run(claim, signal);
+    }
     const d = claim.job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
     if (d.plan) { await this.runtime.run(claim, signal); return; }

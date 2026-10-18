@@ -1,3 +1,7 @@
+import { inquiryFixture, quoteCapability, quoteBinding } from './fixtures/network-inquiry.js';
+import { Coordinator } from '../packages/coordinator/coordinator.js';
+import type { JobStore } from '../packages/core/store.js';
+import type { ExecutionCatalog } from '../packages/core/catalog.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
@@ -15,7 +19,7 @@ import { commands } from '../packages/network/contracts.js';
 import { createApp } from '../apps/gateway/app.js';
 import { jwtVerifier, protectedResourceMetadata } from '../apps/gateway/auth.js';
 
-async function fixture(enabled = true, directory = false) {
+async function fixture(enabled = true, directory = false, catalogFactory?: (store: JobStore) => ExecutionCatalog) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-network-http-')), memberPath = join(dir, 'members.sqlite');
   const seed = new MemberStore(memberPath);
   const identity = { issuer: 'https://issuer.test', tenant: 't1', subject: 'alice' };
@@ -30,7 +34,7 @@ async function fixture(enabled = true, directory = false) {
     OIDC_CLIENT_ID: 'browser', OIDC_AGENT_CLIENT_ID: 'connector', MEMBERSHIP_DATABASE_PATH: memberPath,
     EIGOS_NETWORK_ENABLED: enabled ? 'true' : 'false', EIGOS_NETWORK_MEMBER_IDS: [alice.id, bob.id], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: directory ? [bob.id] : [] };
   const keys = await generateKeyPair('ES256'), jwk = { ...await exportJWK(keys.publicKey), kid: 'test', alg: 'ES256' };
-  const gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })));
+  const gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })), catalogFactory);
   server.on('request', gateway.app);
   const makeAgent = async (member = alice, scopes = [...SCOPES, 'network:read', 'network:write']) => {
     const p: Principal = { issuer: member.issuer, tenant: member.tenant, subject: member.subject, clientId: 'connector', scopes };
@@ -270,4 +274,55 @@ test('T09 HTTP/MCP updates share private follow filtering, checkpoints and revoc
     f.gateway.members.agents.revoke(f.bob.id, f.b.id);
     assert.equal((await f.api('updates', { version: 1, spaceId }, f.b.token)).status, 403);
   } finally { await client.close(); await f.close(); }
+});
+
+test('T10 HTTP/MCP conversion needs trusted buyer confirmation and continues as an owner-isolated A2A Task', async () => {
+  const source = inquiryFixture(), f = await fixture(true, true, () => source.catalog);
+  const client = new Client({ name: 't10-fixture', version: '1' });
+  try {
+    const { profileId } = await f.init(), bs = f.gateway.members.createSession(f.bob.id);
+    const bobControl = (action: object) => f.control({ ...action, _csrf: bs.csrf }, { Cookie: `__Host-eigos-member=${bs.token}` });
+    const rep = await f.command(profileId, { operation: 'representation.request', providerId: quoteBinding.providerId, role: 'aggregator', capabilityRefs: [quoteCapability.ref], note: 'Synthetic provider' }); assert.equal(rep.status, 200);
+    const representationId = (await rep.json()).refs[0].id;
+    assert.equal((await bobControl({ action: 'representation.review', representationId, expectedRevision: 1, decision: 'verified', proofRef: 'fixture', validUntil: new Date(Date.now() + 86400000).toISOString() })).status, 200);
+    const lr = await f.command(profileId, { operation: 'listing.create', representationId, capabilityRef: quoteCapability.ref, details: { title: 'Only the selected synthetic quote source', description: 'Fixture read only', coarseAreas: ['110105'] } }); assert.equal(lr.status, 200);
+    const listingId = (await lr.json()).refs[0].id;
+    assert.equal((await f.command(profileId, { operation: 'listing.submit_review', listingId, expectedRevision: 1 })).status, 200);
+    assert.equal((await bobControl({ action: 'listing.review', listingId, expectedRevision: 2, decision: 'approved', bindingRef: quoteBinding.ref })).status, 200);
+    const publish = async (content: object) => {
+      const d = await f.command(profileId, { operation: 'draft.create', content }); assert.equal(d.status, 200); const draftId = (await d.json()).refs[0].id;
+      const r = await f.command(profileId, { operation: 'publication.request_approval', draftId, expectedRevision: 1, recipientMemberIds: [f.alice.id, f.bob.id], publishBefore: new Date(Date.now() + 60000).toISOString(), visibleUntil: new Date(Date.now() + 3600000).toISOString() }); assert.equal(r.status, 200);
+      const a = (await r.json()).result[0]; const g = await f.control({ action: 'publication.approve', approvalRequestId: a.id, expectedDraftRevision: 1, reviewDigest: a.reviewDigest }); assert.equal(g.status, 200);
+      const p = await f.command(profileId, { operation: 'publication.publish', draftId, expectedRevision: 1, grantId: (await g.json()).refs[0].id }); assert.equal(p.status, 200); return (await p.json()).refs[0].id;
+    };
+    const listingPublicationId = await publish({ kind: 'listing', listingId, listingRevision: 3 });
+    const postId = await publish({ kind: 'need', body: { title: 'Coarse need', safeGoal: 'Coarse public text', category: 'delivery', coarseArea: '110105', replyDeadline: new Date(Date.now() + 7200000).toISOString() } });
+    await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.a.token}` } } }));
+    const proposed = await client.callTool({ name: 'network_command', arguments: { version: 1, asProfileId: profileId, requestId: randomUUID(), operation: 'inquiry.request_conversion', input: {
+      postId, expectedPostRevision: 1, listing: { publicationId: listingPublicationId, revision: 1 }, request: { kind: 'create', buyerGoal: 'PRIVATE_HTTP_GOAL <script>unsafe()</script> 只查合成1公斤文件普通送', completionTarget: 'quote_only' },
+    } } }); assert(!proposed.isError, JSON.stringify(proposed));
+    const choiceId = (proposed.structuredContent as {result:{refs:{id:string}[]}}).result.refs[0]!.id;
+    assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 50, offset: 0 }).total, 0); assert.equal(source.readCount(), 0);
+    assert.equal((await f.command(profileId, { operation: 'inquiry.convert', choiceId })).status, 403);
+    const choice = f.gateway.network!.store.get('choice', choiceId), approvalInput = { action: 'inquiry.approve_choice', choiceId, expectedRevision: 1, reviewDigest: choice.reviewDigest };
+    assert.equal((await f.call('/members/network/commands', { version: 1, requestId: randomUUID(), ...approvalInput }, { Authorization: `Bearer ${f.a.token}`, Origin: f.origin })).status, 401);
+    assert.equal((await f.control({ ...approvalInput, _csrf: 'invalid' })).status, 403); assert.equal((await bobControl(approvalInput)).status, 404);
+    const page = await f.call('/members/network', undefined, { Cookie: `__Host-eigos-member=${f.session.token}` }); const html = await page.text();
+    assert(html.includes('PRIVATE_HTTP_GOAL')); assert(html.includes('&lt;script&gt;')); assert(!html.includes('<script>'));
+    assert.equal((await f.control(approvalInput)).status, 200);
+    const apply = { version: 1, asProfileId: profileId, operation: 'inquiry.convert', choiceId, requestId: randomUUID() };
+    const [m, h] = await Promise.all([client.callTool({ name: 'network_command', arguments: apply }), f.api('commands', apply)]);
+    assert(!m.isError, JSON.stringify(m)); assert.equal(h.status, 200); const http = await h.json();
+    assert.deepEqual((m.structuredContent as {result:{refs:unknown}}).result.refs, http.refs); assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 50, offset: 0 }).total, 1);
+    const taskId = http.result[0].taskId;
+    assert.equal((await f.api('query', { version: 1, kind: 'my_inquiry', postId }, f.b.token)).status, 404);
+    const claim = f.gateway.store.claim(['eigos.delegate'], 15000)!; assert.equal(claim.job.id, taskId);
+    await new Coordinator(f.gateway.store, source.model, source.catalog).run(claim, new AbortController().signal);
+    const a2a = await f.call('/a2a', { jsonrpc: '2.0', id: 't10', method: 'GetTask', params: { id: taskId } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
+    const task = await a2a.json(); assert.equal(task.result.status.state, 'TASK_STATE_COMPLETED');
+    const foreign = await f.call('/a2a', { jsonrpc: '2.0', id: 'foreign', method: 'GetTask', params: { id: taskId } }, { Authorization: `Bearer ${f.b.token}`, 'A2A-Version': '1.0' });
+    assert((await foreign.json()).error);
+    const publicFeed = await f.api('updates', { version: 1, spaceId: f.gateway.network!.store.spaceId }, f.b.token); const text = await publicFeed.text();
+    assert(!text.includes(taskId)); assert(!text.includes('PRIVATE_HTTP_GOAL')); assert.equal(source.readCount(), 2); assert.equal(source.alternateReadCount(), 0);
+  } finally { await client.close(); await f.close(); source.close(); }
 });

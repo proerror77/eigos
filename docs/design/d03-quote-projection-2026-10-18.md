@@ -2,6 +2,8 @@
 
 日期：2026-10-18。基于已提交 `204cfee`。当前实现依据：[N1](../ontology-n1.md)、[projectTask](../../packages/ontology/task-projection.ts)、[Ontology MCP 回执](../../packages/capabilities/paotui-mcp-server.ts)。新增要求为设计，未实现或进行真实复验。
 
+[T10](../network-t10.md) 已复用当前本体投影和函数，增加受买方会话确认的 reviewed/Proposal 选择及不可变快照。当前组合基线为 `70aaa12`；真实来源/真实 PA 的新增复验仍不由本轮合成工程测试代替。
+
 ## 1. 复用边界与事实来源
 
 继续使用现有 Worker → 内部 stdio Ontology MCP → 官方只读程序、原任务补问/选择与回执。`projectTask` 是当前任务到 N1 对象的唯一来源投影器，已经由 JobStore.save 在同一业务事务中调用。

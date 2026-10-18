@@ -1,3 +1,5 @@
+import { businessTransaction } from '../core/transaction.js';
+import type { Inquiry, InquiryChoice, QuoteSelection } from './inquiry-contracts.js';
 import type { FollowEdge, NetworkEvent } from './activity-contracts.js';
 import type { NeedPost, EngagementMessage } from './collaboration-contracts.js';
 import type { Space, Membership, Invitation, Representation, Listing } from './directory-contracts.js';
@@ -6,8 +8,8 @@ import { randomUUID, randomBytes } from 'node:crypto';
 import { digest } from '../core/delegation.js';
 import { fail, type Profile, type Binding, type Draft, type Approval, type Grant, type Publication, type ResultRef } from './contracts.js';
 
-export type Records = { follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
-const tables = { follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export type Records = { inquiry: Inquiry; choice: InquiryChoice; selection: QuoteSelection; follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
+const tables = { inquiry: 'network_inquiries', choice: 'network_inquiry_choices', selection: 'network_quote_selections', follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
@@ -21,6 +23,8 @@ export class NetworkStore {
     `);
     for (const table of Object.values(tables)) db.exec(`CREATE TABLE IF NOT EXISTS ${table} (id TEXT PRIMARY KEY,owner TEXT NOT NULL,body TEXT NOT NULL); CREATE INDEX IF NOT EXISTS ${table}_owner ON ${table}(owner,id);`);
     db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS network_inquiry_post ON network_inquiries(owner,json_extract(body,'$.postId'));
+      CREATE UNIQUE INDEX IF NOT EXISTS network_inquiry_task ON network_inquiries(owner,json_extract(body,'$.taskId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_follow_identity ON network_follows(json_extract(body,'$.profileId'),json_extract(body,'$.targetProfileId'));
       CREATE UNIQUE INDEX IF NOT EXISTS network_membership_identity ON network_memberships(json_extract(body,'$.spaceId'),json_extract(body,'$.memberId'));
       CREATE INDEX IF NOT EXISTS network_member_spaces ON network_memberships(json_extract(body,'$.memberId'),json_extract(body,'$.state'),id);
@@ -55,11 +59,10 @@ export class NetworkStore {
       }
     });
   }
+  usesConnection(db: DatabaseSync) { return this.db === db; }
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
   transaction<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try { const value = fn(); this.db.exec('COMMIT'); return value; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return businessTransaction(this.db, fn);
   }
   get<K extends keyof Records>(kind: K, id: string, owner?: string): Records[K] {
     const row = this.db.prepare(`SELECT owner,body FROM ${tables[kind]} WHERE id=?`).get(id);
@@ -77,7 +80,7 @@ export class NetworkStore {
     if (!Number.isInteger(limit) || limit < 1 || limit > 201) return fail('INVALID_INPUT', 422);
     const clauses = ['id>?']; const params: string[] = [after];
     for (const [field, value] of Object.entries(filters)) {
-      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId', 'targetProfileId'].includes(field)) return fail('INVALID_INPUT', 422);
+      if (!['spaceId', 'memberId', 'profileId', 'state', 'content.kind', 'content.listingId', 'content.body.postId', 'representationId', 'targetProfileId', 'postId', 'taskId'].includes(field)) return fail('INVALID_INPUT', 422);
       clauses.push(`json_extract(body,'$.${field}')=?`); params.push(value);
     }
     return this.db.prepare(`SELECT body FROM ${tables[kind]} WHERE ${clauses.join(' AND ')} ORDER BY id LIMIT ?`).all(...params, limit).map(r => JSON.parse(String(r.body)));

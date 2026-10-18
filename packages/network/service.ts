@@ -1,3 +1,6 @@
+import { InquiryBridge } from './inquiry.js';
+import type { JobStore } from '../core/store.js';
+import type { TaskService } from '../core/tasks.js';
 import { NetworkActivity } from './activity.js';
 import { updatesQuerySchema } from './activity-contracts.js';
 import { NetworkCollaboration } from './collaboration.js';
@@ -14,26 +17,28 @@ import { NetworkError, fail, networkCommandSchema, controlCommandSchema, network
   type Content, type NetworkActor, type Draft, type Approval, type Grant, type Publication, type ResultRef, type Binding } from './contracts.js';
 
 export interface NetworkQueryResult { spaceId?: string; profileId?: string; need?: { id: string; revision: number; contentRevision: number; state: string }; message?: { id: string; revision: number }; capabilityState?: ReturnType<NetworkDirectory['candidateState']>; version: number; content?: Content; visibleUntil?: string; items?: unknown[]; page?: { hasMore: boolean; cursor?: string }; result?: unknown; representations?: unknown[]; listings?: unknown[]; ref?: {kind: string; id: string; revision: number}; services?: unknown[]; hasMoreServices?: boolean }
-export interface NetworkOptions { memberIds: string[]; operatorIds?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: CollaborationLimits }
+export interface NetworkOptions { memberIds: string[]; operatorIds?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: CollaborationLimits; jobs?: JobStore; tasks?: TaskService }
 const iso = (time: number) => new Date(time).toISOString();
 function fields(value: unknown, prefix = ''): string[] {
   if (value && typeof value === 'object' && !Array.isArray(value)) return Object.entries(value).flatMap(([key, child]) => fields(child, prefix + '/' + key));
   return [prefix];
 }
-const requiredCommand = { 'follow.set': 'follow.manage', 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
+const requiredCommand = { 'inquiry.request_conversion': 'inquiry.manage', 'inquiry.request_selection': 'inquiry.manage', 'inquiry.convert': 'inquiry.manage', 'inquiry.select_quote': 'inquiry.manage', 'follow.set': 'follow.manage', 'need.close': 'withdraw_own', 'draft.create': 'draft.create', 'draft.update': 'draft.edit', 'publication.request_approval': 'approval.request', 'publication.publish': 'publish', 'publication.withdraw': 'withdraw_own', 'publication.replace': 'publish', 'representation.request': 'directory.manage', 'listing.create': 'directory.manage', 'listing.update': 'directory.manage', 'listing.submit_review': 'directory.manage', 'listing.set_state': 'directory.manage' } as const;
 
-/** No model, supplier, payment or task-dispatch access. All mutations are synchronous. */
+/** No model or supplier calls. Private Task submission shares the transaction; only Worker executes. */
 export class NetworkService {
   readonly holder = randomUUID();
   readonly directory: NetworkDirectory;
   readonly collaboration: NetworkCollaboration;
   readonly activity: NetworkActivity;
+  readonly inquiry?: InquiryBridge;
   private timer: ReturnType<typeof setInterval>;
   private leaseLost = false;
   private cursorKey = randomBytes(32);
   constructor(readonly store: NetworkStore, private members: MemberStore, private options: NetworkOptions) {
     this.activity = new NetworkActivity(store, (pub, viewer) => this.publicView(pub, viewer), (profileId, spaceId, memberId) => { this.directoryQuery(memberId, { version: 1, kind: 'profile', profileId, spaceId }); });
     this.collaboration = new NetworkCollaboration(store, (pub, viewer) => !!this.baseView(pub, viewer), options.collaborationLimits);
+    if (options.jobs && options.tasks && options.catalog) this.inquiry = new InquiryBridge(store, options.jobs, options.tasks, options.catalog, (memberId, input) => this.directoryQuery(memberId, input), (id, owner) => this.validBinding(id, owner));
     store.acquire(this.holder);
     this.directory = new NetworkDirectory(store, id => this.member(id), options.operatorIds ?? [], options.catalog);
     try { this.directory.bootstrap(options.memberIds, id => members.get(id)); } catch (error) { store.release(this.holder); throw error; }
@@ -154,13 +159,20 @@ export class NetworkService {
     }
     return this.ownView(owner, ref);
   }
+  private inquiryService() { return this.inquiry ?? fail('INQUIRY_UNAVAILABLE', 503); }
+  private inquiryScope(p: Principal) { if (!p.scopes.includes('tasks:write') || !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403); }
   command(p: Principal, token: string, input: unknown) {
     const args = networkCommandSchema.parse(input);
+    if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
     let actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
     const committed = this.store.once(this.actorKey(actor), args.operation, args.requestId, args, () => {
+      if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
       actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
     }, () => {
       const a = actor;
+      if (args.operation === 'inquiry.request_conversion') return this.inquiryService().request(a, 'convert', args.input);
+      if (args.operation === 'inquiry.request_selection') return this.inquiryService().request(a, 'select_quote', args.input);
+      if (args.operation === 'inquiry.convert' || args.operation === 'inquiry.select_quote') return this.inquiryService().apply(p, a, args.choiceId, args.operation === 'inquiry.convert' ? 'convert' : 'select_quote');
       if (args.operation === 'follow.set') return this.activity.follow(a, args);
       if (args.operation === 'need.close') return this.collaboration.close(a, args.postId, args.expectedRevision);
       if (isDirectoryCommand(args)) return this.directory.command(a, args);
@@ -226,6 +238,8 @@ export class NetworkService {
   control(memberId: string, input: unknown) {
     const args = controlCommandSchema.parse(input); const member = this.member(memberId), owner = ownerKey({ ...member, clientId: '', scopes: [] });
     const committed = this.store.once(digest([owner, 'controller']), args.action, args.requestId, args, () => { this.member(memberId); }, () => {
+      if (args.action === 'inquiry.revoke_choice') return this.inquiryService().revoke(owner, args.choiceId, args.expectedRevision);
+      if (args.action === 'inquiry.approve_choice') return this.inquiryService().approve(owner, memberId, args.choiceId, args.expectedRevision, args.reviewDigest);
       if (isDirectoryControl(args)) return this.directory.control(memberId, owner, args);
       if (args.action === 'profile.create') {
         this.store.quota('profile', owner); const id = randomUUID();
@@ -268,6 +282,9 @@ export class NetworkService {
   }
   private ownView(owner: string, ref: ResultRef): unknown {
     const record = this.store.get(ref.kind, ref.id, owner);
+    if (ref.kind === 'choice') { const c = this.store.get('choice', ref.id, owner); return { id: c.id, kind: c.kind, status: c.status, revision: c.revision, expiresAt: c.expiresAt, reviewDigest: c.reviewDigest, input: c.input }; }
+    if (ref.kind === 'inquiry') return this.inquiryService().inquiryView(owner, ref.id);
+    if (ref.kind === 'selection') return this.inquiryService().selectionView(owner, ref.id);
     if (ref.kind === 'need') return this.collaboration.view(this.store.get('need', ref.id, owner));
     if (ref.kind === 'publication') {
       const pub = record as Publication, grant = this.store.get('grant', pub.grantId, owner);
@@ -287,12 +304,25 @@ export class NetworkService {
   }
   query(p: Principal, token: string, input: unknown): NetworkQueryResult {
     const args = networkQuerySchema.parse(input);
+    if (args.kind === 'my_inquiry' || args.kind === 'my_selection') {
+      if (!p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+      this.identity(p, token, 'network:read'); const owner = ownerKey(p);
+      if (args.kind === 'my_selection') return { version: 1, result: this.inquiryService().selectionView(owner, args.selectionId) };
+      const inquiry = this.inquiryService().byPost(owner, args.postId) ?? fail('NOT_FOUND', 404);
+      return { version: 1, result: this.inquiryService().inquiryView(owner, inquiry.id) };
+    }
     if (['get', 'spaces', 'profile', 'listing', 'search', 'need', 'messages'].includes(args.kind)) {
       const { member } = this.identity(p, token, 'network:read');
       return this.directoryQuery(member.id, args);
     }
-    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory' && args.kind !== 'my_follows') return fail('INVALID_INPUT', 422);
+    if (args.kind !== 'my_drafts' && args.kind !== 'my_approval_request' && args.kind !== 'my_directory' && args.kind !== 'my_follows' && args.kind !== 'my_choice') return fail('INVALID_INPUT', 422);
     const a = this.actor(p, token, args.asProfileId, 'network:read');
+    if (args.kind === 'my_choice') {
+      if (!p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+      const choice = this.store.get('choice', args.choiceId, a.owner);
+      if (choice.profileId !== a.profileId || choice.bindingId !== a.bindingId || choice.bindingRevision !== a.bindingRevision) fail('NOT_FOUND', 404);
+      return { version: 1, result: this.ownView(a.owner, { kind: 'choice', id: choice.id }) };
+    }
     if (args.kind === 'my_follows') {
       const rows = this.activity.follows(a.owner, a.profileId);
       const context = digest(['follows', this.actorKey(a), a.bindingRevision, rows.map(f => [f.id, f.revision])]);
@@ -418,7 +448,9 @@ export class NetworkService {
   }
 
   receipt(p: Principal, token: string, input: unknown) {
-    const args = receiptQuerySchema.parse(input), a = this.actor(p, token, args.asProfileId, 'network:read');
+    const args = receiptQuerySchema.parse(input);
+    if (args.operation.startsWith('inquiry.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+    const a = this.actor(p, token, args.asProfileId, 'network:read');
     const r = this.store.receipt(this.actorKey(a), args.operation, args.requestId);
     if (!r) return fail('NOT_FOUND', 404);
     return { version: 1, refs: r.refs, result: r.refs.map(ref => this.ownView(a.owner, ref)) };
@@ -428,7 +460,7 @@ export class NetworkService {
     const spaces = this.directory.spaces(memberId), operator = this.directory.isOperator(memberId);
     const managedSpaces = operator ? this.store.scan('space').map(s => ({ id: s.id, name: s.name, revision: s.revision, state: s.state, role: 'operator' })) : this.store.scan('membership', { memberId, state: 'active' }).filter(m => m.role === 'moderator').map(m => { const s = this.store.get('space', m.spaceId); return { id: s.id, name: s.name, revision: s.revision, state: s.state, role: m.role }; });
     const knownMembers = new Set([memberId, ...spaces.flatMap(s => this.store.scan('membership', { spaceId: s.id, state: 'active' }).map(m => m.memberId))]);
-    return { operator, spaces, invitations: this.store.scan('invitation', { memberId, state: 'pending' }),
+    return { operator, spaces, choices: this.store.list('choice', owner), inquiries: this.inquiry ? this.store.list('inquiry', owner).map(i => this.inquiry!.inquiryView(owner, i.id)) : [], invitations: this.store.scan('invitation', { memberId, state: 'pending' }),
       spaceMembers: managedSpaces.map(s => ({ space: s, memberships: this.store.scan('membership', { spaceId: s.id }) })),
       representations: this.directory.isOperator(memberId) ? this.store.scan('representation') : this.store.list('representation', owner),
       listings: this.directory.isOperator(memberId) ? this.store.scan('listing') : this.store.list('listing', owner),

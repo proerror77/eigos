@@ -1,3 +1,6 @@
+import { JobStore } from '../../packages/core/store.js';
+import { TaskService } from '../../packages/core/tasks.js';
+import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -10,11 +13,14 @@ import { commands } from '../../packages/network/contracts.js';
 import { SCOPES, ownerKey, type Principal } from '../../packages/core/domain.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 
-export function networkFixture(options: { operatorSubjects?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: { maxResponders: number; maxClarificationRounds: number } } = {}) {
+export function networkFixture(options: { withTasks?: boolean; catalogFactory?: (jobs: JobStore) => ExecutionCatalog; operatorSubjects?: string[]; catalog?: ExecutionCatalog; collaborationLimits?: { maxResponders: number; maxClarificationRounds: number } } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-network-')), path = join(dir, 'business.sqlite');
+  const jobs = options.withTasks ? new JobStore(path) : undefined;
+  const catalog = options.catalogFactory && jobs ? options.catalogFactory(jobs) : options.catalog ?? (jobs ? createExecutionCatalog({ store: jobs }) : undefined);
+  const tasks = jobs && catalog ? new TaskService(jobs, { catalog }) : undefined;
   const db = new DatabaseSync(path), members = new MemberStore(join(dir, 'members.sqlite'));
   let now = Date.now();
-  const store = new NetworkStore(db, () => now);
+  const store = jobs?.createNetworkStore(() => now) ?? new NetworkStore(db, () => now);
   const identity = (subject: string) => ({ issuer: 'https://idp.test', subject, tenant: 'one' });
   const create = (subject: string) => {
     const member = members.login(identity(subject)); members.apply(member.id, { displayName: subject, locale: 'en', timezone: 'UTC', consent: true }, false);
@@ -29,7 +35,7 @@ export function networkFixture(options: { operatorSubjects?: string[]; catalog?:
     return { ...u, id, secret, token };
   };
   const a = install(alice), a2 = install(alice), b = install(bob), c = install(charlie);
-  const service = new NetworkService(store, members, { memberIds: [a.member.id, b.member.id, c.member.id], operatorIds: [a, b, c].filter(u => options.operatorSubjects?.includes(u.p.subject)).map(u => u.member.id), catalog: options.catalog, collaborationLimits: options.collaborationLimits });
+  const service = new NetworkService(store, members, { memberIds: [a.member.id, b.member.id, c.member.id], operatorIds: [a, b, c].filter(u => options.operatorSubjects?.includes(u.p.subject)).map(u => u.member.id), catalog, jobs, tasks, collaborationLimits: options.collaborationLimits });
   const control = (action: object, memberId = a.member.id) => service.control(memberId, { version: 1, requestId: randomUUID(), ...action });
   const profileId = control({ action: 'profile.create', displayName: 'Alice Agent' }).refs[0]!.id;
   const bindingId = control({ action: 'profile.bind_installation', profileId, installationId: a.id, allowedCommands: [...commands] }).refs[0]!.id;
@@ -42,8 +48,8 @@ export function networkFixture(options: { operatorSubjects?: string[]; catalog?:
   const grant = (id: string) => store.get('grant', id, ownerKey(a.p));
   const publish = (draftId: string, grantId: string, requestId = randomUUID()) => command({ operation: 'publication.publish', draftId, expectedRevision: 1, grantId, requestId });
   const get = (publicationId: string, user = b) => service.query(user.p, user.token, { version: 1, kind: 'get', publicationId });
-  return { dir, path, db, store, members, service, a, a2, b, c, profileId, bindingId, control, command, draft, request, approval, approve, grant, publish, get,
+  return { dir, path, db, store, members, jobs, tasks, catalog, service, a, a2, b, c, profileId, bindingId, control, command, draft, request, approval, approve, grant, publish, get,
     advance: (ms: number) => { now += ms; store.acquire(service.holder); },
-    close: () => { service.close(); members.close(); db.close(); rmSync(dir, { recursive: true, force: true }); } };
+    close: () => { service.close(); members.close(); jobs?.close(); db.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 export type NetworkFixture = ReturnType<typeof networkFixture>;

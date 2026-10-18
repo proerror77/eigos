@@ -2,6 +2,8 @@
 
 日期：2026-10-18。契约 `eigos.network.v1`，待实现。依赖 [D01](d01-identity-publication-2026-10-18.md)、[D02](d02-network-data-events-2026-10-18.md)、[D03](d03-quote-projection-2026-10-18.md)。本文件替代上层方案中的暂定 network_search/publish/respond 等工具名；所有 schema 仍需实现测试，本轮没有新增 API。
 
+T10 已实现本分册的私有询价与选择主流程；为落实明确选择，增加 request_choice 对应的两个准备命令和会员会话确认，再消费 choiceId。准确接口名称、参数和当前支持的报价来源以 [T10 实现说明](../network-t10.md) 为准；下文保留设计推演，不代表其余全部接口已实现。
+
 ## 1. 保留现有公共协议
 
 | 现有入口 | 处理 |

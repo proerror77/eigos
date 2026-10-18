@@ -37,14 +37,19 @@ export class TaskService {
     return this.store.ontology.evaluate(ownerKey(p), input);
   }
 
-  submit(p: Principal, input: unknown, contextId?: string): Job {
+  submit(p: Principal, input: unknown, contextId?: string): Job { return this.submitInternal(p, input, contextId, false); }
+  submitInTransaction(p: Principal, input: unknown): Job {
+    this.store.assertTransaction(); return this.submitInternal(p, input, undefined, true);
+  }
+  private submitInternal(p: Principal, input: unknown, contextId: string | undefined, inTransaction: boolean): Job {
     requireScope(p, 'tasks:write');
     const args = submitSchema.parse(input);
     if (contextId) taskIdSchema.parse(contextId);
     const owner = ownerKey(p);
-    if (args.service === 'eigos.aftersales') { if (contextId && this.store.get(owner, args.originalTaskId).contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match original task'); const { service, ...remedy } = args; return this.requestRemediation(p, remedy); }
+    if (args.service === 'eigos.aftersales') { if (inTransaction) throw new DomainError('FORBIDDEN', 'Inquiry cannot submit after-sales'); if (contextId && this.store.get(owner, args.originalTaskId).contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match original task'); const { service, ...remedy } = args; return this.requestRemediation(p, remedy); }
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
-    const submitted = this.store.once(owner, 'submit', args.requestId, JSON.stringify([args, contextId]), () => {
+    const once = inTransaction ? this.store.onceInTransaction.bind(this.store) : this.store.once.bind(this.store);
+    const submitted = once(owner, 'submit', args.requestId, JSON.stringify([args, contextId]), () => {
       if (contextId && !this.store.hasContext(owner, contextId)) throw new DomainError('NOT_FOUND', 'Context not found');
       const now = new Date().toISOString();
       const job: Job = {

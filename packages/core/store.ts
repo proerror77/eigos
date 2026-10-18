@@ -1,3 +1,4 @@
+import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
@@ -81,7 +82,7 @@ export class JobStore {
     this.ontology = new OntologyObjectStore(this.db);
   }
 
-  createNetworkStore(): NetworkStore { return new NetworkStore(this.db); }
+  createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
 
   close(): void { this.db.close(); }
 
@@ -279,9 +280,7 @@ export class JobStore {
   }
 
   transaction<T>(action: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try { const result = action(); this.db.exec('COMMIT'); return result; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return businessTransaction(this.db, action);
   }
 
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
@@ -409,18 +408,32 @@ export class JobStore {
     return { jobs: rows.map(row => JSON.parse(String(row.body)) as Job), total };
   }
 
+  assertTransaction(): void {
+    assertBusinessTransaction(this.db);
+  }
+  sharesNetworkStore(store: NetworkStore): boolean { return store.usesConnection(this.db); }
+  hasClaim(owner: string, jobId: string): boolean {
+    this.get(owner, jobId); return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=?').get(jobId);
+  }
+  bindInquiryContext(owner: string, jobId: string, value: unknown): void {
+    this.assertTransaction(); this.get(owner, jobId);
+    this.db.prepare('INSERT INTO preparation_contexts VALUES(?,?,?,?)').run(owner, jobId, 'network-inquiry-source@1', JSON.stringify(value));
+  }
+
   // All mutations are synchronous inside one transaction, including the retry receipt.
   once(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
-    return this.transaction(() => {
-      const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
-        .get(owner, operation, requestId);
-      if (previous) {
-        if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
-        return JSON.parse(String(previous.response)) as Job;
-      }
-      const result = action();
-      this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
-      return result;
-    });
+    return this.transaction(() => this.onceInTransaction(owner, operation, requestId, fingerprint, action));
+  }
+  onceInTransaction(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
+    this.assertTransaction();
+    const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
+      .get(owner, operation, requestId);
+    if (previous) {
+      if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
+      return JSON.parse(String(previous.response)) as Job;
+    }
+    const result = action();
+    this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
+    return result;
   }
 }
