@@ -5,6 +5,7 @@ import { digest } from '../core/delegation.js';
 import { sourceProof as proof } from './object-evidence.js';
 import { evaluateDomainFunction } from './domain-functions.js';
 import { evaluateCommerceFunction } from './commerce-functions.js';
+import { evaluateCatalogFunction } from './catalog-functions.js';
 import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store.js';
@@ -13,6 +14,7 @@ export interface Computation { status: 'known' | 'unknown'; value?: unknown; rea
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
+  simple('catalogReadStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -48,6 +50,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const catalogResult = evaluateCatalogFunction(store, owner, input, budget);
+  if (catalogResult) return catalogResult;
   const commerceResult = evaluateCommerceFunction(store, owner, input, budget);
   if (commerceResult) return commerceResult;
   const domainResult = evaluateDomainFunction(store, owner, input, budget);

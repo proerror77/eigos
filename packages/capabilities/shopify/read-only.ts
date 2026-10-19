@@ -14,7 +14,7 @@ const idSchema = z.string().regex(/^gid:\/\/shopify\/(?:p\/[A-Za-z0-9_-]+|Produc
 const contextSchema = z.strictObject({ address_country: z.string().regex(/^[A-Z]{2}$/) }).optional();
 const inputs = {
   search_catalog: z.strictObject({ query: z.string().trim().min(1).max(500), context: contextSchema, pagination: z.strictObject({ limit: z.number().int().min(1).max(10) }).optional(), filters: z.strictObject({ shops: z.array(z.string().regex(/^gid:\/\/shopify\/Shop\/[0-9]+$/)).min(1).max(10) }).optional() }),
-  get_product: z.strictObject({ id: idSchema, context: contextSchema }),
+  get_product: z.strictObject({ id: idSchema, context: contextSchema, filters: z.strictObject({ shops: z.array(z.string().regex(/^gid:\/\/shopify\/Shop\/[0-9]+$/)).min(1).max(10) }).optional() }),
   lookup_catalog: z.strictObject({ ids: z.array(idSchema).min(1).max(10), context: contextSchema }),
 };
 const price = z.object({ amount: z.number().int().nonnegative().safe(), currency: z.string().regex(/^[A-Z]{3}$/) });
@@ -111,7 +111,7 @@ interface Connection {
   onEvidence?: (receipt: ShopifyReadReceipt, response: Uint8Array) => Promise<void>;
 }
 
-/** Technical admission probe. Deliberately absent from the autonomous action catalog.
+/** Bounded read-only transport used by admission probes and the catalog adapter.
  * The hosted fixture negotiates protocol support; it is not an EIGOS agent identity.
  * No cart, checkout, order, payment, URL-following or arbitrary tool API exists. */
 export class ShopifyReadOnlyClient {

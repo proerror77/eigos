@@ -42,6 +42,11 @@ const publicGeoQueries = readWorkerConfig({
     ?? field(oldSettings, 'EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES'),
 }).EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES ?? [];
 const publicGeoSetting = "'" + JSON.stringify(publicGeoQueries).replaceAll("'", '\\u0027') + "'";
+const shopifyMerchants = readWorkerConfig({
+  NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development',
+  EIGOS_SHOPIFY_CATALOG_MERCHANTS: process.env.EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? field(oldSettings, 'EIGOS_SHOPIFY_CATALOG_MERCHANTS'),
+}).EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? [];
+const shopifySetting = "'" + JSON.stringify(shopifyMerchants).replaceAll("'", '\\u0027') + "'";
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
@@ -67,6 +72,8 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
   'EIGOS_PAOTUI_ORDERS_ENABLED=false', `EIGOS_PAOTUI_SKILL_DIR=${skill}`, `EIGOS_AUDIT_PATH=${join(runtime, 'http.jsonl')}`,
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
+  `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
+  ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');
 const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>
@@ -117,7 +124,7 @@ try {
   privateWrite(join(directory,'runtime-location.json'),JSON.stringify({runtime,release,buildDigest,database:join(runtime,'tasks.sqlite'),audit:join(runtime,'http.jsonl')})+'\n');
   // Retired executable snapshots are recovery material, never a second active mode.
   for (const name of ['dist','scripts']) if (existsSync(join(runtime,name))) renameSync(join(runtime,name), join(backup,'retired-'+name));
-  console.log(JSON.stringify({status:'ready',endpoint:'http://127.0.0.1:3430',defaultService:'eigos.delegate',buildDigest,release,backup,sourceCommit,sourceTreeDirty:dirty,publicGeoDiscoveryQueries:publicGeoQueries,skillInstall:join(runtime,'skill-install.md')}));
+  console.log(JSON.stringify({status:'ready',endpoint:'http://127.0.0.1:3430',defaultService:'eigos.delegate',buildDigest,release,backup,sourceCommit,sourceTreeDirty:dirty,publicGeoDiscoveryQueries:publicGeoQueries,shopifyCatalogMerchants:shopifyMerchants,skillInstall:join(runtime,'skill-install.md')}));
 } catch (error) {
   if (needsRestart) {
     await stop().catch(()=>{});

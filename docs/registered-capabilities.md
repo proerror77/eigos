@@ -1,8 +1,8 @@
-# Ontology + LLM 后端 v3
+# Ontology + LLM 后端
 
-2026-10-17。当前通用委托使用 `ontology-execution-v3`。Personal Agent、MCP/A2A、身份和会员接入保留；v1/v2 执行计划只读，不迁移、不恢复，也不回退到旧执行器。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
+更新于 2026-10-19。当前通用委托使用 `ontology-execution-v7`，业务模型为 `eigos.business@6`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
-本文描述当前运行实现；后续目标见 [2026-10-18 Ontology 规格](ontology-spec-v0.2-2026-10-18.md) 和 [N0～N5 阶段](backend-implementation-goals.md)。新规格中的三领域 Offer、事实契约和预订状态尚待实现，不计入下方当前能力。
+本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
 ## 主路径
 
@@ -54,6 +54,7 @@ LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函�
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
 | `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `commerce.catalog.query@1` | 显式配置商家后，Worker 匿名读取 Shopify Global Catalog 与店铺；本体模型规划及店铺再次核对 | 公开商品查询文件；显示单价与可售标记不证明库存、配送或购买权限 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |
 
 CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、跑腿读取均走新后端；旧独立原型入口和状态机已删除。delivery.quote@2 支持同任务真实地址读取、选项保存、自然语言选择与价格查询。
@@ -90,10 +91,10 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 
 ## 2026-10-18 六类服务扩展
 
-当前运行契约为 ontology-execution-v7，业务模型为 eigos.business@5。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
+六类扩展时的运行契约为 ontology-execution-v7，业务模型为 eigos.business@5；后续商品只读扩展升级模型至 @6。六个新增能力只在受信任代码显式传入 domainSandboxProviders 时登记，默认真实能力列表不包含它们；它们要求 sandbox 任务和本机开发身份。新增 domain 业务终点必须由逐条件领域验收及独立 verifier 同时通过。来源观察由有效领取者投影到稳定业务对象，旧回执保留，私人字段不进入协议交付物。
 
 ## UCP 官方本地测试商家
 
 显式 `createExecutionCatalog({ store, ucpSandbox })` 可登记 `commerce.ucp.prepare.sandbox@1` 和 `commerce.ucp.confirm.sandbox@1`。连接限定 127.0.0.1 和官方模拟支付处理器；前者完成会话准备，后者需 order/payment 两种准确许可并独立读取原订单。复用现有执行账本和授权预算，默认关闭。协议版本、对象映射、恢复规则、实际模型及官方商家证据见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。
 
-[六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。本轮不切换常驻服务，不运行真实交易或预约。
+[六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。该轮未切换常驻服务；2026-10-19 为 [Shopify 只读 PA 验证](shopify-pa-worker-2026-10-19.md) 更新了本机服务。真实交易与预约仍关闭。

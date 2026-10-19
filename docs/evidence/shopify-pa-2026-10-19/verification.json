@@ -1,0 +1,1151 @@
+{
+  "passed": true,
+  "recordedAt": "2026-10-19T02:15:52.680Z",
+  "scope": "Actual Monk PA on connected Mac -> A2A -> Codex grounding and Ontology planning -> anonymous Shopify catalog and independent merchant lookup -> accepted artifact -> PA GetTask -> independent MCP and database readback",
+  "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+  "requestId": "a76e44cc-c5df-47bd-a8f9-b90849311f52",
+  "createdAt": "2026-10-19T02:10:31.107Z",
+  "completedAt": "2026-10-19T02:11:53.970Z",
+  "buildDigest": "eafcfe4b3c26757652cdb82be459d91094747ec30156aef4212ac0adfdac2399",
+  "businessModel": {
+    "id": "eigos.business",
+    "version": "6",
+    "digest": "2c98e66bbc2603f1be2238b54216a893be8727a60555a3518237a0c4645562a0"
+  },
+  "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+  "sourceFrozenAt": "2026-10-19T02:09:03.434Z",
+  "sourceHashManifestSha256": "4bb368f53f57659e687769a7d58da3233968c8ed8f20a9d6ff06ad643aed3318",
+  "connectionAndCredentialsUnchanged": true,
+  "previousJobsUnchanged": 11,
+  "query": {
+    "merchantId": "purity-coffee",
+    "query": "coffee beans",
+    "country": "US"
+  },
+  "merchant": {
+    "id": "purity-coffee",
+    "name": "Purity Coffee",
+    "shopId": "gid://shopify/Shop/40613871783",
+    "domain": "purity-coffee.myshopify.com"
+  },
+  "items": [
+    {
+      "globalProductId": "gid://shopify/p/2GO8ZtWTaAFDP4WN0h2efc",
+      "variantId": "gid://shopify/ProductVariant/36130238136487",
+      "title": "FLOW: Original Medium Roast Whole Bean Coffee",
+      "sku": "PC12-R",
+      "displayPrice": {
+        "minor": "2900",
+        "currency": "USD"
+      },
+      "availableReported": true,
+      "nativeCheckoutEligibleReported": false,
+      "globalReceiptId": "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+      "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+    },
+    {
+      "globalProductId": "gid://shopify/p/1W5yodBQAJkHpSrG6YXuIA",
+      "variantId": "gid://shopify/ProductVariant/36130229878951",
+      "title": "EASE: Dark Roast Whole Bean Coffee",
+      "sku": "PC12-DK",
+      "displayPrice": {
+        "minor": "2900",
+        "currency": "USD"
+      },
+      "availableReported": true,
+      "nativeCheckoutEligibleReported": false,
+      "globalReceiptId": "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+      "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+    },
+    {
+      "globalProductId": "gid://shopify/p/1as9zn1sAKYoLaeirnDpuB",
+      "variantId": "gid://shopify/ProductVariant/42064997318825",
+      "title": "PROTECT: Light-Medium Roast Whole Bean Coffee",
+      "sku": "PC12-PRO",
+      "displayPrice": {
+        "minor": "2900",
+        "currency": "USD"
+      },
+      "availableReported": true,
+      "nativeCheckoutEligibleReported": false,
+      "globalReceiptId": "d16bc765-dad6-41a2-af87-c032ae5ff581",
+      "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+    }
+  ],
+  "sourceReads": [
+    {
+      "id": "9b47feba-7fdb-4363-92e4-a7ba5efd7858",
+      "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "operation": "search_catalog",
+      "startedAt": "2026-10-19T02:11:05.945Z",
+      "receivedAt": "2026-10-19T02:11:07.120Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "17a15febd2071420e400df9b2c3b5ed311d97f1bde051008cfb5cd4b8a0fc849",
+      "responseSha256": "f1efdbb1dfe2dbc77081732be97f4fc9f7f48ef7c8e1767f42067639056fc468",
+      "responseBytes": 19479
+    },
+    {
+      "id": "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+      "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "operation": "get_product",
+      "startedAt": "2026-10-19T02:11:07.133Z",
+      "receivedAt": "2026-10-19T02:11:07.477Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "ef19828527eb4600160799732a1c6c2819e5260cc912b188a8fae574e6d6f01b",
+      "responseSha256": "d198e89717e3dec7065e19ea2c944c0b2fe3c8aa19345157d84151dd8dd8dcc8",
+      "responseBytes": 8311
+    },
+    {
+      "id": "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+      "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "operation": "get_product",
+      "startedAt": "2026-10-19T02:11:07.479Z",
+      "receivedAt": "2026-10-19T02:11:07.797Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "c871a448608b1ad324413d3eb2837cc3e7a5a985b572ebd7a63f4bb9586d2b84",
+      "responseSha256": "272d0b194b662b947c79e2e43079126386644a317656f346cba72312dacad526",
+      "responseBytes": 7786
+    },
+    {
+      "id": "d16bc765-dad6-41a2-af87-c032ae5ff581",
+      "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "operation": "get_product",
+      "startedAt": "2026-10-19T02:11:07.799Z",
+      "receivedAt": "2026-10-19T02:11:08.162Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "4ce1bce52e42ddfc6f5520fa76fba591fd75fbb1a234dce17d4d1c2f04e47e7f",
+      "responseSha256": "908476d020d938c75587b252ca4ecb2528c955e1770767dbc3e9c12aad6a9f40",
+      "responseBytes": 8191
+    },
+    {
+      "id": "7e3351d3-648f-49a4-9020-18ce3b73378f",
+      "endpoint": "https://purity-coffee.myshopify.com/.well-known/ucp",
+      "operation": "discovery",
+      "startedAt": "2026-10-19T02:11:08.164Z",
+      "receivedAt": "2026-10-19T02:11:09.076Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "responseSha256": "d8c83f031fc8d60986ce9940b9750b4a4e05aebf18e8bad8c53861adf9edbd82",
+      "responseBytes": 5206
+    },
+    {
+      "id": "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8",
+      "endpoint": "https://purity-coffee.myshopify.com/api/ucp/mcp",
+      "operation": "lookup_catalog",
+      "startedAt": "2026-10-19T02:11:09.084Z",
+      "receivedAt": "2026-10-19T02:11:09.745Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "667b417e94991e489a3c501b7d5d645681770fd78296a10369f96d8e4597f1f3",
+      "responseSha256": "bde7cb6ad2707cecc91dfa0c0f57e5cf9abc1873f4f2edaa541e6759030f6f1c",
+      "responseBytes": 38287
+    },
+    {
+      "id": "db9c9046-a79c-4494-bb66-79e57c17df6c",
+      "endpoint": "https://purity-coffee.myshopify.com/.well-known/ucp",
+      "operation": "discovery",
+      "startedAt": "2026-10-19T02:11:49.984Z",
+      "receivedAt": "2026-10-19T02:11:51.679Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "responseSha256": "d8c83f031fc8d60986ce9940b9750b4a4e05aebf18e8bad8c53861adf9edbd82",
+      "responseBytes": 5206
+    },
+    {
+      "id": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf",
+      "endpoint": "https://purity-coffee.myshopify.com/api/ucp/mcp",
+      "operation": "lookup_catalog",
+      "startedAt": "2026-10-19T02:11:51.691Z",
+      "receivedAt": "2026-10-19T02:11:52.465Z",
+      "httpStatus": 200,
+      "authentication": "anonymous",
+      "inputSha256": "7e279d9045fb86b0e8b61f4ea02f282e75182171664f828db0a05be4d7d8307c",
+      "responseSha256": "55a1728ea255a01ceab573b2de1845c117d87a44e357dd10fa858a5d181ae204",
+      "responseBytes": 38287
+    }
+  ],
+  "totalSourceReadsIncludingPreviousAttempts": 12,
+  "previousAttempts": [
+    {
+      "taskId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+      "state": "rejected",
+      "error": "当前没有可提案的查询计划：唯一候选状态为 unavailable，事实有效期已结束；“仅公开目录”和“不创建购物车、结账、订单或付款”两项硬要求均为 unknown，前置条件评估也未返回通过证据。已查询的 CatalogRead 数据为空，无法评估具体查询记录或提供实际商品信息。realSupply=false 本身不表示只读查询是模拟的，但现有证据不足以确认可用的实时查询。库存数量与配送承诺均未确认；商品结果须在查询执行后经独立核验，目前不能声称已查到商品。",
+      "modelReceipts": [
+        {
+          "id": "17db0e9b-2886-4bc6-b30a-9e5ac82b6830",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-19T01:48:09.898Z",
+          "completedAt": "2026-10-19T01:48:21.741Z",
+          "outputSha256": "b9733d4ed4b3479dcd8011174f1f8cb9eb713b8c174d9ef3076eed0b8c2d46f2",
+          "threadId": "01a151d8-4536-7240-897b-54fbc9726ad7",
+          "usage": {
+            "input_tokens": 41218,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 115,
+            "reasoning_output_tokens": 16
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "e459fd66-bbd3-44c4-a5f9-b68a44efa7cc",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-19T01:48:21.802Z",
+          "completedAt": "2026-10-19T01:48:40.785Z",
+          "outputSha256": "52c56d33083b63123a687b012c1c59d45fdaff2ae2270256a467c631df20e2de",
+          "threadId": "01a151d8-7214-77f0-b02c-ca7626f1d09d",
+          "usage": {
+            "input_tokens": 44390,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 438,
+            "reasoning_output_tokens": 55
+          },
+          "purpose": "grounding"
+        },
+        {
+          "id": "fbd12595-24f8-4e5b-ad1f-08c91dd2db87",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-19T01:48:46.010Z",
+          "completedAt": "2026-10-19T01:49:16.261Z",
+          "outputSha256": "22773e8d16ebf606e47f1c0ddff38daeea64f47f6d9ece3d953c0c1bd856c8f5",
+          "threadId": "01a151d9-1632-7bb3-9c2d-54e3bec61811",
+          "usage": {
+            "input_tokens": 31134,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 155,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "planning"
+        },
+        {
+          "id": "466652ab-3eae-47d8-8dad-c2f017cd1ca8",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-19T01:49:16.271Z",
+          "completedAt": "2026-10-19T01:49:28.334Z",
+          "outputSha256": "ec1a9acc8b88988992fc42a5356b6a6f5480dac4691a0e140c952e7aef9fd55a",
+          "threadId": "01a151d9-46d0-7293-8917-664d9dd79028",
+          "usage": {
+            "input_tokens": 36294,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 219,
+            "reasoning_output_tokens": 35
+          },
+          "purpose": "planning"
+        }
+      ],
+      "failure": {
+        "taskId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+        "state": "rejected",
+        "artifactPresent": false,
+        "sourceReads": [
+          {
+            "requestId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+            "requestRevision": 1,
+            "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+            "receipt": {
+              "id": "5bf6b36c-f4a4-43a9-90d7-0ab652a9d487",
+              "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+              "operation": "search_catalog",
+              "startedAt": "2026-10-19T01:48:40.887Z",
+              "receivedAt": "2026-10-19T01:48:44.704Z",
+              "httpStatus": 200,
+              "authentication": "anonymous",
+              "inputSha256": "fcb250024fd642d43bef8090c46d6488094d81fbf5a757a4fb645153b707e87a",
+              "responseSha256": "46fc6d55b998eeff79f7cae7b7a1d4f459d67355eef097106f92f1569d15d465",
+              "responseBytes": 19479
+            }
+          },
+          {
+            "requestId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+            "requestRevision": 1,
+            "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+            "receipt": {
+              "id": "5321d426-f3ae-4d75-b8cd-1f9637a02d13",
+              "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+              "operation": "get_product",
+              "startedAt": "2026-10-19T01:48:44.799Z",
+              "receivedAt": "2026-10-19T01:48:45.123Z",
+              "httpStatus": 200,
+              "authentication": "anonymous",
+              "inputSha256": "8ecb275467f0b3502ff169dae017be6d8d098142eccab34b615756573b42a388",
+              "responseSha256": "925dc9ef748b0b829e6734a47073f442e42cf09e569ab29a89f8fa68832df6cf",
+              "responseBytes": 11440
+            }
+          },
+          {
+            "requestId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+            "requestRevision": 1,
+            "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+            "receipt": {
+              "id": "c12528e7-9f5f-4198-acd0-fef1ce8002a9",
+              "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+              "operation": "get_product",
+              "startedAt": "2026-10-19T01:48:45.271Z",
+              "receivedAt": "2026-10-19T01:48:45.623Z",
+              "httpStatus": 200,
+              "authentication": "anonymous",
+              "inputSha256": "b0e1ecc2251ea00ab58ee7d73e581ff66a000261cb79e0cf96d0b0f1a1bd4ff3",
+              "responseSha256": "41925b63e32c320350dc84045400377f0dd76b1452617851774de030aa6a07f7",
+              "responseBytes": 10895
+            }
+          },
+          {
+            "requestId": "b33a7960-f808-4fb0-9e07-2eca81a83e95",
+            "requestRevision": 1,
+            "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+            "receipt": {
+              "id": "fd8c800a-186e-4d25-9272-ca963dfb8b30",
+              "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+              "operation": "get_product",
+              "startedAt": "2026-10-19T01:48:45.626Z",
+              "receivedAt": "2026-10-19T01:48:45.972Z",
+              "httpStatus": 200,
+              "authentication": "anonymous",
+              "inputSha256": "8fd3dd5c1416f39e9cb5fc4cb2f1b452d0ba58a03e07d743de1490ab865b1844",
+              "responseSha256": "7b4bf0de9b202c7e020e0e711e9310003b215573818bbc93a29d55d0c3f6c73b",
+              "responseBytes": 36596
+            }
+          }
+        ],
+        "cause": "The searched Purity variant was absent from the bounded global product-cluster detail response; exact identity check prevented preparation.",
+        "expectedVariantId": "gid://shopify/ProductVariant/42064997318825",
+        "globalProductId": "gid://shopify/p/1as9zn1sAKYoLaeirnDpuB",
+        "returnedVariantCount": 10,
+        "matchingVariantCount": 0,
+        "detailReceiptId": "fd8c800a-186e-4d25-9272-ca963dfb8b30",
+        "failedJobSha256": "f97f637f8a501e51d045ae1bfb49d20a7cb3bd33d283a89bea29f8b1bf7f682b",
+        "paReceivedSha256": "cf97e2679f1d7fed9abaf926f1554e64612f53fa9df2e4df4dce71384b3683de"
+      },
+      "unchanged": true
+    },
+    {
+      "taskId": "f2b3a553-d948-4bda-88c1-e10dac28d7dd",
+      "state": "failed",
+      "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+      "modelReceipts": [
+        {
+          "id": "cc2df747-89f5-4296-8a27-20ad298c601d",
+          "runtime": "codex-exec",
+          "startedAt": "2026-10-19T02:01:14.179Z",
+          "completedAt": "2026-10-19T02:03:10.319Z",
+          "outputSha256": "35252136d258fbdace9c4cd4bd78c20a2c38df8be56c4b23222ceac9d00b1b0c",
+          "threadId": "01a151e4-5dca-70a0-96b7-d45e639ec63e",
+          "usage": {
+            "input_tokens": 41216,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 128,
+            "reasoning_output_tokens": 0
+          },
+          "purpose": "grounding"
+        }
+      ],
+      "failure": {
+        "taskId": "f2b3a553-d948-4bda-88c1-e10dac28d7dd",
+        "state": "failed",
+        "artifactPresent": false,
+        "sourceReads": [],
+        "cause": "Model-stage failure before any Shopify request. The generic failure does not independently identify timeout or provider error; timing reached the configured 120-second limit during high local load.",
+        "configuredModelTimeoutMs": 120000,
+        "lastSuccessfulModelCompletedAt": "2026-10-19T02:03:10.319Z",
+        "failedAt": "2026-10-19T02:05:11.149Z",
+        "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+        "failedJobSha256": "2ab08452394d634705eedd12a2ead09ac5e7c98d8cbef6828ba75f6caeb1d7a2",
+        "paReceivedSha256": "902a19831feaef2daf7e7b13e0ed651d56a5f0d8e670763c1f36ffa2a1114a2b"
+      },
+      "unchanged": true
+    }
+  ],
+  "modelReceipts": [
+    {
+      "id": "70089641-cde2-43ad-979b-4a25ea27b3be",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-19T02:10:31.182Z",
+      "completedAt": "2026-10-19T02:10:46.631Z",
+      "outputSha256": "70b4d4f0e4ad49ac26dc2f643c2010f9093fdfa759ba9c5d95b5559b51934beb",
+      "threadId": "01a151ec-bcc0-7c73-b856-187f85d5dc6e",
+      "usage": {
+        "input_tokens": 41213,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 127,
+        "reasoning_output_tokens": 0
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "02e5e7ce-6e14-4571-b0d5-3becb544431b",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-19T02:10:46.881Z",
+      "completedAt": "2026-10-19T02:11:05.914Z",
+      "outputSha256": "25f6cbca42c3bd8f1f05eab5f4ba097c5d563a868d3eca25df4ebc7330ed41da",
+      "threadId": "01a151ec-f912-7401-85f7-5946f6ac7651",
+      "usage": {
+        "input_tokens": 44378,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 422,
+        "reasoning_output_tokens": 30
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "b499cb2f-90cc-42cc-af11-8411c62b6479",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-19T02:11:09.832Z",
+      "completedAt": "2026-10-19T02:11:29.745Z",
+      "outputSha256": "d88ac2c1bde712bc95648b4831252ebea66f21f8c216502a2f3f53cb9e95fc05",
+      "threadId": "01a151ed-5284-7e90-b9f0-8aee7f744735",
+      "usage": {
+        "input_tokens": 31730,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 262,
+        "reasoning_output_tokens": 0
+      },
+      "purpose": "planning"
+    },
+    {
+      "id": "a7d809bb-65f6-4a9d-bd51-27d44c5cc29c",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-19T02:11:29.830Z",
+      "completedAt": "2026-10-19T02:11:49.017Z",
+      "outputSha256": "9b1dd66c66a784f8db1705691c0f0a4f3ee0f5095afbcb2287b3cf9bca05f728",
+      "threadId": "01a151ed-a1bc-75d2-aa61-59d3fbba09e5",
+      "usage": {
+        "input_tokens": 39913,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 377,
+        "reasoning_output_tokens": 35
+      },
+      "purpose": "planning"
+    }
+  ],
+  "ontologyPlanning": {
+    "mode": "model_queries",
+    "model": {
+      "id": "eigos.business",
+      "version": "6",
+      "digest": "2c98e66bbc2603f1be2238b54216a893be8727a60555a3518237a0c4645562a0"
+    },
+    "requestRevision": 1,
+    "conditionsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    "reads": [
+      {
+        "id": "3f14517a-1566-43bd-8322-bf763751570d",
+        "at": "2026-10-19T02:11:29.772Z",
+        "tool": "describe_ontology",
+        "inputDigest": "dd3b27a448b8508d1bc9eaa846773a9f47f34ad6062f3a8a1a72a134d8ff8a85",
+        "outputDigest": "1571502916f2fe276e0cb04d7c39d153df17fab6c4152d573949b5272a41b5c5",
+        "datasetRevision": 11,
+        "status": "ok",
+        "objects": []
+      },
+      {
+        "id": "6b5a908c-5380-42f9-98da-4a38621befb3",
+        "at": "2026-10-19T02:11:29.781Z",
+        "tool": "query_ontology",
+        "inputDigest": "9e7f92df8c447c85fc1a9f5abebb409f41ced609e8e93506c69de10cdd7751e7",
+        "outputDigest": "46363ad696993b8ec19f18858fb381884d85449a6d0d9a40efceebd6df34a5cc",
+        "datasetRevision": 11,
+        "status": "ok",
+        "objects": [
+          {
+            "ref": {
+              "type": "CatalogRead",
+              "id": "707af579-a161-4dd2-8e36-9dfb43a1ca76"
+            },
+            "revision": 1,
+            "propertiesDigest": "77ab5b992d1e95d5f0d589d53352ced94e5381c5d97b6feecef83ca41873545b",
+            "linksDigest": "a63111fdb3f7cec141ad1e74d3729ec37c3f977727387ff10de8b63ec54e8830"
+          }
+        ]
+      },
+      {
+        "id": "ecdacc3b-7245-4257-a540-5b195493f127",
+        "at": "2026-10-19T02:11:29.815Z",
+        "tool": "evaluate_ontology",
+        "inputDigest": "ffbc0f6d6204b6579fb2220e99cee2f6b5ddf60016c8ef1b0b483e0913aeffdd",
+        "outputDigest": "1ffcd9df9b01b4d5d7913c8702f3482060d27bb22f1f6111fbd854a3297706bf",
+        "datasetRevision": 11,
+        "status": "ok",
+        "objects": [
+          {
+            "ref": {
+              "type": "SourceReceipt",
+              "id": "catalog:707af579-a161-4dd2-8e36-9dfb43a1ca76"
+            },
+            "revision": 1,
+            "propertiesDigest": "28a9935a6bc6ee6ff958ba609cfa0578ee658bf73772e11df15cad8ea9a9e95b",
+            "linksDigest": "87ff482ae3c37a800c183d422e645e0e7ccc1435b06509fb29e39b385e1f5f69"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "4204b0752f2787f2c1118abd365cce3b7cd8d2064cfd4763000b64fe0959e533"
+            },
+            "revision": 1,
+            "propertiesDigest": "1591f51a4be27b8546662ed6f4ad58ec2c4293d044b987c7b632a13b990eda56",
+            "linksDigest": "7f3fbbd4f5c9e7c6c21d06305134115a13eaf4bddcdc9880067c0361e4bd7246"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "8ffa239c7e329cf776e414bbe04e0e65b41abd02b6f2788e2d05d4ccd5c100b5"
+            },
+            "revision": 1,
+            "propertiesDigest": "6f3619196376d996582d24fd63fd7b7debdd195c520c2535213d0cea181d8f76",
+            "linksDigest": "b7062e46d2991ca47f1a5271fa4df46bcdf2f45b95cacef8cb4646860938cb88"
+          },
+          {
+            "ref": {
+              "type": "ProductOffer",
+              "id": "bbc748cb5235166c416be2d19712f8f9a92e585a082fab1dcc6aa91f8fb9986a"
+            },
+            "revision": 1,
+            "propertiesDigest": "b2bfcb4612f39032f163e06954f4d0b5147ac210604a968c79a27f9a07bcfcc4",
+            "linksDigest": "589e4fada0ecddaa59aa2f20689ef33738c524b22f1f96224bdb6af84d142eed"
+          }
+        ]
+      },
+      {
+        "id": "871b10c7-d1d6-490d-a137-3dbeef668e99",
+        "at": "2026-10-19T02:11:29.818Z",
+        "tool": "assess_conditions",
+        "inputDigest": "af7cad3306b452b3ed7fb79d85440cede6c18c17bac61bcd83af959f54a5f8d6",
+        "outputDigest": "8fe644d0366ba879fe0f3c0c889dd036c1347df993711abb22f947be6b2841cc",
+        "datasetRevision": 11,
+        "status": "ok",
+        "objects": []
+      }
+    ],
+    "objects": [
+      {
+        "ref": {
+          "type": "CatalogRead",
+          "id": "707af579-a161-4dd2-8e36-9dfb43a1ca76"
+        },
+        "revision": 1,
+        "propertiesDigest": "77ab5b992d1e95d5f0d589d53352ced94e5381c5d97b6feecef83ca41873545b",
+        "linksDigest": "a63111fdb3f7cec141ad1e74d3729ec37c3f977727387ff10de8b63ec54e8830"
+      },
+      {
+        "ref": {
+          "type": "SourceReceipt",
+          "id": "catalog:707af579-a161-4dd2-8e36-9dfb43a1ca76"
+        },
+        "revision": 1,
+        "propertiesDigest": "28a9935a6bc6ee6ff958ba609cfa0578ee658bf73772e11df15cad8ea9a9e95b",
+        "linksDigest": "87ff482ae3c37a800c183d422e645e0e7ccc1435b06509fb29e39b385e1f5f69"
+      },
+      {
+        "ref": {
+          "type": "ProductOffer",
+          "id": "4204b0752f2787f2c1118abd365cce3b7cd8d2064cfd4763000b64fe0959e533"
+        },
+        "revision": 1,
+        "propertiesDigest": "1591f51a4be27b8546662ed6f4ad58ec2c4293d044b987c7b632a13b990eda56",
+        "linksDigest": "7f3fbbd4f5c9e7c6c21d06305134115a13eaf4bddcdc9880067c0361e4bd7246"
+      },
+      {
+        "ref": {
+          "type": "ProductOffer",
+          "id": "8ffa239c7e329cf776e414bbe04e0e65b41abd02b6f2788e2d05d4ccd5c100b5"
+        },
+        "revision": 1,
+        "propertiesDigest": "6f3619196376d996582d24fd63fd7b7debdd195c520c2535213d0cea181d8f76",
+        "linksDigest": "b7062e46d2991ca47f1a5271fa4df46bcdf2f45b95cacef8cb4646860938cb88"
+      },
+      {
+        "ref": {
+          "type": "ProductOffer",
+          "id": "bbc748cb5235166c416be2d19712f8f9a92e585a082fab1dcc6aa91f8fb9986a"
+        },
+        "revision": 1,
+        "propertiesDigest": "b2bfcb4612f39032f163e06954f4d0b5147ac210604a968c79a27f9a07bcfcc4",
+        "linksDigest": "589e4fada0ecddaa59aa2f20689ef33738c524b22f1f96224bdb6af84d142eed"
+      }
+    ],
+    "conditionChecks": [],
+    "actionProposals": [],
+    "digest": "8f296c721774b9113e76523a3e98b4b409a0f167c93e0b0d782c5c242919278f"
+  },
+  "planningEvaluation": {
+    "status": "known",
+    "value": {
+      "phase": "prepared",
+      "query": {
+        "merchantId": "purity-coffee",
+        "query": "coffee beans",
+        "country": "US"
+      },
+      "merchant": {
+        "id": "purity-coffee",
+        "name": "Purity Coffee",
+        "shopId": "gid://shopify/Shop/40613871783",
+        "domain": "purity-coffee.myshopify.com"
+      },
+      "itemCount": 3,
+      "items": [
+        {
+          "globalProductId": "gid://shopify/p/2GO8ZtWTaAFDP4WN0h2efc",
+          "variantId": "gid://shopify/ProductVariant/36130238136487",
+          "title": "FLOW: Original Medium Roast Whole Bean Coffee",
+          "sku": "PC12-R",
+          "displayPrice": {
+            "minor": "2900",
+            "currency": "USD"
+          },
+          "availableReported": true,
+          "nativeCheckoutEligibleReported": false,
+          "globalReceiptId": "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+          "merchantReceiptId": "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8"
+        },
+        {
+          "globalProductId": "gid://shopify/p/1W5yodBQAJkHpSrG6YXuIA",
+          "variantId": "gid://shopify/ProductVariant/36130229878951",
+          "title": "EASE: Dark Roast Whole Bean Coffee",
+          "sku": "PC12-DK",
+          "displayPrice": {
+            "minor": "2900",
+            "currency": "USD"
+          },
+          "availableReported": true,
+          "nativeCheckoutEligibleReported": false,
+          "globalReceiptId": "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+          "merchantReceiptId": "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8"
+        },
+        {
+          "globalProductId": "gid://shopify/p/1as9zn1sAKYoLaeirnDpuB",
+          "variantId": "gid://shopify/ProductVariant/42064997318825",
+          "title": "PROTECT: Light-Medium Roast Whole Bean Coffee",
+          "sku": "PC12-PRO",
+          "displayPrice": {
+            "minor": "2900",
+            "currency": "USD"
+          },
+          "availableReported": true,
+          "nativeCheckoutEligibleReported": false,
+          "globalReceiptId": "d16bc765-dad6-41a2-af87-c032ae5ff581",
+          "merchantReceiptId": "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8"
+        }
+      ],
+      "completeness": "partial_or_unknown",
+      "stockQuantity": "unknown",
+      "deliveryCommitment": "unknown",
+      "partnerTrust": "unverified",
+      "grantsAuthority": false,
+      "noBusinessWrites": true
+    },
+    "evidenceRefs": [
+      {
+        "type": "CatalogRead",
+        "id": "707af579-a161-4dd2-8e36-9dfb43a1ca76"
+      },
+      {
+        "type": "SourceReceipt",
+        "id": "catalog:707af579-a161-4dd2-8e36-9dfb43a1ca76"
+      },
+      {
+        "type": "ProductOffer",
+        "id": "4204b0752f2787f2c1118abd365cce3b7cd8d2064cfd4763000b64fe0959e533"
+      },
+      {
+        "type": "ProductOffer",
+        "id": "8ffa239c7e329cf776e414bbe04e0e65b41abd02b6f2788e2d05d4ccd5c100b5"
+      },
+      {
+        "type": "ProductOffer",
+        "id": "bbc748cb5235166c416be2d19712f8f9a92e585a082fab1dcc6aa91f8fb9986a"
+      }
+    ],
+    "evidenceLevels": [
+      "live_readonly"
+    ],
+    "functionRef": {
+      "id": "catalogReadStatus",
+      "version": "1"
+    },
+    "model": {
+      "id": "eigos.business",
+      "version": "6",
+      "digest": "2c98e66bbc2603f1be2238b54216a893be8727a60555a3518237a0c4645562a0"
+    }
+  },
+  "acceptance": {
+    "accepted": true,
+    "reason": "Anonymous configured-merchant catalog read and independent final variant/price/availability lookup agree; no transaction or fulfillment asserted",
+    "checks": [
+      {
+        "requirementId": "public_catalog_only",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "9b47feba-7fdb-4363-92e4-a7ba5efd7858",
+          "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+          "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+          "d16bc765-dad6-41a2-af87-c032ae5ff581",
+          "7e3351d3-648f-49a4-9020-18ce3b73378f",
+          "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8",
+          "db9c9046-a79c-4494-bb66-79e57c17df6c",
+          "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+        ]
+      },
+      {
+        "requirementId": "no_order_or_payment",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "9b47feba-7fdb-4363-92e4-a7ba5efd7858",
+          "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+          "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+          "d16bc765-dad6-41a2-af87-c032ae5ff581",
+          "7e3351d3-648f-49a4-9020-18ce3b73378f",
+          "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8",
+          "db9c9046-a79c-4494-bb66-79e57c17df6c",
+          "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+        ]
+      }
+    ],
+    "evidenceRefs": [
+      "9b47feba-7fdb-4363-92e4-a7ba5efd7858",
+      "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+      "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+      "d16bc765-dad6-41a2-af87-c032ae5ff581",
+      "7e3351d3-648f-49a4-9020-18ce3b73378f",
+      "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8",
+      "db9c9046-a79c-4494-bb66-79e57c17df6c",
+      "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+    ],
+    "at": "2026-10-19T02:11:53.970Z"
+  },
+  "businessFacts": [],
+  "completionTarget": "artifact",
+  "stockQuantity": "unknown",
+  "deliveryCommitment": "unknown",
+  "partnerTrust": "unverified",
+  "noBusinessWrites": true,
+  "paArtifactDigest": "4984451f0d390f437a979f91d55b8008672f9c78735b00ae717a33bc836aff57",
+  "observerArtifactDigest": "4984451f0d390f437a979f91d55b8008672f9c78735b00ae717a33bc836aff57",
+  "paReceivedFileSha256": "ee4c13cc4d88ef672219e519d8d3cf326d8bdb0fe0b91c7f77b7bdfcae623f21",
+  "originalArtifactFileSha256": "665abd2587b3fdc4af3bc91c063e6b159cfc9e2a969c68804d24917d85f8f253",
+  "a2aTrace": [
+    {
+      "at": "2026-10-19T02:10:31.092Z",
+      "path": "/a2a",
+      "method": "SendMessage",
+      "requestId": "e479594c-793c-4749-a347-931ee1f61bfd",
+      "messageId": "a76e44cc-c5df-47bd-a8f9-b90849311f52",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:40.727Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "2ee5ea5e-7559-4bb3-a383-e7269548435c",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:43.750Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "9b6448cb-d8e7-4ae7-b8dd-3ccff0568af1",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:46.769Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "1a11b5c2-a1a9-4c83-aa00-51a9764bc04f",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:49.813Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "66d58b0d-64b6-478e-924f-2204196cfed1",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:52.833Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "2180bc1e-e4b4-4660-aeb9-69d84caf985c",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:55.848Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "72dce909-61a6-4bc2-be8f-4f4c1c3f5077",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:10:58.887Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "66a803bb-7adc-4179-b122-bd307be00ad0",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:01.934Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "d51ffcab-1190-4be4-aad3-b0907e930537",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:04.951Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "5200c73a-a860-4fab-af78-e2a447a91afe",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:07.962Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "2a87ff2f-6592-4f25-a866-3cb76178ccc4",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:11.048Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "a8ab043f-fcb9-4f43-8101-86dd89d30efe",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:14.104Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "130d5f8e-e3d4-46f3-85de-ea37ca4ad9db",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:17.200Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "94877626-1332-45a2-b684-fd492f6dfe87",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:20.403Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "a4c17bc6-acad-4d76-a7a8-bad22245f4aa",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:23.433Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "e76407f0-cfd2-40c6-b775-563aac25a93e",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:25.710Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "c79eaa9c-55d8-4a92-b3f1-b0913c361c9b",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:25.952Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "a840c307-9fad-45c6-bc7a-6c316b4dd35c",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:28.959Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "e0cf6952-c18a-4cda-bc29-42d7cfa16f40",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:32.009Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "0be19e7e-dc82-4c20-8d42-087f59faf1e6",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:35.040Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "ccc32775-cfc1-44e2-a323-31a9265fe239",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:38.066Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "632cf3a2-f2dc-4b77-82bf-a4d0ac8a673d",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:41.084Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "2aa511be-4ae6-4304-9217-3a6f8b328821",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:44.101Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "670a58bb-2fe6-43b0-a617-bb8fa0af2eeb",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:47.165Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "5a2c79d6-3fa1-4952-b658-7b5ccc5eb84c",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:50.334Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "feb587a3-f116-476c-a0fc-1e1a9b2568ec",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:53.775Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "157e5cdc-ac63-4644-9b16-6b6236693300",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:11:57.391Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "d0f61e21-580a-4ca3-bbc2-7eb3248bd0a4",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    },
+    {
+      "at": "2026-10-19T02:12:06.736Z",
+      "path": "/a2a",
+      "method": "GetTask",
+      "requestId": "3cbb9b21-a3f4-44eb-8373-415e604d929e",
+      "taskId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+      "httpStatus": 200
+    }
+  ],
+  "snapshot": {
+    "id": "d5228faf-2722-4724-8e63-0e935a82c77a",
+    "source": "shopify",
+    "authentication": "anonymous",
+    "protocolVersion": "2026-08-25",
+    "requestId": "1ec26262-7d40-405a-bf26-6e1ea9923ffc",
+    "requestRevision": 1,
+    "configurationDigest": "f8d13bebf500c1eb2d2d1a75756fcdbe764d88c2d265f6a8ad104a87c4bdd00c",
+    "inputDigest": "66566534239a4ce1511924521b7dabe514c64ee39bb1a268a9933a610ccc71db",
+    "query": {
+      "merchantId": "purity-coffee",
+      "query": "coffee beans",
+      "country": "US"
+    },
+    "merchant": {
+      "id": "purity-coffee",
+      "name": "Purity Coffee",
+      "shopId": "gid://shopify/Shop/40613871783",
+      "domain": "purity-coffee.myshopify.com"
+    },
+    "phase": "verified",
+    "evidenceKind": "live_readonly",
+    "startedAt": "2026-10-19T02:11:05.940Z",
+    "observedAt": "2026-10-19T02:11:52.886Z",
+    "expiresAt": "2026-10-19T02:16:05.940Z",
+    "validityBasis": "local_refresh_limit",
+    "completeness": "partial_or_unknown",
+    "stockQuantity": "unknown",
+    "deliveryCommitment": "unknown",
+    "partnerTrust": "unverified",
+    "items": [
+      {
+        "globalProductId": "gid://shopify/p/2GO8ZtWTaAFDP4WN0h2efc",
+        "variantId": "gid://shopify/ProductVariant/36130238136487",
+        "title": "FLOW: Original Medium Roast Whole Bean Coffee",
+        "sku": "PC12-R",
+        "displayPrice": {
+          "minor": "2900",
+          "currency": "USD"
+        },
+        "availableReported": true,
+        "nativeCheckoutEligibleReported": false,
+        "globalReceiptId": "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+        "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+      },
+      {
+        "globalProductId": "gid://shopify/p/1W5yodBQAJkHpSrG6YXuIA",
+        "variantId": "gid://shopify/ProductVariant/36130229878951",
+        "title": "EASE: Dark Roast Whole Bean Coffee",
+        "sku": "PC12-DK",
+        "displayPrice": {
+          "minor": "2900",
+          "currency": "USD"
+        },
+        "availableReported": true,
+        "nativeCheckoutEligibleReported": false,
+        "globalReceiptId": "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+        "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+      },
+      {
+        "globalProductId": "gid://shopify/p/1as9zn1sAKYoLaeirnDpuB",
+        "variantId": "gid://shopify/ProductVariant/42064997318825",
+        "title": "PROTECT: Light-Medium Roast Whole Bean Coffee",
+        "sku": "PC12-PRO",
+        "displayPrice": {
+          "minor": "2900",
+          "currency": "USD"
+        },
+        "availableReported": true,
+        "nativeCheckoutEligibleReported": false,
+        "globalReceiptId": "d16bc765-dad6-41a2-af87-c032ae5ff581",
+        "merchantReceiptId": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf"
+      }
+    ],
+    "receipts": [
+      {
+        "id": "9b47feba-7fdb-4363-92e4-a7ba5efd7858",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "search_catalog",
+        "startedAt": "2026-10-19T02:11:05.945Z",
+        "receivedAt": "2026-10-19T02:11:07.120Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "17a15febd2071420e400df9b2c3b5ed311d97f1bde051008cfb5cd4b8a0fc849",
+        "responseSha256": "f1efdbb1dfe2dbc77081732be97f4fc9f7f48ef7c8e1767f42067639056fc468",
+        "responseBytes": 19479
+      },
+      {
+        "id": "e35d14c1-2c2c-49e9-ac0e-7b19df23b534",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "get_product",
+        "startedAt": "2026-10-19T02:11:07.133Z",
+        "receivedAt": "2026-10-19T02:11:07.477Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "ef19828527eb4600160799732a1c6c2819e5260cc912b188a8fae574e6d6f01b",
+        "responseSha256": "d198e89717e3dec7065e19ea2c944c0b2fe3c8aa19345157d84151dd8dd8dcc8",
+        "responseBytes": 8311
+      },
+      {
+        "id": "59495a0f-c81c-425e-af6b-ce1a70b9abb9",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "get_product",
+        "startedAt": "2026-10-19T02:11:07.479Z",
+        "receivedAt": "2026-10-19T02:11:07.797Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "c871a448608b1ad324413d3eb2837cc3e7a5a985b572ebd7a63f4bb9586d2b84",
+        "responseSha256": "272d0b194b662b947c79e2e43079126386644a317656f346cba72312dacad526",
+        "responseBytes": 7786
+      },
+      {
+        "id": "d16bc765-dad6-41a2-af87-c032ae5ff581",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "get_product",
+        "startedAt": "2026-10-19T02:11:07.799Z",
+        "receivedAt": "2026-10-19T02:11:08.162Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "4ce1bce52e42ddfc6f5520fa76fba591fd75fbb1a234dce17d4d1c2f04e47e7f",
+        "responseSha256": "908476d020d938c75587b252ca4ecb2528c955e1770767dbc3e9c12aad6a9f40",
+        "responseBytes": 8191
+      },
+      {
+        "id": "7e3351d3-648f-49a4-9020-18ce3b73378f",
+        "endpoint": "https://purity-coffee.myshopify.com/.well-known/ucp",
+        "operation": "discovery",
+        "startedAt": "2026-10-19T02:11:08.164Z",
+        "receivedAt": "2026-10-19T02:11:09.076Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "responseSha256": "d8c83f031fc8d60986ce9940b9750b4a4e05aebf18e8bad8c53861adf9edbd82",
+        "responseBytes": 5206
+      },
+      {
+        "id": "fdb6c5c6-be6f-434d-aa81-fa3f9eefb9b8",
+        "endpoint": "https://purity-coffee.myshopify.com/api/ucp/mcp",
+        "operation": "lookup_catalog",
+        "startedAt": "2026-10-19T02:11:09.084Z",
+        "receivedAt": "2026-10-19T02:11:09.745Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "667b417e94991e489a3c501b7d5d645681770fd78296a10369f96d8e4597f1f3",
+        "responseSha256": "bde7cb6ad2707cecc91dfa0c0f57e5cf9abc1873f4f2edaa541e6759030f6f1c",
+        "responseBytes": 38287
+      },
+      {
+        "id": "db9c9046-a79c-4494-bb66-79e57c17df6c",
+        "endpoint": "https://purity-coffee.myshopify.com/.well-known/ucp",
+        "operation": "discovery",
+        "startedAt": "2026-10-19T02:11:49.984Z",
+        "receivedAt": "2026-10-19T02:11:51.679Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "responseSha256": "d8c83f031fc8d60986ce9940b9750b4a4e05aebf18e8bad8c53861adf9edbd82",
+        "responseBytes": 5206
+      },
+      {
+        "id": "1e904fc2-58ad-41fe-a1c2-c84bbcf57daf",
+        "endpoint": "https://purity-coffee.myshopify.com/api/ucp/mcp",
+        "operation": "lookup_catalog",
+        "startedAt": "2026-10-19T02:11:51.691Z",
+        "receivedAt": "2026-10-19T02:11:52.465Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "7e279d9045fb86b0e8b61f4ea02f282e75182171664f828db0a05be4d7d8307c",
+        "responseSha256": "55a1728ea255a01ceab573b2de1845c117d87a44e357dd10fa858a5d181ae204",
+        "responseBytes": 38287
+      }
+    ],
+    "noBusinessWrites": true,
+    "contentDigest": "a326d2cf33be3d267bad43a2d19da1472e5d04fdad3ea04eb1fded1554760bc0"
+  }
+}

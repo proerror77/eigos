@@ -1,6 +1,12 @@
 import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { publicGeoQuerySchema } from '../capabilities/paotui-contracts.js';
+import { shopifyMerchantsSchema } from '../capabilities/shopify/contracts.js';
+
+const shopifyMerchants = z.string().max(16384).transform((value, ctx) => {
+  try { return shopifyMerchantsSchema.parse(JSON.parse(value)); }
+  catch { ctx.addIssue({ code: 'custom', message: 'EIGOS_SHOPIFY_CATALOG_MERCHANTS must be a JSON array of at most 8 strict, unique merchant identities' }); return z.NEVER; }
+});
 
 const publicGeoQueries = z.string().max(16384).transform((value, ctx) => {
   let input: unknown;
@@ -25,6 +31,8 @@ const schema = z.object({
   EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
+  EIGOS_SHOPIFY_CATALOG_MERCHANTS: shopifyMerchants.optional(),
+  EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
@@ -58,6 +66,8 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   const publicUrl = new URL(c.PUBLIC_URL);
+  if (c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Shopify anonymous catalog requires explicitly configured local development');
+  if (c.EIGOS_SHOPIFY_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_AUDIT_DIR))) throw new Error('Shopify audit requires enabled catalog and an absolute private directory');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username || publicUrl.password) {
     throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
   }
