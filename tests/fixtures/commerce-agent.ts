@@ -89,6 +89,25 @@ export async function setupCommerce(options: { scenario?: CommerceSandboxScenari
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '在沙箱选择能供两袋整豆咖啡的商家并完成所需交易阶段；先查询保存的地址和跨境信息。', executionEnvironment: 'sandbox', requirements: [{ id: 'quantity', kind: 'quantity', role: 'item_quantity', strength: 'hard', expected: { amount: '2', unit: 'piece' } }, ...(options.target === 'cart' ? [] : [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, { id: 'arrival', kind: 'deadline', role: 'arrival', strength: 'hard', expected: { at: new Date(Date.now() + 7 * 86400000).toISOString(), timezone: 'UTC', original: 'within seven days' } }]), { id: 'sandbox', kind: 'condition', strength: 'hard', expected: { predicate: 'commerce.sandbox_only' } }] });
   const approve = (job: Job, effects = job.delegation!.authorizationRequest!.effects) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
-  const finish = async (id: string, autoApprove = true) => { for (let n = 0; n < 45; n++) { const job = store.get(owner, id); if (job.state === 'auth-required' && autoApprove) { approve(job); continue; } if (!['working', 'submitted'].includes(job.state)) return job; if ((job.delegation?.nextAt ?? 0) > Date.now()) await pause(Math.min(1100, job.delegation!.nextAt! - Date.now())); await b.run(); } throw new Error('Commerce fixture did not settle'); };
+  const finish = async (id: string, autoApprove = true) => {
+    const deadline = Date.now() + 120000;
+    let work = 0;
+    while (Date.now() < deadline && work < 80) {
+      const job = store.get(owner, id);
+      if (job.state === 'auth-required' && autoApprove) { approve(job); work++; continue; }
+      if (!['working', 'submitted'].includes(job.state)) return job;
+      const claim = store.claim(['eigos.delegate'], 15000);
+      if (!claim) {
+        // Timers can wake slightly before nextAt, especially on a busy runner.
+        // A healthy queued task is not a missing/failed execution attempt.
+        await pause(Math.min(100, Math.max(5, (job.delegation?.nextAt ?? 0) - Date.now())));
+        continue;
+      }
+      work++;
+      try { await b.coordinator.run(claim, new AbortController().signal); }
+      finally { store.release(claim); }
+    }
+    throw new Error('Commerce fixture did not settle within its bounded execution wait');
+  };
   return { provider, directory, tokenFile, settings, store, catalog, b, model, submit, approve, finish, diagnostics, close: async () => { store.close(); await provider.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
