@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { parseArgs, parseEnv } from 'node:util';
 import { createConnection } from 'node:net';
 import { readConfig } from '../dist/packages/core/config.js';
 import { assertSourceProxy } from '../dist/packages/core/private-source-proxy.js';
+import { installReleaseDependencies } from '../dist/packages/deployment/dependencies.js';
 
 // Separate from com.eigos.grok-life. No token acquisition, IdP changes or business calls.
 const { values } = parseArgs({ options: { config: { type: 'string' }, apply: { type: 'boolean', default: false } } });
@@ -44,10 +45,10 @@ for (const p of [runtime, release, dirname(plistPath)]) mkdirSync(p, { recursive
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
 for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json')].entries()) if (existsSync(p)) cpSync(p, join(backup, String(i)));
 for (const p of files) { const to = join(release, p); if (!existsSync(to)) { mkdirSync(dirname(to), { recursive: true }); cpSync(join(root, p), to); } if (!readFileSync(to).equals(readFileSync(join(root, p)))) throw new Error('Immutable release differs from the build'); }
-const lockHash = createHash('sha256').update(readFileSync(join(root, 'package-lock.json'))).digest('hex');
-const dependencies = join(runtime, 'dependencies', lockHash);
-if (!existsSync(dependencies)) { mkdirSync(dirname(dependencies), { recursive: true }); cpSync(join(root, 'node_modules'), dependencies, { recursive: true }); }
-if (!existsSync(join(release, 'node_modules'))) symlinkSync(dependencies, join(release, 'node_modules'));
+installReleaseDependencies(root, runtime, release);
+// Import the actual relocated modules before stopping an existing service.
+try { execFileSync(process.execPath, ['--input-type=module', '-e', "await import('./dist/apps/gateway/app.js'); await import('./dist/apps/worker/runtime.js')"], { cwd: release, stdio: 'pipe', timeout: 15000 }); }
+catch { throw new Error('Relocated runtime dependency verification failed; the existing service was not stopped'); }
 const pause = ms => new Promise(r => setTimeout(r, ms));
 async function stop() {
   if (loaded()) execFileSync('launchctl', ['bootout', service], { stdio: 'ignore' });
