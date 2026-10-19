@@ -142,7 +142,7 @@ try {
         : (s.actionInput.variantIds as string[]).map(id => { const found = pairs.filter((x: any) => x.v.id === id && x.v.inputs?.some((i: any) => i.id === id && i.match === 'exact')); assert.equal(found.length, 1); if (found[0].v.seller) assert(belongs(found[0])); return found[0]; });
       assert.equal(expectedPairs.length, s.items.length, 'A mapper may not silently select the first variants');
       for (const [i, item] of s.items.entries()) {
-        const { p, v } = expectedPairs[i]; assert.equal(item.variantId, v.id); assert.equal(item.productId, p.id); assert.equal(item.title, v.title ?? p.title);
+        const { p, v } = expectedPairs[i]; assert.equal(item.variantId, v.id); assert.equal(item.productId, p.id); assert.equal(item.title, v.title && v.title !== p.title ? `${p.title} — ${v.title}` : p.title);
         assert.deepEqual(item.displayPrice, v.price ? { minor: String(v.price.amount), currency: v.price.currency } : undefined); assert.equal(item.sku, v.sku); assert.equal(item.availableReported, v.availability?.available); assert.equal(item.nativeCheckoutEligibleReported, v.eligible?.native_checkout);
       }
     }

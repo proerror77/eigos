@@ -33,7 +33,7 @@ export class CatalogAgentProgram implements AgentProgram {
   constructor(merchants: ShopifyMerchant[], options: { connector?: CatalogConnector; auditDirectory?: string } = {}) {
     this.merchants = shopifyMerchantsSchema.parse(merchants);
     this.connector = options.connector ?? new AnonymousShopifyConnector(options.auditDirectory);
-    this.configurationDigest = digest({ merchants: this.merchants, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: this.connector.evidenceKind, program: 'catalog-agent-actions-v1' });
+    this.configurationDigest = digest({ merchants: this.merchants, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: this.connector.evidenceKind, program: 'catalog-agent-actions-v2' });
   }
   permitted(owner: string) { return this.merchants.length > 0 && owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
@@ -116,7 +116,9 @@ export class CatalogAgentProgram implements AgentProgram {
     else {
       const output = shopifyCatalogOutputSchema.parse(response.value), products = [...output.products, ...(output.product ? [output.product] : [])];
       const identity = (variantId: string) => ({ variantId, sellerId: merchant.shopId, merchantDomain: merchant.domain });
-      const item = (variant: ShopifyVariant, productId: string, title: string) => ({ productId, variantId: variant.id, title: variant.title ?? title, ...(variant.sku === undefined ? {} : { sku: variant.sku }), ...(variant.price ? { displayPrice: { minor: String(variant.price.amount), currency: variant.price.currency } } : {}), ...(variant.availability?.available === undefined ? {} : { availableReported: variant.availability.available }), ...(variant.eligible?.native_checkout === undefined ? {} : { nativeCheckoutEligibleReported: variant.eligible.native_checkout }) });
+      // Merchant variant titles may be only option labels (for example "12 oz /
+      // Whole Bean"). Preserve the product name as well as that source label.
+      const item = (variant: ShopifyVariant, productId: string, title: string) => ({ productId, variantId: variant.id, title: variant.title && variant.title !== title ? `${title} — ${variant.title}` : title, ...(variant.sku === undefined ? {} : { sku: variant.sku }), ...(variant.price ? { displayPrice: { minor: String(variant.price.amount), currency: variant.price.currency } } : {}), ...(variant.availability?.available === undefined ? {} : { availableReported: variant.availability.available }), ...(variant.eligible?.native_checkout === undefined ? {} : { nativeCheckoutEligibleReported: variant.eligible.native_checkout }) });
       if (action === 'SearchPublicCatalog') items = products.flatMap(p => p.variants.filter(v => v.seller?.id === merchant.shopId && v.seller.domain === merchant.domain).map(v => item(v, p.id, p.title)));
       else if (action === 'InspectCatalogVariant') { const v = bindShopifyOffer(output, identity(String(input.variantId))), p = products.find(p => p.variants.includes(v))!; items = [item(v, p.id, p.title)]; }
       else items = (input.variantIds as string[]).map(id => { const v = bindShopifyMerchantVariant(output, identity(id)), p = products.find(p => p.variants.includes(v))!; return item(v, p.id, p.title); });

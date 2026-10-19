@@ -18,7 +18,7 @@ const caps = Object.fromEntries(['dev.ucp.shopping.catalog.search', 'dev.ucp.sho
 const response = (body: unknown) => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 export function fixture() {
   const calls: { endpoint: string; operation: string; headers: Record<string, string>; catalog: any }[] = [];
-  const flags = { price: new Map(ids.map((id, i) => [id, (i + 1) * 1000])), changeAtMerchant: false, empty: false, wrongSeller: false, before: undefined as undefined | ((operation: string) => Promise<void>) };
+  const flags = { price: new Map(ids.map((id, i) => [id, (i + 1) * 1000])), productTitle: 'Coffee', variantTitle: undefined as string | undefined, changeAtMerchant: false, empty: false, wrongSeller: false, before: undefined as undefined | ((operation: string) => Promise<void>) };
   const fetcher: typeof fetch = async (url, options = {}) => {
     const endpoint = String(url), body = options.body ? JSON.parse(String(options.body)) : undefined;
     const operation = body?.params?.name ?? 'discovery', catalog = body?.params?.arguments?.catalog;
@@ -28,8 +28,8 @@ export function fixture() {
     if (operation === 'lookup_catalog' && flags.changeAtMerchant) { flags.price.set(ids[0]!, 5000); flags.changeAtMerchant = false; }
     if (!body) return response({ ucp: { version: '2026-08-25', capabilities: caps, services: { 'dev.ucp.shopping': [{ version: '2026-08-25', transport: 'mcp', endpoint: 'https://coffee.myshopify.com/api/ucp/mcp' }] } } });
     const selected = operation === 'get_product' ? [catalog.id] : operation === 'lookup_catalog' ? catalog.ids : ids;
-    const variants = selected.map((id: string) => ({ id, title: `Coffee ${ids.indexOf(id)}`, sku: `C${ids.indexOf(id)}`, price: { amount: flags.price.get(id), currency: 'USD' }, seller: { id: flags.wrongSeller ? 'gid://shopify/Shop/99' : merchant.shopId, name: merchant.name, domain: merchant.domain }, availability: { available: true }, eligible: { native_checkout: false }, inputs: [{ id, match: 'exact' }] }));
-    const product = { id: productId, title: 'Coffee', variants };
+    const variants = selected.map((id: string) => ({ id, title: flags.variantTitle ?? `Coffee ${ids.indexOf(id)}`, sku: `C${ids.indexOf(id)}`, price: { amount: flags.price.get(id), currency: 'USD' }, seller: { id: flags.wrongSeller ? 'gid://shopify/Shop/99' : merchant.shopId, name: merchant.name, domain: merchant.domain }, availability: { available: true }, eligible: { native_checkout: false }, inputs: [{ id, match: 'exact' }] }));
+    const product = { id: productId, title: flags.productTitle, variants };
     return response({ jsonrpc: '2.0', id: body.id, result: { structuredContent: { ucp: { version: '2026-08-25', status: 'success', capabilities: caps }, ...(operation === 'get_product' ? { product } : { products: flags.empty ? [] : [product] }), messages: [] } } });
   };
   return { calls, flags, connector: new AnonymousShopifyConnector(undefined, fetcher) };

@@ -1,0 +1,95 @@
+{
+  "checkedAt": "2026-10-19T05:04:51.811Z",
+  "model": {
+    "id": "eigos.business",
+    "version": "7",
+    "digest": "e60c81a4c972de2ccd772fd24935a9780d9cbd04c470acc4a9387c72f756109d"
+  },
+  "types": [
+    "CatalogEndpoint",
+    "CatalogObservation",
+    "CatalogRead",
+    "CatalogTask"
+  ],
+  "readActions": [
+    {
+      "id": "SearchPublicCatalog",
+      "effect": "read",
+      "resultType": "CatalogObservation",
+      "execution": "definition_only"
+    },
+    {
+      "id": "InspectCatalogVariant",
+      "effect": "read",
+      "resultType": "CatalogObservation",
+      "execution": "definition_only"
+    },
+    {
+      "id": "DiscoverMerchantCatalog",
+      "effect": "read",
+      "resultType": "CatalogEndpoint",
+      "execution": "definition_only"
+    },
+    {
+      "id": "ReadMerchantVariants",
+      "effect": "read",
+      "resultType": "CatalogObservation",
+      "execution": "definition_only"
+    }
+  ],
+  "newTaskObjects": 0,
+  "oldObservationStatus": [
+    {
+      "object": {
+        "type": "CatalogRead",
+        "id": "707af579-a161-4dd2-8e36-9dfb43a1ca76"
+      },
+      "status": {
+        "status": "unknown",
+        "reason": "Catalog observations are expired or from the future",
+        "evidenceRefs": [
+          {
+            "type": "CatalogRead",
+            "id": "707af579-a161-4dd2-8e36-9dfb43a1ca76"
+          }
+        ],
+        "evidenceLevels": [],
+        "functionRef": {
+          "id": "catalogReadStatus",
+          "version": "1"
+        },
+        "model": {
+          "id": "eigos.business",
+          "version": "7",
+          "digest": "e60c81a4c972de2ccd772fd24935a9780d9cbd04c470acc4a9387c72f756109d"
+        }
+      }
+    },
+    {
+      "object": {
+        "type": "CatalogRead",
+        "id": "d5228faf-2722-4724-8e63-0e935a82c77a"
+      },
+      "status": {
+        "status": "unknown",
+        "reason": "Catalog observations are expired or from the future",
+        "evidenceRefs": [
+          {
+            "type": "CatalogRead",
+            "id": "d5228faf-2722-4724-8e63-0e935a82c77a"
+          }
+        ],
+        "evidenceLevels": [],
+        "functionRef": {
+          "id": "catalogReadStatus",
+          "version": "1"
+        },
+        "model": {
+          "id": "eigos.business",
+          "version": "7",
+          "digest": "e60c81a4c972de2ccd772fd24935a9780d9cbd04c470acc4a9387c72f756109d"
+        }
+      }
+    }
+  ]
+}

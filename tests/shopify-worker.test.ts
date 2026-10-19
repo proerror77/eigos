@@ -56,6 +56,23 @@ test('A known-ID goal composes discovery and merchant lookup, skipping search an
   } finally { t.store.close(); }
 });
 
+test('Merchant option labels never replace the product name in ontology or delivery', async () => {
+  for (const label of ['12 oz / Whole Bean', 'FLOW: Original Medium Roast Whole Bean Coffee']) {
+    const t = setup(knownChoice); try {
+      t.flags.productTitle = 'FLOW: Original Medium Roast Whole Bean Coffee'; t.flags.variantTitle = label;
+      const job = t.b.submit({ goal: `Check ${ids[1]}` }), done = await t.finish(job.id); assert.equal(done.state, 'completed');
+      const expected = label === t.flags.productTitle ? label : `${t.flags.productTitle} — ${label}`;
+      assert.equal(answer(done).selections[0]!.items[0]!.title, expected);
+      const observation = done.delegation!.agent!.observations.find(r => r.type === 'CatalogObservation')!;
+      const value = checkedAgentCatalogObservation(t.store.ontology.read(owner, observation).properties.snapshot);
+      assert.equal(value.items[0]!.title, expected);
+      const offers = t.store.ontology.related(owner, observation, 'offers', { remaining: 1000 })!;
+      const variants = t.store.ontology.related(owner, offers[0]!.ref, 'productVariant', { remaining: 1000 })!;
+      assert.equal(variants[0]!.properties.name, expected);
+    } finally { t.store.close(); }
+  }
+});
+
 test('Changed merchant facts reach the Agent, which explicitly selects a different comparison', async () => {
   const choices: string[][] = [];
   const t = setup((ctx, access) => {
