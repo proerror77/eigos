@@ -1,0 +1,110 @@
+{
+  "checkedAt": "2026-10-19T23:45:02.465Z",
+  "sourceCommit": "2f1f7c6e69652c3d6d5b6c68e795ddd4afaf483f",
+  "releaseDigest": "d45b0dedc60059525d572c95dd79dba23227dafb7881fc2e0c6d7284eebb7590",
+  "releaseFilesMatched": 132,
+  "backend": "ontology-execution-v8",
+  "program": {
+    "id": "delivery.quote",
+    "version": "3"
+  },
+  "taskHash": "ec57392b408bded020f8866a4d1e1c681c3f06582d4de873105b845715a2b28a",
+  "predecessorTaskHash": "2560f97f4d5fff136b26bba4c71b84b2bd6174a9be13380e1600dd948de2f5e7",
+  "taskState": "completed",
+  "accepted": true,
+  "requestRevision": 1,
+  "predecessorState": "canceled",
+  "predecessorModelRunsPreserved": 28,
+  "predecessorReadOnly": true,
+  "callerThread": "01a1568d-8714-7f90-a888-416b57213bf6",
+  "workerModelRuns": 13,
+  "workerThreadIds": [
+    "01a1568a-7c30-7773-aab2-c66a49d51522",
+    "01a1568a-ad4b-7fb2-84a6-bc0174c78fe6",
+    "01a1568a-f6f6-7c82-82c0-3a6eeb739cd5",
+    "01a1568b-21de-72b3-b77e-4826bc02a7fa",
+    "01a1568b-56f3-7ec1-a4f2-f2e423f788bd",
+    "01a1568b-83d7-7442-b119-44c1c78f61d4",
+    "01a1568b-c0d7-76e1-b447-ccf1d67dfb15",
+    "01a1568b-ee10-7da3-a9e6-c835e44c8a8c",
+    "01a1568c-1a1c-7481-928d-0a548f9785ef",
+    "01a1568c-589c-7771-8ab6-ab49c29ca860",
+    "01a1568c-8ae7-7cb3-a0ff-fdbc8ad2639c",
+    "01a1568c-b698-78a2-b1d5-98b615cc094c",
+    "01a1568c-e1a5-7972-9160-130c155d84df"
+  ],
+  "sourceReadCount": 4,
+  "sourceOperations": [
+    "get_address_list",
+    "get_address_info",
+    "get_address_info",
+    "delivery_preview"
+  ],
+  "sourceReadsSingleOperation": true,
+  "evidenceKind": "live_readonly",
+  "acceptedSourceProofVerified": true,
+  "selectedAddressIdentityAndContentsMatchHumanChoices": true,
+  "parcel": {
+    "declaredContents": "一份文件",
+    "category": "文件",
+    "estimatedWeightKg": 0.5,
+    "upperBoundGrams": 500,
+    "service": "ordinary"
+  },
+  "quoteObservedAt": "2026-10-19T23:43:20.624Z",
+  "localRefreshAfter": "2026-10-19T23:48:20.624Z",
+  "priceKind": "estimate",
+  "pricingCompleteness": "unknown",
+  "completedAt": "2026-10-19T23:44:09.248Z",
+  "freshAtCompletion": true,
+  "freshAtVerification": true,
+  "typedQuoteMatches": "pass",
+  "completionVerifierReplay": true,
+  "mcpReadback": true,
+  "a2aReadback": true,
+  "databaseReadback": true,
+  "artifactDigest": "6091455c7170e788630f1be18a638ed44c6f9367f0274c866b87e8b30f35f621",
+  "ontologyReads": {
+    "total": 23,
+    "ok": 23,
+    "rejected": 0,
+    "tools": [
+      "describe_ontology",
+      "query_ontology",
+      "evaluate_ontology",
+      "assess_conditions"
+    ]
+  },
+  "actionIntents": 4,
+  "attempts": 4,
+  "authorizationGrants": 0,
+  "paymentReservations": 0,
+  "sourceAuditMatched": true,
+  "noOrders": true,
+  "noPayments": true,
+  "noAddressWrites": true,
+  "limitation": "One linked successor query completed after the original task used 28 of 32 turns across clarification, grounding repair and source renewals. Original history and limits retained; original task was canceled before the successor submit. User-confirmed labels were expanded to the exact previously displayed addresses, checked against current own-account address data. Quote is an estimate; fee completeness is unknown.",
+  "priceReadback": {
+    "currency": "CNY",
+    "positiveMinorAmount": true,
+    "sourceMcpA2aDatabaseAmountMatch": true,
+    "amountOmittedFromPublicEvidence": true
+  },
+  "runtimeCodeCi": {
+    "headSha": "2f1f7c6e69652c3d6d5b6c68e795ddd4afaf483f",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/proerror77/eigos/actions/runs/39283433578"
+  },
+  "callerThreads": [
+    "01a15689-f16d-7be1-b762-511e5dca01f8",
+    "01a1568d-8714-7f90-a888-416b57213bf6"
+  ],
+  "boundedWaitResume": {
+    "firstPaWaitEndedBeforeCompletion": true,
+    "secondPaReadSameTask": true,
+    "noSecondPriceQuery": true
+  },
+  "configuredReaderSha256": "0a6b0ef9371bcbf9a6a5cecc20f3efe1b6220174dcffed365d91fc9949d407ba",
+  "predecessorCanceledBeforeSingleSuccessorSubmit": true
+}

@@ -1,6 +1,6 @@
 # 会员使用自己的服务账号
 
-2026-10-19。接续 `26a2359`，将来源接入扩展为“每名使用者的 PA 连接本人账号”。默认关闭，保持非生产、同机 loopback HTTPS/JWT 范围。当前 v8 已更新独立私有测试实例，见 [验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)。本人完成平台授权后，真实 PA 的本人地址簿查询已通过，见 [真实账号验证记录](evidence/member-source-live-2026-10-19/README.md)。没有真实订单或付款。
+2026-10-19。接续 `26a2359`，将来源接入扩展为“每名使用者的 PA 连接本人账号”。默认关闭，保持非生产、同机 loopback HTTPS/JWT 范围。当前 v8 已更新独立私有测试实例，见 [验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)。本人完成平台授权后，真实 PA 的[本人地址簿查询](evidence/member-source-live-2026-10-19/README.md)及[一次真实费用预览与回读](evidence/member-quote-live-2026-10-20/README.md)已通过；后者包含原任务取消后的一次关联查询，不能视为无缝续办。没有真实订单或付款。
 
 ## 用户与 PA 的路径
 
@@ -80,3 +80,5 @@ node --import tsx examples/connect-member-source.ts
 工程测试中的模型决策、账号和商家返回使用隔离替身，见[工程证据](evidence/member-source-auth-2026-10-19/README.md)。随后在本人完成授权后，真实 PA 和当前版本本人来源只读查询已通过[实际验证](evidence/member-source-live-2026-10-19/README.md)。人工非建模者演练和 T13 其余验收仍单列。
 
 独立私有 HTTPS 实例已更新至 v8 并完成运行文件及接口回读；随后已完成 Auth0 来源权限、PA 会员授权和真实本人地址簿查询，见 [真实回路记录](evidence/member-source-live-2026-10-19/README.md)。当前版本见 [v8 验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)，初次部署与依赖修复保留在 [历史部署记录](evidence/member-network-deployment-2026-10-19/README.md)。
+
+2026-10-20 在数量解释修复版本完成了[真实文件查价](evidence/member-quote-live-2026-10-20/README.md)：本人先选择地址并确认500克及普通送，真实模型执行4次官方只读操作，PA 的最终 MCP、独立 A2A 与持久化结果一致。长时间等待及连接续期使原任务只剩4次模型额度，已保留历史并由 PA 取消；实际报价来自一次明确关联、已补齐事实的后续任务。未重置原预算，也未绕过来源或地址校验。
