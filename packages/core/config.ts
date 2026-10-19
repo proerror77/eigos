@@ -37,6 +37,9 @@ const schema = z.object({
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
   EIGOS_SANDBOX_TOKEN_FILE: z.string().optional(),
+  EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
+  EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
+  EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
   EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -103,6 +106,12 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     const target = new URL(c.EIGOS_SANDBOX_PROVIDER_URL);
     if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_SANDBOX_TOKEN_FILE!)) throw new Error('Sandbox provider must be an explicit loopback origin with an absolute credential file');
   }
+  if (!!c.EIGOS_COMMERCE_SANDBOX_URL !== !!c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE) throw new Error('Commerce sandbox requires both endpoint and private token file');
+  if (c.EIGOS_COMMERCE_SANDBOX_URL) {
+    const target = new URL(c.EIGOS_COMMERCE_SANDBOX_URL);
+    if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || !target.port || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!)) throw new Error('Commerce sandbox must use the explicit local sandbox environment and 127.0.0.1 source');
+  }
+  if (c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR && (!c.EIGOS_COMMERCE_SANDBOX_URL || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR))) throw new Error('Commerce audit requires an enabled sandbox and an absolute private directory');
   return c;
 }
 

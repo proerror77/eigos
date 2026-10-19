@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v8' as const;
+export const BACKEND_VERSION = 'ontology-execution-v9' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -51,6 +51,7 @@ export interface ServiceCapability {
   requirementRoles?: RequirementRoleDefinition[];
   environment?: 'local' | 'live' | 'sandbox';
   locationSemantics?: 'search_area' | 'destination';
+  constraintEvaluation?: 'staged';
 }
 export interface ProviderBinding {
   ref: Ref;

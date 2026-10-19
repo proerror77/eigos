@@ -26,7 +26,8 @@
     "dev:worker": "node --env-file=.env --import tsx apps/worker/main.ts",
     "start:gateway": "node --env-file-if-exists=.env dist/apps/gateway/main.js",
     "start:worker": "node --env-file-if-exists=.env dist/apps/worker/main.js",
-    "setup:pa": "node scripts/setup-pa.mjs"
+    "setup:pa": "node scripts/setup-pa.mjs",
+    "setup:commerce-sandbox": "node scripts/setup-commerce-sandbox.mjs"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.3.0",

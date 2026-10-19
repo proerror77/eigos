@@ -12,6 +12,7 @@ import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
+import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -96,6 +97,15 @@ export class TaskService {
         }
         const request = job.delegation!.request;
         if (job.delegation!.agent) {
+          const intents = this.store.intents(owner, job.id);
+          const fixedEffect = intents.some(i => (['order', 'payment', 'reserve'].includes(i.effect) || ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(i.state) && !['read', 'local'].includes(i.effect)) && !['ready', 'canceled_before_dispatch', 'rejected'].includes(i.state));
+          if (fixedEffect) {
+            if (args.requirements?.length) throw new DomainError('CONFLICT', 'An original business operation is fixed or uncertain; reconcile it before creating changed requirements');
+            request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+            for (const intent of intents) if (!['read', 'local'].includes(intent.effect) && ['needs_review', 'effect_unknown'].includes(intent.state)) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+            job.delegation!.nextAt = 0; job.delegation!.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+            this.store.save(owner, job); return job;
+          }
           this.store.cancelActions(owner, job.id);
           job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
           delete job.delegation!.agent;
@@ -161,7 +171,20 @@ export class TaskService {
       const job = this.store.get(owner, id);
       if (job.service !== DELEGATE || job.state !== 'auth-required') throw new DomainError('CONFLICT', 'No pending delegation authorization');
       if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only');
-      const d = job.delegation; const plan = d.plan;
+      const d = job.delegation;
+      if (d.agent) {
+        const plan = d.agent.plans.find(p => p.id === d.agent!.pendingPlanId), program = this.options.catalog.agentProgram(d.agent.programRef, owner);
+        const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
+        if (!this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox' || !plan || !program || program.configurationDigest !== d.agent.programDigest) throw new DomainError('FORBIDDEN', 'No current configured sandbox Agent plan');
+        validatePlanningSnapshot(this.store.ontology, owner, d.request, plan.ontologyPlanning, true);
+        const ctx = { graph: this.store.ontology, owner, request: d.request, state: d.agent, intents: this.store.intents(owner, job.id) };
+        for (const step of plan.steps) if (step.effect !== 'read') { validateAgentAuthority(program, ctx, plan, step); program.validatePlanning?.(ctx, step.action, step.input, plan.ontologyPlanning); }
+        this.store.grant(owner, createAgentSandboxGrant(owner, id, plan, permit));
+        d.phase = 'executing'; d.nextAt = 0; job.updatedAt = new Date().toISOString(); job.state = 'submitted'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+        d.events.push({ at: job.updatedAt, event: 'agent_plan_authorized', evidence: plan.digest });
+        this.store.save(owner, job); return job;
+      }
+      const plan = d.plan;
       if (!plan || !this.options.catalog) throw new DomainError('CONFLICT', 'No fixed plan to authorize');
       if (args.action === 'approve_plan') {
         const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
@@ -189,6 +212,16 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id);
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) {
+        const pending = this.store.intents(owner, id).filter(i => !['read', 'local'].includes(i.effect) && ['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(i.state));
+        if (!pending.length) return job;
+        for (const intent of pending) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0;
+        const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
+        job.delegation.recoveryPending = terminal; job.revision = (job.revision ?? 0) + 1;
+        if (!terminal) { job.state = 'working'; delete job.question; }
+        job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      }
       if (job.delegation?.backendVersion !== BACKEND_VERSION || !job.delegation.plan) throw new DomainError('CONFLICT', 'No current business operation to reconcile');
       let pending = false;
       for (const intent of this.store.intents(owner, id)) if (['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(intent.state)) { pending = true; intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
@@ -204,6 +237,13 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
+      if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
+        this.store.revokeGrants(owner, id); job.revision = (job.revision ?? 0) + 1;
+        const intents = this.store.intents(owner, id);
+        for (const intent of intents) if (intent.state === 'dispatching' && !['read', 'local'].includes(intent.effect)) { intent.state = 'effect_unknown'; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+        d.recoveryPending = intents.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
+        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      }
       if (d?.backendVersion !== BACKEND_VERSION || !d.plan || (!d.authorizationRequest && !d.plan.quote) || ['completed', 'failed', 'canceled'].includes(job.state)) throw new DomainError('CONFLICT', 'No open plan authorization to revoke');
       this.store.revokeGrants(owner, id); delete d.approval; job.revision = (job.revision ?? 0) + 1;
       d.recoveryPending = this.store.intents(owner, id).some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;

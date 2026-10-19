@@ -78,10 +78,45 @@ test('UCP lost creation response does not invent a lookup or create a second che
   } finally { await t.close(); }
 });
 
-for (const issue of ['badOrderItems', 'badOrderDestination'] as const) test(`UCP independent order read rejects ${issue}`, async () => {
+for (const issue of ['badOrderItems', 'badOrderDestination', 'badOrderApartment', 'badOrderCostTerms'] as const) test(`UCP independent order read rejects ${issue}`, async () => {
   const t = await setup(); try {
     await t.prepare(); const waiting = await t.confirmation(); t.approve(waiting); t.merchant.flags[issue] = true;
     const done = await t.b.run(); assert.equal(done.state, 'failed'); assert.equal(done.artifact, undefined); assert.equal(t.merchant.counts().completes, 1);
+  } finally { await t.close(); }
+});
+
+test('UCP invalidates approval when fee categories or payer terms change with the same total', async () => {
+  const t = await setup(); try {
+    await t.prepare(); const waiting = await t.confirmation(); t.approve(waiting);
+    const checkout = [...t.merchant.checkouts.values()][0]!;
+    const amount = checkout.totals.find((r: { type: string }) => r.type === 'total').amount;
+    checkout.totals.unshift({ type: 'duty', amount: 0, payer: 'buyer_on_arrival' });
+    assert.equal(checkout.totals.find((r: { type: string }) => r.type === 'total').amount, amount);
+    const done = await t.b.run(); assert.equal(done.state, 'failed'); assert.equal(t.merchant.counts().completes, 0);
+  } finally { await t.close(); }
+});
+
+test('UCP country-only destinations do not establish protocol readiness or allow confirmation', async () => {
+  const t = await setup(); try {
+    t.merchant.options.fulfillmentProfiles.office!.destination = { address_country: 'CN' };
+    // A fresh catalog pins the changed, explicitly incomplete test profile.
+    const catalog = createExecutionCatalog({ store: t.store, ucpSandbox: t.merchant.options });
+    let prepId = '';
+    const b = backend(catalog, reasoner(req => {
+      const prepare = req.originalGoal === 'Prepare';
+      const id = prepare ? UCP_PREPARE : UCP_CONFIRM;
+      return { ...interpretation(req, id, prepare ? { items: [{ id: 'roses', quantity: 2 }], fulfillmentProfile: 'office' } : { preparationTaskId: prepId, budget: { minor: '10000', currency: 'USD' } }), capabilityRef: { id, version: '1' } };
+    }), t.store, { allowSandbox: true });
+    b.submit({ goal: 'Prepare', executionEnvironment: 'sandbox' });
+    const waiting = await b.run(), a = waiting.delegation!.authorizationRequest!;
+    b.tasks.authorize(principal, waiting.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' });
+    const prepared = await b.run(); prepId = prepared.id; assert.equal(prepared.state, 'completed');
+    const session = t.store.ontology.query(owner, { type: 'CheckoutSession' }).items[0]!;
+    const readiness = t.store.ontology.evaluate(owner, { function: 'checkoutReadiness', object: session.ref }).value as { status: string; purchaseFeasibility: string };
+    assert.equal(readiness.status, 'unknown'); assert.equal(readiness.purchaseFeasibility, 'unknown');
+    const confirm = new UcpSandboxAdapter('confirm', t.store, t.merchant.options);
+    const refused = await confirm.prepare({ owner, request: { ...prepared.delegation!.request, id: randomUUID() } }, { preparationTaskId: prepId, budget: { minor: '10000', currency: 'USD' } }, new AbortController().signal);
+    assert.equal(refused.kind, 'unavailable'); assert.equal(t.merchant.counts().completes, 0);
   } finally { await t.close(); }
 });
 

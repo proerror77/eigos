@@ -13,6 +13,7 @@ export type IntentState = 'ready' | 'dispatching' | 'awaiting_remote' | 'effect_
 export interface ActionIntent {
   id: string; owner: string; jobId: string; stepId: string; businessOperationKey: string; planDigest: string;
   bindingRef: Ref; inputDigest: string; privateDigest: string; privateData: unknown; effect: EffectClass;
+  additionalEffects?: EffectClass[];
   state: IntentState; remoteRef?: string; latestVersion?: number; latestObservationId?: string;
   acceptedOutput?: Record<string, unknown>; delivery?: Delivery; nextAt: number; createdAt: string;
   lastResult?: ActionResult; failedQueries?: number;

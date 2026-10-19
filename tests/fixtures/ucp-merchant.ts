@@ -11,7 +11,7 @@ const clone = <T>(v: T): T => structuredClone(v);
 export async function ucpMerchant() {
   const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }), keyId = 'test-platform';
   const requests: { method: string; path: string; key?: string; body: Json }[] = [], checkouts = new Map<string, Json>(), orders = new Map<string, Json>(), keys = new Map<string, { input: string; value: Json }>();
-  const flags = { dropCreate: false, dropComplete: false, badOrderItems: false, badOrderDestination: false, signatureMissing: false, profileVersion: '2026-04-08', foreignEndpoint: false, redirectCreate: false, businessError200: false, noMockHandler: false, beforeCompleteResponse: undefined as (() => Promise<void>) | undefined };
+  const flags = { dropCreate: false, dropComplete: false, badOrderItems: false, badOrderDestination: false, badOrderApartment: false, badOrderCostTerms: false, signatureMissing: false, profileVersion: '2026-04-08', foreignEndpoint: false, redirectCreate: false, businessError200: false, noMockHandler: false, beforeCompleteResponse: undefined as (() => Promise<void>) | undefined };
   let origin = '', creates = 0, completes = 0;
   const meta = (cap: string) => ({ version: '2026-04-08', capabilities: { [cap]: [{ version: '2026-04-08' }] }, payment_handlers: {} });
   const platform = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ucp: meta('dev.ucp.shopping.checkout'), signing_keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: keyId, alg: 'ES256' }] })); });
@@ -26,6 +26,8 @@ export async function ucpMerchant() {
       const original = orders.get(path.split('/')[2]!); if (!original) return send({ ucp: { status: 'error' } }, 404);
       const value = clone(original); if (flags.badOrderItems) value.line_items[0].quantity.total = 1;
       if (flags.badOrderDestination) value.fulfillment.expectations[0].destination.street_address = 'Wrong destination';
+      if (flags.badOrderApartment) value.fulfillment.expectations[0].destination.extended_address = 'Unit B';
+      if (flags.badOrderCostTerms) value.totals.unshift({ type: 'duty', amount: 0, payer: 'buyer_on_arrival' });
       return send(value);
     }
     if (method === 'GET' && path.startsWith('/checkout-sessions/')) return send(checkouts.get(path.split('/')[2]!) ?? { ucp: { status: 'error' } }, checkouts.has(path.split('/')[2]!) ? 200 : 404);
@@ -54,6 +56,6 @@ export async function ucpMerchant() {
     send({ ucp: { status: 'error' } }, 404);
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
-  const options: UcpSandboxOptions = { merchantId: 'wire-test-merchant', baseUrl: origin, platformProfileUrl: `http://127.0.0.1:${(platform.address() as { port: number }).port}/.well-known/ucp`, keyId, privateKey: pair.privateKey, fulfillmentProfiles: { office: { label: 'Synthetic office', destination: { address_country: 'US', street_address: '123 Test Street', address_locality: 'Test City', postal_code: '10001', address_region: 'NY' }, optionId: 'std-ship' } } };
+  const options: UcpSandboxOptions = { merchantId: 'wire-test-merchant', baseUrl: origin, platformProfileUrl: `http://127.0.0.1:${(platform.address() as { port: number }).port}/.well-known/ucp`, keyId, privateKey: pair.privateKey, fulfillmentProfiles: { office: { label: 'Synthetic office', destination: { address_country: 'US', street_address: '123 Test Street', extended_address: 'Unit A', address_locality: 'Test City', postal_code: '10001', address_region: 'NY' }, optionId: 'std-ship' } } };
   return { options, flags, requests, checkouts, orders, counts: () => ({ creates, completes }), close: async () => { server.closeAllConnections(); platform.closeAllConnections(); await Promise.all([new Promise<void>(resolve => server.close(() => resolve())), new Promise<void>(resolve => platform.close(() => resolve()))]); } };
 }

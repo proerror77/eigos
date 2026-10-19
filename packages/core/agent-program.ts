@@ -5,16 +5,22 @@ import type { OntologyObjectStore } from '../ontology/object-store.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { ServiceCapability, ServiceRequest, Ref } from '../ontology/execution.js';
 import type { Delivery } from './catalog.js';
+import type { ActionIntent } from '../ontology/actions.js';
+import type { AgentDecision } from '../ontology/agent-actions.js';
 
 export interface AgentProgramContext {
-  graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState;
+  graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
 }
 export interface AgentActionContext extends AgentProgramContext {
-  planId: string; intentId: string; attemptId: string; modelRunId: string;
+  planId: string; intentId: string; attemptId: string; modelRunId: string; operationKey?: string; recovery?: boolean; originalDispatchAt?: string;
 }
 export interface AgentActionResult { value: unknown; evidenceRefs: string[] }
+export interface AgentActionAuthority { cost: { minor: string; currency: string; payeeId: string }; operationScope?: string }
 /** A connector failure with a deliberately safe, credential-free diagnostic. */
 export class AgentReadError extends Error {}
+export class AgentOperationRejected extends AgentReadError {
+  constructor(message: string, readonly evidenceRefs: string[]) { super(message); }
+}
 
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
@@ -24,13 +30,19 @@ export interface AgentProgram {
   readonly actionIds: readonly string[];
   readonly guidance: string;
   readonly completionSchema: object;
+  readonly limits?: { modelTurns: number; plans: number; actions: number };
   permitted(owner: string): boolean;
   capability(): ServiceCapability;
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;
+  validatePlanning?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot): void;
+  validatePause?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): void;
+  authority?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): AgentActionAuthority;
   invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult>;
+  /** Read the original operation only. It must never replay a business write. */
+  recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;
   project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult): ObjectRef;
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery;
 }

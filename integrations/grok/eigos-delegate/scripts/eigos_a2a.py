@@ -4,6 +4,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -13,7 +14,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-MAX_RESPONSE = 2 * 1024 * 1024
+MAX_RESPONSE = 8 * 1024 * 1024
 DEFAULT_SERVICES = ['eigos.delegate']
 TERMINAL = {'TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED'}
 
@@ -204,8 +205,21 @@ class Client:
         current = self.rpc('GetTask', {'id': task_id})
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured allowlist')
-        if not isinstance(data, dict) or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'} or data['action'] != 'confirm_simulated_payment':
-            raise ClientError('Supply the exact simulated confirmation fields and a stable requestId')
+        if not isinstance(data, dict) or not isinstance(data.get('requestId'), str) or not 1 <= len(data['requestId']) <= 128:
+            raise ClientError('Supply an exact sandbox confirmation with a stable requestId')
+        if data.get('action') == 'approve_plan':
+            required = {'requestId', 'action', 'planDigest', 'allowedEffects', 'maxAmount', 'payeeIds', 'expiresAt', 'environment'}
+            amount, effects, payees = data.get('maxAmount'), data.get('allowedEffects'), data.get('payeeIds')
+            if set(data) != required or data['environment'] != 'sandbox' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
+                raise ClientError('Plan approval requires exact fields, a plan digest and environment sandbox')
+            if not isinstance(effects, list) or not 1 <= len(effects) <= 8 or any(e not in ('local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund') for e in effects):
+                raise ClientError('Plan approval has invalid declared effects')
+            if not isinstance(amount, dict) or set(amount) != {'minor', 'currency'} or not isinstance(amount['minor'], str) or not re.fullmatch(r'(0|[1-9][0-9]{0,17})', amount['minor']) or not isinstance(amount['currency'], str) or not re.fullmatch(r'[A-Z]{3}', amount['currency']):
+                raise ClientError('Plan approval requires an explicit minor-unit amount and currency')
+            if not isinstance(payees, list) or len(payees) > 8 or any(not isinstance(p, str) or not 1 <= len(p) <= 200 for p in payees) or not isinstance(data['expiresAt'], str) or not data['expiresAt']:
+                raise ClientError('Plan approval requires exact payees and a finite expiry')
+        elif data.get('action') != 'confirm_simulated_payment' or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'}:
+            raise ClientError('Supply the exact supported sandbox confirmation fields')
         if not task_id or any(c not in '0123456789abcdef-' for c in task_id.lower()):
             raise ClientError('Invalid task ID')
         base = urllib.parse.urlsplit(self.config['cardUrl'])

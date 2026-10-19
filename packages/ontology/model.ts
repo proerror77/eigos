@@ -49,6 +49,7 @@ export interface ActionDefinition {
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
   read?: { version: string; effect: 'read'; inputSchema: object; resultType: string };
+  operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read' | 'local'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox'; inputSchema: object; resultType: string };
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
 export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[] }
@@ -124,6 +125,7 @@ export class OntologyModel {
       nameSchema.parse(a.id);
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
+      if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');

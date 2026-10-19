@@ -15,7 +15,7 @@ export const UCP_CONFIRM = 'commerce.ucp.confirm.sandbox';
 export const prepareCheckoutInput = z.object({ items: requestedItemsSchema, fulfillmentProfile: z.string().min(1).max(80) }).strict();
 export const confirmCheckoutInput = z.object({ preparationTaskId: z.uuid(), budget: moneySchema }).strict();
 export interface UcpSandboxOptions extends UcpLocalConnection {
-  fulfillmentProfiles: Record<string, { label: string; destination: { address_country: string; postal_code?: string; address_region?: string; address_locality?: string; street_address?: string }; optionId: string }>;
+  fulfillmentProfiles: Record<string, { label: string; destination: { address_country: string; postal_code?: string; address_region?: string; address_locality?: string; street_address?: string; extended_address?: string; first_name?: string; last_name?: string; phone_number?: string }; optionId: string }>;
 }
 type Mode = 'prepare' | 'confirm';
 interface PreparedData {
@@ -69,7 +69,7 @@ export class UcpSandboxAdapter implements ActionAdapter {
       if (prior && prior.jobId !== ctx.request.id) return { kind: 'unavailable', reason: '该结账会话已有确认任务，请读取或查证原任务，不能另建购买意图。', details: { originalTaskId: prior.jobId } };
       const response = await this.client.getCheckout(original.checkout.id, signal), checkout = checkoutSnapshot(response);
       if (checkout.id !== original.checkout.id || checkout.quoteDigest !== original.checkout.quoteDigest) return { kind: 'unavailable', reason: '结账商品、费用、地址或条款已经变化，需要重新准备并确认准确方案。' };
-      if (checkout.state !== 'ready_for_complete' || checkout.messageCodes.length || !checkout.destinationDigest) return { kind: 'unavailable', reason: checkout.state === 'completed' ? '该会话已有订单，应查询原订单；不能作为新的购买再次提交。' : '商家尚未提供可确认的完整结账会话，请先处理商家要求。', details: { state: checkout.state, ...(checkout.continueUrl ? { continueUrl: checkout.continueUrl } : {}), messageCodes: checkout.messageCodes } };
+      if (checkout.state !== 'ready_for_complete' || checkout.messageCodes.length || !checkout.destinationDigest || !checkout.destinationComplete) return { kind: 'unavailable', reason: checkout.state === 'completed' ? '该会话已有订单，应查询原订单；不能作为新的购买再次提交。' : '商家尚未提供可确认的完整结账会话，请先处理商家要求。', details: { state: checkout.state, ...(checkout.continueUrl ? { continueUrl: checkout.continueUrl } : {}), messageCodes: checkout.messageCodes } };
       if (checkout.total.currency !== input.budget.currency || BigInt(checkout.total.minor) > BigInt(input.budget.minor)) return { kind: 'unavailable', reason: '商家当前完整总额超过指定预算，或币种不一致。' };
       fixed.preparationTaskId = previous.id; fixed.expectedItems = original.expectedItems; fixed.checkout = checkout; fixed.expectedDestinationDigest = original.checkout.destinationDigest; fixed.budget = input.budget;
       facts = this.facts(checkout); observedAt = response.receipt.receivedAt;
