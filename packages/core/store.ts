@@ -168,7 +168,8 @@ export class JobStore {
     this.intent(owner, intentId);
     return this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=? ORDER BY rowid').all(owner, intentId).map(r => JSON.parse(String(r.body)));
   }
-  recordObservation(owner: string, intentId: string, attemptId: string, result: ActionResult, verified: boolean): { id: string; applied: boolean } {
+  recordObservation(owner: string, intentId: string, attemptId: string, result: ActionResult, verified: boolean,
+    fence?: { claim: WorkClaim; apply: (job: Job, intent: ActionIntent) => void }): { id: string; applied: boolean } {
     return this.transaction(() => {
       const intent = this.intent(owner, intentId);
       const attemptRow = this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId);
@@ -177,7 +178,16 @@ export class JobStore {
       if (!result.eventId || !Number.isSafeInteger(result.sourceVersion) || result.sourceVersion < 0) throw new DomainError('INVALID_INPUT', 'Observation requires a stable event and source version');
       const hash = digest(result);
       const duplicate = this.db.prepare('SELECT id,digest FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, result.eventId);
+      // Agent observations and graph projection commit together under the original
+      // lease. Late responses are audit evidence only, including duplicate events.
+      if (fence && (fence.claim.owner !== owner || fence.claim.job.id !== intent.jobId || attempt.claimToken !== fence.claim.token || !this.active(fence.claim, Date.now()))) {
+        if (duplicate) return { id: String(duplicate.id), applied: false };
+        const id = randomUUID();
+        this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+        return { id, applied: false };
+      }
       if (duplicate) {
+        if (fence) return { id: String(duplicate.id), applied: false };
         if (duplicate.digest !== hash) {
           if (attempt.planDigest === intent.planDigest) { intent.state = 'needs_review'; this.saveIntent(owner, intent); }
           const event = `${result.eventId}:conflict:${hash}`; const previous = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, event);
@@ -214,7 +224,11 @@ export class JobStore {
         if (verified && result.kind === 'confirmed' && intent.effect === 'payment') this.db.prepare("UPDATE budget_reservations SET state='consumed' WHERE owner=? AND intent_id=?").run(owner, intentId);
         if (verified && result.kind === 'rejected') this.db.prepare("UPDATE budget_reservations SET state='released' WHERE owner=? AND intent_id=? AND state='held'").run(owner, intentId);
       }
-      this.saveIntent(owner, intent); return { id, applied: !!applied };
+      if (applied && fence) {
+        const job = this.get(owner, intent.jobId); fence.apply(job, intent);
+        this.saveIntent(owner, intent); this.save(owner, job);
+      } else this.saveIntent(owner, intent);
+      return { id, applied: !!applied };
     });
   }
   observations(owner: string, intentId: string): unknown[] {
@@ -316,7 +330,7 @@ export class JobStore {
     for (const row of rows) {
       const job = JSON.parse(String(row.body)) as Job;
       if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
-      if (job.delegation?.plan && (job.revision ?? 0) === Number(row.revision)) {
+      if ((job.delegation?.plan || job.delegation?.agent) && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
         if (job.state === 'working') job.delegation.nextAt = now;

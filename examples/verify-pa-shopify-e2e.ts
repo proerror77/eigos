@@ -1,3 +1,5 @@
+// Historical v7/capability@1 observer. Reproduce against checkout fc00061 and its
+// recorded runtime. The current v8 Agent path has a separate observer.
 // Independent read-only observer. The actual PA submits the goal and receives its artifact.
 // This program never invokes Shopify, submits a task, or runs a model.
 import assert from 'node:assert/strict';
@@ -12,7 +14,6 @@ import { canonical, digest } from '../packages/core/delegation.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import type { Job } from '../packages/core/domain.js';
 import { checkedCatalogSnapshot, catalogReceiptSchema, type CatalogSnapshot } from '../packages/capabilities/shopify/contracts.js';
-import { ShopifyCatalogAdapter } from '../packages/capabilities/shopify/adapter.js';
 import { SHOPIFY_TEST_PROFILE, SHOPIFY_UCP_VERSION } from '../packages/capabilities/shopify/read-only.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { businessModel } from '../packages/ontology/business-model.js';
@@ -44,8 +45,8 @@ assert.deepEqual(config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES, baseline.publicGeoDi
 assert.equal(config.EIGOS_PAOTUI_ORDERS_ENABLED, 'false'); assert.equal(config.EIGOS_ACTION_SANDBOX, 'false');
 assert.equal(config.EIGOS_EXECUTOR, 'codex'); assert.equal(config.EIGOS_COORDINATOR, 'codex');
 assert.equal(fileSha(join(config.EIGOS_PAOTUI_SKILL_DIR!, 'paotui.js')), baseline.paotuiSourceSha256);
-// Construction only: no source call or runtime operation is performed.
-const adapter = new ShopifyCatalogAdapter(config.EIGOS_SHOPIFY_CATALOG_MERCHANTS!);
+// Historical metadata only; the preset workflow implementation was removed.
+const adapter = { id: 'shopify:anonymous-catalog', configurationDigest: digest({ merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: 'live_readonly', mapping: 'catalog-read-v1' }) };
 const discovered = read(join(directory, 'pa-discovery.json')), submitted = read(join(directory, 'pa-submit.json'));
 const peer = read(join(directory, 'pa-received.json')), original = read(join(directory, 'artifact-original.json'));
 assert.deepEqual(discovered.card.skills.map((s: { id: string }) => s.id), ['eigos.delegate']);

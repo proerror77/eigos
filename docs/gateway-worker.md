@@ -52,7 +52,8 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 - Worker 正常退出会中止活动调用，记录失败；未领取任务仍保留。强制退出后，由存活或重新启动的 Worker 检测过期领取，标记 `failed` 并明确外部执行结果未知，不自动重放已开始调用。没有 Worker 时，过期检查也要等待 Worker 恢复。
 - v3 派发前保存 ActionIntent 与 ExecutionAttempt，网络调用在事务外；返回先追加 Observation，再用当前领取令牌推进 Task。接单/付款后崩溃进入 effect_unknown，由新 Worker 查原键，不能重下单或释放未知支出。取消/租约丢失的迟到事实仍保存，旧源版本和重复回执不能覆盖新事实。
 - 异步任务按 nextAt 持久等待。取消/撤销后的已发操作可在只读恢复模式查证，终态 Task 不因此重开；售后建立新的关联任务。授权和累计预算在每次新派发/业务续接前重查。
-- 旧委托不匹配当前 `ontology-execution-v7` 标识时保留只读，不领取/续接/取消，不自动迁移。更新既有实例前停止旧 Worker 并备份，禁止新旧 Worker 在同一数据库混跑。本人常驻部署由 setup:pa 管理；旧代码保留在私有备份。
+- v8 Agent 动作计划由模型选择并持久化。每轮结束后释放领取，下一轮从已接受的本体观察继续决策。观察、本体投影和 Agent 状态在原领取令牌下原子写入；失效领取的迟到回包仅作审计。中断读取不自动重放，新模型决策可明确提出新的只读动作。
+- 旧委托不匹配当前 `ontology-execution-v8` 标识时保留只读，不领取/续接/取消，不自动迁移。更新既有实例前停止旧 Worker 并备份，禁止新旧 Worker 在同一数据库混跑。本人常驻部署由 setup:pa 管理；旧代码保留在私有备份。
 
 ## 部署边界
 
@@ -60,7 +61,7 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 
 本人常驻服务先构建，再用 `npm run setup:pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
 
-Shopify 匿名查询使用 `EIGOS_SHOPIFY_CATALOG_MERCHANTS` 显式列出商家身份（内部 id、名称、Shop GID、canonical myshopify 域名）。默认关闭，最多 8 家，身份不得重复；仅允许本机开发身份、loopback 和非生产环境。Gateway 只构造能力元数据，实际 HTTP 读取及模型由 Worker 执行。`setup:pa` 同样保留既有清单，显式 `[]` 关闭；启用时将原始响应和回执保存到私有 `shopify-reads/`，不读取 Shopify 账号凭据。两次店铺核对间发生价格、变体或可售标记变化时，在原任务有界重规划；取消和租约失效后的结果不能提交。配置例子、投影及真实 PA 验收见 [接入记录](shopify-pa-worker-2026-10-19.md)。
+Shopify 匿名查询使用 `EIGOS_SHOPIFY_CATALOG_MERCHANTS` 显式列出商家身份（内部 id、名称、Shop GID、canonical myshopify 域名）。默认关闭，最多 8 家，身份不得重复；仅允许本机开发身份、loopback 和非生产环境。Gateway 只构造能力元数据，实际 HTTP 读取及模型由 Worker 执行。`setup:pa` 同样保留既有清单，显式 `[]` 关闭；启用时将原始响应和回执保存到私有 `shopify-reads/`，不读取 Shopify 账号凭据。Agent 自行选择查询、变体、动作组合及完成时机；价格等事实变化作为新的观察交给 Agent，没有固定复查或自动重试流程。当前实现、边界与 PA 验收状态见 [Agent 动作说明](catalog-agent-actions-2026-10-19.md)。
 
 当前适用于同机、持久本地磁盘上的 Gateway／Worker 分进程部署。SQLite WAL 不用于跨机器网络文件系统。跨主机和容器集群扩容，需要以后替换共享存储／队列实现并重新验证故障恢复。
 

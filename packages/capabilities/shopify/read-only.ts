@@ -25,6 +25,7 @@ const capabilities = z.record(z.string(), z.array(z.object({ version: z.string()
 const ucp = z.object({ version: z.literal(SHOPIFY_UCP_VERSION), status: z.string().optional(), capabilities });
 const catalogOutput = z.object({ ucp, product: product.optional(), products: z.array(product).max(50).default([]), messages: z.array(z.object({ type: z.string(), code: z.string().max(200).optional() })).default([]) });
 export type ShopifyCatalogOutput = z.infer<typeof catalogOutput>;
+export { catalogOutput as shopifyCatalogOutputSchema };
 export type ShopifyVariant = z.infer<typeof variant>;
 const businessProfile = z.object({ ucp: z.object({ version: z.literal(SHOPIFY_UCP_VERSION), capabilities, services: z.record(z.string(), z.array(z.object({ version: z.string(), transport: z.string(), endpoint: z.string().optional() }))) }) });
 
@@ -131,12 +132,20 @@ export class ShopifyReadOnlyClient {
     if (!this.#connection.merchantDomain) throw new ShopifyReadError('MERCHANT_REQUIRED_FOR_DISCOVERY');
     this.#discovered = false;
     const response = await this.#request('discovery', undefined, signal);
-    const profile = parse(businessProfile, response.value, 'INVALID_BUSINESS_PROFILE');
+    const profile = this.restoreDiscovery(response.value);
+    return { value: profile, receipt: response.receipt };
+  }
+  /** Rehydrate a source-verified profile supplied by the host. Validation is pure;
+   * a new merchant call never hides an extra discovery request. */
+  restoreDiscovery(value: unknown) {
+    if (!this.#connection.merchantDomain) throw new ShopifyReadError('MERCHANT_REQUIRED_FOR_DISCOVERY');
+    this.#discovered = false;
+    const profile = parse(businessProfile, value, 'INVALID_BUSINESS_PROFILE');
     const bindings = profile.ucp.services['dev.ucp.shopping']?.filter(s => s.transport === 'mcp' && s.version === SHOPIFY_UCP_VERSION) ?? [];
     if (bindings.length !== 1 || bindings[0]!.endpoint !== `${this.origin}/api/ucp/mcp`) throw new ShopifyReadError('MERCHANT_ENDPOINT_MISMATCH');
     for (const name of ['dev.ucp.shopping.catalog.search', 'dev.ucp.shopping.catalog.lookup', 'dev.shopify.catalog']) if (!profile.ucp.capabilities[name]?.some(c => c.version === SHOPIFY_UCP_VERSION)) throw new ShopifyReadError('MISSING_CATALOG_CAPABILITY');
     this.#discovered = true;
-    return { value: profile, receipt: response.receipt };
+    return profile;
   }
   async listTools(signal: AbortSignal) {
     const id = randomUUID();

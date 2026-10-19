@@ -1,0 +1,58 @@
+# 用户 PA 经 EIGOS Agent 完成 Shopify 只读任务
+
+2026-10-19，既有 Grok Bot／Monk PA 在用户连接的 Mac 上，通过现有 A2A 客户端发起业务目标。EIGOS Gateway／Worker 使用真实模型和 Ontology 选择动作，调用 Shopify 公开接口，将观察写回本体并验收，随后由同一个 PA 读回实际交付物。完整链路已通过独立核验：
+
+**用户 PA → A2A → EIGOS Gateway／Agent → Ontology＋LLM → Shopify 连接器／接口 → 本体观察 → EIGOS Agent 验收 → Gateway／A2A → 用户 PA**
+
+这是连接 Mac 的实际 PA 往返；验证环境为本机 loopback Gateway／Worker 和 Shopify 匿名公开接口，不涉及公网部署或交易。
+
+## 实际请求与返回
+
+- 请求 ID：`7426dfdd-dc34-47cb-819c-d41dea77dbf8`，只提交一次。
+- 任务 ID：`e0f58f72-49a4-46ed-819a-363a49083db8`。
+- 18:26:05 提交，18:29:19 完成且 accepted；18:30:06，Monk 在界面报告结果。时间均为 Asia/Shanghai。
+- PA 的业务目标是比较 Purity Coffee 美国市场 FLOW／EASE 两款整豆咖啡，返回标识、SKU、显示价格、可售标记和价差，保留未知的库存数量及配送承诺。它没有向 EIGOS 指定厂商调用顺序、变体 ID 或价格答案。
+
+| 商品及变体 | SKU | 变体 ID 尾号 | 当次显示单价 | 公开可售标记 |
+| --- | --- | --- | --- | --- |
+| FLOW: Original Medium Roast Whole Bean Coffee — 12 oz / Whole Bean | PC12-R | 36130238136487 | 29.00 USD | true |
+| EASE: Dark Roast Whole Bean Coffee — 12 oz / Whole Bean | PC12-DK | 36130229878951 | 29.00 USD | true |
+
+完整变体 ID 前缀为 `gid://shopify/ProductVariant/`。FLOW 减 EASE 的显示价差为 0 美分。这些是 18:28 店铺读取的有时间戳观察，五分钟本地有效窗口分别到 18:33:38 和 18:33:39，不作为以后时点的最新价格。库存数量、配送承诺、目录覆盖完整性与合作信任仍为未知或未验证；可售标记不等于库存数量或配送保证。
+
+## Agent 实际选择的动作
+
+14 次真实 Codex 模型调用产生 21 次本体读取／计算、3 轮动作计划和 7 次匿名 HTTP 读取：
+
+| 模型计划 | 模型选择的动作 | 厂商请求数 |
+| --- | --- | --- |
+| 1 | 分别搜索 FLOW 与 EASE | 2 |
+| 2 | 分别读取选中变体的详情 | 2 |
+| 3 | 发现商家目录端点，再通过实际端点引用读取两个选中变体 | 3 |
+
+每个厂商请求都有先行的模型决策、计划、本体读取、持久动作和尝试记录。模型原始选择的摘要与实际执行参数一致；连接器每次只调用一个接口。没有准备阶段的隐式查询或连接器固定复查。
+
+此前[已知变体 ID 的真实后端诊断](../ontology-runtime-2026-10-19/README.md)由模型选择 2 个动作；本轮按商品名比较由模型选择 7 个动作。两次使用同一执行代码，业务目标和模型动作轨迹分别记录。这里证明的是已登记的四类只读动作可由模型选择和组合。
+
+完成前，模型读取最终商家观察并分别执行 `catalogObservationStatus`。独立观察器按实际读取时刻重算两个结果，确认均为 `known` 且输出摘要一致，然后核对模型完成选择、原始来源事实和交付内容。
+
+## PA 接收与独立读回
+
+Monk 实际发现服务、提交目标、持续查询同一个任务，并用 `get` 重新读取终态；随后在原生界面报告两个商品、标识、SKU、显示价、0 美分价差及全部未知项。详见[界面中本任务的记录](pa-ui-observation.json)。只归档本任务相关内容，没有归档其他聊天内容。
+
+PA 保存的交付对象是它收到的 JSON 文本中的原始字节片段；文件摘要与界面报告一致。PA、独立 MCP 查询和数据库中的交付内容按规范化 JSON 摘要一致。原有 14 条任务未修改，PA profile、凭据、客户端与既有配置未改变。
+
+## 归档与复核
+
+- [完整验证记录](verification.json)：实际模型、本体读取、计划、HTTP 回执、来源事实、完成计算、验收和 A2A 轨迹。
+- [PA 收到的交付物](pa-artifact.json)。
+- [实际运行源码摘要](source-files.json)：提交前冻结的 96 个运行源文件／配置文件；运行构建为 `1ae0704789303fcbc9fdcefc287cf8f2a101b0844d40b7431d12785f1c6ad2dd`，执行代码对应 `9fa18db`。
+- 共享执行代码的 [334 项回归](../ontology-runtime-2026-10-19/tests.txt)和 [7 项进程测试](../ontology-runtime-2026-10-19/e2e.txt)保留独立证据，不混作真实 PA 记录。
+
+`examples/verify-pa-agent-catalog-e2e.ts` 只读取 PA 文件、MCP 任务、数据库和已保存的来源响应。它逐项核对模型选择与每个真实请求，复算请求／响应摘要、商品身份／名称／价格、完成时的本体计算、历史任务和连接、不可变构建及源码；不提交任务、不调用模型、不调用 Shopify。
+
+```sh
+node --import tsx examples/verify-pa-agent-catalog-e2e.ts --live --session-dir <本次私有 PA 目录>
+```
+
+全程没有创建购物车、结账、订单、付款或履约记录。此记录完成的是只读查询任务的真实往返。
