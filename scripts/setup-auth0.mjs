@@ -7,10 +7,11 @@ import { auth0Plan, ensureAuth0ConnectionClients } from '../dist/packages/member
 const { values } = parseArgs({ options: {
   'public-url': { type: 'string' }, 'agent-callback': { type: 'string' }, tenant: { type: 'string' },
   connection: { type: 'string' },
+  'member-sources': { type: 'boolean', default: false },
   output: { type: 'string', default: 'data/auth0-live' }, apply: { type: 'boolean', default: false },
 } });
 if (!values['public-url']) throw new Error('Usage: npm run setup:auth0 -- --public-url https://gateway-origin [--tenant tenant.auth0.com --apply]');
-const plan = auth0Plan(values['public-url'], values['agent-callback']);
+const plan = auth0Plan(values['public-url'], values['agent-callback'], { memberSources: values['member-sources'] });
 const directory = resolve(values.output), localData = resolve('data');
 if (!relative(localData, directory) || relative(localData, directory).startsWith('..') || relative(localData, directory).startsWith('/')) throw new Error('Use a dedicated directory under ignored data/ for private Auth0 configuration');
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -69,6 +70,8 @@ if (!values.apply) {
     else {
       const { identifier, signing_alg, ...settings } = plan.api;
       if (resource.signing_alg !== signing_alg) throw new Error('Existing API signing algorithm does not match');
+      // An opt-in source scope update must preserve separately configured network scopes.
+      settings.scopes = [...new Map([...(resource.scopes ?? []), ...settings.scopes].map(scope => [scope.value, scope])).values()];
       api('patch', `resource-servers/${encodeURIComponent(resource.id)}`, settings);
     }
     state.apiId = resource.id; save('state.json', state);

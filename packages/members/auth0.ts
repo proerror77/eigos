@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { SCOPES } from '../core/domain.js';
+import { SOURCE_SCOPES } from '../core/member-source.js';
 import { MEMBERSHIP_SCOPE } from './agents.js';
 
 type ManagementApi = (method: 'get' | 'patch', path: string, body?: unknown) => unknown;
@@ -30,7 +31,7 @@ export function ensureAuth0ConnectionClients(api: ManagementApi, connectionId: s
   if ([...desired].some(id => !confirmed.has(id))) throw new Error('Connection readback did not confirm both OAuth clients');
 }
 
-export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback') {
+export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback', options: { memberSources?: boolean } = {}) {
   const origin = new URL(publicUrl);
   if (origin.protocol !== 'https:' || origin.origin !== publicUrl || origin.username || origin.password) throw new Error('Auth0 requires an exact HTTPS Gateway origin');
   const callback = new URL(agentCallback);
@@ -43,7 +44,7 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
       name: `EIGOS API ${suffix}`, identifier: publicUrl, signing_alg: 'RS256', token_dialect: 'rfc9068_profile',
       token_lifetime: 900, token_lifetime_for_web: 900, allow_offline_access: true,
       skip_consent_for_verifiable_first_party_clients: false,
-      scopes: [...SCOPES.map(value => ({ value, description: value === 'services:read' ? 'View EIGOS services' : value === 'tasks:read' ? 'Read your EIGOS tasks' : 'Submit, reply to and cancel your EIGOS tasks' })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }],
+      scopes: [...SCOPES.map(value => ({ value, description: value === 'services:read' ? 'View EIGOS services' : value === 'tasks:read' ? 'Read your EIGOS tasks' : 'Submit, reply to and cancel your EIGOS tasks' })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
     },
     portal: {
       name: `EIGOS member portal ${suffix}`, app_type: 'regular_web', oidc_conformant: true, is_first_party: true,

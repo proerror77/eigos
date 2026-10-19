@@ -16,7 +16,7 @@ export function createWorker(config: Config, overrides: {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS);
     const catalog = createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
-      paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, executionHost: 'worker', ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
+      paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'worker', ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_AUDIT_DIR } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });

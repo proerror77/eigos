@@ -4,7 +4,7 @@ import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema } from '../ontology/execution.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
-export type Scope = (typeof SCOPES)[number];
+export type Scope = (typeof SCOPES)[number] | 'sources:read' | 'sources:write';
 export interface Principal {
   issuer: string;
   subject: string;

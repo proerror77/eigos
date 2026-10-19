@@ -1,6 +1,7 @@
 import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
+import { SourceAuthorizationRequired } from '../../packages/core/member-source.js';
 
 export interface WorkerOptions {
   coordinator: Pick<Coordinator, 'run'>;
@@ -55,6 +56,14 @@ export class Worker {
       await this.options.coordinator.run(claim, controller.signal);
     }).catch(error => {
       this.store.finish(claim, current => {
+        if (error instanceof SourceAuthorizationRequired && !controller.signal.aborted && current.delegation && this.store.intents(owner, current.id).every(i => ['read', 'local'].includes(i.effect))) {
+          const d = current.delegation;
+          current.state = 'auth-required'; d.phase = 'awaiting_authorization';
+          d.sourceAuthorization = { provider: 'meituan-paotui', nextAction: 'begin_source_connection', resumeAction: 'resume_source_task' };
+          current.updatedAt = new Date().toISOString(); current.question = error.message; delete current.error;
+          current.messages.push({ id: randomUUID(), role: 'agent', text: error.message, at: current.updatedAt });
+          return;
+        }
         const intentId = current.delegation?.intentId;
         const dispatched = intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();

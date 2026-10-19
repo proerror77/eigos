@@ -53,6 +53,7 @@ export interface Delegation {
   actionReply?: { intentId: string; messageId: string; answer: string };
   actions?: { id: string; stepId: string; state: import('../ontology/actions.js').IntentState; remoteRef?: string; latestObservationId?: string }[];
   authorizationRequest?: { planDigest: string; effects: import('../ontology/actions.js').EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox'; realOperationsAllowed: false };
+  sourceAuthorization?: { provider: 'meituan-paotui'; nextAction: 'begin_source_connection'; resumeAction: 'resume_source_task' };
   businessFacts?: { intentId: string; snapshot: import('../ontology/actions.js').BusinessSnapshot; sourceVersion: number; evidenceRefs: string[] }[];
   authorizationBudget?: { minor: string; currency: string; state: string; intentId: string }[];
   approval?: { planDigest: string; quoteDigest: string; at: string; simulationOnly: true };

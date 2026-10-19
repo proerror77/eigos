@@ -3,7 +3,7 @@ import type { AgentRegistration } from '../../../packages/members/agents.js';
 
 const escape = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
 const statuses = { new: '待开通', pending: '等待审核', active: '已开通', suspended: '已停用' };
-const scopeNames: Record<string, string> = { 'services:read': '查看服务', 'tasks:read': '读取任务', 'tasks:write': '创建、回复与取消任务', 'network:read': '读取获准的协作内容', 'network:write': '提交受控协作操作' };
+const scopeNames: Record<string, string> = { 'services:read': '查看服务', 'sources:read': '查看本人的服务连接', 'sources:write': '连接或撤销本人的只读服务账号', 'tasks:read': '读取任务', 'tasks:write': '创建、回复与取消任务', 'network:read': '读取获准的协作内容', 'network:write': '提交受控协作操作' };
 const localTime = (value: string, profile: Profile) => new Intl.DateTimeFormat(profile.locale, {
   timeZone: profile.timezone, dateStyle: 'medium', timeStyle: 'short',
 }).format(new Date(value));

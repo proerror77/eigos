@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, isAbsolute } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const exec = promisify(execFile);
 const clientId = 'ac76c22d257c4c6d9164719eea64ed4b';
@@ -9,14 +11,15 @@ import { paotuiPreviewSchema, paotuiQuerySchema, type PaotuiQuery, type PaotuiRe
 import { normalizePaotuiPublicPlaces } from './paotui-public-locations.js';
 export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 
-// Official CLI has a personal credential/cache. Restrict this adapter to one local
-// development identity or one explicitly connected member; no shared-token fallback.
+// Legacy reads use the explicit operator connection. Member-supplied reads inject
+// only their pinned credential and never consult the operator's credential/cache.
 export class LocalPaotuiReader implements PaotuiReader {
-  constructor(private skillDir: string, private onCommand?: (command: string) => void, private assertAccess?: () => void) {
+  constructor(private skillDir: string, private onCommand?: (command: string) => void, private assertAccess?: () => void, private ownedToken?: () => string) {
     if (!isAbsolute(skillDir)) throw new Error('Paotui skill directory must be absolute');
   }
   private async token(signal: AbortSignal): Promise<string> {
     this.assertAccess?.();
+    if (this.ownedToken) { const token = this.ownedToken(); signal.throwIfAborted(); this.assertAccess?.(); return token; }
     const result = await exec('pt-passport', ['get-token', '--client_id', clientId], { signal, timeout: 10000, maxBuffer: 65536 });
     signal.throwIfAborted(); this.assertAccess?.();
     const token = result.stdout.trim().split('\n').at(-1);
@@ -24,11 +27,13 @@ export class LocalPaotuiReader implements PaotuiReader {
     return token;
   }
   private async command(args: string[], token: string, signal: AbortSignal): Promise<Record<string, any>> {
+    // Member tokens do not inherit the operator's HOME, working directory or login cache.
+    const privateHome = this.ownedToken ? mkdtempSync(join(tmpdir(), 'eigos-source-cli-')) : undefined;
     try {
       signal.throwIfAborted(); this.assertAccess?.();
       const r = await exec(process.execPath, [join(this.skillDir, 'paotui.js'), ...args], {
-        cwd: this.skillDir, signal, timeout: 30000, maxBuffer: 512000,
-        env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_ACCESS_TOKEN: token },
+        cwd: privateHome ?? this.skillDir, signal, timeout: 30000, maxBuffer: 512000,
+        env: { PATH: process.env.PATH, HOME: privateHome ?? process.env.HOME, MCP_ACCESS_TOKEN: token },
       });
       signal.throwIfAborted(); this.assertAccess?.();
       const data = JSON.parse(r.stdout);
@@ -36,6 +41,7 @@ export class LocalPaotuiReader implements PaotuiReader {
       this.onCommand?.(args[0]!);
       return data;
     } catch { throw new Error('Meituan operation failed; inspect provider account before retrying.'); }
+    finally { if (privateHome) rmSync(privateHome, { recursive: true, force: true }); }
   }
   private async preview(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     const q = paotuiPreviewSchema.parse(input);

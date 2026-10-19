@@ -41,6 +41,7 @@ const schema = z.object({
   EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
   EIGOS_PAOTUI_MEMBER_CONNECTION_FILE: z.string().optional(),
+  EIGOS_MEMBER_SOURCE_KEY_FILE: z.string().optional(),
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: shopifyMerchants.optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
@@ -119,9 +120,14 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   return c;
 }
 
-/** This bridge remains a non-production, loopback-only single-account connection. */
+/** Both owned-source modes remain explicit, non-production and loopback-only. */
 export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
-  if (c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
+  if (c.EIGOS_MEMBER_SOURCE_KEY_FILE) {
+    if (!isAbsolute(c.EIGOS_MEMBER_SOURCE_KEY_FILE) || !c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_PAOTUI_SKILL_DIR) || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
+      || c.EIGOS_AUTH_MODE !== 'jwt' || c.EIGOS_NETWORK_ENABLED !== 'true' || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:'
+      || nodeEnv === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname)
+      || new URL(c.PUBLIC_URL).protocol !== 'https:' || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length) throw new Error('Member-supplied sources require isolated loopback HTTPS/JWT network configuration and a private encryption key; shared credentials are forbidden');
+  } else if (c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
     if (!isAbsolute(c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) || !c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_PAOTUI_SKILL_DIR)
       || c.EIGOS_AUTH_MODE !== 'jwt' || c.EIGOS_NETWORK_ENABLED !== 'true' || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:'
       || nodeEnv === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname)

@@ -3,6 +3,7 @@ import { decodeJwt } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../../packages/core/config.js';
 import { DomainError, SCOPES } from '../../../packages/core/domain.js';
+import { SOURCE_SCOPES } from '../../../packages/core/member-source.js';
 import { MemberStore, applicationSchema } from '../../../packages/members/store.js';
 import { AgentAccessError, MEMBERSHIP_SCOPE, type AgentRegistration } from '../../../packages/members/agents.js';
 import type { VerifyToken } from '../auth.js';
@@ -12,7 +13,7 @@ export const enrollmentClaim = (resource: string) => `${resource}/claims/agent_e
 export function agentOnboardingMetadata(c: Config) {
   return { version: 1, registration_endpoint: `${c.PUBLIC_URL}/agents/registrations`,
     issuer: c.OAUTH_ISSUER, client_id: c.OIDC_AGENT_CLIENT_ID, audience: c.OAUTH_AUDIENCE,
-    scopes: ['openid', 'offline_access', MEMBERSHIP_SCOPE, ...SCOPES],
+    scopes: ['openid', 'offline_access', MEMBERSHIP_SCOPE, ...SCOPES, ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     membership_url: `${c.PUBLIC_URL}/members`, admission_policy: c.EIGOS_MEMBERSHIP_APPROVAL,
     authorization_grant: 'urn:ietf:params:oauth:grant-type:device_code', credential_header: REGISTRATION_HEADER,
     registration_credential: { generation: '32 cryptographically random bytes, unpadded base64url', length: 43, purpose: 'Registration status and binding only; not a business access token' },

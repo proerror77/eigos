@@ -1,4 +1,5 @@
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
+import { initializeMemberSources, MemberSourceVault } from './member-source.js';
 import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -84,7 +85,10 @@ export class JobStore {
       `);
     });
     this.ontology = new OntologyObjectStore(this.db);
+    initializeMemberSources(this.db);
   }
+
+  memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
 
   createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
 

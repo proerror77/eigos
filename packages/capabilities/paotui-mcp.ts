@@ -1,4 +1,5 @@
 import type { PersonalSourceAccess } from '../core/personal-source.js';
+import type { MemberSourceVault, SourceGrant } from '../core/member-source.js';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
@@ -11,17 +12,19 @@ import { ontologyReceiptSchema } from './paotui-mcp-server.js';
 
 export class OntologyMcpPaotuiReader implements PaotuiReader {
   readonly configurationDigest: string;
-  constructor(private skillDirectory: string, private auditPath?: string, private options: { access?: PersonalSourceAccess; databasePath?: string; execute?: boolean } = {}) {
+  constructor(private skillDirectory: string, private auditPath?: string, private options: { access?: PersonalSourceAccess; memberSource?: { vault: MemberSourceVault; grant: SourceGrant }; databasePath?: string; execute?: boolean } = {}) {
     if (!isAbsolute(skillDirectory) || (auditPath && !isAbsolute(auditPath))) throw new Error('Ontology MCP requires absolute private local paths');
-    if (options.access && (!options.databasePath || !isAbsolute(options.databasePath))) throw new Error('Member source requires a persistent shared business database');
+    if ((options.access || options.memberSource) && (!options.databasePath || !isAbsolute(options.databasePath))) throw new Error('Member source requires a persistent shared business database');
+    if (options.access && options.memberSource) throw new Error('Mixed credential modes are forbidden');
     this.configurationDigest = digest({ server: 'eigos-ontology', version: '1', skillDirectory, capabilityDefinitions: PAOTUI_READ_CAPABILITIES, ...(options.access ? { memberConnection: options.access.configurationDigest } : {}) });
   }
   async query(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     signal.throwIfAborted();
     if (this.options.execute === false) throw new Error('Source reads run only in the Worker');
     this.options.access?.assert();
+    this.options.memberSource?.vault.assert(this.options.memberSource.grant);
     const query = paotuiQuerySchema.parse(input);
-    if (this.options.access && query.action !== 'addresses' && query.action !== 'preview') throw new Error('Member source permits only owned address and delivery quote reads');
+    if ((this.options.access || this.options.memberSource) && query.action !== 'addresses' && query.action !== 'preview') throw new Error('Member source permits only owned address and delivery quote reads');
     if (query.action === 'authorization') throw new Error('Authorization is not an ontology business read');
     const id = query.action === 'preview' ? 'delivery.quote' : query.action === 'addresses' ? 'address.book.read' : 'geo.search';
     const definition = paotuiReadDefinitions.find(d => d.id === id)!;
@@ -39,6 +42,11 @@ export class OntologyMcpPaotuiReader implements PaotuiReader {
       env.EIGOS_PAOTUI_CONNECTION_DIGEST = this.options.access.configurationDigest;
       env.EIGOS_SOURCE_DATABASE_PATH = this.options.databasePath!;
     }
+    if (this.options.memberSource) {
+      env.EIGOS_MEMBER_SOURCE_KEY_FILE = this.options.memberSource.vault.keyPath;
+      env.EIGOS_MEMBER_SOURCE_GRANT = JSON.stringify(this.options.memberSource.grant);
+      env.EIGOS_SOURCE_DATABASE_PATH = this.options.databasePath!;
+    }
     const client = new Client({ name: 'eigos-ontology-worker', version: '1' });
     const transport = new StdioClientTransport({ command: process.execPath, args: [...(source ? ['--import', 'tsx'] : []), script], env, stderr: 'ignore', maxBufferSize: 1024 * 1024 });
     const abort = () => { void client.close().catch(() => {}); };
@@ -51,11 +59,14 @@ export class OntologyMcpPaotuiReader implements PaotuiReader {
       const response = await client.callTool({ name: tool, arguments: args }, { signal, timeout: 120000 });
       if (response.isError) throw new Error('Ontology read rejected');
       const { result, receipt } = z.object({ result: z.record(z.string(), z.unknown()), receipt: ontologyReceiptSchema }).parse(response.structuredContent);
-      if (!result || typeof result !== 'object' || receipt.evidenceKind !== 'live_readonly' || receipt.sourceConnectionDigest !== this.options.access?.configurationDigest || receipt.tool !== tool || digest(receipt.capabilityRef) !== digest(capability.ref) || digest(receipt.ontologyRef) !== digest(capability.ontologyRef) || receipt.inputDigest !== digest(args) || receipt.resultDigest !== digest(result)) throw new Error('Ontology response mismatch');
+      const connectionDigest = this.options.memberSource ? digest(this.options.memberSource.grant) : this.options.access?.configurationDigest;
+      if (!result || typeof result !== 'object' || receipt.evidenceKind !== 'live_readonly' || receipt.sourceConnectionDigest !== connectionDigest || receipt.tool !== tool || digest(receipt.capabilityRef) !== digest(capability.ref) || digest(receipt.ontologyRef) !== digest(capability.ontologyRef) || receipt.inputDigest !== digest(args) || receipt.resultDigest !== digest(result)) throw new Error('Ontology response mismatch');
       signal.throwIfAborted(); this.options.access?.assert();
+      this.options.memberSource?.vault.assert(this.options.memberSource.grant);
       return { ...result, ontologyReceipt: receipt };
     } catch {
       signal.throwIfAborted();
+      this.options.memberSource?.vault.assert(this.options.memberSource.grant);
       throw new Error('Ontology MCP read failed; check personal Meituan authorization and connectivity.');
     } finally { signal.removeEventListener('abort', abort); await client.close().catch(() => {}); await transport.close().catch(() => {}); }
   }

@@ -18,6 +18,7 @@ export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: Candi
 export interface ProviderAdapter {
   readonly id: string;
   permitted(owner: string): boolean;
+  sourceAuthorization?(owner: string): { provider: string; state: string; nextAction: string };
   prepare(ctx: AdapterContext, input: unknown, signal: AbortSignal): Promise<Preparation>;
   verify(ctx: AdapterContext, plan: ExecutionPlan, privateData: unknown, delivery: Delivery): { accepted: boolean; reason: string };
 }
@@ -111,7 +112,8 @@ export class ExecutionCatalog {
     const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length));
     // Do not silently truncate an unsearched catalogue; add domain retrieval before scaling it.
     if (permitted.length > limit) throw new DomainError('CONFLICT', 'Capability retrieval limit exceeded; a narrower discovery scope is required');
-    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics }));
+    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics,
+      sourceAuthorization: this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
   }
   delegationService(): ServiceDefinition {
     const definitions = [...this.services.values()];

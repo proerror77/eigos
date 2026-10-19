@@ -17,6 +17,8 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.equal(plan.connector.refresh_token.rotation_type, 'rotating'); assert.equal(plan.connector.refresh_token.infinite_token_lifetime, false);
   assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
+  assert(!plan.api.scopes.some(s => s.value.startsWith('sources:')));
+  assert.deepEqual(auth0Plan('https://eigos.example', undefined, { memberSources: true }).api.scopes.filter(s => s.value.startsWith('sources:')).map(s => s.value), ['sources:read', 'sources:write']);
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
   assert.throws(() => auth0Plan('https://eigos.example', 'https://attacker.example/callback'));

@@ -1,4 +1,5 @@
 import { NETWORK_SCOPES } from '../../packages/network/contracts.js';
+import { SOURCE_SCOPES } from '../../packages/core/member-source.js';
 import { timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
@@ -41,7 +42,7 @@ export function protectedResourceMetadata(c: Config): object {
   return {
     resource: c.OAUTH_AUDIENCE ?? c.PUBLIC_URL,
     authorization_servers: c.OAUTH_ISSUER ? [c.OAUTH_ISSUER] : [],
-    scopes_supported: [...SCOPES, ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : [])],
+    scopes_supported: [...SCOPES, ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     bearer_methods_supported: ['header'],
     resource_name: 'EIGOS task gateway',
     ...(c.OIDC_AGENT_CLIENT_ID ? { eigos_agent_registration: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}),

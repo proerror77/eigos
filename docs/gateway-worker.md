@@ -15,6 +15,8 @@
 
 Gateway 不启动模型、跑腿凭据适配器或后台执行定时器。新 `eigos.delegate` 的本体解释、候选准备、计划推理、异步执行和独立验收都在 Worker；Gateway 只接受提交、精确模拟授权和查询/取消。原始 CSV 快照由 Worker 准备并私有持久化，不进入模型或任务 metadata。新的目录、适配器和边界见 [后端说明](registered-capabilities.md)。旧需求登记、直接执行、跑腿订单和 CSV pilot 的分发及状态机均已删除。可复用的 CSV 解析／验收程序归入新能力包。
 
+会员自有来源的密文保存在业务库的专用私有表；Gateway 接受已授权 PA 的独立上传，Worker／内部 MCP 使用库外私有密钥读取本 owner 的凭据。两侧均不把 Token 交给模型或任务对象，复用原领取／取消／租约。配置和接入见[会员自有账号授权](member-source-authorization.md)。
+
 ## 启动
 
 ```sh

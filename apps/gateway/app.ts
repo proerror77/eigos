@@ -1,4 +1,6 @@
 import { NetworkService } from '../../packages/network/service.js';
+import { MemberSourceService } from '../../packages/members/source-service.js';
+import { mountSourceRoutes } from './sources.js';
 import { mountNetworkRoutes } from './network/routes.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
@@ -48,7 +50,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   try {
     catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
-      paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, executionHost: 'gateway',
+      paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
@@ -132,6 +134,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   };
 
   mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
+  const sources = config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
+  mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
   for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
@@ -167,7 +171,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);

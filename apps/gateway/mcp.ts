@@ -1,4 +1,6 @@
 import type { NetworkService } from '../../packages/network/service.js';
+import type { MemberSourceService } from '../../packages/members/source-service.js';
+import { sourceBeginSchema, sourceRevokeSchema } from '../../packages/core/member-source.js';
 import { mountNetworkMcp } from './network/mcp.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -19,10 +21,17 @@ function result(action: () => unknown): CallToolResult {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }): McpServer {
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   if (network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+  if (sources) {
+    server.registerTool('list_source_connections', { description: 'Discover available account-backed services and the current user\'s own connection status. Visibility does not lend another member\'s credential.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.list(principal, sources.token)));
+    server.registerTool('get_source_connection', { description: 'Read this user\'s Meituan connection state, expiry and next action. Accepted credential is not provider verification.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.status(principal, sources.token)));
+    server.registerTool('begin_source_connection', { description: 'Begin or rotate the user\'s own read-only Meituan connection. The PA must obtain the credential locally and upload through the returned private HTTP path. Never send a token through MCP or task text.', inputSchema: sourceBeginSchema, annotations: { idempotentHint: true, destructiveHint: false } }, args => result(() => sources.service.begin(principal, sources.token, args)));
+    server.registerTool('revoke_source_connection', { description: 'Revoke this user\'s source connection and all pending upload requests immediately. Does not revoke the provider account itself.', inputSchema: sourceRevokeSchema, annotations: { idempotentHint: true, destructiveHint: true } }, args => result(() => sources.service.revoke(principal, sources.token, args)));
+    server.registerTool('resume_source_task', { description: 'Resume the SAME owned task after its source connection is ready. Re-reads addresses and price; no order or payment authorization.', inputSchema: z.object({ taskId: taskIdSchema, requestId: z.uuid(), expectedRevision: z.number().int().positive() }).strict(), annotations: { idempotentHint: true, destructiveHint: false } }, args => result(() => sources.service.resume(principal, sources.token, args)));
+  }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
     inputSchema: z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict(), annotations: read,

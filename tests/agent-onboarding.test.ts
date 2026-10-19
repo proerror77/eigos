@@ -170,6 +170,36 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
   } finally { await mcp?.close(); await f.close(); }
 });
 
+test('PA source helper loads credentials only for the fixed private upload path and keeps them out of its cache and errors', async () => {
+  const f = await fixture(), secret = 'test-private-provider-token', calls: { path: string; body: any; headers: Headers }[] = [];
+  let badDestination = false, acknowledged = false, loads = 0;
+  try {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname.startsWith('/sources/')) {
+        assert.equal(url.origin, f.base); assert.equal(init?.redirect, 'error');
+        const body = JSON.parse(String(init?.body)), headers = new Headers(init?.headers); calls.push({ path: url.pathname, body, headers });
+        assert(headers.get('Authorization')?.startsWith('Bearer ')); assert(!headers.get('Authorization')?.includes(secret));
+        return new Response(JSON.stringify(url.pathname.endsWith('/begin') ? { requestId: body.requestId, uploadPath: badDestination ? 'https://foreign.test/credential' : '/sources/meituan-paotui/credential', completed: acknowledged, ...(acknowledged ? { status: { state: 'connected' } } : {}) } : { state: 'connected' }), { headers: { 'Content-Type': 'application/json' } });
+      }
+      return f.fetcher(input, init);
+    };
+    const path = join(f.directory, 'agent', 'credentials.json'), agent = await AgentConnector.open({ baseUrl: f.base, credentialPath: path, displayName: 'Private source PA', fetch: fetcher });
+    await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
+    const loadCredential = async () => { loads++; return { token: secret, expiresAt: new Date(Date.now() + 3600000).toISOString() }; };
+    assert.deepEqual(await agent.connectSource({ requestId: randomUUID(), expectedRevision: 0, loadCredential }), { state: 'connected' });
+    assert(!JSON.stringify(calls[0]!.body).includes(secret)); assert.equal(calls[1]!.body.token, secret); assert.equal(loads, 1);
+    assert(!readFileSync(path, 'utf8').includes(secret));
+    acknowledged = true;
+    assert.deepEqual(await agent.connectSource({ requestId: calls[0]!.body.requestId, expectedRevision: 0, loadCredential }), { state: 'connected' }); assert.equal(loads, 1, 'Lost acknowledgement recovers status without fetching or uploading credentials again');
+    acknowledged = false;
+    badDestination = true;
+    await assert.rejects(agent.connectSource({ requestId: randomUUID(), expectedRevision: 1, loadCredential }), /source_connection_failed/); assert.equal(loads, 1);
+    badDestination = false;
+    await assert.rejects(agent.connectSource({ requestId: randomUUID(), expectedRevision: 1, loadCredential: async () => { throw new Error(secret); } }), e => e instanceof Error && e.message === 'source_connection_failed');
+  } finally { await f.close(); }
+});
+
 test('uncertain rotating refresh is not retried; external destinations and unapproved credentials fail closed', async () => {
   const f = await fixture();
   try {

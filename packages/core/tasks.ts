@@ -23,6 +23,25 @@ export class TaskService {
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
+  resumeSource(p: Principal, input: unknown, assertConnected: (owner: string) => void): Job {
+    requireScope(p, 'tasks:write');
+    const args = z.object({ taskId: taskIdSchema, requestId: z.uuid(), expectedRevision: z.number().int().positive() }).strict().parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `source_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), d = job.delegation;
+      if (job.service !== DELEGATE || d?.backendVersion !== BACKEND_VERSION || job.state !== 'auth-required' || !d.sourceAuthorization || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Task is not waiting for this source authorization');
+      assertConnected(owner);
+      const intents = this.store.intents(owner, job.id);
+      if (intents.some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
+      for (const i of intents) { i.state = 'rejected'; this.store.saveIntent(owner, i); }
+      if (d.plan) d.planHistory = [...(d.planHistory ?? []), d.plan];
+      delete d.plan; delete d.intentId; delete d.intentIds; delete d.actions; delete d.resolution; delete d.sourceAuthorization; delete d.reasoning; delete d.ontologyReads; delete d.conditionChecks; delete d.authorizationRequest;
+      job.revision = (job.revision ?? 0) + 1; d.request.revision = job.revision; d.phase = 'grounding'; d.nextAt = 0;
+      job.state = 'submitted'; job.updatedAt = new Date().toISOString(); delete job.question; delete job.error;
+      d.events.push({ at: job.updatedAt, event: 'owned_source_connected' });
+      this.store.save(owner, job); return job;
+    });
+  }
+
   describeOntology(p: Principal, input: unknown) {
     requireScope(p, 'services:read');
     const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict().parse(input);
