@@ -238,8 +238,11 @@ export class TaskService {
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
       if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
-        this.store.revokeGrants(owner, id); job.revision = (job.revision ?? 0) + 1;
+        this.store.revokeGrants(owner, id);
         const intents = this.store.intents(owner, id);
+        const pendingWrite = intents.some(i => !['read', 'local'].includes(i.effect) && ['ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(i.state));
+        if (!pendingWrite) { job.updatedAt = new Date().toISOString(); d.events.push({ at: job.updatedAt, event: 'agent_authority_revoked_readback_continues', evidence: requestId }); this.store.save(owner, job); return job; }
+        job.revision = (job.revision ?? 0) + 1;
         for (const intent of intents) if (intent.state === 'dispatching' && !['read', 'local'].includes(intent.effect)) { intent.state = 'effect_unknown'; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
         d.recoveryPending = intents.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
         job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;

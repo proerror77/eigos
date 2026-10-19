@@ -70,6 +70,13 @@ test('A cart-only goal needs no destination, customs, order or payment calls', a
   } finally { await t.close(); }
 });
 
+test('An explicit user quantity remains known when grounding leaves the nullable field empty',async()=>{
+  const t=await setupCommerce({target:'quote'});try{
+    const ground=t.model.ground.bind(t.model);t.model.ground=async(...args)=>{const response=await ground(...args);response.decision.inputJson=JSON.stringify({...JSON.parse(response.decision.inputJson),quantity:null});return response;};
+    const done=await t.finish(t.submit().id);assert.equal(done.state,'completed');assert.equal(done.delegation!.agent!.input.quantity,2);assert.equal(done.delegation!.agent!.informationRequests?.length??0,0);
+  }finally{await t.close();}
+});
+
 test('Domestic available inventory changes the chosen merchant and route without changing the engine', async () => {
   const t = await setupCommerce({ target: 'quote', scenario: { domesticAvailable: true } }); try {
     const done = await t.finish(t.submit().id); assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
@@ -145,6 +152,14 @@ test('Revocation before order dispatch prevents the write, and cancellation neve
     const id=t.submit().id,waiting=await pendingOrder(t,id);t.approve(waiting);t.b.tasks.revokeAuthorization(principal,id,randomUUID());
     const revoked=t.store.get(owner,id);assert.equal(revoked.state,'auth-required');assert(t.store.grants(owner,id).every(g=>g.revoked));assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);
     t.b.tasks.cancel(principal,id);assert.equal(t.store.get(owner,id).state,'canceled');assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);
+  }finally{await t.close();}
+});
+
+test('Revoking a consumed permit does not strand independent readback of the already submitted order',async()=>{
+  const t=await setupCommerce();try{
+    const id=t.submit().id,waiting=await pendingOrder(t,id);t.approve(waiting);await t.b.run();assert.equal(t.provider.counts().SubmitCommerceOrder,1);
+    t.b.tasks.revokeAuthorization(principal,id,randomUUID());assert.equal(t.store.get(owner,id).state,'working');
+    const done=await t.finish(id);assert.equal(done.state,'completed');assert.equal(t.provider.counts().SubmitCommerceOrder,1);assert(t.store.grants(owner,id).every(g=>g.revoked));
   }finally{await t.close();}
 });
 

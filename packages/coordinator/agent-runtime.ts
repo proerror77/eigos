@@ -23,9 +23,9 @@ export function agentLimits(program?: AgentProgram) {
 }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };
-const errorMessage = (error: unknown) => error instanceof DomainError || error instanceof AgentReadError ? error.message : error instanceof z.ZodError ? 'Input or source response does not match the registered schema' : 'Read action failed without a validated source response';
+const errorMessage = (error: unknown) => error instanceof DomainError || error instanceof AgentReadError ? error.message : error instanceof z.ZodError ? 'Input or source response does not match the registered schema' : 'Action failed without a validated source response';
 
-/** Durable model-decide / read-action / ontology-observe loop. No domain name,
+/** Durable model-decide / bound-action / ontology-observe loop. No domain name,
  * vendor operation, product selection or step recipe is encoded here. */
 export class AgentRuntime {
   constructor(private store: JobStore, private catalog: ExecutionCatalog, private reasoner: Reasoner,

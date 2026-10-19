@@ -52,6 +52,9 @@ export class CommerceAgentProgram implements AgentProgram {
     if (!this.permitted(owner) || request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Commerce journey is available only to the configured local sandbox identity');
     const input = commerceJourneyInputSchema.parse(raw), scope = { type: 'CommerceTask', id: `${request.id}:r${request.revision}` };
     const requirements = request.requirements.map(({ provenance: _provenance, ...requirement }) => requirement);
+    const quantities = requirements.filter(r => r.kind === 'quantity' && r.strength === 'hard' && (!r.role || r.role === 'item_quantity'));
+    if (input.quantity === null && quantities.length === 1 && quantities[0]!.kind === 'quantity' && quantities[0]!.expected.unit === 'piece') input.quantity = Number(quantities[0]!.expected.amount);
+    commerceJourneyInputSchema.parse(input);
     for (const r of requirements) if (r.kind === 'quantity' && r.strength === 'hard' && (!r.role || r.role === 'item_quantity') && (r.expected.unit !== 'piece' || input.quantity !== null && String(input.quantity) !== r.expected.amount)) fail('The selected quantity must match the explicit user item count');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: 'Agent 沙箱交易范围', requestRevision: request.revision, input, requirements, configurationDigest: this.configurationDigest, allowedActions: this.actionIds, environment: 'sandbox' } }], links: [{ type: 'CommerceTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };

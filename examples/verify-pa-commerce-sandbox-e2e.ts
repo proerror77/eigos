@@ -29,6 +29,7 @@ const sha = (value: string | Uint8Array) => createHash('sha256').update(value).d
 const fileSha = (path: string) => sha(readFileSync(path));
 const lines = (path: string, offset = 0) => readFileSync(path).subarray(offset).toString('utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
 const session = read(join(directory,'session.json')), baseline = read(join(directory,'baseline.json')), deployment = read(join(directory,'deployment-before-pa.json')), sourceHashes = read(join(directory,'source-hashes.json'));
+assert.equal(fileSha(session.inputFile),session.inputSha256,'Original PA task input changed');
 const profile = read(join(runtime,'profile.json')); assert.equal(profile.cardUrl,'http://127.0.0.1:3430/.well-known/agent-card.json'); assert.deepEqual(profile.allowedServices,['eigos.delegate']);
 assert.equal(lstatSync(profile.tokenFile).mode & 0o077,0);
 const token = readFileSync(profile.tokenFile,'utf8').trim(), config = readConfig(parseEnv(readFileSync(join(runtime,'server.env'),'utf8')));
