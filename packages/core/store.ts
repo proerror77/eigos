@@ -1,8 +1,9 @@
+import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
@@ -32,8 +33,10 @@ function equivalentFingerprint(a: string, b: string): boolean {
 export class JobStore {
   private db: DatabaseSync;
   readonly ontology: OntologyObjectStore;
+  readonly databasePath: string;
 
   constructor(path: string) {
+    this.databasePath = path === ':memory:' ? path : resolve(path);
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
@@ -76,6 +79,7 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS capability_claims (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_verifications (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_change_proposals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS personal_source_binding (slot TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, configuration_digest TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
     });
@@ -84,6 +88,14 @@ export class JobStore {
 
   createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
 
+  // Gateway calls this only after validating the enrolled member and acquiring its network lease.
+  admitPersonalSource(c?: PersonalSource, configurationDigest?: string): void {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM personal_source_binding WHERE slot='meituan-paotui'").run();
+      if (c && configurationDigest) this.db.prepare('INSERT INTO personal_source_binding VALUES(?,?,?,?,?)').run('meituan-paotui', c.connectionId, sourceOwner(c), c.memberId, configurationDigest);
+    });
+  }
+  personalSourceAdmitted(c: PersonalSource, configurationDigest: string): boolean { return personalSourceAdmitted(this.db, c, configurationDigest); }
   close(): void { this.db.close(); }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {

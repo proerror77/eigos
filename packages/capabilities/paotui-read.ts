@@ -31,8 +31,8 @@ function readFacts(query: PaotuiQuery, result: Record<string, unknown>) {
 }
 export class PaotuiReadAdapter implements ExecutionAdapter {
   readonly id: string;
-  constructor(private capabilityIndex: number, private reader: PaotuiReader) { this.id = PAOTUI_READ_BINDINGS[capabilityIndex]!.adapterId; }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  constructor(private capabilityIndex: number, private reader: PaotuiReader, private access?: { permitted(owner: string): boolean }) { this.id = PAOTUI_READ_BINDINGS[capabilityIndex]!.adapterId; }
+  permitted(owner: string) { return this.access ? this.access.permitted(owner) : owner === JSON.stringify(['local-development', 'local', 'developer']); }
   private query(input: unknown): PaotuiQuery {
     const definition = paotuiReadDefinitions[this.capabilityIndex]!;
     const parsed = definition.schema.parse(input);
@@ -42,6 +42,8 @@ export class PaotuiReadAdapter implements ExecutionAdapter {
   async prepare(ctx: AdapterContext, input: unknown, signal: AbortSignal): Promise<Preparation> {
     if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal Paotui read requires local identity');
     const query = this.query(input); const result = await this.reader.query(query, signal) as Record<string, unknown>;
+    signal.throwIfAborted();
+    if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal source access changed during reading');
     if (result.source !== 'meituan' || (query.action === 'preview' ? result.previewOnly !== true || result.orderCreated !== false : result.readOnly !== true)) return { kind: 'unavailable', reason: '只读来源回执无法核实。' };
     if (query.action === 'preview' && !total(result)) return { kind: 'unavailable', reason: '配送总费用无法核实，不能把缺失费用当作零。' };
     if (query.action === 'preview') {
@@ -53,14 +55,17 @@ export class PaotuiReadAdapter implements ExecutionAdapter {
       observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300000).toISOString(), privateData: { query, result } };
   }
   async execute(ctx: AdapterContext, plan: ExecutionPlan, data: unknown, signal: AbortSignal): Promise<Delivery> {
+    if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal read source is unavailable');
     const payload = data as { query: PaotuiQuery; result: Record<string, unknown> };
     let result = payload.result;
     if (payload.query.action === 'preview') { result = await this.reader.query(payload.query, signal) as Record<string, unknown>; if (digest(snapshot(result)) !== digest(snapshot(payload.result))) throw new ReplanRequired('Paotui quote or address snapshot changed; refresh the plan'); }
+    signal.throwIfAborted();
+    if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal read source is unavailable');
     return { artifact: { id: randomUUID(), name: `${PAOTUI_READ_CAPABILITIES[this.capabilityIndex]!.ref.id}.json`, data: { goal: ctx.request.originalGoal, deliverable: '只读结果已取得；不代表订单、支付或履约完成。', execution: 'completed', result } }, facts: readFacts(payload.query, result), evidenceRefs: [`meituan:read:${digest(snapshot(result))}`] };
   }
-  verify(_ctx: AdapterContext, _plan: ExecutionPlan, data: unknown, delivery: Delivery) {
+  verify(ctx: AdapterContext, _plan: ExecutionPlan, data: unknown, delivery: Delivery) {
     const payload = data as { query: PaotuiQuery; result: Record<string, unknown> }; const result = delivery.artifact.data.result as Record<string, unknown>;
-    const accepted = result?.source === 'meituan' && digest(snapshot(result)) === digest(snapshot(payload.result)) && (payload.query.action === 'preview' ? result.previewOnly === true && result.orderCreated === false : result.readOnly === true);
+    const accepted = this.permitted(ctx.owner) && result?.source === 'meituan' && digest(snapshot(result)) === digest(snapshot(payload.result)) && (payload.query.action === 'preview' ? result.previewOnly === true && result.orderCreated === false : result.readOnly === true);
     return { accepted, reason: accepted ? 'Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted' : 'Read receipt/source mismatch' };
   }
 }

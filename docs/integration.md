@@ -76,3 +76,6 @@ T11 增加 evidence.prepare/refresh 与 my_evidence，使用新的 evidence.mana
 
 
 T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿和发布状态。`/members/network/inquiries/:id` 与 `/members/network/tasks/:id` 复用原对象与 TaskService，会员会话只能读自己的记录。网页可在 CSRF／Origin 和显示版本校验后回复原任务补问；不会批准执行或把 cookie 当作 MCP/A2A 凭据。Agent 继续使用已有任务工具与原 taskId。详情及 T13 未完成的实测门槛见 [T12](network-t12.md)／[T13](network-t13.md)。
+
+
+个人美团与会员身份的衔接使用[单会员个人来源连接](member-source-connection.md)。EIGOS_PAOTUI_MEMBER_CONNECTION_FILE 指定当前系统用户拥有的私有连接记录；Gateway 核对会员与准确 owner，Worker／内部 MCP 每次读前后重查连接和会员撤权。只有绑定会员能使用 delivery.quote@2 和 address.book.read@1，看到服务目录不授予调用权限。默认关闭、只限非生产 loopback，凭据不写入会员库或 Task；没有新的真实交易接口。

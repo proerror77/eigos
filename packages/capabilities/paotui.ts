@@ -10,23 +10,27 @@ import { normalizePaotuiPublicPlaces } from './paotui-public-locations.js';
 export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 
 // Official CLI has a personal credential/cache. Restrict this adapter to one local
-// development identity; it is not a multi-user token broker or a payment executor.
+// development identity or one explicitly connected member; no shared-token fallback.
 export class LocalPaotuiReader implements PaotuiReader {
-  constructor(private skillDir: string, private onCommand?: (command: string) => void) {
+  constructor(private skillDir: string, private onCommand?: (command: string) => void, private assertAccess?: () => void) {
     if (!isAbsolute(skillDir)) throw new Error('Paotui skill directory must be absolute');
   }
   private async token(signal: AbortSignal): Promise<string> {
+    this.assertAccess?.();
     const result = await exec('pt-passport', ['get-token', '--client_id', clientId], { signal, timeout: 10000, maxBuffer: 65536 });
+    signal.throwIfAborted(); this.assertAccess?.();
     const token = result.stdout.trim().split('\n').at(-1);
     if (!token || /\s/.test(token)) throw new Error('Missing credential');
     return token;
   }
   private async command(args: string[], token: string, signal: AbortSignal): Promise<Record<string, any>> {
     try {
+      signal.throwIfAborted(); this.assertAccess?.();
       const r = await exec(process.execPath, [join(this.skillDir, 'paotui.js'), ...args], {
         cwd: this.skillDir, signal, timeout: 30000, maxBuffer: 512000,
         env: { PATH: process.env.PATH, HOME: process.env.HOME, MCP_ACCESS_TOKEN: token },
       });
+      signal.throwIfAborted(); this.assertAccess?.();
       const data = JSON.parse(r.stdout);
       if (data.status !== 'ok') throw new Error('Provider rejected request');
       this.onCommand?.(args[0]!);

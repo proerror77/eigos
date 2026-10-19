@@ -34,12 +34,13 @@ const label = (c: Choices, i: number) => c.generation === 1 ? `地址${i + 1}` :
 export class PaotuiRequestAdapter implements ExecutionAdapter {
   readonly id = DELIVERY_REQUEST_BINDING.adapterId;
   private primitive: PaotuiReadAdapter;
-  constructor(private reader: PaotuiReader, private store: JobStore, private configurationDigest: string) { this.primitive = new PaotuiReadAdapter(1, reader); }
+  constructor(private reader: PaotuiReader, private store: JobStore, private configurationDigest: string, access?: { permitted(owner: string): boolean }) { this.primitive = new PaotuiReadAdapter(1, reader, access); }
   permitted(owner: string) { return this.primitive.permitted(owner); }
   async prepare(ctx: AdapterContext, value: unknown, signal: AbortSignal): Promise<Preparation> {
     if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal address selection requires the local identity');
     const input = inputSchema.parse(value);
     const result = await this.reader.query({ action: 'addresses' }, signal) as Record<string, unknown>; signal.throwIfAborted();
+    if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal source access changed during address reading');
     if (result.source !== 'meituan' || result.readOnly !== true) throw new Error('Invalid address-book read');
     const fresh = z.array(addressSchema).max(100).parse(result.addresses);
     if (!fresh.length) return { kind: 'needs_input', question: '美团地址簿暂无可用地址。请先在美团保存同城寄件、收件地址，完成后在本任务回复继续。' };

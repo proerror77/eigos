@@ -34,6 +34,7 @@ const schema = z.object({
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
   EIGOS_PAOTUI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_PAOTUI_SKILL_DIR: z.string().optional(),
+  EIGOS_PAOTUI_MEMBER_CONNECTION_FILE: z.string().optional(),
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
@@ -93,7 +94,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   for (const origin of c.ALLOWED_ORIGINS.split(',').filter(Boolean)) {
     if (new URL(origin).origin !== origin) throw new Error('ALLOWED_ORIGINS must contain exact origins, without trailing slashes');
   }
-  if (c.EIGOS_PAOTUI_SKILL_DIR && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production')) throw new Error('Personal Paotui credentials are restricted to local development');
+  assertPersonalSourceConfig(c, env.NODE_ENV);
   if (c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length && (!c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production'
     || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) {
     throw new Error('Public-location discovery requires configured personal Paotui in non-production loopback development');
@@ -106,6 +107,19 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname) || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_SANDBOX_TOKEN_FILE!)) throw new Error('Sandbox provider must be an explicit loopback origin with an absolute credential file');
   }
   return c;
+}
+
+/** This bridge remains a non-production, loopback-only single-account connection. */
+export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
+  if (c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
+    if (!isAbsolute(c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) || !c.EIGOS_PAOTUI_SKILL_DIR || !isAbsolute(c.EIGOS_PAOTUI_SKILL_DIR)
+      || c.EIGOS_AUTH_MODE !== 'jwt' || c.EIGOS_NETWORK_ENABLED !== 'true' || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:'
+      || nodeEnv === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname)
+      || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length) throw new Error('Member source requires explicit loopback JWT network configuration, a persistent database and private connection metadata');
+  } else if (c.EIGOS_PAOTUI_SKILL_DIR && (c.EIGOS_AUTH_MODE !== 'development' || nodeEnv === 'production'
+    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) {
+    throw new Error('Personal Paotui credentials are restricted to local development unless an explicit loopback member source connection is configured');
+  }
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'gateway'); }

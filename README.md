@@ -59,7 +59,7 @@ PA 读取 `~/.local/share/eigos/grok-life/skill-install.md` 更新现有接入�
 
 ## 认证与生产边界
 
-MCP、A2A 共用 OAuth/JWT、会员资格、任务归属和 scope 校验。生产认证默认拒绝缺失配置；本地随机开发令牌只允许 loopback。会员与客户端自助登记、续期见 [会员资料库](docs/membership.md)、[Agent 接入](docs/agent-onboarding.md) 和 [Auth0 配置](docs/auth0-integration.md)。个人美团授权只限本人本机，不是多用户凭据代理。
+MCP、A2A 共用 OAuth/JWT、会员资格、任务归属和 scope 校验。生产认证默认拒绝缺失配置；本地随机开发令牌只允许 loopback。会员与客户端自助登记、续期见 [会员资料库](docs/membership.md)、[Agent 接入](docs/agent-onboarding.md) 和 [Auth0 配置](docs/auth0-integration.md)。个人美团授权只限本人本机。新增[单会员来源连接](docs/member-source-connection.md)可将现有只读来源明确绑定给一个已核对的 JWT 会员；其他会员没有调用资格，仍不支持公开多用户凭据代理。
 
 Gateway 不运行模型或业务程序。Worker 事务外调用，任务领取、取消、租约、迟到观察及未知结果恢复由共享核心约束。当前部署限同机持久 SQLite，不支持网络文件系统或跨机器数据库副本。具体职责见 [Gateway／Worker](docs/gateway-worker.md)。
 

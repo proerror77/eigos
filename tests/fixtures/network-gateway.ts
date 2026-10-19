@@ -15,7 +15,7 @@ import { commands } from '../../packages/network/contracts.js';
 import { createApp } from '../../apps/gateway/app.js';
 import { jwtVerifier } from '../../apps/gateway/auth.js';
 
-export async function networkGatewayFixture(enabled = true, directory = false, catalogFactory?: (store: JobStore) => ExecutionCatalog, localBrowser = false) {
+export async function networkGatewayFixture(enabled = true, directory = false, catalogFactory?: (store: JobStore) => ExecutionCatalog, localBrowser = false, setup?: (config: Config, context: { alice: import('../../packages/members/store.js').Member; bob: import('../../packages/members/store.js').Member; dir: string }) => void) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-network-http-')), memberPath = join(dir, 'members.sqlite');
   const seed = new MemberStore(memberPath);
   const identity = { issuer: 'https://issuer.test', tenant: 't1', subject: 'alice' };
@@ -29,8 +29,11 @@ export async function networkGatewayFixture(enabled = true, directory = false, c
     EIGOS_AUTH_MODE: 'jwt', OAUTH_ISSUER: identity.issuer, OAUTH_AUDIENCE: origin, OAUTH_JWKS_URL: identity.issuer + '/jwks', PUBLIC_URL: origin,
     OIDC_CLIENT_ID: 'browser', OIDC_AGENT_CLIENT_ID: 'connector', MEMBERSHIP_DATABASE_PATH: memberPath,
     EIGOS_NETWORK_ENABLED: enabled ? 'true' : 'false', EIGOS_NETWORK_MEMBER_IDS: [alice.id, bob.id], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: directory ? [bob.id] : [] };
+  setup?.(config, { alice, bob, dir });
   const keys = await generateKeyPair('ES256'), jwk = { ...await exportJWK(keys.publicKey), kid: 'test', alg: 'ES256' };
-  const gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })), catalogFactory);
+  let gateway: ReturnType<typeof createApp>;
+  try { gateway = createApp(config, jwtVerifier(identity.issuer, origin, createLocalJWKSet({ keys: [jwk] })), catalogFactory); }
+  catch (error) { await new Promise<void>(resolve => server.close(() => resolve())); rmSync(dir, { recursive: true, force: true }); throw error; }
   server.on('request', gateway.app);
   const makeAgent = async (member = alice, scopes = [...SCOPES, 'network:read', 'network:write']) => {
     const p: Principal = { issuer: member.issuer, tenant: member.tenant, subject: member.subject, clientId: 'connector', scopes };
