@@ -1,10 +1,10 @@
 import { inquiryCatalog } from './inquiry-scope.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { DomainError, type Job } from '../core/domain.js';
+import { DomainError, ConnectionAuthorizationRequired, type Job } from '../core/domain.js';
 import type { JobStore, WorkClaim } from '../core/store.js';
 import { ExecutionCatalog } from '../core/catalog.js';
-import { groundingSchema, proposalSchema, type Grounding, type PlanProposal } from '../core/delegation.js';
+import { digest, groundingSchema, proposalSchema, type Grounding, type PlanProposal } from '../core/delegation.js';
 import { BACKEND_VERSION, requirementSchema, type ServiceCapability, type ServiceRequest } from '../ontology/execution.js';
 import { CodexExecutor, type RunEvidence } from '../capabilities/executor.js';
 import { CapabilityResolver, type Resolution } from './resolver.js';
@@ -22,7 +22,7 @@ import { AgentRuntime, AGENT_LIMITS } from './agent-runtime.js';
 
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
-export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number }
+export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
 export interface AgentPlanningContext { request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; actionIds: string[]; guidance: string; completionSchema: object }
 export interface Reasoner {
   ground(request: ServiceRequest, capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<Grounding>>;
@@ -52,9 +52,11 @@ export class CodexReasoner implements Reasoner {
       'For condition requirements, expected.predicate must use the relevant capability\'s registered predicate id, never a paraphrase of the user text. Preserve the original wording in quote. If a condition has no compatible registered predicate, retain it as an unresolved predicate and clarify; do not pretend it is supported. Input schema fields such as the audit checks array are not item-quantity requirements.',
       'Never ask the requester for internal predicate IDs, schemas or ontology artifacts. Map conditions already covered by registered business descriptions to those predicates. For unsupported conditions explain the actual business limitation or ask a concrete business question. Search limits such as maxStores are retrieval scope, not product quantities.',
       'Business outcome predicates listed in outcomePredicates are success criteria for AFTER execution, not claims that delivery/refund has already happened. Extract them without asserting success. City/locationKeyword define a read-comparison discovery scope, not a guaranteed delivery destination. Preserve those in the input contract. Never turn a fulfillment goal into a read-only comparison.',
+      'For delivery.quote, the scalar quantity is the mass being priced. Item counts such as 一个文件 or 一份文件 describe declared parcel contents, not a request to deliver or verify a count of items; retain them in the user request and later goodsName rather than inventing a quantity unit such as 份文件. Preserve the stated mass and any upper-bound wording. Generic quantity amounts follow their integer schema; use an equivalent integer gram amount for fractional kilograms. An estimated quote may use the explicitly supplied upper-bound mass, without claiming that the parcel was weighed.',
       'For parcel quotes, sender and recipient are distinct roles in the capability input and the selected DeliveryRoute. Express quote applicability with parcel.quote_matches_request. Do not flatten a two-endpoint route such as "from A to B" into a generic location.ref string: it is neither a single destination nor a search area. Existing structured location requirements still remain fixed and must be checked, never silently removed. Generic condition predicates come only from capability.predicates; typed predicateRef contracts belong in conditionsJson.',
       'conditionsJson is a JSON array using the typed business-condition contract below. Extract relevant explicit domain conditions with their exact messageId/quote, phase and role. Preserve all existing conditions and generic requirements. Result conditions describe the desired future outcome; they are not prerequisites for fetching information. Use only known object references; subject.object may be omitted until a source supplies an unambiguous object. Parcel/route refs may also be omitted at interpretation. Never invent them or infer authorization. Use [] for goals with no applicable domain condition. Do not force document-only or CSV goals into a physical service condition.',
       JSON.stringify(z.toJSONSchema(businessConditionSchema)),
+      'Previous interpretations rejected by host validation, before provider dispatch. Correct the schema or exact source quotation; preserve all fixed requirements. Do not ask for information the user already supplied:', JSON.stringify(access.groundingFeedback ?? []),
       'Registered capability summaries and input contracts:', JSON.stringify(capabilities),
       'Untrusted request data:', JSON.stringify(request),
     ].join('\n\n');
@@ -96,14 +98,23 @@ export class Coordinator {
     if ((claim.job.runs?.length ?? 0) >= this.modelLimit(claim)) throw new Error('Maximum reasoning turns reached');
     const summaries = this.catalog.summaries(claim.owner, 16, d.request.executionEnvironment ?? 'live');
     const groundingAccess = this.access(claim, d.request, [], signal, 'request_interpreted');
-    const grounded = await this.reasoner.ground(structuredClone(d.request), summaries, signal, groundingAccess);
-    signal.throwIfAborted();
-    if (!this.recordRun(claim, grounded.evidence, 'request_interpreted')) return;
-    const decision = groundingSchema.parse(grounded.decision);
-    if (decision.requestRevision !== d.request.revision) throw new DomainError('CONFLICT', 'Stale request interpretation');
-    if (decision.kind === 'unsupported') { this.pause(claim, d.request, false, decision.message); return; }
-    const selected = decision.kind === 'resolve' && summaries.some(s => s.ref.id === decision.capabilityRef.id && s.ref.version === decision.capabilityRef.version) ? this.catalog.capability(decision.capabilityRef) : undefined;
-    const request = groundConditions(groundRequirements(d.request, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles), decision.conditionsJson, groundingAccess.session.retrievedRefs());
+    let decision: Grounding, request: ServiceRequest, selected: ServiceCapability | undefined;
+    try {
+      const grounded = await this.reasoner.ground(structuredClone(d.request), summaries, signal, groundingAccess);
+      signal.throwIfAborted();
+      if (!this.recordRun(claim, grounded.evidence, 'request_interpreted')) return;
+      decision = groundingSchema.parse(grounded.decision);
+      if (decision.requestRevision !== d.request.revision) throw new DomainError('CONFLICT', 'Stale request interpretation');
+      if (decision.kind === 'unsupported') { this.pause(claim, d.request, false, decision.message); return; }
+      selected = decision.kind === 'resolve' && summaries.some(s => s.ref.id === decision.capabilityRef.id && s.ref.version === decision.capabilityRef.version) ? this.catalog.capability(decision.capabilityRef) : undefined;
+      if (decision.kind === 'resolve' && !selected) throw new DomainError('FORBIDDEN', 'Capability was not retrieved for this identity');
+      request = groundConditions(groundRequirements(d.request, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles), decision.conditionsJson, groundingAccess.session.retrievedRefs());
+    } catch (error) {
+      signal.throwIfAborted();
+      if (!this.store.claimActive(claim) || error instanceof ConnectionAuthorizationRequired || error instanceof DomainError && !['CONFLICT', 'INVALID_INPUT'].includes(error.code)) throw error;
+      if (!(error instanceof DomainError || error instanceof z.ZodError || error instanceof SyntaxError)) throw error;
+      this.groundingFailure(claim, 'interpretation', error); return;
+    }
     if (decision.kind === 'clarify') { this.pause(claim, request, true, decision.message); return; }
     if (!summaries.some(s => s.ref.id === decision.capabilityRef.id && s.ref.version === decision.capabilityRef.version)) throw new DomainError('FORBIDDEN', 'Capability was not retrieved for this identity');
     const capability = selected!;
@@ -111,13 +122,20 @@ export class Coordinator {
     if (program) {
       // Scope construction is pure. No provider preparation, selection or HTTP
       // precedes the Agent's ontology-grounded action decision.
-      this.store.finish(claim, job => {
-        job.delegation!.request = request;
-        const initialized = program.initialize(this.store.ontology, claim.owner, request, JSON.parse(decision.inputJson));
-        job.delegation!.agent = { version: '1', programRef: program.ref, programDigest: program.configurationDigest, ...initialized, requestRevision: request.revision, plans: [], observations: [], feedback: [] };
-        job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0;
-        job.updatedAt = new Date().toISOString(); job.delegation!.events.push({ at: job.updatedAt, event: 'agent_scope_initialized', evidence: initialized.scope.id });
-      });
+      try {
+        this.store.finish(claim, job => {
+          job.delegation!.request = request;
+          const initialized = program.initialize(this.store.ontology, claim.owner, request, JSON.parse(decision.inputJson));
+          job.delegation!.agent = { version: '1', programRef: program.ref, programDigest: program.configurationDigest, ...initialized, requestRevision: request.revision, plans: [], observations: [], feedback: [] };
+          job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0;
+          job.updatedAt = new Date().toISOString(); job.delegation!.events.push({ at: job.updatedAt, event: 'agent_scope_initialized', evidence: initialized.scope.id });
+        });
+      } catch (error) {
+        // Only model input schema errors are recoverable here. Source authorization,
+        // ownership and storage failures retain their existing protected handoff.
+        if (!(error instanceof z.ZodError || error instanceof SyntaxError)) throw error;
+        this.groundingFailure(claim, 'input', error);
+      }
       return;
     }
     const resolution = await this.resolver.resolve({ owner: claim.owner, request }, capability.ref, JSON.parse(decision.inputJson), signal);
@@ -171,13 +189,30 @@ export class Coordinator {
     if (plan.quote || requiresPermit) { this.store.finish(claim, savePlan); return; }
     if (this.store.checkpoint(claim, savePlan)) await this.runtime.run(claim, signal);
   }
+  private groundingFailure(claim: WorkClaim, stage: 'interpretation' | 'input', error: unknown) {
+    if (!this.store.claimActive(claim)) return;
+    const message = error instanceof DomainError ? error.message : 'Interpretation does not match the registered schema; use exact capability inputs and quoted request facts';
+    this.store.finish(claim, job => {
+      const d = job.delegation!, at = new Date().toISOString();
+      // This path is reached only before resolution/dispatch or after a rolled-back
+      // scope initialization. No provider action, grant or accepted fact is changed.
+      if (d.plan || d.agent) throw new DomainError('CONFLICT', 'Grounding feedback cannot replace executable state');
+      const feedback = { requestRevision: d.request.revision, stage, message, decisionDigest: job.runs?.at(-1)?.decisionDigest, at };
+      d.groundingFeedback = [...(d.groundingFeedback ?? []), feedback]; d.phase = 'grounding'; d.nextAt = 0; job.updatedAt = at;
+      d.events.push({ at, event: 'grounding_validation_rejected', evidence: digest(feedback) });
+      if (d.groundingFeedback.filter(f => f.requestRevision === d.request.revision && f.stage === stage && f.message === message).length >= 3 || (job.runs?.length ?? 0) >= this.modelLimit(claim)) {
+        job.state = 'input-required'; d.phase = 'clarifying'; job.question = '本次信息的自动解释连续未通过校验，尚未发出业务查询。已有信息已保留，请调整表述后在原任务继续。';
+        job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at });
+      }
+    });
+  }
   private access(claim: WorkClaim, request: ServiceRequest, candidates: import('../ontology/execution.js').ResolvedCandidate[], signal: AbortSignal, purpose: string, bounds?: { readScope: 'request'; refs: import('../ontology/model.js').ObjectRef[] }): PlanningAccess {
     const session = new OntologyPlanningSession(this.store.ontology, claim.owner, request, candidates, () => {
       signal.throwIfAborted(); if (!this.store.claimActive(claim)) throw new DomainError('CONFLICT', 'Planning claim is no longer active');
     }, receipt => {
       if (!this.store.checkpoint(claim, job => { job.delegation!.ontologyReads = [...(job.delegation!.ontologyReads ?? []), receipt]; })) throw new DomainError('CONFLICT', 'Planning read arrived after cancellation or lease loss');
     }, bounds?.readScope ?? (this.store.get(claim.owner, claim.job.id).delegation?.ontologyReadScope === 'owner' ? 'owner' : 'request'), bounds?.refs);
-    return { session, maxTurns: this.modelLimit(claim) - (this.store.get(claim.owner, claim.job.id).runs?.length ?? 0), record: evidence => { if (!this.recordRun(claim, evidence, purpose)) throw new DomainError('CONFLICT', 'Reasoning turn arrived after cancellation or lease loss'); } };
+    return { session, ...(purpose === 'request_interpreted' ? { groundingFeedback: this.store.get(claim.owner, claim.job.id).delegation?.groundingFeedback?.filter(f => f.requestRevision === request.revision).slice(-3) } : {}), maxTurns: this.modelLimit(claim) - (this.store.get(claim.owner, claim.job.id).runs?.length ?? 0), record: evidence => { if (!this.recordRun(claim, evidence, purpose)) throw new DomainError('CONFLICT', 'Reasoning turn arrived after cancellation or lease loss'); } };
   }
   private modelLimit(claim: WorkClaim) { const d = this.store.get(claim.owner, claim.job.id).delegation; return d?.agent || d?.agentHistory?.length ? AGENT_LIMITS.modelTurns : 12; }
   private recordRun(claim: WorkClaim, evidence: RunEvidence, event: string): boolean {

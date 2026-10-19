@@ -42,6 +42,7 @@ export interface Delegation {
   manualReconciliation?: string;
   resolution?: { candidates: ResolvedCandidate[]; scope: ResolutionScope; comparison?: import('../ontology/supply.js').Comparison };
   reasoning?: { summary: string; evidenceRef: string };
+  groundingFeedback?: { requestRevision: number; stage: 'interpretation' | 'input'; message: string; decisionDigest?: string; at: string }[];
   ontologyReads?: import('../ontology/planning-contract.js').PlanningReadReceipt[];
   ontologyReadScope?: 'owner' | 'request';
   conditionChecks?: import('../ontology/planning-contract.js').ConditionCheck[];
