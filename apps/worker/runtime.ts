@@ -1,6 +1,7 @@
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { Coordinator, CodexReasoner, type Reasoner } from '../../packages/coordinator/coordinator.js';
 import { assertPersonalSourceConfig, type Config } from '../../packages/core/config.js';
+import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { JobStore } from '../../packages/core/store.js';
 import { CodexExecutor, type Executor } from '../../packages/capabilities/executor.js';
 import { Worker } from './worker.js';
@@ -10,6 +11,7 @@ export function createWorker(config: Config, overrides: {
   timing?: { leaseMs?: number; pollMs?: number; timeoutMs?: number };
 } = {}) {
   assertPersonalSourceConfig(config);
+  assertSourceProxy(config);
   if (!overrides.store && config.DATABASE_PATH === ':memory:') throw new Error('Separate Gateway and Worker require a shared database file');
   const store = overrides.store ?? new JobStore(config.DATABASE_PATH);
   try {

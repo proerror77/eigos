@@ -55,6 +55,10 @@ EIGOS_PAOTUI_ORDERS_ENABLED=false
 
 另需已有 `EIGOS_AUTH_MODE=jwt`、HTTPS `PUBLIC_URL`、loopback HOST、持久业务库、网络准入名单和 PA 客户端。与 `EIGOS_PAOTUI_MEMBER_CONNECTION_FILE` 互斥，也不启用公共地点发现。
 
+现有私有 Tailscale HTTPS 可通过 `EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN` 明确启用：它必须与 PUBLIC_URL 完全相同，并以 `.ts.net` 为主机域名。Gateway／Worker 每次启动都读取本机 Serve 配置，要求该精确端口为 HTTPS、唯一根路径转发至本实例的 `127.0.0.1:PORT`，且该端口未启用 Funnel。其他端口的现有服务不受影响；没有私有代理证明就拒绝启动。此配置仍禁止生产模式和非 loopback 监听。
+
+专用 macOS 部署使用 `node scripts/deploy-member-network.mjs --config /absolute/private/config.env` 先检查，再加 `--apply` 启动 `com.eigos.member-network`。它要求已提交的构建、独立会员／任务库和私有密钥，保存不可变发布副本与恢复备份，核对 HTTPS 健康摘要、scope 发现和未授权 401；失败恢复旧服务配置。它不获取用户 Token，不修改 IdP，也不调用业务提供方。
+
 Auth0 配置计划支持 `--member-sources`，只加入上述两个来源 scope，并保留既有 scope。未指定 `--apply` 时只生成本地计划。实际 IdP 扩权、重启服务、真实凭据传输均未在本轮执行。已登录 PA 若缺新 scope，须重新经过用户同意。
 
 PA 宿主可调用 `AgentConnector.connectSource({requestId, expectedRevision, loadCredential})`；回调在本机读取本人凭据。SDK 固定上传到当前 EIGOS origin，拒绝重定向、外部路径和请求标识不匹配，不把 Token 保存到登记缓存，异常也不回显凭据。

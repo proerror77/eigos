@@ -1,6 +1,7 @@
 import { NetworkService } from '../../packages/network/service.js';
 import { MemberSourceService } from '../../packages/members/source-service.js';
 import { mountSourceRoutes } from './sources.js';
+import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { mountNetworkRoutes } from './network/routes.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
@@ -32,6 +33,7 @@ const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tena
 
 export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
   assertPersonalSourceConfig(config);
+  assertSourceProxy(config);
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (config.EIGOS_NETWORK_ENABLED === 'true' && (config.EIGOS_AUTH_MODE !== 'jwt' || !config.OIDC_AGENT_CLIENT_ID || !config.OIDC_CLIENT_ID || !config.EIGOS_NETWORK_MEMBER_IDS.length)) throw new Error('Network requires explicit JWT and enrolled-member configuration');
   const hostname = new URL(config.PUBLIC_URL).hostname;
