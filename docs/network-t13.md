@@ -4,7 +4,7 @@
 
 ## 已验证的组合链
 
-以 T11 `54904cb` 为基线，包含 `aa50b2a` 的本体／UCP／Shopify 现有改动。当前运行契约为 ontology-execution-v7、eigos.business@5。
+以 T11 `54904cb` 为基线，包含 `aa50b2a` 的本体／UCP／Shopify 现有改动。该轮联合工程验证使用 ontology-execution-v7、eigos.business@5；后续单会员来源衔接已合入主线 fc00061，对应 eigos.business@6，并重新运行工程验证。
 
 `tests/network-gateway.test.ts` 的联合测试实际运行本地 HTTP、MCP、A2A、Coordinator 与 SQLite：
 

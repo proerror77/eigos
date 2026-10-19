@@ -134,7 +134,12 @@ function runtimeFixture(domain: ServiceDomain, options: Parameters<typeof domain
   const f = domainProvider(domain, options), capability = domainCapability(domain), catalog = createExecutionCatalog({ domainSandboxProviders: [f.provider] });
   const b = backend(catalog, { ground: async request => ({ decision: { ...interpretation(request, capability.ref.id, f.parameters), capabilityRef: capability.ref }, evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); const candidate = context.resolution.candidates[0]!; assert(candidate.ontologySubject); access.session.call('query_ontology', { object: candidate.ontologySubject }); const result = access.session.call('evaluate_ontology', { function: serviceDomain(domain).eligibleFunction, object: candidate.ontologySubject }) as { value: DomainAssessment }; assert.equal(result.value.status, 'satisfied'); return { decision: proposal(context), evidence: evidence() }; } }, undefined, { allowSandbox: true });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; b.tasks.authorize(principal, job.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
-  const tick = async (jobId: string) => { const next = Math.min(...b.store.intents(owner, jobId).map(i => i.nextAt)); await new Promise(r => setTimeout(r, Math.max(0, next - Date.now()) + 20)); return b.run(); };
+  const tick = async (jobId: string) => {
+    // The coordinator can defer the task beyond the provider intent's nextAt.
+    // Wait for the durable task schedule as well, including under a busy host.
+    const next = Math.max(b.store.get(owner, jobId).delegation!.nextAt ?? 0, Math.min(...b.store.intents(owner, jobId).map(i => i.nextAt)));
+    await new Promise(r => setTimeout(r, Math.max(0, next - Date.now()) + 20)); return b.run();
+  };
   return { ...f, ...b, catalog, approve, tick };
 }
 

@@ -9,6 +9,7 @@ import { linkSnapshotDigest, type OntologyObjectStore, type ObjectBatch, type Ob
 import type { ObjectRef } from './model.js';
 import { projectDomainSnapshot } from './domain-projection.js';
 import { projectCheckoutRequest, projectCommerceSnapshot } from './commerce-projection.js';
+import { projectCatalogRead } from './catalog-projection.js';
 
 function upsert(graph: OntologyObjectStore, owner: string, type: string, id: string, values: Record<string, unknown>): ObjectWrite {
   const ref = { type, id }; let expectedRevision: number | undefined;
@@ -49,6 +50,7 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
   const request = read.request;
   if (!read.result || typeof read.result !== 'object') return { state: 'request_only' };
   const result = read.result as Record<string, unknown>;
+  if (result.catalogSnapshot !== undefined) return projectCatalogRead(graph, owner, request, read.capabilityId, read.input, result.catalogSnapshot);
   let checkoutRequest: ObjectRef | undefined;
   if (result.checkoutRequest !== undefined) checkoutRequest = projectCheckoutRequest(graph, owner, request, result.checkoutRequest);
   if (result.ucpSnapshot !== undefined) return projectCommerceSnapshot(graph, owner, request, read.capabilityId, read.input, result.ucpSnapshot);

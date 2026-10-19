@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } from './commerce.js';
+import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './catalog-read.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
 
 export const decimalSchema = z.string().regex(/^(0|[1-9]\d{0,14})(?:\.\d{1,6})?$/);
@@ -156,7 +157,7 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '5', objects: [...objects, ...domainObjects, ...commerceObjects], links: [...links, ...domainLinks, ...commerceLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '6', objects: [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
@@ -169,6 +170,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
   ],
   functions: [
     ...commerceFunctions,
+    ...catalogReadFunctions,
     ...domainFunctions,
     { id: 'offerFreshness', version: '1', inputTypes: ['Offer'], description: 'Evidence-backed freshness at the server clock; local refresh windows are not provider commitments' },
     { id: 'remainingQuantity', version: '1', inputTypes: ['OrderLine'], description: 'Ordered quantity minus accepted delivery allocations, with unit, specification and event checks' },
