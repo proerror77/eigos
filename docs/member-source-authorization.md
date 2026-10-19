@@ -1,6 +1,6 @@
 # 会员使用自己的服务账号
 
-2026-10-19。接续 `26a2359`，将来源接入扩展为“每名使用者的 PA 连接本人账号”。默认关闭，保持非生产、同机 loopback HTTPS/JWT 范围。本轮交付是代码、测试和开发同步；没有启用真实连接、部署、下单或付款。
+2026-10-19。接续 `26a2359`，将来源接入扩展为“每名使用者的 PA 连接本人账号”。默认关闭，保持非生产、同机 loopback HTTPS/JWT 范围。当前 v8 已更新独立私有测试实例，见 [验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)。真实会员来源查询仍待本人完成平台授权，没有真实订单或付款。
 
 ## 用户与 PA 的路径
 
@@ -59,7 +59,7 @@ EIGOS_PAOTUI_ORDERS_ENABLED=false
 
 专用 macOS 部署使用 `node scripts/deploy-member-network.mjs --config /absolute/private/config.env` 先检查，再加 `--apply` 启动 `com.eigos.member-network`。它要求已提交的构建、独立会员／任务库和私有密钥，保存不可变发布副本与恢复备份，核对 HTTPS 健康摘要、scope 发现和未授权 401；失败恢复旧服务配置。它不获取用户 Token，不修改 IdP，也不调用业务提供方。
 
-Auth0 配置计划支持 `--member-sources`，只加入上述两个来源 scope，并保留既有 scope。未指定 `--apply` 时只生成本地计划。实际 IdP 扩权、重启服务、真实凭据传输均未在本轮执行。已登录 PA 若缺新 scope，须重新经过用户同意。
+Auth0 配置计划支持 `--member-sources`，只加入上述两个来源 scope，并保留既有 scope。未指定 `--apply` 时只生成本地计划。私有服务已更新并重启；实际 IdP 扩权和真实凭据传输仍待本人重新登录。已登录 PA 若缺新 scope，须重新经过用户同意。
 
 PA 宿主可调用 `AgentConnector.connectSource({requestId, expectedRevision, loadCredential})`；回调在本机读取本人凭据。SDK 固定上传到当前 EIGOS origin，拒绝重定向、外部路径和请求标识不匹配，不把 Token 保存到登记缓存，异常也不回显凭据。
 
@@ -79,4 +79,4 @@ node --import tsx examples/connect-member-source.ts
 
 模型决策、账号和商家返回均为隔离测试替身。真实 PA、供应商授权与当前版本真实只读查询仍待单独启用和实测；人工非建模者演练也继续单列。该实现不改变 T13 的完整验收状态。检查结果见[本轮证据](evidence/member-source-auth-2026-10-19/README.md)。
 
-后续已部署独立私有 HTTPS 实例并完成基础回读；Auth0 重新授权尚待完成，真实账号查询未执行。运行版本、依赖修复和边界见[部署记录](evidence/member-network-deployment-2026-10-19/README.md)。
+独立私有 HTTPS 实例现已更新至 v8 并完成运行文件及接口回读；Auth0 重新授权尚待完成，真实账号查询未执行。当前版本见 [v8 验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)，初次部署与依赖修复保留在 [历史部署记录](evidence/member-network-deployment-2026-10-19/README.md)。

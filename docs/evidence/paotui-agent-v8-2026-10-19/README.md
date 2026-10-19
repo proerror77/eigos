@@ -4,7 +4,7 @@
 
 ## 工程验证
 
-- `npm run check`、`npm test`（475/475）、`npm run build`、`git diff --check` 通过。
+- `npm run check`、`npm test`（475/475）、`npm run build`、`npm run test:e2e:run`（9/9）、`git diff --check` 通过。
 - 覆盖两个 JWT 会员各用本人 Token，Worker → stdio MCP → 隔离官方 CLI 形状的替身进程、原任务授权恢复、连接轮换、调用中撤销及无操作人凭据回退。
 - Agent 行为测试覆盖地址簿单独完成、分步详情再预览、依赖动作、同任务补问、明确用户参数、编号展示／排序／失效、私有属性隔离、跨任务引用、观察过期、取消和租约失效迟到结果、七字段证据降级。
 - 原 T10 指定来源询价接入新程序；完成后的报价选择读取模型完成快照，T11 历史查询卡核验实际动作账本。未自动迁移或发布服务 listing。
@@ -18,3 +18,11 @@
 首次诊断驱动未续租，实际模型返回时领取已失效，被运行时拒绝且未发出供应商调用。改用项目已有 Worker 的续租后，上述演练通过。租约失效回包和不自动重放另有确定性回归测试。
 
 开发同步、私有环境运行、Auth0 用户授权与供应商查询分别验收。此证据没有真实订单、付款或履约。
+
+## 私有部署与独立回读
+
+代码提交 `522cc0f1ffdc38802c8e85fd7d59f60eeca28fda` 的 [CI](https://github.com/proerror77/eigos/actions/runs/39272177510) 成功后，更新 `com.eigos.member-network` 的专用私有 HTTPS 实例，沿用原独立数据库和库外密钥。构建摘要为 `64c499b15b7ff4cbdb52b778b5a8091b8ec4bed1077478de701d8259036d7e43`。
+
+[独立运行回读](deployment-readback.json)检查了全部 132 个发布文件与工作区构建一致，HTTPS `/health` 返回 `ontology-execution-v8` 和相同构建摘要；来源 scope 已在资源元数据公布，未授权来源、MCP、A2A 访问均为 401。精确 Tailnet HTTPS 代理检查通过，该端口未启用 Funnel。原运行配置和数据库备份保留在专用运行目录。
+
+部署前后均为 0 个业务任务、0 份供应商凭据、0 个领取，没有重放或迁移旧任务。Auth0 CLI 返回 `session_expired`，已向本人提供重新登录入口；在本人完成之前未修改 IdP，也未发起真实会员／美团查询。该登录依赖不影响已完成的代码、CI 和私有实例更新。
