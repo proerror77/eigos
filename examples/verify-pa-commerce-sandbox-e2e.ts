@@ -12,8 +12,8 @@ import { digest, canonical } from '../packages/core/delegation.js';
 import { readConfig } from '../packages/core/config.js';
 import { CommerceAgentProgram } from '../packages/capabilities/commerce-agent.js';
 import { sandboxResponseSchema } from '../packages/capabilities/commerce-sandbox/connector.js';
-import { checkedCommerceObservation, sourcePayloadDigest } from '../packages/ontology/commerce-journey-functions.js';
-import { commerceActionMetadata, parseCommerceEntity, type CommerceJourneyAction } from '../packages/ontology/commerce-journey.js';
+import { checkedCommerceObservation, sourcePayloadDigest, postalAddressDigest } from '../packages/ontology/commerce-journey-functions.js';
+import { commerceActionMetadata, commerceJourneyInputSchema, parseCommerceEntity, type CommerceJourneyAction, type CommerceEntityType } from '../packages/ontology/commerce-journey.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { businessModel } from '../packages/ontology/business-model.js';
 import type { Job } from '../packages/core/domain.js';
@@ -66,8 +66,27 @@ try{
       for(const [i,step]of plan.steps.entries()){
         const {input,definitionDigest,intentId:_intent,operationKey:_key,effect:_effect,additionalEffects:_additional,cost:_cost,operationScope:_scope,...choice}=step;
         assert.deepEqual(choice,plan.modelDecision.steps[i]);assert.deepEqual(input,JSON.parse(step.argumentsJson));assert.equal(definitionDigest,digest(businessModel.action(step.action)));assert(program.actionIds.includes(step.action));
-        const intent=intents.find(v=>v.id===step.intentId)!;assert(intent);assert.equal(intent.businessOperationKey,step.operationKey);assert.equal(intent.effect,step.effect);assert.equal(intent.planDigest,plan.digest);
+        const intent=intents.find(v=>v.id===step.intentId)!;assert(intent);assert.equal(intent.businessOperationKey,step.operationKey);assert.equal(intent.effect,step.effect);assert.equal(intent.planDigest,plan.digest);assert.equal(intent.inputDigest,digest({input:step.input,inputRefs:step.inputRefs}));
       }
+    }
+    // Reconstruct the wire request from the recorded model inputs and immutable
+    // source objects, independently of the live connector's transport mapping.
+    const object=(ref:ObjectRef)=>JSON.parse(String(db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,ref.type,ref.id)!.body));
+    function wirePayload(action:CommerceJourneyAction,input:Record<string,unknown>,at:string){
+      const get=<T extends CommerceEntityType>(key:string,type:T)=>{const snapshot=checkedCommerceObservation(object(input[key] as ObjectRef).properties.snapshot);assert.equal(snapshot.type,type);assert(Date.parse(snapshot.observedAt)<=Date.parse(at));return{snapshot,data:parseCommerceEntity(type,snapshot.data)};};
+      if(action==='ReadCommerceContext')return{contextKey:commerceJourneyInputSchema.parse(object(input.scope as ObjectRef).properties.input).contextKey??'default'};
+      if(action==='SearchCommerceMerchants')return{query:input.query};
+      if(action==='ReadCommerceProduct'){const budget=d.request.requirements.find(r=>r.kind==='budget');return{merchantId:input.merchantId,query:input.query,...(budget?.kind==='budget'?{currency:budget.expected.currency}:{})};}
+      if(action==='ReadCommerceInventory'||action==='CreateCommerceCart'){const p=get('product','CommerceProduct').data;return{merchantId:p.merchantId,variantId:p.variantId,quantity:input.quantity,currency:p.unitPrice.currency};}
+      if(action==='ReadCommerceFulfillment'){const p=get('product','CommerceProduct').data,i=get('inventory','InventoryObservation'),c=get('context','FulfillmentContext').data,a=c.addresses.find(a=>a.id===input.addressId);assert(a);return{merchantId:p.merchantId,variantId:p.variantId,quantity:input.quantity,inventoryId:i.snapshot.sourceId,contextKey:c.contextKey,addressId:a.id,addressRevision:a.revision,destinationDigest:postalAddressDigest(a.address),currency:p.unitPrice.currency};}
+      if(action==='ReadCommerceCustoms'){const p=get('product','CommerceProduct').data;return{merchantId:p.merchantId,variantId:p.variantId,fulfillmentId:get('fulfillment','FulfillmentPlan').snapshot.sourceId,optionId:input.optionId};}
+      if(action==='QuoteCommerceLandedCost'){const p=get('product','CommerceProduct').data;return{merchantId:p.merchantId,variantId:p.variantId,inventoryId:get('inventory','InventoryObservation').snapshot.sourceId,fulfillmentId:get('fulfillment','FulfillmentPlan').snapshot.sourceId,optionId:input.optionId,customsId:get('customs','CustomsAssessment').snapshot.sourceId};}
+      if(action==='UpdateCommerceCart'){const c=get('cart','Cart').data,p=get('product','CommerceProduct').data;return{cartId:c.cartId,expectedRevision:c.revision,merchantId:p.merchantId,variantId:p.variantId,quantity:input.quantity,currency:p.unitPrice.currency};}
+      if(action==='CancelCommerceCart'){const c=get('cart','Cart').data;return{cartId:c.cartId,expectedRevision:c.revision};}
+      if(action==='ReadCommerceCart')return{cartId:get('cart','Cart').data.cartId};
+      if(action==='PrepareCommerceCheckout'){const q=get('quote','LandedCostQuote');return{quoteId:q.snapshot.sourceId,sourceQuoteDigest:q.snapshot.receipt.payloadDigest,quoteDigest:q.snapshot.contentDigest,...(input.cart?{cartId:get('cart','Cart').data.cartId}:{})};}
+      if(action==='SubmitCommerceOrder'){const c=get('checkout','CommerceCheckout').data;return{checkoutId:c.checkoutId,quoteDigest:c.quoteDigest,expectedTotal:c.total,expectedDestinationDigest:c.destinationDigest};}
+      const o=get('order','CommerceOrderObservation').data;return{orderId:o.orderId,merchantId:o.merchantId};
     }
     const rows=lines(join(config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR!,'http.jsonl'),baseline.commerceAuditBytes).filter(r=>r.requestId===job.id);
     assert(rows.length>0);
@@ -75,6 +94,13 @@ try{
       const plan=plans.find(p=>p.id===row.planId)!;assert(plan);const step=plan.steps.find(s=>s.intentId===row.intentId)!;assert(step);assert.equal(row.action,step.action);assert.equal(row.modelRunId,plan.modelRunId);assert.equal(row.operationKey,step.operationKey);
       const attempt=JSON.parse(String(db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner,row.attemptId,row.intentId)!.body)) as ExecutionAttempt;
       assert(Date.parse(run(plan.modelRunId).completedAt)<=Date.parse(attempt.startedAt));assert(Date.parse(attempt.startedAt)<=Date.parse(row.startedAt));assert.equal(attempt.kind,row.recovery?'reconcile':'dispatch');
+      const materialized=structuredClone(step.input);
+      for(const link of step.inputRefs){assert(step.dependsOn.includes(link.stepId));const dependency=plan.steps.find(s=>s.id===link.stepId);assert(dependency);const output=intents.find(i=>i.id===dependency.intentId)?.acceptedOutput?.object;assert(output);materialized[link.targetKey]=output;}
+      // Attempts fence the mutable queue revision (also advanced by approvals);
+      // the wire context below carries the pinned business request revision.
+      assert.equal(attempt.planDigest,plan.digest);assert(attempt.requestRevision<=(job.revision??0));assert.equal(attempt.inputDigest,digest(row.recovery?{operationKey:step.operationKey}:materialized));
+      assert.deepEqual(row.transportInput.context,{ownerDigest:digest(owner),requestId:job.id,requestRevision:plan.requestRevision,action:step.action,planId:plan.id,intentId:step.intentId,attemptId:attempt.id,modelRunId:plan.modelRunId,operationKey:step.operationKey});
+      assert.deepEqual(row.transportInput.payload,row.recovery?null:wirePayload(step.action as CommerceJourneyAction,materialized,attempt.startedAt));
       assert.equal(row.environment,'sandbox');assert.equal(digest({method:row.method,path:row.path,context:row.transportInput.context,payload:row.transportInput.payload}),row.inputDigest);
       const bytes=readFileSync(join(config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR!,`${row.id}.json`));assert.equal(sha(bytes),row.responseSha256);assert.equal(bytes.length,row.responseBytes);assert.equal(createHmac('sha256',sandboxToken).update(bytes).digest('hex'),row.signature);
       const raw=JSON.parse(bytes.toString('utf8'));assert.deepEqual(raw.context,row.transportInput.context);
@@ -90,6 +116,14 @@ try{
     finally{sourceDb.close();}
     assert(sourceAudit.length>=rows.length);assert(sourceAudit.every(r=>r.ownerDigest===digest(owner)&&r.realOperationsAllowed===false));
     for(const row of rows)assert(sourceAudit.some(s=>s.attemptId===row.attemptId&&s.operationKey===row.operationKey&&s.action===row.action));
+    for(const source of sourceAudit){
+      const plan=plans.find(p=>p.id===source.planId),step=plan?.steps.find(s=>s.intentId===source.intentId);assert(plan&&step,'Unplanned source operation');
+      assert.equal(source.action,step.action);assert.equal(source.modelRunId,plan.modelRunId);assert.equal(source.operationKey,step.operationKey);assert.equal(source.requestRevision,plan.requestRevision);
+      const attempt=JSON.parse(String(db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner,source.attemptId,source.intentId)!.body)) as ExecutionAttempt;
+      assert.equal(attempt.planDigest,plan.digest);assert(Date.parse(attempt.startedAt)<=Date.parse(source.at));
+      const observed=rows.find(r=>r.attemptId===source.attemptId);
+      if(observed?.status===200){const envelope=sandboxResponseSchema.parse(read(join(config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR!,`${observed.id}.json`)));assert.equal(source.responsePayloadDigest,sourcePayloadDigest(envelope.result));}
+    }
     const required=['ReadCommerceContext','SearchCommerceMerchants','ReadCommerceProduct','ReadCommerceInventory','ReadCommerceFulfillment','ReadCommerceCustoms','QuoteCommerceLandedCost','CreateCommerceCart','PrepareCommerceCheckout','SubmitCommerceOrder','ReadCommerceOrder','ReadCommercePayment','ReadCommerceDelivery'];
     for(const action of required)assert(rows.some(r=>r.action===action&&r.status===200),`Missing actual selected source action: ${action}`);
     const purchase=intents.filter(i=>i.effect==='order');assert.equal(purchase.length,1);assert.equal(db.prepare('SELECT count(*) AS n FROM action_attempts WHERE owner=? AND intent_id=? AND json_extract(body,\'$.kind\')=\'dispatch\'').get(owner,purchase[0]!.id)!.n,1);
@@ -132,14 +166,23 @@ try{
     const product=(observations as any[]).map(o=>o.snapshot).find(o=>o.type==='CommerceProduct'&&o.data.merchantId===result.order.merchantId);assert(product);assert.equal(product.data.goodsOriginCountry,'BR');
     const merchant=(observations as any[]).filter(o=>o.snapshot.type==='CommerceMerchantSearch').flatMap(o=>o.snapshot.data.merchants).find((m:any)=>m.id===result.order.merchantId);assert.equal(merchant.registeredCountry,'CA');
     assert(result.quote.components.filter((c:any)=>['tax','duty','clearance'].includes(c.category)).every((c:any)=>c.payer==='seller'&&c.coveredByTotal&&c.responsibilityEvidence));
+    const orderRef={type:'Order',id:digest({environment:'commerce-sandbox',configuration:program.configurationDigest,merchant:result.order.merchantId,providerId:result.order.orderId,type:'Order'})};
+    const canonicalOrder=finalGraph.read(owner,orderRef),payments=finalGraph.related(owner,orderRef,'payments',{remaining:1000})??[],shipments=finalGraph.related(owner,orderRef,'shipments',{remaining:1000})??[],orderLines=finalGraph.related(owner,orderRef,'lines',{remaining:1000})??[];
+    assert.equal(canonicalOrder.properties.orderState,'confirmed');assert.deepEqual(canonicalOrder.properties.total,result.order.total);assert.equal(payments.length,1);assert.equal(payments[0]!.properties.paymentState,'paid');assert.deepEqual(payments[0]!.properties.amount,result.payment.amount);assert.equal(shipments.length,2);assert(shipments.every(s=>s.properties.shipmentState==='delivered'));assert.equal(orderLines.length,1);
+    const remaining=finalGraph.evaluate(owner,{function:'remainingQuantity',object:orderLines[0]!.ref});assert.equal(remaining.status,'known');assert.deepEqual(remaining.value,{amount:'0',unit:'piece'});
+    const allocations=finalGraph.related(owner,orderLines[0]!.ref,'allocations',{remaining:1000})??[];assert.equal(allocations.length,2);assert(allocations.every(a=>a.properties.verificationState==='accepted'));
+    const canonicalGraphReadback={order:canonicalOrder,payments,shipments,orderLines,allocations,remaining};
     const http=lines(join(runtime,'http.jsonl'),baseline.httpAuditBytes),a2a=http.filter(r=>r.path==='/a2a'&&(r.taskId===job.id||r.messageId===session.requestId||r.messageId===session.replyRequestId));
+    const externalCatalogReads=lines(join(config.EIGOS_SHOPIFY_AUDIT_DIR!,'reads.jsonl'),baseline.shopifyAuditBytes).filter(r=>r.requestId===job.id);
+    assert.equal(externalCatalogReads.length,0,'This sandbox task must not call the real Shopify source');
     assert.equal(a2a.filter(r=>r.method==='SendMessage'&&r.messageId===session.requestId).length,1);assert.equal(a2a.filter(r=>r.method==='SendMessage'&&r.messageId===session.replyRequestId).length,1);assert(a2a.some(r=>r.method==='GetTask'&&r.taskId===job.id&&Date.parse(r.at)>=Date.parse(job.updatedAt)));
     const approvals=http.filter(r=>r.path===`/tasks/${job.id}/authorize`);assert(approvals.length>=3);assert(approvals.every(r=>r.httpStatus===200));
     for(const root of [runtime,sandboxRuntime]){const release=read(join(root,'release.json')),expected=root===runtime?deployment.release:deployment.sandboxRelease,hash=createHash('sha256');for(const file of release.files){const bytes=readFileSync(join(release.release,file));assert(bytes.equals(readFileSync(resolve(file))),`Compiled file differs: ${file}`);hash.update(file+'\0');hash.update(bytes);}assert.equal(hash.digest('hex'),release.buildDigest);assert.equal(release.buildDigest,expected.buildDigest);}
     for(const [file,hash]of Object.entries(sourceHashes.sha256))assert.equal(fileSha(resolve(file)),hash,`Source changed after PA submission: ${file}`);
     const health=await fetch('http://127.0.0.1:3430/health').then(r=>r.json());assert.equal(health.backend,'ontology-execution-v9');assert.equal(health.releaseDigest,deployment.release.buildDigest);
     const evidence={passed:true,recordedAt:new Date().toISOString(),scope:'Actual Monk PA -> A2A -> actual EIGOS LLM and Ontology -> signed isolated commerce simulator -> independent original order/payment/delivery -> PA; business facts and effects are synthetic',taskId:job.id,requestId:session.requestId,replyRequestId:session.replyRequestId,createdAt:job.createdAt,completedAt:job.updatedAt,backend:d.backendVersion,businessModel:businessModel.ref,configurationDigest:program.configurationDigest,buildDigest:deployment.release.buildDigest,sandboxBuildDigest:deployment.sandboxRelease.buildDigest,previousJobsUnchanged:baseline.oldJobs.length,credentialAndAllowlistReadback:true,sourceFrozenAt:sourceHashes.capturedBeforeRun,sourceManifestSha256:fileSha(join(directory,'source-hashes.json')),modelReceipts:job.runs,ontologyReads:d.ontologyReads,plans,informationRequests:questions,completion:complete,sourceReads:rows,sourceAudit,observations,evaluations,grants,intents:intents.map(({privateData:_private,...intent})=>intent),acceptance:d.acceptance,result,a2aTrace:a2a,authorizationTrace:approvals,realOrders:0,realPayments:0,paArtifactDigest:digest(peer.artifacts[0].parts[0].data),observerArtifactDigest:digest(job.artifact!.data),originalArtifactFileSha256:fileSha(join(directory,'artifact-original.json')),paReceivedFileSha256:fileSha(join(directory,'pa-received.json'))};
-    const serialized=JSON.stringify(evidence,null,2)+'\n';assert(!serialized.includes(token));assert(!serialized.includes(sandboxToken));writeFileSync(join(directory,'verification.json'),serialized,{mode:0o600});
+    const modelFeedback=states.flatMap(s=>s.feedback.map(f=>({...f,requestRevision:s.requestRevision})));
+    const serialized=JSON.stringify({...evidence,canonicalGraphReadback,modelFeedback},null,2)+'\n';assert(!serialized.includes(token));assert(!serialized.includes(sandboxToken));writeFileSync(join(directory,'verification.json'),serialized,{mode:0o600});
     console.log(JSON.stringify({passed:true,taskId:job.id,modelCalls:job.runs!.length,plans:plans.length,sourceCalls:rows.length,paQuestions:questions.length,grants:grants.length,realTransactions:0,buildDigest:deployment.release.buildDigest}));
   }finally{memory.close();db.close();}
 }finally{await client.close();}

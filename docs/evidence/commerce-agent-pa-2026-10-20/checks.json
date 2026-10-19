@@ -1,0 +1,17 @@
+{
+  "recordedAt": "2026-10-19T23:55:38.276798+00:00",
+  "scope": "Post-observer-change local checks; execution source files unchanged from frozen PA run",
+  "typecheck": "passed",
+  "tests": {
+    "passed": 366,
+    "failed": 0,
+    "skipped": 0
+  },
+  "build": "passed",
+  "diffCheck": "passed",
+  "observerSourceSha256": "4514798c2e3b2b4b684e95834d24acdfbc067abfc62323de81f8c904d48a3dea",
+  "observerPassed": true,
+  "frozenExecutionSourceManifestSha256": "9a4896cd035bf83ab1253502c92333031643da901f7352457f190586dc1bdaca",
+  "liveExecutionDigest": "781ca4dd8fcd570e2af054a0840b42c14afddec6016d4a23bed1a3a03d3e5735",
+  "liveSandboxDigest": "763af6b7980f3992e4c3cb7c9ad8b8811d4b70ea9bd7b0a8339469346a2873a8"
+}
