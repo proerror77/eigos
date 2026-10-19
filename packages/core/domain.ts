@@ -22,6 +22,9 @@ export class ReplanRequired extends DomainError {
   constructor(message: string) { super('CONFLICT', message); }
 }
 
+// Domain programs signal a human-owned connection handoff without a model retry.
+export class ConnectionAuthorizationRequired extends ReplanRequired {}
+
 export function requireScope(principal: Principal, scope: Scope): void {
   if (!principal.scopes.includes(scope)) throw new DomainError('FORBIDDEN', `Required scope: ${scope}`);
 }

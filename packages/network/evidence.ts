@@ -6,6 +6,7 @@ import type { ExecutionCatalog } from '../core/catalog.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { domainNames } from '../ontology/service-domains.js';
 import { domainCapabilityId } from '../ontology/domain-projection.js';
+import { paotuiAgentEvidence } from '../ontology/paotui-agent-evidence.js';
 import { sourceProof } from '../ontology/object-evidence.js';
 import { objectRefSchema } from '../ontology/model.js';
 import { ontologyReceiptSchema } from '../capabilities/paotui-mcp-server.js';
@@ -126,13 +127,15 @@ export class NetworkEvidence {
     } else if (plan && plan.steps.every(s => s.effect === 'local') && accepted && allVerified) {
       resultKind = 'local_artifact'; evidenceLevel = simulated ? 'synthetic_validation' : 'local_generation'; result = 'accepted';
     }
+    const agentProof = paotuiAgentEvidence(this.jobs, this.catalog, owner, job);
+    if (agentProof) { evidenceLevel = agentProof.evidenceKind === 'fixture' ? 'synthetic_validation' : 'live_query'; resultKind = 'query_report'; result = 'query_completed'; snapshots.push(agentProof); }
     if (evidenceLevel === 'insufficient_evidence' && ['accepted', 'partial', 'query_completed'].includes(result)) result = 'insufficient_evidence';
     let statement = '';
     if (projection.kind === 'statement') {
       evidenceLevel = 'participant_statement'; resultKind = 'participant_statement'; result = 'declared';
       statement = { result_received: '发布者声明已收到查询结果。', service_received: '发布者声明已收到服务。', problem_reported: '发布者声明存在待处理问题。' }[projection.statement];
     }
-    const body = evidenceBodySchema.parse({ serviceKind: serviceKind(plan?.capabilityRef.id), observedOn: observedDay(job.updatedAt), timeZone: 'Asia/Shanghai', resultKind, outcome: result, evidenceLevel,
+    const body = evidenceBodySchema.parse({ serviceKind: serviceKind(d.agent?.programRef.id ?? plan?.capabilityRef.id), observedOn: observedDay(job.updatedAt), timeZone: 'Asia/Shanghai', resultKind, outcome: result, evidenceLevel,
       safeSummary: `${labels[evidenceLevel]}：${statement || outcomes[result] + '。'}${limits[evidenceLevel]}` });
     return { body, sourceDigest: digest({ policy: this.policyVersion(), body, job, feedback, intents, snapshots, projection }) };
   }

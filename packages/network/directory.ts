@@ -96,10 +96,10 @@ export class NetworkDirectory {
     const base = { claim: 'declared', representation: 'verified', availableNow: 'unknown', realExecutionEnabled: false } as const;
     if (!l.bindingRef || !this.catalog) return { ...base, binding: 'none', candidateEligible: false, mode: 'introduction_only' };
     try {
-      const { binding, adapter } = this.catalog.binding(l.bindingRef, viewerOwner), capability = this.catalog.capability(l.capabilityRef);
+      const selected = this.catalog.source(l.bindingRef, viewerOwner), { binding } = selected, capability = this.catalog.capability(l.capabilityRef);
       if (bindingDigest(binding) !== l.bindingDigest || digest(capability) !== l.capabilityDigest || binding.providerId !== l.providerId || !sameRef(binding.capabilityRef, l.capabilityRef)) throw new Error();
       const read = capability.actions.some(a => a.effect === 'read' || a.effect === 'local');
-      const authorization = adapter.sourceAuthorization?.(viewerOwner);
+      const authorization = ('program' in selected ? selected.program : selected.adapter).sourceAuthorization?.(viewerOwner);
       if (authorization && authorization.state !== 'connected') return { ...base, binding: 'configured', candidateEligible: false, mode: 'requires_own_authorization', authorization };
       return { ...base, binding: 'configured', candidateEligible: read && capability.environment !== 'sandbox', mode: capability.environment === 'sandbox' ? 'sandbox_only' : read ? 'read_candidate' : 'unavailable', evidenceLevel: binding.verification.level };
     } catch { return { ...base, binding: 'unavailable', candidateEligible: false, mode: 'unavailable' }; }

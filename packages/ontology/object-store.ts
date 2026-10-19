@@ -59,6 +59,10 @@ export class OntologyObjectStore {
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
     return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
   }
+  /** Trusted source validators only. Never expose this through a query or model tool. */
+  readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
+    return structuredClone(this.raw(owner, ref, budget));
+  }
   relationshipDigest(owner: string, ref: ObjectRef, budget: ReadBudget): string {
     this.raw(owner, ref, budget);
     const rows = this.db.prepare("SELECT * FROM ontology_links WHERE owner=? AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201").all(owner, ref.type, ref.id);

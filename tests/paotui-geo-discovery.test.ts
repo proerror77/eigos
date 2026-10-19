@@ -78,7 +78,7 @@ test('application catalog opts into public discovery without duplicating the sta
     assert.deepEqual(optedIn.bindings(capability.ref, owner), []);
     assert.deepEqual(optedIn.discoverySources(capability.ref, 'another-owner'), []);
     assert.equal(optedIn.summaries(owner).filter(summary => summary.ref.id === 'geo.search').length, 1);
-    assert.equal(optedIn.bindings({ id: 'address.book.read', version: '1' }, owner).length, 1);
+    assert(optedIn.agentProgram({ id: 'address.book.read', version: '2' }, owner));
   } finally { store.close(); }
 });
 

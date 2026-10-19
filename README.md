@@ -7,13 +7,13 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 ## 当前能力
 
 - `eigos.delegate` 是统一业务入口。模型根据实际注册的本体选择能力，不要求 PA 知道内部能力 ID 或提供者地址 ID。
-- `delivery.quote@2`：读取本人美团保存地址，在同一任务提供选项并收集寄件、收件、物品、重量和服务；选择明确后，经 Ontology MCP 查询并复查真实运费。只查价，不下单、不付款。
-- `geo.search@1`、`address.book.read@1`：本人地点／地址只读查询。
+- `delivery.quote@3`：Agent 读取本体，选择本人地址簿、已选地址详情和费用预估动作；每个动作只调用一个官方只读接口。缺少信息在同一任务补充，会员各用自己的授权。[实现与验证边界](docs/paotui-agent-actions-2026-10-19.md)。只查价，不下单、不付款。
+- `geo.search@1`、`address.book.read@2`：本人地点／地址只读查询。
 - `brief.prepare@2`：生成任务说明，底层业务仍 `execution=not_started`。
 - `document.compose@1`：显式开启文档模型后产生 Markdown 草稿；不代表执行文档中的业务。
 - `data.quality.audit.simulated@2`：专用本地 CSV 的完整五项审计、模拟许可与独立验收。
 - N1 业务对象模型：28 个具体类型、Offer／EvidenceBacked 接口、双向关系、有界查询和九个只读计算。MCP 与 HTTP 使用现有认证；[接口与验证](docs/ontology-n1.md) 已用三个场景合成数据验证。
-- 六类服务本体：新增打车、医院挂号、外卖、酒店、行程安排、预约用车／自驾租车的对象、关系、规则、决策 Action、沙箱执行和独立验收。含 Agent 商品查询扩展的全模型现有 69 类型、25 个函数；[实现与真实接口缺口](docs/service-domains-2026-10-18.md)。[六类真实模型与 18 题独立调查](docs/service-domain-validation-2026-10-18.md) 已在合成来源上通过，真实接口仍未接通。
+- 六类服务本体：新增打车、医院挂号、外卖、酒店、行程安排、预约用车／自驾租车的对象、关系、规则、决策 Action、沙箱执行和独立验收。含 Agent 商品查询扩展的全模型现有 71 类型、26 个函数；[实现与真实接口缺口](docs/service-domains-2026-10-18.md)。[六类真实模型与 18 题独立调查](docs/service-domain-validation-2026-10-18.md) 已在合成来源上通过，真实接口仍未接通。
 - N2 模型规划：解释和规划阶段可主动读取对象、核对类型化条件并提出不执行的业务决策提案。固定证据／版本、权限及取消边界由程序检查；[实现与验证](docs/ontology-n2.md) 使用独立 Agent 和真实模型、合成业务数据。
 - UCP 本地商家接入：通过正式签名 HTTP 请求创建结账、取得准确模拟许可、确认并独立读取原订单；已用真实模型和独立官方商家进程验证。[实现与边界](docs/ucp-local-integration-2026-10-18.md)。交易执行仅支持显式配置的本地测试商家。
 - Shopify 公开商品查询 `commerce.catalog.query@2`：EIGOS Agent 读取本体，选择和组合搜索、变体详情、商家发现及店铺读取；连接器每次只调用一个接口。来源观察写回本体后，模型继续决策并选择最终结果，程序独立验收。[实现与验证状态](docs/catalog-agent-actions-2026-10-19.md)。默认关闭，仅限本机本人、配置商家、美国市场和匿名只读；库存数量、配送、商家合作、账号令牌及交易未验证。

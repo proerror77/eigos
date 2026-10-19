@@ -15,7 +15,7 @@ export type Preparation = { kind: 'needs_input'; question: string; details?: Rec
   privateData?: unknown;
   recipe?: PreparedStep[];
 };
-export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[] }
+export interface Delivery { conditionSubject?: import('../ontology/model.js').ObjectRef; artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[] }
 export interface ProviderAdapter {
   readonly id: string;
   permitted(owner: string): boolean;
@@ -62,6 +62,7 @@ export class ExecutionCatalog {
   private adapters = new Map<string, RegisteredAdapter>();
   private discovered = new Map<string, DiscoveredBinding>();
   private sources: DiscoverySource[];
+  private programBindings = new Map<string, { binding: ProviderBinding; program: AgentProgram }>();
   private programs = new Map<string, AgentProgram>();
   constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = []) {
     for (const adapter of adapters) {
@@ -75,6 +76,11 @@ export class ExecutionCatalog {
     for (const program of programs) {
       if (this.programs.has(key(program.ref)) || !this.services.has(key(program.ref))) throw new Error('Duplicate or unresolved agent program');
       this.programs.set(key(program.ref), program);
+      const binding = program.listingBinding?.();
+      if (binding) {
+        if (!sameRef(binding.capabilityRef, program.ref) || binding.configurationDigest !== program.configurationDigest || this.programBindings.has(key(binding.ref)) || bindings.some(b => sameRef(b.ref, binding.ref))) throw new Error('Invalid or duplicate agent listing binding');
+        this.programBindings.set(key(binding.ref), { binding: structuredClone(binding), program });
+      }
     }
     for (const binding of bindings) {
       if (this.providers.has(key(binding.ref))) throw new Error('Duplicate binding version');
@@ -88,7 +94,7 @@ export class ExecutionCatalog {
     this.sources = sources;
   }
   // Metadata only, for the configured operator's listing review; never installs discovered code.
-  configuredBinding(ref: Ref): ProviderBinding | undefined { const value = this.providers.get(key(ref)); return value ? structuredClone(value) : undefined; }
+  configuredBinding(ref: Ref): ProviderBinding | undefined { const value = this.providers.get(key(ref)) ?? this.programBindings.get(key(ref))?.binding; return value ? structuredClone(value) : undefined; }
 
   capability(ref: Ref): ServiceCapability {
     const definition = this.services.get(key(ref));
@@ -99,6 +105,12 @@ export class ExecutionCatalog {
     const program = this.programs.get(key(ref));
     if (program && !program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent program is unavailable to this identity');
     return program;
+  }
+  source(ref: Ref, owner: string): { binding: ProviderBinding; program: AgentProgram } | { binding: ProviderBinding; adapter: RegisteredAdapter } {
+    const selected = this.programBindings.get(key(ref));
+    if (!selected) return this.binding(ref, owner);
+    if (!selected.binding.enabled || !selected.program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent source is unavailable to this identity');
+    return { binding: structuredClone(selected.binding), program: selected.program };
   }
   binding(ref: Ref, owner: string, requestId?: string): { binding: ProviderBinding; adapter: RegisteredAdapter } {
     const binding = this.providers.get(key(ref)) ?? (requestId ? this.discovered.get(JSON.stringify([owner, requestId, key(ref)])) : undefined);
@@ -124,7 +136,7 @@ export class ExecutionCatalog {
     // Do not silently truncate an unsearched catalogue; add domain retrieval before scaling it.
     if (permitted.length > limit) throw new DomainError('CONFLICT', 'Capability retrieval limit exceeded; a narrower discovery scope is required');
     return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics,
-      sourceAuthorization: this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
+      sourceAuthorization: this.programs.get(key(s.ref))?.sourceAuthorization?.(owner) ?? this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
   }
   delegationService(): ServiceDefinition {
     const definitions = [...this.services.values()];

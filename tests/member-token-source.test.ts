@@ -14,8 +14,10 @@ import { createWorker } from '../apps/worker/runtime.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { JobStore } from '../packages/core/store.js';
 import { assertPersonalSourceConfig } from '../packages/core/config.js';
-import { DELIVERY_REQUEST_BINDING, DELIVERY_REQUEST_CAPABILITY } from '../packages/capabilities/paotui-request.js';
-import { interpretation, proposal, reasoner } from './backend-fixture.js';
+import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
+import { paotuiModel, programContext, programRead } from './fixtures/paotui-agent.js';
+const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
+const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: '3' }, providerId: 'meituan-paotui' };
 
 async function fixture() {
   let source!: ReturnType<typeof memberTokenSource>;
@@ -32,11 +34,7 @@ async function fixture() {
   const vault = f.gateway.store.memberSources(source.keyFile, source.directory);
   return { ...f, a, b, a2, source, sourceCall: call, connect, vault };
 }
-const missing = { sender: null, recipient: null, goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };
-const model = reasoner(r => interpretation(r, 'delivery.quote', { ...missing, ...(r.messages.some(m => m.text.includes('1寄到2')) ? { sender: '地址1', recipient: '地址2' } : {}) }), context => {
-  for (const token of Object.values(sourceTokens)) assert(!JSON.stringify(context).includes(token));
-  assert(!JSON.stringify(context).includes('_PRIVATE_')); return proposal(context);
-});
+const model = paotuiModel();
 
 test('private source upload binds verified identity and installation; scopes, CAS, replay, expiry and cross-user token reuse fail closed', async () => {
   const f = await fixture();
@@ -96,7 +94,7 @@ test('MCP/A2A with real Worker and stdio transport: two members connect their ow
       const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId: job.id, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${who.token}`, 'A2A-Version': '1.0' });
       assert.equal((await reply.json()).result.task.id, job.id);
       const done = await wait(who, job.id); assert.equal(done.state, 'completed', JSON.stringify(done)); assert(done.delegation?.acceptance?.accepted);
-      const text = JSON.stringify(done); assert(text.includes(who === f.a ? '12.50' : '23.50')); for (const token of Object.values(sourceTokens)) assert(!text.includes(token));
+      const text = JSON.stringify(done); assert(text.includes(who === f.a ? '1250' : '2350')); for (const token of Object.values(sourceTokens)) assert(!text.includes(token));
       assert.equal(f.gateway.tasks.list(who.p, { limit: 10, offset: 0 }).total, 1);
     }
     assert(!f.source.calls().some(c => c.command === 'FORBIDDEN_PASSPORT'));
@@ -112,23 +110,21 @@ test('MCP/A2A with real Worker and stdio transport: two members connect their ow
   } finally { await worker?.close(); await client.close(); process.env.PATH = previous; await f.close(); }
 });
 
-test('revocation during the real CLI call drops its output; rotation invalidates pinned work and forces fresh private address choices', async () => {
+test('revocation during atomic CLI reads drops output; rotation requires fresh source scope and choices', async () => {
   const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
   const store = new JobStore(f.config.DATABASE_PATH);
   try {
     await f.connect(); const owner = ownerKey(f.a.p), old = f.vault.grant(owner);
     const catalog = createExecutionCatalog({ store, memberSourceKeyFile: f.source.keyFile, paotuiSkillDirectory: f.source.directory, executionHost: 'worker' });
-    const adapter = catalog.binding(DELIVERY_REQUEST_BINDING.ref, owner).adapter;
-    const job = f.gateway.tasks.submit(f.a.p, { goal: '查价', requestId: randomUUID() });
-    f.source.behavior({ owner, revokeOn: 'get_address_list' });
-    await assert.rejects(adapter.prepare({ owner, request: job.delegation!.request }, missing, new AbortController().signal), SourceAuthorizationRequired);
-    assert.equal(store.preparationContext(owner, job.id, 'delivery-addresses:' + (await import('../packages/core/delegation.js')).digest(old)), undefined);
-    f.source.behavior({}); await f.connect(sourceTokens.rotated, f.a, 2);
-    assert.throws(() => f.vault.assert(old), /changed/);
-    const choices = await adapter.prepare({ owner, request: job.delegation!.request }, missing, new AbortController().signal);
-    assert.equal(choices.kind, 'needs_input'); if (choices.kind === 'needs_input') { assert(choices.question.includes('ROTATED_PRIVATE_ORIGIN')); assert(!choices.question.includes('ALICE_PRIVATE_ORIGIN')); }
-    f.source.behavior({ failOn: 'get_address_list' });
-    await assert.rejects(adapter.prepare({ owner, request: job.delegation!.request }, missing, new AbortController().signal), e => e instanceof Error && Object.values(sourceTokens).every(token => !e.message.includes(token)));
+    const program = catalog.agentProgram(PAOTUI_AGENT_REFS.quote, owner)!, job = f.gateway.tasks.submit(f.a.p, { goal: '查价', requestId: randomUUID() });
+    const ctx = programContext(store, owner, job.delegation!.request, program);
+    f.source.behavior({ owner, revokeOn: 'get_address_list' }); await assert.rejects(programRead(program, ctx), SourceAuthorizationRequired);
+    assert.equal(store.ontology.query(owner, { type: 'PaotuiObservation' }).items.length, 0);
+    f.source.behavior({}); await f.connect(sourceTokens.rotated, f.a, 2); assert.throws(() => f.vault.assert(old), /changed/);
+    await assert.rejects(programRead(program, ctx), SourceAuthorizationRequired);
+    const fresh = programContext(store, owner, job.delegation!.request, program); await programRead(program, fresh);
+    const choices = program.clarify!(fresh, '[[saved_addresses]]'); assert(choices.includes('ROTATED_PRIVATE_ORIGIN')); assert(!choices.includes('ALICE_PRIVATE_ORIGIN'));
+    f.source.behavior({ failOn: 'get_address_list' }); await assert.rejects(programRead(program, fresh), e => e instanceof Error && Object.values(sourceTokens).every(token => !e.message.includes(token)));
     f.gateway.members.agents.revoke(f.alice.id, f.a.id); assert.throws(() => f.vault.grant(owner), SourceAuthorizationRequired);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 0);
   } finally { store.close(); process.env.PATH = previous; await f.close(); }
@@ -210,4 +206,26 @@ test('credential and upload expiry, pending-ticket revocation and persisted memb
     f.gateway.members.setStatus(f.alice.id, 'suspended'); assert.equal(reopened.status(owner).state, 'unavailable');
     f.gateway.members.setStatus(f.alice.id, 'active'); assert.throws(() => reopened.grant(owner), SourceAuthorizationRequired);
   } finally { db.close(); await f.close(); }
+});
+
+test('Worker pauses a started agent task on source revocation and resumes it with a new scope without replaying the old plan', async () => {
+  const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
+  let worker: ReturnType<typeof createWorker> | undefined;
+  try {
+    await f.connect(); const owner = ownerKey(f.a.p), job = f.gateway.tasks.submit(f.a.p, { goal: '查询1公斤文件普通送费用', requestId: randomUUID() });
+    f.source.behavior({ owner, revokeOn: 'get_address_list' });
+    worker = createWorker(f.config, { reasoner: model, timing: { pollMs: 10, leaseMs: 30000, timeoutMs: 30000 } });
+    const settle = async () => { const deadline = Date.now() + 30000; while (['working', 'submitted'].includes(f.gateway.tasks.get(f.a.p, job.id).state) && Date.now() < deadline) await delay(20); return f.gateway.tasks.get(f.a.p, job.id); };
+    const paused = await settle(); assert.equal(paused.state, 'auth-required', JSON.stringify(paused)); assert(paused.delegation!.agent);
+    assert.equal(paused.delegation!.agent!.observations.length, 0); const oldScope = paused.delegation!.agent!.scope;
+    assert.equal(f.gateway.store.intents(owner, job.id).filter(i => i.state === 'rejected').length, 1);
+    f.source.behavior({}); await f.connect(sourceTokens.rotated, f.a, 2);
+    const resume = await f.sourceCall('/resume', { taskId: job.id, expectedRevision: paused.revision, requestId: randomUUID() }); assert.equal(resume.status, 200);
+    const asked = await settle(); assert.equal(asked.state, 'input-required', JSON.stringify(asked)); assert(asked.question?.includes('ROTATED_PRIVATE_ORIGIN')); assert(!asked.question?.includes('ALICE_PRIVATE_ORIGIN'));
+    assert.notDeepEqual(asked.delegation!.agent!.scope, oldScope); assert.equal(asked.delegation!.agentHistory!.length, 1);
+    assert.deepEqual(f.source.calls().map(c => [c.command, c.account]), [['get_address_list', 'alice'], ['get_address_list', 'rotated']]);
+    f.gateway.tasks.reply(f.a.p, { taskId: job.id, requestId: randomUUID(), answer: '1寄到2' });
+    const done = await settle(); assert.equal(done.state, 'completed', JSON.stringify(done)); assert.equal(done.id, job.id); assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
+    assert.equal(done.delegation!.agentHistory!.length, 2, 'Budgets and abandoned plans remain auditable');
+  } finally { await worker?.close(); process.env.PATH = previous; await f.close(); }
 });

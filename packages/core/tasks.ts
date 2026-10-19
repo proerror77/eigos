@@ -33,6 +33,7 @@ export class TaskService {
       const intents = this.store.intents(owner, job.id);
       if (intents.some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
       for (const i of intents) { i.state = 'rejected'; this.store.saveIntent(owner, i); }
+      if (d.agent) { d.agentHistory = [...(d.agentHistory ?? []), d.agent]; delete d.agent; }
       if (d.plan) d.planHistory = [...(d.planHistory ?? []), d.plan];
       delete d.plan; delete d.intentId; delete d.intentIds; delete d.actions; delete d.resolution; delete d.sourceAuthorization; delete d.reasoning; delete d.ontologyReads; delete d.conditionChecks; delete d.authorizationRequest;
       job.revision = (job.revision ?? 0) + 1; d.request.revision = job.revision; d.phase = 'grounding'; d.nextAt = 0;

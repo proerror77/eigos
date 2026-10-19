@@ -6,6 +6,7 @@ import { sourceProof as proof } from './object-evidence.js';
 import { evaluateDomainFunction } from './domain-functions.js';
 import { evaluateCommerceFunction } from './commerce-functions.js';
 import { evaluateCatalogFunction } from './catalog-functions.js';
+import { evaluatePaotuiFunction } from './paotui-agent-functions.js';
 import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
 import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
@@ -16,7 +17,7 @@ const simple = (name: string) => z.object({ function: z.literal(name), object: o
 export const functionCallSchema = z.union([
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('catalogObservationStatus'),
+  simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -52,6 +53,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const paotuiResult = evaluatePaotuiFunction(store, owner, input, budget);
+  if (paotuiResult) return paotuiResult;
   const agentCatalogResult = evaluateAgentCatalogFunction(store, owner, input, budget);
   if (agentCatalogResult) return agentCatalogResult;
   const catalogResult = evaluateCatalogFunction(store, owner, input, budget);

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { paotuiQuerySchema, type PaotuiReader } from './paotui-contracts.js';
 import { PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions, ontologyToolName } from './paotui-ontology.js';
+import { atomicDefinition, atomicPaotuiSchemas, atomicReceiptSchema, atomicResultSchemas, atomicTool, paotuiOperations, type PaotuiOperation, type AtomicReceipt } from './paotui-atomic.js';
 
 export const ontologyReceiptSchema = z.object({
   id: z.uuid(), transport: z.literal('mcp-stdio'), server: z.literal('eigos-ontology'),
@@ -17,13 +18,34 @@ export const ontologyReceiptSchema = z.object({
 export type OntologyReceipt = z.infer<typeof ontologyReceiptSchema>;
 
 // This internal server has no HTTP listener or write tools. The Worker owns its stdio pipe.
-export function createPaotuiOntologyServer(reader: PaotuiReader, options: {
+export function createPaotuiOntologyServer(reader: PaotuiReader & { atomic?(operation: PaotuiOperation, input: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> }, options: {
   allowedActions?: readonly ('addresses' | 'preview')[]; sourceConnectionDigest?: string;
   evidenceKind: OntologyReceipt['evidenceKind']; sourceCalls?: () => string[];
-  record?: (receipt: OntologyReceipt) => void;
+  record?: (receipt: OntologyReceipt | AtomicReceipt) => void;
 }) {
   const server = new McpServer({ name: 'eigos-ontology', version: '1' });
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: true };
+  if (reader.atomic) {
+    server.registerTool('source_definition', { description: 'Pinned single-operation read contract; grants no business-write authority.', inputSchema: z.strictObject({ operation: z.enum(paotuiOperations) }), annotations: { ...read, openWorldHint: false } }, ({ operation }) => {
+      const definition = atomicDefinition(operation);
+      return { content: [{ type: 'text', text: JSON.stringify(definition) }], structuredContent: { definition } };
+    });
+    for (const operation of paotuiOperations) {
+      const inputSchema: z.ZodObject = atomicPaotuiSchemas[operation];
+      server.registerTool(atomicTool(operation), { description: `One authorized read: ${operation}. No further API calls are implied.`, inputSchema, annotations: read }, async (input, extra): Promise<CallToolResult> => {
+      try {
+        options.sourceCalls?.();
+        const args = atomicPaotuiSchemas[operation].parse(input), result = atomicResultSchemas[operation].parse(await reader.atomic!(operation, args, extra.mcpReq.signal));
+        const calls = options.sourceCalls?.() ?? [operation];
+        if (digest(calls) !== digest([operation])) throw new Error('Atomic operation made unexpected calls');
+        const receipt = atomicReceiptSchema.parse({ id: randomUUID(), server: 'eigos-ontology', transport: 'mcp-stdio', version: '1', operation, tool: atomicTool(operation), evidenceKind: options.evidenceKind,
+          inputDigest: digest(args), resultDigest: digest(result), observedAt: new Date().toISOString(), sourceConnectionDigest: options.sourceConnectionDigest, sourceCalls: calls, readOnly: true });
+        options.record?.(receipt);
+        return { content: [{ type: 'text', text: JSON.stringify({ result, receipt }) }], structuredContent: { result, receipt } };
+      } catch { return { isError: true, content: [{ type: 'text', text: 'Single source read unavailable; check owned authorization and connectivity.' }] }; }
+      });
+    }
+  }
   server.registerTool('ontology_definition', {
     description: 'Read a pinned ontology capability definition before invoking its read action.',
     inputSchema: z.object({ id: z.enum(['geo.search', 'delivery.quote', 'address.book.read']) }).strict(),

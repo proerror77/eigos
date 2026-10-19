@@ -9,6 +9,7 @@ const clientId = 'ac76c22d257c4c6d9164719eea64ed4b';
 export { paotuiPreviewSchema, paotuiQuerySchema } from './paotui-contracts.js';
 import { paotuiPreviewSchema, paotuiQuerySchema, type PaotuiQuery, type PaotuiReader } from './paotui-contracts.js';
 import { normalizePaotuiPublicPlaces } from './paotui-public-locations.js';
+import { atomicPaotuiSchemas, atomicResultSchemas, type PaotuiOperation } from './paotui-atomic.js';
 export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 
 // Legacy reads use the explicit operator connection. Member-supplied reads inject
@@ -69,6 +70,24 @@ export class LocalPaotuiReader implements PaotuiReader {
     money(preview._previewTotal); money(preview._deliveryFee);
     return  { route: { sender: sender.address, recipient: recipient.address }, goods: { name: q.goodsName, category: q.category, weightKg: q.weightKg }, service: q.service,
         quote: Object.fromEntries(['feeDisplay', 'estimateTime', 'distance', 'serviceType', 'deliveryServiceType', '_deliveryFee', '_previewTotal'].filter(k => preview[k] !== undefined).map(k => [k, preview[k]])) };
+  }
+  /** Exactly one provider API command. No hidden address, detail or price reads. */
+  async atomic(operation: PaotuiOperation, input: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+    try {
+      if (!Object.hasOwn(atomicPaotuiSchemas, operation)) throw new Error('Unregistered read');
+      const q = atomicPaotuiSchemas[operation].parse(input);
+      let args: string[];
+      if (operation === 'get_address_list') args = [operation];
+      else if (operation === 'get_address_info') args = [operation, '--address-id', atomicPaotuiSchemas.get_address_info.parse(q).addressId];
+      else {
+        const p = atomicPaotuiSchemas.delivery_preview.parse(q);
+        if (p.sender.cityId !== p.recipient.cityId) throw new Error('Same-city addresses required');
+        const goods = { goodsName: p.goodsName, goodsWeight: p.weightKg, goodTypes: [p.category === '文件' ? 4 : p.category === '快递' ? 8 : 2], goodTypeNames: [p.category] };
+        args = [operation, '--sender', JSON.stringify(p.sender), '--recipient', JSON.stringify(p.recipient), '--goods', JSON.stringify(goods), '--business-type', '1', '--service-type', p.service === 'ordinary' ? '1003' : '4033'];
+      }
+      const data = await this.command(args, await this.token(signal), signal);
+      return atomicResultSchemas[operation].parse(data);
+    } catch { signal.throwIfAborted(); this.assertAccess?.(); throw new Error('Meituan single read failed; check authorization and connectivity.'); }
   }
   async query(input: PaotuiQuery, signal: AbortSignal): Promise<object> {
     const q = paotuiQuerySchema.parse(input);

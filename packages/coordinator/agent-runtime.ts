@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest, actionOperationKey } from '../core/delegation.js';
-import { DomainError, type Job } from '../core/domain.js';
+import { DomainError, ConnectionAuthorizationRequired, type Job } from '../core/domain.js';
 import type { JobStore, WorkClaim } from '../core/store.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../core/agent-program.js';
@@ -57,8 +57,9 @@ export class AgentRuntime {
       job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at });
     }
   }
-  private pause(claim: WorkClaim, clarify: boolean, message: string) {
+  private pause(claim: WorkClaim, clarify: boolean, message: string, program?: AgentProgram) {
     this.store.finish(claim, job => {
+      if (clarify && program?.clarify) message = program.clarify(this.context(claim), message);
       job.state = clarify ? 'input-required' : 'rejected'; job.delegation!.phase = clarify ? 'clarifying' : 'rejected'; job.updatedAt = new Date().toISOString();
       if (clarify) job.question = message; else job.error = message;
       job.messages.push({ id: randomUUID(), role: 'agent', text: message, at: job.updatedAt });
@@ -84,7 +85,7 @@ export class AgentRuntime {
     const reads = access.session.finish();
     if (decision.kind === 'clarify' || decision.kind === 'no_feasible_plan') {
       if (decision.steps.length || decision.completionJson) failure('A paused decision cannot include executable actions');
-      this.pause(claim, decision.kind === 'clarify', decision.message); return;
+      this.pause(claim, decision.kind === 'clarify', decision.message, program); return;
     }
     if (decision.kind === 'complete') {
       try {
@@ -97,16 +98,17 @@ export class AgentRuntime {
           const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
           const checks = checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
           if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
-          const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, undefined, 'result');
+          const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, delivery.conditionSubject, 'result');
           if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
           const at = new Date().toISOString();
           current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
-          current.delegation!.phase = 'accepted'; current.delegation!.agent!.completion = { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads };
+          current.delegation!.phase = 'accepted'; current.delegation!.conditionChecks = conditions; current.delegation!.agent!.completion = { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads };
           current.delegation!.acceptance = { accepted: true, reason: 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
           current.delegation!.events.push({ at, event: 'agent_completion_verified', evidence: response.evidence.id });
           current.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
         });
       } catch (error) {
+        if (error instanceof ConnectionAuthorizationRequired) throw error;
         if (!this.store.claimActive(claim)) return;
         this.store.finish(claim, current => { this.feedback(current, 'completion', errorMessage(error), digest(decision.completionJson)); current.delegation!.nextAt = 0; });
       }
@@ -151,6 +153,7 @@ export class AgentRuntime {
       });
       if (saved) await this.execute(claim, program, signal);
     } catch (error) {
+      if (error instanceof ConnectionAuthorizationRequired) throw error;
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) return;
       // A stored plan is resumed from its ledger, never replaced by validation feedback.
@@ -191,14 +194,17 @@ export class AgentRuntime {
         program.validate(current, step.action, input);
         if (!this.store.checkpoint(claim, () => { attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input)); })) return;
       } catch (error) {
-        this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); continue;
+        this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); });
+        if (error instanceof ConnectionAuthorizationRequired) throw error;
+        continue;
       }
       const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId };
-      let response: AgentActionResult | undefined, result: ActionResult;
+      let response: AgentActionResult | undefined, result: ActionResult, authorizationError: ConnectionAuthorizationRequired | undefined;
       try {
         response = await program.invoke(context, step.action, input, signal);
         result = { kind: 'confirmed', eventId: attempt!.id, sourceVersion: attempt!.ordinal, output: { source: response.value }, evidenceRefs: response.evidenceRefs };
       } catch (error) {
+        if (error instanceof ConnectionAuthorizationRequired) authorizationError = error;
         result = { kind: error instanceof DomainError || error instanceof z.ZodError ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: [] };
       }
       const record = (value: ActionResult) => this.store.recordObservation(claim.owner, intent.id, attempt!.id, value, value.kind !== 'unknown', { claim, apply: (job, accepted) => {
@@ -210,11 +216,13 @@ export class AgentRuntime {
       } });
       try { record(result); }
       catch (error) {
+        if (error instanceof ConnectionAuthorizationRequired) authorizationError = error;
         // A rejected projection rolls back the observation and graph atomically.
         // Record the rejection; no connector retry is implied.
         record({ kind: 'rejected', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: response?.evidenceRefs ?? [] });
       }
       signal.throwIfAborted();
+      if (authorizationError) throw authorizationError;
     }
     this.store.finish(claim, job => { delete job.delegation!.agent!.pendingPlanId; job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0; job.updatedAt = new Date().toISOString(); });
   }

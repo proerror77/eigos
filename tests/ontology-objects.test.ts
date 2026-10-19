@@ -21,7 +21,7 @@ function fixture() {
 }
 
 test('Ontology compiles core, service, checkout and catalog types, inherited interfaces and bounded metadata', () => {
-  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 69);
+  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 71);
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');

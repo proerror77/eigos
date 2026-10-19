@@ -24,7 +24,7 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   const request = job.delegation.request;
   const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
   if (job.delegation.outcome?.status === 'unknown' || job.delegation.outcome?.status === 'needs_human') progress.failed = 'needs_review';
-  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
+  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: job.delegation.agent?.programRef.id ?? job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
   const saveRequest = (projectionState: string) => {
     const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });
@@ -36,6 +36,7 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   try { previousProjection = String(graph.read(owner, { type: 'ServiceRequest', id: request.id }).properties.projectionState ?? 'request_only'); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   saveRequest(previousProjection);
   if (job.state !== 'completed' || !job.artifact?.data.result) return;
+  if (job.delegation.agent?.completion && (job.artifact.data.result as Record<string, unknown>).paotuiAnswer) { saveRequest('typed_result'); return; }
   const plan = job.delegation.plan;
   const projected = projectReadResult(graph, owner, { request, capabilityId: plan?.capabilityRef.id ?? '', input: plan?.steps[0]?.input ?? {}, preparedReceipt: plan?.details.ontologyReceipt, result: job.artifact.data.result });
   if (projected.state !== 'request_only') saveRequest(projected.state);

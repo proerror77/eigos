@@ -1,4 +1,5 @@
-import { ExecutionCatalog, sameRef, type AdapterContext, type ExecutionAdapter } from '../core/catalog.js';
+import { ExecutionCatalog, sameRef, isActionAdapter, type AdapterContext, type ExecutionAdapter } from '../core/catalog.js';
+import type { AgentProgram } from '../core/agent-program.js';
 import { DomainError } from '../core/domain.js';
 import type { JobStore } from '../core/store.js';
 import type { ExecutionPlan } from '../ontology/execution.js';
@@ -13,7 +14,26 @@ export function inquiryCatalog(jobs: JobStore, owner: string, jobId: string, cat
     if (ctx && (ctx.owner !== owner || ctx.request.id !== jobId || ctx.request.executionEnvironment === 'sandbox')) throw new DomainError('FORBIDDEN', 'Inquiry context cannot change identity or environment');
     return validateInquirySource(network, catalog, owner, source);
   };
-  const selected = guard(), original = selected.adapter;
+  const selected = guard();
+  if ('program' in selected) {
+    const original = selected.program;
+    const program: AgentProgram = {
+      ref: original.ref, configurationDigest: original.configurationDigest, actionIds: original.actionIds, guidance: original.guidance, completionSchema: original.completionSchema,
+      permitted(candidate) { if (candidate !== owner) return false; guard(); return original.permitted(candidate); },
+      capability: () => selected.capability, listingBinding: () => selected.binding,
+      sourceAuthorization: candidate => { if (candidate !== owner) throw new DomainError('FORBIDDEN', 'Inquiry owner changed'); guard(); return original.sourceAuthorization?.(candidate); },
+      initialize(graph, candidate, request, input) { guard({ owner: candidate, request }); return original.initialize(graph, candidate, request, input); },
+      schema: action => original.schema(action), definition: (graph, action) => original.definition(graph, action),
+      validate(ctx, action, input) { guard(ctx); original.validate(ctx, action, input); },
+      async invoke(ctx, action, input, signal) { guard(ctx); const result = await original.invoke(ctx, action, input, signal); signal.throwIfAborted(); guard(ctx); return result; },
+      project(ctx, action, input, result) { guard(ctx); return original.project(ctx, action, input, result); },
+      complete(ctx, proposal, reads) { guard(ctx); return original.complete(ctx, proposal, reads); },
+      clarify(ctx, message) { guard(ctx); return original.clarify?.(ctx, message) ?? message; },
+    };
+    return new ExecutionCatalog([selected.capability], [], [], [], [program]);
+  }
+  const original = selected.adapter;
+  if (isActionAdapter(original)) throw new DomainError('FORBIDDEN', 'Inquiry source must be read-only');
   const planGuard = (ctx: AdapterContext, plan: ExecutionPlan) => {
     guard(ctx);
     if (!sameRef(plan.capabilityRef, source.capabilityRef) || !sameRef(plan.bindingRef, source.bindingRef) || plan.quote

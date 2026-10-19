@@ -78,4 +78,4 @@ T11 增加 evidence.prepare/refresh 与 my_evidence，使用新的 evidence.mana
 T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿和发布状态。`/members/network/inquiries/:id` 与 `/members/network/tasks/:id` 复用原对象与 TaskService，会员会话只能读自己的记录。网页可在 CSRF／Origin 和显示版本校验后回复原任务补问；不会批准执行或把 cookie 当作 MCP/A2A 凭据。Agent 继续使用已有任务工具与原 taskId。详情及 T13 未完成的实测门槛见 [T12](network-t12.md)／[T13](network-t13.md)。
 
 
-个人美团采用[会员自有账号授权](member-source-authorization.md)：各会员 PA 通过独立 HTTP 通道提交本人 Token，MCP 仅提供连接发现／状态／发起／撤销／原任务恢复工具。新增 sources:read、sources:write；身份来自已验签的 JWT 与安装登记。凭据在业务库专用表加密保存，不进入 Task／模型／会员会话库。服务目录可见，查询执行仍需买方自己的有效连接。复用 delivery.quote@2、address.book.read@1，默认关闭、只限非生产 loopback HTTPS；旧单会员操作人连接是互斥兼容模式。
+个人美团采用[会员自有账号授权](member-source-authorization.md)：各会员 PA 通过独立 HTTP 通道提交本人 Token，MCP 仅提供连接发现／状态／发起／撤销／原任务恢复工具。新增 sources:read、sources:write；身份来自已验签的 JWT 与安装登记。凭据在业务库专用表加密保存，不进入 Task／模型／会员会话库。服务目录可见，查询执行仍需买方自己的有效连接。采用 v8 AgentRuntime 的 delivery.quote@3、address.book.read@2，复用原任务、授权、官方 CLI 和来源回执。模型选择三个独立读取动作及完成依据；详见 [美团 Agent 动作](paotui-agent-actions-2026-10-19.md)。能力默认关闭、只限非生产 loopback HTTPS；旧单会员操作人连接是互斥兼容模式。

@@ -40,7 +40,7 @@ export function quoteSelectionMaterial(jobs: JobStore, inquiry: Inquiry, input: 
     objects: objects.map(o => ({ ref: o.ref, revision: o.revision, propertiesDigest: digest(o.properties), linksDigest: graph.relationshipDigest(inquiry.owner, o.ref, budget) })),
     sourceReceiptRefs: freshness.evidenceRefs.filter(r => r.type === 'SourceReceipt'), evidenceLevels: freshness.evidenceLevels,
     quoteTerms: Object.fromEntries(['priceKind', 'pricingTerms', 'pricingCompleteness', 'quotedWeight', 'serviceLevel', 'observedAt', 'expiresAt', 'validityBasis'].map(k => [k, quote.properties[k]])),
-    validUntil: quote.properties.expiresAt, checks, conditions, planningSnapshotDigest: job.delegation.plan?.ontologyPlanning.digest ?? null,
+    validUntil: quote.properties.expiresAt, checks, conditions, planningSnapshotDigest: job.delegation.agent?.completion?.ontologyPlanning.digest ?? job.delegation.plan?.ontologyPlanning.digest ?? null,
     selectionKind: input.selectionKind, execution: 'not_started',
   };
   return { snapshot, snapshotDigest: digest(snapshot), requestRef, quoteRef };

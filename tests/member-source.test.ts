@@ -1,3 +1,5 @@
+import { NetworkEvidence } from '../packages/network/evidence.js';
+import { quoteSelectionMaterial } from '../packages/ontology/offer-selection.js';
 import { commands } from '../packages/network/contracts.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -13,8 +15,10 @@ import { PersonalSourceAccess, readPersonalSource, personalSourceActive } from '
 import { ownerKey } from '../packages/core/domain.js';
 import { createWorker } from '../apps/worker/runtime.js';
 import { setTimeout as delay } from 'node:timers/promises';
-import { interpretation, reasoner, proposal } from './backend-fixture.js';
-import { DELIVERY_REQUEST_CAPABILITY, DELIVERY_REQUEST_BINDING } from '../packages/capabilities/paotui-request.js';
+import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
+import { paotuiModel, programContext, programRead } from './fixtures/paotui-agent.js';
+const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
+const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: '3' }, providerId: 'meituan-paotui' };
 
 async function fixture() {
   let source!: ReturnType<typeof personalSourceFixture>;
@@ -23,59 +27,49 @@ async function fixture() {
   const workerCatalog = () => createExecutionCatalog({ store: workerStore, paotuiSkillDirectory: source.directory, paotuiMemberConnectionFile: source.connectionFile, executionHost: 'worker' });
   return { ...f, source, workerStore, workerCatalog, close: async () => { workerStore.close(); await f.close(); } };
 }
-const signal = () => new AbortController().signal;
 const request = () => ({ id: randomUUID(), revision: 1, originalGoal: '只查价', requirements: [], messages: [] });
-const missing = { sender: null, recipient: null, goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };
 
-test('member source is exact-owner only on discovery, direct adapter calls and Worker; Gateway never launches the reader', async () => {
-  const f = await fixture(); const previousPath = process.env.PATH; process.env.PATH = f.source.bin + ':' + previousPath;
+test('member source is exact-owner only on discovery and actions; Gateway cannot launch the reader', async () => {
+  const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
   try {
     const owner = ownerKey(f.a.p), other = ownerKey(f.b.p), catalog = f.workerCatalog();
     assert(catalog.summaries(owner).some(c => c.ref.id === 'delivery.quote'));
-    assert(!catalog.summaries(other).some(c => c.ref.id === 'delivery.quote'));
-    assert(!catalog.summaries(JSON.stringify(['local-development', 'local', 'developer'])).some(c => c.ref.id === 'delivery.quote'));
-    assert(!catalog.summaries(owner).some(c => c.ref.id === 'geo.search'), 'No public query permission added');
-    assert.throws(() => catalog.binding(DELIVERY_REQUEST_BINDING.ref, other));
-    const adapter = catalog.binding(DELIVERY_REQUEST_BINDING.ref, owner).adapter;
-    await assert.rejects(adapter.prepare({ owner: other, request: request() }, missing, signal()));
+    for (const identity of [other, JSON.stringify(['local-development', 'local', 'developer'])]) { assert(!catalog.summaries(identity).some(c => c.ref.id === 'delivery.quote')); assert.throws(() => catalog.source(DELIVERY_REQUEST_BINDING.ref, identity)); }
+    assert(!catalog.summaries(owner).some(c => c.ref.id === 'geo.search'));
+    const program = catalog.agentProgram(PAOTUI_AGENT_REFS.quote, owner)!;
     const job = f.gateway.tasks.submit(f.a.p, { goal: '仅查询一公斤文件普通送', requestId: randomUUID() });
-    await assert.rejects(f.gateway.catalog.binding(DELIVERY_REQUEST_BINDING.ref, owner).adapter.prepare({ owner, request: job.delegation!.request }, missing, signal()), /only in the Worker/);
+    assert.throws(() => programContext(f.workerStore, other, job.delegation!.request, program));
+    const gatewayProgram = f.gateway.catalog.agentProgram(PAOTUI_AGENT_REFS.quote, owner)!;
+    const ctx = programContext(f.gateway.store, owner, job.delegation!.request, gatewayProgram);
+    await assert.rejects(programRead(gatewayProgram, ctx));
     assert.equal(f.source.calls().length, 0);
-    const prepared = await adapter.prepare({ owner, request: job.delegation!.request }, missing, signal());
-    assert.equal(prepared.kind, 'needs_input'); if (prepared.kind === 'needs_input') assert(prepared.question.includes('PRIVATE_TEST_ORIGIN'));
+    ctx.graph = f.workerStore.ontology; await programRead(program, ctx);
+    assert(program.clarify!(ctx, '[[saved_addresses]]').includes('PRIVATE_TEST_ORIGIN'));
     assert.deepEqual(f.source.calls().map(c => c.command), ['passport', 'get_address_list']);
-    const serialized = JSON.stringify(f.gateway.tasks.get(f.a.p, job.id)); assert(!serialized.includes('TEST_ONLY_SECRET')); assert(!serialized.includes(f.source.connectionFile));
-    const foreignTask = f.gateway.tasks.submit(f.b.p, { goal: 'Borrow Alice credential', requestId: randomUUID() });
-    await assert.rejects(adapter.prepare({ owner: other, request: foreignTask.delegation!.request }, missing, signal()));
-    assert.equal(f.source.calls().length, 2);
-  } finally { process.env.PATH = previousPath; await f.close(); }
+    assert(!JSON.stringify(f.gateway.tasks.get(f.a.p, job.id)).includes('TEST_ONLY_SECRET'));
+    assert.throws(() => programContext(f.workerStore, other, request(), program)); assert.equal(f.source.calls().length, 2);
+  } finally { process.env.PATH = previous; await f.close(); }
 });
 
-test('actual stdio transport rejects revoked or changed connections and drops a result revoked inside the CLI', async () => {
-  const f = await fixture(); const previousPath = process.env.PATH; process.env.PATH = f.source.bin + ':' + previousPath;
+test('actual stdio atomic transport drops revoked results and never changes credential owner', async () => {
+  const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
   try {
-    const owner = ownerKey(f.a.p), catalog = f.workerCatalog(), adapter = catalog.binding(DELIVERY_REQUEST_BINDING.ref, owner).adapter;
-    const job = f.gateway.tasks.submit(f.a.p, { goal: '仅查询', requestId: randomUUID() });
-    f.source.behavior({ revokeOn: 'get_address_list' });
-    await assert.rejects(adapter.prepare({ owner, request: job.delegation!.request }, missing, signal()), /Ontology MCP read failed/);
-    assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 0);
-    assert.equal(f.workerStore.preparationContext(owner, job.id, `delivery-addresses:${catalog.configuredBinding(DELIVERY_REQUEST_BINDING.ref)!.configurationDigest}`), undefined);
-    assert(!adapter.permitted(owner));
-    await assert.rejects(adapter.prepare({ owner, request: job.delegation!.request }, missing, signal()));
-    assert.equal(f.source.calls().length, 2);
+    const owner = ownerKey(f.a.p), catalog = f.workerCatalog(), program = catalog.agentProgram(PAOTUI_AGENT_REFS.quote, owner)!;
+    const job = f.gateway.tasks.submit(f.a.p, { goal: '仅查询', requestId: randomUUID() }), ctx = programContext(f.workerStore, owner, job.delegation!.request, program);
+    f.source.behavior({ revokeOn: 'get_address_list' }); await assert.rejects(programRead(program, ctx));
+    assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 0); assert.equal(f.workerStore.ontology.query(owner, { type: 'PaotuiObservation' }).items.length, 0);
+    assert(!program.permitted(owner)); await assert.rejects(programRead(program, ctx)); assert.equal(f.source.calls().length, 2);
     f.source.write({ ...f.source.connection, owner: { ...f.source.connection.owner, subject: f.b.p.subject } });
-    assert(!adapter.permitted(owner)); assert(!f.workerCatalog().summaries(ownerKey(f.b.p)).some(c => c.ref.id === 'delivery.quote'), 'Changed owner requires fresh Gateway identity validation');
-  } finally { process.env.PATH = previousPath; await f.close(); }
+    assert(!program.permitted(owner)); assert(!f.workerCatalog().summaries(ownerKey(f.b.p)).some(c => c.ref.id === 'delivery.quote'));
+  } finally { process.env.PATH = previous; await f.close(); }
 });
 
-test('member suspension is observed through the existing durable fence in a separate Worker database connection', async () => {
+test('member suspension is observed through the durable fence in a separate Worker connection', async () => {
   const f = await fixture(); try {
-    const owner = ownerKey(f.a.p), adapter = f.workerCatalog().binding(DELIVERY_REQUEST_BINDING.ref, owner).adapter;
-    f.gateway.members.setStatus(f.alice.id, 'suspended');
-    assert(!adapter.permitted(owner));
-    await assert.rejects(adapter.prepare({ owner, request: request() }, missing, signal()));
-    assert.equal(f.source.calls().length, 0);
-    f.gateway.members.setStatus(f.alice.id, 'active'); assert(!adapter.permitted(owner), 'Reapproval does not silently clear the durable revocation');
+    const owner = ownerKey(f.a.p), program = f.workerCatalog().agentProgram(PAOTUI_AGENT_REFS.quote, owner)!;
+    f.gateway.members.setStatus(f.alice.id, 'suspended'); assert(!program.permitted(owner));
+    assert.throws(() => programContext(f.workerStore, owner, request(), program)); assert.equal(f.source.calls().length, 0);
+    f.gateway.members.setStatus(f.alice.id, 'active'); assert(!program.permitted(owner));
   } finally { await f.close(); }
 });
 
@@ -142,9 +136,7 @@ test('JWT network inquiry uses the existing real reader path, preserves one Task
     assert.equal((await f.control({ action: 'inquiry.approve_choice', choiceId: choice.id, expectedRevision: 1, reviewDigest: choice.reviewDigest })).status, 200);
     const converted = await f.command(profileId, { operation: 'inquiry.convert', choiceId: choice.id }); assert.equal(converted.status, 200); const taskId = (await converted.json()).result[0].taskId;
     assert.equal(f.source.calls().length, 0, 'Gateway only admitted the source and created the private task');
-    const model = reasoner(r => ({ ...interpretation(r, 'delivery.quote', { ...missing, ...(r.revision > 1 ? { sender: '地址1', recipient: '地址2' } : {}) }), capabilityRef: DELIVERY_REQUEST_CAPABILITY.ref }), ctx => {
-      assert(!JSON.stringify(ctx).includes('PRIVATE_TEST_ORIGIN')); assert(!JSON.stringify(ctx).includes('TEST_ONLY_SECRET')); return proposal(ctx);
-    });
+    const model = paotuiModel();
     worker = createWorker(f.config, { store: f.workerStore, reasoner: model, timing: { leaseMs: 30000, pollMs: 10, timeoutMs: 30000 } });
     const run = async () => {
       const deadline = Date.now() + 30000;
@@ -158,14 +150,20 @@ test('JWT network inquiry uses the existing real reader path, preserves one Task
     const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
     assert.equal((await reply.json()).result.task.id, taskId); await run();
     const done = f.gateway.tasks.get(f.a.p, taskId); assert.equal(done.state, 'completed'); assert(done.delegation?.acceptance?.accepted);
-    assert.equal((done.artifact!.data.result as { ontologyReceipt: { sourceConnectionDigest?: string } }).ontologyReceipt.sourceConnectionDigest?.length, 64);
-    assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 2);
+    assert(done.delegation!.agent!.completion); assert.equal(done.delegation!.agent!.programRef.version, '3');
+    assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
     assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 20, offset: 0 }).total, 1);
     assert.equal(f.gateway.store.list(ownerKey(f.b.p), { limit: 20, offset: 0 }).total, 0);
-    const readback = await client.callTool({ name: 'get_task', arguments: { taskId } }); assert(!readback.isError); assert(JSON.stringify(readback).includes('12.50'));
+    const readback = await client.callTool({ name: 'get_task', arguments: { taskId } }); assert(!readback.isError); assert(JSON.stringify(readback).includes('1250'));
     for (const secret of ['TEST_ONLY_SECRET_NEVER_PERSIST', f.source.connectionFile, f.source.directory]) assert(!JSON.stringify(readback).includes(secret));
     assert(!readFileSync(f.config.DATABASE_PATH).includes(Buffer.from('TEST_ONLY_SECRET_NEVER_PERSIST')));
-    assert(f.gateway.tasks.queryOntology(f.a.p, { type: 'DeliveryQuote' }).items.length > 0);
+    const quote = f.gateway.tasks.queryOntology(f.a.p, { type: 'DeliveryQuote' }).items[0]!;
+    const inquiry = f.gateway.network!.store.list('inquiry', ownerKey(f.a.p)).find(i => i.taskId === taskId)!;
+    const selection = quoteSelectionMaterial(f.gateway.store, inquiry, { inquiryId: inquiry.id, expectedRequestRevision: done.delegation!.request.revision, quote: { type: 'DeliveryQuote', id: quote.ref.id, revision: quote.revision }, selectionKind: 'reviewed' });
+    assert.equal(selection.snapshot.planningSnapshotDigest, done.delegation!.agent!.completion!.ontologyPlanning.digest);
+    const evidence = new NetworkEvidence(f.gateway.network!.store, f.gateway.store, f.gateway.catalog).resultSummary(ownerKey(f.a.p), taskId);
+    assert.equal(evidence.evidenceLevel, 'live_query'); assert.equal(evidence.outcome, 'query_completed'); assert.equal(Object.keys(evidence).length, 7);
+    assert(!JSON.stringify(evidence).includes('PRIVATE_TEST')); assert(!JSON.stringify(evidence).includes(taskId));
     assert.equal(f.gateway.tasks.queryOntology(f.b.p, { type: 'DeliveryQuote' }).items.length, 0);
   } finally { await worker?.close(); await client.close(); process.env.PATH = previousPath; await f.close(); }
 });

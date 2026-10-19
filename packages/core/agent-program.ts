@@ -3,7 +3,7 @@ import type { AgentExecutionState } from '../ontology/agent-actions.js';
 import type { ActionDefinition, ObjectRef } from '../ontology/model.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
-import type { ServiceCapability, ServiceRequest, Ref } from '../ontology/execution.js';
+import type { ServiceCapability, ServiceRequest, Ref, ProviderBinding } from '../ontology/execution.js';
 import type { Delivery } from './catalog.js';
 
 export interface AgentProgramContext {
@@ -26,6 +26,9 @@ export interface AgentProgram {
   readonly completionSchema: object;
   permitted(owner: string): boolean;
   capability(): ServiceCapability;
+  listingBinding?(): ProviderBinding;
+  sourceAuthorization?(owner: string): { provider: string; state: string; nextAction: string } | undefined;
+  clarify?(ctx: AgentProgramContext, message: string): string;
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;

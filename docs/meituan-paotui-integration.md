@@ -1,28 +1,32 @@
-# 本人美团跑腿：地址选择与真实查价
+# 本人美团跑腿：Agent 地址查询与费用预估
 
-当前公共入口为 `eigos.delegate`，业务本体为 `delivery.quote@2`。PA 可以提交“帮我查1公斤文件普通送运费，先让我选择寄件和收件地址”。不要求预先提供地址 ID 或 JSON 查询。
+当前入口是 `eigos.delegate`，使用 `delivery.quote@3` 和 `address.book.read@2`。这两个能力已接入 v8 AgentRuntime：模型读取本体后选择具体动作、参数、依赖及完成依据。PA 继续提交自然语言目标，无须提供技术地址 ID。详细实现及验证边界见 [Agent 动作说明](paotui-agent-actions-2026-10-19.md)。
 
-## 同一任务中的流程
+## 同一任务中的交互
 
-1. 实际协调模型选择报价本体，缺少的业务输入留为空。
-2. Worker 经独立 stdio Ontology MCP 读取本人美团地址簿。EIGOS 向任务所有者展示有编号的地址，补问寄件／收件及缺少的物品、分类、重量、服务。
-3. PA 转述真实选项，得到用户明确选择后在原 taskId 回复自然语言。
-4. 系统只匹配当前任务中真实且无歧义的选项，核对不同地址、同城及计价参数，再取得真实报价；模型根据事实提出受约束的计划，执行时复查报价并独立验收。
-5. PA 读回同一任务的完成状态、accepted 验收和报价交付物。查价完成不表示下单、支付或配送。
+解释阶段仅创建本人查询范围，不调用供应商。执行 Agent 可选择：
 
-地址选项按 owner、taskId、配置摘要保存于私有 preparation_contexts；不进入规划模型提示词。重启和地址簿排序变化不重排已显示的编号。地址或门牌变化会产生新选项并拒绝旧编号。不得把“1公斤”等数字误当地址选择，未知或含糊地址不能用第一个候选代替。
+| 本体动作 | 单次官方 CLI 操作 | 结果 |
+| --- | --- | --- |
+| `ReadSavedAddresses` | `get_address_list` | 地址簿安全摘要；原始地址私有保存 |
+| `ReadSavedAddressDetail` | `get_address_info` | 用户明确选中地址的联系人详情；模型只见角色和状态 |
+| `PreviewDeliveryQuote` | `delivery_preview` | 两条已核验地址详情和明确物品／重量／服务的费用预估 |
+
+没有固定的地址簿→详情→查价程序。模型可只完成地址簿目标、逐步读取详情、组合独立详情与依赖报价，或在原任务补问。具体地址选项仅在模型选择补问后由宿主插入本人任务问题；不会进入执行模型提示词。模型不能选择第一个候选补足未知地址，不能编造物品、重量或服务默认值。
+
+选择记录按 owner、taskId、来源连接版本私有保存。只改变供应商列表排序时保持已显示编号；地址内容变化产生新编号，拒绝旧选项。编号只在显示过该列表后的用户回复中生效，不能把“1公斤”当成地址。换账号／重新授权后废弃旧范围和观察，仍使用原 taskId，并保留旧模型轮次和动作预算。
 
 ## 内部 MCP 与配置
 
-Gateway／Worker 使用相同的 `EIGOS_PAOTUI_SKILL_DIR`。Gateway 只登记能力；Worker 在调用时启动 `apps/ontology-mcp/main`，先核验 `ontology_definition`，再调用 `ontology_address_book_read` 或 `ontology_delivery_quote`。内部原语 `delivery.quote@1` 使用明确的源地址引用；只有后端在选择后解析它，PA 不接触这些技术 ID。
+Gateway／Worker 使用相同的读取程序和来源配置。Gateway 只登记能力；Worker 通过私有 stdio MCP 先核验 `source_definition`，再调用一个 `source_get_address_list`、`source_get_address_info` 或 `source_delivery_preview`。每张回执必须对应且只对应一个官方读取命令。该内部服务没有 HTTP 监听，也没有订单、支付或取消工具。
 
-MCP 服务没有 HTTP 监听，不开放订单、支付或取消工具。美团凭据由原有 pt-passport／官方查询程序内部读取，真实手机号只用于进程内费用预览，不返回给 PA。地址与门牌是完成选择所需的本人数据，只向任务所有者展示。
+会员凭据通过[本人来源连接](member-source-authorization.md)单独上传并加密。模型、MCP 公共参数、Task 和审计不包含 Token；完整地址、联系人、手机号和微度坐标仅在受限本体字段及私有调用记录中保留。公开本体查询只能读取安全摘要。手机号不返回 PA，地址选项和本人地址簿交付物仅向任务所有者展示。
 
-每次成功读取产生能力／本体版本、输入／结果摘要、时间及调用名称的回执。可用绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH` 保存不含地址、电话和令牌的元数据。`geo.search@1` 和 `address.book.read@1` 可单独用于对应读取目标，不作为报价目标的替代完成。
+保存地址的坐标保持官方 CLI 的整数微度格式，城市 ID 按该接口的数字格式传递。公开 POI 的坐标转换仍沿用独立 `geo.search@1` 的契约，不与本人地址查价混用。
 
-公开地点结果中的 `lat`／`lng` 由官方 CLI 的整数微度转换为度，并显式标注 `coordinateUnit: "degree"`；转换发生在 Ontology 回执计算摘要之前。单位按 CLI 契约解释，不按数值大小猜测；不据此推定坐标参考系。地址簿及报价链的坐标保持原有契约。公开地点响应最多 100 项，缺少名称、非法坐标或嵌套未知业务字段会拒绝，额外调试／联系信息不会进入结果。
+`EIGOS_ONTOLOGY_AUDIT_PATH` 可保存不含地址、电话和 Token 的回执元数据。授权在每次调用前后、投影前及完成时复核；撤销、到期或轮换会阻止使用在途返回值。任务完成须由模型实际读取所选观察并调用 `paotuiObservationStatus`，再通过来源、请求版本、费用对象及硬条件的独立检查。查价完成只表示读取和验收通过，不代表订单、付款或配送。
 
-真实下单程序和支付链接执行器已从项目删除；`EIGOS_PAOTUI_ORDERS_ENABLED=true` 会在启动时报错。只读绑定仍限固定本人 loopback 开发身份，多用户凭据代理尚未实现。
+`EIGOS_PAOTUI_ORDERS_ENABLED=true` 仍在启动时报错。新配置仅注册 Agent 查询能力；旧 `delivery.quote@1/@2` 的固定准备代码只用于历史测试与记录，不作为当前查询回退路径。
 
 ## 可选公开地点发现
 
