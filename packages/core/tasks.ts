@@ -95,6 +95,11 @@ export class TaskService {
           this.store.save(owner, job); return job;
         }
         const request = job.delegation!.request;
+        if (job.delegation!.agent) {
+          this.store.cancelActions(owner, job.id);
+          job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
+          delete job.delegation!.agent;
+        }
         request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
         for (const r of args.requirements ?? []) {
           const previous = request.requirements.findIndex(x => x.id === r.id);
@@ -136,7 +141,7 @@ export class TaskService {
       if (job.service === DELEGATE && job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
       job.state = 'canceled';
-      if (job.delegation?.plan) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
+      if (job.delegation?.plan || job.delegation?.agent) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
       if (job.delegation) job.delegation.phase = 'canceled';
       if (job.delegation?.plan) this.store.recordFeedback(owner, job, 'unverified', false);
       delete job.question;
@@ -241,8 +246,8 @@ export class TaskService {
     });
   }
   private view(owner: string, job: Job): Job {
-    if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.plan) {
-      const intents = this.store.intents(owner, job.id).filter(i => i.planDigest === job.delegation!.plan!.digest);
+    if (job.delegation?.backendVersion === BACKEND_VERSION && (job.delegation.plan || job.delegation.agent || job.delegation.agentHistory?.length)) {
+      const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);
       job.delegation.actions = intents.map(i => ({ id: i.id, stepId: i.stepId, state: i.state, remoteRef: i.remoteRef, latestObservationId: i.latestObservationId }));
       job.delegation.businessFacts = intents.flatMap(i => i.businessSnapshot ? [{ intentId: i.id, snapshot: i.businessSnapshot.value, sourceVersion: i.businessSnapshot.sourceVersion, evidenceRefs: i.businessSnapshot.evidenceRefs }] : []);
       job.delegation.authorizationBudget = this.store.budget(owner, job.id).map(b => ({ minor: String(b.minor), currency: String(b.currency), state: String(b.state), intentId: String(b.intent_id) }));

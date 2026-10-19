@@ -4,6 +4,7 @@ import { type Ref, type ServiceCapability, type ProviderBinding, type CandidateF
 import type { DiscoveredBinding, DiscoveryCoverage, ProductOfferSnapshot } from '../ontology/supply.js';
 import type { ActionContext, ActionResult, PreparedStep } from '../ontology/actions.js';
 import { digest } from './delegation.js';
+import type { AgentProgram } from './agent-program.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 export type Preparation = { kind: 'needs_input'; question: string; details?: Record<string, unknown> } | { kind: 'unavailable'; reason: string; details?: Record<string, unknown> } | {
@@ -60,7 +61,8 @@ export class ExecutionCatalog {
   private adapters = new Map<string, RegisteredAdapter>();
   private discovered = new Map<string, DiscoveredBinding>();
   private sources: DiscoverySource[];
-  constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = []) {
+  private programs = new Map<string, AgentProgram>();
+  constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = []) {
     for (const adapter of adapters) {
       if (this.adapters.has(adapter.id)) throw new Error('Duplicate adapter');
       this.adapters.set(adapter.id, adapter);
@@ -68,6 +70,10 @@ export class ExecutionCatalog {
     for (const service of services) {
       if (this.services.has(key(service.ref))) throw new Error('Duplicate capability version');
       this.services.set(key(service.ref), structuredClone(service));
+    }
+    for (const program of programs) {
+      if (this.programs.has(key(program.ref)) || !this.services.has(key(program.ref))) throw new Error('Duplicate or unresolved agent program');
+      this.programs.set(key(program.ref), program);
     }
     for (const binding of bindings) {
       if (this.providers.has(key(binding.ref))) throw new Error('Duplicate binding version');
@@ -84,6 +90,11 @@ export class ExecutionCatalog {
     const definition = this.services.get(key(ref));
     if (!definition) throw new DomainError('CONFLICT', 'Capability version is unavailable');
     return structuredClone(definition);
+  }
+  agentProgram(ref: Ref, owner: string): AgentProgram | undefined {
+    const program = this.programs.get(key(ref));
+    if (program && !program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent program is unavailable to this identity');
+    return program;
   }
   binding(ref: Ref, owner: string, requestId?: string): { binding: ProviderBinding; adapter: RegisteredAdapter } {
     const binding = this.providers.get(key(ref)) ?? (requestId ? this.discovered.get(JSON.stringify([owner, requestId, key(ref)])) : undefined);
@@ -105,7 +116,7 @@ export class ExecutionCatalog {
     return [...this.providers.values()].filter(b => sameRef(b.capabilityRef, ref) && b.enabled && this.adapters.get(b.adapterId)!.permitted(owner)).map(b => structuredClone(b));
   }
   summaries(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live') {
-    const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length));
+    const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || this.programs.get(key(s.ref))?.permitted(owner)));
     // Do not silently truncate an unsearched catalogue; add domain retrieval before scaling it.
     if (permitted.length > limit) throw new DomainError('CONFLICT', 'Capability retrieval limit exceeded; a narrower discovery scope is required');
     return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics }));

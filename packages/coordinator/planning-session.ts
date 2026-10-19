@@ -54,8 +54,8 @@ export class OntologyPlanningSession {
   private bytes = 0;
   private failures = new Map<string, number>();
   constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
-    private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner') {}
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships and exact objects already retrieved through this request. Other owner data requires tasks:read.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+    private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = []) {}
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
   receipts() { return structuredClone(this.reads); }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
   private remember(ref: ObjectRef, expectedRevision?: number) {
@@ -65,8 +65,9 @@ export class OntologyPlanningSession {
     this.seen.set(key(ref), next);
     if (this.seen.size > 150) throw new DomainError('CONFLICT', 'Planner object budget exceeded');
   }
-  private retrieved(ref: ObjectRef) {
+  private retrieved(ref: ObjectRef, allowBoundQuery = false) {
     if (ref.type === 'ServiceRequest' && ref.id === this.request.id) return;
+    if (allowBoundQuery && this.boundRefs.some(bound => key(bound) === key(ref))) return;
     if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
   }
   call(tool: string, input: unknown): unknown {
@@ -90,7 +91,7 @@ export class OntologyPlanningSession {
             if (query.type !== 'ServiceRequest') throw new DomainError('FORBIDDEN', 'This delegation lacks tasks:read for owner-wide object search');
             const { type: _type, ...fields } = query;
             query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
-          } else if ('object' in query) this.retrieved(query.object);
+          } else if ('object' in query) this.retrieved(query.object, true);
           else if (query.from.type !== 'ServiceRequest' || query.from.id !== this.request.id) throw new DomainError('FORBIDDEN', 'This delegation permits only relationships of the current request');
         }
         if ('from' in query) this.retrieved(query.from);
@@ -113,6 +114,7 @@ export class OntologyPlanningSession {
         output = { checks, grantsAuthority: false };
       } else if (tool === 'propose_action') {
         const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
+        if (definition.read) throw new DomainError('INVALID_INPUT', 'Read actions are selected in an agent execute decision; this proposal-only tool never executes them');
         if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
         const inputs: DecisionActionProposal['inputs'] = {};
         for (const item of args.inputs) {

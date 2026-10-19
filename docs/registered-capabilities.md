@@ -1,6 +1,6 @@
 # Ontology + LLM 后端
 
-更新于 2026-10-19。当前通用委托使用 `ontology-execution-v7`，业务模型为 `eigos.business@6`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
+更新于 2026-10-19。当前通用委托使用 `ontology-execution-v8`，业务模型为 `eigos.business@7`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
@@ -54,7 +54,7 @@ LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函�
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
 | `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
-| `commerce.catalog.query@1` | 显式配置商家后，Worker 匿名读取 Shopify Global Catalog 与店铺；本体模型规划及店铺再次核对 | 公开商品查询文件；显示单价与可售标记不证明库存、配送或购买权限 |
+| `commerce.catalog.query@2` | Agent 读取本体，选择搜索／详情／商家发现／店铺读取及其参数和组合；逐次观察后由模型提出完成，程序验收 | 有来源的公开商品查询或比较文件；显示单价与可售标记不证明库存、配送或购买权限 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |
 
 CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、跑腿读取均走新后端；旧独立原型入口和状态机已删除。delivery.quote@2 支持同任务真实地址读取、选项保存、自然语言选择与价格查询。

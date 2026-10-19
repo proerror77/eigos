@@ -56,7 +56,7 @@ export class Worker {
     }).catch(error => {
       this.store.finish(claim, current => {
         const intentId = current.delegation?.intentId;
-        const dispatched = intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
+        const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
         current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'
           : dispatched ? 'Action did not return an accepted result. Inspect recorded observations; no automatic replay.'

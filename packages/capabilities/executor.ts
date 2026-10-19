@@ -21,6 +21,7 @@ export interface RunEvidence {
   startedAt: string;
   completedAt: string;
   outputSha256: string;
+  decisionDigest?: string;
   model?: string;
   threadId?: string;
   usage?: Record<string, number>;

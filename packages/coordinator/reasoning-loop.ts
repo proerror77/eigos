@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { CodexExecutor, RunEvidence } from '../capabilities/executor.js';
 import { reasoningTurnSchema } from '../ontology/planning-contract.js';
 import type { OntologyPlanningSession } from './planning-session.js';
+import { digest } from '../core/delegation.js';
 
 export async function reasonWithOntology(model: Pick<CodexExecutor, 'runStructured'>, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
   record: (evidence: RunEvidence) => void, maxTurns = 8) {
@@ -16,13 +17,16 @@ export async function reasonWithOntology(model: Pick<CodexExecutor, 'runStructur
       'Batch independent reads where useful. Use exact registered type and property names, including the primaryKey for filters; ObjectRef.id is not automatically a property named id. You can read an exact reference with query_ontology.object. Reserve a final response for your conclusion. On the last model response return final based on the evidence obtained; report insufficient information rather than inventing facts or requesting more reads.',
       JSON.stringify({ interface: session.catalog(), budget: { modelResponse: turn + 1, maxModelResponses: turnLimit, responsesRemainingIncludingThis: turnLimit - turn, toolCallsRemaining: 20 - session.receipts().length }, finalSchema, requestRef: { type: 'ServiceRequest', id: session.request.id }, request: session.request, conversation: transcript }),
     ].join('\n\n'), z.toJSONSchema(reasoningTurnSchema), signal);
-    signal.throwIfAborted(); record(response.evidence);
+    signal.throwIfAborted();
     const step = reasoningTurnSchema.parse(response.output);
     if (step.kind === 'final') {
       if (step.calls.length || !step.finalJson) throw new Error('Invalid final planning turn');
       if (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok')) throw new Error('The model skipped required ontology reads');
-      return { output: JSON.parse(step.finalJson) as unknown, evidence: response.evidence };
+      const output: unknown = JSON.parse(step.finalJson), evidence = { ...response.evidence, decisionDigest: digest(output) };
+      record(evidence);
+      return { output, evidence };
     }
+    record(response.evidence);
     if (!step.calls.length || step.finalJson) throw new Error('Invalid ontology read turn');
     for (const call of step.calls) {
       signal.throwIfAborted();
