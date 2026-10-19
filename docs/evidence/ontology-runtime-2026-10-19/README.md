@@ -1,6 +1,6 @@
 # Ontology 真实后端运行核验
 
-本次由 Codex 诊断客户端通过已认证 MCP 提交只读业务目标，使用正在运行的 EIGOS Gateway／Worker、真实 Codex 模型和 Shopify 店铺接口。它核验 **诊断客户端 → EIGOS Agent → Ontology＋LLM → Shopify → 本体观察 → EIGOS Agent 验收 → MCP 读回**。用户 PA 发起的完整往返仍待单独完成，不能用本记录替代。
+本次由 Codex 诊断客户端通过已认证 MCP 提交只读业务目标，使用正在运行的 EIGOS Gateway／Worker、真实 Codex 模型和 Shopify 店铺接口。它核验 **诊断客户端 → EIGOS Agent → Ontology＋LLM → Shopify → 本体观察 → EIGOS Agent 验收 → MCP 读回**。用户 PA 发起的完整往返已在随后[单独核验并归档](../agent-catalog-pa-2026-10-19/README.md)，不以本诊断记录替代。
 
 ## 结果
 
