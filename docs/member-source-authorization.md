@@ -78,3 +78,5 @@ node --import tsx examples/connect-member-source.ts
 验证覆盖两个 JWT 会员、各自不同 Token／地址／报价、实际 Worker 和 stdio MCP 子进程、服务目录至买方 Task、原任务恢复、版本重放、期限、连接轮换、在途撤销、会员／安装撤权、密文篡改、密钥／目录不一致、无本机凭据回退，以及 SDK 的同源传输和错误脱敏。
 
 模型决策、账号和商家返回均为隔离测试替身。真实 PA、供应商授权与当前版本真实只读查询仍待单独启用和实测；人工非建模者演练也继续单列。该实现不改变 T13 的完整验收状态。检查结果见[本轮证据](evidence/member-source-auth-2026-10-19/README.md)。
+
+后续已部署独立私有 HTTPS 实例并完成基础回读；Auth0 重新授权尚待完成，真实账号查询未执行。运行版本、依赖修复和边界见[部署记录](evidence/member-network-deployment-2026-10-19/README.md)。
