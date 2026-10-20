@@ -21,6 +21,11 @@ export const requirementSchema = z.discriminatedUnion('kind', [
 export const requirementsSchema = z.array(requirementSchema).max(40).refine(items => new Set(items.map(i => i.id)).size === items.length, 'Requirement IDs must be unique');
 export type RequirementInput = z.infer<typeof requirementSchema>;
 export type Requirement = RequirementInput & { provenance: { source: 'pa'; interpretation: 'structured' | 'quoted_text'; messageId: string; receivedAt: string; quote?: string } };
+export interface ConfirmedInput {
+  field: string; status: 'confirmed' | 'ambiguous' | 'cleared'; value?: unknown; quote: string; revision: number;
+  source: { messageId: string; messageIndex: number; receivedAt: string };
+}
+export interface ConfirmedInputs { version: '1'; revision: number; messageDigest: string; fields: Record<string, ConfirmedInput>; history: ConfirmedInput[] }
 export interface ServiceRequest {
   id: string;
   revision: number;
@@ -28,7 +33,10 @@ export interface ServiceRequest {
   requestedDeliverable?: string;
   requirements: Requirement[];
   successCriteria?: Requirement[];
+  supersededRequirements?: Requirement[];
+  confirmedInputs?: Record<string, ConfirmedInputs>;
   conditions?: import('./business-model.js').BusinessCondition[];
+  supersededConditions?: import('./business-model.js').BusinessCondition[];
   messages: { id: string; text: string; receivedAt: string }[];
   outcome?: 'refund' | 'cancel';
   businessScopeId?: string;

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
+import { modelUsageRecorder } from '../core/model-usage-context.js';
 
 export const decisionSchema = z.object({
   decision: z.enum(['ask_user', 'complete']),
@@ -66,10 +67,13 @@ export class CodexExecutor implements Executor {
   async runStructured(prompt: string, schema: object, signal: AbortSignal): Promise<{ output: unknown; evidence: RunEvidence }> {
     const id = randomUUID();
     const startedAt = new Date().toISOString();
-    const directory = await mkdtemp(join(tmpdir(), 'eigos-executor-'));
-    const schemaPath = join(directory, 'output-schema.json');
-    const outputPath = join(directory, 'result.json');
+    const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-exec', startedAt);
+    let recorded: RunEvidence | undefined, succeeded = false;
+    let directory: string | undefined;
     try {
+      directory = await mkdtemp(join(tmpdir(), 'eigos-executor-'));
+      const schemaPath = join(directory, 'output-schema.json');
+      const outputPath = join(directory, 'result.json');
       await writeFile(schemaPath, JSON.stringify(schema), { mode: 0o600 });
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
         '-c', 'project_doc_max_bytes=0', '-c', 'web_search="disabled"',
@@ -123,16 +127,20 @@ export class CodexExecutor implements Executor {
       });
       if (!events.some(e => e.type === 'turn.completed') || events.some(e => e.type === 'turn.failed')) throw new Error('No successful model turn receipt');
       const text = await readFile(outputPath, 'utf8');
-      const output: unknown = JSON.parse(text);
       const threadId = events.find(e => e.type === 'thread.started')?.thread_id;
       const usage = events.findLast(e => e.type === 'turn.completed')?.usage;
       const model = /^model:\s*(\S+)/m.exec(stderr)?.[1];
-      return { output, evidence: {
+      recorded = {
         id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(),
         outputSha256: createHash('sha256').update(text).digest('hex'), model,
         threadId: typeof threadId === 'string' ? threadId : undefined,
         usage: usage && typeof usage === 'object' ? Object.fromEntries(Object.entries(usage).filter((entry): entry is [string, number] => typeof entry[1] === 'number')) : undefined,
-      } };
-    } finally { await rm(directory, { recursive: true, force: true }); }
+      };
+      const output: unknown = JSON.parse(text); succeeded = true;
+      return { output, evidence: recorded };
+    } finally {
+      try { recorder?.finish(id, recorded, succeeded ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
+      finally { if (directory) await rm(directory, { recursive: true, force: true }); }
+    }
   }
 }

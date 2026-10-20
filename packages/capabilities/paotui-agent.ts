@@ -16,6 +16,7 @@ import { checkedPaotuiObservation, paotuiOperation, paotuiSummary, projectPaotui
 import { atomicResultSchemas, type PaotuiAtomicReader, type SavedAddress } from './paotui-atomic.js';
 import { OntologyMcpPaotuiReader } from './paotui-mcp.js';
 import { PaotuiAddressSelection } from './paotui-address-selection.js';
+import { paotuiInputs, preparePaotuiRequest, validatePaotuiParcel, validatePaotuiRequest } from './paotui-current-inputs.js';
 
 export const PAOTUI_AGENT_REFS = { quote: { id: 'delivery.quote', version: '3' }, addresses: { id: 'address.book.read', version: '2' } } as const;
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -44,6 +45,8 @@ export class PaotuiAgentProgram implements AgentProgram {
   }
   sourceAuthorization(owner: string) { const s = this.options.vault?.status(owner); return s ? { provider: s.provider, state: s.state, nextAction: s.nextAction } : undefined; }
   assertContext(ctx: AgentProgramContext) { this.scope(ctx); }
+  prepareRequest(request: ServiceRequest) { return preparePaotuiRequest(request); }
+  validateRequest(request: ServiceRequest) { validatePaotuiRequest(request); }
   listingBinding(): ProviderBinding {
     return { ref: { id: `meituan:${this.ref.id}`, version: this.ref.version }, capabilityRef: this.ref, providerId: 'meituan-paotui', channelId: 'meituan', adapterId: `meituan:${this.ref.id}.agent`, protocol: 'mcp', enabled: true, configurationDigest: this.configurationDigest,
       verification: { level: 'read_only_probe', evidenceRefs: ['docs/meituan-paotui-integration.md'] }, recovery: { idempotency: 'none', lookup: false } };
@@ -110,10 +113,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     if (action === 'PreviewDeliveryQuote') {
       const a = paotuiActionSchemas.PreviewDeliveryQuote.parse(input), sender = this.selected(ctx, this.observation(ctx, a.sender, 'ReadSavedAddressDetail')), recipient = this.selected(ctx, this.observation(ctx, a.recipient, 'ReadSavedAddressDetail'));
       if (sender.role !== 'sender' || recipient.role !== 'recipient' || sender.book.id !== recipient.book.id || sender.selected.addressId === recipient.selected.addressId || sender.selected.cityId !== recipient.selected.cityId) invalid('Choose distinct same-city sender and recipient addresses from the same book');
-      const text = ctx.request.messages.map(m => m.text.normalize('NFKC').toLowerCase()).join('\n'), norm = (s: string) => s.replace(/\s/g, '').toLowerCase();
-      const weights = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(公斤|千克|kg|克|g)(?![a-z])/gi)].map(m => Number(m[1]) / (['克', 'g'].includes(m[2]!.toLowerCase()) ? 1000 : 1));
-      for (const [word, n] of [['一', 1], ['二', 2], ['两', 2], ['三', 3], ['五', 5], ['十', 10]] as const) if (new RegExp(`${word}\\s*(公斤|千克)`).test(text)) weights.push(n);
-      if (!norm(text).includes(norm(a.goodsName)) || !text.includes(a.category) || !weights.includes(a.weightKg) || !(a.service === 'ordinary' ? /普通送|普通配送|ordinary/ : /专送|express/).test(text)) invalid('Parcel name, category, weight and service must be explicitly supplied by the owner; ask for missing facts');
+      validatePaotuiParcel(ctx.request, a);
     }
   }
   private reader(grant?: SourceGrant) { return this.options.connector ?? new OntologyMcpPaotuiReader(this.options.directory, this.options.auditPath, { access: this.options.access, memberSource: grant ? { vault: this.options.vault!, grant } : undefined, databasePath: this.options.store.databasePath, execute: this.options.execute }); }
@@ -155,8 +155,22 @@ export class PaotuiAgentProgram implements AgentProgram {
   }
   clarify(ctx: AgentProgramContext, message: string) {
     const source = this.scope(ctx);
-    if (!message.includes('[[saved_addresses]]')) return message;
     const bookRef = ctx.state.observations.filter(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot).action === 'ReadSavedAddresses').at(-1);
+    if (this.kind === 'quote') {
+      const facts = paotuiInputs(ctx.request).fields;
+      const labels = { goodsText: '物品说明', category: '物品分类', weightKg: '重量', service: '配送方式' };
+      const missing = Object.entries(labels).filter(([key]) => facts[key]?.status !== 'confirmed').map(([, name]) => name);
+      if (!bookRef) {
+        if (!missing.length) invalid('Parcel facts are confirmed. Read the current owned address book before asking about address choices.');
+        return `请补充${missing.join('、')}。已确认的其他信息保留。`;
+      }
+      const book = this.observation(ctx, bookRef, 'ReadSavedAddresses');
+      const routeReady = this.choices.ready(ctx.owner, ctx.request, source.selectionContext, atomicResultSchemas.get_address_list.parse(book.result).addresses);
+      if (!missing.length && routeReady) invalid('All parcel facts and current address choices are already confirmed. Continue from these facts; do not ask the owner to repeat them.');
+      if (routeReady) return `请补充${missing.join('、')}。寄收地址及其他已确认信息保留。`;
+      return `${missing.length ? `请补充${missing.join('、')}，并选择寄件和收件地址。` : '请选择寄件和收件地址。'}\n${this.choices.present(ctx.owner, ctx.request, source.selectionContext)}`;
+    }
+    if (!message.includes('[[saved_addresses]]')) return message;
     if (!bookRef) invalid('Read a current address book before displaying choices');
     this.observation(ctx, bookRef!, 'ReadSavedAddresses');
     return message.replaceAll('[[saved_addresses]]', this.choices.present(ctx.owner, ctx.request, source.selectionContext));

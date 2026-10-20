@@ -33,7 +33,9 @@ export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  recovery?: import('./task-recovery.js').TaskRecovery;
+  recoveryHistory?: import('./task-recovery.js').TaskRecovery[];
   plan?: ExecutionPlan;
   agent?: import('../ontology/agent-actions.js').AgentExecutionState;
   agentHistory?: import('../ontology/agent-actions.js').AgentExecutionState[];

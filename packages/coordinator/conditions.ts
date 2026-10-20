@@ -8,6 +8,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from '../ontology/ob
 import type { ConditionCheck } from '../ontology/planning-contract.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
+import { operativeText } from '../core/current-inputs.js';
 
 const conditionsSchema = z.array(businessConditionSchema).max(40);
 const refEqual = (a: ObjectRef, b: ObjectRef) => a.type === b.type && a.id === b.id;
@@ -43,8 +44,16 @@ export function groundConditions(request: ServiceRequest, json: string, retrieve
     };
     verifyReferences(c.subject.object); verifyReferences(c.expected);
     const requestedQuantity = id === 'parcel.quote_matches_request' ? expected.weight : id === 'goods.capacity_covers_quantity' ? expected : id === 'delivery.receipt_matches_request' ? expected.quantity : undefined;
-    if (requestedQuantity && !quotedQuantity(c.source.quote, requestedQuantity)) throw new DomainError('CONFLICT', 'Condition quantity differs from its quoted instruction');
-    if (id === 'parcel.quote_matches_request' && !(expected.serviceLevel === 'ordinary' ? /普通送|ordinary/i : /专送|快送|express/i).test(c.source.quote)) throw new DomainError('CONFLICT', 'Parcel service differs from its quoted instruction');
+    const inputs = id === 'parcel.quote_matches_request' ? request.confirmedInputs?.paotui?.fields : undefined;
+    if (inputs) {
+      if (inputs.weightKg?.status !== 'confirmed' || inputs.service?.status !== 'confirmed'
+        || !sameQuantity(expected.weight, { amount: String(inputs.weightKg.value), unit: 'kg' }) || expected.serviceLevel !== inputs.service.value)
+        throw new DomainError('CONFLICT', 'Parcel condition must use the latest confirmed weight and service; their owner quotations may come from different messages');
+      if (![inputs.weightKg.source.messageId, inputs.service.source.messageId].includes(c.source.messageId)) throw new DomainError('CONFLICT', 'Parcel condition must cite a current confirmed input source');
+    } else {
+      if (requestedQuantity && !quotedQuantity(operativeText(c.source.quote), requestedQuantity)) throw new DomainError('CONFLICT', 'Condition quantity differs from its quoted instruction');
+      if (id === 'parcel.quote_matches_request' && !(expected.serviceLevel === 'ordinary' ? /普通送|ordinary/i : /专送|快送|express/i).test(operativeText(c.source.quote))) throw new DomainError('CONFLICT', 'Parcel service differs from its quoted instruction');
+    }
     if (id === 'reservation.slot_matches_request' && !quotedQuantity(c.source.quote, { amount: String(expected.partySize), unit: 'person' })) throw new DomainError('CONFLICT', 'Party size differs from its quoted instruction');
     if (id === 'offer.total_within_budget') {
       const amount = expected.amount as { minor: string; currency: string };
@@ -60,10 +69,14 @@ export function groundConditions(request: ServiceRequest, json: string, retrieve
     const old = result.conditions?.find(v => v.id === c.id || key(v) === key(c));
     if (old) {
       const { source: _a, ...a } = old, { source: _b, ...b } = c;
-      if (digest(a) !== digest(b)) throw new DomainError('CONFLICT', 'Model attempted to replace a fixed business condition');
-      continue;
+      if (digest(a) === digest(b)) continue;
+      const newer = request.messages.findIndex(m => m.id === c.source.messageId) > request.messages.findIndex(m => m.id === old.source.messageId);
+      if (!newer || old.predicateRef.id !== c.predicateRef.id || old.subject.type !== c.subject.type || old.subject.role !== c.subject.role || old.phase !== c.phase || old.strength !== c.strength || old.operator !== c.operator)
+        throw new DomainError('CONFLICT', 'Model attempted to replace a fixed business condition without a later explicit owner correction');
+      result.supersededConditions = [...(result.supersededConditions ?? []), old];
+      result.conditions = result.conditions!.filter(v => v.id !== old.id);
     }
-    result.conditions = [...(result.conditions ?? []), c];
+    result.conditions = [...(result.conditions ?? []), { ...c, id: old?.id ?? c.id }];
   }
   if ((result.conditions?.length ?? 0) > 40) throw new DomainError('INVALID_INPUT', 'Too many business conditions');
   return result;

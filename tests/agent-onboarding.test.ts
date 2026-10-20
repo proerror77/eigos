@@ -158,9 +158,9 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
     mcp = new Client({ name: 'self-enrolled-agent', version: '1' });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my onboarding brief', requestId: randomUUID() } });
-    const job = (submitted.structuredContent as { result: { id: string } }).result;
-    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required') break;await new Promise(r=>setTimeout(r,10));}
-    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
+    const job = (submitted.structuredContent as { result: { id: string } }).result; let questionRevision: number | undefined;
+    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required'){questionRevision=(read.structuredContent as {result:{revision:number}}).result.revision;break;}await new Promise(r=>setTimeout(r,10));}
+    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, metadata: { expectedRevision: questionRevision }, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
     assert.equal((await reply.json()).result.task.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } }); assert.equal((readback.structuredContent as { result: { state: string } }).result.state, 'completed');
     assert.equal((await agent.revoke()).status, 'agent_registration_revoked');

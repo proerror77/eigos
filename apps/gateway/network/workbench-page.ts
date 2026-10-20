@@ -5,7 +5,7 @@ import type { EvidenceBody } from '../../../packages/network/evidence-contracts.
 import { directoryShell, escape } from './html.js';
 
 const root = '/members/network';
-export const taskNames: Record<JobState, string> = { submitted: '等待处理', working: '处理中', 'input-required': '等待补充信息', 'auth-required': '等待独立授权', completed: '任务处理完成', failed: '处理失败', canceled: '已取消', rejected: '已拒绝' };
+export const taskNames: Record<JobState, string> = { submitted: '等待处理', working: '处理中', paused: '等待运行恢复', 'input-required': '等待补充信息', 'auth-required': '等待独立授权', completed: '任务处理完成', failed: '处理失败', canceled: '已取消', rejected: '已拒绝' };
 export const evidenceNames: Record<EvidenceBody['evidenceLevel'], string> = {
   synthetic_validation: '合成验证', simulated_execution: '模拟执行', live_query: '真实查询', live_execution: '真实执行', live_fulfillment: '真实履约', local_generation: '本地生成', participant_statement: '参与者声明', insufficient_evidence: '证据不足',
 };

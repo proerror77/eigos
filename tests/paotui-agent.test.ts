@@ -67,7 +67,7 @@ test('unread completion, invented selector, cross-task reference and write actio
       if (mode === 'unread') return decide(ctx, [], { observation: items[0]!.ref, rationale: 'Attempt without required evaluation' });
       return decide(ctx, [step('bad', mode === 'write' ? 'CreateOrder' : 'ReadSavedAddressDetail', { scope: ctx.state.scope, book: mode === 'foreign' ? { type: 'PaotuiObservation', id: 'other-task' } : items[0]!.ref, selector: 'invented address', role: 'sender' })]);
     }, mode === 'unread' ? 'addresses' : 'quote');
-    try { const job = f.b.submit({ goal }); const result = await f.finish(job.id); assert.equal(result.state, 'input-required', mode); assert.deepEqual(f.calls.map(c => c.operation), ['get_address_list']); assert(!result.artifact); } finally { f.store.close(); }
+    try { const job = f.b.submit({ goal }); const result = await f.finish(job.id); assert.equal(result.state, 'paused', mode); assert.equal(result.question, undefined); assert.deepEqual(f.calls.map(c => c.operation), ['get_address_list']); assert(!result.artifact); } finally { f.store.close(); }
   }
 });
 
@@ -98,7 +98,7 @@ test('missing parcel facts and a stale observation cannot be replaced by model d
   const stale = setup(bookChoice, 'addresses'); try {
     const job = stale.b.submit({ goal: '地址簿查询' }); await stale.b.run(); await stale.b.run();
     const clock = stale.store.ontology.now; (stale.store.ontology as { now: () => number }).now = () => clock() + 300001;
-    const result = await stale.finish(job.id); assert.equal(result.state, 'input-required'); assert(!result.artifact);
+    const result = await stale.finish(job.id); assert.equal(result.state, 'paused'); assert.equal(result.question, undefined); assert(!result.artifact);
   } finally { stale.store.close(); }
 });
 
@@ -213,5 +213,29 @@ test('legacy choices cannot acquire a new account identity merely by being read 
     f.store.savePreparationContext(owner, request.id, 'agent-paotui-addresses:legacy-token', { generation: 1, addresses });
     choices.observe(owner, request, 'new-token', addresses, { authorizationEpoch: 'new-authorization', accountIdentity: 'account-a' });
     assert.throws(() => choices.select(owner, request, 'new-token', addresses, 'Private A', 'sender'));
+  } finally { f.store.close(); }
+});
+
+test('withdrawn routes cannot revive old choices; newest named or numbered roles win', () => {
+  const f = setup(); try {
+    const choices = new PaotuiAddressSelection(f.store), request = f.b.submit({ goal: '从Private A寄到Private B' }).delegation!.request;
+    const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+    const append = (r: typeof request, text: string) => ({ ...r, revision: r.revision + 1, messages: [...r.messages, { id: randomUUID(), text, receivedAt: new Date().toISOString() }] });
+    choices.observe(owner, request, 'source', addresses); choices.present(owner, request, 'source');
+    assert(choices.ready(owner, request, 'source', addresses));
+    for (const text of ['寄件地址作废', '寄件地址待定', '寄件地址改为未保存的新地址']) {
+      const withdrawn = append(request, text); assert(!choices.ready(owner, withdrawn, 'source', addresses), text);
+      assert.throws(() => choices.select(owner, withdrawn, 'source', addresses, 'Private A', 'sender'), text);
+    }
+    const numbered = append(request, '2寄到1');
+    assert.equal(choices.select(owner, numbered, 'source', addresses, 'Private B', 'sender').addressId, 'b');
+    assert.throws(() => choices.select(owner, numbered, 'source', addresses, 'Private A', 'sender'));
+    const renamed = append(numbered, '寄件改为Private A，收件改为Private B');
+    assert(choices.ready(owner, renamed, 'source', addresses));
+    assert.equal(choices.select(owner, renamed, 'source', addresses, 'Private B', 'recipient').addressId, 'b');
+    // Even before detail selection, the first authenticated book bound the name.
+    const moved = addresses.map(a => a.addressId === 'a' ? { ...a, houseNumber: 'new unit' } : a);
+    choices.observe(owner, request, 'source', moved);
+    assert.throws(() => choices.select(owner, request, 'source', moved, 'Private A', 'sender'));
   } finally { f.store.close(); }
 });

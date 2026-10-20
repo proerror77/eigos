@@ -30,6 +30,9 @@ export interface AgentProgram {
   sourceAuthorization?(owner: string): { provider: string; state: string; nextAction: string } | undefined;
   /** Pure readiness check before spending another model turn; never a source read. */
   assertContext?(ctx: AgentProgramContext): void;
+  /** Pure, deterministic owner-input revision; no provider calls or defaults. */
+  prepareRequest?(request: ServiceRequest): ServiceRequest;
+  validateRequest?(request: ServiceRequest): void;
   clarify?(ctx: AgentProgramContext, message: string): string;
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
   schema(action: string): z.ZodType<Record<string, unknown>>;

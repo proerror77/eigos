@@ -22,9 +22,10 @@ function upsert(graph: OntologyObjectStore, owner: string, type: string, id: str
 export function projectTask(graph: OntologyObjectStore, owner: string, job: Job): void {
   if (job.delegation?.backendVersion !== BACKEND_VERSION || job.service !== 'eigos.delegate') return;
   const request = job.delegation.request;
-  const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
+  const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', paused: 'needs_review', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
   if (job.delegation.outcome?.status === 'unknown' || job.delegation.outcome?.status === 'needs_human') progress.failed = 'needs_review';
-  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: job.delegation.agent?.programRef.id ?? job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
+  const confirmedInputs = request.confirmedInputs ? Object.fromEntries(Object.entries(request.confirmedInputs).map(([key, value]) => [key, { version: value.version, revision: value.revision, fields: value.fields }])) : undefined;
+  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), ...(confirmedInputs ? { confirmedInputs } : {}), revision: request.revision, requestedOutcome: job.delegation.agent?.programRef.id ?? job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
   const saveRequest = (projectionState: string) => {
     const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });

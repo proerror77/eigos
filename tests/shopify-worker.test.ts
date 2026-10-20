@@ -112,7 +112,7 @@ test('Unregistered writes, unconfigured merchants and fabricated IDs cannot disp
       if (bad === 'variant') return decision(ctx, [step('find', 'InspectCatalogVariant', { scope: ctx.state.scope, merchantId: 'coffee', observation: { type: 'CatalogObservation', id: 'invented' }, variantId: ids[0] })]);
       return decision(ctx, [step('bad', bad === 'merchant' ? 'SearchPublicCatalog' : bad, { scope: ctx.state.scope, merchantId: bad === 'merchant' ? 'unapproved' : 'coffee', query: 'coffee', limit: 1 })]);
     });
-    try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'input-required'); assert.equal(t.calls.length, 0); assert.equal(done.delegation!.agent!.feedback.length, 3); assert.equal(done.artifact, undefined); }
+    try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'paused'); assert.equal(t.calls.length, 0); assert.equal(done.delegation!.agent!.feedback.length, 3); assert.equal(done.artifact, undefined); }
     finally { t.store.close(); }
   }
 });
@@ -128,7 +128,7 @@ test('Completion requires an actual current ontology status evaluation', async (
     const observed = observe(ctx, access, false);
     return observed.length ? decision(ctx, [], { selections: [{ observation: observed[0]!.ref, variantIds: [ids[0]] }], rationale: 'Missing evaluation fixture' }) : decision(ctx, [step('find', 'SearchPublicCatalog', { scope: ctx.state.scope, merchantId: 'coffee', query: 'coffee', limit: 1 })]);
   });
-  try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'input-required'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 1); }
+  try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'paused'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 1); }
   finally { t.store.close(); }
 });
 
@@ -162,7 +162,7 @@ test('Lease loss rejects late projection and resumes the durable frontier withou
     release(); await pending;
     assert.equal(t.store.ontology.query(owner, { type: 'CatalogObservation' }).items.length, 0); assert.equal(t.store.intents(owner, job.id)[0]!.state, 'effect_unknown');
     await t.b.coordinator.run(replacement, new AbortController().signal); assert.equal(t.calls.length, 1); assert.equal(t.store.get(owner, job.id).delegation!.agent!.pendingPlanId, undefined);
-    assert.equal(t.store.get(owner, job.id).delegation!.agent!.feedback.at(-1)!.kind, 'action');
+    assert.equal(t.store.get(owner, job.id).delegation!.agent!.feedback.at(-1)!.kind, 'runtime');
   } finally { release?.(); t.store.close(); }
 });
 
@@ -183,7 +183,7 @@ test('Source observations from another task cannot be used as action inputs even
       return decision(ctx, [step('detail', 'InspectCatalogVariant', { scope: ctx.state.scope, merchantId: 'coffee', observation: foreign, variantId: ids[0] })]);
     }), t.store);
     const job = second.submit({ goal: 'Read another Coffee' }); for (let i = 0; i < 4; i++) await second.run();
-    assert.equal(t.store.get(owner, job.id).state, 'input-required'); assert.equal(t.calls.length, 1);
+    assert.equal(t.store.get(owner, job.id).state, 'paused'); assert.equal(t.calls.length, 1);
     const program = new CatalogAgentProgram([merchant], { connector: t.connector }); assert.throws(() => program.initialize(t.store.ontology, 'other-owner', done.delegation!.request, input));
   } finally { t.store.close(); }
 });
@@ -219,7 +219,7 @@ test('A later contradictory observation prevents completing with the older price
   });
   try {
     t.flags.changeAtMerchant = true; const job = t.b.submit({ goal: 'Read Coffee' }), done = await t.finish(job.id);
-    assert.equal(done.state, 'input-required'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 3);
+    assert.equal(done.state, 'paused'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 3);
     assert.match(done.delegation!.agent!.feedback.at(-1)!.message, /later observation disagrees/);
   } finally { t.store.close(); }
 });
@@ -236,15 +236,14 @@ test('The action model cannot search unrelated owner data or read another task o
   finally { t.store.close(); }
 });
 
-test('An expired execution window pauses before model/source calls and resumes the SAME task after input', async () => {
+test('An expired window with verified progress rolls over the SAME task without an owner reply', async () => {
   const t = setup(); try {
     const job = t.b.submit({ goal: 'Read Coffee' }); await t.b.run();
     const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); current.delegation!.executionBudget!.window.startedAt = current.createdAt; t.store.save(owner, current);
     const coordinator = new Coordinator(t.store, model(), t.catalog, { maxTaskMs: 1000 }), claim = t.store.claim(['eigos.delegate'], 15000)!;
     await coordinator.run(claim, new AbortController().signal);
-    let done = t.store.get(owner, job.id); assert.equal(done.state, 'input-required'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
-    assert.equal(done.delegation!.executionBudget!.paused!.resource, 'time');
-    t.b.tasks.reply(principal, { taskId: job.id, requestId: 'continue-expired-window', answer: '继续原任务' });
+    let done = t.store.get(owner, job.id); assert.equal(done.state, 'working'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
+    assert.equal(done.delegation!.executionBudget!.window.reason, 'automatic'); assert.equal(done.delegation!.request.messages.length, 1);
     for (let n = 0; n < 10; n++) {
       const next = t.store.claim(['eigos.delegate'], 15000); if (!next) break;
       await coordinator.run(next, new AbortController().signal);

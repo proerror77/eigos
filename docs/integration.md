@@ -10,7 +10,7 @@
 
 ## MCP
 
-远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
+远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`amend_task`、`resume_task`、`get_member_usage`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
 
 N1 增加三个只读工具：`describe_ontology`（services:read）、`query_ontology`、`evaluate_ontology`（tasks:read）。对应认证 HTTP POST 为 `/ontology/describe`、`/ontology/query`、`/ontology/evaluate`；均按同一 owner 隔离。支持类型／接口发现、分页对象集、单跳关系和登记计算，不开放对象写入或业务 Action。输入、边界和来源投影见 [N1 使用说明](ontology-n1.md)。现有 PA 的任务提交、补问及读回方式保持。
 
@@ -25,18 +25,22 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 缺项返回 `input-required` 和具体问题。按用户选择回复同一任务：
 
 ```json
-{"taskId":"返回的任务UUID","answer":"寄件用地址1，收件用地址2。","requestId":"stable-reply-id"}
+{"taskId":"返回的任务UUID","expectedRevision":1,"answer":"寄件用地址1，收件用地址2。","requestId":"stable-reply-id"}
 ```
 
 地址选项来自真实本人地址簿，按任务私有保存。PA 不自行猜选地址、不索取内部地址 ID，不另建一个报价任务。用户未提供的物品、重量或服务由同一任务补问。已确认的编号绑定本人当时看到的列表；续期后仍须读取当前地址簿，所选地址的 ID 和内容一致才可沿用。无关地址增删或列表重排不要求重复选择；所选地址改变、匹配含糊或身份连续性无法确认时才重新询问。
 
-任务执行预算与支付金额无关。提交可带 `executionBudget: "standard"`（默认）或 `"extended"`。原任务等待输入时，回复可带 `executionBudget: "extended"` 提高执行上限，例如：
+`expectedRevision` 必须来自当时展示的问题或当前任务读回；旧版本回复被拒绝，不自动绑定到后来的问题。用户主动更正已知信息时，用 `amend_task` 和同样参数更新仍开放的只读任务；最新明确事实覆盖旧值，未更正字段及历史来源保留。业务计划固定后仍走原有处理边界。
+
+任务执行预算与支付金额无关。提交可带 `executionBudget: "standard"`（默认）或 `"extended"`。技术故障自动在同一任务重试；连续三次相同故障暂停为 `paused`，不再索取业务答案。运行条件修复后使用 `resume_task`，必要时扩大任务档位：
 
 ```json
-{"taskId":"原任务UUID","answer":"保留已确认的信息，使用长任务预算继续。","executionBudget":"extended","requestId":"stable-budget-reply-id"}
+{"taskId":"原任务UUID","expectedRevision":3,"executionBudget":"extended","requestId":"stable-resume-id"}
 ```
 
-有效补充或来源恢复只开启新的有限执行窗口，不删除累计用量，也不授予业务写权限。`get_task` 的 `delegation.executionBudgetStatus` 返回当前档位、单段和累计上限、已用次数及暂停原因。单段到限后在原任务继续；重复回复或凭据刷新不会清空累计次数，PA 不得用新建替代任务规避上限。具体上限、身份连续性和恢复边界见[任务恢复说明](task-recovery-2026-10-20.md)。
+`resume_task` 不接受 answer、不追加用户确认、不改变业务请求版本。有效补充、来源恢复、技术恢复以及有实质进展的单段续办可开启有限窗口，不删除累计用量，也不授予业务写权限。`get_task` 的 `delegation.executionBudgetStatus` 返回当前档位、单段和累计上限、已用次数及暂停原因；PA 不得用新建替代任务规避累计限制。具体上限、身份连续性和恢复边界见[任务恢复说明](task-recovery-2026-10-20.md)。
+
+`get_member_usage` 需要 `tasks:read`，按当前认证会员汇总其任务和不同安装的用量，不接受其他会员 ID。`get_task.memberUsage` 返回同样统计。当前 `limitsEnforced=false`，不设会员额度上限、余额或重置周期；任务防失控上限仍生效。已报告模型 token、未报告用量的尝试、供应商动作次数分开计数；外部 PA 自己的模型用量不在此账本中。
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
@@ -56,9 +60,9 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 {"jsonrpc":"2.0","id":"rpc-1","method":"SendMessage","params":{"configuration":{"returnImmediately":true},"message":{"messageId":"stable-submit-id","role":"ROLE_USER","parts":[{"text":"帮我查1公斤文件普通送运费，先列出保存地址让我选。只查价。"}]}}}
 ```
 
-后续 SendMessage 带原 taskId，以新的 messageId 回复自然语言。也可使用单个 data part 携带与 MCP 相同的业务参数。`service`、requirements、executionEnvironment、executionBudget 是 EIGOS 字段，非 A2A 标准必填项。标准协议状态、预算和继续执行规则与 MCP 共用底层任务。
+后续 SendMessage 带原 taskId，以新的 messageId 回复自然语言，并在 `message.metadata.expectedRevision` 绑定问题版本。单个 data part 则在 data 中携带 `expectedRevision`。更正使用 `message.metadata.taskOperation="amend"`；技术恢复使用 `"resume"` 和只含 `expectedRevision`、可选 `executionBudget` 的 data part。`service`、requirements、executionEnvironment、executionBudget、taskOperation 是 EIGOS 字段，非 A2A 标准必填项。标准协议状态、预算和继续执行规则与 MCP 共用底层任务。
 
-异步 submitted／working 继续查询同一个 taskId；有界 poll 超时不代表执行失败。input-required 转述问题并等待用户；auth-required 只能经独立授权 API 处理精确的本地模拟方案，普通“同意”回复不授予业务许可。相同请求 ID 重试必须保持原内容，不能用新任务替换结果不明的原操作。
+异步 submitted／working 继续查询同一个 taskId；有界 poll 超时不代表执行失败。A2A 标准状态仍为 WORKING 时，若 `metadata.internalState="paused"` 则等待运行修复后恢复，不询问已有业务信息；详情在 `metadata.delegation.recovery`。input-required 只补真正缺失的信息；auth-required 按来源连接或精确的模拟方案走独立授权 API，普通“同意”回复不授予业务许可。相同请求 ID 重试必须保持原内容，不能用新任务替换结果不明的原操作。GetTask 的 `metadata.memberUsage` 提供本人累计用量。
 
 不提供流式响应或推送通知；客户端轮询。取消 Task 阻止后续工作，不表示供应商订单取消。当前现实订单、支付、取消和退款全部禁止。
 

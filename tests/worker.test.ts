@@ -41,9 +41,9 @@ test('two database connections: exclusive claims, durable queue, expiry fencing 
     const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'one' });
     const claim = a.claim(['eigos.delegate'], 100, 1000)!; assert(claim);
     assert.equal(b.claim(['eigos.delegate'], 100, 1001), undefined);
-    // Expired started work becomes unknown/failed rather than being run again.
+    // The old lease is fenced; pre-dispatch technical recovery retains the original task.
     assert.equal(b.claim(['eigos.delegate'], 100, 1101), undefined);
-    assert.equal(tasks.get(principal, job.id).state, 'failed');
+    assert.equal(tasks.get(principal, job.id).state, 'working'); assert.equal(tasks.get(principal, job.id).delegation?.recovery?.state, 'scheduled');
     assert.equal(a.finish(claim, current => { current.state = 'completed'; }, 1102), false);
     assert.equal(a.renew(claim, 100, 1102), false);
     assert.equal(tasks.get(principal, job.id).artifact, undefined);
@@ -115,7 +115,7 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     const asked = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'input-required');
     assert.equal(asked.runs?.filter(r => r.purpose === 'document').length, 1); assert.equal(asked.question, 'Fixture question?');
     await call('submit_task', input); assert.equal(events.filter(e => e.event === 'started' && e.taskId === submitted.id).length, 1);
-    const reply = { messageId: 'answer', taskId: submitted.id, role: 'ROLE_USER', parts: [{ text: '90 minutes' }] };
+    const reply = { messageId: 'answer', taskId: submitted.id, metadata: { expectedRevision: asked.revision }, role: 'ROLE_USER', parts: [{ text: '90 minutes' }] };
     const response = await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply }); assert(!response.error, JSON.stringify(response));
     await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply });
     const done = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'completed');

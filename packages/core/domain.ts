@@ -49,15 +49,18 @@ const answerReplySchema = z.object({
   taskId: taskIdSchema,
   answer: z.string().trim().min(1).max(4_000),
   requestId: requestIdSchema,
+  expectedRevision: z.number().int().positive().optional(),
   requirements: requirementsSchema.optional(),
   executionBudget: z.literal('extended').optional(),
 }).strict();
 export const replySchema = answerReplySchema;
+export const versionedReplySchema = answerReplySchema.extend({ expectedRevision: z.number().int().positive() });
+export const resumeTaskSchema = z.object({ taskId: taskIdSchema, requestId: requestIdSchema, expectedRevision: z.number().int().positive(), executionBudget: z.literal('extended').optional() }).strict();
 export const ontologySubmitSchema = submitSchema;
 export type SubmitInput = z.infer<typeof submitSchema>;
 export type ReplyInput = z.infer<typeof replySchema>;
 
-export type JobState = 'submitted' | 'auth-required' | 'rejected' | 'working' | 'input-required' | 'completed' | 'canceled' | 'failed';
+export type JobState = 'submitted' | 'auth-required' | 'rejected' | 'working' | 'paused' | 'input-required' | 'completed' | 'canceled' | 'failed';
 export interface JobMessage {
   id: string;
   role: 'user' | 'agent';
@@ -78,6 +81,7 @@ export interface Job {
   question?: string;
   artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'completed'; markdown?: string; result?: object } };
   runs?: RunEvidence[];
+  memberUsage?: import('./member-usage.js').MemberUsage;
   revision?: number;
   error?: string;
   messages: JobMessage[];

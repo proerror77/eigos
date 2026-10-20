@@ -32,7 +32,7 @@ test('three identical interpretation failures stop safely with no guessed weight
   const f = setup(), model: Reasoner = { ...paotuiModel(), ground: async r => ({ decision: value(r, 'wrong-mass'), evidence: evidence() }) };
   try {
     const b = backend(f.catalog, model, f.store), job = b.submit({ goal }); for (let i = 0; i < 3; i++) await b.run();
-    const paused = f.store.get(owner, job.id); assert.equal(paused.state, 'input-required'); assert.equal(paused.delegation!.groundingFeedback!.length, 3); assert.equal(f.calls.length, 0); assert.equal(paused.delegation!.request.requirements.length, 0); assert(!paused.artifact);
+    const paused = f.store.get(owner, job.id); assert.equal(paused.state, 'paused'); assert.equal(paused.question, undefined); assert.equal(paused.delegation!.groundingFeedback!.length, 3); assert.equal(f.calls.length, 0); assert.equal(paused.delegation!.request.requirements.length, 0); assert(!paused.artifact);
   } finally { f.store.close(); }
 });
 

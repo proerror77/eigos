@@ -3,7 +3,7 @@ import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/ser
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
+import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 
 export class AgentUser implements User {
@@ -20,6 +20,7 @@ const states: Record<JobState, TaskState> = {
   completed: TaskState.TASK_STATE_COMPLETED,
   canceled: TaskState.TASK_STATE_CANCELED,
   working: TaskState.TASK_STATE_WORKING,
+  paused: TaskState.TASK_STATE_WORKING,
   failed: TaskState.TASK_STATE_FAILED,
 };
 
@@ -37,14 +38,14 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { service: job.service, revision: job.revision, internalState: job.state, ...(job.memberUsage ? { memberUsage: job.memberUsage } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
@@ -107,12 +108,18 @@ export class A2AGateway implements A2ARequestHandler {
         input = parts[0].content.value;
       } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
         const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text } : { goal: text, service: 'eigos.delegate' };
+        input = message.taskId ? { answer: text, expectedRevision: message.metadata?.expectedRevision } : { goal: text, service: 'eigos.delegate' };
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
+      if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        const answer = replySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-        job = this.tasks.reply(p, answer, message.contextId || undefined);
+        if (message.metadata?.taskOperation === 'resume') {
+          const resume = resumeTaskSchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
+          job = this.tasks.resume(p, resume, message.contextId || undefined);
+        } else {
+          const answer = versionedReplySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
+          job = message.metadata?.taskOperation === 'amend' ? this.tasks.amend(p, answer, message.contextId || undefined) : this.tasks.reply(p, answer, message.contextId || undefined);
+        }
       } else {
         const data = submitSchema.parse({ ...(input as object), requestId: message.messageId });
         job = this.tasks.submit(p, { ...data, requestId: message.messageId }, message.contextId || undefined);

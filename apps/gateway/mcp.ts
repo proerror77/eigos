@@ -4,7 +4,7 @@ import { sourceBeginSchema, sourceRevokeSchema } from '../../packages/core/membe
 import { mountNetworkMcp } from './network/mcp.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
+import { DomainError, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
@@ -54,19 +54,31 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => tasks.submit(principal, args)));
   server.registerTool('get_task', {
-    description: 'Read an owned task, its pending question and artifacts. Works for tasks created through MCP or A2A.',
+    description: 'Read an owned task, current revision, pending question and artifacts. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(), annotations: read,
   }, ({ taskId }) => result(() => tasks.get(principal, taskId)));
+  server.registerTool('get_member_usage', {
+    description: 'Read only the authenticated member’s recorded EIGOS Worker usage across tasks. Member limits are disabled. Unknown/unreported usage is separate; task safety budgets still apply.',
+    inputSchema: z.object({}).strict(), annotations: read,
+  }, () => result(() => tasks.usage(principal)));
   server.registerTool('list_tasks', {
     description: 'List tasks owned by the authenticated user within the authenticated organization.',
     inputSchema: z.object({ limit: z.number().int().min(1).max(100).default(50), offset: z.number().int().min(0).max(1_000_000).default(0) }).strict(),
     annotations: read,
   }, args => result(() => tasks.list(principal, args)));
   server.registerTool('reply_to_task', {
-    description: 'Supply missing information or continue the SAME owned task waiting for input. Established facts and cumulative usage remain; a valid reply opens a bounded execution window. executionBudget=extended can increase its execution allowance without replacing the task. A reply never grants business authorization. Reuse requestId only for identical retries.',
-    inputSchema: replySchema,
+    description: 'Answer the current owned task question using expectedRevision from get_task. A later explicit correction replaces the corresponding old value and retains unchanged facts. Technical pauses use resume_task, not a fabricated owner reply. A reply never grants business authorization. Reuse requestId only for identical retries.',
+    inputSchema: versionedReplySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));
+  server.registerTool('amend_task', {
+    description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
+    inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.amend(principal, args)));
+  server.registerTool('resume_task', {
+    description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
+    inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.resume(principal, args)));
   server.registerTool('cancel_task', {
     description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),

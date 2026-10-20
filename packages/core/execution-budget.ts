@@ -12,13 +12,14 @@ type Counts = { modelTurns: number; plans: number; actions: number };
 export interface ExecutionBudget {
   version: '1';
   profile: ExecutionBudgetProfile;
-  window: { sequence: number; reason: 'initial' | 'input' | 'source'; requestRevision: number; startedAt: string; baseline: Counts };
+  window: { sequence: number; reason: 'initial' | 'input' | 'source' | 'automatic' | 'recovery'; requestRevision: number; startedAt: string; baseline: Counts; progressBaseline?: number };
   paused?: { resource: keyof Counts | 'time' | 'reasoning'; scope: 'window' | 'task'; at: string };
 }
 const profiles = {
   standard: { window: { modelTurns: 32, plans: 8, actions: 16 }, task: { modelTurns: 128, plans: 32, actions: 64 }, groundingTurns: 12 },
   extended: { window: { modelTurns: 64, plans: 16, actions: 32 }, task: { modelTurns: 256, plans: 64, actions: 128 }, groundingTurns: 32 },
 } as const;
+const progressCount = (job: Job) => job.delegation!.events.filter(e => ['agent_scope_initialized', 'agent_scope_resumed', 'agent_observation_projected', 'ontology_plan_validated'].includes(e.event)).length;
 export function executionCounts(job: Job): Counts {
   const states = [...(job.delegation?.agentHistory ?? []), ...(job.delegation?.agent ? [job.delegation.agent] : [])];
   const plans = [...new Map(states.flatMap(state => state.plans).map(plan => [plan.id, plan])).values()];
@@ -39,13 +40,13 @@ export function remainingModelTurns(job: Job): number {
   const s = executionBudgetStatus(job);
   return Math.max(0, Math.min(s.limits.window.modelTurns - s.windowUsed.modelTurns, s.limits.task.modelTurns - s.used.modelTurns));
 }
-/** Only an accepted owned input or source-resume transition starts a new window.
+/** Accepted input, verified recovery or new progress can start a bounded window.
  * Actual runs, plans and attempts remain in their original ledgers. */
-export function continueExecutionBudget(job: Job, reason: 'input' | 'source', profile?: ExecutionBudgetProfile) {
+export function continueExecutionBudget(job: Job, reason: 'input' | 'source' | 'automatic' | 'recovery', profile?: ExecutionBudgetProfile) {
   const d = job.delegation!, old = d.executionBudget ?? initialExecutionBudget(job.createdAt);
   const chosen = old.profile === 'extended' || profile === 'extended' ? 'extended' : 'standard';
   d.executionBudget = { version: '1', profile: chosen, window: { sequence: old.window.sequence + 1, reason, requestRevision: d.request.revision,
-    startedAt: job.updatedAt, baseline: executionCounts(job) } };
+    startedAt: job.updatedAt, baseline: executionCounts(job), progressBaseline: progressCount(job) } };
   d.events.push({ at: job.updatedAt, event: 'execution_window_resumed', evidence: `${reason}:${d.executionBudget.window.sequence}:${chosen}` });
 }
 export function executionBudgetExceeded(job: Job, resource: keyof Counts, additional = 0): 'window' | 'task' | undefined {
@@ -56,15 +57,24 @@ export function executionBudgetExceeded(job: Job, resource: keyof Counts, additi
 export function pauseExecutionBudget(job: Job, resource: keyof Counts | 'time' | 'reasoning', scope: 'window' | 'task') {
   const d = job.delegation!, at = new Date().toISOString();
   d.executionBudget ??= initialExecutionBudget(job.createdAt);
+  const status = executionBudgetStatus(job);
+  const progress = progressCount(job) > (status.window.progressBaseline ?? 0);
+  if (scope === 'window' && resource !== 'reasoning' && progress && status.limits.task.modelTurns - status.used.modelTurns >= MIN_REASONING_TURNS
+    && status.used.plans < status.limits.task.plans && status.used.actions < status.limits.task.actions) {
+    job.updatedAt = at; continueExecutionBudget(job, 'automatic');
+    job.state = 'working'; d.phase = d.agent ? 'planning' : d.plan ? 'executing' : 'grounding'; d.nextAt = 0;
+    delete job.question; delete job.error;
+    return;
+  }
   d.executionBudget.paused = { resource, scope, at };
-  job.state = 'input-required'; d.phase = 'clarifying'; d.nextAt = 0; job.updatedAt = at;
-  job.question = scope === 'task'
+  job.state = 'paused'; d.phase = 'paused'; d.nextAt = 0; job.updatedAt = at; delete job.question;
+  const message = scope === 'task'
     ? d.executionBudget.profile === 'extended'
-      ? '任务已到扩展预算的累计上限，已确认的信息和历史记录均保留。需要明确调整执行预算策略才能继续，重复回复不会重置累计用量。'
-      : '任务已到累计执行上限，已确认的信息和历史记录均保留。可为原任务选择较长执行预算后继续；无需重新提交或重复填写业务信息。'
+      ? '任务已到防失控累计上限，保留原任务与确认信息，等待调整执行策略；会员用量没有上限。'
+      : '任务已到防失控累计上限，可为原任务扩展执行策略后继续，无需补充业务信息。'
     : resource === 'reasoning'
-      ? '本次推理未在有限轮次内形成可执行决策，已确认的信息和历史记录均保留。可以在原任务继续，无需重新提交。'
-      : '本段自动执行剩余额度不足，已确认的信息和历史记录均保留。可以在原任务继续；较长任务可选择扩展执行预算。';
+      ? '本次推理未形成有效决策，保留原任务，等待运行恢复。'
+      : '本段执行未取得足够新进展，保留原任务，等待运行恢复；无需重复确认业务信息。';
   d.events.push({ at, event: 'execution_budget_paused', evidence: `${scope}:${resource}` });
-  job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at });
+  job.messages.push({ id: randomUUID(), role: 'agent', text: message, at });
 }

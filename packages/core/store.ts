@@ -12,6 +12,9 @@ import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSale
 import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
+import { scheduleTaskRecovery } from './task-recovery.js';
+import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
+import type { RunEvidence } from '../capabilities/executor.js';
 
 export interface ListFilter {
   limit: number;
@@ -83,6 +86,7 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS personal_source_binding (slot TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, configuration_digest TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
+      initializeMemberUsage(this.db);
     });
     this.ontology = new OntologyObjectStore(this.db);
     initializeMemberSources(this.db);
@@ -101,6 +105,14 @@ export class JobStore {
   }
   personalSourceAdmitted(c: PersonalSource, configurationDigest: string): boolean { return personalSourceAdmitted(this.db, c, configurationDigest); }
   close(): void { this.db.close(); }
+  memberUsage(owner: string) { return memberUsage(this.db, owner); }
+  beginModelUsage(claim: WorkClaim, id: string, runtime: string, startedAt: string) {
+    this.transaction(() => { if (!this.active(claim, Date.now())) throw new DomainError('CONFLICT', 'Model dispatch lease is no longer active'); beginModelUsage(this.db, claim.owner, claim.job.id, id, runtime, startedAt, digest(claim.token)); });
+  }
+  finishModelUsage(claim: WorkClaim, id: string, evidence: RunEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
+    this.transaction(() => finishModelUsage(this.db, claim.owner, claim.job.id, id, evidence, outcome));
+  }
+  recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.get(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
     this.get(owner, jobId);
@@ -329,10 +341,11 @@ export class JobStore {
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
   // Expired calls are never automatically replayed: their external outcome is unknown.
   private expireClaims(now: number): void {
-    const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision FROM work_claims c
+    const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision,c.token AS claim_token FROM work_claims c
       JOIN jobs j ON j.id=c.job_id WHERE c.expires_at<=?`).all(now);
     for (const row of rows) {
       const job = JSON.parse(String(row.body)) as Job;
+      markModelUsageUnknown(this.db, String(row.owner), job.id, digest(String(row.claim_token)));
       if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
       if ((job.delegation?.plan || job.delegation?.agent) && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
@@ -342,8 +355,8 @@ export class JobStore {
         job.updatedAt = new Date(now).toISOString(); this.save(owner, job); continue;
       }
       if (job.state !== 'working' || (job.revision ?? 0) !== Number(row.revision)) continue;
-      job.state = 'failed'; job.error = 'Worker lease expired; execution outcome is unknown. Inspect evidence before submitting a new task.';
-      job.updatedAt = new Date(now).toISOString(); this.save(String(row.owner), job);
+      scheduleTaskRecovery(job, 'worker_interrupted', '运行进程中断，已保留原任务，恢复后继续处理。', { now });
+      this.save(String(row.owner), job);
     }
     this.db.prepare('DELETE FROM work_claims WHERE expires_at<=?').run(now);
   }

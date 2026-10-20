@@ -7,12 +7,13 @@ import { authorizationRequest, createSandboxGrant, requiredEffects } from './pol
 import { createActionIntents } from '../coordinator/runtime.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { DomainError, ownerKey, replySchema, requireScope, submitSchema, taskIdSchema, remediationSchema, type Job, type Principal } from './domain.js';
+import { DomainError, ownerKey, replySchema, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, taskIdSchema, remediationSchema, type Job, type Principal } from './domain.js';
 import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
+import { canRecoverReadOnly } from './task-recovery.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -32,7 +33,7 @@ export class TaskService {
       if (job.service !== DELEGATE || d?.backendVersion !== BACKEND_VERSION || job.state !== 'auth-required' || !d.sourceAuthorization || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Task is not waiting for this source authorization');
       assertConnected(owner);
       const intents = this.store.intents(owner, job.id);
-      if (intents.some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
+      if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
       // Retain confirmed reads and their provenance. Only unfinished execution is
       // canceled; the next scope cannot reuse an old observation or attempt.
       this.store.cancelActions(owner, job.id);
@@ -99,7 +100,27 @@ export class TaskService {
     return submitted;
   }
 
-  reply(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }): Job {
+  amend(p: Principal, input: unknown, contextId?: string): Job { return this.reply(p, versionedReplySchema.parse(input), contextId, undefined, true); }
+
+  resume(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), d = job.delegation;
+      if (contextId && contextId !== job.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+      if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
+      if (!canRecoverReadOnly(job, this.store.intents(owner, job.id))) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
+      job.updatedAt = new Date().toISOString(); job.revision = (job.revision ?? 0) + 1;
+      continueExecutionBudget(job, 'recovery', args.executionBudget);
+      if (remainingModelTurns(job) < MIN_REASONING_TURNS) throw new DomainError('CONFLICT', 'Task safety budget requires a policy change; confirmed facts must not be resubmitted');
+      if (d.recovery) { d.recovery.state = 'scheduled'; d.recovery.retryAt = job.updatedAt; d.recovery.nextAction = 'wait_for_retry'; }
+      job.state = 'working'; d.phase = 'recovering'; d.nextAt = 0; delete job.question; delete job.error;
+      d.events.push({ at: job.updatedAt, event: 'technical_resume_requested' });
+      this.store.save(owner, job); return job;
+    });
+  }
+
+  reply(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }, amendment = false): Job {
     requireScope(p, 'tasks:write');
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
@@ -108,13 +129,21 @@ export class TaskService {
     if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
     if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
-    const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+    const replied = this.store.once(owner, `${amendment ? 'amend' : 'reply'}:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
       // The browser's displayed question must still be current under the write lock.
       if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
+      if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
-      if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
-      if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
+      const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
+      if (amendment) {
+        if (/^(?:请|帮我)?(?:继续|重试|恢复|再试一次|resume|retry|continue)[。.!！\s]*$/iu.test(args.answer.trim())) throw new DomainError('INVALID_INPUT', 'Technical continuation uses resume_task and must not become a new business confirmation');
+        if (!['submitted', 'working', 'input-required', 'paused', 'auth-required'].includes(job.state) || job.state === 'auth-required' && !keepSourceWait || job.delegation?.plan
+          || this.store.intents(owner, job.id).some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('CONFLICT', 'Only an open read-only task may accept a versioned correction; fixed business operations retain their reconciliation boundary');
+      } else {
+        if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
+        if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
+      }
       job.updatedAt = new Date().toISOString();
       job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
       if (job.service === DELEGATE) {
@@ -131,6 +160,7 @@ export class TaskService {
           this.store.save(owner, job); return job;
         }
         const request = job.delegation!.request;
+        const previousProgram = job.delegation!.agent?.programRef ?? job.delegation!.suspendedAgent?.programRef;
         delete job.delegation!.suspendedAgent;
         if (job.delegation!.agent) {
           this.store.cancelActions(owner, job.id);
@@ -141,12 +171,15 @@ export class TaskService {
         for (const r of args.requirements ?? []) {
           const previous = request.requirements.findIndex(x => x.id === r.id);
           const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };
-          if (previous < 0) request.requirements.push(next); else request.requirements[previous] = next;
+          if (previous < 0) request.requirements.push(next); else { request.supersededRequirements = [...(request.supersededRequirements ?? []), request.requirements[previous]!]; request.requirements[previous] = next; }
         }
         if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
+        if (previousProgram) job.delegation!.request = this.options.catalog.agentProgram(previousProgram, owner)?.prepareRequest?.(request) ?? request;
         job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
         continueExecutionBudget(job, 'input', args.executionBudget);
         if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
+        if (job.delegation!.recovery) { job.delegation!.recoveryHistory = [...(job.delegation!.recoveryHistory ?? []), job.delegation!.recovery!]; delete job.delegation!.recovery; }
+        if (keepSourceWait) { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; }
       }
       this.store.save(owner, job);
       return job;
@@ -158,6 +191,7 @@ export class TaskService {
     requireScope(p, 'tasks:read');
     return this.view(ownerKey(p), this.store.get(ownerKey(p), taskIdSchema.parse(id)));
   }
+  usage(p: Principal) { requireScope(p, 'tasks:read'); return this.store.memberUsage(ownerKey(p)); }
 
   list(p: Principal, filter: ListFilter): { jobs: Job[]; total: number } {
     requireScope(p, 'tasks:read');
@@ -285,6 +319,7 @@ export class TaskService {
     });
   }
   private view(owner: string, job: Job): Job {
+    job.memberUsage = this.store.memberUsage(owner);
     if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.executionBudget) job.delegation.executionBudgetStatus = executionBudgetStatus(job);
     if (job.delegation?.backendVersion === BACKEND_VERSION && (job.delegation.plan || job.delegation.agent || job.delegation.agentHistory?.length)) {
       const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);

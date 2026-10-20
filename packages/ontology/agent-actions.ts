@@ -29,7 +29,7 @@ export interface AgentExecutionState {
   input: Record<string, unknown>; requestRevision: number;
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
-  feedback: { at: string; kind: 'validation' | 'action' | 'completion'; message: string; inputDigest: string }[];
+  feedback: { at: string; kind: 'validation' | 'action' | 'completion' | 'runtime'; message: string; inputDigest: string }[];
   completion?: { modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
 }
 export const agentObjectRefSchema = objectRefSchema;

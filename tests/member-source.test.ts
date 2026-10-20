@@ -147,7 +147,7 @@ test('JWT network inquiry uses the existing real reader path, preserves one Task
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.a.token}` } } }));
     const asked = await client.callTool({ name: 'get_task', arguments: { taskId } }); assert(!asked.isError); assert(JSON.stringify(asked).includes('PRIVATE_TEST_ORIGIN'));
     const denied = await f.call('/a2a', { jsonrpc: '2.0', id: 'foreign', method: 'GetTask', params: { id: taskId } }, { Authorization: `Bearer ${f.b.token}`, 'A2A-Version': '1.0' }); assert((await denied.json()).error);
-    const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
+    const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId, metadata: { expectedRevision: f.gateway.tasks.get(f.a.p, taskId).revision }, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
     assert.equal((await reply.json()).result.task.id, taskId); await run();
     const done = f.gateway.tasks.get(f.a.p, taskId); assert.equal(done.state, 'completed'); assert(done.delegation?.acceptance?.accepted);
     assert(done.delegation!.agent!.completion); assert.equal(done.delegation!.agent!.programRef.version, '3');

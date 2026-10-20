@@ -121,12 +121,12 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 11);
+    assert.equal(catalog.tools.length, 14);
     for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });
     assert.equal(job.state, 'input-required');
     assert(job.question);
-    const reply = await rpc('SendMessage', { message: { messageId: randomUUID(), taskId: job.id, role: 'ROLE_USER', parts: [{ text: 'A comparison table with sources and prices.' }] } }, accessToken);
+    const reply = await rpc('SendMessage', { message: { messageId: randomUUID(), taskId: job.id, metadata: { expectedRevision: job.revision }, role: 'ROLE_USER', parts: [{ text: 'A comparison table with sources and prices.' }] } }, accessToken);
     assert.equal(reply.status, 200);
     assert.equal(reply.body.result.task.id, job.id);
     assert.equal(reply.body.result.task.status.state, 'TASK_STATE_COMPLETED');
@@ -148,7 +148,7 @@ test('official A2A client discovers and submits; MCP can continue its task', asy
   assert.equal(sent.status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
   const mcpClient = await mcp(accessToken);
   try {
-    await tool(mcpClient, 'reply_to_task', { taskId: sent.id, answer: 'A one-page agenda.', requestId: randomUUID() });
+    await tool(mcpClient, 'reply_to_task', { taskId: sent.id, expectedRevision: sent.metadata?.revision, answer: 'A one-page agenda.', requestId: randomUUID() });
     const completed = await client.getTask(GetTaskRequest.fromJSON({ id: sent.id, historyLength: 0 }), {
       serviceParameters: { Authorization: `Bearer ${accessToken}` },
     });
@@ -213,7 +213,7 @@ test('same request retries do not create duplicate tasks and changed input confl
   const conflict = await rpc('SendMessage', { message: { ...params.message, parts: [{ text: 'Changed goal' }] } }, accessToken);
   assert(conflict.body.error);
   const responseId = randomUUID();
-  const reply = { message: { messageId: responseId, taskId: first.body.result.task.id, role: 'ROLE_USER', parts: [{ text: 'A brief' }] } };
+  const reply = { message: { messageId: responseId, taskId: first.body.result.task.id, metadata: { expectedRevision: first.body.result.task.metadata.revision }, role: 'ROLE_USER', parts: [{ text: 'A brief' }] } };
   const done = await rpc('SendMessage', reply, accessToken);
   assert.deepEqual((await rpc('SendMessage', reply, accessToken)).body.result, done.body.result);
 });

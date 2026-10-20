@@ -162,7 +162,7 @@ test('late source invalidation is rejected by the real Worker before a result ca
     const inquiry = f.convert(); f.duringRead(() => { f.duringRead(undefined); f.seller({ operation: 'listing.set_state', listingId: f.listingId, expectedRevision: 3, state: 'paused' }); });
     worker.start(); const until = Date.now() + 3000;
     while (Date.now() < until && ['submitted', 'working'].includes(f.jobs.get(f.owner, inquiry.taskId).state)) await delay(20);
-    assert.equal(f.jobs.get(f.owner, inquiry.taskId).state, 'failed'); assert.equal(f.readCount(), 1); assert.equal(f.alternateReadCount(), 0);
+    assert.equal(f.jobs.get(f.owner, inquiry.taskId).state, 'paused'); assert.equal(f.readCount(), 1); assert.equal(f.alternateReadCount(), 0);
     assert.deepEqual(f.jobs.ontology.query(f.owner, { type: 'DeliveryQuote' }).items, []);
   } finally { await worker.close(); f.close(); }
 });
@@ -171,16 +171,22 @@ test('inquiry cancellation and lease loss preserve the existing Worker fence aga
   for (const mode of ['cancel', 'lease'] as const) {
     const f = inquiryFixture(); const worker = new Worker(f.jobs, { coordinator: new Coordinator(f.jobs, f.model, f.catalog), pollMs: 20, leaseMs: 1000 });
     try {
+      let inspectLate!: () => void;
+      const lateChecked = new Promise<void>(resolve => { inspectLate = resolve; });
+      let lateProjectionCount: number | undefined;
       const inquiry = f.convert(); f.duringRead(() => {
         f.duringRead(undefined);
         if (mode === 'cancel') f.tasks.cancel(f.a.p, inquiry.taskId);
         else f.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=?').run(Date.now() - 1, inquiry.taskId);
+        setTimeout(() => { lateProjectionCount = f.jobs.ontology.query(f.owner, { type: 'DeliveryQuote' }).items.length; inspectLate(); }, 0);
       });
-      worker.start(); const until = Date.now() + 3000;
+      worker.start(); await lateChecked; assert.equal(lateProjectionCount, 0, 'The original lost/canceled lease cannot project its late response');
+      const until = Date.now() + 5000;
       while (Date.now() < until && ['submitted', 'working'].includes(f.jobs.get(f.owner, inquiry.taskId).state)) await delay(20);
-      assert.equal(f.jobs.get(f.owner, inquiry.taskId).state, mode === 'cancel' ? 'canceled' : 'failed');
-      assert.equal(f.readCount(), 1); assert.equal(f.alternateReadCount(), 0);
-      assert.deepEqual(f.jobs.ontology.query(f.owner, { type: 'DeliveryQuote' }).items, []);
+      assert.equal(f.jobs.get(f.owner, inquiry.taskId).state, mode === 'cancel' ? 'canceled' : 'completed');
+      assert.equal(f.readCount(), mode === 'cancel' ? 1 : 3, 'Recovery performs its fresh quote and final acceptance read'); assert.equal(f.alternateReadCount(), 0);
+      assert.equal(f.jobs.get(f.owner, inquiry.taskId).delegation!.request.messages.length, 1);
+      if (mode === 'cancel') assert.deepEqual(f.jobs.ontology.query(f.owner, { type: 'DeliveryQuote' }).items, []);
     } finally { await worker.close(); f.close(); }
   }
 });

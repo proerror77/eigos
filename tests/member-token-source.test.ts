@@ -92,7 +92,7 @@ test('MCP/A2A with real Worker and stdio transport: two members connect their ow
       assert(!res.isError); assert(!res.error); const question = await wait(who, job.id); assert.equal(question.state, 'input-required', JSON.stringify(question));
       assert(question.question?.includes(who === f.a ? 'ALICE_PRIVATE_ORIGIN' : 'BOB_PRIVATE_ORIGIN'));
       assert(!question.question?.includes(who === f.a ? 'BOB_PRIVATE' : 'ALICE_PRIVATE'));
-      const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId: job.id, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${who.token}`, 'A2A-Version': '1.0' });
+      const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId: job.id, metadata: { expectedRevision: question.revision }, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${who.token}`, 'A2A-Version': '1.0' });
       assert.equal((await reply.json()).result.task.id, job.id);
       const done = await wait(who, job.id); assert.equal(done.state, 'completed', JSON.stringify(done)); assert(done.delegation?.acceptance?.accepted);
       const text = JSON.stringify(done); assert(text.includes(who === f.a ? '1250' : '2350')); for (const token of Object.values(sourceTokens)) assert(!text.includes(token));
@@ -173,7 +173,7 @@ for (const rotateToken of [false, true]) test(`input completion and actual sourc
     assert.equal(interpretations, groundingBeforeResume, 'A credential-only continuation retains the validated interpretation');
     assert.deepEqual(done.runs!.slice(0, retainedRuns.length).map(r => r.id), retainedRuns);
     assert.equal(done.delegation!.executionBudget!.window.sequence, response.delegation.executionBudget.window.sequence);
-    assert.equal(done.messages.filter(m => m.role === 'agent' && m.text.includes('请选择寄件')).length, 1, 'No repeated address confirmation');
+    assert.equal(done.messages.filter(m => m.role === 'agent' && m.text.includes('本人保存地址')).length, 1, 'No repeated address confirmation');
     assert.equal(f.gateway.tasks.list(f.a.p, { limit: 10, offset: 0 }).total, 1);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
     const books = done.delegation!.agent!.observations.map(ref => f.gateway.store.ontology.readPrivate(ownerKey(f.a.p), ref).properties.privateSnapshot as any).filter(o => o.action === 'ReadSavedAddresses');

@@ -31,7 +31,7 @@ export const quoteChoice: Choice = (ctx, access) => {
   const observations = observe(ctx, access), book = observations.find(o => o.summary.action === 'ReadSavedAddresses'), quote = observations.find(o => o.summary.action === 'PreviewDeliveryQuote');
   if (quote) return decide(ctx, [], { observation: quote.ref, rationale: 'The owner selected this current quote' });
   if (!book) return decide(ctx, [step('book', 'ReadSavedAddresses', { scope: ctx.state.scope })]);
-  if (ctx.state.feedback.length || !ctx.request.messages.some(m => m.text.includes('1寄到2'))) return { ...decide(ctx), kind: 'clarify', message: '请选择寄件和收件地址。[[saved_addresses]]' };
+  if (ctx.state.feedback.some(f => f.kind !== 'runtime') || !ctx.request.messages.some(m => m.text.includes('1寄到2'))) return { ...decide(ctx), kind: 'clarify', message: '请选择寄件和收件地址。[[saved_addresses]]' };
   return decide(ctx, [
     step('sender', 'ReadSavedAddressDetail', { scope: ctx.state.scope, book: book.ref, selector: '1', role: 'sender' }),
     step('recipient', 'ReadSavedAddressDetail', { scope: ctx.state.scope, book: book.ref, selector: '2', role: 'recipient' }),
