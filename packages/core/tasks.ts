@@ -1,4 +1,4 @@
-import { DELEGATE } from './delegation.js';
+import { DELEGATE, digest } from './delegation.js';
 import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
 import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import { proposePlan, validatePlan } from '../coordinator/plan.js';
@@ -13,7 +13,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
-import { paPaymentReportSchema, verifyPAPaymentRequest } from './pa-payment.js';
+import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
+import { readBookingObservation } from '../ontology/booking-functions.js';
+import { bookingDataSchema, bookingPaymentDataSchema } from '../ontology/booking.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -79,7 +81,7 @@ export class TaskService {
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
-      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
+      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
@@ -130,6 +132,40 @@ export class TaskService {
   get(p: Principal, id: string): Job {
     requireScope(p, 'tasks:read');
     return this.view(ownerKey(p), this.store.get(ownerKey(p), taskIdSchema.parse(id)));
+  }
+
+  selectPaymentRoute(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = paPaymentRouteSchema.parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `pa-route:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION || job.state !== 'input-required' || job.delegation.phase !== 'awaiting_pa_payment') throw new DomainError('CONFLICT', 'Payment route selection requires the original waiting task');
+      if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+      const payment = verifyPAPaymentRequest(job, owner);
+      if (payment.request.id !== args.handoffId || payment.request.digest !== args.handoffDigest) throw new DomainError('CONFLICT', 'Payment route must reference the exact original handoff');
+      const program = this.options.catalog.agentProgram(job.delegation.agent!.programRef, owner);
+      if (!this.options.allowSandboxActions || job.delegation.request.executionEnvironment !== 'sandbox' || !program || program.configurationDigest !== payment.request.configurationDigest) throw new DomainError('FORBIDDEN', 'The original payment source is no longer enabled with the same configuration');
+      if (job.delegation.request.requirements.some(r => r.kind === 'deadline' && r.strength === 'hard' && (!r.role || r.role === 'completion') && Date.parse(r.expected.at) <= Date.now())) throw new DomainError('CONFLICT', 'The requested booking completion deadline expired before payment route selection');
+      const latest = (type: string) => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1);
+      const bookingRef = latest('BookingObservation'), paymentRef = latest('BookingPaymentObservation');
+      if (!bookingRef || !paymentRef) throw new DomainError('CONFLICT', 'Read the original provider booking and payment before selecting a route');
+      const booked = readBookingObservation(this.store.ontology, owner, bookingRef), paid = readBookingObservation(this.store.ontology, owner, paymentRef);
+      const b = bookingDataSchema.parse(booked.payload.data), money = bookingPaymentDataSchema.parse(paid.payload.data);
+      const terms = payment.request.terms;
+      if ([booked, paid].some(s => s.receipt.requestId !== job.id || s.receipt.requestRevision !== payment.request.requestRevision || s.configurationDigest !== payment.request.configurationDigest || s.receipt.readbackSequence !== payment.readbackSequence)) throw new DomainError('CONFLICT', 'Payment route requires the current owned provider readback');
+      if (b.providerId !== terms.providerId || b.holdExpiresAt !== terms.expiresAt || digest(b.checkout) !== digest(terms.checkout) || digest(b.paymentHandler) !== digest(terms.handler) || digest(b.offer.total) !== digest(terms.amount)) throw new DomainError('CONFLICT', 'Payment routes must retain the original independently read provider terms');
+      if (booked.receipt.action !== 'ReadProviderBooking' || paid.receipt.action !== 'ReadProviderPayment' || b.bookingId !== terms.bookingId || b.termsDigest !== terms.bookingTermsDigest || b.state !== 'awaiting_payment' || money.bookingId !== terms.bookingId || money.bookingTermsDigest !== terms.bookingTermsDigest || money.state !== 'unpaid' || money.paidAmount.minor !== '0' || money.paymentId || money.capturedAt) throw new DomainError('CONFLICT', 'The original provider booking must still be unpaid; reconcile instead of switching payment routes');
+      const selected = recordPAPaymentSelection(payment, args.wallet);
+      job.updatedAt = selected.selectedAt;
+      job.question = selected.route === 'link_agent_wallet'
+        ? '已选择 Link Agent Wallet 测试路线。请 PA 使用自己的测试钱包和原操作键处理此预约；结果未知时只查询原付款，不切换路线或重付。'
+        : `已转到普通 Link 测试结账路线。请用户在服务商提供的页面确认模拟付款：${terms.checkout.url}。不得真实付款；页面完成提示不代替服务商付款及预约回读。`;
+      job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt });
+      job.delegation.events.push({ at: job.updatedAt, event: 'pa_payment_route_selected', evidence: selected.digest });
+      job.revision = (job.revision ?? 0) + 1;
+      this.store.save(owner, job);
+      return this.view(owner, job);
+    });
   }
 
   reportPayment(p: Principal, input: unknown, contextId?: string): Job {

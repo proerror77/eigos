@@ -185,10 +185,23 @@ class Client:
             'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
         }}, endpoint)
 
+    def payment_route(self, task_id, data, request_id):
+        allowed = {'handoffId', 'handoffDigest', 'wallet'}
+        if not isinstance(data, dict) or set(data) != allowed:
+            raise ClientError('Payment route accepts only handoffId, handoffDigest and wallet availability')
+        wallet = data.get('wallet')
+        reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
+        if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
+            raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        return self.payment_continuation(task_id, data, request_id, 'select_payment_route', 'payment-route:')
+
     def payment_result(self, task_id, data, request_id):
         allowed = {'handoffId', 'handoffDigest', 'outcome'}
         if not isinstance(data, dict) or set(data) != allowed or data.get('outcome') not in ('submitted', 'declined', 'unknown', 'canceled'):
             raise ClientError('Payment notification accepts only handoffId, handoffDigest and outcome; never include wallet credentials')
+        return self.payment_continuation(task_id, data, request_id, 'report_payment_result', 'payment-result:')
+
+    def payment_continuation(self, task_id, data, request_id, action, key_prefix):
         if any(not isinstance(data.get(k), str) or len(data[k]) != 64 or any(c not in '0123456789abcdef' for c in data[k]) for k in ('handoffId', 'handoffDigest')):
             raise ClientError('Use the exact original payment handoff ID and digest')
         try:
@@ -202,9 +215,9 @@ class Client:
         if request.get('id') != data['handoffId'] or request.get('digest') != data['handoffDigest']:
             raise ClientError('Payment notification does not match the owned task handoff')
         _, endpoint = self.discover()
-        return self.write('payment-result:' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+        return self.write(key_prefix + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
             'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER',
-            'parts': [{'data': {'action': 'report_payment_result', **data}}],
+            'parts': [{'data': {'action': action, **data}}],
         }}, endpoint)
 
     def send_text(self, text, request_id, task_id=None):
@@ -247,6 +260,19 @@ class Client:
         base = urllib.parse.urlsplit(self.config['cardUrl'])
         url = urllib.parse.urlunsplit((base.scheme, base.netloc, '/tasks/' + task_id + '/authorize', '', ''))
         return self.request(url, data)
+
+    def reconcile(self, task_id, request_id):
+        try:
+            uuid.UUID(task_id)
+            uuid.UUID(request_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ClientError('Reconciliation requires the original task ID and a stable UUID request ID') from None
+        current = self.rpc('GetTask', {'id': task_id})
+        if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
+            raise ClientError('Task service is outside the configured allowlist')
+        base = urllib.parse.urlsplit(self.config['cardUrl'])
+        url = urllib.parse.urlunsplit((base.scheme, base.netloc, '/tasks/' + task_id + '/reconcile', '', ''))
+        return self.request(url, {'requestId': request_id})
 
     def poll(self, task_id, seconds, interval):
         deadline = time.monotonic() + seconds
@@ -294,6 +320,13 @@ def main():
     payment.add_argument('--task-id', required=True)
     payment.add_argument('--input-file', required=True)
     payment.add_argument('--request-id', required=True)
+    route = commands.add_parser('payment-route')
+    route.add_argument('--task-id', required=True)
+    route.add_argument('--input-file', required=True)
+    route.add_argument('--request-id', required=True)
+    reconcile = commands.add_parser('reconcile')
+    reconcile.add_argument('--task-id', required=True)
+    reconcile.add_argument('--request-id', required=True)
     submit = commands.add_parser('submit')
     submit.add_argument('--input-file', required=True)
     submit.add_argument('--request-id', required=True)
@@ -351,6 +384,10 @@ def main():
             output = client.authorize(args.task_id, read_json(args.input_file))
         elif args.command == 'payment-result':
             output = client.payment_result(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command == 'payment-route':
+            output = client.payment_route(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command == 'reconcile':
+            output = client.reconcile(args.task_id, args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
         elif args.command == 'reply':

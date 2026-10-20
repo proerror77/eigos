@@ -9,7 +9,7 @@ import { createBookingSandboxProvider } from '../../packages/capabilities/bookin
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { JobStore } from '../../packages/core/store.js';
 import { digest } from '../../packages/core/delegation.js';
-import type { PAPaymentRequest } from '../../packages/core/pa-payment.js';
+import type { PAPaymentRequest, LinkWalletAvailability } from '../../packages/core/pa-payment.js';
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import type { AgentDecision } from '../../packages/ontology/agent-actions.js';
 import type { BookingEntityType, BookingSnapshot } from '../../packages/ontology/booking.js';
@@ -18,7 +18,7 @@ import type { ObjectRef } from '../../packages/ontology/model.js';
 import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
 import { commerceDecision as decision, commerceStep as step } from './commerce-agent.js';
 
-export const bookingProgramRef = { id: 'booking.pa-payment.sandbox', version: '1' };
+export const bookingProgramRef = { id: 'booking.pa-payment.sandbox', version: '2' };
 export function bookingReads(ctx: AgentPlanningContext, access: PlanningAccess) {
   access.session.call('describe_ontology', { search: 'BookingTask', limit: 1 });
   access.session.call('query_ontology', { object: ctx.state.scope });
@@ -61,10 +61,11 @@ export class FixturePAWallet {
   readonly attempts: { handoffId: string; key: string }[] = [];
   private keys = new Map<string, string>();
   constructor(private origin: string, private credential: string) {}
-  async pay(request: PAPaymentRequest, approvedAmount = request.terms.amount) {
+  async pay(request: PAPaymentRequest, approvedAmount = request.terms.amount, operationId?: string) {
     const { digest: expected, ...body } = request;
     if (digest(body) !== expected || request.terms.environment !== 'sandbox' || request.terms.handler.endpoint !== this.origin + '/pa/payments' || Date.parse(request.terms.expiresAt) <= Date.now()) throw new Error('PA refuses changed, expired or unbound payment handoff');
-    let key = this.keys.get(request.id); if (!key) { key = randomUUID(); this.keys.set(request.id, key); }
+    let key = this.keys.get(request.id); if (!key) { key = operationId ?? randomUUID(); this.keys.set(request.id, key); }
+    if (operationId && key !== operationId) throw new Error('The original payment operation identity changed');
     this.attempts.push({ handoffId: request.id, key });
     const response = await fetch(request.terms.handler.endpoint, { method: 'POST', headers: { authorization: `Bearer ${this.credential}`, 'content-type': 'application/json', connection: 'close' }, body: JSON.stringify({ handoff: request, idempotencyKey: key, approvedAmount }), redirect: 'error' });
     if (!response.ok) throw new Error(`PA fixture payment rejected (${response.status})`);
@@ -80,6 +81,7 @@ export async function setupPABooking(options: { databasePath?: string; provider?
   const submit = (extra: object = {}) => b.submit({ goal: '在沙箱预约两人的咨询服务，预算 200 元；交给 PA 自己付款后，独立核验原付款和预约。', executionEnvironment: 'sandbox', requirements: [{ id: 'count', kind: 'quantity', role: 'participant_count', strength: 'hard', expected: { amount: '2', unit: 'person' } }, { id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '20000', currency: 'CNY' } }, { id: 'confirmed', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.confirmed' } }, { id: 'paid', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.payment_confirmed' } }], ...extra });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
   const report = (job: Job, outcome: 'submitted' | 'unknown' | 'declined' | 'canceled' = 'submitted', requestId = randomUUID()) => { const request = job.delegation!.agent!.paPayment!.request; return b.tasks.reportPayment(principal, { action: 'report_payment_result', taskId: job.id, requestId, handoffId: request.id, handoffDigest: request.digest, outcome }); };
+  const selectRoute = (job: Job, wallet: LinkWalletAvailability, requestId = randomUUID()) => { const request = job.delegation!.agent!.paPayment!.request; return b.tasks.selectPaymentRoute(principal, { action: 'select_payment_route', taskId: job.id, requestId, handoffId: request.id, handoffDigest: request.digest, wallet }); };
   const finish = async (id: string, autoApprove = true) => {
     const deadline = Date.now() + 60000; let iterations = 0;
     while (Date.now() < deadline && iterations < 60) {
@@ -93,5 +95,5 @@ export async function setupPABooking(options: { databasePath?: string; provider?
     }
     throw new Error('Booking fixture did not reach a bounded waiting/terminal state');
   };
-  return { directory, provider, settings, store, catalog, model, b, wallet, submit, approve, report, finish, close: async () => { store.close(); if (!options.provider) await provider.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { directory, provider, settings, store, catalog, model, b, wallet, submit, approve, report, selectRoute, finish, close: async () => { store.close(); if (!options.provider) await provider.close(); rmSync(directory, { recursive: true, force: true }); } };
 }

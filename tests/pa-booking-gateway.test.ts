@@ -16,7 +16,7 @@ import { setupPABooking } from './fixtures/pa-booking.js';
 import { owner } from './backend-fixture.js';
 
 const exec = promisify(execFile);
-test('PA A2A handoff survives Gateway/Worker restart, PA pays directly, MCP verifies the same final booking', async () => {
+for (const route of ['link_agent_wallet', 'link_checkout'] as const) test(`PA A2A ${route} selection survives Gateway/Worker restart and MCP verifies the same final booking`, async () => {
   const t = await setupPABooking(), token = 'pa-booking-gateway-fixture'.repeat(3), database = join(t.directory, 'gateway.sqlite');
   let server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const port = (server.address() as { port: number }).port, base = `http://127.0.0.1:${port}`;
@@ -24,14 +24,14 @@ test('PA A2A handoff survives Gateway/Worker restart, PA pays directly, MCP veri
   let gateway = createApp(config); server.on('request', gateway.app);
   let worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, t.model, gateway.catalog, { allowSandbox: true }), pollMs: 10 }); worker.start();
   const client = new Client({ name: 'pa-booking-mcp-verifier', version: '1' });
-  const script = resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), profile = join(t.directory, 'pa-profile.json'), tokenFile = join(t.directory, 'pa-token'), inputFile = join(t.directory, 'input.json'), approvalFile = join(t.directory, 'approval.json'), reportFile = join(t.directory, 'report.json');
+  const script = resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), profile = join(t.directory, 'pa-profile.json'), tokenFile = join(t.directory, 'pa-token'), inputFile = join(t.directory, 'input.json'), approvalFile = join(t.directory, 'approval.json'), reportFile = join(t.directory, 'report.json'), routeFile = join(t.directory, 'route.json');
   writeFileSync(tokenFile, token, { mode: 0o600 });
   const run = async (...args: string[]) => { const output = await exec('python3', [script, '--config', profile, ...args], { maxBuffer: 8 * 1024 * 1024 }); assert(!output.stdout.includes(token)); assert(!output.stdout.includes(t.provider.paToken)); assert(!output.stdout.includes(t.provider.sourceToken)); return JSON.parse(output.stdout); };
   const call = async (name: string, args: Record<string, unknown>) => { const value = await client.callTool({ name, arguments: args }); assert(!value.isError, JSON.stringify(value)); return (value.structuredContent as { result: any }).result; };
   try {
     const card = await fetch(base + '/.well-known/agent-card.json').then(r => r.json());
     assert(card.capabilities.extensions.some((e: any) => e.uri === base + '/.well-known/eigos-pa-payment'));
-    const protocol = await fetch(base + '/.well-known/eigos-pa-payment').then(r => r.json()); assert.equal(protocol.credentialsAccepted, false); assert.equal(protocol.notificationIsPaymentProof, false);
+    const protocol = await fetch(base + '/.well-known/eigos-pa-payment').then(r => r.json()); assert.equal(protocol.credentialsAccepted, false); assert.equal(protocol.notificationIsPaymentProof, false); assert.equal(protocol.version, '2'); assert.equal(protocol.routePolicy, 'prefer_link_agent_wallet');
     await run('configure', '--card-url', base + '/.well-known/agent-card.json', '--token-file', tokenFile, '--allow-loopback-http');
     writeFileSync(inputFile, JSON.stringify({ service: 'eigos.delegate', goal: 'Prepare the sandbox booking, hand payment to my PA, then verify both provider payment and booking confirmation.', executionEnvironment: 'sandbox', requirements: [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '20000', currency: 'CNY' } }] }));
     const sent = await run('submit', '--input-file', inputFile, '--request-id', randomUUID());
@@ -42,22 +42,47 @@ test('PA A2A handoff survives Gateway/Worker restart, PA pays directly, MCP veri
     const waiting = (await run('poll', '--task-id', sent.id, '--seconds', '8')).task;
     assert.equal(waiting.status.state, 'TASK_STATE_INPUT_REQUIRED'); assert.equal(waiting.metadata.delegation.phase, 'awaiting_pa_payment');
     const handoff = waiting.metadata.delegation.agent.paPayment.request;
+    if (route === 'link_checkout') {
+      const refreshed = await run('reconcile', '--task-id', sent.id, '--request-id', randomUUID());
+      assert.equal(refreshed.task.id, sent.id);
+      const reread = (await run('poll', '--task-id', sent.id, '--seconds', '8')).task;
+      assert.equal(reread.status.state, 'TASK_STATE_INPUT_REQUIRED');
+      assert.equal(reread.metadata.delegation.agent.paPayment.reports.length, 0);
+      assert.deepEqual(reread.metadata.delegation.agent.paPayment.request, handoff);
+    }
+    const availability = { status: route === 'link_agent_wallet' ? 'available' : 'unavailable', reason: route === 'link_agent_wallet' ? 'ready' : 'region_unsupported', observedAt: new Date().toISOString() };
+    const routeInput = { handoffId: handoff.id, handoffDigest: handoff.digest, wallet: availability };
+    writeFileSync(routeFile, JSON.stringify(routeInput));
+    const routeRequestId = randomUUID(), selected = await run('payment-route', '--task-id', sent.id, '--input-file', routeFile, '--request-id', routeRequestId);
+    const selection = selected.metadata.delegation.agent.paPayment.selection;
+    assert.equal(selection.route, route);
+    assert.deepEqual((await run('payment-route', '--task-id', sent.id, '--input-file', routeFile, '--request-id', routeRequestId)).metadata.delegation.agent.paPayment.selection, selection);
     assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 0);
     await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close();
     gateway = createApp(config); server = createServer(gateway.app); server.listen(port, '127.0.0.1'); await once(server, 'listening');
     worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, t.model, gateway.catalog, { allowSandbox: true }), pollMs: 10 }); worker.start();
-    const restored = await run('get', '--task-id', sent.id); assert.deepEqual(restored.metadata.delegation.agent.paPayment.request, handoff);
-    await t.wallet.pay(handoff);
+    const restored = await run('get', '--task-id', sent.id); assert.deepEqual(restored.metadata.delegation.agent.paPayment.request, handoff); assert.deepEqual(restored.metadata.delegation.agent.paPayment.selection, selection);
+    await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
+    const selectedByMcp = await call('select_payment_route', { ...routeInput, action: 'select_payment_route', taskId: sent.id, requestId: routeRequestId });
+    assert.deepEqual(selectedByMcp.delegation.agent.paPayment.selection, selection);
+    if (route === 'link_agent_wallet') await t.wallet.pay(handoff, handoff.terms.amount, selection.operationId);
+    else {
+      const page = await fetch(handoff.terms.checkout.url).then(r => r.text());
+      assert.match(page, /确认测试付款/);
+      const fields = Object.fromEntries([...page.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map(m => [m[1]!, m[2]!]));
+      const paid = await fetch(handoff.terms.checkout.url, { method: 'POST', headers: { origin: t.provider.endpoint, 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields), redirect: 'manual' });
+      assert.equal(paid.status, 303);
+    }
     writeFileSync(reportFile, JSON.stringify({ handoffId: handoff.id, handoffDigest: handoff.digest, outcome: 'submitted' }));
     const notificationId = randomUUID(); await run('payment-result', '--task-id', sent.id, '--input-file', reportFile, '--request-id', notificationId); await run('payment-result', '--task-id', sent.id, '--input-file', reportFile, '--request-id', notificationId);
     const done = (await run('poll', '--task-id', sent.id, '--seconds', '8')).task; assert.equal(done.status.state, 'TASK_STATE_COMPLETED', JSON.stringify(done.status));
-    await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     const mcp = await call('get_task', { taskId: sent.id }); assert.deepEqual(done.artifacts[0].parts[0].data, mcp.artifact.data);
     const result = mcp.artifact.data.result;
+    assert.equal(result.paymentRoute, route);
     const booking = await call('evaluate_ontology', { function: 'bookingObservationStatus', object: result.sourceRefs.booking }), payment = await call('evaluate_ontology', { function: 'bookingObservationStatus', object: result.sourceRefs.payment });
     assert.equal(booking.value.status, 'confirmed'); assert.equal(payment.value.paid, true); assert.deepEqual(payment.evidenceLevels, ['synthetic']);
     const replay = await call('report_payment_result', { taskId: sent.id, requestId: notificationId, action: 'report_payment_result', handoffId: handoff.id, handoffDigest: handoff.digest, outcome: 'submitted' }); assert.equal(replay.id, sent.id);
-    assert.equal(gateway.store.get(owner, sent.id).delegation!.agent!.paPayment!.reports.length, 1); assert.equal(t.provider.countBookings(), 1); assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 1);
+    assert.equal(gateway.store.get(owner, sent.id).delegation!.agent!.paPayment!.reports.length, 1); assert.equal(t.provider.countBookings(), 1); assert.equal(t.provider.audit().filter(a => a.caller === (route === 'link_agent_wallet' ? 'pa_wallet' : 'checkout_user')).length, 1);
     writeFileSync(reportFile, JSON.stringify({ handoffId: handoff.id, handoffDigest: handoff.digest, outcome: 'submitted', stripeSecretKey: 'sk_test_never_send' }));
     await assert.rejects(run('payment-result', '--task-id', sent.id, '--input-file', reportFile, '--request-id', randomUUID()));
   } finally { await client.close(); await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); await t.close(); }

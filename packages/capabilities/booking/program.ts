@@ -4,7 +4,7 @@ import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../../core/agent-program.js';
 import type { Delivery } from '../../core/catalog.js';
-import { paPaymentRequestSchema, type PAPaymentTerms } from '../../core/pa-payment.js';
+import { paPaymentRequestSchema, verifyPAPaymentSelection, type PAPaymentTerms } from '../../core/pa-payment.js';
 import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/model.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
@@ -18,7 +18,7 @@ function fail(message: string): never { throw new DomainError('CONFLICT', messag
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
 const completion = z.strictObject({ booking: objectRefSchema.extend({ type: z.literal('BookingObservation') }), payment: objectRefSchema.extend({ type: z.literal('BookingPaymentObservation') }), rationale: z.string().min(1).max(2000) });
 export class BookingAgentProgram implements AgentProgram {
-  readonly ref = { id: 'booking.pa-payment.sandbox', version: '1' };
+  readonly ref = { id: 'booking.pa-payment.sandbox', version: '2' };
   readonly actionIds = Object.keys(bookingActionSchemas);
   readonly limits = { modelTurns: 48, plans: 20, actions: 36 };
   readonly completionSchema = z.toJSONSchema(completion);
@@ -28,15 +28,16 @@ export class BookingAgentProgram implements AgentProgram {
     'You select atomic booking actions from independently read Ontology facts. This program is an isolated synthetic booking provider; no real booking or money movement is supported. There is no EIGOS payment action or customer wallet credential.',
     'Discover offers and choose a source offer satisfying the user service, time, participants, venue and complete price constraints. Evaluate bookingObservationStatus on the exact source before reserving. CreatePendingBooking only holds an unpaid booking, with a separate exact zero-payment reservation permit.',
     'Read the original provider booking and separate unpaid payment state independently before RequestPAPayment. This action publishes exact immutable payment terms and pauses so the PA can use its own wallet directly with the provider. Evaluate both observations in this decision; an already paid or processing payment must not produce a new payment request. Never ask the PA for card details, Stripe keys or payment tokens.',
+    'Keep both source-provided Link routes. The PA checks its own wallet and calls select_payment_route: prefer Link Agent Wallet when available and supported by the provider; otherwise give the user the original provider Link checkout URL for confirmation. Unknown availability is not unavailability. An issued route may already be in use: never switch routes after selection, a payment submission, a decline or an unknown outcome. A checkout page or redirect is not payment proof.',
     'The same paPayment.request ID and digest survive all responses, retries and restarts. A PA notification is unverified and only wakes you to query the provider. After a handoff, only ReadProviderBooking, ReadProviderPayment and local waiting are available. Never create a replacement booking or payment to resolve uncertainty.',
     'After a notification or an explicit reconcile request, read both the original booking and its separate payment. Obtain fresh receipts after the latest notification. If payment or booking is unresolved, evaluate both and call WaitForPAPayment to pause on the original identity. A repeated handoff never means permission to pay again. If the provider says the booking expired/canceled or the payment was refunded, report that bounded outcome rather than claiming success.',
     'Complete only with separately read and evaluated booking/payment refs. The provider must confirm the original booking AND exact paid amount, currency, payee and original terms. PA submitted/approved/paid text, wallet approval, payment alone or booking alone is insufficient. Booking confirmation proves reservation, not attendance or delivery of the underlying service.',
   ].join('\n');
-  constructor(options: BookingSandboxOptions) { this.connector = new BookingSandboxConnector(options); this.configurationDigest = digest({ source: this.connector.configurationDigest, semantics: 'pa-owned-payment-booking-v1' }); }
+  constructor(options: BookingSandboxOptions) { this.connector = new BookingSandboxConnector(options); this.configurationDigest = digest({ source: this.connector.configurationDigest, semantics: 'pa-owned-payment-booking-link-routes-v2' }); }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
     const predicates = ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed'];
-    return { ref: this.ref, ontologyRef: { id: 'eigos.booking.pa-payment', version: '1' }, name: '预约准备、PA 自主付款与独立回读', description: '在隔离服务商沙箱查询可预约服务，建立待付款预约并向 PA 返回准确付款请求。PA 使用自己的支付能力直接向服务商付款；EIGOS 只回读原付款和预约，二者均确认才完成。无真实预约、扣款或服务履约。', tags: ['booking', 'pa-payment', 'sandbox'], environment: 'sandbox', inputSchema: z.toJSONSchema(bookingInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: bookingActionMetadata[id as BookingAction].effect })), predicates: predicates.map(id => ({ id, description: id === 'booking.payment_confirmed' ? 'Independent provider receipt confirms exact PA-funded synthetic payment' : id === 'booking.confirmed' ? 'Independent provider receipt confirms the original booking' : 'All provider and wallet operations stay in the isolated sandbox' })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'booking.pa-payment.independent', version: '1' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of participants in the service booking, in person units' }, { kind: 'budget', role: 'service_total', description: 'Complete fixed booking price including every mandatory fee' }, { kind: 'deadline', role: 'completion', description: 'Deadline for obtaining confirmed booking and payment, not service attendance' }, { kind: 'location', role: 'venue', description: 'Exact source venue reference' }], ontology: { objects: ['BookingTask', 'BookingOffers', 'BookingObservation', 'BookingPaymentObservation', 'PAPaymentRequest'], functions: ['bookingObservationStatus'], execution: 'agent_selected_atomic_actions', paymentAuthority: 'pa_owned', realSourceConnected: false } };
+    return { ref: this.ref, ontologyRef: { id: 'eigos.booking.pa-payment', version: '2' }, name: '预约准备、双路线 Link 付款与独立回读', description: '在隔离服务商沙箱查询可预约服务，建立待付款预约并向 PA 返回准确付款请求。优先使用 PA 的 Link Agent Wallet 测试能力；不可用时交给用户在服务商提供的普通 Link 测试结账页确认。EIGOS 只回读原付款和预约，二者均确认才完成。无真实预约、扣款或服务履约。', tags: ['booking', 'pa-payment', 'sandbox'], environment: 'sandbox', inputSchema: z.toJSONSchema(bookingInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: bookingActionMetadata[id as BookingAction].effect })), predicates: predicates.map(id => ({ id, description: id === 'booking.payment_confirmed' ? 'Independent provider receipt confirms exact PA-funded synthetic payment' : id === 'booking.confirmed' ? 'Independent provider receipt confirms the original booking' : 'All provider and wallet operations stay in the isolated sandbox' })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'booking.pa-payment.independent', version: '2' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of participants in the service booking, in person units' }, { kind: 'budget', role: 'service_total', description: 'Complete fixed booking price including every mandatory fee' }, { kind: 'deadline', role: 'completion', description: 'Deadline for obtaining confirmed booking and payment, not service attendance' }, { kind: 'location', role: 'venue', description: 'Exact source venue reference' }], ontology: { objects: ['BookingTask', 'BookingOffers', 'BookingObservation', 'BookingPaymentObservation', 'PAPaymentRequest'], functions: ['bookingObservationStatus'], execution: 'agent_selected_atomic_actions', paymentAuthority: 'pa_owned', realSourceConnected: false } };
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown) {
     if (!this.permitted(owner) || request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Booking PA-payment program is local sandbox only');
@@ -58,6 +59,7 @@ export class BookingAgentProgram implements AgentProgram {
       const { digest: expected, ...request } = paPaymentRequestSchema.parse(ctx.state.paPayment.request);
       const stored = ctx.graph.read(ctx.owner, { type: 'PAPaymentRequest', id: request.id });
       if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== this.configurationDigest || !same(stored.properties.terms, request.terms)) fail('Original PA payment handoff integrity changed');
+      verifyPAPaymentSelection(ctx.state.paPayment);
     }
     return bookingInputSchema.parse(scope.properties.input);
   }
@@ -71,6 +73,7 @@ export class BookingAgentProgram implements AgentProgram {
     if (s.payload.type !== 'BookingObservation') fail('Expected the original provider booking');
     const data = bookingDataSchema.parse(s.payload.data);
     if (data.paymentHandler.endpoint !== this.connector.origin + '/pa/payments' || data.paymentHandler.payeeId !== data.providerId) fail('Provider payment handler is outside the configured source');
+    if (data.checkout.bookingId !== data.bookingId || data.checkout.payeeId !== data.providerId || data.checkout.url !== `${this.connector.origin}/checkout/${encodeURIComponent(data.checkout.id)}`) fail('Provider Link checkout is not bound to the original booking and configured source');
     return { s, data };
   }
   private checkOffer(ctx: AgentProgramContext, offer: z.infer<typeof bookingEntitySchemas.BookingOffers>['offers'][number], fresh: boolean) {
@@ -128,7 +131,7 @@ export class BookingAgentProgram implements AgentProgram {
   }
   private paymentTerms(ctx: AgentProgramContext, booking: ObjectRef, payment: ObjectRef): PAPaymentTerms {
     const { data } = this.booking(ctx, booking);
-    return { providerId: data.providerId, bookingId: data.bookingId, bookingTermsDigest: data.termsDigest, booking: { type: 'BookingObservation', id: booking.id }, unpaidObservation: { type: 'BookingPaymentObservation', id: payment.id }, description: `${data.offer.title}; ${data.offer.startsAt}; ${data.offer.participants} participant(s)`, amount: data.offer.total, handler: data.paymentHandler, expiresAt: data.holdExpiresAt, environment: 'sandbox', evidenceLevel: 'synthetic' };
+    return { providerId: data.providerId, bookingId: data.bookingId, bookingTermsDigest: data.termsDigest, booking: { type: 'BookingObservation', id: booking.id }, unpaidObservation: { type: 'BookingPaymentObservation', id: payment.id }, description: `${data.offer.title}; ${data.offer.startsAt}; ${data.offer.participants} participant(s)`, amount: data.offer.total, handler: data.paymentHandler, checkout: data.checkout, routePolicy: 'prefer_link_agent_wallet', expiresAt: data.holdExpiresAt, environment: 'sandbox', evidenceLevel: 'synthetic' };
   }
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input);
@@ -160,6 +163,7 @@ export class BookingAgentProgram implements AgentProgram {
   }
   private matchPayment(ctx: AgentProgramContext, booking: z.infer<typeof bookingDataSchema>, payment: z.infer<typeof bookingPaymentDataSchema>) {
     const terms = ctx.state.paPayment?.request.terms ?? fail('Completion requires the original PA payment handoff');
+    if (booking.termsDigest !== digest({ offer: booking.offer, paymentHandler: booking.paymentHandler, checkout: booking.checkout }) || !same(booking.paymentHandler, terms.handler) || !same(booking.checkout, terms.checkout) || booking.holdExpiresAt !== terms.expiresAt) return false;
     return booking.bookingId === terms.bookingId && booking.providerId === terms.providerId && booking.termsDigest === terms.bookingTermsDigest && payment.bookingId === booking.bookingId && payment.providerId === booking.providerId && payment.payeeId === terms.handler.payeeId && payment.bookingTermsDigest === terms.bookingTermsDigest && same(booking.offer.total, terms.amount) && same(payment.amount, terms.amount) && same(payment.paidAmount, terms.amount) && payment.state === 'paid' && !!payment.paymentId && !!payment.capturedAt && Date.parse(payment.capturedAt) <= Date.now() && Date.parse(payment.capturedAt) <= Date.parse(terms.expiresAt) && booking.state === 'confirmed' && !!booking.confirmedAt && Date.parse(booking.confirmedAt) <= Date.now();
   }
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
@@ -170,7 +174,7 @@ export class BookingAgentProgram implements AgentProgram {
     const after = Date.parse(handoff.reports.at(-1)?.receivedAt ?? handoff.request.createdAt);
     if (handoff.readbackSequence < 1 || booking.s.receipt.readbackSequence !== handoff.readbackSequence || payment.receipt.readbackSequence !== handoff.readbackSequence || booking.s.receipt.action !== 'ReadProviderBooking' || !booking.data.independentRead || payment.receipt.action !== 'ReadProviderPayment' || Date.parse(booking.s.receipt.startedAt) < after || Date.parse(payment.receipt.startedAt) < after || !this.matchPayment(ctx, booking.data, paid)) fail('Independent fresh provider payment AND booking confirmation must match the original handoff; PA claims are insufficient');
     this.checkOffer(ctx, booking.data.offer, false);
-    const evidenceRefs = [booking.s.receipt.id, payment.receipt.id], result = { environment: 'sandbox', evidenceLevel: 'synthetic', realPayment: false, paymentAuthority: 'pa_owned', handoffId: handoff.request.id, booking: booking.data, payment: paid, sourceRefs: selected, receiptIds: evidenceRefs };
+    const evidenceRefs = [booking.s.receipt.id, payment.receipt.id], result = { environment: 'sandbox', evidenceLevel: 'synthetic', realPayment: false, paymentAuthority: 'pa_owned', paymentRoute: handoff.selection?.route ?? 'unreported', handoffId: handoff.request.id, booking: booking.data, payment: paid, sourceRefs: selected, receiptIds: evidenceRefs };
     return { artifact: { id: digest(result), name: 'pa-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验原预约与 PA 模拟付款均获服务商确认；这是沙箱预约确认，不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed'], totalPrice: booking.data.offer.total, amounts: { service_total: booking.data.offer.total }, quantity: { amount: String(booking.data.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(booking.data.offer.participants), unit: 'person' } }, deliveryBy: booking.data.confirmedAt, deadlines: { completion: booking.data.confirmedAt }, locationRef: booking.data.offer.venue, locations: { venue: booking.data.offer.venue } }, evidenceRefs };
   }
   async reconcilePAPayment(ctx: AgentProgramContext, signal: AbortSignal) {

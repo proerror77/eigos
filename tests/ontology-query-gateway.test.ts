@@ -59,6 +59,6 @@ test('N1 queries share PA authentication, owner and scope boundaries without exp
     assert.equal(projected.value.items[0].properties.originalGoal, '只准备一个说明，验证原 PA 入口');
     const card = await fetch(base + '/.well-known/agent-card.json').then(r => r.json());
     assert.deepEqual(card.skills.map((s: { id: string }) => s.id), ['eigos.delegate']);
-    assert.equal((await fetch(base + '/health').then(r => r.json())).backend, 'ontology-execution-v13');
+    assert.equal((await fetch(base + '/health').then(r => r.json())).backend, 'ontology-execution-v14');
   } finally { await client.close(); await gateway.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

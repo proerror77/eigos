@@ -6,7 +6,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
-import { paPaymentTermsSchema } from '../../core/pa-payment.js';
+import { paPaymentRequestSchema } from '../../core/pa-payment.js';
 import { bookingInputSchema, bookingOfferSchema, bookingPayloadSchema, bookingSourceContextSchema, type BookingData } from '../../ontology/booking.js';
 
 type Context = z.infer<typeof bookingSourceContextSchema>;
@@ -19,12 +19,14 @@ const now = () => new Date().toISOString();
 async function body(req: IncomingMessage) {
   const chunks: Buffer[] = []; let bytes = 0;
   for await (const chunk of req) { bytes += chunk.length; if (bytes > 32768) reject('INPUT_TOO_LARGE', 413); chunks.push(Buffer.from(chunk)); }
-  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown; } catch { return reject('INVALID_JSON', 400); }
+  const raw = Buffer.concat(chunks).toString('utf8');
+  try { return req.headers['content-type']?.startsWith('application/x-www-form-urlencoded') ? Object.fromEntries(new URLSearchParams(raw)) : JSON.parse(raw) as unknown; } catch { return reject('INVALID_JSON', 400); }
 }
+const html = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export interface BookingSandboxFlags {
-  dropCreateResponse?: boolean; dropBeforeCreate?: boolean; dropPAResponse?: boolean;
+  dropCreateResponse?: boolean; dropBeforeCreate?: boolean; dropPAResponse?: boolean; dropCheckoutResponse?: boolean;
   paymentMode?: 'paid' | 'processing' | 'failed'; confirmBooking?: boolean;
-  changedOffer?: boolean; emptyOffers?: boolean;
+  changedOffer?: boolean; emptyOffers?: boolean; walletUnavailable?: boolean; checkoutUnavailable?: boolean;
   beforeResponse?: (action: string) => Promise<void>;
 }
 /** Separate provider and PA credentials; no outgoing network client or real
@@ -38,6 +40,7 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
     CREATE TABLE IF NOT EXISTS bookings (id TEXT PRIMARY KEY,owner TEXT,task TEXT,revision INTEGER,version INTEGER,body TEXT,payment TEXT);
     CREATE TABLE IF NOT EXISTS operations (key TEXT PRIMARY KEY,owner TEXT,task TEXT,input_digest TEXT,body TEXT);
     CREATE TABLE IF NOT EXISTS pa_operations (key TEXT PRIMARY KEY,input_digest TEXT,body TEXT);
+    CREATE TABLE IF NOT EXISTS checkout_sessions (id TEXT PRIMARY KEY,booking TEXT UNIQUE,nonce TEXT);
     CREATE TABLE IF NOT EXISTS audit (ordinal INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT);`);
   const setting = <T>(key: string, value: T): T => { const row = db.prepare('SELECT body FROM settings WHERE key=?').get(key); if (row) return JSON.parse(String(row.body)); db.prepare('INSERT INTO settings VALUES(?,?)').run(key, JSON.stringify(value)); return value; };
   const providerId = setting('providerId', `booking-provider-${randomUUID()}`), anchor = setting('anchor', Date.now());
@@ -66,17 +69,18 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
     const url = new URL(req.url!, 'http://127.0.0.1'); let ctx: Context | undefined, effectApplied = false;
     const send = (value: unknown, status = 200, signed = true) => { const raw = JSON.stringify(value); res.statusCode = status; res.setHeader('content-type', 'application/json'); if (signed) res.setHeader('x-eigos-booking-signature', createHmac('sha256', sourceToken).update(raw).digest('hex')); res.end(raw); };
     try {
-      if (url.pathname === '/health' && req.method === 'GET') { send({ environment: 'sandbox', providerId, protocol: 'eigos.booking.sandbox.v1', realPayments: false }, 200, false); return; }
+      if (url.pathname === '/health' && req.method === 'GET') { send({ environment: 'sandbox', providerId, protocol: 'eigos.booking.sandbox.v2', realPayments: false }, 200, false); return; }
       if (url.pathname === '/pa/payments') {
         if (req.headers.authorization !== `Bearer ${paToken}` || req.method !== 'POST') { send({ error: 'PA_WALLET_AUTH_REQUIRED' }, 403, false); return; }
-        const input = z.strictObject({ handoff: z.strictObject({ id: z.string().regex(/^[a-f0-9]{64}$/), version: z.literal('1'), taskId: z.uuid(), requestRevision: z.number().int().positive(), ownerDigest: z.literal(localOwner), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/), createdAt: z.iso.datetime(), terms: paPaymentTermsSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }), idempotencyKey: z.uuid(), approvedAmount: bookingOfferSchema.shape.total }).parse(await body(req));
+        const input = z.strictObject({ handoff: paPaymentRequestSchema.extend({ ownerDigest: z.literal(localOwner) }), idempotencyKey: z.uuid(), approvedAmount: bookingOfferSchema.shape.total }).parse(await body(req));
         const { digest: claimed, ...request } = input.handoff;
         if (digest(request) !== claimed) reject('HANDOFF_CHANGED');
         const old = db.prepare('SELECT * FROM pa_operations WHERE key=?').get(input.idempotencyKey);
         if (old) { if (old.input_digest !== digest(input)) reject('PA_IDEMPOTENCY_CONFLICT'); send(JSON.parse(String(old.body)), 200, false); return; }
         const original = getBooking({ ownerDigest: localOwner, requestId: request.taskId, requestRevision: request.requestRevision }, request.terms.bookingId), b = original.data;
         if (b.state !== 'awaiting_payment' || original.payment.state !== 'unpaid') reject('ORIGINAL_PAYMENT_ALREADY_STARTED');
-        if (request.terms.providerId !== providerId || request.terms.bookingTermsDigest !== b.termsDigest || !same(request.terms.amount, b.offer.total) || !same(input.approvedAmount, b.offer.total) || !same(request.terms.handler, b.paymentHandler) || request.terms.expiresAt !== b.holdExpiresAt || Date.parse(b.holdExpiresAt) <= Date.now()) reject('PAYMENT_TERMS_MISMATCH');
+        if (!b.paymentHandler.supported) reject('WALLET_ROUTE_UNAVAILABLE');
+        if (request.terms.providerId !== providerId || request.terms.bookingTermsDigest !== b.termsDigest || !same(request.terms.amount, b.offer.total) || !same(input.approvedAmount, b.offer.total) || !same(request.terms.handler, b.paymentHandler) || !same(request.terms.checkout, b.checkout) || request.terms.expiresAt !== b.holdExpiresAt || Date.parse(b.holdExpiresAt) <= Date.now()) reject('PAYMENT_TERMS_MISMATCH');
         db.exec('BEGIN IMMEDIATE');
         try {
           settle(b.bookingId);
@@ -87,6 +91,39 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
           if (flags.dropPAResponse) { flags.dropPAResponse = false; res.destroy(); return; }
           send(result, 200, false); return;
         } catch (e) { if (db.isTransaction) db.exec('ROLLBACK'); throw e; }
+      }
+      const checkoutMatch = /^\/checkout\/([^/]+)$/.exec(url.pathname);
+      if (checkoutMatch) {
+        const session = db.prepare('SELECT b.*,c.nonce FROM checkout_sessions c JOIN bookings b ON b.id=c.booking WHERE c.id=?').get(decodeURIComponent(checkoutMatch[1]!));
+        if (!session) reject('CHECKOUT_NOT_FOUND', 404);
+        const original = getBooking({ ownerDigest: String(session.owner), requestId: String(session.task), requestRevision: Number(session.revision) }, String(session.id)), b = original.data;
+        if (!b.checkout.supported) reject('LINK_CHECKOUT_UNAVAILABLE');
+        if (req.method === 'POST') {
+          if (req.headers.origin !== endpoint) reject('CHECKOUT_ORIGIN_MISMATCH', 403);
+          const input = z.strictObject({ confirmation: z.literal('confirm_test_payment'), csrfNonce: z.string().regex(/^[a-f0-9]{64}$/), bookingId: id, termsDigest: z.string(), amountMinor: z.string(), currency: z.string() }).parse(await body(req));
+          if (input.csrfNonce !== session.nonce || input.bookingId !== b.bookingId || input.termsDigest !== b.termsDigest || input.amountMinor !== b.offer.total.minor || input.currency !== b.offer.total.currency) reject('CHECKOUT_TERMS_MISMATCH', 403);
+          const key = `checkout:${b.checkout.id}`, old = db.prepare('SELECT * FROM pa_operations WHERE key=?').get(key);
+          if (old && old.input_digest !== digest(input)) reject('CHECKOUT_IDEMPOTENCY_CONFLICT');
+          if (!old) {
+            if (b.state !== 'awaiting_payment' || original.payment.state !== 'unpaid' || Date.parse(b.holdExpiresAt) <= Date.now()) reject('ORIGINAL_PAYMENT_ALREADY_STARTED');
+            db.exec('BEGIN IMMEDIATE');
+            try {
+              settle(b.bookingId);
+              db.prepare('INSERT INTO pa_operations VALUES(?,?,?)').run(key, digest(input), JSON.stringify({ bookingId: b.bookingId, environment: 'sandbox', realPayment: false }));
+              log({ caller: 'checkout_user', action: 'ConfirmLinkTestCheckout', bookingId: b.bookingId, checkoutId: b.checkout.id });
+              db.exec('COMMIT'); effectApplied = true;
+            } catch (e) { if (db.isTransaction) db.exec('ROLLBACK'); throw e; }
+          }
+          await flags.beforeResponse?.('LinkCheckout');
+          if (flags.dropCheckoutResponse) { flags.dropCheckoutResponse = false; res.destroy(); return; }
+          res.writeHead(303, { location: `/checkout/${encodeURIComponent(b.checkout.id)}`, 'cache-control': 'no-store' }); res.end(); return;
+        }
+        if (req.method !== 'GET') reject('CHECKOUT_METHOD_UNSUPPORTED', 405);
+        const canConfirm = b.state === 'awaiting_payment' && original.payment.state === 'unpaid';
+        const values = { confirmation: 'confirm_test_payment', csrfNonce: String(session.nonce), bookingId: b.bookingId, termsDigest: b.termsDigest, amountMinor: b.offer.total.minor, currency: b.offer.total.currency };
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'content-security-policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", 'x-content-type-options': 'nosniff' });
+        res.end(`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>普通 Link 路线测试</title><body><h1>普通 Link 路线测试</h1><p>这是本地模拟结账页，不连接 Stripe，不输入银行卡，也不会真实扣款。</p><dl><dt>预约</dt><dd>${html(b.bookingId)}</dd><dt>服务</dt><dd>${html(b.offer.title)}</dd><dt>金额（最小货币单位）</dt><dd>${html(b.offer.total.minor)} ${html(b.offer.total.currency)}</dd><dt>付款状态</dt><dd>${html(original.payment.state)}</dd><dt>预约状态</dt><dd>${html(b.state)}</dd></dl>${canConfirm ? `<form method="post" action="/checkout/${encodeURIComponent(b.checkout.id)}">${Object.entries(values).map(([key, value]) => `<input type="hidden" name="${key}" value="${html(value)}">`).join('')}<button type="submit">确认测试付款</button></form>` : '<p>请返回 PA 查询原预约。EIGOS 将独立读取服务商付款与预约结果；请勿重复付款。</p>'}</body></html>`);
+        return;
       }
       if (req.headers.authorization !== `Bearer ${sourceToken}`) { send({ error: 'SOURCE_AUTH_REQUIRED' }, 403, false); return; }
       ctx = bookingSourceContextSchema.parse(JSON.parse(Buffer.from(String(req.headers['x-eigos-context']), 'base64url').toString('utf8')));
@@ -115,12 +152,13 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
           const offered = search ? JSON.parse(String(search.body)).data.offers as z.infer<typeof bookingOfferSchema>[] : [];
           const offer = offered.find(o => o.id === input.offerId);
           if (!offer || offer.availability !== 'available' || Date.parse(offer.expiresAt) <= Date.now() || digest(offer) !== input.offerDigest || flags.changedOffer) reject('OFFER_CHANGED');
-          const bookingId = `booking-${randomUUID()}`, paymentHandler = { id: 'pa-wallet-sandbox', type: 'sandbox.pa-wallet' as const, payeeId: providerId, endpoint: endpoint + '/pa/payments' };
-          const b: BookingData = { bookingId, providerId, offer, termsDigest: digest({ offer, paymentHandler }), state: 'awaiting_payment', holdExpiresAt: new Date(Date.now() + (options.holdMs ?? 600000)).toISOString(), independentRead: false, paymentHandler };
+          const bookingId = `booking-${randomUUID()}`, paymentHandler = { id: 'pa-wallet-sandbox', type: 'sandbox.pa-wallet' as const, payeeId: providerId, endpoint: endpoint + '/pa/payments', supported: !flags.walletUnavailable };
+          const checkoutId = `checkout-${randomUUID()}`, checkout = { id: checkoutId, type: 'link_checkout' as const, bookingId, payeeId: providerId, url: `${endpoint}/checkout/${checkoutId}`, supported: !flags.checkoutUnavailable, userConfirmationRequired: true as const };
+          const b: BookingData = { bookingId, providerId, offer, termsDigest: digest({ offer, paymentHandler, checkout }), state: 'awaiting_payment', holdExpiresAt: new Date(Date.now() + (options.holdMs ?? 600000)).toISOString(), independentRead: false, paymentHandler, checkout };
           const payment = { bookingId, providerId, payeeId: providerId, bookingTermsDigest: b.termsDigest, amount: offer.total, paidAmount: { ...offer.total, minor: '0' }, state: 'unpaid', independentRead: true };
           result = payload('BookingObservation', bookingId, b);
           db.exec('BEGIN IMMEDIATE');
-          try { db.prepare('INSERT INTO bookings VALUES(?,?,?,?,?,?,?)').run(bookingId, ctx.ownerDigest, ctx.requestId, ctx.requestRevision, 1, JSON.stringify(b), JSON.stringify(payment)); db.prepare('INSERT INTO operations VALUES(?,?,?,?,?)').run(ctx.operationKey, ctx.ownerDigest, ctx.requestId, digest(input), JSON.stringify(result)); db.exec('COMMIT'); effectApplied = true; } catch (e) { db.exec('ROLLBACK'); throw e; }
+          try { db.prepare('INSERT INTO bookings VALUES(?,?,?,?,?,?,?)').run(bookingId, ctx.ownerDigest, ctx.requestId, ctx.requestRevision, 1, JSON.stringify(b), JSON.stringify(payment)); db.prepare('INSERT INTO checkout_sessions VALUES(?,?,?)').run(checkoutId, bookingId, randomBytes(32).toString('hex')); db.prepare('INSERT INTO operations VALUES(?,?,?,?,?)').run(ctx.operationKey, ctx.ownerDigest, ctx.requestId, digest(input), JSON.stringify(result)); db.exec('COMMIT'); effectApplied = true; } catch (e) { db.exec('ROLLBACK'); throw e; }
         }
       } else {
         const match = /^\/bookings\/([^/]+)(\/payment)?$/.exec(url.pathname);

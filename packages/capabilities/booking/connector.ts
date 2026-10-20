@@ -19,7 +19,7 @@ export class BookingSandboxConnector {
   constructor(readonly options: BookingSandboxOptions) {
     this.origin = bookingSandboxOrigin(options.endpoint);
     if (!isAbsolute(options.tokenFile)) throw new DomainError('INVALID_INPUT', 'Booking source token file must be absolute');
-    this.configurationDigest = digest({ protocol: 'eigos.booking.sandbox.v1', origin: this.origin, tokenFile: options.tokenFile });
+    this.configurationDigest = digest({ protocol: 'eigos.booking.sandbox.v2', origin: this.origin, tokenFile: options.tokenFile });
   }
   async call(ctx: AgentActionContext, action: string, payload: Record<string, unknown>, signal: AbortSignal, recovery = false): Promise<BookingSourceResult | undefined> {
     if (ctx.request.executionEnvironment !== 'sandbox' || !ctx.operationKey) throw new DomainError('FORBIDDEN', 'Booking connector requires an original sandbox operation');

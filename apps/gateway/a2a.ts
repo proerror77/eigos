@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
-import { paPaymentReportSchema } from '../../packages/core/pa-payment.js';
+import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -49,7 +49,7 @@ export function agentCard(c: Config, services: ReturnType<TaskService['services'
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'PA-owned payment handoff and unverified status notifications; provider readback is required for completion.', required: false }, ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
+      extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }, ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
     },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
@@ -112,7 +112,10 @@ export class A2AGateway implements A2ARequestHandler {
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
+        if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
+          const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
+          job = this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
           const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.reportPayment(p, report, message.contextId || undefined);
         } else {

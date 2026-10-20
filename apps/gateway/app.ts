@@ -1,5 +1,5 @@
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
-import { paPaymentRequestSchema, paPaymentReportSchema } from '../../packages/core/pa-payment.js';
+import { paPaymentRequestSchema, paPaymentReportSchema, paPaymentRouteSchema, paPaymentSelectionSchema } from '../../packages/core/pa-payment.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -79,7 +79,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     next();
   });
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
-  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '1', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, requestPath: 'metadata.delegation.agent.paPayment.request', a2a: { method: 'SendMessage', action: 'report_payment_result' }, mcpTool: 'report_payment_result', notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
+  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;

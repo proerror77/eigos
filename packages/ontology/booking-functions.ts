@@ -47,7 +47,7 @@ export function readBookingObservation(graph: OntologyObjectStore, owner: string
   }
   if (s.payload.type === 'BookingObservation') {
     const b = bookingDataSchema.parse(s.payload.data);
-    if (b.providerId !== s.receipt.sourceIdentity || b.termsDigest !== digest({ offer: b.offer, paymentHandler: b.paymentHandler }) || b.providerId !== b.offer.providerId) fail('Original booking terms or provider identity changed');
+    if (b.providerId !== s.receipt.sourceIdentity || b.termsDigest !== digest({ offer: b.offer, paymentHandler: b.paymentHandler, checkout: b.checkout }) || b.providerId !== b.offer.providerId) fail('Original booking terms or provider identity changed');
   } else if (s.payload.type === 'BookingPaymentObservation' && s.payload.data.providerId !== s.receipt.sourceIdentity) fail('Payment source identity changed');
   return s;
 }

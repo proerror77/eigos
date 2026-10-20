@@ -17,6 +17,7 @@ export const bookingDataSchema = z.strictObject({
   state: z.enum(['awaiting_payment', 'confirmed', 'canceled', 'expired', 'unknown']),
   holdExpiresAt: instant, confirmedAt: instant.optional(), independentRead: z.boolean(),
   paymentHandler: paPaymentTermsSchema.shape.handler,
+  checkout: paPaymentTermsSchema.shape.checkout,
 });
 export const bookingPaymentDataSchema = z.strictObject({
   bookingId: id, providerId: id, payeeId: id, bookingTermsDigest: sha,
@@ -64,8 +65,8 @@ const p = (kind: PropertyDefinition['kind'], schema: z.ZodType, description: str
 const common = { id: p('string', id, 'Immutable owned identity'), displayTitle: p('string', id, 'Business label'), requestRevision: p('integer', z.number().int().positive(), 'Fixed request revision') };
 export const bookingObjects: ObjectTypeDefinition[] = [
   { id: 'BookingTask', version: '1', name: 'PA 付款预约任务', aliases: ['BookingTask', '预约付款'], description: 'Agent-selected booking with payment authority retained by the PA', primaryKey: 'id', titleKey: 'displayTitle', properties: { ...common, input: p('struct', bookingInputSchema, 'Requested service, participant count and optional exact start'), configurationDigest: p('string', sha, 'Configured source identity'), allowedActions: p('array', z.array(id), 'Atomic actions; no EIGOS payment action') } },
-  ...Object.entries(bookingEntitySchemas).map(([type, schema]): ObjectTypeDefinition => ({ id: type, version: '1', name: type, aliases: [type], description: 'Independent provider observation; payment and booking confirmation are separate facts', primaryKey: 'id', titleKey: 'displayTitle', interfaces: [{ id: 'EvidenceBacked' }], properties: { ...common, data: p('struct', schema, 'Normalized source facts'), snapshot: p('struct', bookingSnapshotSchema, 'Source, task, model and HTTP provenance') } })),
-  { id: 'PAPaymentRequest', version: '1', name: '交给 PA 的付款请求', aliases: ['PAPaymentRequest'], description: 'Local immutable payment handoff. Contains no wallet credentials and is never proof of payment.', primaryKey: 'id', titleKey: 'displayTitle', properties: { ...common, terms: p('struct', paPaymentTermsSchema, 'Original booking and authorized provider payment route'), configurationDigest: p('string', sha, 'Configured source identity') } },
+  ...Object.entries(bookingEntitySchemas).map(([type, schema]): ObjectTypeDefinition => ({ id: type, version: type === 'BookingObservation' ? '2' : '1', name: type, aliases: [type], description: 'Independent provider observation; payment and booking confirmation are separate facts', primaryKey: 'id', titleKey: 'displayTitle', interfaces: [{ id: 'EvidenceBacked' }], properties: { ...common, data: p('struct', schema, 'Normalized source facts'), snapshot: p('struct', bookingSnapshotSchema, 'Source, task, model and HTTP provenance') } })),
+  { id: 'PAPaymentRequest', version: '2', name: '交给 PA 的付款请求', aliases: ['PAPaymentRequest'], description: 'Local immutable payment handoff. Contains no wallet credentials and is never proof of payment.', primaryKey: 'id', titleKey: 'displayTitle', properties: { ...common, terms: p('struct', paPaymentTermsSchema, 'Original booking and authorized provider payment route'), configurationDigest: p('string', sha, 'Configured source identity') } },
 ];
 export const bookingLinks: LinkDefinition[] = [
   { id: 'BookingTaskRequest', description: 'Owned booking scope', from: { type: 'BookingTask', name: 'request', many: false, required: true }, to: { type: 'ServiceRequest', name: 'bookingTasks', many: true } },
@@ -84,4 +85,4 @@ export const bookingActions: ActionDefinition[] = Object.entries(bookingActionSc
   const m = bookingActionMetadata[id as BookingAction];
   return { id, description: m.description, inputs: { scope: 'BookingTask' }, changes: [m.type], submissionCriteria: ['same_owner', 'current_request_revision', 'exact_source_terms', 'sandbox_only', ...(m.effect === 'reserve' ? ['exact_reservation_authority'] : [])], ...(m.effect === 'read' ? { read: { version: '1', effect: m.effect, inputSchema: z.toJSONSchema(schema), resultType: m.type } } : { operation: { version: '1', effect: m.effect, environment: 'sandbox', inputSchema: z.toJSONSchema(schema), resultType: m.type } }) };
 });
-export const bookingFunctions: FunctionDefinition[] = [{ id: 'bookingObservationStatus', version: '1', inputTypes: Object.keys(bookingEntitySchemas), description: 'Validate owned source receipts, exact original terms, freshness and independent provider read. PA requests and reports never establish payment or booking completion.' }];
+export const bookingFunctions: FunctionDefinition[] = [{ id: 'bookingObservationStatus', version: '2', inputTypes: Object.keys(bookingEntitySchemas), description: 'Validate owned source receipts, exact original terms, freshness and independent provider read. PA requests and reports never establish payment or booking completion.' }];

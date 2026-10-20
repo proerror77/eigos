@@ -151,7 +151,7 @@ test('A provider cannot silently replace the already reserved service terms befo
     const ref = t.store.get(owner, id).delegation!.agent!.observations.find(r => r.type === 'BookingObservation')!;
     const original = t.store.ontology.read(owner, ref).properties.data as any;
     const changed = { ...original.offer, title: 'Different service', total: { ...original.offer.total, minor: '19000' } };
-    t.provider.mutate(original.bookingId, { offer: changed, termsDigest: digest({ offer: changed, paymentHandler: original.paymentHandler }) });
+    t.provider.mutate(original.bookingId, { offer: changed, termsDigest: digest({ offer: changed, paymentHandler: original.paymentHandler, checkout: original.checkout }) });
     const result = await t.finish(id); assert.equal(result.state, 'input-required'); assert.equal(result.delegation!.agent!.paPayment, undefined); assert.equal(result.artifact, undefined); assert.equal(t.wallet.attempts.length, 0);
   } finally { await t.close(); }
 });
