@@ -8,6 +8,7 @@ import { evaluateCommerceFunction } from './commerce-functions.js';
 import { evaluateCatalogFunction } from './catalog-functions.js';
 import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
 import { evaluateCommerceJourneyFunction } from './commerce-journey-functions.js';
+import { evaluateCustomsPolicyFunction } from './customs-policy-functions.js';
 import { domainFunctionCallSchemas } from './service-domains.js';
 import { DomainError } from '../core/domain.js';
 import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store.js';
@@ -15,6 +16,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  simple('customsGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
@@ -54,6 +56,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const customsResult = evaluateCustomsPolicyFunction(store, owner, input, budget);
+  if (customsResult) return customsResult;
   const journeyResult = evaluateCommerceJourneyFunction(store, owner, input, budget);
   if (journeyResult) return journeyResult;
   const agentCatalogResult = evaluateAgentCatalogFunction(store, owner, input, budget);

@@ -13,6 +13,8 @@ import { commerceJourneyInputSchema, commerceJourneyActionSchemas, commerceActio
 import { readCommerceObservation, checkedCommerceObservation, commerceObservationReadiness, commerceDestinationChoice, postalAddressDigest, addressHasDeliveryStructure } from '../ontology/commerce-journey-functions.js';
 import { projectCommerceObservation, type CommerceSourceResult } from '../ontology/commerce-journey-projection.js';
 import { HttpCommerceSandboxConnector, type CommerceSandboxConnector, type CommerceSandboxOptions } from './commerce-sandbox/connector.js';
+import { CUSTOMS_POLICY_DIGEST, CUSTOMS_RULE_REF, CUSTOMS_REFERENCES, CUSTOMS_REFERENCE_REFS, seedCustomsPolicy } from '../ontology/customs-policy.js';
+import { customsGateStatus, productRegulatoryBoundary } from '../ontology/customs-policy-functions.js';
 
 const selectedRef = objectRefSchema;
 const completion = z.strictObject({ selected: selectedRef, cart: selectedRef.optional(), order: selectedRef.optional(), payment: selectedRef.optional(), delivery: selectedRef.optional(), rationale: z.string().min(1).max(2000) });
@@ -20,7 +22,7 @@ const fail = (message: string): never => { throw new DomainError('CONFLICT', mes
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const supportedPredicates = ['commerce.sandbox_only', 'commerce.stock_confirmed', 'commerce.customs_checked', 'commerce.all_buyer_fees', 'commerce.delivery_promised', 'commerce.cart_created', 'commerce.checkout_prepared', 'commerce.order_confirmed', 'commerce.payment_settled', 'commerce.delivery_verified'];
 export class CommerceAgentProgram implements AgentProgram {
-  readonly ref = { id: 'commerce.journey.sandbox', version: '1' };
+  readonly ref = { id: 'commerce.journey.sandbox', version: '2' };
   readonly actionIds = Object.keys(commerceJourneyActionSchemas);
   readonly configurationDigest: string;
   readonly limits = { modelTurns: 72, plans: 24, actions: 56 };
@@ -30,6 +32,8 @@ export class CommerceAgentProgram implements AgentProgram {
     'This is the explicitly isolated commerce sandbox. All merchant, PA-context, customs, payment and shipping responses are synthetic source evidence; never present them as real-world transactions or tariff rules. You decide the business action sequence and which merchant, product and shipping option to select. Queries and drafts are not purchase authority.',
     'The CommerceTask starts without merchant or country facts. Query authorized PA context and merchant directory yourself. A merchant registration country, actual dispatch warehouse, goods customs origin, shopping market and delivery country are different facts. Read provider facts through the available source actions; do not ask PA to supply merchant warehouse, HS code, taxes or shipping facts that these actions can query.',
     'Query the supplied CommerceTask and relevant exact observation refs; commerceJourneyStatus reports evidence and stage gaps. commerceObservationStatus independently validates one observation and returns assessment.status plus gaps. You must actually evaluate the quote before PrepareCommerceCheckout and the checkout before SubmitCommerceOrder. Each sandbox write uses a separate frontier and requires the exact PA permit through the existing authorization interface.',
+    `Read policy through query_ontology with from=the current ServiceRequest and link="customsRuleSets", then read the same request's link="regulatoryReferences". These direct request relationships work with your scoped permissions; do not search owner-wide objects or traverse arbitrary relationships. The current rule set is ${JSON.stringify(CUSTOMS_RULE_REF)}. Official reference documents are supporting information, not legal eligibility or permission. Before QuoteCommerceLandedCost, evaluate customsGateStatus on its exact CustomsAssessment; before PrepareCommerceCheckout, evaluate it on the exact LandedCostQuote; before SubmitCommerceOrder, evaluate it on the exact CommerceCheckout. In the same decision, query the rule set and its reference documents before evaluating. Only pass_sandbox may proceed. First obtain observations, then evaluate; an unobserved future action output cannot satisfy this gate.`,
+    'Missing, expired, conflicting or unsupported regulatory evidence stops purchasing. A PA authorization cannot override that result. Tobacco and unsupported regulated categories are outside this program; do not propose procurement or forwarding routes for them. If an actually read and evaluated directory contains no merchants, report the limited registered-source coverage through no_feasible_plan; do not infer worldwide unavailability or ask PA to repair a missing provider integration.',
     'For ambiguous saved addresses, first read and evaluate FulfillmentContext. Then clarify with informationRequest={fact:"destination_choice",evidenceRefs:[contextRef]}, listing the source labels in message and asking PA to return the chosen label as a structured location requirement with role destination. Do not infer a choice from PA location, IP or language. A single usable address or explicit preferredAddressId can be used without an unnecessary question. A missing quantity or query can be clarified with fact requested_quantity or product_need. Other missing facts must be queried from their source.',
     'Do not create a fixed search/detail/shipping recipe. Read the exact facts required for the next decision, inspect alternative merchants when supply or terms fail, and adapt to changed evidence. A quote may cover seller-borne unknown tax amounts only with explicit responsibility evidence; never treat unknown buyer fees as zero. Shipment promises must cover every package, quantity and destination and satisfy any hard arrival deadline.',
     'For complete: selected identifies the current terminal evidence for target quote/cart/checkout/order, or the independently read order for target delivery; include order/payment/delivery refs when required. Every selected ref must have been read and evaluated with commerceObservationStatus in this decision. Delivery requires a separately read original order, settled simulated payment and actual synthetic delivery events for every package. Order confirmation alone proves neither settlement nor arrival.',
@@ -37,16 +41,16 @@ export class CommerceAgentProgram implements AgentProgram {
   ].join('\n');
   constructor(options: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }) {
     this.connector = options.connector ?? new HttpCommerceSandboxConnector(options);
-    this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v1' });
+    this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v2', customsPolicyDigest: CUSTOMS_POLICY_DIGEST });
   }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
-    return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '1' }, name: 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],
+    return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '2' }, name: 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],
       description: '仅在隔离沙箱比较商家、查询 PA 保存地址、库存、仓库、跨境税费和配送承诺，自主形成报价或创建模拟购物车、结账、订单、付款与交付回读。商家、国家与地址无需预先提供，缺失时 input query/quantity/contextKey 可为 null；先通过动作获取事实，只有用户选择才问 PA。数量为所选商品变体件数，袋装咖啡的一袋是一件 piece。target 明确为 quote/cart/checkout/order/delivery；购物车可以独立准备。所有业务证据为 synthetic，禁止真实购买付款。',
       inputSchema: z.toJSONSchema(commerceJourneyInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: commerceActionMetadata[id as CommerceJourneyAction].effect, additionalEffects: commerceActionMetadata[id as CommerceJourneyAction].additionalEffects })),
       predicates: supportedPredicates.map(id => ({ id, description: ({ 'commerce.sandbox_only': 'All activity stays in the isolated sandbox; no real transaction', 'commerce.stock_confirmed': 'Source confirms capacity for the requested quantity', 'commerce.customs_checked': 'Applicable synthetic import and customs requirements are resolved', 'commerce.all_buyer_fees': 'Buyer total includes every mandatory buyer-paid charge', 'commerce.delivery_promised': 'Source arrival commitments cover all selected packages and hard deadlines', 'commerce.cart_created': 'Owned sandbox draft cart exists', 'commerce.checkout_prepared': 'Exact sandbox checkout is prepared', 'commerce.order_confirmed': 'Original sandbox order independently read and matched', 'commerce.payment_settled': 'Separate simulated payment receipt confirms settlement', 'commerce.delivery_verified': 'Separate synthetic delivered events cover the exact ordered goods and destination' } as Record<string, string>)[id]! })), outcomePredicates: supportedPredicates,
       requirementRoles: [{ kind: 'quantity', role: 'item_quantity', description: 'Selected merchant variant count in piece units' }, { kind: 'budget', role: 'service_total', description: 'Complete buyer cost including all buyer-paid freight, tax, duty and clearance fees' }, { kind: 'deadline', role: 'arrival', description: 'All ordered packages must arrive by the explicit source-bound deadline' }, { kind: 'location', role: 'destination', description: 'Explicit saved-address label or ID selected by PA; an unspecified saved address is discovered through ReadCommerceContext' }], locationSemantics: 'destination',
-      ontology: { objects: ['CommerceTask', 'FulfillmentContext', 'CommerceProduct', 'InventoryObservation', 'FulfillmentPlan', 'CustomsAssessment', 'LandedCostQuote', 'Cart', 'CommerceCheckout', 'CommerceOrderObservation', 'CommercePaymentObservation', 'CommerceDeliveryObservation'], functions: ['commerceJourneyStatus', 'commerceObservationStatus'], execution: 'agent_selected_atomic_actions', realSourceConnected: false }, verifierRef: { id: 'commerce.journey.independent', version: '1' }, completion: 'domain' };
+      ontology: { objects: ['CommerceTask', 'FulfillmentContext', 'CommerceProduct', 'InventoryObservation', 'FulfillmentPlan', 'CustomsAssessment', 'LandedCostQuote', 'Cart', 'CommerceCheckout', 'CommerceOrderObservation', 'CommercePaymentObservation', 'CommerceDeliveryObservation', 'CustomsRuleSet', 'RegulatoryReference'], functions: ['commerceJourneyStatus', 'commerceObservationStatus', 'customsGateStatus'], execution: 'agent_selected_atomic_actions', realSourceConnected: false }, verifierRef: { id: 'commerce.journey.independent', version: '2' }, completion: 'domain' };
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown) {
     if (!this.permitted(owner) || request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Commerce journey is available only to the configured local sandbox identity');
@@ -57,6 +61,7 @@ export class CommerceAgentProgram implements AgentProgram {
     commerceJourneyInputSchema.parse(input);
     for (const r of requirements) if (r.kind === 'quantity' && r.strength === 'hard' && (!r.role || r.role === 'item_quantity') && (r.expected.unit !== 'piece' || input.quantity !== null && String(input.quantity) !== r.expected.amount)) fail('The selected quantity must match the explicit user item count');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: 'Agent 沙箱交易范围', requestRevision: request.revision, input, requirements, configurationDigest: this.configurationDigest, allowedActions: this.actionIds, environment: 'sandbox' } }], links: [{ type: 'CommerceTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
+    seedCustomsPolicy(graph, owner, scope, { type: 'ServiceRequest', id: request.id });
     return { scope, input };
   }
   schema(action: string) { if (!Object.hasOwn(commerceJourneyActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Unknown commerce action'); return commerceJourneyActionSchemas[action as CommerceJourneyAction]; }
@@ -87,6 +92,10 @@ export class CommerceAgentProgram implements AgentProgram {
     const observations = Object.entries(input).filter(([key]) => key !== 'scope').flatMap(([, value]) => objectRefSchema.safeParse(value).success ? [this.facts(ctx, value, undefined, identityRead)] : []);
     const get = <T extends CommerceEntityType>(key: string, type: T) => { const s = this.facts(ctx, input[key], type, identityRead); return { s, data: parseCommerceEntity(type, s.data) }; };
     if (input.quantity !== undefined) this.quantity(ctx, Number(input.quantity));
+    if (action === 'CreateCommerceCart' || action === 'UpdateCommerceCart') {
+      const boundary = productRegulatoryBoundary(get('product', 'CommerceProduct').data);
+      if (boundary.result !== 'pass') fail(boundary.reason);
+    }
     if (action === 'ReadCommerceProduct') {
       const { data } = get('discovery', 'CommerceMerchantSearch'); if (!data.merchants.some(m => m.id === input.merchantId)) fail('Select a merchant from an actual directory observation');
     }
@@ -103,6 +112,7 @@ export class CommerceAgentProgram implements AgentProgram {
       if (!option || option.status !== 'available' || product.data.merchantId !== fulfillment.data.merchantId || product.data.variantId !== fulfillment.data.variantId) fail('Select a currently available source shipping option for these goods');
       if (action === 'QuoteCommerceLandedCost') {
         const customs = get('customs', 'CustomsAssessment'), inventory = get('inventory', 'InventoryObservation'); this.ready(ctx, customs.s); this.ready(ctx, inventory.s);
+        this.requireCustomsGate(ctx, objectRefSchema.parse(input.customs));
         if (customs.data.fulfillmentId !== fulfillment.s.sourceId || customs.data.optionId !== input.optionId || customs.data.destinationDigest !== fulfillment.data.destinationDigest || customs.data.variantId !== product.data.variantId || inventory.data.variantId !== product.data.variantId || inventory.data.merchantId !== product.data.merchantId || inventory.data.requestedQuantity !== fulfillment.data.quantity) fail('Quote inputs refer to different products, routes or quantities');
       }
     }
@@ -112,9 +122,10 @@ export class CommerceAgentProgram implements AgentProgram {
     }
     if (action === 'PrepareCommerceCheckout') {
       const quote = get('quote', 'LandedCostQuote'); this.ready(ctx, quote.s);
+      this.requireCustomsGate(ctx, objectRefSchema.parse(input.quote));
       if (input.cart) { const cart = get('cart', 'Cart'); if (cart.data.state !== 'active' || cart.data.merchantId !== quote.data.merchantId || cart.data.lines.length !== 1 || cart.data.lines[0]!.variantId !== quote.data.variantId || cart.data.lines[0]!.quantity !== quote.data.quantity) fail('Cart contents differ from the selected firm quote'); }
     }
-    if (action === 'SubmitCommerceOrder') this.ready(ctx, get('checkout', 'CommerceCheckout').s);
+    if (action === 'SubmitCommerceOrder') { this.ready(ctx, get('checkout', 'CommerceCheckout').s); this.requireCustomsGate(ctx, objectRefSchema.parse(input.checkout)); }
     if (['ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery'].includes(action)) this.ready(ctx, get('order', 'CommerceOrderObservation').s);
     if (observations.some(s => s.evidenceLevel !== 'synthetic')) fail('Sandbox actions cannot consume real transaction evidence');
   }
@@ -123,7 +134,20 @@ export class CommerceAgentProgram implements AgentProgram {
     if (current.status !== 'known' || !reads.reads.some(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: 'commerceObservationStatus', object: ref }) && r.outputDigest === digest(current))) fail('The Agent must read and evaluate the exact current commerce evidence before using it for this decision');
     if (ready) this.ready(ctx, this.facts(ctx, ref));
   }
+  private requireCustomsGate(ctx: AgentProgramContext, ref: ObjectRef) {
+    const gate = customsGateStatus(ctx.graph, ctx.owner, ref);
+    if (gate.status !== 'pass_sandbox') fail(`Customs hard gate ${gate.status}: ${gate.checks.filter(c => c.result !== 'pass').map(c => `${c.id}: ${c.reason}`).join('; ')}`);
+    return gate;
+  }
   validatePlanning(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot) {
+    const gateInput = action === 'QuoteCommerceLandedCost' ? input.customs : action === 'PrepareCommerceCheckout' ? input.quote : action === 'SubmitCommerceOrder' ? input.checkout : undefined;
+    if (gateInput) {
+      const ref = objectRefSchema.parse(gateInput), call = { function: 'customsGateStatus', object: ref }, result = ctx.graph.evaluate(ctx.owner, call);
+      if (result.status !== 'known' || (result.value as { status?: string } | undefined)?.status !== 'pass_sandbox') fail('The current customs hard gate has not passed');
+      const evaluated = reads.reads.find(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest(call) && r.outputDigest === digest(result));
+      const queried = (ref: ObjectRef) => reads.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok' && evaluated && r.at <= evaluated.at && (r.objects.some(o => equal(o.ref, ref)) || r.inputDigest === digest({ object: ref }) || r.inputDigest === digest({ from: { type: 'ServiceRequest', id: ctx.request.id }, link: ref.type === 'CustomsRuleSet' ? 'customsRuleSets' : 'regulatoryReferences' })));
+      if (!queried(CUSTOMS_RULE_REF) || CUSTOMS_REFERENCE_REFS.some(ref => !queried(ref)) || !evaluated) fail('The Agent must query the exact customs rule set and references, then evaluate customsGateStatus for this decision');
+    }
     if (action === 'PrepareCommerceCheckout') this.requireEvaluation(ctx, objectRefSchema.parse(input.quote), reads, true);
     if (action === 'SubmitCommerceOrder') this.requireEvaluation(ctx, objectRefSchema.parse(input.checkout), reads, true);
   }
@@ -131,7 +155,12 @@ export class CommerceAgentProgram implements AgentProgram {
     validatePlanningSnapshot(ctx.graph, ctx.owner, ctx.request, reads, true);
     if (decision.kind === 'no_feasible_plan') {
       const hasProviderFacts = ctx.state.observations.some(r => ['CommerceProduct', 'InventoryObservation', 'FulfillmentPlan', 'CustomsAssessment', 'LandedCostQuote'].includes(r.type));
-      if (!hasProviderFacts) fail('Query available merchant and fulfillment sources before rejecting the business goal');
+      if (!hasProviderFacts) {
+        const ref = ctx.state.observations.filter(r => r.type === 'CommerceMerchantSearch').at(-1) ?? fail('Query available merchant and fulfillment sources before rejecting the business goal');
+        const directory = parseCommerceEntity('CommerceMerchantSearch', this.facts(ctx, ref, 'CommerceMerchantSearch').data);
+        this.requireEvaluation(ctx, ref, reads);
+        if (directory.query !== this.scope(ctx).query || directory.merchants.length) fail('Only an evaluated empty directory for the requested query establishes this registered-source coverage gap');
+      }
       return;
     }
     const information = decision.informationRequest ?? fail('A commerce clarification must identify the missing PA fact in informationRequest');
@@ -194,6 +223,12 @@ export class CommerceAgentProgram implements AgentProgram {
     const quote = findQuote(selected);
     if (quote) {
       const q = parseCommerceEntity('LandedCostQuote', quote.data); data.quote = q;
+      const plan = ctx.state.plans.find(p => p.id === quote.receipt.planId) ?? fail('The selected quote has no recorded model plan');
+      const step = plan.steps.find(s => s.intentId === quote.receipt.intentId);
+      const assessmentRef = quote.dependencies.find(d => d.ref.type === 'CustomsAssessment')?.ref ?? fail('The selected quote has no bound customs assessment');
+      const gateRead = plan.ontologyPlanning.reads.find(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: 'customsGateStatus', object: assessmentRef })) ?? fail('The selected quote has no recorded model customs gate evaluation');
+      if (step?.action !== 'QuoteCommerceLandedCost') fail('The selected quote came from a different action');
+      data.customsPolicy = { ruleSet: CUSTOMS_RULE_REF, policyDigest: CUSTOMS_POLICY_DIGEST, evaluatedAt: gateRead.at, modelRunId: plan.modelRunId, evaluationDigest: gateRead.outputDigest, coverage: 'synthetic_commerce_only', legalApproval: false, references: CUSTOMS_REFERENCES.map(r => ({ title: r.title, url: r.url, documentVersion: r.documentVersion, capturedAt: r.capturedAt })) };
       facts.totalPrice = q.buyerTotal; facts.amounts = { service_total: q.buyerTotal }; facts.quantity = { amount: String(q.quantity), unit: 'piece' }; facts.quantities = { item_quantity: facts.quantity };
       conditions.push('commerce.stock_confirmed', 'commerce.customs_checked', 'commerce.all_buyer_fees');
       const commitments = q.promises.filter(p => p.kind === 'commitment' && p.milestone === 'arrival' && p.latestAt && p.conditions.every(c => c.status === 'met'));

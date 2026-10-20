@@ -182,7 +182,7 @@ export const commerceJourneyLinks: LinkDefinition[] = [
 ];
 export const commerceJourneyActions: ActionDefinition[] = Object.entries(commerceJourneyActionSchemas).map(([id, schema]) => {
   const m = commerceActionMetadata[id as CommerceJourneyAction];
-  return { id, description: m.description, inputs: { scope: 'CommerceTask' }, changes: [m.type], submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_inputs', 'fresh_dependencies', 'sandbox_only', ...(m.effect === 'read' ? [] : ['exact_plan_authority'])],
+  return { id, description: m.description, inputs: { scope: 'CommerceTask' }, changes: [m.type], submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_inputs', 'fresh_dependencies', 'sandbox_only', ...(m.effect === 'read' ? [] : ['exact_plan_authority']), ...(['QuoteCommerceLandedCost', 'PrepareCommerceCheckout', 'SubmitCommerceOrder'].includes(id) ? ['current_customs_policy', 'model_evaluated_customs_gate', 'customs_gate_pass_sandbox'] : []), ...(['CreateCommerceCart', 'UpdateCommerceCart'].includes(id) ? ['supported_commodity_policy'] : [])],
     ...(m.effect === 'read' ? { read: { version: '1', effect: 'read' as const, inputSchema: z.toJSONSchema(schema), resultType: m.type } } : { operation: { version: '1', effect: m.effect, ...(m.additionalEffects ? { additionalEffects: m.additionalEffects } : {}), environment: 'sandbox' as const, inputSchema: z.toJSONSchema(schema), resultType: m.type } }) };
 });
 export const commerceJourneyFunctions: FunctionDefinition[] = [

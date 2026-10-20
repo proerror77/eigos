@@ -4,6 +4,7 @@ import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } fr
 import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './catalog-read.js';
 import { catalogAgentActions, catalogAgentFunctions, catalogAgentLinks, catalogAgentObjects } from './catalog-agent.js';
 import { commerceJourneyActions, commerceJourneyFunctions, commerceJourneyLinks, commerceJourneyObjects } from './commerce-journey.js';
+import { customsPolicyObjects, customsPolicyLinks, customsPolicyFunctions } from './customs-policy.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
 
 export const decimalSchema = z.string().regex(/^(0|[1-9]\d{0,14})(?:\.\d{1,6})?$/);
@@ -159,7 +160,7 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '8', objects: [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '9', objects: [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
@@ -174,6 +175,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'SelectOffer', description: 'Record a version-bound choice; grants no payment or order authority', inputs: { request: 'ServiceRequest', offer: 'Offer' }, changes: ['Proposal', 'Proposal.selectedOffer', 'ServiceRequest.selectedProposal'], submissionCriteria: ['same_owner', 'same_request', 'current_request_revision', 'fresh_offer', 'hard_preconditions_pass'] },
   ],
   functions: [
+    ...customsPolicyFunctions,
     ...commerceJourneyFunctions,
     ...catalogAgentFunctions,
     ...commerceFunctions,
