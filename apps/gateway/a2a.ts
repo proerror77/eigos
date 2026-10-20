@@ -5,6 +5,7 @@ import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
+import { taskSummary } from '../../packages/core/task-summary.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -26,6 +27,7 @@ const states: Record<JobState, TaskState> = {
 
 function toTask(job: Job, historyLength?: number): Task {
   if (historyLength !== undefined) z.number().int().min(0).max(1000).parse(historyLength);
+  const summary = taskSummary(job);
   const messages = job.messages.map(message => ({
     messageId: message.id, contextId: job.contextId, taskId: job.id,
     role: message.role === 'user' ? 'ROLE_USER' : 'ROLE_AGENT',
@@ -34,11 +36,14 @@ function toTask(job: Job, historyLength?: number): Task {
   return Task.fromJSON({
     id: job.id, contextId: job.contextId,
     status: { state: states[job.state], timestamp: job.updatedAt, message: messages.at(-1) },
-    history: historyLength === undefined ? messages : historyLength === 0 ? [] : messages.slice(-historyLength),
+    history: !historyLength ? [] : messages.slice(-historyLength),
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
-      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
+      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, revision: job.revision, internalState: job.state, ...(job.memberUsage ? { memberUsage: job.memberUsage } : {}), ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { view: summary.view, service: summary.service, revision: summary.revision, internalState: summary.state, counts: summary.counts,
+      ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
+      ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
+      ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
   });
 }
 

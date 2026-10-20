@@ -6,6 +6,7 @@ import { networkGatewayFixture } from './fixtures/network-gateway.js';
 import { ownerKey } from '../packages/core/domain.js';
 import { inquiryFixture } from './fixtures/network-inquiry.js';
 import { inquiryPage, workbenchPage } from '../apps/gateway/network/workbench-page.js';
+import type { TaskSummary } from '../packages/core/task-summary.js';
 
 function hidden(html: string, name: string) {
   const value = new RegExp(`name="${name}" value="([^"]*)"`).exec(html)?.[1];
@@ -40,9 +41,11 @@ test('T12 member task form resumes the same task; MCP/A2A read back the reply, i
     const replay = await f.call(url + '/reply', input, headers); assert.equal(replay.status, 409);
     const job = f.gateway.tasks.get(f.a.p, task.id); assert.equal(job.messages.filter(m => m.text === input.answer).length, 1);
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.a.token}` } } }));
-    const mcp = await client.callTool({ name: 'get_task', arguments: { taskId: task.id } }); assert(!mcp.isError, JSON.stringify(mcp)); assert(JSON.stringify(mcp).includes(input.answer));
+    const mcp = await client.callTool({ name: 'get_task', arguments: { taskId: task.id } }); assert(!mcp.isError, JSON.stringify(mcp));
+    const summary = (mcp.structuredContent as { result: TaskSummary }).result, accepted = job.messages.findLast(m => m.role === 'user')!;
+    assert.deepEqual(summary.latestInput, { id: accepted.id, text: input.answer, receivedAt: accepted.at }); assert(!('messages' in summary));
     const rpc = await f.call('/a2a', { jsonrpc: '2.0', id: 't12', method: 'GetTask', params: { id: task.id } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
-    const a2a = (await rpc.json()).result; assert.equal(a2a.id, task.id); assert.equal(a2a.status.state, 'TASK_STATE_SUBMITTED'); assert(JSON.stringify(a2a).includes(input.answer));
+    const a2a = (await rpc.json()).result; assert.equal(a2a.id, task.id); assert.equal(a2a.status.state, 'TASK_STATE_SUBMITTED'); assert.deepEqual(a2a.metadata.latestInput, summary.latestInput);
     assert.equal(f.gateway.store.list(owner, { limit: 20, offset: 0 }).total, 1);
     f.gateway.members.setStatus(f.alice.id, 'suspended');
     assert.equal((await f.call('/members/network/workbench', undefined, cookie)).status, 403);

@@ -17,6 +17,7 @@ import { assertPersonalSourceConfig } from '../packages/core/config.js';
 import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import { paotuiModel, programContext, programRead, quoteChoice, observe, decide, step } from './fixtures/paotui-agent.js';
 import { digest } from '../packages/core/delegation.js';
+import type { TaskSummary } from '../packages/core/task-summary.js';
 const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
 const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: PAOTUI_AGENT_REFS.quote.version }, providerId: 'meituan-paotui' };
 
@@ -167,12 +168,15 @@ for (const rotateToken of [false, true]) test(`input completion and actual sourc
     await f.connect(rotateToken ? sourceTokens.rotated : sourceTokens.alice, f.a, 2);
     if (rotateToken) assert.notEqual(f.vault.grant(ownerKey(f.a.p)).selectionContext, firstGrant.selectionContext, 'Continuity must be proven by the new authenticated read, not by the upload');
     const resume = { taskId: job.id, expectedRevision: waiting.revision!, requestId: randomUUID() };
-    const resumed = await f.sourceCall('/resume', resume); assert.equal(resumed.status, 200); const response = await resumed.json();
-    assert.equal((await f.sourceCall('/resume', resume)).status, 200, 'An identical retry does not allocate another window');
+    const resumed = await f.sourceCall('/resume', resume); assert.equal(resumed.status, 200); const response = await resumed.json() as TaskSummary;
+    const retry = await f.sourceCall('/resume', resume); assert.equal(retry.status, 200, 'An identical retry does not allocate another window');
+    const retried = await retry.json() as TaskSummary;
+    assert.deepEqual(retried.delegation!.executionBudgetStatus!.window, response.delegation!.executionBudgetStatus!.window, 'The public retry reports the same execution window');
     const done = await wait(job.id); assert.equal(done.state, 'completed', JSON.stringify(done)); assert.equal(done.id, job.id);
     assert.equal(interpretations, groundingBeforeResume, 'A credential-only continuation retains the validated interpretation');
     assert.deepEqual(done.runs!.slice(0, retainedRuns.length).map(r => r.id), retainedRuns);
-    assert.equal(done.delegation!.executionBudget!.window.sequence, response.delegation.executionBudget.window.sequence);
+    assert.deepEqual(done.delegation!.executionBudget!.window, response.delegation!.executionBudgetStatus!.window, 'The public execution window matches the stored task ledger');
+    assert.equal(Object.hasOwn(response.delegation!, 'executionBudget'), false, 'Internal execution state is not restored to the public response');
     assert.equal(done.messages.filter(m => m.role === 'agent' && m.text.includes('本人保存地址')).length, 1, 'No repeated address confirmation');
     assert.equal(f.gateway.tasks.list(f.a.p, { limit: 10, offset: 0 }).total, 1);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);

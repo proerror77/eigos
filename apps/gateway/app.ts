@@ -22,6 +22,7 @@ import { DomainError, ownerKey, SCOPES, type Principal, type Scope } from '../..
 import { createMcpServer } from './mcp.js';
 import { JobStore } from '../../packages/core/store.js';
 import { TaskService } from '../../packages/core/tasks.js';
+import { taskSummary } from '../../packages/core/task-summary.js';
 import { MemberAccessError, MemberStore } from '../../packages/members/store.js';
 import { mountMemberRoutes } from './members/routes.js';
 import type { LoginProvider } from './members/oidc.js';
@@ -153,7 +154,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
 
   // Application authorization channel, separate from A2A messages. No raw credentials in task parts.
   app.post('/tasks/:taskId/authorize', authenticate, (req, res, next) => {
-    try { res.json({ task: tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body) }); }
+    try { res.json({ task: taskSummary(tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body)) }); }
     catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_authorization' }); return; }
@@ -166,7 +167,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       const task = action === 'aftersales' ? tasks.requestRemediation(p, { ...req.body, originalTaskId: id })
         : action === 'reconcile' ? tasks.reconcile(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId)
         : tasks.revokeAuthorization(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId);
-      res.json({ task });
+      res.json({ task: taskSummary(task) });
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_business_action' }); return; } next(error);

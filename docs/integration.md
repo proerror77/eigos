@@ -12,6 +12,10 @@
 
 远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`amend_task`、`resume_task`、`get_member_usage`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
 
+任务返回默认是 `view: "summary"` 的业务视图，无需 PA 选择精简模式。提交、补充、恢复、查询、列表、取消与授权响应保留任务身份、当前版本、状态、问题、完整交付物、验收结论，以及继续处理所需的授权／来源／恢复信息。模型运行记录、完整计划、读取凭据、定义包和历史快照由 EIGOS 内部保存，不随轮询反复发送。现有 `delegation.plan.quote` 和 `delegation.authorizationRequest` 仍提供准确批准所需的报价或计划标识；摘要本身不授予权限。对象详情通过有权限且有界的 Ontology 查询按需读取。
+
+A2A 使用相同的业务摘要生成 metadata，保留原有状态与完整 artifacts；默认不附历史消息，显式 `historyLength` 可读取相应业务对话。HTTP 授权、对账和来源恢复响应也使用同一投影。内部账本不删减，结果正文不截断；返回大小主要随业务交付物变化，不随内部模型回合和重复定义增长。
+
 N1 增加三个只读工具：`describe_ontology`（services:read）、`query_ontology`、`evaluate_ontology`（tasks:read）。对应认证 HTTP POST 为 `/ontology/describe`、`/ontology/query`、`/ontology/evaluate`；均按同一 owner 隔离。支持类型／接口发现、分页对象集、单跳关系和登记计算，不开放对象写入或业务 Action。输入、边界和来源投影见 [N1 使用说明](ontology-n1.md)。现有 PA 的任务提交、补问及读回方式保持。
 
 N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和计划快照。`query_ontology` 还支持 `{"object":{"type":"具体类型","id":"对象ID"}}` 精确读取。只有 tasks:write 的客户端仍能获得本次写操作的回执，但模型的数据范围限于当前委托及其已取得对象，不能据此搜索其他委托。完整 owner 查询仍要求 tasks:read。业务决策提案保持不执行；详情见 [N2 说明](ontology-n2.md)。
@@ -21,6 +25,8 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 ```json
 {"service":"eigos.delegate","goal":"帮我查询寄1公斤文件普通送的价格，先让我选择寄件和收件地址。只查价，不下单、不付款。","requestId":"stable-submit-id"}
 ```
+
+`goal` 和可选 `deliverable` 都属于原始提交。后端将二者保留为独立、有稳定身份和原提交时间的指令来源，后续补充排在它们之后；不会因要求放在 `deliverable` 中而漏掉重量等事实或无法引用原文。
 
 缺项返回 `input-required` 和具体问题。按用户选择回复同一任务：
 

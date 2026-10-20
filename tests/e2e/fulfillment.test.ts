@@ -16,7 +16,7 @@ async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean,
   const job = diagnosticInput && typeof diagnosticInput === 'object' && 'delegation' in diagnosticInput ? diagnosticInput as Job : undefined;
   const diagnostic = job ? { id: job.id, state: job.state, revision: job.revision, error: job.error, question: job.question,
     phase: job.delegation?.phase, recovery: job.delegation?.recovery, actions: job.delegation?.actions,
-    authorizationBudget: job.delegation?.authorizationBudget, events: job.delegation?.events.slice(-12) } : last;
+    authorizationBudget: job.delegation?.authorizationBudget, events: job.delegation?.events?.slice(-12) } : last;
   assert.fail(label + ': ' + JSON.stringify(diagnostic));
 }
 async function child(file: string, env: NodeJS.ProcessEnv) {

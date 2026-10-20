@@ -15,6 +15,7 @@ import { SCOPES, ownerKey, type Job, type Principal } from '../packages/core/dom
 import { readWorkerConfig } from '../packages/core/config.js';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import type { TaskSummary } from '../packages/core/task-summary.js';
 
 const principal: Principal = { issuer: 'test', tenant: 'one', subject: 'alice', clientId: 'test', scopes: [...SCOPES] };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -83,7 +84,12 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   let client = new Client({ name: 'process-test', version: '1' });
   const connect = () => client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
   const call = async (name: string, args: Record<string, unknown>) => {
-    const result = await client.callTool({ name, arguments: args }); assert(!result.isError, JSON.stringify(result)); return (result.structuredContent as { result: Job }).result;
+    const result = await client.callTool({ name, arguments: args }); assert(!result.isError, JSON.stringify(result)); return (result.structuredContent as { result: TaskSummary }).result;
+  };
+  const stored = (id: string): Job => {
+    const db = new DatabaseSync(path, { readOnly: true });
+    try { const row = db.prepare('SELECT body FROM jobs WHERE id=?').get(id); assert(row); return JSON.parse(String(row.body)); }
+    finally { db.close(); }
   };
   const rpc = async (method: string, params: object) => (await fetch(base + '/a2a', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) })).json();
   const children: ChildProcess[] = []; const events: { event: string; taskId?: string; pid?: number }[] = [];
@@ -113,13 +119,18 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted');
     await Promise.all([launch(), launch()]);
     const asked = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'input-required');
-    assert.equal(asked.runs?.filter(r => r.purpose === 'document').length, 1); assert.equal(asked.question, 'Fixture question?');
+    const askedLedger = stored(asked.id);
+    assert.equal(asked.counts.modelRuns, askedLedger.runs!.length);
+    assert.equal(askedLedger.runs?.filter(r => r.purpose === 'document').length, 1); assert.equal(asked.question, 'Fixture question?');
+    assert.equal(Object.hasOwn(asked, 'runs'), false, 'Public task summaries expose counts without internal model receipts');
     await call('submit_task', input); assert.equal(events.filter(e => e.event === 'started' && e.taskId === submitted.id).length, 1);
     const reply = { messageId: 'answer', taskId: submitted.id, metadata: { expectedRevision: asked.revision }, role: 'ROLE_USER', parts: [{ text: '90 minutes' }] };
     const response = await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply }); assert(!response.error, JSON.stringify(response));
     await rpc('SendMessage', { configuration: { returnImmediately: true }, message: reply });
     const done = await until(() => call('get_task', { taskId: submitted.id }), job => job.state === 'completed');
-    assert.equal(done.runs?.filter(r => r.purpose === 'document').length, 2); assert.equal(done.artifact?.data.markdown, '# Fixture document');
+    const doneLedger = stored(done.id);
+    assert.equal(done.counts.modelRuns, doneLedger.runs!.length);
+    assert.equal(doneLedger.runs?.filter(r => r.purpose === 'document').length, 2); assert.equal(done.artifact?.data.markdown, '# Fixture document');
     const remote = await rpc('GetTask', { id: submitted.id }); assert.equal(remote.result.artifacts[0].parts[0].text, done.artifact!.data.markdown);
     const slow = await call('submit_task', { service: 'eigos.delegate', goal: 'slow', requestId: 'slow' });
     await until(() => events, value => value.some(e => e.event === 'started' && e.taskId === slow.id));
