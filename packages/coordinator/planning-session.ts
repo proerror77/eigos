@@ -20,6 +20,15 @@ const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.arr
 export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
 export const planningToolCatalog = (taskContext = false) => Object.entries(planningToolSchemas).filter(([name]) => taskContext || !['read_task_context', 'read_task_instructions'].includes(name)).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
+const MAX_CONTEXT_READ_BYTES = 200000;
+const MAX_PLANNING_READS = 20;
+const contextBudgetFeedback = { error: 'CONFLICT', message: 'This read exceeds the remaining context budget. Return a final decision using the successful receipts already delivered; unavailable evidence remains unknown.', nextAction: 'finalize_with_available_evidence' };
+// Keep rejection feedback inside the existing result cap, including every call
+// in a model-selected batch. Rejected payloads never become delivered evidence.
+const contextFeedbackReserve = MAX_PLANNING_READS * Buffer.byteLength(JSON.stringify(contextBudgetFeedback));
+class ContextReadBudgetExceeded extends DomainError {
+  constructor() { super('CONFLICT', contextBudgetFeedback.message); }
+}
 export interface PlanningSessionOptions { taskContext?: TaskContextBinding; priorReads?: readonly PlanningReadReceipt[] }
 function assertInstructionCoverage(context: NonNullable<PlanningReadReceipt['context']>, reads: PlanningReadReceipt[]) {
   if (!context.requireCompleteInstructions) return;
@@ -68,6 +77,7 @@ export class OntologyPlanningSession {
   private proposals: DecisionActionProposal[] = [];
   private bytes = 0;
   private instructionBytes = 0;
+  private contextBudgetExhausted = false;
   private failures = new Map<string, number>();
   private callObjects = new Map<string, ObjectSnapshot>();
   private callDelivered = new Map<string, ObjectSnapshot>();
@@ -79,7 +89,8 @@ export class OntologyPlanningSession {
     if (options.taskContext) this.readScope = 'request';
   }
   usesTaskContext() { return !!this.options.taskContext; }
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(this.usesTaskContext()), readScope: this.readScope, ...(this.usesTaskContext() ? { contextReadRequired: true, finalReceiptIdsRequired: true, instructionPages: { maxResultBytes: MAX_INSTRUCTION_READ_BYTES, completeReadRequired: this.options.taskContext!.purpose === 'grounding' } } : {}), scopeNote: this.readScope === 'request' ? 'Only the current task and its retrieved business objects. Traverse only task-owned nodes; shared provider or address metadata cannot be used to navigate into another request. Restricted properties remain unavailable.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+  requiresFinalResponse() { return this.contextBudgetExhausted; }
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(this.usesTaskContext()), readScope: this.readScope, ...(this.usesTaskContext() ? { contextReadRequired: true, finalReceiptIdsRequired: true, instructionPages: { maxResultBytes: MAX_INSTRUCTION_READ_BYTES, completeReadRequired: this.options.taskContext!.purpose === 'grounding' } } : {}), scopeNote: this.readScope === 'request' ? 'Only the current task and its retrieved business objects. Traverse only task-owned nodes; shared provider or address metadata cannot be used to navigate into another request. Restricted properties remain unavailable.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: MAX_PLANNING_READS, maxResultBytes: MAX_CONTEXT_READ_BYTES, remainingResultBytes: Math.max(0, MAX_CONTEXT_READ_BYTES - contextFeedbackReserve - this.bytes), finalResponseRequired: this.requiresFinalResponse() }; }
   receipts() { return structuredClone(this.reads); }
   lastReceipt() { return this.reads.length ? structuredClone(this.reads.at(-1)!) : undefined; }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
@@ -110,14 +121,15 @@ export class OntologyPlanningSession {
   }
   call(tool: string, input: unknown): unknown {
     this.active();
-    if (this.reads.length >= 20) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
-    const before = new Map(this.seen), proposalCount = this.proposals.length, receiptId = randomUUID();
+    if (this.reads.length >= MAX_PLANNING_READS) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
+    const before = new Map(this.seen), knownBefore = new Map(this.knownRefs), proposalCount = this.proposals.length, receiptId = randomUUID();
     this.callObjects = new Map(); this.callDelivered = new Map();
     const datasetRevision = this.graph.revision(this.owner);
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     let contextRead: TaskContextRead | undefined;
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
+      if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
       if (tool === 'read_task_context') {
         if (!this.options.taskContext) throw new DomainError('FORBIDDEN', 'This session has no task-context binding');
         const args = taskContextSchema.parse(input);
@@ -225,18 +237,24 @@ export class OntologyPlanningSession {
         this.proposals.push(proposal); output = proposal;
       } else throw new DomainError('INVALID_INPUT', 'Unregistered planning tool');
       if (tool !== 'describe_ontology' && this.graph.revision(this.owner) !== datasetRevision) throw new DomainError('CONFLICT', 'Objects changed during the planning read');
+      if (!instructionPage && this.bytes + Buffer.byteLength(JSON.stringify(output)) > MAX_CONTEXT_READ_BYTES - contextFeedbackReserve) {
+        this.contextBudgetExhausted = true;
+        throw new ContextReadBudgetExceeded();
+      }
     } catch (error) {
       if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
-      status = 'rejected'; output = { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
-      this.seen = before; this.proposals.length = proposalCount;
+      status = 'rejected'; output = error instanceof ContextReadBudgetExceeded ? { ...contextBudgetFeedback } : { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
+      this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
       this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined;
       instructionRefs = []; instructionPage = false;
-      const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
-      if (count >= 3) throw new DomainError('CONFLICT', 'Three identical planning read failures; stop and report the unresolved input');
+      if (!(error instanceof ContextReadBudgetExceeded)) {
+        const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
+        if (count >= 3) throw new DomainError('CONFLICT', 'Three identical planning read failures; stop and report the unresolved input');
+      }
     }
     if (instructionPage) this.instructionBytes += Buffer.byteLength(JSON.stringify(output));
     else this.bytes += Buffer.byteLength(JSON.stringify(output));
-    if (this.bytes > 200000) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
+    if (this.bytes > MAX_CONTEXT_READ_BYTES) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
     if (this.instructionBytes > MAX_INSTRUCTION_READ_BYTES) throw new DomainError('CONFLICT', 'Original instruction read budget exhausted for this reasoning session');
     this.active();
     const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status,

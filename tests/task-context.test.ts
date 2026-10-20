@@ -26,7 +26,7 @@ import { evidence, fixtureBinding, owner, principal } from './backend-fixture.js
 
 const merchant = { id: 'coffee', name: 'Coffee', shopId: 'gid://shopify/Shop/12', domain: 'coffee.myshopify.com' };
 type ContextResponse = { data: TaskContextPayload; receipt: { id: string; tool: string; outputDigest: string; status: string } };
-function fixture() {
+function fixture(goal?: string) {
   const store = new JobStore(':memory:'), program = new CatalogAgentProgram([merchant]);
   const catalog = new ExecutionCatalog([program.capability()], [], [], [], [program]);
   const tasks = new TaskService(store, { catalog });
@@ -35,7 +35,7 @@ function fixture() {
     projectCapabilityCatalog(store.ontology, owner, job.id, catalog.summaries(owner));
     return job;
   };
-  const job = submit();
+  const job = submit(goal);
   const session = (options: PlanningSessionOptions = { taskContext: { purpose: 'grounding' } }, active: () => void = () => {}, onRead: (receipt: PlanningReadReceipt) => void = () => {}) =>
     new OntologyPlanningSession(store.ontology, owner, store.get(owner, job.id).delegation!.request, [], active, onRead, 'request', [], options);
   const agent = () => {
@@ -141,6 +141,64 @@ test('definition reuse returns the verified bundle and original receipt, with a 
     assert.equal(rejected.error, 'CONFLICT');
     const changedBinding = f.session({ taskContext: { ...binding.taskContext, program: { ...binding.taskContext.program, configurationDigest: digest('changed') } }, priorReads: first.receipts() });
     assert.equal((changedBinding.call('read_task_context', {}) as { error: string }).error, 'CONFLICT');
+  } finally { f.store.close(); }
+});
+
+test('a fresh native reasoning session receives full reused definitions in its own actual context result', async () => {
+  const f = fixture();
+  try {
+    const binding = f.agent(), previous = f.session(binding), original = read(previous);
+    const session = f.session({ ...binding, priorReads: previous.receipts() });
+    let calls = 0;
+    const result = await reasonWithOntology({ runStructured: async (prompt: string) => {
+      calls++;
+      const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { conversation: { result: ContextResponse }[] };
+      if (!packet.conversation.length) return { output: { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' }, evidence: evidence() };
+      const response = packet.conversation[0]!.result;
+      assert.equal(response.data.definitions.reused, true);
+      assert.equal(digest(response.data.definitions.bundle), digest(original.data.definitions.bundle));
+      const actions = response.data.definitions.bundle.actions as { read: { inputSchema: object } }[];
+      assert(actions.length > 0 && actions.every(action => Object.keys(action.read.inputSchema).length > 0));
+      assert.notEqual(response.receipt.id, original.receipt.id);
+      return { output: { kind: 'final', calls: [], receiptIds: [response.receipt.id], finalJson: JSON.stringify({ requestRevision: response.data.request.revision }) }, evidence: evidence() };
+    } }, 'A new decision with no prior transcript.', {}, session, new AbortController().signal, () => {});
+    assert.equal(calls, 2);
+    assert.equal((result.output as { requestRevision: number }).requestRevision, 1);
+    session.finish();
+  } finally { f.store.close(); }
+});
+
+test('context budget rejection is a small receipt and native reasoning finalizes from previously delivered evidence', async () => {
+  const f = fixture('Current requested outcome: ' + '原'.repeat(9000));
+  try {
+    const session = f.session();
+    let calls = 0, deliveredBytes = 0, successfulReads = 0;
+    const result = await reasonWithOntology({ runStructured: async (prompt: string, schema: object) => {
+      calls++;
+      const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { interface: { finalResponseRequired: boolean }; conversation: { result: any; receipt: { id: string; status: string } }[] };
+      const rejected = packet.conversation.find(turn => turn.result.nextAction === 'finalize_with_available_evidence');
+      if (!rejected) return { output: { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' }, evidence: evidence() };
+      assert.equal(packet.interface.finalResponseRequired, true);
+      assert.equal((schema as { properties: { kind: { const: string }; calls: { maxItems: number } } }).properties.kind.const, 'final');
+      assert.equal((schema as { properties: { calls: { maxItems: number } } }).properties.calls.maxItems, 0);
+      assert(Buffer.byteLength(JSON.stringify(rejected.result)) < 512);
+      assert.equal(rejected.receipt.status, 'rejected');
+      deliveredBytes = packet.conversation.reduce((total, turn) => total + Buffer.byteLength(JSON.stringify(turn.result.data ?? turn.result)), 0);
+      const successful = packet.conversation.filter(turn => turn.receipt.status === 'ok');
+      successfulReads = successful.length;
+      assert(successfulReads > 0);
+      return { output: { kind: 'final', calls: [], receiptIds: successful.map(turn => turn.receipt.id), finalJson: JSON.stringify({ requestRevision: successful.at(-1)!.result.data.request.revision }) }, evidence: evidence() };
+    } }, 'Read the current context and decide.', {}, session, new AbortController().signal, () => {});
+    assert(calls <= 8);
+    assert(deliveredBytes <= 200000, 'The error receipt stays inside the original cumulative result budget');
+    assert.equal((result.output as { requestRevision: number }).requestRevision, 1);
+    const rejected = session.receipts().find(receipt => receipt.status === 'rejected')!;
+    assert.deepEqual(rejected.objects, []); assert.deepEqual(rejected.deliveredObjects, []);
+    assert.equal(rejected.context, undefined); assert.equal(rejected.definitions, undefined);
+    const snapshot = session.finish();
+    assert.equal(snapshot.reads.length, successfulReads);
+    assert(snapshot.reads.every(receipt => receipt.status === 'ok'));
+    assert.equal(snapshot.context!.receiptId, snapshot.reads.at(-1)!.id);
   } finally { f.store.close(); }
 });
 
