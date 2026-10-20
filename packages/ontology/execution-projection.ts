@@ -89,10 +89,10 @@ function registered(graph: OntologyObjectStore, action: string): ActionDefinitio
   return graph.model.actionForOperation(action);
 }
 export function actionProperties(definition: ActionDefinition) {
-  return { contractKind: 'semantic_definition', actionId: definition.id, actionVersion: definition.version ?? definition.read?.version ?? digest(definition), definitionDigest: digest(definition),
-    description: definition.description, inputs: definition.inputs, ...(definition.read ? { inputSchema: definition.read.inputSchema, resultType: definition.read.resultType } : {}),
-    effect: definition.read?.effect ?? 'definition_only', ...(definition.kind ? { kind: definition.kind } : {}),
-    effects: definition.effects ?? (definition.read ? ['read'] : []), resultTypes: definition.resultTypes ?? (definition.read ? [definition.read.resultType] : []),
+  return { contractKind: 'semantic_definition', actionId: definition.id, actionVersion: definition.version ?? definition.read?.version ?? definition.operation?.version ?? digest(definition), definitionDigest: digest(definition),
+    description: definition.description, inputs: definition.inputs, ...((definition.read ?? definition.operation) ? { inputSchema: (definition.read ?? definition.operation)!.inputSchema, resultType: (definition.read ?? definition.operation)!.resultType } : {}),
+    effect: definition.read?.effect ?? definition.operation?.effect ?? 'definition_only', ...(definition.kind ? { kind: definition.kind } : {}),
+    effects: definition.effects ?? (definition.read ? ['read'] : definition.operation ? [definition.operation.effect, ...(definition.operation.additionalEffects ?? [])] : []), resultTypes: definition.resultTypes ?? (definition.read ? [definition.read.resultType] : definition.operation ? [definition.operation.resultType] : []),
     changes: definition.changes, submissionCriteria: definition.submissionCriteria, execution: 'definition_only' };
 }
 function safeRequest(request: ServiceRequest): ServiceRequest {
@@ -231,7 +231,7 @@ function agentShape(requestId: string, state: AgentExecutionState, plan: AgentAc
   return { id: plan.id, digest: plan.digest, requestId, requestRevision: plan.requestRevision, kind: 'agent', sequence: plan.sequence, createdAt: plan.createdAt,
     modelRunId: plan.modelRunId, binding: bindingRef(requestId, state),
     state: planStatus(plan.steps.map(step => ledger.intents.find(i => i.id === step.intentId && i.planDigest === plan.digest)), state.pendingPlanId === plan.id, historical),
-    steps: plan.steps.map(step => ({ id: step.id, action: step.action, definitionDigest: step.definitionDigest, input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, intentId: step.intentId, effect: 'read' })) };
+    steps: plan.steps.map(step => ({ id: step.id, action: step.action, definitionDigest: step.definitionDigest, input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, intentId: step.intentId, effect: step.effect })) };
 }
 function stepLinks(plan: PlanShape, step: StepShape, definition?: ActionDefinition): LinkWrite[] {
   const ref = executionStepRef(plan, step.id);
@@ -447,7 +447,7 @@ export function assertAgentPlanProjection(graph: OntologyObjectStore, owner: str
     const stepRef = executionStepRef(plan, step.id), actual = graph.read(owner, stepRef), definition = graph.model.action(step.action), immutable = immutableStep(step);
     if (digest(definition) !== step.definitionDigest || actual.properties.structureDigest !== digest(immutable) || actual.properties.sequence !== sequence
       || actual.properties.stepId !== step.id || actual.properties.actionId !== step.action || actual.properties.definitionDigest !== step.definitionDigest
-      || actual.properties.inputDigest !== immutable.inputDigest || actual.properties.intentId !== step.intentId || actual.properties.planDigest !== plan.digest || actual.properties.effect !== 'read') fail('Execution graph invocation differs from the sealed plan');
+      || actual.properties.inputDigest !== immutable.inputDigest || actual.properties.intentId !== step.intentId || actual.properties.planDigest !== plan.digest || actual.properties.effect !== step.effect) fail('Execution graph invocation differs from the sealed plan');
     assertLinks(graph, owner, stepRef, stepLinks(shape, step, definition));
     const action = graph.read(owner, actionRef(plan.requestId, definition));
     if (!same(action.properties, { id: action.ref.id, displayTitle: action.ref.type, ...actionProperties(definition) })) fail('Registered action graph differs from registry truth');

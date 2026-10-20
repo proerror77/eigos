@@ -1,0 +1,152 @@
+{
+  "observedAt": "2026-10-20T15:15:15.963Z",
+  "scope": "Read-only repository, registration, health and local expiry audit. No new supplier query, model task, authorization renewal or business action.",
+  "sources": {
+    "main": {
+      "commit": "9a28d37ba5bd7b2d0fccc7193054bb02abba0e05",
+      "model": {
+        "id": "eigos.business",
+        "version": "13",
+        "digest": "4c9ad422c212d202c8777205b28c97c618136150631c21fefdb73738ac5db199"
+      },
+      "registeredTypes": {
+        "RequestingParty": false,
+        "BusinessResult": false,
+        "AssessmentFinding": false,
+        "BookingTask": true,
+        "PAPaymentRequest": true,
+        "CommerceTask": true,
+        "ServiceProcessDefinition": false,
+        "TaskBrief": false,
+        "DraftDocument": false,
+        "CsvSnapshot": false,
+        "AuditReport": false,
+        "Flight": false,
+        "FlightReservation": false,
+        "Calendar": false,
+        "CalendarAvailability": false
+      }
+    },
+    "member": {
+      "commit": "effcf66d955383b78ff296a85d846f07c89a9ad9",
+      "model": {
+        "id": "eigos.business",
+        "version": "10",
+        "digest": "b662c4cc8b341ca0aff6cfe9c229c1675fd13dc570fb6dc4ed73f92f64692b31"
+      },
+      "registeredTypes": {
+        "RequestingParty": true,
+        "BusinessResult": true,
+        "AssessmentFinding": true,
+        "BookingTask": false,
+        "PAPaymentRequest": false,
+        "CommerceTask": false,
+        "ServiceProcessDefinition": false,
+        "TaskBrief": false,
+        "DraftDocument": false,
+        "CsvSnapshot": false,
+        "AuditReport": false,
+        "Flight": false,
+        "FlightReservation": false,
+        "Calendar": false,
+        "CalendarAvailability": false
+      }
+    }
+  },
+  "runtimes": [
+    {
+      "name": "member-network",
+      "sourceCommit": "52924c1d05827baaea2f85dcd11ab967564bd075",
+      "model": {
+        "id": "eigos.business",
+        "version": "9",
+        "digest": "64fc646f01dac510f29c43105684e3b3470d615d5f22fa066eeff6c2054d0623"
+      },
+      "releaseUpdatedAt": "2026-10-20T11:48:47.430Z",
+      "configuration": {
+        "documentEnabled": true,
+        "csvEnabled": false,
+        "memberSourceEnabled": true,
+        "shopifyMerchantCount": 0,
+        "sandboxEnabled": false,
+        "bookingSandboxConfigured": false,
+        "commerceSandboxConfigured": false,
+        "realPaotuiOrders": false
+      },
+      "health": {
+        "http": 200,
+        "status": "ok",
+        "backend": "ontology-execution-v8",
+        "releaseMatches": true
+      },
+      "publicServices": [
+        "eigos.delegate"
+      ],
+      "advertisedCapabilities": [
+        "brief.prepare",
+        "delivery.quote",
+        "address.book.read",
+        "document.compose"
+      ],
+      "savedSourceStates": [
+        {
+          "storedState": "connected",
+          "locallyExpired": true,
+          "supplierCredentialValidity": "not_rechecked"
+        }
+      ]
+    },
+    {
+      "name": "grok-life",
+      "sourceCommit": "2516ed15665a94b072563dc62582122bda94c607",
+      "model": {
+        "id": "eigos.business",
+        "version": "10",
+        "digest": "31c9d6a400cdbc0d1d51fd90b5bc16b48c17c557c7a97eb2ecaaebb8769ae607"
+      },
+      "releaseUpdatedAt": "2026-10-20T03:00:24.164Z",
+      "configuration": {
+        "documentEnabled": true,
+        "csvEnabled": false,
+        "memberSourceEnabled": false,
+        "shopifyMerchantCount": 1,
+        "sandboxEnabled": true,
+        "bookingSandboxConfigured": false,
+        "commerceSandboxConfigured": true,
+        "realPaotuiOrders": false
+      },
+      "health": {
+        "http": 200,
+        "status": "ok",
+        "backend": "ontology-execution-v11",
+        "releaseMatches": true
+      },
+      "publicServices": [
+        "eigos.delegate"
+      ],
+      "advertisedCapabilities": [
+        "brief.prepare",
+        "commerce.catalog.query",
+        "commerce.journey.sandbox",
+        "document.compose",
+        "geo.search",
+        "address.book.read",
+        "delivery.quote"
+      ]
+    }
+  ],
+  "ci": [
+    {
+      "branch": "main",
+      "commit": "9a28d37ba5bd7b2d0fccc7193054bb02abba0e05",
+      "runId": 39401507377,
+      "conclusion": "success"
+    },
+    {
+      "branch": "codex/member-paotui-agent",
+      "commit": "effcf66d955383b78ff296a85d846f07c89a9ad9",
+      "runId": 39435139410,
+      "conclusion": "success"
+    }
+  ]
+}

@@ -26,13 +26,14 @@ export function paotuiAgentEvidence(jobs: JobStore, _catalog: ExecutionCatalog, 
       if (!proof || s.requestId !== job.id || s.requestRevision !== d.request.revision || s.configurationDigest !== state.programDigest || !same(s.scope, state.scope)) throw new Error('Invalid source scope');
       const plan = state.plans.find(p => p.id === s.planId); if (!plan) throw new Error('Missing plan');
       const { digest: planDigest, ...body } = plan;
-      if (digest(body) !== planDigest || plan.modelDecision.kind !== 'execute' || !same(plan.programRef, state.programRef) || plan.programDigest !== state.programDigest
+      if (!['1', '2'].includes(plan.version) || digest(body) !== planDigest || plan.modelDecision.kind !== 'execute' || !same(plan.programRef, state.programRef) || plan.programDigest !== state.programDigest
         || plan.requestId !== s.requestId || plan.requestRevision !== s.requestRevision || !same(plan.scope, s.scope)
         || !job.runs?.some(r => r.id === plan.modelRunId && r.decisionDigest === digest(plan.modelDecision)) || s.modelRunId !== plan.modelRunId) throw new Error('Missing model decision');
       const step = plan.steps.find(x => x.intentId === s.intentId), intent = jobs.intent(owner, s.intentId), attempts = jobs.attempts(owner, s.intentId);
       if (!step || step.action !== s.action || intent.planDigest !== planDigest || intent.state !== 'effect_confirmed' || intent.effect !== 'read' || !same(intent.acceptedOutput?.object, ref) || !same(intent.lastVerifiedResult, intent.lastResult) || !same(intent.lastVerifiedResult?.output?.source, s)
         || !attempts.some(a => a.id === s.attemptId && a.planDigest === planDigest && a.inputDigest === digest(s.actionInput))) throw new Error('Missing accepted source attempt');
-      const chosen = plan.modelDecision.steps.find(x => x.id === step.id), { definitionDigest: _d, input: _i, intentId: _id, ...decisionStep } = step;
+      const chosen = plan.modelDecision.steps.find(x => x.id === step.id), { definitionDigest: _d, input: _i, intentId: _id, effect: _effect, additionalEffects: _additional, cost: _cost, operationScope: _scope, operationKey: _key, ...decisionStep } = step;
+      if (plan.version === '2' && (step.effect !== 'read' || step.additionalEffects?.length || step.cost || step.operationScope || step.operationKey !== intent.businessOperationKey)) throw new Error('Read authority changed');
       if (!same(chosen, decisionStep) || !same(step.input, JSON.parse(step.argumentsJson))) throw new Error('Changed model-selected action');
       const args = structuredClone(step.input);
       for (const link of step.inputRefs) { const parent = plan.steps.find(p => p.id === link.stepId); if (!parent || !step.dependsOn.includes(parent.id)) throw new Error('Broken dependency'); args[link.targetKey] = jobs.intent(owner, parent.intentId).acceptedOutput?.object; }

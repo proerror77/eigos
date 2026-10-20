@@ -1,0 +1,31 @@
+{
+  "taskId": "e0798aaf-254f-460f-afc9-7d5d8ea42194",
+  "sourceCommit": "2516ed15665a94b072563dc62582122bda94c607",
+  "modelCalls": 19,
+  "wallSeconds": 319.861,
+  "modelSeconds": 317.565,
+  "usage": {
+    "input_tokens": 806545,
+    "cached_input_tokens": 299264,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 8260,
+    "reasoning_output_tokens": 392
+  },
+  "inputPlusOutputTokens": 814805,
+  "uncachedInputTokens": 507281,
+  "sourceCalls": 9,
+  "sourceSecondsSummed": 0.433,
+  "peakConcurrentSourceReads": 2,
+  "plans": 5,
+  "ontologyReads": 59,
+  "feedback": 0,
+  "buyerTotal": {
+    "minor": "27000",
+    "currency": "CNY"
+  },
+  "shippingRegime": "customs",
+  "customsApplicability": "required",
+  "legalApproval": false,
+  "businessWrites": 0,
+  "realTransactions": 0
+}

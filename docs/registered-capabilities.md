@@ -1,6 +1,8 @@
 # Ontology + LLM 后端
 
-更新于 2026-10-20。当前通用委托使用 `ontology-execution-v8`，业务模型为 `eigos.business@9`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)，当前模型覆盖与待完成项见 [原则复审](ontology-principles-review-2026-10-20.md)。
+更新于 2026-10-20。当前通用委托使用 `ontology-execution-v15`，业务模型为 `eigos.business@14`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)，当前模型覆盖与待完成项见 [原则复审](ontology-principles-review-2026-10-20.md)。
+
+新增 `commerce.journey.sandbox@2`：默认关闭，只对显式本机沙箱任务开放。16 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；5 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 

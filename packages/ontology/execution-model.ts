@@ -61,7 +61,7 @@ export const executionObjects: ObjectTypeDefinition[] = [
     inputs: p('struct', z.record(z.string(), z.string()), 'Named typed object inputs'),
     inputSchema: p('struct', z.record(z.string(), z.unknown()), 'Published argument schema', false),
     resultType: s('Registered result object type', 80, false),
-    effect: p('string', z.enum(['read', 'definition_only']), 'Registered effect, not permission'),
+    effect: p('string', z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'definition_only']), 'Registered effect, not permission'),
     kind: p('string', z.enum(['decision', 'source_read', 'business']), 'Registered action meaning', false),
     effects: strings('Declared effects; never a permission grant'), resultTypes: strings('Registered normalized result object types'),
     changes: strings('Declared object changes'), submissionCriteria: strings('Checks required before invocation'),
@@ -153,7 +153,7 @@ export function executionReferenceLink(kind: ExecutionReferenceKind, target: str
 export function executionReferenceLinks(businessTypes: readonly ObjectTypeDefinition[], actions: readonly ActionDefinition[], interfaces: readonly InterfaceDefinition[] = []): LinkDefinition[] {
   const implementsInterface = (id: string, target: string): boolean => id === target || !!interfaces.find(i => i.id === id)?.parents?.some(parent => implementsInterface(parent, target));
   const expand = (types: string[]) => new Set(businessTypes.filter(object => types.includes(object.id) || object.interfaces?.some(i => types.some(target => implementsInterface(i.id, target)))).map(o => o.id));
-  const outputs = actions.flatMap(action => [...(action.read ? [action.read.resultType] : []), ...(action.resultTypes ?? [])]);
+  const outputs = actions.flatMap(action => [...(action.read ? [action.read.resultType] : []), ...(action.operation ? [action.operation.resultType] : []), ...(action.resultTypes ?? [])]);
   const targets = {
     input: expand(actions.flatMap(action => Object.values(action.inputs)).concat(outputs)),
     output: expand(outputs), observation: expand(outputs),

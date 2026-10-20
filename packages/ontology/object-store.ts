@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { businessModel, businessModelV9 } from './business-model.js';
-import { migrateBusinessChain } from './business-chain-migration.js';
+import { migrateIntegratedOntology } from './integration-migration.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
 import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
 
@@ -44,7 +44,7 @@ export class OntologyObjectStore {
       CREATE INDEX IF NOT EXISTS ontology_links_outgoing ON ontology_links(owner,from_type,from_id,type,to_type,to_id);
       CREATE TABLE IF NOT EXISTS ontology_revisions (owner TEXT PRIMARY KEY,revision INTEGER NOT NULL);
     `);
-    if (model === businessModel) migrateBusinessChain(this.db, businessModelV9, businessModel);
+    if (model === businessModel) migrateIntegratedOntology(this.db, businessModelV9, businessModel);
   }
   private charge(budget: ReadBudget, count = 1) {
     budget.remaining -= count;

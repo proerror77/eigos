@@ -14,14 +14,15 @@ export const agentDecisionSchema = z.strictObject({
   kind: z.enum(['execute', 'complete', 'clarify', 'no_feasible_plan']),
   requestRevision: z.number().int().positive(), message: z.string().min(1).max(4000),
   steps: z.array(agentStepSchema).max(4), completionJson: z.string().max(16000),
+  informationRequest: z.strictObject({ fact: z.string().min(1).max(80), evidenceRefs: z.array(objectRefSchema).max(8) }).optional(),
 });
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 export type AgentStep = z.infer<typeof agentStepSchema>;
 export interface AgentActionPlan {
-  id: string; version: '1'; sequence: number; requestId: string; requestRevision: number;
+  id: string; version: '2'; sequence: number; requestId: string; requestRevision: number;
   programRef: Ref; programDigest: string; scope: ObjectRef; scopeDigest: string;
   modelRunId: string; modelDecision: AgentDecision; reasoning: string; createdAt: string;
-  steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string })[];
+  steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; operationScope?: string })[];
   ontologyPlanning: PlanningSnapshot; digest: string;
 }
 export interface AgentExecutionState {
@@ -29,7 +30,9 @@ export interface AgentExecutionState {
   input: Record<string, unknown>; requestRevision: number;
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
+  paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion' | 'runtime'; message: string; inputDigest: string }[];
+  informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
   completion?: { modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
 }
 export const agentObjectRefSchema = objectRefSchema;

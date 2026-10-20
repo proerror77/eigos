@@ -3,6 +3,8 @@ import type { ShopifyMerchant } from './shopify/contracts.js';
 import type { CatalogConnector } from './shopify/connector.js';
 import { PersonalSourceAccess } from '../core/personal-source.js';
 import { PaotuiAgentProgram } from './paotui-agent.js';
+import { BookingAgentProgram } from './booking/program.js';
+import type { BookingSandboxOptions } from './booking/connector.js';
 import { DomainServiceAdapter, domainBinding, domainCapability, type DomainSandboxProvider } from './domain-service.js';
 import { ExecutionCatalog } from '../core/catalog.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from './brief.js';
@@ -15,9 +17,17 @@ import { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES, PaotuiReadAdapter } fro
 import type { JobStore } from '../core/store.js';
 import { PaotuiGeoDiscoverySource, type PublicGeoQuery } from './paotui-geo-discovery.js';
 import { UcpSandboxAdapter, ucpCapabilities, type UcpSandboxOptions } from './ucp/adapter.js';
+import { CommerceAgentProgram } from './commerce-agent.js';
+import type { CommerceSandboxOptions, CommerceSandboxConnector } from './commerce-sandbox/connector.js';
+import type { StripeTestOptions } from './stripe/client.js';
 
-export function createExecutionCatalog(options: { store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector } } = {}): ExecutionCatalog {
+export function createExecutionCatalog(options: { store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector } } = {}): ExecutionCatalog {
   const shopify = options.shopifyCatalog?.merchants.length ? new CatalogAgentProgram(options.shopifyCatalog.merchants, options.shopifyCatalog) : undefined;
+  const booking = options.bookingSandbox ? new BookingAgentProgram(options.bookingSandbox) : undefined;
+  const commerce = options.commerceSandbox ? new CommerceAgentProgram(options.commerceSandbox) : undefined;
+  if (options.stripeTest && !options.commerceSandbox) throw new Error('Stripe test payment requires an isolated commerce order source');
+  if (options.stripeTest && !options.stripeTest.transport) throw new Error('Merchant Stripe execution is retained only for injected fixtures; use PA-owned payment handoff in EIGOS');
+  const stripe = options.stripeTest ? new CommerceAgentProgram({ ...options.commerceSandbox!, stripe: options.stripeTest }) : undefined;
   if (options.ucpSandbox && !options.store) throw new Error('UCP checkout ownership requires the shared task store');
   const ucp = options.ucpSandbox ? (['prepare', 'confirm'] as const).map(mode => new UcpSandboxAdapter(mode, options.store!, options.ucpSandbox!)) : [];
   const domainProviders = options.domainSandboxProviders ?? [];
@@ -37,8 +47,8 @@ export function createExecutionCatalog(options: { store?: JobStore; csvInputDire
   const geoDiscovery = paotui && options.publicGeoDiscoveryQueries?.length
     ? new PaotuiGeoDiscoverySource(paotui, paotui.configurationDigest, options.publicGeoDiscoveryQueries) : undefined;
   const reads = PAOTUI_READ_CAPABILITIES.map((c, i) => ({ capability: c, binding: PAOTUI_READ_BINDINGS[i]!, i })).filter(x => x.i === 0 && !access);
-  return new ExecutionCatalog([BRIEF_CAPABILITY, ...paotuiPrograms.map(p => p.capability()), ...domainCapabilities, ...(shopify ? [shopify.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []), ...(options.csvInputDirectory ? [CSV_CAPABILITY] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(options.documentEnabled ? [DOCUMENT_CAPABILITY] : []), ...(paotui ? [...reads.map(x => x.capability)] : [])],
+  return new ExecutionCatalog([BRIEF_CAPABILITY, ...paotuiPrograms.map(p => p.capability()), ...domainCapabilities, ...(shopify ? [shopify.capability()] : []), ...(commerce ? [commerce.capability()] : []), ...(stripe ? [stripe.capability()] : []), ...(booking ? [booking.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []), ...(options.csvInputDirectory ? [CSV_CAPABILITY] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(options.documentEnabled ? [DOCUMENT_CAPABILITY] : []), ...(paotui ? [...reads.map(x => x.capability)] : [])],
     [BRIEF_BINDING, ...domainProviders.map(domainBinding), ...ucp.map(adapter => adapter.binding()), ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : []), ...(options.documentEnabled ? [DOCUMENT_BINDING] : []), ...(paotui ? [...reads.filter(x => !geoDiscovery || x.i !== 0).map(x => x.binding)].map(b => ({ ...b, configurationDigest: paotui.configurationDigest })) : [])],
     [new BriefAdapter(), ...domainProviders.map(p => new DomainServiceAdapter(p)), ...ucp, ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : []), ...(options.documentEnabled ? [new DocumentAdapter(options.documentExecutor)] : []), ...(paotui ? [...reads.map(x => x.i === 0 && geoDiscovery ? geoDiscovery.adapter : new PaotuiReadAdapter(x.i, paotui, access))] : [])],
-    geoDiscovery ? [geoDiscovery] : [], [...paotuiPrograms, ...(shopify ? [shopify] : [])]);
+    geoDiscovery ? [geoDiscovery] : [], [...paotuiPrograms, ...(shopify ? [shopify] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : [])]);
 }

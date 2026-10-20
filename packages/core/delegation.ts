@@ -31,9 +31,10 @@ export const proposalSchema = z.object({
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
+  groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
   recovery?: import('./task-recovery.js').TaskRecovery;
   recoveryHistory?: import('./task-recovery.js').TaskRecovery[];
   plan?: ExecutionPlan;

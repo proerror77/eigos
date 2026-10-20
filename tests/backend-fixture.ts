@@ -22,11 +22,16 @@ export function proposal(context: PlanningContext, index = 0): PlanProposal {
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
   return { ground: async (request, _caps, _signal, access) => ({ decision: ground(observeTaskContext(access) ?? request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
 }
+const observedContexts = new WeakMap<PlanningAccess['session'], ServiceRequest>();
 /** The synthetic model explicitly reads and acknowledges its delivered context. */
 export function observeTaskContext(access: PlanningAccess): ServiceRequest | undefined {
   if (!access.session.usesTaskContext()) return;
+  const prior = observedContexts.get(access.session);
+  if (prior) return prior;
   const result = access.session.call('read_task_context', {}) as { data: { request: ServiceRequest }; receipt: { id: string } };
+  if (!result.receipt) throw new Error(`Synthetic model context read was rejected: ${JSON.stringify(result)}`);
   access.session.acceptReceipts([result.receipt.id]);
+  observedContexts.set(access.session, result.data.request);
   return result.data.request;
 }
 export function acknowledgeReads(access: PlanningAccess) { if (access.session.usesTaskContext()) access.session.acceptReceipts(access.session.receipts().filter(r => r.status === 'ok').map(r => r.id)); }

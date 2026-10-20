@@ -16,6 +16,10 @@ import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus,
 import { canRecoverReadOnly } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
 import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
+import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
+import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
+import { readBookingObservation } from '../ontology/booking-functions.js';
+import { bookingDataSchema, bookingPaymentDataSchema } from '../ontology/booking.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -139,6 +143,7 @@ export class TaskService {
       // The browser's displayed question must still be current under the write lock.
       if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
       if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
+      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
       if (amendment) {
@@ -168,6 +173,15 @@ export class TaskService {
         const previousProgram = job.delegation!.agent?.programRef ?? job.delegation!.suspendedAgent?.programRef;
         delete job.delegation!.suspendedAgent;
         if (job.delegation!.agent) {
+          const intents = this.store.intents(owner, job.id);
+          const fixedEffect = intents.some(i => (['order', 'payment', 'reserve'].includes(i.effect) || ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(i.state) && !['read', 'local'].includes(i.effect)) && !['ready', 'canceled_before_dispatch', 'rejected'].includes(i.state));
+          if (fixedEffect) {
+            if (args.requirements?.length) throw new DomainError('CONFLICT', 'An original business operation is fixed or uncertain; reconcile it before creating changed requirements');
+            request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+            for (const intent of intents) if (!['read', 'local'].includes(intent.effect) && ['needs_review', 'effect_unknown'].includes(intent.state)) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+            job.delegation!.nextAt = 0; job.delegation!.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+            this.store.save(owner, job); return job;
+          }
           this.store.cancelActions(owner, job.id);
           job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
           delete job.delegation!.agent;
@@ -198,6 +212,68 @@ export class TaskService {
   }
   usage(p: Principal) { requireScope(p, 'tasks:read'); return this.store.memberUsage(ownerKey(p)); }
 
+  selectPaymentRoute(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = paPaymentRouteSchema.parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `pa-route:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION || job.state !== 'input-required' || job.delegation.phase !== 'awaiting_pa_payment') throw new DomainError('CONFLICT', 'Payment route selection requires the original waiting task');
+      if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+      const payment = verifyPAPaymentRequest(job, owner);
+      if (payment.request.id !== args.handoffId || payment.request.digest !== args.handoffDigest) throw new DomainError('CONFLICT', 'Payment route must reference the exact original handoff');
+      const program = this.options.catalog.agentProgram(job.delegation.agent!.programRef, owner);
+      if (!this.options.allowSandboxActions || job.delegation.request.executionEnvironment !== 'sandbox' || !program || program.configurationDigest !== payment.request.configurationDigest) throw new DomainError('FORBIDDEN', 'The original payment source is no longer enabled with the same configuration');
+      if (job.delegation.request.requirements.some(r => r.kind === 'deadline' && r.strength === 'hard' && (!r.role || r.role === 'completion') && Date.parse(r.expected.at) <= Date.now())) throw new DomainError('CONFLICT', 'The requested booking completion deadline expired before payment route selection');
+      const latest = (type: string) => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1);
+      const bookingRef = latest('BookingObservation'), paymentRef = latest('BookingPaymentObservation');
+      if (!bookingRef || !paymentRef) throw new DomainError('CONFLICT', 'Read the original provider booking and payment before selecting a route');
+      const booked = readBookingObservation(this.store.ontology, owner, bookingRef), paid = readBookingObservation(this.store.ontology, owner, paymentRef);
+      const b = bookingDataSchema.parse(booked.payload.data), money = bookingPaymentDataSchema.parse(paid.payload.data);
+      const terms = payment.request.terms;
+      if ([booked, paid].some(s => s.receipt.requestId !== job.id || s.receipt.requestRevision !== payment.request.requestRevision || s.configurationDigest !== payment.request.configurationDigest || s.receipt.readbackSequence !== payment.readbackSequence)) throw new DomainError('CONFLICT', 'Payment route requires the current owned provider readback');
+      if (b.providerId !== terms.providerId || b.holdExpiresAt !== terms.expiresAt || digest(b.checkout) !== digest(terms.checkout) || digest(b.paymentHandler) !== digest(terms.handler) || digest(b.offer.total) !== digest(terms.amount)) throw new DomainError('CONFLICT', 'Payment routes must retain the original independently read provider terms');
+      if (booked.receipt.action !== 'ReadProviderBooking' || paid.receipt.action !== 'ReadProviderPayment' || b.bookingId !== terms.bookingId || b.termsDigest !== terms.bookingTermsDigest || b.state !== 'awaiting_payment' || money.bookingId !== terms.bookingId || money.bookingTermsDigest !== terms.bookingTermsDigest || money.state !== 'unpaid' || money.paidAmount.minor !== '0' || money.paymentId || money.capturedAt) throw new DomainError('CONFLICT', 'The original provider booking must still be unpaid; reconcile instead of switching payment routes');
+      const selected = recordPAPaymentSelection(payment, args.wallet);
+      job.updatedAt = selected.selectedAt;
+      job.question = selected.route === 'link_agent_wallet'
+        ? '已选择 Link Agent Wallet 测试路线。请 PA 使用自己的测试钱包和原操作键处理此预约；结果未知时只查询原付款，不切换路线或重付。'
+        : `已转到普通 Link 测试结账路线。请用户在服务商提供的页面确认模拟付款：${terms.checkout.url}。不得真实付款；页面完成提示不代替服务商付款及预约回读。`;
+      job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt });
+      job.delegation.events.push({ at: job.updatedAt, event: 'pa_payment_route_selected', evidence: selected.digest });
+      job.revision = (job.revision ?? 0) + 1;
+      this.store.save(owner, job);
+      return this.view(owner, job);
+    });
+  }
+
+  reportPayment(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = paPaymentReportSchema.parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `pa-payment:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'No current PA payment task');
+      if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+      const payment = verifyPAPaymentRequest(job, owner);
+      if (args.handoffId !== payment.request.id || args.handoffDigest !== payment.request.digest) throw new DomainError('CONFLICT', 'Payment notification must reference the exact original handoff');
+      if (job.state === 'working' || job.state === 'submitted' || job.state === 'auth-required') throw new DomainError('CONFLICT', 'Original provider readback is running; read the task and retry this same notification later');
+      if (payment.reports.length >= 20) throw new DomainError('CONFLICT', 'Payment notification bound reached; query the original task');
+      job.updatedAt = new Date().toISOString();
+      payment.reports.push({ id: args.requestId, outcome: args.outcome, receivedAt: job.updatedAt });
+      job.delegation.events.push({ at: job.updatedAt, event: 'pa_payment_notification_received_unverified', evidence: args.requestId });
+      if (job.state === 'completed') { this.store.save(owner, job); return this.view(owner, job); }
+      payment.recoveryAttempts = 0;
+      payment.readbackSequence++;
+      const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
+      payment.status = terminal ? 'withdrawn' : 'reported';
+      job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
+      job.delegation.recoveryPending = terminal; job.delegation.nextAt = 0;
+      if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
+      job.revision = (job.revision ?? 0) + 1;
+      this.store.save(owner, job);
+      return this.view(owner, job);
+    });
+  }
+
   list(p: Principal, filter: ListFilter): { jobs: Job[]; total: number } {
     requireScope(p, 'tasks:read');
     z.number().int().min(1).max(100).parse(filter.limit);
@@ -220,6 +296,7 @@ export class TaskService {
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
       job.state = 'canceled';
       if (job.delegation?.plan || job.delegation?.agent) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
+      if (job.delegation?.agent?.paPayment) { job.delegation.agent.paPayment.status = 'withdrawn'; job.delegation.agent.paPayment.recoveryAttempts = 0; job.delegation.recoveryPending = true; }
       if (job.delegation) job.delegation.phase = 'canceled';
       if (job.delegation?.plan) this.store.recordFeedback(owner, job, 'unverified', false);
       delete job.question;
@@ -239,7 +316,20 @@ export class TaskService {
       const job = this.store.get(owner, id);
       if (job.service !== DELEGATE || job.state !== 'auth-required') throw new DomainError('CONFLICT', 'No pending delegation authorization');
       if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only');
-      const d = job.delegation; const plan = d.plan;
+      const d = job.delegation;
+      if (d.agent) {
+        const plan = d.agent.plans.find(p => p.id === d.agent!.pendingPlanId), program = this.options.catalog.agentProgram(d.agent.programRef, owner);
+        const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
+        if (!this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox' || !plan || !program || program.configurationDigest !== d.agent.programDigest) throw new DomainError('FORBIDDEN', 'No current configured sandbox Agent plan');
+        validatePlanningSnapshot(this.store.ontology, owner, d.request, plan.ontologyPlanning, true);
+        const ctx = { graph: this.store.ontology, owner, request: d.request, state: d.agent, intents: this.store.intents(owner, job.id) };
+        for (const step of plan.steps) if (step.effect !== 'read') { validateAgentAuthority(program, ctx, plan, step); program.validatePlanning?.(ctx, step.action, step.input, plan.ontologyPlanning); }
+        this.store.grant(owner, createAgentSandboxGrant(owner, id, plan, permit));
+        d.phase = 'executing'; d.nextAt = 0; job.updatedAt = new Date().toISOString(); job.state = 'submitted'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+        d.events.push({ at: job.updatedAt, event: 'agent_plan_authorized', evidence: plan.digest });
+        this.store.save(owner, job); return job;
+      }
+      const plan = d.plan;
       if (!plan || !this.options.catalog) throw new DomainError('CONFLICT', 'No fixed plan to authorize');
       if (args.action === 'approve_plan') {
         const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
@@ -267,6 +357,26 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id);
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent?.paPayment) {
+        const payment = verifyPAPaymentRequest(job, owner);
+        if (job.state === 'completed' || job.state === 'working' || job.state === 'submitted') return this.view(owner, job);
+        const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
+        payment.recoveryAttempts = 0; payment.readbackSequence++; payment.status = terminal ? 'withdrawn' : 'reported';
+        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0; job.delegation.recoveryPending = terminal;
+        if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
+        job.revision = (job.revision ?? 0) + 1; job.updatedAt = new Date().toISOString();
+        this.store.save(owner, job); return this.view(owner, job);
+      }
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) {
+        const pending = this.store.intents(owner, id).filter(i => !['read', 'local'].includes(i.effect) && ['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(i.state));
+        if (!pending.length) return job;
+        for (const intent of pending) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0;
+        const terminal = ['canceled', 'failed', 'completed', 'auth-required'].includes(job.state);
+        job.delegation.recoveryPending = terminal; job.revision = (job.revision ?? 0) + 1;
+        if (!terminal) { job.state = 'working'; delete job.question; }
+        job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      }
       if (job.delegation?.backendVersion !== BACKEND_VERSION || !job.delegation.plan) throw new DomainError('CONFLICT', 'No current business operation to reconcile');
       let pending = false;
       for (const intent of this.store.intents(owner, id)) if (['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(intent.state)) { pending = true; intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
@@ -282,6 +392,16 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
+      if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
+        this.store.revokeGrants(owner, id);
+        const intents = this.store.intents(owner, id);
+        const pendingWrite = intents.some(i => !['read', 'local'].includes(i.effect) && ['ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(i.state));
+        if (!pendingWrite) { job.updatedAt = new Date().toISOString(); d.events.push({ at: job.updatedAt, event: 'agent_authority_revoked_readback_continues', evidence: requestId }); this.store.save(owner, job); return job; }
+        job.revision = (job.revision ?? 0) + 1;
+        for (const intent of intents) if (intent.state === 'dispatching' && !['read', 'local'].includes(intent.effect)) { intent.state = 'effect_unknown'; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
+        d.recoveryPending = intents.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
+        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      }
       if (d?.backendVersion !== BACKEND_VERSION || !d.plan || (!d.authorizationRequest && !d.plan.quote) || ['completed', 'failed', 'canceled'].includes(job.state)) throw new DomainError('CONFLICT', 'No open plan authorization to revoke');
       this.store.revokeGrants(owner, id); delete d.approval; job.revision = (job.revision ?? 0) + 1;
       d.recoveryPending = this.store.intents(owner, id).some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;

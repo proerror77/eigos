@@ -286,7 +286,7 @@ export class JobStore {
         if (verified && result.kind === 'confirmed') { intent.acceptedOutput = result.output ?? (result.remoteRef ? { remoteRef: result.remoteRef } : {}); if (result.delivery) intent.delivery = result.delivery; }
         if (result.kind === 'unknown') intent.failedQueries = (intent.failedQueries ?? 0) + 1; else intent.failedQueries = 0;
         if ((intent.failedQueries ?? 0) >= 3) intent.state = 'needs_review';
-        if (verified && result.kind === 'confirmed' && intent.effect === 'payment') this.db.prepare("UPDATE budget_reservations SET state='consumed' WHERE owner=? AND intent_id=?").run(owner, intentId);
+        if (verified && result.kind === 'confirmed' && (intent.effect === 'payment' || intent.additionalEffects?.includes('payment'))) this.db.prepare("UPDATE budget_reservations SET state='consumed' WHERE owner=? AND intent_id=?").run(owner, intentId);
         if (verified && result.kind === 'rejected') this.db.prepare("UPDATE budget_reservations SET state='released' WHERE owner=? AND intent_id=? AND state='held'").run(owner, intentId);
       }
       if (applied && fence) {
@@ -438,7 +438,7 @@ export class JobStore {
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?

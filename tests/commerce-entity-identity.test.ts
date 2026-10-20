@@ -22,16 +22,17 @@ function fixture() {
     const checkoutId = options.checkout ?? randomUUID(), input = { checkout: checkoutId };
     const item = { id: 'item-1', lineId: 'line-1', title: options.title ?? 'Test Coffee', quantity: options.quantity ?? 1, unitPrice: { minor: options.price ?? '1000', currency: 'USD' as const } };
     const total = { minor: (BigInt(item.unitPrice.minor) * BigInt(item.quantity)).toString(), currency: 'USD' as const };
-    const quoteDigest = digest({ items: [item], total });
+    const costBreakdown = [{ type: 'total', amount: total }], costTermsDigest = digest(costBreakdown);
+    const quoteDigest = digest({ items: [item], total, costTermsDigest });
     const receipt = (kind: string) => ({ id: randomUUID(), method: 'GET', path: `/${kind}/${checkoutId}`, startedAt: new Date(started).toISOString(),
       receivedAt: new Date(received).toISOString(), status: 200, inputDigest: digest(input), responseSha256: digest({ kind, quoteDigest, id: options.order, adjustments: options.adjustments ?? 0 }), environment: 'sandbox' as const });
     const value = commerceSnapshotSchema.parse({ environment: 'sandbox', merchantId: options.merchant ?? 'fixture-merchant', merchantOrigin: options.origin ?? 'http://127.0.0.1:8181',
       protocolVersion: '2026-04-08', requestId: job.id, requestRevision: 1, preparationTaskId: options.preparationTaskId ?? job.id, operation: options.order ? 'confirm' : 'prepare',
       inputDigest: digest(input), configurationDigest: digest({ fixture: true }), expectedItems: [{ id: item.id, quantity: 1 }],
-      checkout: { id: checkoutId, state: options.order ? 'completed' : 'ready_for_complete', items: [item], total, quoteDigest,
+      checkout: { id: checkoutId, state: options.order ? 'completed' : 'ready_for_complete', items: [item], total, costBreakdown, costTermsDigest, quoteDigest, destinationComplete: true,
         fulfillmentDigest: digest('fulfillment'), buyerDigest: digest('buyer'), destinationDigest: digest('destination'),
         ...(options.order ? { orderId: options.order } : { expiresAt: new Date(Date.now() + 300000).toISOString() }), messageCodes: [], receipt: receipt('checkout') },
-      ...(options.order ? { order: { id: options.order, checkoutId, items: [item], total, permalinkUrl: `http://127.0.0.1:8181/orders/${options.order}`,
+      ...(options.order ? { order: { id: options.order, checkoutId, items: [item], total, costBreakdown, costTermsDigest, permalinkUrl: `http://127.0.0.1:8181/orders/${options.order}`,
         fulfillment: 'pending', events: [], destinationDigest: digest('destination'), adjustmentCount: options.adjustments ?? 0, receipt: receipt('order') } } : {}),
     });
     return { value, input };

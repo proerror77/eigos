@@ -39,11 +39,11 @@ function fixture() {
     { id: 'book', action: 'ReadSavedAddresses', argumentsJson: JSON.stringify({ scope }), dependsOn: [], inputRefs: [] },
     { id: 'detail', action: 'ReadSavedAddressDetail', argumentsJson: JSON.stringify({ scope, selector: 'PRIVATE_SELECTOR', role: 'sender' }), dependsOn: ['book'], inputRefs: [{ stepId: 'book', targetKey: 'book' }] },
   ];
-  const body: Omit<AgentActionPlan, 'digest'> = { id: 'plan', version: '1', sequence: 1, requestId: request.id, requestRevision: 1, programRef: state.programRef,
+  const body: Omit<AgentActionPlan, 'digest'> = { id: 'plan', version: '2', sequence: 1, requestId: request.id, requestRevision: 1, programRef: state.programRef,
     programDigest: state.programDigest, scope, scopeDigest: digest(graph.read(owner, scope).properties), modelRunId: 'model-receipt',
     modelDecision: { kind: 'execute', requestRevision: 1, message: 'PRIVATE_REASONING', steps: selected, completionJson: '' }, reasoning: 'PRIVATE_REASONING', createdAt: at,
     ontologyPlanning: templatePlanning(request),
-    steps: selected.map(step => ({ ...step, input: JSON.parse(step.argumentsJson) as Record<string, unknown>, definitionDigest: digest(graph.model.action(step.action)), intentId: `intent-${step.id}` })) };
+    steps: selected.map(step => ({ ...step, effect: 'read', operationKey: `PRIVATE_KEY_${step.id}`, input: JSON.parse(step.argumentsJson) as Record<string, unknown>, definitionDigest: digest(graph.model.action(step.action)), intentId: `intent-${step.id}` })) };
   const plan: AgentActionPlan = { ...body, digest: digest(body) }; state.plans.push(plan); state.pendingPlanId = plan.id;
   const intents: ActionIntent[] = plan.steps.map(step => ({ id: step.intentId, owner, jobId: request.id, stepId: step.id, businessOperationKey: `PRIVATE_KEY_${step.id}`,
     planDigest: plan.digest, bindingRef: state.programRef, inputDigest: digest(step.input), privateDigest: digest({}), privateData: { secret: 'PRIVATE_INTENT_SECRET' },

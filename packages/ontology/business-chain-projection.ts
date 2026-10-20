@@ -49,11 +49,11 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     const sourceRelation = (name: string) => subject && graph.model.sides(subject.type).some(side => side.side.name === name) ? related(graph, owner, subject, name)[0]?.ref : undefined;
     const provider = (previous && related(graph, owner, ref, 'provider')[0]?.ref) || sourceRelation('provider') || sandbox?.provider || node('Provider', { provider: providerContract?.providerId ?? data.bindingRef, configuration: data.configurationDigest ?? data.bindingDigest });
     const channel = (previous && related(graph, owner, ref, 'channel')[0]?.ref) || sourceRelation('channel') || sandbox?.channel || node('Channel', { provider, channel: providerContract?.channelId ?? data.bindingRef });
-    if (!optionalObject(graph, owner, provider)) write(graph, owner, provider, { name: providerContract?.providerId ?? 'Configured read service' }, [], source, true);
+    if (!optionalObject(graph, owner, provider)) write(graph, owner, provider, { name: providerContract?.providerId ?? 'Configured service' }, [], source, true);
     if (!optionalObject(graph, owner, channel)) write(graph, owner, channel, { name: providerContract?.channelId ?? 'Configured agent program', supportedOperationRefs: data.actionIds ?? [] }, [], source, true);
     const intents = ledger.intents.filter(intent => planDigests.includes(intent.planDigest) && digest(intent.bindingRef) === digest(data.bindingRef));
     const returned = ledger.observations.some(observation => observation.applied && intents.some(intent => intent.id === observation.intentId));
-    write(graph, owner, ref, { progress: returned ? 'returned' : 'waiting', startedAt: at },
+    write(graph, owner, ref, { progress: returned || previous?.properties.progress === 'returned' ? 'returned' : 'waiting', startedAt: previous?.properties.startedAt ?? at },
       [edge('EngagementRequest', ref, request), edge('EngagementProvider', ref, provider), edge('EngagementRequester', ref, party),
         edge('EngagementChannel', ref, channel), edge('EngagementBinding', ref, binding), edge('ProposalEngagement', proposal, ref)], source);
     engagements.set(`${proposal.id}:${binding.id}`, ref);
@@ -84,23 +84,38 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     [edge('ProposalRequest', ref, request), edge('ProposalSpecification', ref, specificationRef(job.id, state.requestRevision)), edge('ProposalExecutionContext', ref, executionContextRef(job.id, state.requestRevision)),
       ...(index > 0 && agentProposalRef(job.id, states[index - 1]!).id !== ref.id ? [edge('ProposalPredecessor', ref, agentProposalRef(job.id, states[index - 1]!))] : [])], source, true);
     engagement(bindingRef(job.id, state), ref, at, state.plans.map(plan => plan.digest), state.scope);
-    state.plans.forEach(plan => planProposals.set(plan.digest, ref));
+    for (const plan of state.plans) {
+      const requiresPermit = plan.steps.some(step => [step.effect, ...(step.additionalEffects ?? [])].some(effect => !['read', 'local'].includes(effect)));
+      if (!requiresPermit) { planProposals.set(plan.digest, ref); continue; }
+      const proposal = proposalRef(plan);
+      write(graph, owner, proposal, { requestRevision: plan.requestRevision, selectedAt: plan.createdAt, termsVersion: plan.digest, kind: 'execution',
+        capabilityRef: state.programRef, scopeDigest: plan.digest, completionTarget: 'artifact', authorizationMode: 'required', decisionReason: plan.reasoning },
+      [edge('ProposalRequest', proposal, request), edge('ProposalSpecification', proposal, specificationRef(job.id, plan.requestRevision)),
+        edge('ProposalPlan', proposal, executionPlanRef(plan)), edge('ProposalPredecessor', proposal, ref)], source, true);
+      engagement(bindingRef(job.id, state), proposal, plan.createdAt, [plan.digest], state.scope);
+      planProposals.set(plan.digest, proposal);
+      decide('ProposeServiceExecution', 'agent_decision', plan.digest, plan.createdAt, plan.requestRevision, { planDigest: plan.digest }, proposal);
+    }
     decide('ProposeServiceExecution', 'agent_decision', ref.id, at, state.requestRevision, { scope: state.scope, program: state.programRef, programDigest: state.programDigest }, ref);
   }
   for (const grant of ledger.grants) {
     if (grant.owner !== owner || grant.jobId !== job.id) throw new DomainError('FORBIDDEN', 'Authorization projection owner mismatch');
-    const plan = plans.find(plan => plan.digest === grant.planDigest), proposal = planProposals.get(grant.planDigest);
+    const fixed = plans.find(plan => plan.digest === grant.planDigest);
+    const agent = states.find(state => state.plans.some(plan => plan.digest === grant.planDigest));
+    const plan = fixed ?? agent?.plans.find(plan => plan.digest === grant.planDigest), proposal = planProposals.get(grant.planDigest);
     if (!plan || !proposal) continue; // An orphan historical record cannot mint an execution proposal.
     const ref = { type: 'Authorization', id: grant.id };
-    const permittedActions = plan.steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => grant.allowedEffects.includes(effect))
+    const steps = fixed ? fixed.steps.map(step => ({ ...step, actionId: step.actionTypeRef.id }))
+      : agent!.plans.find(value => value.digest === grant.planDigest)!.steps.map(step => ({ ...step, actionId: step.action, bindingRef: agent!.programRef }));
+    const permittedActions = steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => grant.allowedEffects.includes(effect))
       && grant.bindingRefs.some(binding => digest(binding) === digest(step.bindingRef))
-      && (!step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionTypeRef.id);
+      && (!step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionId);
     write(graph, owner, ref, { actor: party.id, allowedActions: [...new Set(permittedActions)],
       dataScope: [job.id], limits: grant.maxAmount, expiresAt: grant.expiresAt, revoked: grant.revoked,
       kind: 'plan_grant', ledgerDigest: digest(grant), planDigest: grant.planDigest, approvedAt: grant.approvedAt,
       ...(grant.revokedAt ? { revokedAt: grant.revokedAt } : {}), environment: grant.environment, allowedEffects: grant.allowedEffects, bindingRefs: grant.bindingRefs, payeeIds: grant.payeeIds },
     [edge('AuthorizationProposal', ref, proposal), edge('AuthorizationRequest', ref, request), edge('AuthorizationActor', ref, party), edge('AuthorizationPlan', ref, executionPlanRef(plan)),
-      ...grant.bindingRefs.flatMap(value => { const binding = fixedBindingRef(plan, value); return binding && optionalObject(graph, owner, binding) ? [edge('AuthorizationBinding', ref, binding)] : []; })], source);
+      ...grant.bindingRefs.flatMap(value => { const binding = fixed ? fixedBindingRef(fixed, value) : agent && digest(value) === digest(agent.programRef) ? bindingRef(job.id, agent) : undefined; return binding && optionalObject(graph, owner, binding) ? [edge('AuthorizationBinding', ref, binding)] : []; })], source);
     const { revoked: _revoked, revokedAt: _revokedAt, ...issued } = grant;
     decide('AuthorizeProposal', 'policy_grant', grant.id, grant.approvedAt, plan.requestRevision, issued, ref, 'requester');
     if (grant.revokedAt) decide('RevokeProposalAuthorization', 'policy_revocation', grant.id, grant.revokedAt, plan.requestRevision, { grantId: grant.id, revokedAt: grant.revokedAt }, ref, 'requester');
@@ -138,7 +153,7 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     const subjects = existing ? related(graph, owner, ref, 'subjects').map(item => item.ref) : normalized?.subjects ?? (pointer && graph.model.implements(pointer.type, 'EvidenceBacked') ? [pointer] : []);
     const receipts = existing ? related(graph, owner, ref, 'sourceReceipts').map(item => item.ref) : normalized?.receipts ?? subjects.flatMap(subject => related(graph, owner, subject, 'sourceReceipts').map(item => item.ref));
     const levels = receipts.map(receipt => graph.read(owner, receipt).properties.evidenceLevel);
-    const evidenceLevel = existing?.properties.evidenceLevel ?? (normalized ? 'synthetic' : levels.includes('live_fulfillment') ? 'live_fulfillment' : levels.includes('live_operation') ? 'live_operation' : levels.includes('live_readonly') ? 'live_readonly' : levels.includes('synthetic') ? 'synthetic' : intent.effect === 'local' ? 'internal' : 'unknown');
+    const evidenceLevel = existing?.properties.evidenceLevel ?? (normalized ? 'synthetic' : levels.includes('live_fulfillment') ? 'live_fulfillment' : levels.includes('live_operation') ? 'live_operation' : levels.includes('live_readonly') ? 'live_readonly' : levels.includes('provider_test') ? 'provider_test' : levels.includes('synthetic') ? 'synthetic' : intent.effect === 'local' ? 'internal' : 'unknown');
     const links = [edge('BusinessResultRequest', ref, request), edge('BusinessResultProposal', ref, proposal),
       edge('BusinessResultStep', ref, executionStepRef(plan, intent.stepId)), edge('BusinessResultObservation', ref, resultRef(job.id, attempt, observation)),
       ...subjects.map(subject => edge('BusinessResultSubject', ref, subject)), ...receipts.map(receipt => edge('BusinessResultEvidence', ref, receipt))];

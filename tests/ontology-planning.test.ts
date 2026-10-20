@@ -1,6 +1,7 @@
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { DatabaseSync } from 'node:sqlite';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { OntologyPlanningSession, validatePlanningSnapshot } from '../packages/coordinator/planning-session.js';
@@ -12,7 +13,7 @@ import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from '../packages/capabilities/brief.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
-import type { BusinessCondition } from '../packages/ontology/business-model.js';
+import { businessConditionSchema, type BusinessCondition } from '../packages/ontology/business-model.js';
 import { equivalentQuantities } from '../packages/ontology/quantity.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, interpretation, proposal, evidence, owner, principal, reasoner, fixtureCapability, fixtureBinding, fixtureAdapter } from './backend-fixture.js';
@@ -26,6 +27,25 @@ function observe(f: ReturnType<typeof fixture>, type = 'DeliveryQuote') {
   f.session.call('describe_ontology', { search: type, limit: 1 });
   return f.session.call('query_ontology', { type }) as ReturnType<OntologyObjectStore['query']>;
 }
+test('Planning descriptions expose full action schemas on demand without repeating every registered input contract', () => {
+  const f = fixture();
+  try {
+    const summary = f.session.call('describe_ontology', { search: 'ServiceRequest' }) as any;
+    const action = summary.actions.find((a: any) => a.read || a.operation);
+    assert(action); assert.equal((action.read ?? action.operation).inputSchema, undefined);
+    const exact = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [action.id] }) as any;
+    assert.equal(exact.actions.length, 1); assert((exact.actions[0].read ?? exact.actions[0].operation).inputSchema);
+    const full = f.graph.model.describe({ search: 'ServiceRequest' });
+    const executable = (actions: any[]) => actions.filter(action => action.read || action.operation);
+    assert(JSON.stringify(executable(summary.actions)).length < JSON.stringify(executable(full.actions)).length * 0.6);
+    assert.equal(f.session.receipts().length, 2);
+    assert.equal(summary.conditionSchema, undefined);
+    // Condition-only discovery is an alternative to requesting every full schema;
+    // keep the per-decision context bound intact as the registry grows.
+    const conditions = new OntologyPlanningSession(f.graph, owner, f.request).call('describe_ontology', { search: 'ServiceRequest', actions: [], includeConditionSchema: true }) as any;
+    assert.deepEqual(conditions.conditionSchema, z.toJSONSchema(businessConditionSchema));
+  } finally { f.db.close(); }
+});
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
 
 test('N2 grounds typed conditions without weakening source quantities, services, budgets or prior conditions', () => {
@@ -141,6 +161,8 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
   try {
     b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
     assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
+    assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
+    assert.equal(done.delegation!.groundingDecisions!.length, 1);
     assert.equal(done.delegation!.ontologyReads!.length, 2); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 1);
     assert.equal(done.delegation!.plan!.version, '7');
     assert(done.delegation!.ontologyReads!.every(read => read.tool === 'read_task_context' && read.status === 'ok'));

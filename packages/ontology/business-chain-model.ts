@@ -109,7 +109,7 @@ export function extendBusinessChain(base: ModelDefinition, shapes: { quantity: z
       requestRevision: n('Business request revision'), planDigest: hashes('Exact originating execution plan'), intentId: s('Stable operation intent'),
       observationId: s('Accepted source observation identity'), kind: p('string', z.enum(['pending', 'confirmed', 'rejected', 'requires_input', 'requires_authorization', 'not_found']), 'Verified source response meaning'),
       effect: p('string', effects, 'Declared operation effect'), sourceVersion: n('Accepted provider version'), observedAt: t('Receipt time'),
-      evidenceLevel: p('string', z.enum(['synthetic', 'internal', 'live_readonly', 'live_operation', 'live_fulfillment', 'unknown']), 'Actual evidence basis, never inferred from task completion'),
+      evidenceLevel: p('string', z.enum(['synthetic', 'provider_test', 'internal', 'live_readonly', 'live_operation', 'live_fulfillment', 'unknown']), 'Actual evidence basis, never inferred from task completion'),
       evidenceIds: texts('Exact accepted evidence identities'),
       states: p('struct', z.record(z.string(), z.string()), 'Normalized order, payment, fulfillment, refund or domain states'),
       deliveredQuantity: p('struct', shapes.quantity, 'Observed cumulative delivered quantity', false),

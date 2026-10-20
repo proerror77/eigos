@@ -9,6 +9,7 @@ import { TaskService } from '../../packages/core/tasks.js';
 import { taskSummary } from '../../packages/core/task-summary.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
+import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 
 function result(action: () => unknown): CallToolResult {
   try {
@@ -80,6 +81,16 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));
+  server.registerTool('select_payment_route', {
+    description: 'Select a payment route for the original unpaid booking using current PA wallet availability: prefer Link Agent Wallet, otherwise the provider Link checkout requiring user confirmation. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
+    inputSchema: paPaymentRouteSchema,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.selectPaymentRoute(principal, args))));
+  server.registerTool('report_payment_result', {
+    description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment or booking completion.',
+    inputSchema: paPaymentReportSchema,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.reportPayment(principal, args))));
   server.registerTool('cancel_task', {
     description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),

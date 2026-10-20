@@ -5,7 +5,7 @@ import type { Ref, ServiceRequest } from '../ontology/execution.js';
 import type { ActionDefinition, ObjectRef } from '../ontology/model.js';
 import type { LinkWrite, ObjectView, OntologyObjectStore } from '../ontology/object-store.js';
 import { readCapabilityCatalog, readPreparedCapability, readPreparedResolution, type PreparedCapability, type PreparedResolution } from '../ontology/capability-catalog.js';
-import { readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
+import { actionProperties, readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import type { PlanningContextReceipt, PlanningDefinitionReceipt, PlanningReadReceipt } from '../ontology/planning-contract.js';
 
@@ -154,6 +154,8 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
   for (const action of actions) {
     Object.values(action.inputs).forEach(type => names.add(type));
     if (action.read) names.add(action.read.resultType);
+    if (action.operation) names.add(action.operation.resultType);
+    for (const type of action.resultTypes ?? []) names.add(type);
   }
   for (const type of [...names].filter(name => !isExecutionBookkeepingType(name) && name !== 'ServiceRequest')) {
     if (graph.model.isInterface(type)) continue;
@@ -197,9 +199,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     const registered = executionView.objects.filter(object => object.ref.type === 'RegisteredActionType');
     for (const action of actions) if (!registered.some(object => {
       const p = object.properties;
-      return p.actionId === action.id && p.definitionDigest === digest(action) && p.actionVersion === (action.read?.version ?? digest(action)) && p.description === action.description &&
-        same(p.inputs, action.inputs) && same(p.inputSchema, action.read?.inputSchema) && p.resultType === action.read?.resultType && p.effect === (action.read?.effect ?? 'definition_only') &&
-        same(p.changes, action.changes) && same(p.submissionCriteria, action.submissionCriteria) && p.execution === 'definition_only';
+      return Object.entries(actionProperties(action)).every(([name, value]) => same(p[name], value));
     })) return conflict('The active action definition is missing or changed in its Ontology binding');
   }
   const capabilities = readCapabilityCatalog(graph, owner, requestId);
@@ -217,6 +217,9 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   const unread = new Map((executionView?.unreadRefs ?? []).map(ref => [refKey(ref), ref]));
   const pendingRelationships: TaskContextPayload['graph']['pendingRelationships'] = [];
   const internalType = (type: string) => isExecutionBookkeepingType(type) || type === 'RegisteredCapability';
+  // Leave room for the Agent's focused source queries and gate evaluations.
+  // Omitted objects remain navigable references, never delivered evidence.
+  let objectBytes = 0;
   const addObject = (object: ObjectView, required = true): boolean => {
     if (taskObjectMembership(graph, owner, request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Task context cannot include another request or revision');
     if (object.ref.type === 'RequestInstruction') {
@@ -234,15 +237,21 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       object = { ...object, properties: metadata };
     }
     if (internalType(object.ref.type)) { unread.set(refKey(object.ref), object.ref); return false; }
+    const bytes = Buffer.byteLength(JSON.stringify(object));
+    if (!objects.has(refKey(object.ref)) && objectBytes + bytes > 30000 && object.ref.type !== 'ServiceRequest' && !same(object.ref, executionView?.scope)) {
+      unread.set(refKey(object.ref), object.ref); return false;
+    }
     if (!objects.has(refKey(object.ref)) && objects.size >= 100) {
       if (required) return conflict('Task context object bound exceeded; narrow the active business context');
       unread.set(refKey(object.ref), object.ref); return false;
     }
+    if (!objects.has(refKey(object.ref))) objectBytes += bytes;
     objects.set(refKey(object.ref), object);
     unread.delete(refKey(object.ref)); return true;
   };
   const addLink = (edge: LinkWrite) => { links.set(JSON.stringify(edge), edge); };
   addObject(graph.read(owner, requestRef));
+  if (executionView?.scope) addObject(graph.read(owner, executionView.scope));
   for (const object of executionView?.objects ?? []) addObject(object);
   for (const edge of executionView?.links ?? []) addLink(edge);
   for (const link of requestLinks) {

@@ -6,6 +6,7 @@ import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { taskSummary } from '../../packages/core/task-summary.js';
+import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -54,7 +55,7 @@ export function agentCard(c: Config, services: ReturnType<TaskService['services'
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      ...(c.OIDC_AGENT_CLIENT_ID ? { extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] } : {}),
+      extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }, ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
     },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
@@ -118,7 +119,13 @@ export class A2AGateway implements A2ARequestHandler {
       let job: Job;
       if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        if (message.metadata?.taskOperation === 'resume') {
+        if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
+          const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
+          job = this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
+          const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
+          job = this.tasks.reportPayment(p, report, message.contextId || undefined);
+        } else if (message.metadata?.taskOperation === 'resume') {
           const resume = resumeTaskSchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.resume(p, resume, message.contextId || undefined);
         } else {

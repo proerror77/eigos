@@ -10,7 +10,7 @@
 
 ## MCP
 
-远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`amend_task`、`resume_task`、`get_member_usage`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
+远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`select_payment_route`、`report_payment_result`、`amend_task`、`resume_task`、`get_member_usage`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
 
 任务返回默认是 `view: "summary"` 的业务视图，无需 PA 选择精简模式。提交、补充、恢复、查询、列表、取消与授权响应保留任务身份、当前版本、状态、问题、完整交付物、验收结论，以及继续处理所需的授权／来源／恢复信息。模型运行记录、完整计划、读取凭据、定义包和历史快照由 EIGOS 内部保存，不随轮询反复发送。现有 `delegation.plan.quote` 和 `delegation.authorizationRequest` 仍提供准确批准所需的报价或计划标识；摘要本身不授予权限。对象详情通过有权限且有界的 Ontology 查询按需读取。`ServiceRequest.requester/proposals/assessments/afterSalesCases` 可进入完整业务链；方案的 `authorizations/businessResults`、验收的 `findings/acceptedArtifact`、售后的 `originalRequest/remedyRequest/originalAssessment/remedyAssessments` 保留各自来源和版本。查询授权状态只返回记录当前是否到期／撤销，不能代替派发时的真实许可检查。详见 [业务链实现与验证](business-chain-implementation-2026-10-20.md)。
 
@@ -52,7 +52,11 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 原始交付要求、更正、执行关系以及默认业务摘要的真实 PA 验证见[2026-10-20 验收记录](evidence/ontology-graph-live-2026-10-20/README.md)。业务验收时的有效报价与之后的历史回读分别记载，不以过期结果承诺当前价格或来源授权。
 
-六类服务扩展复用这些接口和权限。当前运行契约为 `ontology-execution-v8`，业务模型为 `eigos.business@10`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+六类服务扩展复用这些接口和权限。当前运行契约为 `ontology-execution-v15`，业务模型为 `eigos.business@14`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+
+交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
+
+显式 `executionEnvironment: "sandbox"` 可选择已配置的 `commerce.journey.sandbox@2`。Agent 以原子动作查询上下文和商家事实；需要用户选择时在原 Task 补充，沙箱写入在同一 `/tasks/{id}/authorize` 接口使用 `approve_plan`，绑定 `planDigest`、`allowedEffects`、`maxAmount`、`payeeIds`、`expiresAt` 和 `environment: "sandbox"`。模型的可行性判断不产生许可。PA 的既有 Python 客户端支持这种授权格式，同时保留旧模拟报价确认格式。新程序和业务证据边界见 [交易沙箱说明](commerce-agent-sandbox-2026-10-19.md)。
 
 同类要求可带所选能力声明的 `role`：例如酒店 `room_count`／`guest_count`、打车 `pickup`／`arrival`、租车 `service_total`／`deposit`。模型保留各自原话与来源；校验只使用相应角色的事实，缺证据保持 unknown。未带 role 的要求保留原有单一语义，不自动匹配其他角色。v6 及更早计划只读，不自动迁移或恢复执行。修复及真实模型证据见 [六类验证](service-domain-validation-2026-10-18.md)。
 
@@ -99,3 +103,8 @@ T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿�
 
 
 个人美团采用[会员自有账号授权](member-source-authorization.md)：各会员 PA 通过独立 HTTP 通道提交本人 Token，MCP 仅提供连接发现／状态／发起／撤销／原任务恢复工具。新增 sources:read、sources:write；身份来自已验签的 JWT 与安装登记。凭据在业务库专用表加密保存，不进入 Task／模型／会员会话库。服务目录可见，查询执行仍需买方自己的有效连接。采用 v8 AgentRuntime 的 delivery.quote@3、address.book.read@2，复用原任务、授权、官方 CLI 和来源回执。模型选择三个独立读取动作及完成依据；详见 [美团 Agent 动作](paotui-agent-actions-2026-10-19.md)。能力默认关闭、只限非生产 loopback HTTPS；旧单会员操作人连接是互斥兼容模式。
+## PA 自有支付与预约回读
+
+`booking.pa-payment.sandbox@2` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
+
+Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求、路线选择与通知 Schema。Python 客户端支持 `payment-route`、`payment-result`，并通过 `reconcile` 复用已有原操作回读接口。此路径没有 EIGOS 付款动作，不需要 EIGOS Stripe 账户；旧商家付款环境开关已禁用。所有测试均在隔离服务商和 PA 钱包夹具中完成，真实钱包及服务商未接入。详见 [PA 预约付款流程](pa-booking-payment-flow.md)。

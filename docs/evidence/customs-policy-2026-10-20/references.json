@@ -1,0 +1,124 @@
+{
+  "capturedSources": [
+    {
+      "reference": {
+        "id": "cn-customs-law-2021",
+        "title": "中华人民共和国海关法",
+        "issuer": "全国人民代表大会常务委员会",
+        "publisher": "国家原子能机构政府转载",
+        "url": "https://www.caea.gov.cn/n6760401/n6760402/c6827751/content.html",
+        "jurisdiction": "CN",
+        "documentVersion": "2021-04-29 第六次修正",
+        "effectiveFrom": "2021-04-29",
+        "capturedAt": "2026-10-20T00:53:20.336Z",
+        "contentSha256": "cc79773f274045a9d7066e08874b8f13cc5d8a84754ad55861f3f49ad52d8b2d",
+        "capture": "official_document_body",
+        "use": "reference_only",
+        "topics": [
+          "海关监管",
+          "如实申报",
+          "个人物品与货物的适用范围"
+        ],
+        "summary": "海关对进出境货物和物品实施监管；个人物品与货物的适用范围需要区分。申报资料、物品性质和实际用途需要有据可查，承运承诺不等于海关放行。"
+      },
+      "capture": {
+        "url": "https://www.caea.gov.cn/n6760401/n6760402/c6827751/content.html",
+        "resolvedUrl": "https://www.caea.gov.cn/n6760401/n6760402/c6827751/content.html",
+        "status": 200,
+        "fetchedAt": "2026-10-20T00:53:20.336587+00:00",
+        "sha256": "cc79773f274045a9d7066e08874b8f13cc5d8a84754ad55861f3f49ad52d8b2d",
+        "bytes": 56508
+      }
+    },
+    {
+      "reference": {
+        "id": "cn-customs-notice-2024-176",
+        "title": "海关总署公告2024年第176号",
+        "issuer": "海关总署",
+        "publisher": "商务部政府转载",
+        "url": "https://www.mofcom.gov.cn/zcfb/zgdwjjmywg/art/2025/art_4adf716bf28542fdbffe5510b30d8ed9.html",
+        "jurisdiction": "CN",
+        "documentVersion": "2024-11-29 公布文本",
+        "effectiveFrom": "2024-12-01",
+        "capturedAt": "2026-10-20T00:54:23.388Z",
+        "contentSha256": "2749c0d76494721da58c17f35057662c41fe289a4fe6f592a76ce11b13fc90d3",
+        "capture": "official_document_body",
+        "use": "reference_only",
+        "topics": [
+          "进境物品管理文件的修改与废止",
+          "旧版依据不能直接沿用"
+        ],
+        "summary": "该公告修改或废止部分进境物品管理文件。引用旧文件时须核对后续修订及生效范围；此文献本身不构成某一商品或交易的准入结论。"
+      },
+      "capture": {
+        "url": "https://www.mofcom.gov.cn/zcfb/zgdwjjmywg/art/2025/art_4adf716bf28542fdbffe5510b30d8ed9.html",
+        "resolvedUrl": "https://www.mofcom.gov.cn/zcfb/zgdwjjmywg/art/2025/art_4adf716bf28542fdbffe5510b30d8ed9.html",
+        "status": 200,
+        "fetchedAt": "2026-10-20T00:54:23.388823+00:00",
+        "sha256": "2749c0d76494721da58c17f35057662c41fe289a4fe6f592a76ce11b13fc90d3",
+        "bytes": 16921
+      }
+    },
+    {
+      "reference": {
+        "id": "cn-tobacco-law-2015",
+        "title": "中华人民共和国烟草专卖法",
+        "issuer": "全国人民代表大会常务委员会",
+        "publisher": "国家市场监督管理总局",
+        "url": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_5e70a89ddb7d4c20a8315e0124f468a5.html",
+        "jurisdiction": "CN",
+        "documentVersion": "2015-04-24 修正文本",
+        "capturedAt": "2026-10-20T00:53:09.699Z",
+        "contentSha256": "e75edf66f6474c4b1b92a3b26b279b72e558ec36d2ee5402279fd4f864bd8271",
+        "capture": "official_document_body",
+        "use": "reference_only",
+        "topics": [
+          "受管制商品识别",
+          "专卖品监管范围"
+        ],
+        "summary": "雪茄等被纳入烟草专卖品监管范围，相关经营和运输受专门管理。资料用于识别监管属性，不证明某一主体或交易已经获准。"
+      },
+      "capture": {
+        "url": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_5e70a89ddb7d4c20a8315e0124f468a5.html",
+        "resolvedUrl": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_5e70a89ddb7d4c20a8315e0124f468a5.html",
+        "status": 200,
+        "fetchedAt": "2026-10-20T00:53:09.699316+00:00",
+        "sha256": "e75edf66f6474c4b1b92a3b26b279b72e558ec36d2ee5402279fd4f864bd8271",
+        "bytes": 95666
+      }
+    },
+    {
+      "reference": {
+        "id": "cn-tobacco-regulation-2023",
+        "title": "中华人民共和国烟草专卖法实施条例",
+        "issuer": "国务院",
+        "publisher": "国家市场监督管理总局",
+        "url": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_4882f33442244df5bd570219964612b7.html",
+        "jurisdiction": "CN",
+        "documentVersion": "2023-07-20 第四次修订",
+        "capturedAt": "2026-10-20T00:53:09.697Z",
+        "contentSha256": "f9779f18f383598550312837c99a637841abc595490629d9e2ac65239cbf7d92",
+        "capture": "official_document_body",
+        "use": "reference_only",
+        "topics": [
+          "经营主体资格",
+          "进出口及运输的专门监管"
+        ],
+        "summary": "烟草专卖品的经营、进出口及运输存在专门管理与资格要求。商品识别、主体资格和具体许可不能由普通物流报价或用户确认替代。"
+      },
+      "capture": {
+        "url": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_4882f33442244df5bd570219964612b7.html",
+        "resolvedUrl": "https://www.samr.gov.cn/zw/zfxxgk/fdzdgknr/bgt/art/2023/art_4882f33442244df5bd570219964612b7.html",
+        "status": 200,
+        "fetchedAt": "2026-10-20T00:53:09.697219+00:00",
+        "sha256": "f9779f18f383598550312837c99a637841abc595490629d9e2ac65239cbf7d92",
+        "bytes": 114049
+      }
+    }
+  ],
+  "excluded": {
+    "url": "https://online.customs.gov.cn/ociswebserver/pages/jcjybcx/question.html",
+    "reason": "HTTP 200 returned only a page shell; not registered as a captured document body"
+  },
+  "use": "reference_only; no legal eligibility decision"
+}

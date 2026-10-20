@@ -21,7 +21,7 @@ function fixture() {
 }
 
 test('Ontology compiles core, service, checkout and catalog types, inherited interfaces and bounded metadata', () => {
-  for (const id of ['ServiceRequest', 'ProductVariant', 'ExecutionPlan', 'ExecutionStep', 'RegisteredActionType', 'RequestSpecification', 'RoomInventoryObservation']) assert(businessModel.hasType(id));
+  for (const id of ['ServiceRequest', 'ProductVariant', 'ExecutionPlan', 'ExecutionStep', 'RegisteredActionType', 'RequestSpecification', 'RoomInventoryObservation', 'BookingTask', 'PAPaymentRequest', 'CommerceTask', 'CustomsRuleSet', 'StripePaymentObservation']) assert(businessModel.hasType(id));
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'FulfillmentOffer', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');
@@ -34,9 +34,14 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
   assert.equal(new Set(all).size, BUSINESS_MODEL_DEFINITION.objects.filter(object => object.visibility !== 'technical').length + BUSINESS_MODEL_DEFINITION.interfaces.length);
   assert(!all.includes('ExecutionAttempt'));
   assert(businessModel.describe({ search: 'ExecutionAttempt' }).types.some(type => (type as { id: string }).id === 'ExecutionAttempt'));
+  assert(businessModel.implements('StripePaymentObservation', 'EvidenceBacked'));
+  assert.equal(businessModel.action('PayStripePayment').operation?.effect, 'payment');
   assert(businessModel.implements('CatalogRead', 'EvidenceBacked'));
   assert(businessModel.implements('CatalogObservation', 'EvidenceBacked'));
   assert(businessModel.implements('CatalogEndpoint', 'EvidenceBacked'));
+  assert(businessModel.implements('LandedCostQuote', 'CommerceFact'));
+  assert(businessModel.implements('DeliveryPromise', 'EvidenceBacked'));
+  assert.equal(businessModel.action('SubmitCommerceOrder').operation?.environment, 'sandbox');
   assert((businessModel.describe({ search: '报价' }).types as { id: string }[]).length > 0);
   const metadata = businessModel.describeType('DeliveryQuote') as { interfaces: { id: string }[] };
   metadata.interfaces[0]!.id = 'tampered';

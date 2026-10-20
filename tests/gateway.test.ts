@@ -52,7 +52,7 @@ before(async () => {
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
     EIGOS_COORDINATOR: 'codex', EIGOS_ACTION_SANDBOX: 'false', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
-    EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_PAOTUI_ORDERS_ENABLED: 'false',
+    EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_PAOTUI_ORDERS_ENABLED: 'false', EIGOS_STRIPE_TEST_ENABLED: 'false',
   };
   gateway = createApp(config, verify);
   worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();
@@ -121,7 +121,7 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 14);
+    assert.equal(catalog.tools.length, 16);
     for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });
     assert.equal(job.state, 'input-required');

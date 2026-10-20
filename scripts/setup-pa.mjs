@@ -47,6 +47,10 @@ const shopifyMerchants = readWorkerConfig({
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: process.env.EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? field(oldSettings, 'EIGOS_SHOPIFY_CATALOG_MERCHANTS'),
 }).EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? [];
 const shopifySetting = "'" + JSON.stringify(shopifyMerchants).replaceAll("'", '\\u0027') + "'";
+const commerceDisabled = process.env.EIGOS_COMMERCE_SANDBOX_URL === '';
+const commerceUrl = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_URL ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_URL');
+const commerceTokenFile = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_TOKEN_FILE');
+const commerce = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development', EIGOS_ACTION_SANDBOX: commerceUrl ? 'true' : 'false', EIGOS_COMMERCE_SANDBOX_URL: commerceUrl, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: commerceTokenFile });
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
@@ -74,6 +78,7 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
+  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');
 const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>

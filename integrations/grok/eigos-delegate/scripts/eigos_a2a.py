@@ -4,6 +4,7 @@ import argparse
 import ipaddress
 import json
 import os
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -13,7 +14,7 @@ import urllib.parse
 import urllib.request
 import uuid
 
-MAX_RESPONSE = 2 * 1024 * 1024
+MAX_RESPONSE = 8 * 1024 * 1024
 DEFAULT_SERVICES = ['eigos.delegate']
 TERMINAL = {'TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 'TASK_STATE_REJECTED'}
 
@@ -186,6 +187,41 @@ class Client:
             'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'metadata': {'taskOperation': operation}, 'parts': [{'data': data}],
         }}, endpoint)
 
+    def payment_route(self, task_id, data, request_id):
+        allowed = {'handoffId', 'handoffDigest', 'wallet'}
+        if not isinstance(data, dict) or set(data) != allowed:
+            raise ClientError('Payment route accepts only handoffId, handoffDigest and wallet availability')
+        wallet = data.get('wallet')
+        reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
+        if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
+            raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        return self.payment_continuation(task_id, data, request_id, 'select_payment_route', 'payment-route:')
+
+    def payment_result(self, task_id, data, request_id):
+        allowed = {'handoffId', 'handoffDigest', 'outcome'}
+        if not isinstance(data, dict) or set(data) != allowed or data.get('outcome') not in ('submitted', 'declined', 'unknown', 'canceled'):
+            raise ClientError('Payment notification accepts only handoffId, handoffDigest and outcome; never include wallet credentials')
+        return self.payment_continuation(task_id, data, request_id, 'report_payment_result', 'payment-result:')
+
+    def payment_continuation(self, task_id, data, request_id, action, key_prefix):
+        if any(not isinstance(data.get(k), str) or len(data[k]) != 64 or any(c not in '0123456789abcdef' for c in data[k]) for k in ('handoffId', 'handoffDigest')):
+            raise ClientError('Use the exact original payment handoff ID and digest')
+        try:
+            uuid.UUID(request_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ClientError('Payment notifications require a stable UUID request ID') from None
+        current = self.rpc('GetTask', {'id': task_id})
+        if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
+            raise ClientError('Task service is outside the configured delegation allowlist')
+        request = current.get('metadata', {}).get('delegation', {}).get('agent', {}).get('paPayment', {}).get('request', {})
+        if request.get('id') != data['handoffId'] or request.get('digest') != data['handoffDigest']:
+            raise ClientError('Payment notification does not match the owned task handoff')
+        _, endpoint = self.discover()
+        return self.write(key_prefix + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER',
+            'parts': [{'data': {'action': action, **data}}],
+        }}, endpoint)
+
     def send_text(self, text, request_id, task_id=None, expected_revision=None):
         card, endpoint = self.discover()
         if task_id:
@@ -209,13 +245,39 @@ class Client:
         current = self.rpc('GetTask', {'id': task_id})
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured allowlist')
-        if not isinstance(data, dict) or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'} or data['action'] != 'confirm_simulated_payment':
-            raise ClientError('Supply the exact simulated confirmation fields and a stable requestId')
+        if not isinstance(data, dict) or not isinstance(data.get('requestId'), str) or not 1 <= len(data['requestId']) <= 128:
+            raise ClientError('Supply an exact sandbox confirmation with a stable requestId')
+        if data.get('action') == 'approve_plan':
+            required = {'requestId', 'action', 'planDigest', 'allowedEffects', 'maxAmount', 'payeeIds', 'expiresAt', 'environment'}
+            amount, effects, payees = data.get('maxAmount'), data.get('allowedEffects'), data.get('payeeIds')
+            if set(data) != required or data['environment'] != 'sandbox' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
+                raise ClientError('Plan approval requires exact fields, a plan digest and environment sandbox')
+            if not isinstance(effects, list) or not 1 <= len(effects) <= 8 or any(e not in ('local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund') for e in effects):
+                raise ClientError('Plan approval has invalid declared effects')
+            if not isinstance(amount, dict) or set(amount) != {'minor', 'currency'} or not isinstance(amount['minor'], str) or not re.fullmatch(r'(0|[1-9][0-9]{0,17})', amount['minor']) or not isinstance(amount['currency'], str) or not re.fullmatch(r'[A-Z]{3}', amount['currency']):
+                raise ClientError('Plan approval requires an explicit minor-unit amount and currency')
+            if not isinstance(payees, list) or len(payees) > 8 or any(not isinstance(p, str) or not 1 <= len(p) <= 200 for p in payees) or not isinstance(data['expiresAt'], str) or not data['expiresAt']:
+                raise ClientError('Plan approval requires exact payees and a finite expiry')
+        elif data.get('action') != 'confirm_simulated_payment' or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'}:
+            raise ClientError('Supply the exact supported sandbox confirmation fields')
         if not task_id or any(c not in '0123456789abcdef-' for c in task_id.lower()):
             raise ClientError('Invalid task ID')
         base = urllib.parse.urlsplit(self.config['cardUrl'])
         url = urllib.parse.urlunsplit((base.scheme, base.netloc, '/tasks/' + task_id + '/authorize', '', ''))
         return self.request(url, data)
+
+    def reconcile(self, task_id, request_id):
+        try:
+            uuid.UUID(task_id)
+            uuid.UUID(request_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ClientError('Reconciliation requires the original task ID and a stable UUID request ID') from None
+        current = self.rpc('GetTask', {'id': task_id})
+        if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
+            raise ClientError('Task service is outside the configured allowlist')
+        base = urllib.parse.urlsplit(self.config['cardUrl'])
+        url = urllib.parse.urlunsplit((base.scheme, base.netloc, '/tasks/' + task_id + '/reconcile', '', ''))
+        return self.request(url, {'requestId': request_id})
 
     def poll(self, task_id, seconds, interval):
         deadline = time.monotonic() + seconds
@@ -262,6 +324,17 @@ def main():
     authorize = commands.add_parser('authorize')
     authorize.add_argument('--task-id', required=True)
     authorize.add_argument('--input-file', required=True)
+    payment = commands.add_parser('payment-result')
+    payment.add_argument('--task-id', required=True)
+    payment.add_argument('--input-file', required=True)
+    payment.add_argument('--request-id', required=True)
+    route = commands.add_parser('payment-route')
+    route.add_argument('--task-id', required=True)
+    route.add_argument('--input-file', required=True)
+    route.add_argument('--request-id', required=True)
+    reconcile = commands.add_parser('reconcile')
+    reconcile.add_argument('--task-id', required=True)
+    reconcile.add_argument('--request-id', required=True)
     submit = commands.add_parser('submit')
     submit.add_argument('--input-file', required=True)
     submit.add_argument('--request-id', required=True)
@@ -318,6 +391,12 @@ def main():
             output = client.send_text(text, args.request_id, args.task_id, args.expected_revision)
         elif args.command == 'authorize':
             output = client.authorize(args.task_id, read_json(args.input_file))
+        elif args.command == 'payment-result':
+            output = client.payment_result(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command == 'payment-route':
+            output = client.payment_route(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command == 'reconcile':
+            output = client.reconcile(args.task_id, args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
         elif args.command in ('reply', 'amend', 'resume'):

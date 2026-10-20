@@ -5,11 +5,18 @@ import { authoritativeTotal, type UcpCheckout, type UcpOrder } from './contracts
 import type { UcpResponse } from './client.js';
 import { z } from 'zod';
 
+const addressSchema = z.looseObject({ address_country: z.string().min(2).max(3), postal_code: z.string().nullish(), address_region: z.string().nullish(), address_locality: z.string().nullish(), street_address: z.string().nullish(), extended_address: z.string().nullish(), first_name: z.string().nullish(), last_name: z.string().nullish(), phone_number: z.string().nullish() });
 export function addressDigest(value: unknown): string | undefined {
-  const address = z.looseObject({ address_country: z.string().min(2).max(3), postal_code: z.string().nullish(), address_region: z.string().nullish(), address_locality: z.string().nullish(), street_address: z.string().nullish() }).safeParse(value);
+  const address = addressSchema.safeParse(value);
   if (!address.success) return;
-  return digest(Object.fromEntries(['address_country', 'postal_code', 'address_region', 'address_locality', 'street_address'].flatMap(key => address.data[key] ? [[key, address.data[key]]] : [])));
+  return digest(Object.fromEntries(Object.keys(addressSchema.shape).flatMap(key => address.data[key] ? [[key, address.data[key]]] : [])));
 }
+export function usableAddressStructure(value: unknown): boolean {
+  const address = addressSchema.safeParse(value);
+  return !!(address.success && address.data.street_address?.trim() && (address.data.postal_code?.trim() || address.data.address_locality?.trim()));
+}
+const costBreakdown = (value: Pick<UcpCheckout, 'totals' | 'currency'>) => value.totals.map(t => ({ type: t.type, amount: { minor: String(t.amount), currency: value.currency }, ...(typeof t.display_text === 'string' && t.display_text ? { displayText: t.display_text } : {}) }));
+const costTermsDigest = (value: Pick<UcpCheckout, 'totals' | 'line_items'> | Pick<UcpOrder, 'totals' | 'line_items'>) => digest({ totals: value.totals, lines: value.line_items.map(l => ({ id: l.item.id, totals: l.totals })).sort((a, b) => a.id.localeCompare(b.id)) });
 
 function countUnit(line: Record<string, unknown>, item: Record<string, unknown>) {
   for (const raw of [line.quantity_unit, item.quantity_unit]) if (raw !== undefined) {
@@ -23,13 +30,17 @@ export function checkoutSnapshot(response: UcpResponse<UcpCheckout>): CommerceSn
   if (new Set(items.map(i => i.id)).size !== items.length || new Set(c.line_items.map(i => i.id)).size !== items.length) throw new DomainError('CONFLICT', 'Ambiguous duplicate UCP item or line identities');
   const total = authoritativeTotal(c), fulfillmentDigest = digest(c.fulfillment ?? null), buyerDigest = digest(c.buyer ?? null);
   const methods = z.array(z.looseObject({ type: z.string(), line_item_ids: z.array(z.string()), selected_destination_id: z.string().optional(), destinations: z.array(z.record(z.string(), z.unknown())).optional(), groups: z.array(z.looseObject({ selected_option_id: z.string().optional() })).optional() })).safeParse(c.fulfillment?.methods);
-  let destinationDigest: string | undefined;
+  let destinationDigest: string | undefined, destinationComplete = false;
   if (methods.success && methods.data.length === 1) {
     const m = methods.data[0]!;
-    if (m.type === 'shipping' && m.groups?.length && m.groups.every(g => g.selected_option_id) && digest([...m.line_item_ids].sort()) === digest(c.line_items.map(l => l.id).sort())) destinationDigest = addressDigest(m.destinations?.find(d => d.id === m.selected_destination_id));
+    if (m.type === 'shipping' && m.groups?.length && m.groups.every(g => g.selected_option_id) && digest([...m.line_item_ids].sort()) === digest(c.line_items.map(l => l.id).sort())) {
+      const destination = m.destinations?.find(d => d.id === m.selected_destination_id);
+      destinationDigest = addressDigest(destination); destinationComplete = usableAddressStructure(destination);
+    }
   }
-  return { id: c.id, state: c.status, items, total, fulfillmentDigest, buyerDigest,
-    quoteDigest: digest({ items, total, fulfillmentDigest, buyerDigest, links: c.links }),
+  const costs = costBreakdown(c), costDigest = costTermsDigest(c);
+  return { id: c.id, state: c.status, items, total, costBreakdown: costs, costTermsDigest: costDigest, fulfillmentDigest, buyerDigest, destinationComplete,
+    quoteDigest: digest({ items, total, costTermsDigest: costDigest, fulfillmentDigest, buyerDigest, links: c.links }),
     ...(destinationDigest ? { destinationDigest } : {}), ...(c.expires_at ? { expiresAt: c.expires_at } : {}), ...(c.continue_url ? { continueUrl: c.continue_url } : {}), ...(c.order ? { orderId: c.order.id } : {}),
     messageCodes: c.messages?.filter(m => m.type === 'error').map(m => String(m.code ?? 'unspecified').slice(0, 200)) ?? [], receipt: response.receipt };
 }
@@ -60,5 +71,5 @@ export function orderSnapshot(response: UcpResponse<UcpOrder>): NonNullable<Comm
     for (const l of e.data.line_items) { if (!o.line_items.some(i => i.id === l.id)) completeCoverage = false; coverage.set(l.id, (coverage.get(l.id) ?? 0) + l.quantity); }
   }
   const destinationDigest = completeCoverage && destinations.size === 1 && o.line_items.every(l => coverage.get(l.id) === l.quantity.total) ? [...destinations][0] : undefined;
-  return { id: o.id, checkoutId: o.checkout_id, items: o.line_items.map(l => ({ id: l.item.id, lineId: l.id, title: l.item.title, quantity: l.quantity.total, unitPrice: { minor: String(l.item.price), currency: o.currency } })), total: authoritativeTotal(o), permalinkUrl: o.permalink_url, fulfillment, events, adjustmentCount: o.adjustments?.length ?? 0, ...(destinationDigest ? { destinationDigest } : {}), receipt: response.receipt };
+  return { id: o.id, checkoutId: o.checkout_id, items: o.line_items.map(l => ({ id: l.item.id, lineId: l.id, title: l.item.title, quantity: l.quantity.total, unitPrice: { minor: String(l.item.price), currency: o.currency } })), total: authoritativeTotal(o), costBreakdown: costBreakdown(o), costTermsDigest: costTermsDigest(o), permalinkUrl: o.permalink_url, fulfillment, events, adjustmentCount: o.adjustments?.length ?? 0, ...(destinationDigest ? { destinationDigest } : {}), receipt: response.receipt };
 }

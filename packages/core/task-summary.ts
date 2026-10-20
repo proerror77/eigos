@@ -22,6 +22,7 @@ export function taskSummary(job: Job) {
       businessFacts: d.businessFacts?.map(fact => ({ intentId: fact.intentId, sourceVersion: fact.sourceVersion, evidenceRefs: fact.evidenceRefs,
         snapshot: { order: fact.snapshot.order, payment: fact.snapshot.payment, fulfillment: fact.snapshot.fulfillment, refund: fact.snapshot.refund,
           ...(fact.snapshot.domain ? { domain: { name: fact.snapshot.domain.name, status: fact.snapshot.domain.status, endpoint: fact.snapshot.domain.endpoint } } : {}) } })),
+      ...(d.agent?.paPayment ? { agent: { paPayment: structuredClone(d.agent.paPayment) } } : {}),
       afterSalesCaseId: d.afterSalesCaseId,
       executionBudgetStatus: d.executionBudget ? d.executionBudgetStatus ?? executionBudgetStatus(job) : undefined,
       ...(d.plan ? { plan: { id: d.plan.id, digest: d.plan.digest, expiresAt: d.plan.expiresAt, quote: d.plan.quote } } : {}),

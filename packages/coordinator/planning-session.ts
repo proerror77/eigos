@@ -14,7 +14,7 @@ import type { DomainAssessment } from '../ontology/domain-rules.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import { assertTaskContextCurrent, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES, readTaskContext, readTaskInstructions, taskContextSchema, taskInstructionsSchema, taskObjectMembership, type TaskContextBinding, type TaskContextRead } from './task-context.js';
 
-const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), includeSchemas: z.boolean().optional().describe('Request full property value schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
@@ -144,11 +144,21 @@ export class OntologyPlanningSession {
         for (const object of result.items) this.remember(object.ref, object.revision, true);
         instructionRefs = result.items.map(object => object.ref); instructionPage = true; output = result;
       } else if (tool === 'describe_ontology') {
-        const { includeSchemas = false, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
-        output = { ...result, ...(this.options.taskContext ? { actions: result.actions.filter(action => this.options.taskContext!.program?.actionIds.includes(action.id)) } : {}), schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
+        const { includeSchemas = false, includeConditionSchema = false, actions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+        const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
+        const describedActions = selected.filter(action => !this.options.taskContext?.program || this.options.taskContext.program.actionIds.includes(action.id)).map(action => {
+          if (includeSchemas || actions) return action;
+          const { read, operation, ...summary } = action;
+          const compact = (metadata: NonNullable<typeof read | typeof operation>) => {
+            const { inputSchema, ...rest } = metadata;
+            return { ...rest, inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), schemaAvailable: true };
+          };
+          return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}) };
+        });
+        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
           const value = type as { properties: Record<string, Record<string, unknown>> };
           return { ...value, properties: Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
-        }) };
+        }), actions: describedActions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
       }
       else if (tool === 'query_ontology') {
         let query = objectQuerySchema.parse(input);

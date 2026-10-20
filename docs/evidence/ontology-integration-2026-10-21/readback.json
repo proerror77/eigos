@@ -1,0 +1,66 @@
+{
+  "verifiedAt": "2026-10-20T16:29:02.236Z",
+  "environment": "isolated-loopback-synthetic-only",
+  "backendVersion": "ontology-execution-v15",
+  "model": {
+    "id": "eigos.business",
+    "version": "14",
+    "digest": "8482a64b0e6d058454af37bc8951dd703e152061d8ced023785cbf8b619c0f94"
+  },
+  "counts": {
+    "objectTypes": 137,
+    "interfaces": 4,
+    "visibleDefinitions": 127,
+    "technicalTypes": 14,
+    "actions": 55,
+    "functions": 33,
+    "links": 575,
+    "httpDefinitionPages": 26
+  },
+  "checks": {
+    "syntheticBookingCompleted": true,
+    "allDefinitionsReadThroughAuthenticatedHttp": true,
+    "ownerIsolation": true,
+    "unauthenticatedDenied": true,
+    "exactReservePermitLinkedToProposalAndPlan": true,
+    "stepEffectPreserved": true,
+    "independentBookingAndPaymentReadback": true,
+    "acceptanceFindingsPresent": true
+  },
+  "readback": {
+    "taskState": "completed",
+    "proposals": [
+      {
+        "kind": "execution",
+        "authorizationMode": "required"
+      },
+      {
+        "kind": "read_scope",
+        "authorizationMode": "not_required"
+      }
+    ],
+    "authorization": {
+      "effects": [
+        "reserve"
+      ],
+      "actions": [
+        "CreatePendingBooking"
+      ],
+      "environment": "sandbox"
+    },
+    "bookingStatus": "confirmed",
+    "paymentConfirmed": true,
+    "evidenceLevels": [
+      "synthetic"
+    ],
+    "assessmentCount": 1,
+    "findingCount": 6
+  },
+  "boundaries": {
+    "realOrders": false,
+    "realPayments": false,
+    "supplierAuthorizationRenewed": false,
+    "deployedToExistingInstances": false,
+    "multiAgentTripImplemented": false
+  }
+}

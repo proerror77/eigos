@@ -19,6 +19,7 @@ export const capabilityCatalogObjects: ObjectTypeDefinition[] = [{
     tags: p('array', z.array(z.string().max(100)).max(50), 'Discovery labels'), inputSchema: p('struct', jsonObject, 'Typed input contract'),
     predicates: p('array', z.array(jsonObject).max(100), 'Declared business predicates'), outcomePredicates: p('array', z.array(z.string()).max(100), 'Declared result predicates'),
     requirementRoles: p('array', z.array(jsonObject).max(100), 'Distinct semantic roles for request constraints'),
+    constraintEvaluation: p('string', z.enum(['staged']), 'Evaluate source facts at the appropriate business stage', false),
     locationSemantics: p('string', z.string().max(100), 'Meaning of requested location', false),
     definitionDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Exact metadata snapshot digest'),
   },
@@ -28,7 +29,7 @@ export const capabilityCatalogLinks: LinkDefinition[] = [{ id: 'CapabilityReques
 const canonical = (s: CapabilitySummary): CapabilitySummary => ({ ref: s.ref, name: s.name, description: s.description, tags: s.tags, inputSchema: s.inputSchema,
   predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
   // Source readiness is mutable owner state, never part of a definition's identity.
-  locationSemantics: s.locationSemantics, sourceAuthorization: undefined });
+  locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, sourceAuthorization: undefined });
 
 /** Called under the same fenced transaction as interpretation, never by a model. */
 export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string, summaries: ReturnType<ExecutionCatalog['summaries']>) {
@@ -39,6 +40,7 @@ export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: stri
     const s = canonical(item), hash = digest(s), object = { type: 'RegisteredCapability', id: `capability:${hash}` };
     const properties = { id: object.id, capabilityRef: s.ref, name: s.name, description: s.description, tags: s.tags, inputSchema: s.inputSchema,
       predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
+      ...(s.constraintEvaluation ? { constraintEvaluation: s.constraintEvaluation } : {}),
       ...(s.locationSemantics ? { locationSemantics: s.locationSemantics } : {}), definitionDigest: hash };
     try { if (digest(graph.read(owner, object).properties) !== digest(properties)) throw new DomainError('CONFLICT', 'Registered capability snapshot changed'); }
     catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; objects.push({ ref: object, properties }); }
@@ -54,7 +56,7 @@ export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string,
   return objects.map(object => {
     const p = object.properties;
     const value = canonical({ ref: p.capabilityRef, name: p.name, description: p.description, tags: p.tags, inputSchema: p.inputSchema, predicates: p.predicates,
-      outcomePredicates: p.outcomePredicates, requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, sourceAuthorization: undefined } as CapabilitySummary);
+      outcomePredicates: p.outcomePredicates, requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, constraintEvaluation: p.constraintEvaluation, sourceAuthorization: undefined } as CapabilitySummary);
     if (digest(value) !== p.definitionDigest || object.ref.id !== `capability:${p.definitionDigest}`) throw new DomainError('CONFLICT', 'Registered capability evidence changed');
     return value;
   });

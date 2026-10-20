@@ -135,7 +135,7 @@ export class ExecutionCatalog {
     const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || this.programs.get(key(s.ref))?.permitted(owner)));
     // Do not silently truncate an unsearched catalogue; add domain retrieval before scaling it.
     if (permitted.length > limit) throw new DomainError('CONFLICT', 'Capability retrieval limit exceeded; a narrower discovery scope is required');
-    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics,
+    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation,
       sourceAuthorization: this.programs.get(key(s.ref))?.sourceAuthorization?.(owner) ?? this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
   }
   delegationService(): ServiceDefinition {

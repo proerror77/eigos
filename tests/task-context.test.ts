@@ -337,10 +337,10 @@ test('a long task reads a compact business context and can explicitly inspect ol
     for (let sequence = 1; sequence <= 24; sequence++) {
       const input = { scope: state.scope, merchantId: 'coffee', query: `query-${sequence}`, limit: 1 };
       const chosen = { id: 'search', action: 'SearchPublicCatalog', argumentsJson: JSON.stringify(input), dependsOn: [], inputRefs: [] };
-      const body: Omit<AgentActionPlan, 'digest'> = { id: `plan-${sequence}`, version: '1', sequence, requestId: request.id, requestRevision: request.revision,
+      const body: Omit<AgentActionPlan, 'digest'> = { id: `plan-${sequence}`, version: '2', sequence, requestId: request.id, requestRevision: request.revision,
         programRef: state.programRef, programDigest: state.programDigest, scope: state.scope, scopeDigest: digest(f.store.ontology.read(owner, state.scope).properties),
         modelRunId: `synthetic-run-${sequence}`, modelDecision: { kind: 'execute', requestRevision: request.revision, message: 'Synthetic historical choice', steps: [chosen], completionJson: '' },
-        reasoning: 'Synthetic historical choice', createdAt: job.createdAt, steps: [{ ...chosen, input, definitionDigest: digest(f.store.ontology.model.action(chosen.action)), intentId: `intent-${sequence}` }],
+        reasoning: 'Synthetic historical choice', createdAt: job.createdAt, steps: [{ ...chosen, input, effect: 'read', operationKey: `operation-${sequence}`, definitionDigest: digest(f.store.ontology.model.action(chosen.action)), intentId: `intent-${sequence}` }],
         ontologyPlanning: templatePlanning(request) };
       state.plans.push({ ...body, digest: digest(body) });
     }
