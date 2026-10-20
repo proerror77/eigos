@@ -27,6 +27,7 @@ import { readOntologyRequest } from '../ontology/execution-projection.js';
 import { assertSemanticSubmission } from '../ontology/action-submission.js';
 
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
+const capabilitySelectionFeedback = 'Choose an exact capability reference and version listed by read_task_context for this task; the selected capability was not available.';
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
 export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
 export interface AgentPlanningContext { request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; actionIds: string[]; guidance: string; completionSchema: object }
@@ -70,7 +71,12 @@ export class CodexReasoner implements Reasoner {
       'Read the request instructions, current constraints, facts and available registered capabilities through read_task_context. These are authoritative business inputs; this bootstrap contains references only.',
       JSON.stringify({ requestRef: { type: 'ServiceRequest', id: request.id } }),
     ].join('\n\n');
-    const response = await reasonWithOntology(this.model, prompt, z.toJSONSchema(groundingSchema), access.session, signal, access.record, access.maxTurns);
+    const finalSchema = z.toJSONSchema(groundingSchema);
+    finalSchema.properties!.capabilityRef = { anyOf: [...capabilities.map(capability => capability.ref), { id: 'none', version: 'none' }].map(ref => ({
+      type: 'object', properties: { id: { type: 'string', enum: [ref.id] }, version: { type: 'string', enum: [ref.version] } },
+      required: ['id', 'version'], additionalProperties: false,
+    })) };
+    const response = await reasonWithOntology(this.model, prompt, finalSchema, access.session, signal, access.record, access.maxTurns);
     return { decision: groundingSchema.parse(response.output), evidence: response.evidence };
   }
   async plan(context: PlanningContext, signal: AbortSignal, access: PlanningAccess) {
@@ -137,7 +143,7 @@ export class Coordinator {
       if (decision.requestRevision !== d.request.revision) throw new DomainError('CONFLICT', 'Stale request interpretation');
       if (decision.kind === 'unsupported') { this.pause(claim, d.request, false, decision.message); return; }
       selected = decision.kind === 'resolve' && summaries.some(s => s.ref.id === decision.capabilityRef.id && s.ref.version === decision.capabilityRef.version) ? this.catalog.capability(decision.capabilityRef) : undefined;
-      if (decision.kind === 'resolve' && !selected) throw new DomainError('FORBIDDEN', 'Capability was not retrieved for this identity');
+      if (decision.kind === 'resolve' && !selected) throw new DomainError('CONFLICT', capabilitySelectionFeedback);
       const preparer = selected ? this.catalog.agentProgram(selected.ref, claim.owner) : undefined;
       const currentRequest = preparer?.prepareRequest?.(d.request) ?? d.request;
       request = groundConditions(groundRequirements(currentRequest, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles), decision.conditionsJson, groundingAccess.session.retrievedRefs());
@@ -149,8 +155,8 @@ export class Coordinator {
       this.groundingFailure(claim, 'interpretation', error); return;
     }
     if (decision.kind === 'clarify') { this.pause(claim, request, true, decision.message); return; }
-    if (!summaries.some(s => s.ref.id === decision.capabilityRef.id && s.ref.version === decision.capabilityRef.version)) throw new DomainError('FORBIDDEN', 'Capability was not retrieved for this identity');
-    const capability = selected!;
+    if (!selected) { this.groundingFailure(claim, 'interpretation', new DomainError('CONFLICT', capabilitySelectionFeedback)); return; }
+    const capability = selected;
     const program = this.catalog.agentProgram(capability.ref, claim.owner);
     if (program) {
       // Scope construction is pure. No provider preparation, selection or HTTP

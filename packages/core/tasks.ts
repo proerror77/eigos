@@ -15,6 +15,7 @@ import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
 import { canRecoverReadOnly } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
+import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -92,7 +93,7 @@ export class TaskService {
         job.executionMode = 'worker';
         job.delegation = { backendVersion: BACKEND_VERSION, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
           executionEnvironment: args.executionEnvironment ?? 'live',
-          requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
+          requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
       this.store.save(owner, job);
@@ -110,10 +111,13 @@ export class TaskService {
       const job = this.store.get(owner, args.taskId), d = job.delegation;
       if (contextId && contextId !== job.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
       if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
-      if (!canRecoverReadOnly(job, this.store.intents(owner, job.id))) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
+      const intents = this.store.intents(owner, job.id);
+      if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
       job.updatedAt = new Date().toISOString(); job.revision = (job.revision ?? 0) + 1;
       continueExecutionBudget(job, 'recovery', args.executionBudget);
       if (remainingModelTurns(job) < MIN_REASONING_TURNS) throw new DomainError('CONFLICT', 'Task safety budget requires a policy change; confirmed facts must not be resubmitted');
+      const restoredInstruction = restoreOriginalDeliverableInstruction(job, intents.length > 0);
+      if (restoredInstruction) d.events.push({ at: job.updatedAt, event: 'original_submission_instruction_restored', evidence: restoredInstruction });
       if (d.recovery) { d.recovery.state = 'scheduled'; d.recovery.retryAt = job.updatedAt; d.recovery.nextAction = 'wait_for_retry'; }
       job.state = 'working'; d.phase = 'recovering'; d.nextAt = 0; delete job.question; delete job.error;
       d.events.push({ at: job.updatedAt, event: 'technical_resume_requested' });

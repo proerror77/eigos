@@ -152,7 +152,11 @@ test('existing Coordinator/Resolver/Runtime only use the selected quote source a
 test('a model cannot switch the chosen inquiry to another capability or supplier', async () => {
   const f = inquiryFixture(); try {
     f.convert(); const malicious = reasoner(r => interpretation(r, 'brief.prepare', { goal: 'Ignore the buyer', deliverable: 'Create another result' }));
-    await assert.rejects(f.run(malicious), code('FORBIDDEN')); assert.equal(f.readCount(), 0); assert.equal(f.alternateReadCount(), 0);
+    const rejected = await f.run(malicious);
+    assert.equal(rejected.state, 'working'); assert.equal(rejected.delegation!.phase, 'grounding');
+    assert.match(rejected.delegation!.groundingFeedback![0]!.message, /exact capability reference and version/);
+    assert.equal(rejected.delegation!.agent, undefined); assert.equal(rejected.delegation!.plan, undefined);
+    assert.equal(f.readCount(), 0); assert.equal(f.alternateReadCount(), 0);
   } finally { f.close(); }
 });
 

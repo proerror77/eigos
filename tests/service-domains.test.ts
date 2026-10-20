@@ -178,7 +178,10 @@ test('canceling a prepared domain action prevents dispatch; live tasks cannot us
     f.submit({ executionEnvironment: 'sandbox' }); const ready = await f.run();
     f.tasks.cancel(principal, ready.id); assert.throws(() => f.approve(ready)); assert.equal(f.counters().submits, 0);
     const current = f.tasks.get(principal, ready.id); assert.equal(current.state, 'canceled');
-    f.submit({ executionEnvironment: 'live' }); await assert.rejects(f.run()); assert.equal(f.counters().submits, 0);
+    f.submit({ executionEnvironment: 'live' }); const unavailable = await f.run();
+    assert.equal(unavailable.state, 'working'); assert.equal(unavailable.delegation!.phase, 'grounding');
+    assert.match(unavailable.delegation!.groundingFeedback![0]!.message, /exact capability reference and version/);
+    assert.equal(unavailable.delegation!.plan, undefined); assert.equal(f.counters().submits, 0);
   } finally { f.store.close(); }
 });
 
