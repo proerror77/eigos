@@ -37,10 +37,10 @@ export const executionContextRef = (requestId: string, requestRevision: number):
 export const executionPlanRef = (plan: { id: string; digest: string; requestId: string }): ObjectRef => node('ExecutionPlan', { requestId: plan.requestId, planId: plan.id, planDigest: plan.digest });
 export const executionStepRef = (plan: { id: string; digest: string; requestId: string }, stepId: string): ObjectRef => node('ExecutionStep', { plan: executionPlanRef(plan), stepId });
 const inputRef = (step: ObjectRef, parameter: string): ObjectRef => node('ExecutionInput', { step, parameter });
-const attemptRef = (requestId: string, attempt: ExecutionAttempt): ObjectRef => node('ExecutionAttempt', { requestId, planDigest: attempt.planDigest, attemptId: attempt.id });
-const resultRef = (requestId: string, attempt: ExecutionAttempt, observation: ExecutionObservation): ObjectRef => node('ExecutionResult', { requestId, planDigest: attempt.planDigest, attemptId: attempt.id, observationId: observation.id });
-const actionRef = (requestId: string, definition: ActionDefinition): ObjectRef => node('RegisteredActionType', { requestId, actionId: definition.id, definitionDigest: digest(definition) });
-const bindingRef = (requestId: string, state: Pick<AgentExecutionState, 'programRef' | 'programDigest' | 'scope' | 'requestRevision'>): ObjectRef =>
+export const attemptRef = (requestId: string, attempt: ExecutionAttempt): ObjectRef => node('ExecutionAttempt', { requestId, planDigest: attempt.planDigest, attemptId: attempt.id });
+export const resultRef = (requestId: string, attempt: ExecutionAttempt, observation: ExecutionObservation): ObjectRef => node('ExecutionResult', { requestId, planDigest: attempt.planDigest, attemptId: attempt.id, observationId: observation.id });
+export const actionRef = (requestId: string, definition: ActionDefinition): ObjectRef => node('RegisteredActionType', { requestId, actionId: definition.id, definitionDigest: digest(definition) });
+export const bindingRef = (requestId: string, state: Pick<AgentExecutionState, 'programRef' | 'programDigest' | 'scope' | 'requestRevision'>): ObjectRef =>
   node('ActionBinding', { requestId, requestRevision: state.requestRevision, programRef: state.programRef, programDigest: state.programDigest, scope: state.scope });
 const referenceEdge = (kind: ExecutionReferenceKind, from: ObjectRef, to: ObjectRef): LinkWrite => edge(executionReferenceLink(kind, to.type).id, from, to);
 
@@ -57,7 +57,7 @@ function related(graph: OntologyObjectStore, owner: string, from: ObjectRef, lin
   return items;
 }
 function write(graph: OntologyObjectStore, owner: string, ref: ObjectRef, properties: Record<string, unknown>, links: LinkWrite[], source: ObjectSource, removeLinks: LinkWrite[] = []): void {
-  const previous = readOptional(graph, owner, ref), values: Record<string, unknown> = { id: ref.id, displayTitle: ref.type, ...properties };
+  const previous = readOptional(graph, owner, ref), values: Record<string, unknown> = { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...properties };
   const mutable: Record<string, string[]> = {
     RequestInstruction: [], RequestConstraint: [],
     RegisteredActionType: [], ActionBinding: ['active'], ExecutionPlan: ['state'], ExecutionStep: ['state', 'acceptedOutput'],
@@ -88,7 +88,7 @@ function write(graph: OntologyObjectStore, owner: string, ref: ObjectRef, proper
 function registered(graph: OntologyObjectStore, action: string): ActionDefinition | undefined {
   return graph.model.actionForOperation(action);
 }
-function actionProperties(definition: ActionDefinition) {
+export function actionProperties(definition: ActionDefinition) {
   return { contractKind: 'semantic_definition', actionId: definition.id, actionVersion: definition.version ?? definition.read?.version ?? digest(definition), definitionDigest: digest(definition),
     description: definition.description, inputs: definition.inputs, ...(definition.read ? { inputSchema: definition.read.inputSchema, resultType: definition.read.resultType } : {}),
     effect: definition.read?.effect ?? 'definition_only', ...(definition.kind ? { kind: definition.kind } : {}),
@@ -107,6 +107,8 @@ function safeRequest(request: ServiceRequest): ServiceRequest {
 function projectRequest(graph: OntologyObjectStore, owner: string, request: ServiceRequest, source: ObjectSource): void {
   const specification = node('RequestSpecification', { requestId: request.id, requestRevision: request.revision });
   const view = safeRequest(request), specificationProperties = { requestRevision: request.revision, requestDigest: digest(view), instructionCount: request.messages.length,
+    assertionSnapshotVersion: '1', factCount: Object.values(request.confirmedInputs ?? {}).reduce((n, family) => n + Object.keys(family.fields).length, 0), conditionCount: request.conditions?.length ?? 0,
+    factFamilies: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([namespace, {version, revision, messageDigest}]) => [namespace, {version, revision, messageDigest}])),
     constraintCount: request.requirements.length + (request.successCriteria?.length ?? 0), confirmedInputDigests: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([name, value]) => [name, value.messageDigest])),
     ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId'].filter(name => view[name as keyof ServiceRequest] !== undefined).map(name => [name, view[name as keyof ServiceRequest]])),
   };
@@ -135,8 +137,19 @@ function projectRequest(graph: OntologyObjectStore, owner: string, request: Serv
     write(graph, owner, ref, { introducedRevision: previous?.properties.introducedRevision ?? request.revision, requirementId: requirement.id, sequence, group, kind: requirement.kind, strength: requirement.strength,
       ...('role' in requirement && requirement.role ? { role: requirement.role } : {}), expected: requirement.expected, provenance }, links, source);
   }
+  for (const [namespace, family] of Object.entries(request.confirmedInputs ?? {})) for (const fact of Object.values(family.fields)) {
+    const ref = node('RequestFact', { requestId: request.id, namespace, fact });
+    const links = [edge('FactRequest', ref, root(request.id)), ...(instructions.has(fact.source.messageId) ? [edge('FactInstruction', ref, instructions.get(fact.source.messageId)!)] : [])];
+    write(graph, owner, ref, { namespace, field: fact.field, status: fact.status, ...(fact.value !== undefined ? { value: fact.value } : {}), quote: fact.quote, source: fact.source, factRevision: fact.revision }, links, source);
+    specificationLinks.push(edge('SpecificationFact', specification, ref));
+  }
+  for (const [sequence, condition] of (request.conditions ?? []).entries()) {
+    const ref = node('RequestCondition', { requestId: request.id, condition, sequence });
+    write(graph, owner, ref, { condition, sequence }, [edge('ConditionRequest', ref, root(request.id)), ...(instructions.has(condition.source.messageId) ? [edge('ConditionInstruction', ref, instructions.get(condition.source.messageId)!)] : [])], source);
+    specificationLinks.push(edge('SpecificationCondition', specification, ref));
+  }
   const removeLinks: LinkWrite[] = [];
-  if (previousSpecification) for (const [name, type] of [['instructions', 'RequestSpecificationInstruction'], ['constraints', 'RequestSpecificationConstraint']] as const) {
+  if (previousSpecification) for (const [name, type] of [['instructions', 'RequestSpecificationInstruction'], ['constraints', 'RequestSpecificationConstraint'], ['facts', 'SpecificationFact'], ['conditions', 'SpecificationCondition']] as const) {
     for (const previous of related(graph, owner, specification, name)) {
       const old = edge(type, specification, previous.ref); if (!specificationLinks.some(next => same(next, old))) removeLinks.push(old);
     }
@@ -157,12 +170,23 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
     const p = item.properties; if (p.sequence !== i) fail('Constraint sequence is incomplete');
     return { ...requirementSchema.parse({ id: p.requirementId, kind: p.kind, ...(p.role ? { role: p.role } : {}), strength: p.strength, expected: p.expected }), provenance: structuredClone(p.provenance) as ServiceRequest['requirements'][number]['provenance'] };
   });
-  const confirmed = request.properties.confirmedInputs as Record<string, Pick<ConfirmedInputs, 'version' | 'revision' | 'fields'>> | undefined;
+  let confirmed = request.properties.confirmedInputs as Record<string, Pick<ConfirmedInputs, 'version' | 'revision' | 'fields'>> | undefined;
   const inputDigests = specification.confirmedInputDigests as Record<string, string>;
+  let conditions = structuredClone(request.properties.conditions ?? []) as ServiceRequest['conditions'];
+  if (specification.assertionSnapshotVersion === '1') {
+    const facts = related(graph, owner, specs[0]!.ref, 'facts'), assertions = related(graph, owner, specs[0]!.ref, 'conditions').sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence));
+    if (facts.length !== specification.factCount || assertions.length !== specification.conditionCount || assertions.some((item, i) => item.properties.sequence !== i)) fail('Request assertions are incomplete');
+    const families = specification.factFamilies as Record<string, Pick<ConfirmedInputs, 'version' | 'revision' | 'messageDigest'>>;
+    confirmed = Object.fromEntries(Object.entries(families).map(([namespace, metadata]) => [namespace, { ...metadata, fields: Object.fromEntries(facts.filter(fact => fact.properties.namespace === namespace).map(fact => {
+      const p = fact.properties;
+      return [String(p.field), { field: p.field, status: p.status, ...(p.value !== undefined ? {value: p.value} : {}), quote: p.quote, revision: p.factRevision, source: p.source } as ConfirmedInputs['fields'][string]];
+    })) }]));
+    conditions = assertions.map(item => item.properties.condition) as ServiceRequest['conditions'];
+  }
   const view: ServiceRequest = { id: requestId, revision, originalGoal: String(request.properties.originalGoal),
     ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId'].filter(name => specification[name] !== undefined).map(name => [name, specification[name]])),
     requirements: readConstraints('requirement'), successCriteria: readConstraints('success_criterion'),
-    conditions: structuredClone(request.properties.conditions ?? []) as ServiceRequest['conditions'],
+    conditions,
     confirmedInputs: Object.fromEntries(Object.entries(confirmed ?? {}).map(([name, value]) => [name, { ...structuredClone(value), messageDigest: inputDigests[name] ?? fail('Confirmed input provenance is missing'), history: [] }])),
     messages: instructions.map(({ properties: p }) => ({ id: String(p.messageId), text: String(p.text), receivedAt: String(p.receivedAt) })) };
   if (digest(safeRequest(view)) !== specification.requestDigest) fail('Current request graph differs from its sealed specification');
@@ -249,7 +273,7 @@ function providerContract(binding: ProviderBinding) {
     ...(binding.merchantId ? { merchantId: binding.merchantId } : {}), adapterId: binding.adapterId, protocol: binding.protocol, enabled: binding.enabled,
     recovery: binding.recovery, verificationLevel: binding.verification.level });
 }
-function fixedBindingRef(plan: ExecutionPlan, ref: Ref): ObjectRef | undefined {
+export function fixedBindingRef(plan: ExecutionPlan, ref: Ref): ObjectRef | undefined {
   const pinned = plan.bindingDigests.find(binding => same(binding.ref, ref));
   return pinned ? node('ActionBinding', { requestId: plan.requestId, requestRevision: plan.requestRevision, planDigest: plan.digest, bindingRef: ref, bindingDigest: pinned.digest }) : undefined;
 }
@@ -343,7 +367,7 @@ function projectPlan(graph: OntologyObjectStore, owner: string, plan: PlanShape,
       }) : undefined;
       write(graph, owner, attemptNode, { attemptId: attempt.id, intentId: attempt.intentId, planDigest: attempt.planDigest, ordinal: attempt.ordinal,
         requestRevision: plan.requestRevision, taskRevision: attempt.requestRevision, kind: attempt.kind, inputDigest: attempt.inputDigest, startedAt: attempt.startedAt,
-        state: observations.some(o => o.applied) ? 'observed' : observations.length ? 'audit_only' : 'started', ...(submission ? { submission } : {}) }, [edge('ExecutionAttemptStep', attemptNode, stepRef)], source);
+        state: observations.some(o => o.applied) ? 'observed' : observations.length ? 'audit_only' : 'started', ...(submission ? { submission } : {}) }, [edge('ExecutionAttemptStep', attemptNode, stepRef), ...(attempt.authorizationId ? [edge('ExecutionAttemptAuthorization', attemptNode, { type: 'Authorization', id: attempt.authorizationId })] : [])], source);
       for (const observation of observations) {
         const result = resultRef(plan.requestId, attempt, observation);
         const oldResult = readOptional(graph, owner, result);
@@ -431,7 +455,7 @@ export function assertAgentPlanProjection(graph: OntologyObjectStore, owner: str
     if (inputs.length !== expectedInputs.length) fail('Execution graph input count changed');
     for (const properties of expectedInputs) {
       const ref = inputRef(stepRef, properties.parameter), input = graph.read(owner, ref);
-      if (!same(input.properties, { id: ref.id, displayTitle: ref.type, ...properties })) fail('Execution graph input differs from the sealed plan');
+      if (!same(input.properties, { [graph.model.object(ref.type).primaryKey]: ref.id, displayTitle: ref.type, ...properties })) fail('Execution graph input differs from the sealed plan');
       assertLinks(graph, owner, ref, inputLinks(shape, step, properties));
     }
   }

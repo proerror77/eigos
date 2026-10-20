@@ -23,7 +23,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前运行契约为 `ontology-execution-v8`、业务模型为 `eigos.business@9`。Agent 通过本体读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。Shopify 和跑腿使用 Agent 动作循环，固定操作保留显式实现绑定。网络协作仍有独立模型，完整性边界见 [原则复审](docs/ontology-principles-review-2026-10-20.md)。历史任务及对象不自动迁移或重新执行，私有运行版本以对应部署回读为准。
+仓库当前运行契约为 `ontology-execution-v8`、业务模型为 `eigos.business@10`。Agent 通过本体读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。Shopify 和跑腿使用 Agent 动作循环，固定操作保留显式实现绑定。网络协作仍有独立模型，完整性边界见 [原则复审](docs/ontology-principles-review-2026-10-20.md)。业务链已把委托主体、执行方案、真实许可账本、已验证结果、逐项验收和售后关联，见 [业务链实现与验证](docs/business-chain-implementation-2026-10-20.md)。仅已知 v9 → v10 对象／关系定义执行原子兼容迁移，保留事实和历史；旧模型计划不自动重新执行，私有运行版本以对应部署回读为准。
 
 ## 本地开发
 

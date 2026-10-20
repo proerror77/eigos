@@ -106,8 +106,9 @@ export class ActionRuntime {
       if (!this.store.checkpoint(claim, job => {
         const subject = job.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)?.ontologySubject;
         const submission = freshPermit ? assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject) : undefined;
-        if (freshPermit) authorizeDispatch(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true);
-        attempt = this.store.startAttempt(claim, intent.id, kind, digest(input), kind === 'resume' ? resumeKey : undefined, submission);
+        const grant = freshPermit ? authorizeDispatch(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true) : undefined;
+        const authorizationId = grant?.id ?? (freshPermit && plan.quote && job.delegation!.approval ? digest(job.delegation!.approval) : undefined);
+        attempt = this.store.startAttempt(claim, intent.id, kind, digest(input), kind === 'resume' ? resumeKey : undefined, submission, authorizationId);
         job.updatedAt = new Date().toISOString(); job.delegation!.phase = 'executing';
         job.delegation!.events.push({ at: job.updatedAt, event: `action_${kind}_started`, evidence: attempt.id });
       })) return false;
@@ -162,7 +163,7 @@ export class ActionRuntime {
         const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: result.output!.ucpSnapshot !== undefined ? { ucpSnapshot: result.output!.ucpSnapshot } : { domainSnapshot: result.output!.domainSnapshot } });
         if (projection.state !== 'typed_result') throw new DomainError('CONFLICT', 'Verified domain observation could not be projected');
         const latest = this.store.intent(claim.owner, intent.id);
-        if (projection.subject && latest.latestObservationId === recorded.id && latest.state === 'effect_confirmed') {
+        if (projection.subject && latest.latestObservationId === recorded.id) {
           latest.ontologyOutput = { object: projection.subject, observationId: recorded.id };
           this.store.saveIntent(claim.owner, latest);
         }

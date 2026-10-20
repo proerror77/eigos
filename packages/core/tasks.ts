@@ -285,7 +285,9 @@ export class TaskService {
       if (d?.backendVersion !== BACKEND_VERSION || !d.plan || (!d.authorizationRequest && !d.plan.quote) || ['completed', 'failed', 'canceled'].includes(job.state)) throw new DomainError('CONFLICT', 'No open plan authorization to revoke');
       this.store.revokeGrants(owner, id); delete d.approval; job.revision = (job.revision ?? 0) + 1;
       d.recoveryPending = this.store.intents(owner, id).some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state)); d.nextAt = 0;
-      job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
+      job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
+      d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: d.plan.digest });
+      this.store.save(owner, job); return job;
     });
   }
   requestRemediation(p: Principal, input: unknown): Job {

@@ -15,7 +15,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
-  simple('checkoutReadiness'), simple('commerceOrderOutcome'),
+  simple('authorizationStatus'), simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
   simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
   ...domainFunctionCallSchemas,
@@ -64,6 +64,11 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   const domainResult = evaluateDomainFunction(store, owner, input, budget);
   if (domainResult) return domainResult;
   const object = store.read(owner, input.object, budget), p = object.properties;
+  if (input.function === 'authorizationStatus') {
+    requireType(object, 'Authorization');
+    if (!p.kind || !p.ledgerDigest || !p.approvedAt || !p.expiresAt || p.revoked === undefined) return known('unknown', [object.ref]);
+    return known(p.revoked ? 'revoked' : Date.parse(String(p.expiresAt)) <= store.now() ? 'expired' : 'active', [object.ref]);
+  }
   if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
   if (input.function === 'remainingQuantity') {
     requireType(object, 'OrderLine'); const ordered = quantity(p.quantityOrdered);
@@ -150,7 +155,7 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     return known(matches ? 'pass' : 'fail', [object.ref, request.ref, parcel.ref, route.ref, ...fresh.evidenceRefs], fresh.evidenceLevels);
   }
   if (input.function === 'withinBudget' && 'budget' in input) {
-    if (!['DeliveryQuote', 'ProductOffer'].includes(object.ref.type)) return unknown('This function compares a scoped total, not a reservation deposit', [object.ref]);
+    if (!['DeliveryQuote', 'ProductOffer', 'FulfillmentOffer'].includes(object.ref.type)) return unknown('This function compares a scoped total, not a reservation deposit', [object.ref]);
     const fresh = freshness(store, owner, object, budget), terms = p.pricingTerms as { total?: unknown; scope?: string } | undefined;
     const total = moneyValueSchema.safeParse(terms?.total);
     if (fresh.status !== 'known' || !fresh.value || p.priceKind !== input.priceBasis || p.pricingCompleteness !== 'complete' || terms?.scope !== 'all_mandatory_fees' || !total.success || total.data.currency !== input.budget.currency) return unknown('Comparable, complete and current price evidence is missing', [object.ref]);

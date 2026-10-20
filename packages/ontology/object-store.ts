@@ -2,7 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
-import { businessModel } from './business-model.js';
+import { businessModel, businessModelV9 } from './business-model.js';
+import { migrateBusinessChain } from './business-chain-migration.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
 import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
 
@@ -43,6 +44,7 @@ export class OntologyObjectStore {
       CREATE INDEX IF NOT EXISTS ontology_links_outgoing ON ontology_links(owner,from_type,from_id,type,to_type,to_id);
       CREATE TABLE IF NOT EXISTS ontology_revisions (owner TEXT PRIMARY KEY,revision INTEGER NOT NULL);
     `);
+    if (model === businessModel) migrateBusinessChain(this.db, businessModelV9, businessModel);
   }
   private charge(budget: ReadBudget, count = 1) {
     budget.remaining -= count;
@@ -72,6 +74,17 @@ export class OntologyObjectStore {
       if (row.definition_digest !== digest(this.model.link(String(row.type)))) throw new DomainError('CONFLICT', 'Pinned link definition changed');
       return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
     }));
+  }
+  /** Internal projection fast path. Checks exact owner/endpoint/definition
+   * membership; this grants no write or execution authority to callers. */
+  containsLinks(owner: string, links: LinkWrite[]): boolean {
+    const statement = this.db.prepare('SELECT definition_digest FROM ontology_links WHERE owner=? AND type=? AND from_type=? AND from_id=? AND to_type=? AND to_id=?');
+    return links.every(link => {
+      const row = statement.get(owner, link.type, link.from.type, link.from.id, link.to.type, link.to.id);
+      if (!row) return false;
+      if (row.definition_digest !== digest(this.model.link(link.type))) throw new DomainError('CONFLICT', 'Pinned link definition changed');
+      return true;
+    });
   }
   /** Atomic import with schema, identity, revision, endpoint and cardinality checks. */
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void {
@@ -127,6 +140,13 @@ export class OntologyObjectStore {
           const prefix = direction === 'forward' ? 'from' : 'to';
           const count = Number(this.db.prepare(`SELECT count(*) AS n FROM ontology_links WHERE owner=? AND type=? AND ${prefix}_type=? AND ${prefix}_id=?`).get(owner, link.id, ref.type, ref.id)!.n);
           if ((!side.many && count > 1) || (side.required && count === 0)) failure('Relationship cardinality violation');
+        }
+        if (ref.type === 'Proposal') {
+          const proposal = this.raw(owner, ref, { remaining: 1 });
+          if (!["execution", "read_scope"].includes(String(proposal.properties.kind))) {
+            const count = this.db.prepare("SELECT count(*) AS n FROM ontology_links WHERE owner=? AND type='ProposalOffer' AND from_id=?").get(owner, ref.id)!.n;
+            if (count !== 1) failure('An offer selection requires exactly one selected offer');
+          }
         }
         if (ref.type === 'Payment' || ref.type === 'AfterSalesCase') {
           const relations = ref.type === 'Payment' ? ['PaymentOrder', 'PaymentReservation'] : ['CaseOrder', 'CaseReservation'];

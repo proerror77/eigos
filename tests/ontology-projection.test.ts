@@ -69,7 +69,7 @@ test('N1 public places keep source identity and receipt-local identity without b
     assert.equal(places.items.length, 2); assert.notEqual(places.items[0]!.ref.id, places.items[1]!.ref.id);
     for (const place of places.items) assert.equal(graph.query(owner, { from: place.ref, link: 'sourceReceipts' }).items.length, 1);
     assert.equal(graph.query(owner, { type: 'Offer' }).items.length, 0);
-    assert.equal(graph.query(owner, { type: 'Provider' }).items.length, 0);
+    assert(graph.query(owner, { type: 'Provider' }).items.every(value => value.source.kind === 'task'), 'Configured read-provider identity is not source-verified supply');
     assert.equal(b.reads(), 1);
   } finally { b.store.close(); }
 });

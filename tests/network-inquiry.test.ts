@@ -199,7 +199,7 @@ test('reviewed quote and confirmed Proposal are private version-bound decisions,
   const f = inquiryFixture(); try {
     const inquiry = f.convert(), done = await f.run(), quoteId = finalQuote(done), before = structuredClone(done);
     const viewed = select(f, inquiry.id, quoteId); const view = query(f, { kind: 'my_selection', selectionId: viewed }).result as {current:boolean; snapshot: {evidenceLevels:string[]}};
-    assert.equal(view.current, true); assert.deepEqual(view.snapshot.evidenceLevels, ['synthetic']); assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal' }).items.length, 0);
+    assert.equal(view.current, true); assert.deepEqual(view.snapshot.evidenceLevels, ['synthetic']); assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal', where: [{ property: 'kind', op: 'eq', value: 'offer_selection' }] }).items.length, 0);
     const selected = select(f, inquiry.id, quoteId, 'proposal'), result = query(f, { kind: 'my_selection', selectionId: selected }).result as {proposalId:string; current:boolean; snapshotDigest:string};
     assert.equal(result.current, true); assert.equal(f.jobs.ontology.read(f.owner, { type: 'Proposal', id: result.proposalId }).properties.termsVersion, result.snapshotDigest);
     assert.equal(f.jobs.ontology.query(f.owner, { from: { type: 'ServiceRequest', id: inquiry.taskId }, link: 'selectedProposal' }).items[0]!.ref.id, result.proposalId);
@@ -267,10 +267,10 @@ test('Proposal, selectedProposal relationship, snapshot and choice roll back as 
     f.confirm(choiceId); const input = { operation: 'inquiry.select_quote', choiceId, requestId: randomUUID() };
     f.db.exec("CREATE TRIGGER fail_selection BEFORE INSERT ON network_events WHEN NEW.kind='quote_selected' BEGIN SELECT RAISE(ABORT,'injected selection fault'); END;");
     assert.throws(() => f.command(input), /injected selection fault/); assert.equal(f.store.get('choice', choiceId).status, 'approved');
-    assert.equal(f.store.scan('selection').length, 0); assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal' }).items.length, 0);
+    assert.equal(f.store.scan('selection').length, 0); assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal', where: [{ property: 'kind', op: 'eq', value: 'offer_selection' }] }).items.length, 0);
     assert.equal(f.jobs.ontology.query(f.owner, { from: { type: 'ServiceRequest', id: inquiry.taskId }, link: 'selectedProposal' }).items.length, 0);
     f.db.exec('DROP TRIGGER fail_selection'); const result = f.command(input); assert.deepEqual(f.command(input).refs, result.refs);
-    assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal' }).items.length, 1); assert.equal(f.readCount(), 2);
+    assert.equal(f.jobs.ontology.query(f.owner, { type: 'Proposal', where: [{ property: 'kind', op: 'eq', value: 'offer_selection' }] }).items.length, 1); assert.equal(f.readCount(), 2);
   } finally { f.close(); }
 });
 

@@ -4,6 +4,8 @@ import { assessConditions, hardConditionsPass } from '../coordinator/conditions.
 import { equivalentQuantities } from './quantity.js';
 import type { Inquiry, SelectionInput } from '../network/inquiry-contracts.js';
 import { fail } from '../network/contracts.js';
+import { actionProperties, actionRef } from './execution-projection.js';
+import { businessRef, writeBusiness } from './business-chain-write.js';
 
 /** Decision material only. No order, authorization grant or provider invocation. */
 export function quoteSelectionMaterial(jobs: JobStore, inquiry: Inquiry, input: SelectionInput) {
@@ -52,8 +54,21 @@ export function recordSelectedProposal(jobs: JobStore, inquiry: Inquiry, proposa
   if (!old) return fail('RESOURCE_BUDGET', 429);
   const proposalRef = { type: 'Proposal', id: proposalId };
   graph.ingest(inquiry.owner, {
-    objects: [{ ref: proposalRef, properties: { proposalId, displayTitle: '已确认的只读报价方案', requestRevision: material.snapshot.requestRevision, selectedAt: at, termsVersion: material.snapshotDigest, decisionReason: 'Buyer confirmed this version-bound quote-only selection; no business execution authorized.' } }],
+    objects: [{ ref: proposalRef, properties: { proposalId, kind: 'offer_selection', displayTitle: '已确认的只读报价方案', requestRevision: material.snapshot.requestRevision, selectedAt: at, termsVersion: material.snapshotDigest, decisionReason: 'Buyer confirmed this version-bound quote-only selection; no business execution authorized.' } }],
     removeLinks: old.map(o => ({ type: 'SelectedProposal', from: material.requestRef, to: o.ref })),
-    links: [{ type: 'ProposalRequest', from: proposalRef, to: material.requestRef }, { type: 'ProposalOffer', from: proposalRef, to: material.quoteRef }, { type: 'SelectedProposal', from: material.requestRef, to: proposalRef }],
+    links: [{ type: 'ProposalRequest', from: proposalRef, to: material.requestRef }, { type: 'ProposalOffer', from: proposalRef, to: material.quoteRef }, { type: 'SelectedProposal', from: material.requestRef, to: proposalRef },
+      { type: 'ProposalSpecification', from: proposalRef, to: businessRef('RequestSpecification', { requestId: inquiry.taskId, requestRevision: material.snapshot.requestRevision }) },
+      ...old.map(value => ({ type: 'ProposalPredecessor', from: proposalRef, to: value.ref }))],
   }, { kind: 'user', id: proposalId, observedAt: at });
+  const definition = graph.model.action('SelectOffer'), contract = actionRef(inquiry.taskId, definition);
+  const source = { kind: 'user' as const, id: proposalId, observedAt: at };
+  const requester = businessRef('RequestingParty', inquiry.owner);
+  writeBusiness(graph, inquiry.owner, requester, { ownerDigest: digest(inquiry.owner), identityBasis: 'ledger_owner' },
+    [{ type: 'RequestRequester', from: material.requestRef, to: requester }], source, true);
+  writeBusiness(graph, inquiry.owner, contract, actionProperties(definition), [{ type: 'RegisteredActionTypeRequest', from: contract, to: material.requestRef }], source, true);
+  const decision = businessRef('BusinessDecision', { requestId: inquiry.taskId, actionId: definition.id, sourceId: proposalId });
+  writeBusiness(graph, inquiry.owner, decision, { actionId: definition.id, actionVersion: definition.version ?? digest(definition), definitionDigest: digest(definition),
+    requestRevision: material.snapshot.requestRevision, sourceKind: 'owner_instruction', sourceId: proposalId, occurredAt: at, termsDigest: material.snapshotDigest, actorKind: 'requester' },
+  [{ type: 'DecisionRequest', from: decision, to: material.requestRef }, { type: 'DecisionAction', from: decision, to: contract },
+    { type: 'DecisionRequester', from: decision, to: requester }, { type: 'DecisionProposal', from: decision, to: proposalRef }], source, true);
 }

@@ -5,6 +5,7 @@ import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './ca
 import { paotuiAgentActions, paotuiAgentFunctions, paotuiAgentLinks, paotuiAgentObjects } from './paotui-agent.js';
 import { catalogAgentActions, catalogAgentFunctions, catalogAgentLinks, catalogAgentObjects } from './catalog-agent.js';
 import { executionObjects, executionLinks, executionReferenceLinks } from './execution-model.js';
+import { extendBusinessChain } from './business-chain-model.js';
 import { capabilityCatalogObjects, capabilityCatalogLinks } from './capability-catalog.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
 
@@ -103,7 +104,7 @@ const objects: ObjectTypeDefinition[] = [
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
   type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
-// Only changed definitions advance. Historical object fingerprints are never rewritten.
+// Only changed definitions advance. The named v9 → v10 migration below is the sole compatibility transition.
 objects.find(o => o.id === 'ServiceRequest')!.version = '4';
 objects.find(o => o.id === 'Order')!.version = '2';
 const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
@@ -162,7 +163,7 @@ for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceRec
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
 const businessObjects = [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...paotuiAgentObjects];
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '9', objects: [...businessObjects, ...executionObjects, ...capabilityCatalogObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...paotuiAgentLinks, ...executionLinks, ...capabilityCatalogLinks],
+const predecessorDefinition: ModelDefinition = { id: 'eigos.business', version: '9', objects: [...businessObjects, ...executionObjects, ...capabilityCatalogObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...paotuiAgentLinks, ...executionLinks, ...capabilityCatalogLinks],
   interfaces: [
     ...domainInterfaces,
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
@@ -191,5 +192,9 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'slotAvailability', version: '1', inputTypes: ['ReservationSlot'], description: 'Check current evidenced slot eligibility for venue, time, timezone and party size' },
   ],
 };
-BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(businessObjects, BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces));
+predecessorDefinition.links.push(...executionReferenceLinks(businessObjects, predecessorDefinition.actions, predecessorDefinition.interfaces));
+export const businessModelV9 = new OntologyModel(predecessorDefinition);
+export const BUSINESS_MODEL_DEFINITION = extendBusinessChain(predecessorDefinition, { quantity: quantitySchema, pricing: pricingSchema, condition: businessConditionSchema });
+const knownLinks = new Set(BUSINESS_MODEL_DEFINITION.links.map(link => link.id));
+BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(BUSINESS_MODEL_DEFINITION.objects.filter(type => type.visibility !== 'technical'), BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces).filter(link => !knownLinks.has(link.id)));
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);

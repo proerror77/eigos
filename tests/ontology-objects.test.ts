@@ -22,7 +22,7 @@ function fixture() {
 
 test('Ontology compiles core, service, checkout and catalog types, inherited interfaces and bounded metadata', () => {
   for (const id of ['ServiceRequest', 'ProductVariant', 'ExecutionPlan', 'ExecutionStep', 'RegisteredActionType', 'RequestSpecification', 'RoomInventoryObservation']) assert(businessModel.hasType(id));
-  assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
+  assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'FulfillmentOffer', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');
   const all: string[] = []; let after: string | undefined;

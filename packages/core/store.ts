@@ -15,6 +15,7 @@ import { projectTask } from '../ontology/task-projection.js';
 import { scheduleTaskRecovery } from './task-recovery.js';
 import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
 import type { RunEvidence } from '../capabilities/executor.js';
+import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
 
 export interface ListFilter {
@@ -136,7 +137,10 @@ export class JobStore {
       return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
         verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
     });
-    projectExecution(this.ontology, owner, job, { intents: [...archived, ...current], attempts, observations });
+    const ledger = { intents: [...archived, ...current], attempts, observations };
+    projectExecution(this.ontology, owner, job, ledger);
+    const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
+    projectBusinessChain(this.ontology, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
   }
   private executionMutation<T>(action: () => T): T {
     this.db.exec('SAVEPOINT execution_ontology');
@@ -211,13 +215,13 @@ export class JobStore {
     this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
     });
   }
-  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string, submission?: ExecutionAttempt['submission']): ExecutionAttempt {
+  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string, submission?: ExecutionAttempt['submission'], authorizationId?: string): ExecutionAttempt {
     return this.executionMutation(() => {
     const intent = this.intent(claim.owner, intentId);
     if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
     if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
     else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
-    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}) };
+    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}), ...(authorizationId ? { authorizationId } : {}) };
     this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
     this.projectExecution(claim.owner, this.get(claim.owner, intent.jobId));
     return attempt;
@@ -313,11 +317,17 @@ export class JobStore {
   }
   grant(owner: string, grant: PlanGrant): void {
     if (grant.owner !== owner) throw new DomainError('FORBIDDEN', 'Grant owner mismatch'); this.get(owner, grant.jobId);
-    this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
+    this.executionMutation(() => {
+      this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
+      this.projectExecution(owner, this.get(owner, grant.jobId));
+    });
   }
   grants(owner: string, jobId: string): PlanGrant[] { this.get(owner, jobId); return this.db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner, jobId).map(r => JSON.parse(String(r.body))); }
   revokeGrants(owner: string, jobId: string): void {
-    for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true }), owner, grant.id);
+    this.executionMutation(() => {
+    for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true, revokedAt: grant.revokedAt ?? new Date().toISOString() }), owner, grant.id);
+    this.projectExecution(owner, this.get(owner, jobId));
+    });
   }
   reserveBudget(owner: string, intentId: string, grant: PlanGrant, amount: { minor: string; currency: string }): void {
     this.intent(owner, intentId);

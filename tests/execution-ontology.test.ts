@@ -7,7 +7,7 @@ import { JobStore } from '../packages/core/store.js';
 import type { Job } from '../packages/core/domain.js';
 import type { AgentActionPlan, AgentExecutionState } from '../packages/ontology/agent-actions.js';
 import type { ActionIntent, ExecutionAttempt } from '../packages/ontology/actions.js';
-import { BUSINESS_MODEL_DEFINITION, businessModel } from '../packages/ontology/business-model.js';
+import { BUSINESS_MODEL_DEFINITION, businessModel, businessModelV9 } from '../packages/ontology/business-model.js';
 import { executionObjects, executionLinks, executionReferenceLinks, isExecutionBookkeepingType } from '../packages/ontology/execution-model.js';
 import { assertAgentPlanProjection, assertFixedPlanProjection, executionContextRef, executionPlanRef, executionStepRef, projectExecution, readExecutionContext, readOntologyRequest, type ExecutionLedger } from '../packages/ontology/execution-projection.js';
 import { BACKEND_VERSION, type ExecutionPlan, type ProviderBinding, type ServiceRequest } from '../packages/ontology/execution.js';
@@ -88,12 +88,10 @@ function fixedFixture(adapterOnly = false) {
 }
 
 test('execution graph preserves old object fingerprints and concrete reference endpoints', () => {
-  const additions = new Set(executionObjects.map(o => o.id));
-  const business = BUSINESS_MODEL_DEFINITION.objects.filter(o => !additions.has(o.id) && o.id !== 'RegisteredCapability');
-  const addedLinks = new Set([...executionLinks, ...executionReferenceLinks(business, BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces)].map(l => l.id));
-  const old = new OntologyModel({ ...BUSINESS_MODEL_DEFINITION, version: '8', objects: business,
-    links: BUSINESS_MODEL_DEFINITION.links.filter(l => !addedLinks.has(l.id) && l.id !== 'CapabilityRequest') });
-  for (const object of business) assert.equal(old.fingerprint(object.id), businessModel.fingerprint(object.id), object.id);
+  const migrated = new Set(['Proposal', 'Authorization', 'OutcomeAssessment', 'RequestSpecification']);
+  for (const object of BUSINESS_MODEL_DEFINITION.objects) {
+    if (businessModelV9.hasType(object.id) && !migrated.has(object.id)) assert.equal(businessModelV9.fingerprint(object.id), businessModel.fingerprint(object.id), object.id);
+  }
   assert.equal(businessModel.link('ExecutionInputObjectPaotuiTask').to.type, 'PaotuiTask');
   assert(isExecutionBookkeepingType('ExecutionStep'));
   assert(!isExecutionBookkeepingType('RequestConstraint'));
@@ -117,6 +115,33 @@ test('request and execution readback traverses typed plans, dependencies and inp
     const before = f.graph.revision(owner); f.job.updatedAt = '2026-10-20T03:00:01.000Z'; f.project();
     assert.equal(f.graph.revision(owner), before, 'bookkeeping saves with unchanged values do not churn graph revisions');
     assert.throws(() => readExecutionContext(f.graph, 'other-owner', f.request.id, 1), /not found/);
+  } finally { f.db.close(); }
+});
+
+test('typed fact and condition snapshots retain each historical requirement version and detect current assertion tampering', () => {
+  const f = fixture();
+  try {
+    f.request.confirmedInputs = { parcel: { version: '1', revision: 1, messageDigest: digest('first'), history: [], fields: {
+      weightKg: { field: 'weightKg', status: 'confirmed', value: 2, quote: '2 kg', revision: 1, source: { messageId: 'message', messageIndex: 0, receivedAt: at } },
+    } } };
+    f.request.conditions = [{ id: 'scope', predicateRef: { id: 'geo.query_scope_matches', version: '1' }, subject: { type: 'Place', role: 'search_area' },
+      phase: 'result', strength: 'hard', operator: 'eq', expected: { city: '上海', keyword: '咖啡' }, source: { messageId: 'message', quote: '上海咖啡' } }];
+    projectTask(f.graph, owner, f.job); f.project();
+    const spec = f.graph.query(owner, { from: { type: 'ServiceRequest', id: f.request.id }, link: 'specifications' }).items[0]!;
+    const oldFacts = f.graph.query(owner, { from: spec.ref, link: 'facts' }).items, oldConditions = f.graph.query(owner, { from: spec.ref, link: 'conditions' }).items;
+    assert.equal(oldFacts[0]!.properties.value, 2); assert.equal(oldConditions.length, 1);
+    f.request.revision = 2; f.request.messages.push({ id: 'correction', text: '改为 3 kg', receivedAt: at });
+    f.request.confirmedInputs.parcel!.revision = 2; f.request.confirmedInputs.parcel!.messageDigest = digest('second');
+    f.request.confirmedInputs.parcel!.fields.weightKg = { field: 'weightKg', status: 'confirmed', value: 3, quote: '3 kg', revision: 2, source: { messageId: 'correction', messageIndex: 1, receivedAt: at } };
+    f.job.delegation!.agentHistory = [f.state]; delete f.job.delegation!.agent;
+    projectTask(f.graph, owner, f.job); f.project();
+    assert.equal(readOntologyRequest(f.graph, owner, f.request.id).confirmedInputs!.parcel!.fields.weightKg!.value, 3);
+    assert.deepEqual(f.graph.query(owner, { from: spec.ref, link: 'facts' }).items, oldFacts);
+    assert.deepEqual(f.graph.query(owner, { from: spec.ref, link: 'conditions' }).items, oldConditions);
+    const currentSpec = f.graph.query(owner, { from: { type: 'ServiceRequest', id: f.request.id }, link: 'specifications', where: [{ property: 'requestRevision', op: 'eq', value: 2 }] }).items[0]!;
+    const currentFact = f.graph.query(owner, { from: currentSpec.ref, link: 'facts' }).items[0]!;
+    f.graph.ingest(owner, { objects: [{ ref: currentFact.ref, properties: { ...currentFact.properties, value: 99 }, expectedRevision: currentFact.revision }] }, currentFact.source);
+    assert.throws(() => readOntologyRequest(f.graph, owner, f.request.id), /differs from its sealed specification/);
   } finally { f.db.close(); }
 });
 

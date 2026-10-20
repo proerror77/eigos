@@ -127,6 +127,11 @@ test('CSV full-audit contract rejects subsets; approval, snapshot and independen
     b.tasks.authorize(principal, ready.id, approval); b.tasks.authorize(principal, ready.id, approval);
     const done = await b.run(); assert.equal(done.state, 'completed'); assert(done.delegation!.acceptance!.accepted);
     assert.equal(done.delegation!.request.revision, 1); assert.equal(b.store.observations(owner, done.delegation!.intentId!).length, 1);
+    const authorizations = b.store.ontology.query(owner, { from: { type: 'ServiceRequest', id: done.id }, link: 'authorizations' }).items;
+    assert.equal(authorizations.length, 1); assert.equal(authorizations[0]!.properties.kind, 'simulation_approval');
+    assert.equal(authorizations[0]!.properties.environment, 'local_simulation');
+    assert.equal(b.store.ontology.query(owner, { from: authorizations[0]!.ref, link: 'attempts' }).items.length, 1);
+    assert.equal(b.store.grants(owner, done.id).length, 0, 'A local quote approval is never a sandbox or real payment permit');
     assert.throws(() => b.store.intent('different-owner', done.delegation!.intentId!), /not found/);
   } finally { b.store.close(); rmSync(dir, { recursive: true, force: true }); }
 });

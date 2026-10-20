@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import type { Job } from '../../packages/core/domain.js';
+import type { ObjectRef } from '../../packages/ontology/model.js';
+import type { ObjectView, ObjectQuery } from '../../packages/ontology/object-store.js';
 
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean, label: string): Promise<T> {
@@ -62,8 +64,50 @@ async function fixture(t: TestContext, fault: object = {}) {
     const body = { action: 'approve_plan', requestId: randomUUID(), planDigest: request.planDigest, allowedEffects: request.effects, maxAmount: request.maxAmount, payeeIds: request.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox', ...extra };
     const r = await appPost(j.id, 'authorize', body); assert.equal(r.status, 200, JSON.stringify(r)); const retry = await appPost(j.id, 'authorize', body); assert.equal(retry.status, 200);
   };
+  const query = async (args: ObjectQuery): Promise<ObjectView[]> => {
+    const response = await mcp.callTool({ name: 'query_ontology', arguments: args });
+    assert(!response.isError, JSON.stringify(response));
+    const value = (response.structuredContent as { result: { items: ObjectView[]; page: { hasMore: boolean } } }).result;
+    assert.equal(value.page.hasMore, false, 'Fixture readback must inspect the complete bounded relationship');
+    return value.items;
+  };
+  const related = (from: ObjectRef, link: string) => query({ from, link, limit: 50 });
+  const chain = async (id: string, judgment: 'satisfied' | 'unsatisfied') => {
+    const request = { type: 'ServiceRequest', id };
+    const parties = await related(request, 'requester'); assert.equal(parties.length, 1);
+    const proposals = await related(request, 'proposals'); assert.equal(proposals.length, 1);
+    const proposal = proposals[0]!;
+    const engagements = await related(proposal.ref, 'engagements'); assert.equal(engagements.length, 1);
+    assert.deepEqual((await related(engagements[0]!.ref, 'requester'))[0]!.ref, parties[0]!.ref);
+    assert.equal((await related(engagements[0]!.ref, 'provider')).length, 1);
+    const grants = await related(proposal.ref, 'authorizations'); assert(grants.length > 0);
+    assert(grants.every(value => value.properties.environment === 'sandbox' && value.properties.kind === 'plan_grant'));
+    for (const grant of grants) {
+      assert.deepEqual((await related(grant.ref, 'approver'))[0]!.ref, parties[0]!.ref);
+      const attempts = await related(grant.ref, 'attempts'); assert(attempts.length > 0, 'Every issued fixture permit was used for an actual dispatch');
+      for (const attempt of attempts) assert.equal((await related(attempt.ref, 'step')).length, 1);
+    }
+    const results = await related(proposal.ref, 'businessResults'); assert(results.length > 0);
+    for (const value of results) {
+      assert.equal(value.properties.evidenceLevel, 'synthetic');
+      assert.equal((await related(value.ref, 'executionResult')).length, 1);
+      assert((await related(value.ref, 'sourceReceipts')).length >= 1);
+      assert((await related(value.ref, 'subjects')).length > 0);
+    }
+    const assessments = await related(proposal.ref, 'assessments'); assert.equal(assessments.length, 1);
+    assert.equal(assessments[0]!.properties.judgment, judgment);
+    const findings = await related(assessments[0]!.ref, 'findings');
+    assert.equal(findings.length, (assessments[0]!.properties.criterionResults as unknown[]).length);
+    assert(findings.some(value => value.properties.origin === 'independent_verifier'));
+    assert(findings.some(value => value.properties.origin === 'completion_target'));
+    assert.equal((await related(assessments[0]!.ref, 'specification')).length, 1);
+    assert((await related(assessments[0]!.ref, 'businessResults')).length > 0);
+    const decisions = await related(request, 'businessDecisions');
+    for (const action of ['SubmitServiceRequest', 'ProposeServiceExecution', 'AuthorizeProposal', 'AssessServiceOutcome']) assert(decisions.some(value => value.properties.actionId === action));
+    return { request, proposal, engagement: engagements[0]!, grants, results, assessment: assessments[0]! };
+  };
   t.after(async () => { await mcp.close(); for (const w of workers) await stop(w.process); await stop(gateway.process); await stop(provider.process); rmSync(dir, { recursive: true, force: true }); });
-  return { dir, base, workers, task, get, approve, api, rpc, alternate, appPost, startWorker, mcp };
+  return { dir, base, workers, task, get, approve, api, rpc, alternate, appPost, startWorker, mcp, query, related, chain };
 }
 
 for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${crashAfter} success + Worker crash recovers by original key; two Workers never replay effects`, { timeout: 45000 }, async t => {
@@ -81,6 +125,18 @@ for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${cras
   const last = await f.api('ledger'); assert.equal(last.counters.ordersCreated, 1); assert.equal(last.counters.charges, 1); assert.equal(last.counters.orderPostCalls, 1); assert.equal(last.counters.payPostCalls, 1); assert(last.counters.reconcileCalls >= 1);
   const a2a = await f.rpc('GetTask', { id: done.id }); assert.equal(a2a.result.status.state, 'TASK_STATE_COMPLETED');
   const other = await f.rpc('GetTask', { id: done.id }, f.alternate); assert(other.error); assert.equal(other.result, undefined);
+  const chain = await f.chain(done.id, 'satisfied');
+  const offer = (await f.related(chain.proposal.ref, 'selectedOffer'))[0]!;
+  assert.equal(offer.ref.type, 'FulfillmentOffer');
+  assert.deepEqual((await f.related(offer.ref, 'provider'))[0]!.ref, (await f.related(chain.engagement.ref, 'provider'))[0]!.ref);
+  const budget = await f.mcp.callTool({ name: 'evaluate_ontology', arguments: { function: 'withinBudget', object: offer.ref, budget: { minor: '50000', currency: 'CNY' }, priceBasis: 'firm_quote' } });
+  assert.equal((budget.structuredContent as { result: { value: string } }).result.value, 'pass');
+  const order = (await f.related(chain.request, 'orders'))[0]!;
+  assert.equal(order.properties.providerOrderReference, last.orders[0].id);
+  const line = (await f.related(order.ref, 'lines'))[0]!;
+  assert.equal((await f.related(line.ref, 'productVariant')).length, 0, 'No SKU is fabricated for a quantity-only simulator service');
+  const remaining = await f.mcp.callTool({ name: 'evaluate_ontology', arguments: { function: 'remainingQuantity', object: line.ref } });
+  assert.equal((remaining.structuredContent as { result: { value: { amount: string } } }).result.value.amount, '0');
 });
 
 test('E2E: revoked permits preserve in-flight facts and stop later payment until exact reauthorization', { timeout: 45000 }, async t => {
@@ -92,6 +148,8 @@ test('E2E: revoked permits preserve in-flight facts and stop later payment until
   await f.approve(await f.get(offered.id)); await waitFor(() => f.api('ledger'), x => x.counters.charges === 1, 'reauthorized payment');
   await f.api('advance', { orderId: created.orders[0].id, fulfillment: 'delivered' }); await waitFor(() => f.get(offered.id), x => x.state === 'completed', 'accepted after reauthorization');
   const final = await f.api('ledger'); assert.equal(final.counters.ordersCreated, 1); assert.equal(final.counters.charges, 1);
+  const chain = await f.chain(offered.id, 'satisfied'); assert.equal(chain.grants.length, 2);
+  assert.equal(chain.grants.filter(grant => grant.properties.revoked === true).length, 1);
 });
 
 test('E2E: a real/default-environment request cannot be satisfied by a sandbox provider', { timeout: 45000 }, async t => {
@@ -116,6 +174,21 @@ test('E2E: partial delivery fails, refund application is pending, receipt resolv
   const original = await f.get(failed.id); assert.equal(original.state, 'failed'); assert.equal(original.afterSales![0]!.state, 'resolved');
   const retry = await f.mcp.callTool({ name: 'request_remediation', arguments: { originalTaskId: failed.id, action: 'refund', reason: '重新查询', requestId: 'another-message' } }); assert.equal((retry.structuredContent as { result: Job }).result.id, remedy.id);
   const last = await f.api('ledger'); assert.equal(last.counters.refundRequests, 1); assert.equal(last.counters.refundPayments, 1);
+  const originalChain = await f.chain(failed.id, 'unsatisfied'), remedyChain = await f.chain(remedy.id, 'satisfied');
+  assert.deepEqual((await f.related(originalChain.engagement.ref, 'provider'))[0]!.ref, (await f.related(remedyChain.engagement.ref, 'provider'))[0]!.ref);
+  const cases = await f.related(originalChain.request, 'afterSalesCases'); assert.equal(cases.length, 1);
+  assert.equal(cases[0]!.properties.progress, 'resolved');
+  assert.deepEqual((await f.related(cases[0]!.ref, 'originalAssessment'))[0]!.ref, originalChain.assessment.ref);
+  assert.deepEqual((await f.related(cases[0]!.ref, 'remedyAssessments'))[0]!.ref, remedyChain.assessment.ref);
+  assert.deepEqual((await f.related(cases[0]!.ref, 'remedyRequest'))[0]!.ref, remedyChain.request);
+  assert((await f.related(cases[0]!.ref, 'originalResults')).length > 0);
+  assert((await f.related(cases[0]!.ref, 'remedyResults')).length > 0);
+  const refunds = await f.related(cases[0]!.ref, 'refunds'); assert.equal(refunds.length, 1);
+  assert.equal(refunds[0]!.properties.refundState, 'refunded');
+  assert.deepEqual(refunds[0]!.properties.amount, { minor: '45000', currency: 'CNY' });
+  const payment = (await f.related(refunds[0]!.ref, 'originalPayment'))[0]!;
+  assert.equal(payment.properties.paymentState, 'paid');
+  assert.deepEqual((await f.related(payment.ref, 'order'))[0]!.ref, (await f.related(cases[0]!.ref, 'order'))[0]!.ref);
 });
 
 test('E2E: cancel records late facts, prevents payment and uses a separately authorized business cancellation', { timeout: 45000 }, async t => {

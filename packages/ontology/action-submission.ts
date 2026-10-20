@@ -27,6 +27,7 @@ export function assertSemanticSubmission(graph: OntologyObjectStore, owner: stri
   const refs = new Map<string, ObjectRef>([[JSON.stringify(root.ref), root.ref]]);
   const remember = (ref: ObjectRef) => { refs.set(JSON.stringify(ref), ref); };
   const related = (ref: ObjectRef, name: string) => graph.related(owner, ref, name, { remaining: 1000 });
+  if (definition.providerOperation?.startsWith('sandbox.') && request.executionEnvironment === 'sandbox') passed.add('sandbox_request');
   const domain = serviceDomains.find(d => d.action === definition.id);
   if (domain) {
     if (!subject || subject.type !== domain.candidateType) fail('option');

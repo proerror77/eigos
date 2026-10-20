@@ -28,6 +28,7 @@ export interface ExecutionAttempt {
   startedAt: string; claimToken: string; requestRevision: number; inputDigest: string;
   planDigest: string;
   ordinal: number;
+  authorizationId?: string;
   submission?: import('./action-submission.js').SemanticSubmission;
 }
 export interface BusinessSnapshot {
@@ -55,7 +56,7 @@ export interface ActionContext {
 export interface PlanGrant {
   id: string; owner: string; jobId: string; planDigest: string; bindingRefs: Ref[]; allowedEffects: EffectClass[];
   maxAmount: { minor: string; currency: string }; payeeIds: string[]; expiresAt: string; revoked: boolean;
-  environment: 'sandbox'; approvedAt: string;
+  environment: 'sandbox'; approvedAt: string; revokedAt?: string;
 }
 export interface OutcomeAssessment {
   requestId: string; requestRevision: number; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human';
