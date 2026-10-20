@@ -6,7 +6,7 @@
     "version": "14",
     "digest": "8482a64b0e6d058454af37bc8951dd703e152061d8ced023785cbf8b619c0f94"
   },
-  "sourceManifestSha256": "9401fb52bc50dec485c9cc8b76da5afcb722af82f32e7d3f7fdf2398127f5574",
+  "sourceManifestSha256": "011a2753e9d95f75fbdf56d6f49ee0fa50bbb7f2739c6eed0129c558b313bd60",
   "local": {
     "typecheck": "passed",
     "build": "passed",
@@ -51,7 +51,14 @@
       "cancelled": 0,
       "skipped": 0
     },
-    "diffCheck": "passed"
+    "diffCheck": "passed",
+    "domainOutcomeRegression": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0
+    }
   },
   "ci": "Final commit full CI is independently checked during delivery; see the branch GitHub Actions run for that SHA.",
   "realOrders": false,

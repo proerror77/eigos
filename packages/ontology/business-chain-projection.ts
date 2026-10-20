@@ -89,7 +89,7 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
       if (!requiresPermit) { planProposals.set(plan.digest, ref); continue; }
       const proposal = proposalRef(plan);
       write(graph, owner, proposal, { requestRevision: plan.requestRevision, selectedAt: plan.createdAt, termsVersion: plan.digest, kind: 'execution',
-        capabilityRef: state.programRef, scopeDigest: plan.digest, completionTarget: 'artifact', authorizationMode: 'required', decisionReason: plan.reasoning },
+        capabilityRef: state.programRef, scopeDigest: plan.digest, completionTarget: 'domain', authorizationMode: 'required', decisionReason: plan.reasoning },
       [edge('ProposalRequest', proposal, request), edge('ProposalSpecification', proposal, specificationRef(job.id, plan.requestRevision)),
         edge('ProposalPlan', proposal, executionPlanRef(plan)), edge('ProposalPredecessor', proposal, ref)], source, true);
       engagement(bindingRef(job.id, state), proposal, plan.createdAt, [plan.digest], state.scope);

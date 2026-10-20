@@ -42,6 +42,7 @@ test('EIGOS pauses on an unpaid booking, PA pays separately, then both independe
     const proposals = t.store.ontology.related(owner, authorization.ref, 'proposal', { remaining: 1000 })!;
     assert.equal(proposals.length, 1); assert.equal(proposals[0]!.properties.kind, 'execution');
     assert.equal(proposals[0]!.properties.authorizationMode, 'required');
+    assert.equal(proposals[0]!.properties.completionTarget, 'domain');
     assert.equal(proposals[0]!.properties.termsVersion, grant.planDigest);
     const plans = t.store.ontology.related(owner, authorization.ref, 'executionPlan', { remaining: 1000 })!;
     assert.equal(plans[0]!.properties.planDigest, grant.planDigest);

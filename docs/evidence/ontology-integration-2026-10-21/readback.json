@@ -1,5 +1,5 @@
 {
-  "verifiedAt": "2026-10-20T16:29:02.236Z",
+  "verifiedAt": "2026-10-20T16:59:00.084Z",
   "environment": "isolated-loopback-synthetic-only",
   "backendVersion": "ontology-execution-v15",
   "model": {
@@ -31,12 +31,14 @@
     "taskState": "completed",
     "proposals": [
       {
-        "kind": "execution",
-        "authorizationMode": "required"
+        "kind": "read_scope",
+        "completionTarget": "artifact",
+        "authorizationMode": "not_required"
       },
       {
-        "kind": "read_scope",
-        "authorizationMode": "not_required"
+        "kind": "execution",
+        "completionTarget": "domain",
+        "authorizationMode": "required"
       }
     ],
     "authorization": {

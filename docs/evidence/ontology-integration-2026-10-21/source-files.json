@@ -527,8 +527,8 @@
       "compiledSha256": "1e2db0ef82a4b0ea1d3140df30f51161553882fd034b9e174ddeed3b482473fd"
     },
     "packages/ontology/business-chain-projection.ts": {
-      "sourceSha256": "c21504d675234d18938e2800e658532e90e1054dbd798e1741b2d49d04a60c8b",
-      "compiledSha256": "5aaedafa646538a1c4a616b8c1142e904e054a6574399732c6c0ae253edbefc1"
+      "sourceSha256": "f0b2125fd97bcb1a8d498d1949e50aedfb4b96f36de74b2a9ddb958f30a631cc",
+      "compiledSha256": "d1eebbc2bd8445cab1ecd92f03a55e482ee37ff2de8e18ff7fe956b0b9d002b3"
     },
     "packages/ontology/business-chain-write.ts": {
       "sourceSha256": "67eb02a167a08dd4e28e60aaa762c2b970b704dccfc677f2984b2660f8a27455",
@@ -790,5 +790,5 @@
       "compiledSha256": "64adf8b1f837df5bc669c362d382c57105023de0378ff19e747d33ef50ee4d20"
     }
   },
-  "manifestSha256": "9401fb52bc50dec485c9cc8b76da5afcb722af82f32e7d3f7fdf2398127f5574"
+  "manifestSha256": "011a2753e9d95f75fbdf56d6f49ee0fa50bbb7f2739c6eed0129c558b313bd60"
 }

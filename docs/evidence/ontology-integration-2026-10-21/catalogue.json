@@ -4,859 +4,6 @@
     "version": "14",
     "digest": "8482a64b0e6d058454af37bc8951dd703e152061d8ced023785cbf8b619c0f94"
   },
-  "actions": [
-    {
-      "id": "ReadCommerceContext",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "FulfillmentContext"
-      }
-    },
-    {
-      "id": "SearchCommerceMerchants",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CommerceMerchantSearch"
-      }
-    },
-    {
-      "id": "ReadCommerceProduct",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CommerceProduct"
-      }
-    },
-    {
-      "id": "ReadCommerceInventory",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "InventoryObservation"
-      }
-    },
-    {
-      "id": "ReadCommerceFulfillment",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "FulfillmentPlan"
-      }
-    },
-    {
-      "id": "ReadCommerceCustoms",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CustomsAssessment"
-      }
-    },
-    {
-      "id": "QuoteCommerceLandedCost",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "LandedCostQuote"
-      }
-    },
-    {
-      "id": "CreateCommerceCart",
-      "kind": "business",
-      "effects": [
-        "change"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "change",
-        "environment": "sandbox",
-        "resultType": "Cart"
-      }
-    },
-    {
-      "id": "ReadCommerceCart",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "Cart"
-      }
-    },
-    {
-      "id": "UpdateCommerceCart",
-      "kind": "business",
-      "effects": [
-        "change"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "change",
-        "environment": "sandbox",
-        "resultType": "Cart"
-      }
-    },
-    {
-      "id": "CancelCommerceCart",
-      "kind": "business",
-      "effects": [
-        "cancel"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "cancel",
-        "environment": "sandbox",
-        "resultType": "Cart"
-      }
-    },
-    {
-      "id": "PrepareCommerceCheckout",
-      "kind": "business",
-      "effects": [
-        "change"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "change",
-        "environment": "sandbox",
-        "resultType": "CommerceCheckout"
-      }
-    },
-    {
-      "id": "SubmitCommerceOrder",
-      "kind": "business",
-      "effects": [
-        "order",
-        "payment"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "order",
-        "environment": "sandbox",
-        "resultType": "CommerceOrderObservation"
-      }
-    },
-    {
-      "id": "SubmitCommerceUnpaidOrder",
-      "kind": "business",
-      "effects": [
-        "order"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "order",
-        "environment": "sandbox",
-        "resultType": "CommerceOrderObservation"
-      }
-    },
-    {
-      "id": "ReadCommerceOrder",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CommerceOrderObservation"
-      }
-    },
-    {
-      "id": "ReadCommercePayment",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CommercePaymentObservation"
-      }
-    },
-    {
-      "id": "ReadCommerceDelivery",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CommerceDeliveryObservation"
-      }
-    },
-    {
-      "id": "PrepareStripePayment",
-      "kind": "business",
-      "effects": [
-        "change"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "change",
-        "environment": "sandbox",
-        "resultType": "StripePaymentObservation"
-      }
-    },
-    {
-      "id": "PayStripePayment",
-      "kind": "business",
-      "effects": [
-        "payment"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "payment",
-        "environment": "sandbox",
-        "resultType": "StripePaymentObservation"
-      }
-    },
-    {
-      "id": "ReadStripePayment",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "StripePaymentObservation"
-      }
-    },
-    {
-      "id": "SearchBookingOffers",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "BookingOffers"
-      }
-    },
-    {
-      "id": "CreatePendingBooking",
-      "kind": "business",
-      "effects": [
-        "reserve"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "reserve",
-        "environment": "sandbox",
-        "resultType": "BookingObservation"
-      }
-    },
-    {
-      "id": "ReadProviderBooking",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "BookingObservation"
-      }
-    },
-    {
-      "id": "ReadProviderPayment",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "BookingPaymentObservation"
-      }
-    },
-    {
-      "id": "RequestPAPayment",
-      "kind": "business",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "local",
-        "environment": "sandbox",
-        "resultType": "PAPaymentRequest"
-      }
-    },
-    {
-      "id": "WaitForPAPayment",
-      "kind": "business",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only",
-      "operation": {
-        "effect": "local",
-        "environment": "sandbox",
-        "resultType": "PAPaymentRequest"
-      }
-    },
-    {
-      "id": "SearchPublicCatalog",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CatalogObservation"
-      }
-    },
-    {
-      "id": "InspectCatalogVariant",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CatalogObservation"
-      }
-    },
-    {
-      "id": "DiscoverMerchantCatalog",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CatalogEndpoint"
-      }
-    },
-    {
-      "id": "ReadMerchantVariants",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "CatalogObservation"
-      }
-    },
-    {
-      "id": "ReadSavedAddresses",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "PaotuiObservation"
-      }
-    },
-    {
-      "id": "ReadSavedAddressDetail",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "PaotuiObservation"
-      }
-    },
-    {
-      "id": "PreviewDeliveryQuote",
-      "kind": "source_read",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only",
-      "read": {
-        "resultType": "PaotuiObservation"
-      }
-    },
-    {
-      "id": "PrepareCheckout",
-      "kind": "business",
-      "effects": [
-        "reserve"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "CompleteCheckout",
-      "kind": "business",
-      "effects": [
-        "order",
-        "payment"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestRide",
-      "kind": "business",
-      "effects": [
-        "order"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestMedicalAppointment",
-      "kind": "business",
-      "effects": [
-        "reserve"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestFoodOrder",
-      "kind": "business",
-      "effects": [
-        "order"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestHotelReservation",
-      "kind": "business",
-      "effects": [
-        "reserve"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "BuildItinerary",
-      "kind": "business",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestVehicleBooking",
-      "kind": "business",
-      "effects": [
-        "reserve"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestDeliveryQuote",
-      "kind": "decision",
-      "effects": [],
-      "execution": "definition_only"
-    },
-    {
-      "id": "SelectOffer",
-      "kind": "decision",
-      "effects": [],
-      "execution": "definition_only"
-    },
-    {
-      "id": "SubmitServiceRequest",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "ProposeServiceExecution",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "AuthorizeProposal",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "ConfirmSimulationQuote",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RevokeProposalAuthorization",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "AssessServiceOutcome",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RequestServiceRemedy",
-      "kind": "decision",
-      "effects": [
-        "local"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "PlaceSandboxOrder",
-      "kind": "business",
-      "effects": [
-        "order"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "PaySandboxOrder",
-      "kind": "business",
-      "effects": [
-        "payment"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "ObserveSandboxDelivery",
-      "kind": "business",
-      "effects": [
-        "read"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "CancelSandboxOrder",
-      "kind": "business",
-      "effects": [
-        "cancel"
-      ],
-      "execution": "definition_only"
-    },
-    {
-      "id": "RefundSandboxPayment",
-      "kind": "business",
-      "effects": [
-        "refund"
-      ],
-      "execution": "definition_only"
-    }
-  ],
-  "functions": [
-    {
-      "id": "shippingGateStatus",
-      "version": "1",
-      "inputTypes": [
-        "CustomsAssessment",
-        "LandedCostQuote",
-        "CommerceCheckout"
-      ],
-      "description": "Evaluate route-specific domestic, regional and customs requirements from exact legs and warehouse regulatory status. Local bonded stock is not exempt. Synthetic coverage only; no legal approval."
-    },
-    {
-      "id": "customsGateStatus",
-      "version": "1",
-      "inputTypes": [
-        "CustomsAssessment",
-        "LandedCostQuote",
-        "CommerceCheckout"
-      ],
-      "description": "Evaluate current trusted policy and exact source-bound commodity, route, mandatory clauses, version and freshness. Only pass_sandbox may continue a simulated purchase; blocked or unknown stops execution. Never grants real import permission."
-    },
-    {
-      "id": "commerceObservationStatus",
-      "version": "1",
-      "inputTypes": [
-        "FulfillmentContext",
-        "CommerceMerchantSearch",
-        "CommerceProduct",
-        "InventoryObservation",
-        "InventoryReservation",
-        "FulfillmentPlan",
-        "CustomsAssessment",
-        "LandedCostQuote",
-        "Cart",
-        "CartLine",
-        "CommerceCheckout",
-        "CommerceOrderObservation",
-        "CommercePaymentObservation",
-        "CommerceDeliveryObservation",
-        "DeliveryPromise",
-        "FulfillmentGroup",
-        "FactRequirement"
-      ],
-      "description": "Verify exact source, task scope, current versions and recursive input freshness; return typed facts and missing requirements. This read grants no execution authority."
-    },
-    {
-      "id": "commerceJourneyStatus",
-      "version": "1",
-      "inputTypes": [
-        "CommerceTask"
-      ],
-      "description": "Read current commerce facts and stage-specific gaps. Missing buyer choices go to PA; merchant, stock, customs and fulfillment facts go to their source services."
-    },
-    {
-      "id": "stripePaymentStatus",
-      "version": "1",
-      "inputTypes": [
-        "StripePaymentObservation"
-      ],
-      "description": "Check original-order identity, account, freshness, evidence strength and test capture. Only an independent succeeded GET with exact captured charge establishes test_paid; not bank settlement."
-    },
-    {
-      "id": "bookingObservationStatus",
-      "version": "2",
-      "inputTypes": [
-        "BookingOffers",
-        "BookingObservation",
-        "BookingPaymentObservation"
-      ],
-      "description": "Validate owned source receipts, exact original terms, freshness and independent provider read. PA requests and reports never establish payment or booking completion."
-    },
-    {
-      "id": "catalogObservationStatus",
-      "version": "1",
-      "inputTypes": [
-        "CatalogObservation",
-        "CatalogEndpoint"
-      ],
-      "description": "Validate a single observation's identity, source, relationships and freshness; return its facts and explicit unknowns. A known empty observation is partial evidence, never proof of complete absence."
-    },
-    {
-      "id": "paotuiObservationStatus",
-      "version": "1",
-      "inputTypes": [
-        "PaotuiObservation"
-      ],
-      "description": "Verify immutable source content, owned task relationships, and freshness; return only safe summary fields. Source connection authority is rechecked separately before each action and completion."
-    },
-    {
-      "id": "checkoutReadiness",
-      "version": "2",
-      "inputTypes": [
-        "CheckoutSession"
-      ],
-      "description": "Narrow protocol readiness with a usable destination structure; this is not inventory, customs, purchase or delivery feasibility"
-    },
-    {
-      "id": "commerceOrderOutcome",
-      "version": "2",
-      "inputTypes": [
-        "CheckoutSession"
-      ],
-      "description": "Compare the independently read original order with fixed checkout items, cost breakdown, complete destination identity and budget; order confirmation is not fulfillment"
-    },
-    {
-      "id": "catalogReadStatus",
-      "version": "1",
-      "inputTypes": [
-        "CatalogRead"
-      ],
-      "description": "Check query identity, freshness and bound source evidence; return display-price observations and unknowns without granting business authority"
-    },
-    {
-      "id": "rideEligibility",
-      "version": "2",
-      "inputTypes": [
-        "RideOption"
-      ],
-      "description": "打车候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "rideOutcome",
-      "version": "1",
-      "inputTypes": [
-        "RideTrip"
-      ],
-      "description": "实际接送路线、人数、车型、上车及到达时间与最终完整车费；接单不是到达"
-    },
-    {
-      "id": "appointmentEligibility",
-      "version": "2",
-      "inputTypes": [
-        "AppointmentOption"
-      ],
-      "description": "医院挂号候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "appointmentOutcome",
-      "version": "1",
-      "inputTypes": [
-        "MedicalAppointment"
-      ],
-      "description": "指定就诊人、院区、科室、医生、时段的有效挂号确认；候补、支付或号源列表不是挂号成功"
-    },
-    {
-      "id": "foodEligibility",
-      "version": "2",
-      "inputTypes": [
-        "FoodOption"
-      ],
-      "description": "外卖候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "foodOutcome",
-      "version": "1",
-      "inputTypes": [
-        "FoodDelivery"
-      ],
-      "description": "指定商家、菜品规格与数量送达指定地点和期限，核对完整费用及已约定忌口"
-    },
-    {
-      "id": "hotelEligibility",
-      "version": "2",
-      "inputTypes": [
-        "HotelOption"
-      ],
-      "description": "酒店候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "hotelOutcome",
-      "version": "1",
-      "inputTypes": [
-        "HotelReservation"
-      ],
-      "description": "确认指定酒店、房型、入住退房日期、间数人数与条款；住宿完成是另一个明确终点"
-    },
-    {
-      "id": "itineraryEligibility",
-      "version": "2",
-      "inputTypes": [
-        "ItineraryOption"
-      ],
-      "description": "行程安排候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "itineraryOutcome",
-      "version": "1",
-      "inputTypes": [
-        "Itinerary"
-      ],
-      "description": "方案满足时间、衔接、费用与可行性并披露未预订项；要求订妥时逐项核对确认"
-    },
-    {
-      "id": "vehicleEligibility",
-      "version": "2",
-      "inputTypes": [
-        "VehicleOption"
-      ],
-      "description": "预约用车与自驾租车候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
-    },
-    {
-      "id": "vehicleOutcome",
-      "version": "1",
-      "inputTypes": [
-        "VehicleBooking"
-      ],
-      "description": "指定模式、车型、人数、地点、租期与条件的确认；完成租用还需交接、归还及押金结清"
-    },
-    {
-      "id": "offerFreshness",
-      "version": "1",
-      "inputTypes": [
-        "Offer"
-      ],
-      "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
-    },
-    {
-      "id": "remainingQuantity",
-      "version": "1",
-      "inputTypes": [
-        "OrderLine"
-      ],
-      "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
-    },
-    {
-      "id": "actualArrival",
-      "version": "1",
-      "inputTypes": [
-        "Shipment"
-      ],
-      "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
-    },
-    {
-      "id": "reservationStatus",
-      "version": "1",
-      "inputTypes": [
-        "Reservation"
-      ],
-      "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
-    },
-    {
-      "id": "deliveryQuoteMatches",
-      "version": "1",
-      "inputTypes": [
-        "DeliveryQuote"
-      ],
-      "description": "Match quote to request, selected route, parcel versions, weight and service"
-    },
-    {
-      "id": "withinBudget",
-      "version": "2",
-      "inputTypes": [
-        "DeliveryQuote",
-        "ProductOffer",
-        "ReservationOffer",
-        "FulfillmentOffer"
-      ],
-      "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
-    },
-    {
-      "id": "reservationMatches",
-      "version": "1",
-      "inputTypes": [
-        "Reservation"
-      ],
-      "description": "Check effective confirmation for the exact venue, time, timezone and party size"
-    },
-    {
-      "id": "productOfferMatches",
-      "version": "2",
-      "inputTypes": [
-        "ProductOffer"
-      ],
-      "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
-    },
-    {
-      "id": "slotAvailability",
-      "version": "1",
-      "inputTypes": [
-        "ReservationSlot"
-      ],
-      "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
-    },
-    {
-      "id": "authorizationStatus",
-      "version": "1",
-      "inputTypes": [
-        "Authorization"
-      ],
-      "description": "Evaluate a projected policy record at the current clock; real dispatch still requires the authoritative policy ledger."
-    }
-  ],
   "types": [
     {
       "id": "AfterSalesCase",
@@ -14164,6 +13311,859 @@
           "description": "The current checkout request whose preparation is represented by this candidate"
         }
       ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "ReadCommerceContext",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "FulfillmentContext"
+      }
+    },
+    {
+      "id": "SearchCommerceMerchants",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CommerceMerchantSearch"
+      }
+    },
+    {
+      "id": "ReadCommerceProduct",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CommerceProduct"
+      }
+    },
+    {
+      "id": "ReadCommerceInventory",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "InventoryObservation"
+      }
+    },
+    {
+      "id": "ReadCommerceFulfillment",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "FulfillmentPlan"
+      }
+    },
+    {
+      "id": "ReadCommerceCustoms",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CustomsAssessment"
+      }
+    },
+    {
+      "id": "QuoteCommerceLandedCost",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "LandedCostQuote"
+      }
+    },
+    {
+      "id": "CreateCommerceCart",
+      "kind": "business",
+      "effects": [
+        "change"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "change",
+        "environment": "sandbox",
+        "resultType": "Cart"
+      }
+    },
+    {
+      "id": "ReadCommerceCart",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "Cart"
+      }
+    },
+    {
+      "id": "UpdateCommerceCart",
+      "kind": "business",
+      "effects": [
+        "change"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "change",
+        "environment": "sandbox",
+        "resultType": "Cart"
+      }
+    },
+    {
+      "id": "CancelCommerceCart",
+      "kind": "business",
+      "effects": [
+        "cancel"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "cancel",
+        "environment": "sandbox",
+        "resultType": "Cart"
+      }
+    },
+    {
+      "id": "PrepareCommerceCheckout",
+      "kind": "business",
+      "effects": [
+        "change"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "change",
+        "environment": "sandbox",
+        "resultType": "CommerceCheckout"
+      }
+    },
+    {
+      "id": "SubmitCommerceOrder",
+      "kind": "business",
+      "effects": [
+        "order",
+        "payment"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "order",
+        "environment": "sandbox",
+        "resultType": "CommerceOrderObservation"
+      }
+    },
+    {
+      "id": "SubmitCommerceUnpaidOrder",
+      "kind": "business",
+      "effects": [
+        "order"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "order",
+        "environment": "sandbox",
+        "resultType": "CommerceOrderObservation"
+      }
+    },
+    {
+      "id": "ReadCommerceOrder",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CommerceOrderObservation"
+      }
+    },
+    {
+      "id": "ReadCommercePayment",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CommercePaymentObservation"
+      }
+    },
+    {
+      "id": "ReadCommerceDelivery",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CommerceDeliveryObservation"
+      }
+    },
+    {
+      "id": "PrepareStripePayment",
+      "kind": "business",
+      "effects": [
+        "change"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "change",
+        "environment": "sandbox",
+        "resultType": "StripePaymentObservation"
+      }
+    },
+    {
+      "id": "PayStripePayment",
+      "kind": "business",
+      "effects": [
+        "payment"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "payment",
+        "environment": "sandbox",
+        "resultType": "StripePaymentObservation"
+      }
+    },
+    {
+      "id": "ReadStripePayment",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "StripePaymentObservation"
+      }
+    },
+    {
+      "id": "SearchBookingOffers",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "BookingOffers"
+      }
+    },
+    {
+      "id": "CreatePendingBooking",
+      "kind": "business",
+      "effects": [
+        "reserve"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "reserve",
+        "environment": "sandbox",
+        "resultType": "BookingObservation"
+      }
+    },
+    {
+      "id": "ReadProviderBooking",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "BookingObservation"
+      }
+    },
+    {
+      "id": "ReadProviderPayment",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "BookingPaymentObservation"
+      }
+    },
+    {
+      "id": "RequestPAPayment",
+      "kind": "business",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "local",
+        "environment": "sandbox",
+        "resultType": "PAPaymentRequest"
+      }
+    },
+    {
+      "id": "WaitForPAPayment",
+      "kind": "business",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only",
+      "operation": {
+        "effect": "local",
+        "environment": "sandbox",
+        "resultType": "PAPaymentRequest"
+      }
+    },
+    {
+      "id": "SearchPublicCatalog",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CatalogObservation"
+      }
+    },
+    {
+      "id": "InspectCatalogVariant",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CatalogObservation"
+      }
+    },
+    {
+      "id": "DiscoverMerchantCatalog",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CatalogEndpoint"
+      }
+    },
+    {
+      "id": "ReadMerchantVariants",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "CatalogObservation"
+      }
+    },
+    {
+      "id": "ReadSavedAddresses",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "PaotuiObservation"
+      }
+    },
+    {
+      "id": "ReadSavedAddressDetail",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "PaotuiObservation"
+      }
+    },
+    {
+      "id": "PreviewDeliveryQuote",
+      "kind": "source_read",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only",
+      "read": {
+        "resultType": "PaotuiObservation"
+      }
+    },
+    {
+      "id": "PrepareCheckout",
+      "kind": "business",
+      "effects": [
+        "reserve"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "CompleteCheckout",
+      "kind": "business",
+      "effects": [
+        "order",
+        "payment"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestRide",
+      "kind": "business",
+      "effects": [
+        "order"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestMedicalAppointment",
+      "kind": "business",
+      "effects": [
+        "reserve"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestFoodOrder",
+      "kind": "business",
+      "effects": [
+        "order"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestHotelReservation",
+      "kind": "business",
+      "effects": [
+        "reserve"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "BuildItinerary",
+      "kind": "business",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestVehicleBooking",
+      "kind": "business",
+      "effects": [
+        "reserve"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestDeliveryQuote",
+      "kind": "decision",
+      "effects": [],
+      "execution": "definition_only"
+    },
+    {
+      "id": "SelectOffer",
+      "kind": "decision",
+      "effects": [],
+      "execution": "definition_only"
+    },
+    {
+      "id": "SubmitServiceRequest",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "ProposeServiceExecution",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "AuthorizeProposal",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "ConfirmSimulationQuote",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RevokeProposalAuthorization",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "AssessServiceOutcome",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RequestServiceRemedy",
+      "kind": "decision",
+      "effects": [
+        "local"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "PlaceSandboxOrder",
+      "kind": "business",
+      "effects": [
+        "order"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "PaySandboxOrder",
+      "kind": "business",
+      "effects": [
+        "payment"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "ObserveSandboxDelivery",
+      "kind": "business",
+      "effects": [
+        "read"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "CancelSandboxOrder",
+      "kind": "business",
+      "effects": [
+        "cancel"
+      ],
+      "execution": "definition_only"
+    },
+    {
+      "id": "RefundSandboxPayment",
+      "kind": "business",
+      "effects": [
+        "refund"
+      ],
+      "execution": "definition_only"
+    }
+  ],
+  "functions": [
+    {
+      "id": "shippingGateStatus",
+      "version": "1",
+      "inputTypes": [
+        "CustomsAssessment",
+        "LandedCostQuote",
+        "CommerceCheckout"
+      ],
+      "description": "Evaluate route-specific domestic, regional and customs requirements from exact legs and warehouse regulatory status. Local bonded stock is not exempt. Synthetic coverage only; no legal approval."
+    },
+    {
+      "id": "customsGateStatus",
+      "version": "1",
+      "inputTypes": [
+        "CustomsAssessment",
+        "LandedCostQuote",
+        "CommerceCheckout"
+      ],
+      "description": "Evaluate current trusted policy and exact source-bound commodity, route, mandatory clauses, version and freshness. Only pass_sandbox may continue a simulated purchase; blocked or unknown stops execution. Never grants real import permission."
+    },
+    {
+      "id": "commerceObservationStatus",
+      "version": "1",
+      "inputTypes": [
+        "FulfillmentContext",
+        "CommerceMerchantSearch",
+        "CommerceProduct",
+        "InventoryObservation",
+        "InventoryReservation",
+        "FulfillmentPlan",
+        "CustomsAssessment",
+        "LandedCostQuote",
+        "Cart",
+        "CartLine",
+        "CommerceCheckout",
+        "CommerceOrderObservation",
+        "CommercePaymentObservation",
+        "CommerceDeliveryObservation",
+        "DeliveryPromise",
+        "FulfillmentGroup",
+        "FactRequirement"
+      ],
+      "description": "Verify exact source, task scope, current versions and recursive input freshness; return typed facts and missing requirements. This read grants no execution authority."
+    },
+    {
+      "id": "commerceJourneyStatus",
+      "version": "1",
+      "inputTypes": [
+        "CommerceTask"
+      ],
+      "description": "Read current commerce facts and stage-specific gaps. Missing buyer choices go to PA; merchant, stock, customs and fulfillment facts go to their source services."
+    },
+    {
+      "id": "stripePaymentStatus",
+      "version": "1",
+      "inputTypes": [
+        "StripePaymentObservation"
+      ],
+      "description": "Check original-order identity, account, freshness, evidence strength and test capture. Only an independent succeeded GET with exact captured charge establishes test_paid; not bank settlement."
+    },
+    {
+      "id": "bookingObservationStatus",
+      "version": "2",
+      "inputTypes": [
+        "BookingOffers",
+        "BookingObservation",
+        "BookingPaymentObservation"
+      ],
+      "description": "Validate owned source receipts, exact original terms, freshness and independent provider read. PA requests and reports never establish payment or booking completion."
+    },
+    {
+      "id": "catalogObservationStatus",
+      "version": "1",
+      "inputTypes": [
+        "CatalogObservation",
+        "CatalogEndpoint"
+      ],
+      "description": "Validate a single observation's identity, source, relationships and freshness; return its facts and explicit unknowns. A known empty observation is partial evidence, never proof of complete absence."
+    },
+    {
+      "id": "paotuiObservationStatus",
+      "version": "1",
+      "inputTypes": [
+        "PaotuiObservation"
+      ],
+      "description": "Verify immutable source content, owned task relationships, and freshness; return only safe summary fields. Source connection authority is rechecked separately before each action and completion."
+    },
+    {
+      "id": "checkoutReadiness",
+      "version": "2",
+      "inputTypes": [
+        "CheckoutSession"
+      ],
+      "description": "Narrow protocol readiness with a usable destination structure; this is not inventory, customs, purchase or delivery feasibility"
+    },
+    {
+      "id": "commerceOrderOutcome",
+      "version": "2",
+      "inputTypes": [
+        "CheckoutSession"
+      ],
+      "description": "Compare the independently read original order with fixed checkout items, cost breakdown, complete destination identity and budget; order confirmation is not fulfillment"
+    },
+    {
+      "id": "catalogReadStatus",
+      "version": "1",
+      "inputTypes": [
+        "CatalogRead"
+      ],
+      "description": "Check query identity, freshness and bound source evidence; return display-price observations and unknowns without granting business authority"
+    },
+    {
+      "id": "rideEligibility",
+      "version": "2",
+      "inputTypes": [
+        "RideOption"
+      ],
+      "description": "打车候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "rideOutcome",
+      "version": "1",
+      "inputTypes": [
+        "RideTrip"
+      ],
+      "description": "实际接送路线、人数、车型、上车及到达时间与最终完整车费；接单不是到达"
+    },
+    {
+      "id": "appointmentEligibility",
+      "version": "2",
+      "inputTypes": [
+        "AppointmentOption"
+      ],
+      "description": "医院挂号候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "appointmentOutcome",
+      "version": "1",
+      "inputTypes": [
+        "MedicalAppointment"
+      ],
+      "description": "指定就诊人、院区、科室、医生、时段的有效挂号确认；候补、支付或号源列表不是挂号成功"
+    },
+    {
+      "id": "foodEligibility",
+      "version": "2",
+      "inputTypes": [
+        "FoodOption"
+      ],
+      "description": "外卖候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "foodOutcome",
+      "version": "1",
+      "inputTypes": [
+        "FoodDelivery"
+      ],
+      "description": "指定商家、菜品规格与数量送达指定地点和期限，核对完整费用及已约定忌口"
+    },
+    {
+      "id": "hotelEligibility",
+      "version": "2",
+      "inputTypes": [
+        "HotelOption"
+      ],
+      "description": "酒店候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "hotelOutcome",
+      "version": "1",
+      "inputTypes": [
+        "HotelReservation"
+      ],
+      "description": "确认指定酒店、房型、入住退房日期、间数人数与条款；住宿完成是另一个明确终点"
+    },
+    {
+      "id": "itineraryEligibility",
+      "version": "2",
+      "inputTypes": [
+        "ItineraryOption"
+      ],
+      "description": "行程安排候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "itineraryOutcome",
+      "version": "1",
+      "inputTypes": [
+        "Itinerary"
+      ],
+      "description": "方案满足时间、衔接、费用与可行性并披露未预订项；要求订妥时逐项核对确认"
+    },
+    {
+      "id": "vehicleEligibility",
+      "version": "2",
+      "inputTypes": [
+        "VehicleOption"
+      ],
+      "description": "预约用车与自驾租车候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行"
+    },
+    {
+      "id": "vehicleOutcome",
+      "version": "1",
+      "inputTypes": [
+        "VehicleBooking"
+      ],
+      "description": "指定模式、车型、人数、地点、租期与条件的确认；完成租用还需交接、归还及押金结清"
+    },
+    {
+      "id": "offerFreshness",
+      "version": "1",
+      "inputTypes": [
+        "Offer"
+      ],
+      "description": "Evidence-backed freshness at the server clock; local refresh windows are not provider commitments"
+    },
+    {
+      "id": "remainingQuantity",
+      "version": "1",
+      "inputTypes": [
+        "OrderLine"
+      ],
+      "description": "Ordered quantity minus accepted delivery allocations, with unit, specification and event checks"
+    },
+    {
+      "id": "actualArrival",
+      "version": "1",
+      "inputTypes": [
+        "Shipment"
+      ],
+      "description": "Actual arrival from accepted delivery events; an ETA is never an arrival"
+    },
+    {
+      "id": "reservationStatus",
+      "version": "1",
+      "inputTypes": [
+        "Reservation"
+      ],
+      "description": "Provider confirmation plus required deposit evidence; paid alone is not confirmation"
+    },
+    {
+      "id": "deliveryQuoteMatches",
+      "version": "1",
+      "inputTypes": [
+        "DeliveryQuote"
+      ],
+      "description": "Match quote to request, selected route, parcel versions, weight and service"
+    },
+    {
+      "id": "withinBudget",
+      "version": "2",
+      "inputTypes": [
+        "DeliveryQuote",
+        "ProductOffer",
+        "ReservationOffer",
+        "FulfillmentOffer"
+      ],
+      "description": "Compare a complete scoped total and price basis; a reservation deposit is not a total"
+    },
+    {
+      "id": "reservationMatches",
+      "version": "1",
+      "inputTypes": [
+        "Reservation"
+      ],
+      "description": "Check effective confirmation for the exact venue, time, timezone and party size"
+    },
+    {
+      "id": "productOfferMatches",
+      "version": "2",
+      "inputTypes": [
+        "ProductOffer"
+      ],
+      "description": "Check the quoted product specification revision, quantity, capacity, complete total, destination and commitment"
+    },
+    {
+      "id": "slotAvailability",
+      "version": "1",
+      "inputTypes": [
+        "ReservationSlot"
+      ],
+      "description": "Check current evidenced slot eligibility for venue, time, timezone and party size"
+    },
+    {
+      "id": "authorizationStatus",
+      "version": "1",
+      "inputTypes": [
+        "Authorization"
+      ],
+      "description": "Evaluate a projected policy record at the current clock; real dispatch still requires the authoritative policy ledger."
     }
   ]
 }
