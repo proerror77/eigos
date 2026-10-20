@@ -31,6 +31,7 @@ export const proposalSchema = z.object({
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
+  groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;
   phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';

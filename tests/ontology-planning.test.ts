@@ -1,6 +1,7 @@
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { z } from 'zod';
 import { DatabaseSync } from 'node:sqlite';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { OntologyPlanningSession, validatePlanningSnapshot } from '../packages/coordinator/planning-session.js';
@@ -12,7 +13,7 @@ import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from '../packages/capabilities/brief.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
-import type { BusinessCondition } from '../packages/ontology/business-model.js';
+import { businessConditionSchema, type BusinessCondition } from '../packages/ontology/business-model.js';
 import { equivalentQuantities } from '../packages/ontology/quantity.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, interpretation, proposal, evidence, owner, principal, reasoner, fixtureCapability, fixtureBinding, fixtureAdapter } from './backend-fixture.js';
@@ -37,6 +38,9 @@ test('Planning descriptions expose full action schemas on demand without repeati
     const full = f.session.call('describe_ontology', { search: 'ServiceRequest', includeSchemas: true }) as any;
     assert(JSON.stringify(summary).length < JSON.stringify(full).length * 0.6);
     assert.equal(f.session.receipts().length, 3);
+    assert.equal(summary.conditionSchema, undefined);
+    const conditions = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [], includeConditionSchema: true }) as any;
+    assert.deepEqual(conditions.conditionSchema, z.toJSONSchema(businessConditionSchema));
   } finally { f.db.close(); }
 });
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
@@ -155,6 +159,8 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
   try {
     b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
     assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
+    assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
+    assert.equal(done.delegation!.groundingDecisions!.length, 1);
     assert.equal(done.delegation!.ontologyReads!.length, 4); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 2);
     assert.equal(done.delegation!.plan!.version, '7');
     assert(prompts.some(p => p.includes('propertiesDigest')) === false, 'Internal snapshot hashes need not be shown as business data');
