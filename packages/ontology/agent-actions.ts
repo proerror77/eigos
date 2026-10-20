@@ -30,6 +30,7 @@ export interface AgentExecutionState {
   input: Record<string, unknown>; requestRevision: number;
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
+  paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion'; message: string; inputDigest: string }[];
   informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
   completion?: { modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };

@@ -4,6 +4,7 @@ import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSch
 import { TaskService } from '../../packages/core/tasks.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
+import { paPaymentReportSchema } from '../../packages/core/pa-payment.js';
 
 function result(action: () => unknown): CallToolResult {
   try {
@@ -55,6 +56,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));
+  server.registerTool('report_payment_result', {
+    description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment or booking completion.',
+    inputSchema: paPaymentReportSchema,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.reportPayment(principal, args)));
   server.registerTool('cancel_task', {
     description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),

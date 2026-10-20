@@ -6,7 +6,7 @@ import { setupStripe, stripeFixture } from './fixtures/stripe.js';
 import { owner, principal } from './backend-fixture.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { StripeTestClient } from '../packages/capabilities/stripe/client.js';
-import { readConfig, readWorkerConfig, stripeTestConfig } from '../packages/core/config.js';
+import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { commerceDecision, commerceReads } from './fixtures/commerce-agent.js';
 import { stripeChoice } from './fixtures/stripe.js';
 
@@ -31,7 +31,8 @@ test('Stripe test capability is inert, opt-in, sandbox-only and consistently con
     assert.throws(() => program.schema('SubmitCommerceOrder')); assert.throws(() => program.schema('ReadCommercePayment'));
     assert.equal(t.stripe.calls.length, 0);
     const env = { EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(40), EIGOS_ACTION_SANDBOX: 'true', EIGOS_COMMERCE_SANDBOX_URL: t.provider.endpoint, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: t.tokenFile, EIGOS_STRIPE_TEST_ENABLED: 'true', EIGOS_STRIPE_TEST_SECRET_KEY_FILE: t.stripe.options.secretKeyFile, EIGOS_STRIPE_TEST_ACCOUNT_ID: t.stripe.options.accountId, EIGOS_STRIPE_TEST_MERCHANT_ID: t.stripe.options.merchantId };
-    assert.deepEqual(stripeTestConfig(readConfig(env)), stripeTestConfig(readWorkerConfig(env)));
+    assert.throws(() => readConfig(env), /not an EIGOS runtime capability/);
+    assert.throws(() => readWorkerConfig(env), /not an EIGOS runtime capability/);
     for (const changed of [{ EIGOS_STRIPE_TEST_ENABLED: 'false' }, { EIGOS_STRIPE_TEST_SECRET_KEY_FILE: 'relative' }, { EIGOS_STRIPE_TEST_ACCOUNT_ID: undefined }, { EIGOS_COMMERCE_SANDBOX_URL: undefined }, { NODE_ENV: 'production' }, { EIGOS_ACTION_SANDBOX: 'false' }]) assert.throws(() => readWorkerConfig({ ...env, ...changed }));
   } finally { await t.close(); }
 });

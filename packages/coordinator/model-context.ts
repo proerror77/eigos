@@ -16,6 +16,7 @@ export function agentModelContext(context: AgentPlanningContext) {
         steps: plan.steps.map(step => ({ id: step.id, action: step.action, effect: step.effect, argumentsJson: step.argumentsJson, dependsOn: step.dependsOn, inputRefs: step.inputRefs })),
       })),
       feedback: state.feedback,
+      ...(state.paPayment ? { paPayment: { request: state.paPayment.request, status: state.paPayment.status, readbackSequence: state.paPayment.readbackSequence, reports: state.paPayment.reports, recovery: state.paPayment.recovery } } : {}),
       informationRequests: state.informationRequests?.map(item => ({ at: item.at, message: item.decision.message, informationRequest: item.decision.informationRequest })),
     },
   };

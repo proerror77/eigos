@@ -185,6 +185,28 @@ class Client:
             'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
         }}, endpoint)
 
+    def payment_result(self, task_id, data, request_id):
+        allowed = {'handoffId', 'handoffDigest', 'outcome'}
+        if not isinstance(data, dict) or set(data) != allowed or data.get('outcome') not in ('submitted', 'declined', 'unknown', 'canceled'):
+            raise ClientError('Payment notification accepts only handoffId, handoffDigest and outcome; never include wallet credentials')
+        if any(not isinstance(data.get(k), str) or len(data[k]) != 64 or any(c not in '0123456789abcdef' for c in data[k]) for k in ('handoffId', 'handoffDigest')):
+            raise ClientError('Use the exact original payment handoff ID and digest')
+        try:
+            uuid.UUID(request_id)
+        except (ValueError, TypeError, AttributeError):
+            raise ClientError('Payment notifications require a stable UUID request ID') from None
+        current = self.rpc('GetTask', {'id': task_id})
+        if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
+            raise ClientError('Task service is outside the configured delegation allowlist')
+        request = current.get('metadata', {}).get('delegation', {}).get('agent', {}).get('paPayment', {}).get('request', {})
+        if request.get('id') != data['handoffId'] or request.get('digest') != data['handoffDigest']:
+            raise ClientError('Payment notification does not match the owned task handoff')
+        _, endpoint = self.discover()
+        return self.write('payment-result:' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER',
+            'parts': [{'data': {'action': 'report_payment_result', **data}}],
+        }}, endpoint)
+
     def send_text(self, text, request_id, task_id=None):
         card, endpoint = self.discover()
         if task_id:
@@ -268,6 +290,10 @@ def main():
     authorize = commands.add_parser('authorize')
     authorize.add_argument('--task-id', required=True)
     authorize.add_argument('--input-file', required=True)
+    payment = commands.add_parser('payment-result')
+    payment.add_argument('--task-id', required=True)
+    payment.add_argument('--input-file', required=True)
+    payment.add_argument('--request-id', required=True)
     submit = commands.add_parser('submit')
     submit.add_argument('--input-file', required=True)
     submit.add_argument('--request-id', required=True)
@@ -323,6 +349,8 @@ def main():
             output = client.send_text(text, args.request_id, args.task_id)
         elif args.command == 'authorize':
             output = client.authorize(args.task_id, read_json(args.input_file))
+        elif args.command == 'payment-result':
+            output = client.payment_result(args.task_id, read_json(args.input_file), args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
         elif args.command == 'reply':

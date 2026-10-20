@@ -1,5 +1,5 @@
-import { stripeTestConfig } from '../../packages/core/config.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
+import { paPaymentRequestSchema, paPaymentReportSchema } from '../../packages/core/pa-payment.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -45,7 +45,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
     shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS } : undefined,
-    stripeTest: stripeTestConfig(config),
+    bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
     commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
   const tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
@@ -79,6 +79,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     next();
   });
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
+  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '1', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, requestPath: 'metadata.delegation.agent.paPayment.request', a2a: { method: 'SendMessage', action: 'report_payment_result' }, mcpTool: 'report_payment_result', notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;

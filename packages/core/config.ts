@@ -40,6 +40,8 @@ const schema = z.object({
   EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
   EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
+  EIGOS_BOOKING_SANDBOX_URL: z.url().optional(),
+  EIGOS_BOOKING_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ENABLED: z.enum(['false', 'true']).default('false'),
   EIGOS_STRIPE_TEST_SECRET_KEY_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]{1,100}$/).optional(),
@@ -117,14 +119,14 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   }
   if (c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR && (!c.EIGOS_COMMERCE_SANDBOX_URL || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR))) throw new Error('Commerce audit requires an enabled sandbox and an absolute private directory');
   const stripeConfigured = !!(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || c.EIGOS_STRIPE_TEST_ACCOUNT_ID || c.EIGOS_STRIPE_TEST_MERCHANT_ID);
-  if (c.EIGOS_STRIPE_TEST_ENABLED === 'true') {
-    if (!c.EIGOS_COMMERCE_SANDBOX_URL || !c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || !isAbsolute(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) || !c.EIGOS_STRIPE_TEST_ACCOUNT_ID || !c.EIGOS_STRIPE_TEST_MERCHANT_ID || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production') throw new Error('Stripe test requires a local commerce sandbox, private absolute key file, exact account and merchant');
-  } else if (stripeConfigured) throw new Error('Stripe test configuration requires explicit EIGOS_STRIPE_TEST_ENABLED=true');
+  if (c.EIGOS_STRIPE_TEST_ENABLED === 'true' || stripeConfigured) throw new Error('Merchant-side Stripe payment is not an EIGOS runtime capability; use PA-owned booking payment handoff');
+  if (!!c.EIGOS_BOOKING_SANDBOX_URL !== !!c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE) throw new Error('Booking sandbox requires its endpoint and private source token file');
+  if (c.EIGOS_BOOKING_SANDBOX_URL) {
+    const u = new URL(c.EIGOS_BOOKING_SANDBOX_URL);
+    if (c.EIGOS_AUTH_MODE !== 'development' || c.EIGOS_ACTION_SANDBOX !== 'true' || env.NODE_ENV === 'production' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE!)) throw new Error('Booking source requires explicit local sandbox configuration');
+  }
   return c;
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'gateway'); }
 export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'worker'); }
-export function stripeTestConfig(c: Config) {
-  return c.EIGOS_STRIPE_TEST_ENABLED === 'true' ? { secretKeyFile: c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE!, accountId: c.EIGOS_STRIPE_TEST_ACCOUNT_ID!, merchantId: c.EIGOS_STRIPE_TEST_MERCHANT_ID! } : undefined;
-}

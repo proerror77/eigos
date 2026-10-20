@@ -1,3 +1,4 @@
+import { evaluateBookingFunction } from './booking-functions.js';
 import { evaluateStripePaymentFunction } from './stripe-payment-functions.js';
 import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -17,7 +18,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
-  simple('stripePaymentStatus'),
+  simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
@@ -58,6 +59,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const bookingResult = evaluateBookingFunction(store, owner, input, budget);
+  if (bookingResult) return bookingResult;
   const stripeResult = evaluateStripePaymentFunction(store, owner, input, budget);
   if (stripeResult) return stripeResult;
   const customsResult = evaluateCustomsPolicyFunction(store, owner, input, budget);

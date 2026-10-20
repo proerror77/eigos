@@ -13,6 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
+import { paPaymentReportSchema, verifyPAPaymentRequest } from './pa-payment.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -78,6 +79,7 @@ export class TaskService {
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
+      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
@@ -130,6 +132,34 @@ export class TaskService {
     return this.view(ownerKey(p), this.store.get(ownerKey(p), taskIdSchema.parse(id)));
   }
 
+  reportPayment(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = paPaymentReportSchema.parse(input), owner = ownerKey(p);
+    return this.store.once(owner, `pa-payment:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'No current PA payment task');
+      if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+      const payment = verifyPAPaymentRequest(job, owner);
+      if (args.handoffId !== payment.request.id || args.handoffDigest !== payment.request.digest) throw new DomainError('CONFLICT', 'Payment notification must reference the exact original handoff');
+      if (job.state === 'working' || job.state === 'submitted' || job.state === 'auth-required') throw new DomainError('CONFLICT', 'Original provider readback is running; read the task and retry this same notification later');
+      if (payment.reports.length >= 20) throw new DomainError('CONFLICT', 'Payment notification bound reached; query the original task');
+      job.updatedAt = new Date().toISOString();
+      payment.reports.push({ id: args.requestId, outcome: args.outcome, receivedAt: job.updatedAt });
+      job.delegation.events.push({ at: job.updatedAt, event: 'pa_payment_notification_received_unverified', evidence: args.requestId });
+      if (job.state === 'completed') { this.store.save(owner, job); return this.view(owner, job); }
+      payment.recoveryAttempts = 0;
+      payment.readbackSequence++;
+      const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
+      payment.status = terminal ? 'withdrawn' : 'reported';
+      job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
+      job.delegation.recoveryPending = terminal; job.delegation.nextAt = 0;
+      if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
+      job.revision = (job.revision ?? 0) + 1;
+      this.store.save(owner, job);
+      return this.view(owner, job);
+    });
+  }
+
   list(p: Principal, filter: ListFilter): { jobs: Job[]; total: number } {
     requireScope(p, 'tasks:read');
     z.number().int().min(1).max(100).parse(filter.limit);
@@ -152,6 +182,7 @@ export class TaskService {
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
       job.state = 'canceled';
       if (job.delegation?.plan || job.delegation?.agent) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
+      if (job.delegation?.agent?.paPayment) { job.delegation.agent.paPayment.status = 'withdrawn'; job.delegation.agent.paPayment.recoveryAttempts = 0; job.delegation.recoveryPending = true; }
       if (job.delegation) job.delegation.phase = 'canceled';
       if (job.delegation?.plan) this.store.recordFeedback(owner, job, 'unverified', false);
       delete job.question;
@@ -212,6 +243,16 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id);
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent?.paPayment) {
+        const payment = verifyPAPaymentRequest(job, owner);
+        if (job.state === 'completed' || job.state === 'working' || job.state === 'submitted') return this.view(owner, job);
+        const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
+        payment.recoveryAttempts = 0; payment.readbackSequence++; payment.status = terminal ? 'withdrawn' : 'reported';
+        job.delegation.manualReconciliation = requestId; job.delegation.nextAt = 0; job.delegation.recoveryPending = terminal;
+        if (!terminal) { job.state = 'submitted'; job.delegation.phase = 'planning'; delete job.question; }
+        job.revision = (job.revision ?? 0) + 1; job.updatedAt = new Date().toISOString();
+        this.store.save(owner, job); return this.view(owner, job);
+      }
       if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) {
         const pending = this.store.intents(owner, id).filter(i => !['read', 'local'].includes(i.effect) && ['needs_review', 'effect_unknown', 'awaiting_remote', 'dispatching'].includes(i.state));
         if (!pending.length) return job;

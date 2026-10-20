@@ -1,3 +1,4 @@
+import { recordPAPaymentHandoff } from '../core/pa-payment.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest, actionOperationKey } from '../core/delegation.js';
@@ -35,6 +36,7 @@ export class AgentRuntime {
     if (Date.now() <= Date.parse(job.createdAt) + (this.options.maxTaskMs ?? 86400000)) return true;
     this.store.finish(claim, current => {
       current.delegation!.recoveryPending = this.store.cancelActions(claim.owner, current.id);
+      if (current.delegation!.agent?.paPayment) { current.delegation!.agent.paPayment.status = 'withdrawn'; current.delegation!.agent.paPayment.recoveryAttempts = 0; current.delegation!.recoveryPending = true; }
       current.state = 'failed'; current.delegation!.phase = 'failed'; current.updatedAt = new Date().toISOString();
       current.error = '本次查询已超过任务等待时限；已有观察和未确认结果已保留，没有自动重试。请提交新任务。';
       current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
@@ -112,6 +114,7 @@ export class AgentRuntime {
           if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
           const at = new Date().toISOString();
           current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
+          if (current.delegation!.agent!.paPayment) current.delegation!.agent!.paPayment!.status = 'verified';
           current.delegation!.phase = 'accepted'; current.delegation!.agent!.completion = { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads };
           current.delegation!.acceptance = { accepted: true, reason: 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
           current.delegation!.events.push({ at, event: 'agent_completion_verified', evidence: response.evidence.id });
@@ -134,7 +137,7 @@ export class AgentRuntime {
         const definition = program.definition(this.store.ontology, step.action);
         if (!program.actionIds.includes(step.action)) failure('This program permits only its explicitly registered actions');
         const operation = agentOperation(definition);
-        if (operation.effect !== 'read' && (!this.options.allowSandbox || program.capability().environment !== 'sandbox' || ctx.request.executionEnvironment !== 'sandbox' || !program.authority || step.inputRefs.length)) failure('Business operations require an enabled sandbox, current source inputs and a priced authority binding');
+        if (!['read', 'local'].includes(operation.effect) && (!this.options.allowSandbox || program.capability().environment !== 'sandbox' || ctx.request.executionEnvironment !== 'sandbox' || !program.authority || step.inputRefs.length)) failure('Business operations require an enabled sandbox, current source inputs and a priced authority binding');
         const parsed: unknown = JSON.parse(step.argumentsJson);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) failure('Action arguments must be an object');
         const input = parsed as Record<string, unknown>, checked = { ...input }, targets = new Set<string>();
@@ -151,13 +154,15 @@ export class AgentRuntime {
         }
         if (!step.inputRefs.length) program.validate(ctx, step.action, input);
         if (!step.inputRefs.length) program.validatePlanning?.(ctx, step.action, input, reads);
-        const authority = operation.effect === 'read' ? undefined : program.authority!(ctx, step.action, input);
+        const authority = ['read', 'local'].includes(operation.effect) ? undefined : program.authority!(ctx, step.action, input);
         const operationKey = actionOperationKey(claim.owner, authority?.operationScope ?? ctx.request.id, authority?.operationScope ? step.action : `${planId}:${step.id}`);
         if (this.store.intentByBusinessKey(claim.owner, operationKey)) failure('This business operation already has an intent; inspect its original result instead of submitting it again');
         const saved = { ...step, input, definitionDigest: digest(definition), intentId: randomUUID(), effect: operation.effect, ...('additionalEffects' in operation && operation.additionalEffects ? { additionalEffects: operation.additionalEffects } : {}), ...(authority ? { cost: authority.cost, ...(authority.operationScope ? { operationScope: authority.operationScope } : {}) } : {}), operationKey };
         preceding.set(step.id, saved); return saved;
       });
       if (!reads.objects.some(o => equal(o.ref, ctx.state.scope))) failure('Read the task scope before selecting actions');
+      if (ctx.state.paPayment && steps.some(s => !['read', 'local'].includes(s.effect))) failure('A PA payment handoff freezes the original booking; only provider readback may continue');
+      if (steps.some(s => s.effect === 'local') && steps.length !== 1) failure('Local handoff actions require their own frontier');
       if (steps.filter(s => s.effect !== 'read').length > 1) failure('Use a separate frontier for each sandbox business operation so its exact terms can be authorized');
       const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads };
       const plan = { ...body, digest: digest(body) };
@@ -216,6 +221,12 @@ export class AgentRuntime {
     if (intent.planDigest !== plan.digest || intent.effect !== step.effect || intent.businessOperationKey !== step.operationKey || !equal(intent.bindingRef,program.ref) || !equal(intent.additionalEffects??[],step.additionalEffects??[]) || intent.inputDigest!==digest({input:step.input,inputRefs:step.inputRefs}) || intent.privateDigest!==digest(intent.privateData)) failure('Action ledger differs from its pinned plan');
     if (['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state)) return true;
     if (intent.state !== 'ready') {
+      if (step.effect === 'local') {
+        // Local task publication has no remote effect and commits atomically
+        // with its intent. A lost lease can safely return it to model planning.
+        this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'action', 'Local task publication was interrupted; read the current task and propose it again.', digest({ action: step.action, input: step.input })); });
+        return true;
+      }
       if (step.effect !== 'read' && ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(intent.state)) {
         const resolved = await this.recoverStep(claim, program, plan, step, signal);
         if (!resolved) return false;
@@ -231,12 +242,13 @@ export class AgentRuntime {
     let attempt: ExecutionAttempt | undefined;
     try {
       const current = this.context(claim);
+      if (current.state.paPayment && !['read', 'local'].includes(step.effect)) failure('Only original provider readback is permitted after PA payment handoff');
       validatePlanningSnapshot(this.store.ontology, claim.owner, current.request, plan.ontologyPlanning, true);
       if (step.definitionDigest !== digest(program.definition(this.store.ontology, step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
       program.validatePlanning?.(current, step.action, input, plan.ontologyPlanning);
       validateAgentAuthority(program, current, plan, step);
-      if (step.effect !== 'read') {
+      if (!['read', 'local'].includes(step.effect)) {
         if (!this.options.allowSandbox) failure('Sandbox business operations are disabled');
         if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
           this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
@@ -244,7 +256,7 @@ export class AgentRuntime {
         }
       }
       if (!this.store.checkpoint(claim, () => {
-        if (step.effect !== 'read') {
+        if (!['read', 'local'].includes(step.effect)) {
           const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Sandbox authority expired before dispatch');
           this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
         }
@@ -260,19 +272,23 @@ export class AgentRuntime {
       if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
       const current = this.context(claim);
       validateAgentAuthority(program, current, plan, step);
-      if (step.effect !== 'read' && !agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) failure('Exact plan authority expired or was revoked before the provider write');
+      if (!['read', 'local'].includes(step.effect) && !agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) failure('Exact plan authority expired or was revoked before the provider write');
     };
     let response: AgentActionResult | undefined, result: ActionResult;
     try {
       response = await program.invoke(context, step.action, input, signal);
       result = { kind: 'confirmed', eventId: attempt!.id, sourceVersion: attempt!.ordinal, output: { source: response.value }, evidenceRefs: response.evidenceRefs };
     } catch (error) {
-      result = { kind: error instanceof AgentOperationRejected || step.effect === 'read' && (error instanceof DomainError || error instanceof z.ZodError) ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: error instanceof AgentOperationRejected ? error.evidenceRefs : [] };
+      result = { kind: error instanceof AgentOperationRejected || step.effect === 'local' || step.effect === 'read' && (error instanceof DomainError || error instanceof z.ZodError) ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: error instanceof AgentOperationRejected ? error.evidenceRefs : [] };
     }
     const record = (value: ActionResult) => this.store.recordObservation(claim.owner, intent.id, attempt!.id, value, value.kind !== 'unknown', { claim, apply: (job, accepted) => {
       if (value.kind === 'confirmed') {
         const object = program.project({ ...context, state: job.delegation!.agent! }, step.action, input, response!);
         accepted.acceptedOutput = { object }; job.delegation!.agent!.observations.push(object);
+        if (response!.paPayment) {
+          if (step.effect !== 'local' || plan.steps.length !== 1 || object.type !== 'PAPaymentRequest') failure('PA payment handoff requires its explicit local action');
+          recordPAPaymentHandoff(job, claim.owner, object.id, response!.paPayment.terms, response!.paPayment.mode);
+        }
         job.delegation!.events.push({ at: new Date().toISOString(), event: 'agent_observation_projected', evidence: digest(object) });
       } else this.feedback(job, 'action', value.message ?? 'No validated source observation', digest({ action: step.action, input }));
     } });
@@ -280,9 +296,10 @@ export class AgentRuntime {
     catch (error) {
       // A rejected projection rolls back the observation and graph atomically.
       // Record the rejection; no connector retry is implied.
-      record({ kind: step.effect === 'read' ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: response?.evidenceRefs ?? [] });
+      record({ kind: ['read', 'local'].includes(step.effect) ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: response?.evidenceRefs ?? [] });
     }
     signal.throwIfAborted();
+    if (response?.paPayment && !this.store.claimActive(claim)) { this.store.release(claim); return false; }
     if (step.effect !== 'read' && this.store.claimActive(claim) && this.store.intent(claim.owner, intent.id).state === 'effect_unknown') {
       this.store.finish(claim, job => { job.delegation!.nextAt = Date.now() + 1000; job.updatedAt = new Date().toISOString(); }); return false;
     }
@@ -311,6 +328,23 @@ export class AgentRuntime {
     return true;
   }
   private async recoverTerminal(claim: WorkClaim, program: AgentProgram, signal: AbortSignal) {
+    const payment = this.context(claim).state.paPayment;
+    if (payment && program.reconcilePAPayment) {
+      if ((payment.recoveryAttempts ?? 0) >= 3) { this.store.finish(claim, job => { job.delegation!.recoveryPending = false; }); return; }
+      let result: Awaited<ReturnType<NonNullable<AgentProgram['reconcilePAPayment']>>> | undefined;
+      try { result = await program.reconcilePAPayment(this.context(claim), signal); } catch { /* Preserve the original handoff for a later explicit readback. */ }
+      signal.throwIfAborted();
+      this.store.finish(claim, job => {
+        const current = job.delegation!.agent!.paPayment!;
+        current.recoveryAttempts = (current.recoveryAttempts ?? 0) + 1;
+        if (result) current.recovery = result;
+        job.delegation!.recoveryPending = !result && current.recoveryAttempts < 3;
+        job.delegation!.nextAt = Date.now() + 1000;
+        job.updatedAt = new Date().toISOString();
+        job.delegation!.events.push({ at: job.updatedAt, event: result ? 'terminal_pa_payment_readback' : 'terminal_pa_payment_readback_unknown', evidence: current.request.digest });
+      });
+      return;
+    }
     const states = [this.context(claim).state, ...(this.store.get(claim.owner, claim.job.id).delegation!.agentHistory ?? [])];
     for (const plan of states.flatMap(s => s.plans)) for (const step of plan.steps) {
       const intent = this.store.intent(claim.owner, step.intentId);

@@ -23,7 +23,7 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
   if (digest(body) !== expected || plan.requestId !== ctx.request.id || plan.requestRevision !== ctx.request.revision || plan.programDigest !== program.configurationDigest || digest(plan.programRef) !== digest(program.ref)) throw new DomainError('CONFLICT', 'Pinned agent plan or request changed');
   const op = agentOperation(program.definition(ctx.graph, step.action));
   if (op.effect !== step.effect || digest('additionalEffects' in op ? op.additionalEffects ?? [] : []) !== digest(step.additionalEffects ?? [])) throw new DomainError('CONFLICT', 'Declared business effects changed');
-  if (step.effect === 'read') return;
+  if (step.effect === 'read' || step.effect === 'local') return;
   if (!program.authority || ctx.request.executionEnvironment !== 'sandbox' || program.capability().environment !== 'sandbox' || !('environment' in op) || op.environment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Real business operations are unavailable');
   program.validate(ctx, step.action, step.input);
   const current = program.authority(ctx, step.action, step.input);

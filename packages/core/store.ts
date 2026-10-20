@@ -328,7 +328,7 @@ export class JobStore {
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?

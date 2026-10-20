@@ -17,7 +17,10 @@ export interface AgentActionContext extends AgentProgramContext {
    * each provider write in a multi-request atomic business operation. */
   assertDispatchAllowed?: () => void;
 }
-export interface AgentActionResult { value: unknown; evidenceRefs: string[] }
+export interface AgentActionResult {
+  value: unknown; evidenceRefs: string[];
+  paPayment?: { mode: 'request' | 'wait'; terms: import('./pa-payment.js').PAPaymentTerms };
+}
 export interface AgentActionAuthority { cost: { minor: string; currency: string; payeeId: string }; operationScope?: string }
 /** A connector failure with a deliberately safe, credential-free diagnostic. */
 export class AgentReadError extends Error {}
@@ -47,5 +50,8 @@ export interface AgentProgram {
   /** Read the original operation only. It must never replay a business write. */
   recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;
   project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult): ObjectRef;
+  /** Terminal-task audit only. Read the original provider references; never pay,
+   * change the booking, project completion, or reopen a canceled task. */
+  reconcilePAPayment?(ctx: AgentProgramContext, signal: AbortSignal): Promise<NonNullable<import('./pa-payment.js').PAPaymentState['recovery']>>;
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery;
 }

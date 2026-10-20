@@ -12,7 +12,6 @@
     "setup:auth0": "node scripts/setup-auth0.mjs",
     "verify:member-agent": "node --env-file=data/auth0-live/agent.env --import tsx examples/member-oauth-agent.ts",
     "verify:agent-onboarding": "node --env-file=data/agent-onboarding-live/connector.env --import tsx examples/agent-onboarding-live.ts",
-    "verify:stripe-test": "node --env-file-if-exists=.env --import tsx examples/verify-stripe-test.ts",
     "verify:shopify-readonly": "node --import tsx examples/verify-shopify-readonly.ts",
     "members": "node --env-file-if-exists=.env scripts/members.mjs",
     "dev": "node --env-file=.env scripts/run-local.mjs",
@@ -28,6 +27,8 @@
     "start:gateway": "node --env-file-if-exists=.env dist/apps/gateway/main.js",
     "start:worker": "node --env-file-if-exists=.env dist/apps/worker/main.js",
     "setup:pa": "node scripts/setup-pa.mjs",
+    "setup:booking-sandbox": "node scripts/setup-booking-sandbox.mjs",
+    "dev:booking-sandbox": "node --env-file=data/booking-sandbox/provider.env --import tsx apps/booking-sandbox/main.ts",
     "setup:commerce-sandbox": "node scripts/setup-commerce-sandbox.mjs"
   },
   "dependencies": {

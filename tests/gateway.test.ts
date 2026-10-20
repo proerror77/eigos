@@ -121,7 +121,7 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 11);
+    assert.equal(catalog.tools.length, 12);
     for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });
     assert.equal(job.state, 'input-required');

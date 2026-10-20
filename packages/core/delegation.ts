@@ -34,7 +34,7 @@ export interface Delegation {
   groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
   plan?: ExecutionPlan;
   agent?: import('../ontology/agent-actions.js').AgentExecutionState;
   agentHistory?: import('../ontology/agent-actions.js').AgentExecutionState[];
