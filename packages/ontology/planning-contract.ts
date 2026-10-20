@@ -40,6 +40,6 @@ export function templatePlanning(request: ServiceRequest): PlanningSnapshot {
 }
 export const reasoningTurnSchema = z.object({
   kind: z.enum(['read', 'final']),
-  calls: z.array(z.object({ tool: z.enum(['describe_ontology', 'query_ontology', 'evaluate_ontology', 'assess_conditions', 'propose_action']), argumentsJson: z.string().max(24000) }).strict()).max(4),
+  calls: z.array(z.object({ tool: z.enum(['describe_ontology', 'query_ontology', 'evaluate_ontology', 'assess_conditions', 'propose_action']), argumentsJson: z.string().max(24000) }).strict()).max(8),
   finalJson: z.string().max(32000),
 }).strict();

@@ -26,6 +26,19 @@ function observe(f: ReturnType<typeof fixture>, type = 'DeliveryQuote') {
   f.session.call('describe_ontology', { search: type, limit: 1 });
   return f.session.call('query_ontology', { type }) as ReturnType<OntologyObjectStore['query']>;
 }
+test('Planning descriptions expose full action schemas on demand without repeating every registered input contract', () => {
+  const f = fixture();
+  try {
+    const summary = f.session.call('describe_ontology', { search: 'ServiceRequest' }) as any;
+    const action = summary.actions.find((a: any) => a.read || a.operation);
+    assert(action); assert.equal((action.read ?? action.operation).inputSchema, undefined);
+    const exact = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [action.id] }) as any;
+    assert.equal(exact.actions.length, 1); assert((exact.actions[0].read ?? exact.actions[0].operation).inputSchema);
+    const full = f.session.call('describe_ontology', { search: 'ServiceRequest', includeSchemas: true }) as any;
+    assert(JSON.stringify(summary).length < JSON.stringify(full).length * 0.6);
+    assert.equal(f.session.receipts().length, 3);
+  } finally { f.db.close(); }
+});
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
 
 test('N2 grounds typed conditions without weakening source quantities, services, budgets or prior conditions', () => {
@@ -128,7 +141,8 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
   const model = { runStructured: async (prompt: string) => {
     prompts.push(prompt);
     const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request: ServiceRequest; conversation: unknown[]; finalSchema: { properties: Record<string, unknown> } };
-    const request = packet.request;
+    const parts = prompt.split('\n\n').flatMap(part => { try { return [JSON.parse(part)]; } catch { return []; } });
+    const request = parts.find(p => p?.originalGoal) ?? parts.find(p => p?.request)?.request;
     const output = !packet.conversation.length ? { kind: 'read', calls: [
       { tool: 'describe_ontology', argumentsJson: JSON.stringify({ search: 'ServiceRequest', limit: 1 }) },
       { tool: 'query_ontology', argumentsJson: JSON.stringify({ type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: request.id }] }) },

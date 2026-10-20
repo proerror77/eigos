@@ -84,7 +84,7 @@ export class AgentRuntime {
       this.pause(claim, true, '本次查询已达到有限执行预算，请缩小查询范围后继续。已有观察记录已保留。'); return;
     }
     const access = this.access(claim, signal);
-    const response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits }, signal, access);
+    const response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
     signal.throwIfAborted(); access.record(response.evidence);
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
@@ -185,77 +185,100 @@ export class AgentRuntime {
       const { definitionDigest: _definition, input, intentId: _intent, effect: _effect, additionalEffects: _additional, cost: _cost, operationScope: _scope, operationKey: _key, ...selected } = step;
       return !equal(selected, plan.modelDecision.steps[i]) || !equal(input, JSON.parse(step.argumentsJson));
     })) failure('Executable steps differ from the recorded model decision');
-    for (const step of plan.steps) {
-      signal.throwIfAborted(); if (!this.store.claimActive(claim)) return;
-      if (!this.withinTaskBudget(claim)) return;
-      const intent = this.store.intent(claim.owner, step.intentId);
-      if (intent.planDigest !== plan.digest || intent.effect !== step.effect || intent.businessOperationKey !== step.operationKey || !equal(intent.bindingRef,program.ref) || !equal(intent.additionalEffects??[],step.additionalEffects??[]) || intent.inputDigest!==digest({input:step.input,inputRefs:step.inputRefs}) || intent.privateDigest!==digest(intent.privateData)) failure('Action ledger differs from its pinned plan');
-      if (['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state)) continue;
-      if (intent.state !== 'ready') {
-        if (step.effect !== 'read' && ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(intent.state)) {
-          const resolved = await this.recoverStep(claim, program, plan, step, signal);
-          if (!resolved) return;
-        } else this.store.checkpoint(claim, job => this.feedback(job, 'action', 'A previous action was interrupted; preserve its original intent and inspect its outcome before continuing.', digest({ action: step.action, input: step.input })));
-        continue;
+    if (plan.steps.every(step => step.effect === 'read')) {
+      // Only this model-selected, bounded graph may run concurrently. A consumer
+      // starts as soon as its own dependencies settle, without a wave barrier.
+      const pending = new Map<string, Promise<boolean>>();
+      for (const step of plan.steps) {
+        const dependencies = step.dependsOn.map(id => pending.get(id) ?? failure('Unknown read dependency'));
+        pending.set(step.id, (async () => {
+          if ((await Promise.all(dependencies)).some(continued => !continued)) return false;
+          return this.executeStep(claim, program, plan, step, signal);
+        })());
       }
-      const dependencies = step.dependsOn.map(id => this.store.intent(claim.owner, plan.steps.find(s => s.id === id)!.intentId));
-      if (dependencies.some(i => i.state !== 'effect_confirmed')) {
-        this.store.checkpoint(claim, () => { intent.state = 'canceled_before_dispatch'; this.store.saveIntent(claim.owner, intent); }); continue;
-      }
-      const input = structuredClone(step.input);
-      for (const link of step.inputRefs) input[link.targetKey] = objectRefSchema.parse(dependencies.find(i => i.stepId === link.stepId)?.acceptedOutput?.object);
-      let attempt: ExecutionAttempt | undefined;
-      try {
-        const current = this.context(claim);
-        validatePlanningSnapshot(this.store.ontology, claim.owner, current.request, plan.ontologyPlanning, true);
-        if (step.definitionDigest !== digest(program.definition(this.store.ontology, step.action))) failure('Action definition changed');
-        program.validate(current, step.action, input);
-        program.validatePlanning?.(current, step.action, input, plan.ontologyPlanning);
-        validateAgentAuthority(program, current, plan, step);
-        if (step.effect !== 'read') {
-          if (!this.options.allowSandbox) failure('Sandbox business operations are disabled');
-          if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
-            this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
-            return;
-          }
-        }
-        if (!this.store.checkpoint(claim, () => {
-          if (step.effect !== 'read') {
-            const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Sandbox authority expired before dispatch');
-            this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
-          }
-          attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input));
-        })) return;
-      } catch (error) {
-        this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); continue;
-      }
-      const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt };
-      let response: AgentActionResult | undefined, result: ActionResult;
-      try {
-        response = await program.invoke(context, step.action, input, signal);
-        result = { kind: 'confirmed', eventId: attempt!.id, sourceVersion: attempt!.ordinal, output: { source: response.value }, evidenceRefs: response.evidenceRefs };
-      } catch (error) {
-        result = { kind: error instanceof AgentOperationRejected || step.effect === 'read' && (error instanceof DomainError || error instanceof z.ZodError) ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: error instanceof AgentOperationRejected ? error.evidenceRefs : [] };
-      }
-      const record = (value: ActionResult) => this.store.recordObservation(claim.owner, intent.id, attempt!.id, value, value.kind !== 'unknown', { claim, apply: (job, accepted) => {
-        if (value.kind === 'confirmed') {
-          const object = program.project({ ...context, state: job.delegation!.agent! }, step.action, input, response!);
-          accepted.acceptedOutput = { object }; job.delegation!.agent!.observations.push(object);
-          job.delegation!.events.push({ at: new Date().toISOString(), event: 'agent_observation_projected', evidence: digest(object) });
-        } else this.feedback(job, 'action', value.message ?? 'No validated source observation', digest({ action: step.action, input }));
-      } });
-      try { record(result); }
-      catch (error) {
-        // A rejected projection rolls back the observation and graph atomically.
-        // Record the rejection; no connector retry is implied.
-        record({ kind: step.effect === 'read' ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: response?.evidenceRefs ?? [] });
-      }
-      signal.throwIfAborted();
-      if (step.effect !== 'read' && this.store.claimActive(claim) && this.store.intent(claim.owner, intent.id).state === 'effect_unknown') {
-        this.store.finish(claim, job => { job.delegation!.nextAt = Date.now() + 1000; job.updatedAt = new Date().toISOString(); }); return;
-      }
+      // Drain every dispatched read before releasing the claim. Late results
+      // retain the store's existing lease, cancellation and audit protections.
+      const settled = await Promise.allSettled(pending.values());
+      const rejected = settled.find((result): result is PromiseRejectedResult => result.status === 'rejected');
+      if (rejected) throw rejected.reason;
+      if (settled.some(result => result.status === 'fulfilled' && !result.value)) return;
+    } else {
+      // A business-effect frontier remains serial and retains exact-plan grants.
+      for (const step of plan.steps) if (!await this.executeStep(claim, program, plan, step, signal)) return;
     }
     this.store.finish(claim, job => { delete job.delegation!.agent!.pendingPlanId; job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0; job.updatedAt = new Date().toISOString(); });
+  }
+
+  private async executeStep(claim: WorkClaim, program: AgentProgram, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], signal: AbortSignal): Promise<boolean> {
+    signal.throwIfAborted(); if (!this.store.claimActive(claim)) return false;
+    if (!this.withinTaskBudget(claim)) return false;
+    const intent = this.store.intent(claim.owner, step.intentId);
+    if (intent.planDigest !== plan.digest || intent.effect !== step.effect || intent.businessOperationKey !== step.operationKey || !equal(intent.bindingRef,program.ref) || !equal(intent.additionalEffects??[],step.additionalEffects??[]) || intent.inputDigest!==digest({input:step.input,inputRefs:step.inputRefs}) || intent.privateDigest!==digest(intent.privateData)) failure('Action ledger differs from its pinned plan');
+    if (['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state)) return true;
+    if (intent.state !== 'ready') {
+      if (step.effect !== 'read' && ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(intent.state)) {
+        const resolved = await this.recoverStep(claim, program, plan, step, signal);
+        if (!resolved) return false;
+      } else this.store.checkpoint(claim, job => this.feedback(job, 'action', 'A previous action was interrupted; preserve its original intent and inspect its outcome before continuing.', digest({ action: step.action, input: step.input })));
+      return true;
+    }
+    const dependencies = step.dependsOn.map(id => this.store.intent(claim.owner, plan.steps.find(s => s.id === id)!.intentId));
+    if (dependencies.some(i => i.state !== 'effect_confirmed')) {
+      this.store.checkpoint(claim, () => { intent.state = 'canceled_before_dispatch'; this.store.saveIntent(claim.owner, intent); }); return true;
+    }
+    const input = structuredClone(step.input);
+    for (const link of step.inputRefs) input[link.targetKey] = objectRefSchema.parse(dependencies.find(i => i.stepId === link.stepId)?.acceptedOutput?.object);
+    let attempt: ExecutionAttempt | undefined;
+    try {
+      const current = this.context(claim);
+      validatePlanningSnapshot(this.store.ontology, claim.owner, current.request, plan.ontologyPlanning, true);
+      if (step.definitionDigest !== digest(program.definition(this.store.ontology, step.action))) failure('Action definition changed');
+      program.validate(current, step.action, input);
+      program.validatePlanning?.(current, step.action, input, plan.ontologyPlanning);
+      validateAgentAuthority(program, current, plan, step);
+      if (step.effect !== 'read') {
+        if (!this.options.allowSandbox) failure('Sandbox business operations are disabled');
+        if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
+          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
+          return false;
+        }
+      }
+      if (!this.store.checkpoint(claim, () => {
+        if (step.effect !== 'read') {
+          const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Sandbox authority expired before dispatch');
+          this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
+        }
+        attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input));
+      })) return false;
+    } catch (error) {
+      this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); return true;
+    }
+    const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt };
+    let response: AgentActionResult | undefined, result: ActionResult;
+    try {
+      response = await program.invoke(context, step.action, input, signal);
+      result = { kind: 'confirmed', eventId: attempt!.id, sourceVersion: attempt!.ordinal, output: { source: response.value }, evidenceRefs: response.evidenceRefs };
+    } catch (error) {
+      result = { kind: error instanceof AgentOperationRejected || step.effect === 'read' && (error instanceof DomainError || error instanceof z.ZodError) ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: error instanceof AgentOperationRejected ? error.evidenceRefs : [] };
+    }
+    const record = (value: ActionResult) => this.store.recordObservation(claim.owner, intent.id, attempt!.id, value, value.kind !== 'unknown', { claim, apply: (job, accepted) => {
+      if (value.kind === 'confirmed') {
+        const object = program.project({ ...context, state: job.delegation!.agent! }, step.action, input, response!);
+        accepted.acceptedOutput = { object }; job.delegation!.agent!.observations.push(object);
+        job.delegation!.events.push({ at: new Date().toISOString(), event: 'agent_observation_projected', evidence: digest(object) });
+      } else this.feedback(job, 'action', value.message ?? 'No validated source observation', digest({ action: step.action, input }));
+    } });
+    try { record(result); }
+    catch (error) {
+      // A rejected projection rolls back the observation and graph atomically.
+      // Record the rejection; no connector retry is implied.
+      record({ kind: step.effect === 'read' ? 'rejected' : 'unknown', eventId: attempt!.id, sourceVersion: attempt!.ordinal, message: errorMessage(error), evidenceRefs: response?.evidenceRefs ?? [] });
+    }
+    signal.throwIfAborted();
+    if (step.effect !== 'read' && this.store.claimActive(claim) && this.store.intent(claim.owner, intent.id).state === 'effect_unknown') {
+      this.store.finish(claim, job => { job.delegation!.nextAt = Date.now() + 1000; job.updatedAt = new Date().toISOString(); }); return false;
+    }
+    return true;
   }
 
   private async recoverStep(claim: WorkClaim, program: AgentProgram, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], signal: AbortSignal): Promise<boolean> {

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { moneySchema, requirementSchema } from './execution.js';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
+import { stockRegulationSchema, shippingLegSchema, shippingRegimeSchema } from './shipping-policy.js';
 
 const text = z.string().trim().min(1).max(500), id = z.string().min(1).max(200), sha = z.string().regex(/^[a-f0-9]{64}$/);
 const instant = z.iso.datetime({ offset: true }), country = z.string().regex(/^[A-Z]{2}$/), count = z.number().int().min(1).max(1000);
@@ -25,6 +26,7 @@ const group = z.strictObject({
   id, variantId: id, quantity: count, warehouseId: id, dispatchCountry: country,
   destinationDigest: sha, carrier: text, service: text, transport: z.enum(['road', 'air', 'sea', 'rail', 'mixed']),
   transitCountries: z.array(country).max(10),
+  regulation: stockRegulationSchema.optional(), legs: z.array(shippingLegSchema).min(1).max(12).optional(),
 });
 const promise = z.strictObject({
   id, issuer: id, kind: z.enum(['estimate', 'commitment', 'unknown']), milestone: z.enum(['dispatch', 'arrival']),
@@ -56,13 +58,13 @@ export const commerceEntitySchemas = {
   }),
   InventoryObservation: z.strictObject({
     merchantId: id, variantId: id, requestedQuantity: count,
-    locations: z.array(z.strictObject({ warehouseId: id, dispatchCountry: country, availability: z.enum(['confirmed', 'unavailable', 'unknown']), confirmedQuantity: z.number().int().nonnegative().max(1000).optional(), availableQuantity: z.number().int().nonnegative().optional(), quantityState: z.enum(['sellable', 'on_hand', 'unknown']) })).max(20),
+    locations: z.array(z.strictObject({ warehouseId: id, dispatchCountry: country, availability: z.enum(['confirmed', 'unavailable', 'unknown']), confirmedQuantity: z.number().int().nonnegative().max(1000).optional(), availableQuantity: z.number().int().nonnegative().optional(), quantityState: z.enum(['sellable', 'on_hand', 'unknown']), regulation: stockRegulationSchema.optional() })).max(20),
     reserved: z.literal(false),
   }),
   InventoryReservation: z.strictObject({ merchantId: id, variantId: id, warehouseId: id, quantity: count, reservationId: id, state: z.enum(['held', 'released', 'expired', 'unknown']), expiresAt: instant }),
   FulfillmentPlan: z.strictObject({
     merchantId: id, variantId: id, quantity: count, contextKey: id, addressId: id, addressRevision: id,
-    destination: postalAddressSchema, destinationDigest: sha,
+    destination: postalAddressSchema, destinationDigest: sha, destinationCustomsTerritory: id.optional(),
     options: z.array(z.strictObject({ id, status: z.enum(['available', 'unavailable', 'unknown']), groups: z.array(group).min(1).max(20), promises: z.array(promise).max(20), shippingPrice: moneySchema, incoterm: z.enum(['domestic', 'DDP', 'DAP', 'other', 'unknown']), namedPlace: text, reason: text.optional() })).max(12),
   }),
   CustomsAssessment: z.strictObject({
@@ -74,6 +76,7 @@ export const commerceEntitySchemas = {
     importer: z.enum(['buyer', 'seller', 'unknown']), dutyPayer: z.enum(['buyer', 'seller', 'unknown']),
     duty: moneySchema.optional(), tax: moneySchema.optional(), clearanceFee: moneySchema.optional(),
     sourceRuleVersion: id, applicableAt: instant, syntheticRules: z.literal(true),
+    shippingRegime: shippingRegimeSchema.optional(), routeDigest: sha.optional(),
   }),
   LandedCostQuote: z.strictObject({
     merchantId: id, variantId: id, quantity: count, unitPrice: moneySchema,

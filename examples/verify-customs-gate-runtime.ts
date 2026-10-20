@@ -14,6 +14,7 @@ import type { Job } from '../packages/core/domain.js';
 import type { ActionIntent, ExecutionAttempt } from '../packages/ontology/actions.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { businessModel } from '../packages/ontology/business-model.js';
+import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { CUSTOMS_POLICY_DIGEST, CUSTOMS_RULE_REF, CUSTOMS_REFERENCES, CUSTOMS_REFERENCE_REFS } from '../packages/ontology/customs-policy.js';
 import { checkedCommerceObservation, sourcePayloadDigest } from '../packages/ontology/commerce-journey-functions.js';
 import { sandboxResponseSchema } from '../packages/capabilities/commerce-sandbox/connector.js';
@@ -38,7 +39,7 @@ try {
   await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3430/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
   const response = await client.callTool({ name: 'get_task', arguments: { taskId: session.taskId } }); assert(!response.isError);
   const job = (response.structuredContent as { result: Job }).result, delegation = job.delegation!, state = delegation.agent!, owner = JSON.stringify(['local-development', 'local', 'developer']);
-  assert.equal(job.state, 'completed'); assert.equal(delegation.backendVersion, 'ontology-execution-v10'); assert(delegation.acceptance?.accepted); assert.equal(delegation.request.executionEnvironment, 'sandbox');
+  assert.equal(job.state, 'completed'); assert.equal(delegation.backendVersion, BACKEND_VERSION); assert(delegation.acceptance?.accepted); assert.equal(delegation.request.executionEnvironment, 'sandbox');
   assert.deepEqual(state.programRef, program.ref); assert.equal(state.programDigest, program.configurationDigest); assert.equal(job.messages[0]!.id, session.requestId);
   assert.equal(job.messages.filter(m => m.role === 'user').length, 1); assert.equal(delegation.agentHistory?.length ?? 0, 0);
   assert.equal(digest(received.artifacts[0].parts[0].data), digest(job.artifact!.data));
@@ -61,7 +62,8 @@ try {
       const { input, definitionDigest, intentId: _intent, operationKey: _key, effect: _effect, additionalEffects: _extra, cost: _cost, operationScope: _scope, ...choice } = step;
       assert.deepEqual(choice, plan.modelDecision.steps[n]); assert.deepEqual(input, JSON.parse(step.argumentsJson)); assert.equal(definitionDigest, digest(businessModel.action(step.action)));
       if (step.action !== 'QuoteCommerceLandedCost' || intents.find(i => i.id === step.intentId)?.state !== 'effect_confirmed') continue;
-      const call = { function: 'customsGateStatus', object: input.customs }, receipt = plan.ontologyPlanning.reads.find(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest(call)); assert(receipt);
+      const gateFunction = ['shippingGateStatus', 'customsGateStatus'].find(name => plan.ontologyPlanning.reads.some(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: name, object: input.customs }))); assert(gateFunction);
+      const call = { function: gateFunction, object: input.customs }, receipt = plan.ontologyPlanning.reads.find(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest(call)); assert(receipt);
       const evaluated = graphAt(receipt.at).evaluate(owner, call); assert.equal(digest(evaluated), receipt.outputDigest); assert.equal((evaluated.value as any).status, 'pass_sandbox'); assert.equal((evaluated.value as any).legalApproval, false);
       for (const ref of [CUSTOMS_RULE_REF, ...CUSTOMS_REFERENCE_REFS]) assert(plan.ontologyPlanning.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok' && r.at <= receipt.at && (r.objects.some(o => digest(o.ref) === digest(ref)) || r.inputDigest === digest({ object: ref }) || r.inputDigest === digest({ from: { type: 'ServiceRequest', id: job.id }, link: ref.type === 'CustomsRuleSet' ? 'customsRuleSets' : 'regulatoryReferences' }))), 'Missing actual model policy/reference query');
       gates.push({ planId: plan.id, modelRunId: plan.modelRunId, receipt, evaluated });

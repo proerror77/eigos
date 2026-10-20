@@ -57,7 +57,7 @@ test('Authenticated MCP exposes request-bound customs references and the exact s
     while (['working', 'submitted'].includes(job.state) && Date.now() < deadline) { await pause(100); job = await call('get_task', { taskId: job.id }) as Job; }
     assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback));
     const from = { type: 'ServiceRequest', id: job.id }, books = await call('query_ontology', { from, link: 'customsRuleSets' }), references = await call('query_ontology', { from, link: 'regulatoryReferences' });
-    assert.equal(books.items.length, 1); assert.equal(references.items.length, 4);
+    assert.equal(books.items.length, 1); assert.equal(references.items.length, 6);
     const customs = job.delegation!.agent!.observations.find(r => r.type === 'CustomsAssessment')!, gate = await call('evaluate_ontology', { function: 'customsGateStatus', object: customs });
     assert.equal(gate.value.status, 'pass_sandbox'); assert.equal(gate.value.legalApproval, false); assert.equal(gate.value.policyDigest, (job.artifact!.data.result as any).customsPolicy.policyDigest);
     assert.equal(t.provider.counts().CreateCommerceCart, undefined); assert.equal(t.provider.counts().SubmitCommerceOrder, undefined);

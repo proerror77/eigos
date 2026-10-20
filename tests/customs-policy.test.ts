@@ -7,7 +7,7 @@ import { customsGateStatus, productRegulatoryBoundary } from '../packages/ontolo
 import type { CommerceSandboxScenario } from '../packages/capabilities/commerce-sandbox/provider.js';
 
 test('Official references remain reference-only; regulated and unregistered classifications cannot enter purchasing', () => {
-  assert.equal(CUSTOMS_REFERENCES.length, 4);
+  assert.equal(CUSTOMS_REFERENCES.length, 6);
   assert(CUSTOMS_REFERENCES.every(r => r.use === 'reference_only' && r.capture === 'official_document_body' && r.contentSha256.length === 64));
   assert(Object.isFrozen(CUSTOMS_REFERENCES) && CUSTOMS_REFERENCES.every(r => Object.isFrozen(r.topics)));
   assert.equal(productRegulatoryBoundary({ title: '受管制测试对象', category: 'tobacco', hsCode: '240210' }).result, 'blocked');
@@ -22,7 +22,7 @@ test('Agent reads request-scoped policy and source references before a successfu
     const state = done.delegation!.agent!, customs = state.observations.find(r => r.type === 'CustomsAssessment')!;
     const result = customsGateStatus(t.store.ontology, owner, customs); assert.equal(result.status, 'pass_sandbox'); assert.equal(result.legalApproval, false); assert.equal(result.policyDigest, CUSTOMS_POLICY_DIGEST);
     assert.deepEqual(new Set(result.references.map(r => r.id)), new Set(CUSTOMS_REFERENCE_REFS.map(r => r.id)));
-    const output = done.artifact!.data.result as any; assert.equal(output.customsPolicy.legalApproval, false); assert.equal(output.customsPolicy.coverage, 'synthetic_commerce_only'); assert.equal(output.customsPolicy.references.length, 4);
+    const output = done.artifact!.data.result as any; assert.equal(output.customsPolicy.legalApproval, false); assert.equal(output.customsPolicy.coverage, 'synthetic_commerce_only'); assert.equal(output.customsPolicy.references.length, CUSTOMS_REFERENCES.length);
     const book = t.store.ontology.read(owner, CUSTOMS_RULE_REF);
     seedCustomsPolicy(t.store.ontology, owner, state.scope, { type: 'ServiceRequest', id: done.id });
     assert.equal(t.store.ontology.read(owner, CUSTOMS_RULE_REF).revision, book.revision, 'Rebinding a scope must not rewrite immutable source snapshots');

@@ -23,7 +23,9 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前代码运行契约为 `ontology-execution-v10`、业务模型为 `eigos.business@9`。Shopify 目录读取与显式启用的交易沙箱使用 Agent 动作循环；其他能力保留现有执行契约。历史任务及对象不自动迁移或重新执行，常驻实例版本以健康检查和发布文件回读为准。
+仓库当前代码运行契约为 `ontology-execution-v11`、业务模型为 `eigos.business@10`。Shopify 目录读取与显式启用的交易沙箱使用 Agent 动作循环；其他能力保留现有执行契约。历史任务及对象不自动迁移或重新执行，常驻实例版本以健康检查和发布文件回读为准。
+
+模型上下文精简、按依赖并发读取及国内／跨关境运输关卡见 [实现与性能对比](docs/context-and-shipping-2026-10-20.md)。
 
 交易沙箱从未知商家、国家和地址开始，Agent 查询授权 PA 上下文、商家、库存、运输、清关及完整费用，再按准确计划取得沙箱许可。购物车、订单、支付和实际交付各有独立证据；所有新业务来源均为合成数据，真实订单和付款仍禁止。实现、启用方式与验证范围见 [Agent 交易履约沙箱](docs/commerce-agent-sandbox-2026-10-19.md)。
 
