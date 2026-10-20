@@ -17,12 +17,14 @@ const businessPath = process.env.EIGOS_SOURCE_DATABASE_PATH;
 let sourceDb: DatabaseSync | undefined, access: PersonalSourceAccess | undefined;
 const keyFile = process.env.EIGOS_MEMBER_SOURCE_KEY_FILE, grantJson = process.env.EIGOS_MEMBER_SOURCE_GRANT;
 let assertAccess: (() => void) | undefined, ownedToken: (() => string) | undefined, connectionDigest: string | undefined;
+let accountIdentity: ((providerUserId: string) => string) | undefined;
 if (keyFile || grantJson) {
   if (!keyFile || !grantJson || !businessPath || !isAbsolute(businessPath) || connectionFile || expectedDigest) throw new Error('Incomplete or mixed source context');
   const grant = sourceGrantSchema.parse(JSON.parse(grantJson));
   sourceDb = new DatabaseSync(businessPath, { readOnly: true }); sourceDb.exec('PRAGMA busy_timeout=5000');
   const vault = new MemberSourceVault(sourceDb, keyFile, directory);
   assertAccess = () => vault.assert(grant); ownedToken = () => vault.token(grant); connectionDigest = digest(grant); assertAccess();
+  accountIdentity = providerUserId => vault.accountIdentity(grant, providerUserId);
   process.on('exit', () => sourceDb?.close());
 } else if (connectionFile || expectedDigest || businessPath) {
   if (!connectionFile || !expectedDigest || !businessPath || !isAbsolute(businessPath)) throw new Error('Incomplete member source context');
@@ -35,7 +37,7 @@ if (keyFile || grantJson) {
   process.on('exit', () => sourceDb?.close());
 }
 const calls: string[] = [];
-const reader = new LocalPaotuiReader(directory, command => calls.push(command), assertAccess, ownedToken);
+const reader = new LocalPaotuiReader(directory, command => calls.push(command), assertAccess, ownedToken, accountIdentity);
 const server = createPaotuiOntologyServer(reader, {
   evidenceKind: 'live_readonly', allowedActions: assertAccess ? ['addresses', 'preview'] : undefined, sourceConnectionDigest: connectionDigest, sourceCalls: () => calls.splice(0),
   record: audit ? receipt => {

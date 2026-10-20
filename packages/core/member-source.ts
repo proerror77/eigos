@@ -12,7 +12,7 @@ export const SOURCE_SCOPES = ['sources:read', 'sources:write'] as const;
 export class SourceAuthorizationRequired extends ConnectionAuthorizationRequired {
   constructor() { super('Check your own Meituan source connection. Connect or refresh it through the private channel if needed, then resume this task. Never put credentials in task messages.'); }
 }
-export const sourceGrantSchema = z.object({ provider: z.literal(SOURCE_PROVIDER), owner: z.string().max(2000), memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(400), connectionId: z.uuid(), revision: z.number().int().positive(), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/), selectionContext: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
+export const sourceGrantSchema = z.object({ provider: z.literal(SOURCE_PROVIDER), owner: z.string().max(2000), memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(400), connectionId: z.uuid(), revision: z.number().int().positive(), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/), selectionContext: z.string().regex(/^[a-f0-9]{64}$/).optional(), authorizationEpoch: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 export type SourceGrant = z.infer<typeof sourceGrantSchema>;
 export type SourceActor = Pick<SourceGrant, 'owner' | 'memberId' | 'installationId' | 'clientId'>;
 type CredentialRow = SourceGrant & { state: 'connected' | 'revoked'; expiresAt: string; fingerprint: string; ciphertext: string; iv: string; tag: string };
@@ -124,13 +124,14 @@ export class MemberSourceVault {
         const collision = this.db.prepare('SELECT owner FROM member_source_fingerprints WHERE fingerprint=?').get(fingerprint);
         if (collision && collision.owner !== actor.owner) throw unavailable();
         this.db.prepare('INSERT OR IGNORE INTO member_source_fingerprints VALUES(?,?)').run(fingerprint, actor.owner);
-        // Renewing the same credential preserves only user-choice provenance.
-        // Every read still binds the new full grant revision. Revocation, a
-        // different credential or installation starts a separate choice context.
-        const continuous = old?.state === 'connected' && old.fingerprint === fingerprint && old.memberId === actor.memberId
+        // This epoch permits comparing provider-authenticated account identities;
+        // it is not itself proof that two different tokens belong to one account.
+        const sameAuthorization = old?.state === 'connected' && old.memberId === actor.memberId
           && old.installationId === actor.installationId && old.clientId === actor.clientId && old.configurationDigest === this.configurationDigest;
+        const continuous = sameAuthorization && old.fingerprint === fingerprint;
         const selectionContext = continuous ? old.selectionContext ?? digest(rowGrant(old)) : digest({ owner: actor.owner, epoch: randomUUID(), purpose: 'saved-address-choice' });
-        const grant: SourceGrant = { ...actor, provider: SOURCE_PROVIDER, connectionId: old?.connectionId ?? randomUUID(), revision: (old?.revision ?? 0) + 1, configurationDigest: this.configurationDigest, selectionContext };
+        const authorizationEpoch = sameAuthorization ? old.authorizationEpoch ?? old.selectionContext ?? digest(rowGrant(old)) : selectionContext;
+        const grant: SourceGrant = { ...actor, provider: SOURCE_PROVIDER, connectionId: old?.connectionId ?? randomUUID(), revision: (old?.revision ?? 0) + 1, configurationDigest: this.configurationDigest, selectionContext, authorizationEpoch };
         const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
         cipher.setAAD(Buffer.from(digest({ grant, expiresAt: args.expiresAt, fingerprint })));
         const ciphertext = Buffer.concat([cipher.update(args.token, 'utf8'), cipher.final()]);
@@ -173,5 +174,13 @@ export class MemberSourceVault {
       decipher.setAAD(Buffer.from(digest({ grant, expiresAt: r.expiresAt, fingerprint: r.fingerprint }))); decipher.setAuthTag(Buffer.from(r.tag, 'base64'));
       return Buffer.concat([decipher.update(Buffer.from(r.ciphertext, 'base64')), decipher.final()]).toString('utf8');
     } catch { throw unavailable(); } finally { key.fill(0); }
+  }
+  /** Called only on a trusted provider response, never on a caller/model claim. */
+  accountIdentity(grant: SourceGrant, providerUserId: string): string {
+    this.assert(grant);
+    if (!/^[1-9]\d{0,19}$/.test(providerUserId)) throw unavailable();
+    const key = this.key();
+    try { return createHmac('sha256', key).update(`provider-account@1\0${SOURCE_PROVIDER}\0${grant.owner}\0${providerUserId}`).digest('hex'); }
+    finally { key.fill(0); }
   }
 }

@@ -18,7 +18,7 @@ export type PaotuiOperation = keyof typeof atomicPaotuiSchemas;
 export const paotuiOperations = Object.keys(atomicPaotuiSchemas) as [PaotuiOperation, ...PaotuiOperation[]];
 const amount = z.union([z.number().finite().nonnegative(), z.string()]).transform(String).pipe(z.string().regex(/^\d+(?:\.\d{1,2})?$/));
 export const atomicResultSchemas = {
-  get_address_list: z.object({ addresses: z.array(savedAddressSchema).max(100).refine(a => new Set(a.map(v => v.addressId)).size === a.length) }),
+  get_address_list: z.object({ addresses: z.array(savedAddressSchema).max(100).refine(a => new Set(a.map(v => v.addressId)).size === a.length), accountIdentity: z.string().regex(/^[a-f0-9]{64}$/).optional() }),
   get_address_info: contactSchema,
   delivery_preview: z.object({ _previewTotal: amount, _deliveryFee: amount, feeDisplay: z.string().max(500).optional(), estimateTime: z.union([z.string().max(100), z.number().finite()]).optional(), distance: z.union([z.string().max(100), z.number().finite()]).optional() }),
 };

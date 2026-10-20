@@ -107,6 +107,10 @@ export class JobStore {
     const row = this.db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=? AND key=?').get(owner, jobId, key);
     return row ? JSON.parse(String(row.body)) as T : undefined;
   }
+  hasPreparationContext(owner: string, jobId: string, prefix: string): boolean {
+    this.get(owner, jobId);
+    return !!this.db.prepare('SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND substr(key,1,length(?))=? LIMIT 1').get(owner, jobId, prefix, prefix);
+  }
   savePreparationContext(owner: string, jobId: string, key: string, value: unknown): void {
     const job = this.get(owner, jobId);
     if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION || !['working', 'submitted'].includes(job.state)) throw new DomainError('CONFLICT', 'Preparation task is no longer active');

@@ -131,7 +131,7 @@ test('revocation during atomic CLI reads drops output; rotation requires fresh s
   } finally { store.close(); process.env.PATH = previous; await f.close(); }
 });
 
-test('input completion and actual source expiry resume ONE task with its confirmed numeric choices and retained interpretation', async () => {
+for (const rotateToken of [false, true]) test(`input completion and actual source expiry resume ONE task with confirmed choices (different token: ${rotateToken})`, async () => {
   const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
   let worker: ReturnType<typeof createWorker> | undefined, interpretations = 0;
   const choice = paotuiModel((ctx, access) => {
@@ -148,8 +148,10 @@ test('input completion and actual source expiry resume ONE task with its confirm
     return f.gateway.tasks.get(f.a.p, id);
   };
   try {
+    f.source.behavior({ accountProof: true, sameAccount: true });
     await f.connect();
     const firstGrant = f.vault.grant(ownerKey(f.a.p));
+    const originalAccountIdentity = f.vault.accountIdentity(firstGrant, '10001');
     const job = f.gateway.tasks.submit(f.a.p, { goal: '文件普通送查价，先列地址', requestId: randomUUID(), executionBudget: 'extended' });
     worker = createWorker(f.config, { reasoner: choice, timing: { pollMs: 10, leaseMs: 30000, timeoutMs: 30000 } });
     const addressQuestion = await wait(job.id); assert.equal(addressQuestion.state, 'input-required');
@@ -162,7 +164,8 @@ test('input completion and actual source expiry resume ONE task with its confirm
     f.gateway.tasks.reply(f.a.p, { taskId: job.id, requestId: randomUUID(), answer: '重量1公斤' });
     const waiting = await wait(job.id); assert.equal(waiting.state, 'auth-required'); assert(waiting.delegation!.suspendedAgent);
     const retainedRuns = waiting.runs!.map(r => r.id), groundingBeforeResume = interpretations;
-    await f.connect(sourceTokens.alice, f.a, 2);
+    await f.connect(rotateToken ? sourceTokens.rotated : sourceTokens.alice, f.a, 2);
+    if (rotateToken) assert.notEqual(f.vault.grant(ownerKey(f.a.p)).selectionContext, firstGrant.selectionContext, 'Continuity must be proven by the new authenticated read, not by the upload');
     const resume = { taskId: job.id, expectedRevision: waiting.revision!, requestId: randomUUID() };
     const resumed = await f.sourceCall('/resume', resume); assert.equal(resumed.status, 200); const response = await resumed.json();
     assert.equal((await f.sourceCall('/resume', resume)).status, 200, 'An identical retry does not allocate another window');
@@ -173,6 +176,9 @@ test('input completion and actual source expiry resume ONE task with its confirm
     assert.equal(done.messages.filter(m => m.role === 'agent' && m.text.includes('请选择寄件')).length, 1, 'No repeated address confirmation');
     assert.equal(f.gateway.tasks.list(f.a.p, { limit: 10, offset: 0 }).total, 1);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
+    const books = done.delegation!.agent!.observations.map(ref => f.gateway.store.ontology.readPrivate(ownerKey(f.a.p), ref).properties.privateSnapshot as any).filter(o => o.action === 'ReadSavedAddresses');
+    assert(books.length > 0 && books.every(o => o.result.accountIdentity === originalAccountIdentity));
+    assert(!JSON.stringify(done).includes(originalAccountIdentity), 'Account correlation remains in private source evidence');
     assert(f.gateway.store.intents(ownerKey(f.a.p), job.id).every(i => i.state === 'effect_confirmed'), 'Confirmed historical reads remain confirmed');
     assert(done.delegation!.acceptance!.accepted);
   } finally { await worker?.close(); process.env.PATH = previous; await f.close(); }
@@ -185,7 +191,7 @@ test('credential renewal preserves legacy choice context; credential replacement
     let legacyDigest: string;
     try {
       const row = JSON.parse(String(db.prepare('SELECT body FROM member_source_credentials WHERE owner=?').get(owner)!.body));
-      const grant = f.vault.grant(owner); delete grant.selectionContext; delete row.selectionContext;
+      const grant = f.vault.grant(owner); delete grant.selectionContext; delete row.selectionContext; delete grant.authorizationEpoch; delete row.authorizationEpoch;
       const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', readFileSync(f.source.keyFile), iv);
       cipher.setAAD(Buffer.from(digest({ grant, expiresAt: row.expiresAt, fingerprint: row.fingerprint })));
       row.ciphertext = Buffer.concat([cipher.update(sourceTokens.alice, 'utf8'), cipher.final()]).toString('base64'); row.iv = iv.toString('base64'); row.tag = cipher.getAuthTag().toString('base64');
@@ -195,9 +201,12 @@ test('credential renewal preserves legacy choice context; credential replacement
     await f.connect(sourceTokens.alice, f.a, 1); const renewed = f.vault.grant(owner); assert.equal(renewed.selectionContext, legacyDigest);
     await f.connect(sourceTokens.alice, f.a, 2); assert.equal(f.vault.grant(owner).selectionContext, renewed.selectionContext);
     await f.connect(sourceTokens.rotated, f.a, 3); const replaced = f.vault.grant(owner); assert.notEqual(replaced.selectionContext, renewed.selectionContext);
+    assert.equal(replaced.authorizationEpoch, renewed.authorizationEpoch, 'Different tokens may compare trusted provider identities within the same authorization');
     await f.connect(sourceTokens.rotated, f.a2, 4); const otherInstallation = f.vault.grant(owner); assert.notEqual(otherInstallation.selectionContext, replaced.selectionContext);
+    assert.notEqual(otherInstallation.authorizationEpoch, replaced.authorizationEpoch);
     assert.equal((await f.sourceCall('/revoke', { expectedRevision: 5 }, f.a2)).status, 200);
     await f.connect(sourceTokens.rotated, f.a2, 6); assert.notEqual(f.vault.grant(owner).selectionContext, otherInstallation.selectionContext);
+    assert.notEqual(f.vault.grant(owner).authorizationEpoch, otherInstallation.authorizationEpoch);
     assert.equal(f.source.calls().length, 0, 'Connection lifecycle and identity checks never call the supplier');
   } finally { await f.close(); }
 });

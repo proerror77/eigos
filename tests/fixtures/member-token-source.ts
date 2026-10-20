@@ -24,8 +24,12 @@ if (behavior.revokeOn === command) {
  db.prepare('UPDATE member_source_credentials SET body=? WHERE owner=?').run(JSON.stringify(body),row.owner);db.close();
 }
 if (behavior.failOn === command) throw new Error(process.env.MCP_ACCESS_TOKEN);
-const addresses=[{addressId:account+'-a',address:account.toUpperCase()+'_PRIVATE_ORIGIN',cityId:1,name:'Synthetic',lat:1,lng:1},{addressId:account+'-b',address:account.toUpperCase()+'_PRIVATE_DESTINATION',cityId:1,name:'Synthetic',lat:2,lng:2}];
-if (command==='get_address_list') console.log(JSON.stringify({status:'ok',addresses}));
+const addressAccount=behavior.sameAccount&&account==='rotated'?'alice':account;
+const addresses=[{addressId:addressAccount+'-a',address:addressAccount.toUpperCase()+'_PRIVATE_ORIGIN',cityId:1,name:'Synthetic',lat:1,lng:1},{addressId:addressAccount+'-b',address:addressAccount.toUpperCase()+'_PRIVATE_DESTINATION',cityId:1,name:'Synthetic',lat:2,lng:2}];
+if (command==='get_address_list') {
+ if (behavior.accountProof&&process.env.EIGOS_SOURCE_ACCOUNT_RESULT) fs.writeFileSync(process.env.EIGOS_SOURCE_ACCOUNT_RESULT,JSON.stringify({accountId:addressAccount==='alice'?'10001':addressAccount==='bob'?'10002':'10003',addressIds:addresses.map(a=>a.addressId)}),{mode:0o600});
+ console.log(JSON.stringify({status:'ok',addresses}));
+}
 else if (command==='get_address_info') console.log(JSON.stringify({status:'ok',phone:'13800000000'}));
 else if (command==='delivery_preview') console.log(JSON.stringify({status:'ok',_previewTotal:account==='bob'?'23.50':'12.50',_deliveryFee:account==='bob'?'23.50':'12.50',feeDisplay:'synthetic'}));
 else throw new Error('Unapproved command');

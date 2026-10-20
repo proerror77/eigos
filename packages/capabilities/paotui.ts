@@ -1,8 +1,10 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { join, isAbsolute } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { paotuiAccountResponseSchema } from './paotui-account-response.js';
 
 const exec = promisify(execFile);
 const clientId = 'ac76c22d257c4c6d9164719eea64ed4b';
@@ -15,7 +17,7 @@ export type { PaotuiQuery, PaotuiReader } from './paotui-contracts.js';
 // Legacy reads use the explicit operator connection. Member-supplied reads inject
 // only their pinned credential and never consult the operator's credential/cache.
 export class LocalPaotuiReader implements PaotuiReader {
-  constructor(private skillDir: string, private onCommand?: (command: string) => void, private assertAccess?: () => void, private ownedToken?: () => string) {
+  constructor(private skillDir: string, private onCommand?: (command: string) => void, private assertAccess?: () => void, private ownedToken?: () => string, private accountIdentity?: (providerUserId: string) => string) {
     if (!isAbsolute(skillDir)) throw new Error('Paotui skill directory must be absolute');
   }
   private async token(signal: AbortSignal): Promise<string> {
@@ -32,13 +34,25 @@ export class LocalPaotuiReader implements PaotuiReader {
     const privateHome = this.ownedToken ? mkdtempSync(join(tmpdir(), 'eigos-source-cli-')) : undefined;
     try {
       signal.throwIfAborted(); this.assertAccess?.();
-      const r = await exec(process.execPath, [join(this.skillDir, 'paotui.js'), ...args], {
+      const accountResult = privateHome && this.accountIdentity && args[0] === 'get_address_list' ? join(privateHome, 'account.json') : undefined;
+      const source = import.meta.url.endsWith('.ts');
+      const observer = fileURLToPath(new URL(`../../apps/source-account-observer/main.${source ? 'ts' : 'js'}`, import.meta.url));
+      const preload = accountResult ? [...(source ? ['--import', import.meta.resolve('tsx')] : []), '--import', observer] : [];
+      const r = await exec(process.execPath, [...preload, join(this.skillDir, 'paotui.js'), ...args], {
         cwd: privateHome ?? this.skillDir, signal, timeout: 30000, maxBuffer: 512000,
-        env: { PATH: process.env.PATH, HOME: privateHome ?? process.env.HOME, MCP_ACCESS_TOKEN: token },
+        env: { PATH: process.env.PATH, HOME: privateHome ?? process.env.HOME, MCP_ACCESS_TOKEN: token, ...(accountResult ? { EIGOS_SOURCE_ACCOUNT_RESULT: accountResult } : {}) },
       });
       signal.throwIfAborted(); this.assertAccess?.();
       const data = JSON.parse(r.stdout);
       if (data.status !== 'ok') throw new Error('Provider rejected request');
+      // CLI stdout is never an identity assertion. Only the observed, authenticated
+      // response may contribute one, and it must bind this exact returned book.
+      delete data.accountIdentity;
+      if (accountResult && existsSync(accountResult)) {
+        const proof = paotuiAccountResponseSchema.parse(JSON.parse(readFileSync(accountResult, 'utf8')));
+        const ids = atomicResultSchemas.get_address_list.parse(data).addresses.map(a => a.addressId).sort();
+        if (JSON.stringify(ids) === JSON.stringify([...proof.addressIds].sort())) data.accountIdentity = this.accountIdentity!(proof.accountId);
+      }
       this.onCommand?.(args[0]!);
       return data;
     } catch { throw new Error('Meituan operation failed; inspect provider account before retrying.'); }

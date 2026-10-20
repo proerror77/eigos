@@ -140,7 +140,17 @@ export class PaotuiAgentProgram implements AgentProgram {
     this.validate(ctx, action, input); const s = checkedPaotuiObservation(result.value), source = this.scope(ctx);
     if (s.action !== action || !equal(s.actionInput, input) || !equal(s.scope, ctx.state.scope) || s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== this.configurationDigest || s.connectionDigest !== source.connectionDigest || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || !equal(result.evidenceRefs, [s.receipt.id]) || s.receipt.evidenceKind !== (this.options.connector ? 'fixture' : 'live_readonly') || Date.parse(s.summary.expiresAt) <= ctx.graph.now()) invalid('Source result does not bind the exact owned model decision and attempt');
     const ref = projectPaotuiObservation(ctx.graph, ctx.owner, s);
-    if (s.action === 'ReadSavedAddresses') this.choices.observe(ctx.owner, ctx.request, source.selectionContext, atomicResultSchemas.get_address_list.parse(s.result).addresses);
+    if (s.action === 'ReadSavedAddresses') {
+      const book = atomicResultSchemas.get_address_list.parse(s.result);
+      this.choices.observe(ctx.owner, ctx.request, source.selectionContext, book.addresses, {
+        authorizationEpoch: source.grant?.authorizationEpoch ?? source.selectionContext,
+        accountIdentity: book.accountIdentity,
+      });
+    }
+    if (s.action === 'ReadSavedAddressDetail') {
+      const selected = paotuiActionSchemas.ReadSavedAddressDetail.parse(input), book = this.observation(ctx, selected.book, 'ReadSavedAddresses');
+      this.choices.select(ctx.owner, ctx.request, source.selectionContext, atomicResultSchemas.get_address_list.parse(book.result).addresses, selected.selector, selected.role, true);
+    }
     return ref;
   }
   clarify(ctx: AgentProgramContext, message: string) {

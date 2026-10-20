@@ -165,3 +165,53 @@ test('later owner direction changes replace earlier choices without re-presentin
     assert.equal(choices.select(owner, renamed, 'source', addresses, 'Private A', 'sender').addressId, 'a', 'A later explicit name can update an earlier numbered choice');
   } finally { f.store.close(); }
 });
+
+test('different tokens reuse confirmed choices only with matching provider identity and authorization epoch', () => {
+  for (const change of ['same-account', 'different-account', 'missing-identity', 'revoked-authorization'] as const) {
+    const f = setup(); try {
+      const choices = new PaotuiAddressSelection(f.store), request = f.b.submit({ goal }).delegation!.request;
+      const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+      choices.observe(owner, request, 'token-a', addresses, { authorizationEpoch: 'same-grant', accountIdentity: 'account-a' });
+      choices.present(owner, request, 'token-a');
+      const selected = { ...request, revision: 2, messages: [...request.messages, { id: 'choice', text: '1寄到2', receivedAt: new Date().toISOString() }] };
+      assert.equal(choices.select(owner, selected, 'token-a', addresses, '1', 'sender').addressId, 'a');
+      const identity = { authorizationEpoch: change === 'revoked-authorization' ? 'new-grant' : 'same-grant', accountIdentity: change === 'missing-identity' ? undefined : change === 'different-account' ? 'account-b' : 'account-a' };
+      choices.observe(owner, selected, 'token-b', [...addresses].reverse(), identity);
+      if (change === 'same-account') {
+        assert.equal(choices.select(owner, selected, 'token-b', [...addresses].reverse(), '1', 'sender').addressId, 'a');
+        assert.equal(choices.select(owner, selected, 'token-b', [...addresses].reverse(), '2', 'recipient').addressId, 'b');
+      } else {
+        assert.throws(() => choices.select(owner, selected, 'token-b', addresses, '1', 'sender'), change);
+        choices.present(owner, selected, 'token-b');
+        const reply = { ...selected, revision: 3, messages: [...selected.messages, { id: 'new-choice', text: '1寄到2', receivedAt: new Date().toISOString() }] };
+        assert.equal(choices.select(owner, reply, 'token-b', [...addresses].reverse(), '1', 'sender').addressId, 'b');
+      }
+    } finally { f.store.close(); }
+  }
+});
+
+test('named selections require renewed confirmation after account or selected-address changes', () => {
+  const f = setup(); try {
+    const choices = new PaotuiAddressSelection(f.store), request = f.b.submit({ goal: '从Private A寄到Private B' }).delegation!.request;
+    const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+    choices.observe(owner, request, 'token-a', addresses, { authorizationEpoch: 'epoch', accountIdentity: 'account-a' });
+    choices.select(owner, request, 'token-a', addresses, 'Private A', 'sender', true);
+    const moved = addresses.map(a => a.addressId === 'a' ? { ...a, houseNumber: 'changed' } : a);
+    choices.observe(owner, request, 'token-a', moved, { authorizationEpoch: 'epoch', accountIdentity: 'account-a' });
+    assert.throws(() => choices.select(owner, request, 'token-a', moved, 'Private A', 'sender'));
+    const confirmed = { ...request, revision: 2, messages: [...request.messages, { id: 'update', text: '确认寄件仍用Private A', receivedAt: new Date().toISOString() }] };
+    assert.equal(choices.select(owner, confirmed, 'token-a', moved, 'Private A', 'sender').houseNumber, 'changed');
+    choices.observe(owner, confirmed, 'token-b', moved, { authorizationEpoch: 'epoch', accountIdentity: 'account-b' });
+    assert.throws(() => choices.select(owner, confirmed, 'token-b', moved, 'Private A', 'sender'), 'Matching names and addresses are not account continuity');
+  } finally { f.store.close(); }
+});
+
+test('legacy choices cannot acquire a new account identity merely by being read after credential replacement', () => {
+  const f = setup(); try {
+    const choices = new PaotuiAddressSelection(f.store), request = f.b.submit({ goal: '从Private A寄到Private B' }).delegation!.request;
+    const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+    f.store.savePreparationContext(owner, request.id, 'agent-paotui-addresses:legacy-token', { generation: 1, addresses });
+    choices.observe(owner, request, 'new-token', addresses, { authorizationEpoch: 'new-authorization', accountIdentity: 'account-a' });
+    assert.throws(() => choices.select(owner, request, 'new-token', addresses, 'Private A', 'sender'));
+  } finally { f.store.close(); }
+});
