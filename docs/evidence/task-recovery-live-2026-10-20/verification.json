@@ -1,0 +1,155 @@
+{
+  "checkedAt": "2026-10-20T02:17:52.739Z",
+  "sourceCommit": "1921476897491578e09a31af6ce2a9b1e3aea632",
+  "releaseDigest": "cd9c4566003225e43fd57ff870275e885af54b2e11d9b3efb50151ad6e657bbd",
+  "releaseFilesMatched": 133,
+  "backend": "ontology-execution-v8",
+  "program": {
+    "id": "delivery.quote",
+    "version": "3"
+  },
+  "taskHash": "22ff201b0fd573d73b3978319fa9e126e22d56eef9b1b9f8abc48927e5e67cec",
+  "sameTaskAcrossAllStages": true,
+  "taskState": "completed",
+  "accepted": true,
+  "requestRevision": 4,
+  "submissionCount": 1,
+  "paReplyCount": 1,
+  "cancelCount": 0,
+  "sourceResumeCount": 2,
+  "addressPromptCount": 1,
+  "reusedPriorConfirmedUserInput": true,
+  "noAdditionalHumanConfirmation": true,
+  "sourceConnectionActuallyExpired": true,
+  "sourceRenewalPreservedSelectionContext": true,
+  "freshConnectionScopeVerified": true,
+  "noSourceReadWhileExpired": true,
+  "validatedInterpretationReusedAfterRenewal": true,
+  "budget": {
+    "version": "1",
+    "profile": "extended",
+    "limits": {
+      "window": {
+        "modelTurns": 64,
+        "plans": 16,
+        "actions": 32
+      },
+      "task": {
+        "modelTurns": 256,
+        "plans": 64,
+        "actions": 128
+      }
+    },
+    "used": {
+      "modelTurns": 19,
+      "plans": 4,
+      "actions": 5
+    },
+    "windowUsed": {
+      "modelTurns": 11,
+      "plans": 3,
+      "actions": 4
+    },
+    "window": {
+      "sequence": 4,
+      "reason": "source",
+      "requestRevision": 4,
+      "startedAt": "2026-10-20T02:14:42.164Z",
+      "baseline": {
+        "modelTurns": 8,
+        "plans": 1,
+        "actions": 1
+      }
+    }
+  },
+  "workerModelRuns": 19,
+  "callerThreads": [
+    "01a15712-661d-7a43-9a1a-55e487fb5c23",
+    "01a15715-bb8c-71f3-929b-e8222e5dae71"
+  ],
+  "workerThreadIds": [
+    "01a15712-acef-7080-8662-e8a2d723ce09",
+    "01a15712-d9f1-7942-8452-b62e34f3a41c",
+    "01a15713-330f-74b3-87af-e15da16bb4e5",
+    "01a15713-6b77-7e23-82bf-0424c8a4089a",
+    "01a15713-a905-7e23-be08-5c14fa069f12",
+    "01a15713-deff-7953-9f4c-f7622a344b7d",
+    "01a15716-3fcf-7f90-a8bc-6992ba482652",
+    "01a15716-6f5d-7431-8149-ffb04b29927d",
+    "01a15716-ec22-7f31-9bdf-ce17580354a5",
+    "01a15717-1eda-7f33-93b4-c5e35eea0edd",
+    "01a15717-4fb5-7df3-a301-7443fb7636f8",
+    "01a15717-80b9-7f92-add0-68ee762bedb7",
+    "01a15717-c4c8-7e23-97f1-175bd2681ec5",
+    "01a15718-2010-7b71-bf46-106fe85aeabb",
+    "01a15718-61e8-72a3-97bb-84dd2d29d7a8",
+    "01a15718-9f30-7191-948f-f9ef43091fbe",
+    "01a15718-d0ca-7c52-aa14-4282c281bfb4",
+    "01a15719-0327-7521-a759-ed06b163ee9a",
+    "01a15719-3614-7b51-a795-df4a867c2513"
+  ],
+  "sourceReadCount": 5,
+  "sourceOperations": [
+    "get_address_list",
+    "get_address_list",
+    "get_address_info",
+    "get_address_info",
+    "delivery_preview"
+  ],
+  "previewCalls": 1,
+  "historyReceiptsPreserved": true,
+  "evidenceKind": "live_readonly",
+  "acceptedSourceProofVerified": true,
+  "selectedAddressIdentityAndContentsMatchHumanChoices": true,
+  "parcel": {
+    "declaredContents": "一份文件",
+    "category": "文件",
+    "estimatedWeightKg": 0.5,
+    "upperBoundGrams": 500,
+    "service": "ordinary"
+  },
+  "quoteObservedAt": "2026-10-20T02:16:33.650Z",
+  "localRefreshAfter": "2026-10-20T02:21:33.650Z",
+  "priceKind": "estimate",
+  "pricingCompleteness": "unknown",
+  "completedAt": "2026-10-20T02:17:26.540Z",
+  "freshAtCompletion": true,
+  "freshAtVerification": true,
+  "typedQuoteMatches": "pass",
+  "completionVerifierReplay": true,
+  "mcpReadback": true,
+  "a2aReadback": true,
+  "databaseReadback": true,
+  "artifactDigest": "4493695614bc0669dd90c14aeabf8f21d67c78702bac397ac5fb6bcccc810be5",
+  "actionIntents": 5,
+  "attempts": 5,
+  "authorizationGrants": 0,
+  "paymentReservations": 0,
+  "sourceAuditMatched": true,
+  "noOrders": true,
+  "noPayments": true,
+  "noAddressWrites": true,
+  "expiryTestMethod": "Real owned EIGOS source connection TTL shortened to 12 seconds through the existing private credential API; real clock expiry observed; same existing provider credential renewed for one hour. No simulated provider response or fabricated task state.",
+  "priceReadback": {
+    "currency": "CNY",
+    "positiveMinorAmount": true,
+    "sourceMcpA2aDatabaseAmountMatch": true,
+    "amountOmittedFromPublicEvidence": true
+  },
+  "configuredReaderSha256": "0a6b0ef9371bcbf9a6a5cecc20f3efe1b6220174dcffed365d91fc9949d407ba",
+  "runtimeCodeCi": {
+    "headSha": "1921476897491578e09a31af6ce2a9b1e3aea632",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/proerror77/eigos/actions/runs/39356995874"
+  },
+  "localChecks": {
+    "typecheck": true,
+    "tests": 489,
+    "testsPassed": 489,
+    "build": true,
+    "processE2E": 9,
+    "processE2EPassed": 9,
+    "diffCheck": true
+  }
+}

@@ -82,3 +82,5 @@ node --import tsx examples/connect-member-source.ts
 独立私有 HTTPS 实例已更新至 v8 并完成运行文件及接口回读；随后已完成 Auth0 来源权限、PA 会员授权和真实本人地址簿查询，见 [真实回路记录](evidence/member-source-live-2026-10-19/README.md)。当前版本见 [v8 验证与部署记录](evidence/paotui-agent-v8-2026-10-19/README.md)，初次部署与依赖修复保留在 [历史部署记录](evidence/member-network-deployment-2026-10-19/README.md)。
 
 2026-10-20 在数量解释修复版本完成了[真实文件查价](evidence/member-quote-live-2026-10-20/README.md)：本人先选择地址并确认500克及普通送，真实模型执行4次官方只读操作，PA 的最终 MCP、独立 A2A 与持久化结果一致。长时间等待及连接续期使原任务只剩4次模型额度，已保留历史并由 PA 取消；实际报价来自一次明确关联、已补齐事实的后续任务。未重置原预算，也未绕过来源或地址校验。
+
+任务恢复修复后，已进一步通过[同一 Task 的真实 PA 验证](evidence/task-recovery-live-2026-10-20/README.md)：补充信息、连接实际到期、本人凭据续期和报价完成均沿用原 taskId。没有替代任务或额外人工确认；19次模型调用保留，1次费用预览与最终回读通过。
