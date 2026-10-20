@@ -1,5 +1,6 @@
 // Synthetic model decisions against a separate signed HTTP business simulator.
 // Actual PA and LLM execution is verified by a separate end-to-end observer.
+import type { StripeTestOptions } from '../../packages/capabilities/stripe/client.js';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,7 +33,7 @@ export function commerceReads(ctx: AgentPlanningContext, access: PlanningAccess)
   const last = (type: CommerceEntityType, evaluate = false) => { const ref = ctx.state.observations.filter(r => r.type === type).at(-1); return ref ? read(ref, evaluate) : undefined; };
   return { read, last };
 }
-export function commerceChoice(options: { target?: 'quote' | 'cart' | 'checkout' | 'order' | 'delivery'; optionId?: string; cart?: boolean } = {}) {
+export function commerceChoice(options: { target?: 'quote' | 'cart' | 'checkout' | 'order' | 'payment' | 'delivery'; optionId?: string; cart?: boolean } = {}) {
   return (ctx: AgentPlanningContext, access: PlanningAccess): AgentDecision => {
     const { last } = commerceReads(ctx, access), scope = ctx.state.scope, target = options.target ?? 'delivery';
     const existingOrder = last('CommerceOrderObservation', true);
@@ -75,7 +76,7 @@ export function commerceChoice(options: { target?: 'quote' | 'cart' | 'checkout'
   };
 }
 export function commercePolicyReads(access: PlanningAccess, decision: AgentDecision) {
-  const gated = decision.steps.filter(s => ['QuoteCommerceLandedCost', 'PrepareCommerceCheckout', 'SubmitCommerceOrder'].includes(s.action));
+  const gated = decision.steps.filter(s => ['QuoteCommerceLandedCost', 'PrepareCommerceCheckout', 'SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(s.action));
   if (!gated.length) return;
   const from = { type: 'ServiceRequest', id: access.session.request.id };
   access.session.call('query_ontology', { from, link: 'customsRuleSets' });
@@ -86,18 +87,18 @@ export function commercePolicyReads(access: PlanningAccess, decision: AgentDecis
     if (object) access.session.call('evaluate_ontology', { function: 'customsGateStatus', object });
   }
 }
-export async function setupCommerce(options: { scenario?: CommerceSandboxScenario; target?: 'quote' | 'cart' | 'checkout' | 'order' | 'delivery'; optionId?: string; cart?: boolean; includeCustomsPlanning?: boolean; choice?: (ctx: AgentPlanningContext, access: PlanningAccess) => AgentDecision; databasePath?: string } = {}) {
+export async function setupCommerce(options: { scenario?: CommerceSandboxScenario; target?: 'quote' | 'cart' | 'checkout' | 'order' | 'payment' | 'delivery'; optionId?: string; cart?: boolean; includeCustomsPlanning?: boolean; choice?: (ctx: AgentPlanningContext, access: PlanningAccess) => AgentDecision; databasePath?: string; stripe?: StripeTestOptions } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-commerce-test-')), provider = await createCommerceSandboxProvider({ scenario: { ambiguousAddress: false, ...options.scenario } }), tokenFile = join(directory, 'token');
   writeFileSync(tokenFile, provider.token, { mode: 0o600 });
-  const store = new JobStore(options.databasePath ?? ':memory:'), settings = { endpoint: provider.endpoint, tokenFile, auditDirectory: join(directory, 'http') }, catalog = createExecutionCatalog({ store, commerceSandbox: settings });
-  const diagnostics: { stage: string; action: string; error: string }[] = [], program = catalog.agentProgram({ id: 'commerce.journey.sandbox', version: '2' }, owner)!;
+  const store = new JobStore(options.databasePath ?? ':memory:'), settings = { endpoint: provider.endpoint, tokenFile, auditDirectory: join(directory, 'http') }, catalog = createExecutionCatalog({ store, commerceSandbox: settings, stripeTest: options.stripe });
+  const diagnostics: { stage: string; action: string; error: string }[] = [], programRef = options.stripe ? { id: 'commerce.journey.stripe-test', version: '1' } : { id: 'commerce.journey.sandbox', version: '2' }, program = catalog.agentProgram(programRef, owner)!;
   const invoke=program.invoke.bind(program),project=program.project.bind(program),recover=program.recover!.bind(program);
   const diagnostic=(stage:string,action:string,error:unknown)=>diagnostics.push({stage,action,error:(error instanceof Error?`${error.name}: ${error.message}`:String(error)).replaceAll(provider.token,'[redacted]').slice(0,2000)});
   program.invoke=async(...args)=>{try{return await invoke(...args);}catch(error){diagnostic('invoke',args[1],error);throw error;}};
   program.project=(...args)=>{try{return project(...args);}catch(error){diagnostic('project',args[1],error);throw error;}};
   program.recover=async(...args)=>{try{return await recover(...args);}catch(error){diagnostic('recover',args[1],error);throw error;}};
   const choice = options.choice ?? commerceChoice(options);
-  const model: Reasoner = { ground: async request => ({ decision: { ...interpretation(request, 'commerce.journey.sandbox', { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: { id: 'commerce.journey.sandbox', version: '2' } }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+  const model: Reasoner = { ground: async request => ({ decision: { ...interpretation(request, programRef.id, { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: programRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '在沙箱选择能供两袋整豆咖啡的商家并完成所需交易阶段；先查询保存的地址和跨境信息。', executionEnvironment: 'sandbox', requirements: [{ id: 'quantity', kind: 'quantity', role: 'item_quantity', strength: 'hard', expected: { amount: '2', unit: 'piece' } }, ...(options.target === 'cart' ? [] : [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, { id: 'arrival', kind: 'deadline', role: 'arrival', strength: 'hard', expected: { at: new Date(Date.now() + 7 * 86400000).toISOString(), timezone: 'UTC', original: 'within seven days' } }]), { id: 'sandbox', kind: 'condition', strength: 'hard', expected: { predicate: 'commerce.sandbox_only' } }] });
   const approve = (job: Job, effects = job.delegation!.authorizationRequest!.effects) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };

@@ -15,6 +15,9 @@ import { projectCommerceObservation, type CommerceSourceResult } from '../ontolo
 import { HttpCommerceSandboxConnector, type CommerceSandboxConnector, type CommerceSandboxOptions } from './commerce-sandbox/connector.js';
 import { CUSTOMS_POLICY_DIGEST, CUSTOMS_RULE_REF, CUSTOMS_REFERENCES, CUSTOMS_REFERENCE_REFS, seedCustomsPolicy } from '../ontology/customs-policy.js';
 import { customsGateStatus, productRegulatoryBoundary } from '../ontology/customs-policy-functions.js';
+import { StripeTestPayments } from './stripe/payment.js';
+import type { StripeTestOptions } from './stripe/client.js';
+import { stripePaymentActionSchemas, stripeActionMetadata, type StripePaymentAction } from '../ontology/stripe-payment.js';
 
 const selectedRef = objectRefSchema;
 const completion = z.strictObject({ selected: selectedRef, cart: selectedRef.optional(), order: selectedRef.optional(), payment: selectedRef.optional(), delivery: selectedRef.optional(), rationale: z.string().min(1).max(2000) });
@@ -22,12 +25,13 @@ const fail = (message: string): never => { throw new DomainError('CONFLICT', mes
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const supportedPredicates = ['commerce.sandbox_only', 'commerce.stock_confirmed', 'commerce.customs_checked', 'commerce.all_buyer_fees', 'commerce.delivery_promised', 'commerce.cart_created', 'commerce.checkout_prepared', 'commerce.order_confirmed', 'commerce.payment_settled', 'commerce.delivery_verified'];
 export class CommerceAgentProgram implements AgentProgram {
-  readonly ref = { id: 'commerce.journey.sandbox', version: '2' };
-  readonly actionIds = Object.keys(commerceJourneyActionSchemas);
+  readonly ref: { id: string; version: string };
+  readonly actionIds: string[];
   readonly configurationDigest: string;
   readonly limits = { modelTurns: 72, plans: 24, actions: 56 };
   readonly completionSchema = z.toJSONSchema(completion);
   readonly connector: CommerceSandboxConnector;
+  readonly stripe?: StripeTestPayments;
   readonly guidance = [
     'This is the explicitly isolated commerce sandbox. All merchant, PA-context, customs, payment and shipping responses are synthetic source evidence; never present them as real-world transactions or tariff rules. You decide the business action sequence and which merchant, product and shipping option to select. Queries and drafts are not purchase authority.',
     'The CommerceTask starts without merchant or country facts. Query authorized PA context and merchant directory yourself. A merchant registration country, actual dispatch warehouse, goods customs origin, shopping market and delivery country are different facts. Read provider facts through the available source actions; do not ask PA to supply merchant warehouse, HS code, taxes or shipping facts that these actions can query.',
@@ -40,22 +44,36 @@ export class CommerceAgentProgram implements AgentProgram {
     'For complete: selected identifies the current terminal evidence for target quote/cart/checkout/order, or the independently read order for target delivery; include order/payment/delivery refs when required. Every selected ref must have been read and evaluated with commerceObservationStatus in this decision. Delivery requires a separately read original order, settled simulated payment and actual synthetic delivery events for every package. Order confirmation alone proves neither settlement nor arrival.',
     'If a write response is lost, the runtime reads only its original idempotency key. Never select a duplicate write to solve uncertainty. Retain the original business identity. No live checkout, payment or merchant endpoint is supported.',
   ].join('\n');
-  constructor(options: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }) {
+  constructor(options: CommerceSandboxOptions & { connector?: CommerceSandboxConnector; stripe?: StripeTestOptions }) {
     this.connector = options.connector ?? new HttpCommerceSandboxConnector(options);
-    this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v3', customsPolicyDigest: CUSTOMS_POLICY_DIGEST });
+    this.stripe = options.stripe ? new StripeTestPayments(options.stripe) : undefined;
+    this.ref = this.stripe ? { id: 'commerce.journey.stripe-test', version: '1' } : { id: 'commerce.journey.sandbox', version: '2' };
+    this.actionIds = Object.keys(commerceJourneyActionSchemas).filter(id => this.stripe ? !['SubmitCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery'].includes(id) : id !== 'SubmitCommerceUnpaidOrder');
+    if (this.stripe) {
+      this.actionIds.push(...Object.keys(stripePaymentActionSchemas));
+      this.guidance = this.guidance.split('\n').filter(line => !line.startsWith('For complete:')).join('\n')
+        .replace('All merchant, PA-context, customs, payment and shipping responses are synthetic source evidence', 'Merchant, PA-context, customs and shipping responses are synthetic. Stripe payment responses are provider_test only when the official API is called; injected test transports remain synthetic')
+        .replaceAll('SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder')
+        .replace('reads only its original idempotency key', 'reads only its original provider operation')
+        .replace('No live checkout, payment or merchant endpoint is supported.', 'No live checkout or payment is supported.')
+        + '\nStripe test program: target payment means an independently read Stripe test capture for an unpaid synthetic order; target delivery is unavailable. SubmitCommerceUnpaidOrder has zero payment authority and never simulates settlement. Then select payment actions yourself. PrepareStripePayment creates one unconfirmed PaymentIntent; PayStripePayment uses a short-lived amount/currency-limited SPT generated by the Stripe sandbox test helper, not a customer wallet. Each needs its exact PA grant. Evaluate commerceObservationStatus on the independently read order and stripePaymentStatus on the prepared payment before a payment decision. ReadStripePayment is a separate GET after execution, and must be evaluated with stripePaymentStatus in the completion decision. Complete with selected/order referring to the independently read order and payment referring to the independent Stripe observation. Only test_paid satisfies commerce.payment_confirmed. Capture does not prove bank settlement, real purchase or fulfillment. If Stripe requires authentication or its outcome is unknown, retain the original operation and wait for readback; never create a second payment.';
+    }
+    this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v3', customsPolicyDigest: CUSTOMS_POLICY_DIGEST, ...(this.stripe ? { stripe: this.stripe.client.configurationDigest } : {}) });
   }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
-    return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '2' }, name: 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],
-      description: '仅在隔离沙箱比较商家、查询 PA 保存地址、库存、仓库、跨境税费和配送承诺，自主形成报价或创建模拟购物车、结账、订单、付款与交付回读。商家、国家与地址无需预先提供，缺失时 input query/quantity/contextKey 可为 null；先通过动作获取事实，只有用户选择才问 PA。数量为所选商品变体件数，袋装咖啡的一袋是一件 piece。target 明确为 quote/cart/checkout/order/delivery；购物车可以独立准备。所有业务证据为 synthetic，禁止真实购买付款。',
-      inputSchema: z.toJSONSchema(commerceJourneyInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: commerceActionMetadata[id as CommerceJourneyAction].effect, additionalEffects: commerceActionMetadata[id as CommerceJourneyAction].additionalEffects })),
-      predicates: supportedPredicates.map(id => ({ id, description: ({ 'commerce.sandbox_only': 'All activity stays in the isolated sandbox; no real transaction', 'commerce.stock_confirmed': 'Source confirms capacity for the requested quantity', 'commerce.customs_checked': 'Applicable synthetic import and customs requirements are resolved', 'commerce.all_buyer_fees': 'Buyer total includes every mandatory buyer-paid charge', 'commerce.delivery_promised': 'Source arrival commitments cover all selected packages and hard deadlines', 'commerce.cart_created': 'Owned sandbox draft cart exists', 'commerce.checkout_prepared': 'Exact sandbox checkout is prepared', 'commerce.order_confirmed': 'Original sandbox order independently read and matched', 'commerce.payment_settled': 'Separate simulated payment receipt confirms settlement', 'commerce.delivery_verified': 'Separate synthetic delivered events cover the exact ordered goods and destination' } as Record<string, string>)[id]! })), outcomePredicates: supportedPredicates,
+    const predicates = this.stripe ? [...supportedPredicates.filter(p => !['commerce.payment_settled', 'commerce.delivery_verified'].includes(p)), 'commerce.payment_confirmed'] : supportedPredicates;
+    return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '2' }, name: this.stripe ? 'Agent 沙箱订单与 Stripe 测试支付' : 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],
+      description: this.stripe ? 'Agent 自主查询隔离商家、库存、运输及报价，建立未付款模拟订单，按准确授权通过 Stripe Shared Payment Token 测试助手确认付款，再独立回读 PaymentIntent 和捕获证据。target=payment；只接受测试密钥，禁止真实付款。商品和订单仍是 synthetic；Stripe HTTP 是 provider_test，注入测试是 synthetic。Shopify 公共查询不提供结账授权。' : '仅在隔离沙箱比较商家、查询 PA 保存地址、库存、仓库、跨境税费和配送承诺，自主形成报价或创建模拟购物车、结账、订单、付款与交付回读。商家、国家与地址无需预先提供，缺失时 input query/quantity/contextKey 可为 null；先通过动作获取事实，只有用户选择才问 PA。数量为所选商品变体件数，袋装咖啡的一袋是一件 piece。target 明确为 quote/cart/checkout/order/delivery；购物车可以独立准备。所有业务证据为 synthetic，禁止真实购买付款。',
+      inputSchema: z.toJSONSchema(commerceJourneyInputSchema.extend({ target: this.stripe ? z.enum(['quote', 'cart', 'checkout', 'order', 'payment']) : z.enum(['quote', 'cart', 'checkout', 'order', 'delivery']) })), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: Object.hasOwn(stripeActionMetadata, id) ? stripeActionMetadata[id as StripePaymentAction].effect : commerceActionMetadata[id as CommerceJourneyAction].effect, additionalEffects: Object.hasOwn(commerceActionMetadata, id) ? commerceActionMetadata[id as CommerceJourneyAction].additionalEffects : undefined })),
+      predicates: predicates.map(id => ({ id, description: ({ 'commerce.sandbox_only': 'All activity stays in the isolated sandbox; no real transaction', 'commerce.stock_confirmed': 'Source confirms capacity for the requested quantity', 'commerce.customs_checked': 'Applicable synthetic import and customs requirements are resolved', 'commerce.all_buyer_fees': 'Buyer total includes every mandatory buyer-paid charge', 'commerce.delivery_promised': 'Source arrival commitments cover all selected packages and hard deadlines', 'commerce.cart_created': 'Owned sandbox draft cart exists', 'commerce.checkout_prepared': 'Exact sandbox checkout is prepared', 'commerce.order_confirmed': 'Original sandbox order independently read and matched', 'commerce.payment_confirmed': 'Independent original Stripe test PaymentIntent and captured charge match the unpaid sandbox order', 'commerce.payment_settled': 'Separate simulated payment receipt confirms settlement', 'commerce.delivery_verified': 'Separate synthetic delivered events cover the exact ordered goods and destination' } as Record<string, string>)[id]! })), outcomePredicates: predicates,
       requirementRoles: [{ kind: 'quantity', role: 'item_quantity', description: 'Selected merchant variant count in piece units' }, { kind: 'budget', role: 'service_total', description: 'Complete buyer cost including all buyer-paid freight, tax, duty and clearance fees' }, { kind: 'deadline', role: 'arrival', description: 'All ordered packages must arrive by the explicit source-bound deadline' }, { kind: 'location', role: 'destination', description: 'Explicit saved-address label or ID selected by PA; an unspecified saved address is discovered through ReadCommerceContext' }], locationSemantics: 'destination',
-      ontology: { objects: ['CommerceTask', 'FulfillmentContext', 'CommerceProduct', 'InventoryObservation', 'FulfillmentPlan', 'CustomsAssessment', 'LandedCostQuote', 'Cart', 'CommerceCheckout', 'CommerceOrderObservation', 'CommercePaymentObservation', 'CommerceDeliveryObservation', 'CustomsRuleSet', 'RegulatoryReference'], functions: ['commerceJourneyStatus', 'commerceObservationStatus', 'shippingGateStatus', 'customsGateStatus'], execution: 'agent_selected_atomic_actions', realSourceConnected: false }, verifierRef: { id: 'commerce.journey.independent', version: '2' }, completion: 'domain' };
+      ontology: { objects: [...(this.stripe ? ['StripePaymentObservation'] : []), 'CommerceTask', 'FulfillmentContext', 'CommerceProduct', 'InventoryObservation', 'FulfillmentPlan', 'CustomsAssessment', 'LandedCostQuote', 'Cart', 'CommerceCheckout', 'CommerceOrderObservation', 'CommercePaymentObservation', 'CommerceDeliveryObservation', 'CustomsRuleSet', 'RegulatoryReference'], functions: [...(this.stripe ? ['stripePaymentStatus'] : []), 'commerceJourneyStatus', 'commerceObservationStatus', 'shippingGateStatus', 'customsGateStatus'], execution: 'agent_selected_atomic_actions', realSourceConnected: false, ...(this.stripe ? { paymentProvider: 'stripe_test', credentialSource: 'test_helper', providerConnectionVerified: false } : {}) }, verifierRef: { id: 'commerce.journey.independent', version: '2' }, completion: 'domain' };
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown) {
     if (!this.permitted(owner) || request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Commerce journey is available only to the configured local sandbox identity');
     const input = commerceJourneyInputSchema.parse(raw), scope = { type: 'CommerceTask', id: `${request.id}:r${request.revision}` };
+    if (this.stripe ? input.target === 'delivery' : input.target === 'payment') fail('Completion target is unavailable in this configured commerce program');
     const requirements = request.requirements.map(({ provenance: _provenance, ...requirement }) => requirement);
     const quantities = requirements.filter(r => r.kind === 'quantity' && r.strength === 'hard' && (!r.role || r.role === 'item_quantity'));
     if (input.quantity === null && quantities.length === 1 && quantities[0]!.kind === 'quantity' && quantities[0]!.expected.unit === 'piece') input.quantity = Number(quantities[0]!.expected.amount);
@@ -65,7 +83,7 @@ export class CommerceAgentProgram implements AgentProgram {
     seedCustomsPolicy(graph, owner, scope, { type: 'ServiceRequest', id: request.id });
     return { scope, input };
   }
-  schema(action: string) { if (!Object.hasOwn(commerceJourneyActionSchemas, action)) throw new DomainError('FORBIDDEN', 'Unknown commerce action'); return commerceJourneyActionSchemas[action as CommerceJourneyAction]; }
+  schema(action: string) { if (!this.actionIds.includes(action)) throw new DomainError('FORBIDDEN', 'Unknown or disabled commerce action'); return Object.hasOwn(stripePaymentActionSchemas, action) ? stripePaymentActionSchemas[action as StripePaymentAction] : commerceJourneyActionSchemas[action as CommerceJourneyAction]; }
   definition(graph: OntologyObjectStore, action: string) {
     const schema = this.schema(action), definition = graph.model.action(action), metadata = definition.read ?? definition.operation;
     if (!metadata || !equal(metadata.inputSchema, z.toJSONSchema(schema))) fail('Commerce action schema differs from its published Ontology definition');
@@ -89,6 +107,7 @@ export class CommerceAgentProgram implements AgentProgram {
   validate(ctx: AgentProgramContext, action: string, raw: Record<string, unknown>) {
     this.scope(ctx); const input = this.schema(action).parse(raw) as Record<string, unknown>;
     if (!equal(input.scope, ctx.state.scope)) fail('Action scope is not this task');
+    if (Object.hasOwn(stripePaymentActionSchemas, action)) { this.stripe!.validate(ctx, action, input); return; }
     const identityRead = ['ReadCommerceCart', 'ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery'].includes(action);
     const observations = Object.entries(input).filter(([key]) => key !== 'scope').flatMap(([, value]) => objectRefSchema.safeParse(value).success ? [this.facts(ctx, value, undefined, identityRead)] : []);
     const get = <T extends CommerceEntityType>(key: string, type: T) => { const s = this.facts(ctx, input[key], type, identityRead); return { s, data: parseCommerceEntity(type, s.data) }; };
@@ -126,7 +145,8 @@ export class CommerceAgentProgram implements AgentProgram {
       this.requireCustomsGate(ctx, objectRefSchema.parse(input.quote));
       if (input.cart) { const cart = get('cart', 'Cart'); if (cart.data.state !== 'active' || cart.data.merchantId !== quote.data.merchantId || cart.data.lines.length !== 1 || cart.data.lines[0]!.variantId !== quote.data.variantId || cart.data.lines[0]!.quantity !== quote.data.quantity) fail('Cart contents differ from the selected firm quote'); }
     }
-    if (action === 'SubmitCommerceOrder') { this.ready(ctx, get('checkout', 'CommerceCheckout').s); this.requireCustomsGate(ctx, objectRefSchema.parse(input.checkout)); }
+    if (['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action)) { this.ready(ctx, get('checkout', 'CommerceCheckout').s); this.requireCustomsGate(ctx, objectRefSchema.parse(input.checkout)); }
+    if (action === 'SubmitCommerceUnpaidOrder' && get('checkout', 'CommerceCheckout').data.merchantId !== this.stripe?.client.options.merchantId) fail('Unpaid order merchant has no configured Stripe test account');
     if (['ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery'].includes(action)) this.ready(ctx, get('order', 'CommerceOrderObservation').s);
     if (observations.some(s => s.evidenceLevel !== 'synthetic')) fail('Sandbox actions cannot consume real transaction evidence');
   }
@@ -148,14 +168,15 @@ export class CommerceAgentProgram implements AgentProgram {
     }
   }
   validatePlanning(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot) {
-    const gateInput = action === 'QuoteCommerceLandedCost' ? input.customs : action === 'PrepareCommerceCheckout' ? input.quote : action === 'SubmitCommerceOrder' ? input.checkout : undefined;
+    if (Object.hasOwn(stripePaymentActionSchemas, action)) { this.stripe!.validatePlanning(ctx, action, input, reads); return; }
+    const gateInput = action === 'QuoteCommerceLandedCost' ? input.customs : action === 'PrepareCommerceCheckout' ? input.quote : ['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action) ? input.checkout : undefined;
     if (gateInput) {
       const ref = objectRefSchema.parse(gateInput), evaluated = this.gateEvaluation(ctx, ref, reads);
       const queried = (ref: ObjectRef) => reads.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok' && evaluated && r.at <= evaluated.at && (r.objects.some(o => equal(o.ref, ref)) || r.inputDigest === digest({ object: ref }) || r.inputDigest === digest({ from: { type: 'ServiceRequest', id: ctx.request.id }, link: ref.type === 'CustomsRuleSet' ? 'customsRuleSets' : 'regulatoryReferences' })));
       if (!queried(CUSTOMS_RULE_REF) || CUSTOMS_REFERENCE_REFS.some(ref => !queried(ref)) || !evaluated) fail('The Agent must query the exact customs rule set and references, then evaluate customsGateStatus for this decision');
     }
     if (action === 'PrepareCommerceCheckout') this.requireEvaluation(ctx, objectRefSchema.parse(input.quote), reads, true);
-    if (action === 'SubmitCommerceOrder') this.requireEvaluation(ctx, objectRefSchema.parse(input.checkout), reads, true);
+    if (['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action)) this.requireEvaluation(ctx, objectRefSchema.parse(input.checkout), reads, true);
   }
   validatePause(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot) {
     validatePlanningSnapshot(ctx.graph, ctx.owner, ctx.request, reads, true);
@@ -180,7 +201,8 @@ export class CommerceAgentProgram implements AgentProgram {
   }
   authority(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) {
     this.validate(ctx, action, input);
-    if (action === 'SubmitCommerceOrder') { const s = this.facts(ctx, input.checkout, 'CommerceCheckout'), d = parseCommerceEntity('CommerceCheckout', s.data); return { cost: { ...d.total, payeeId: d.merchantId }, operationScope: `commerce-order:${digest({ configuration: this.configurationDigest, merchant: d.merchantId, checkoutId: d.checkoutId })}` }; }
+    if (Object.hasOwn(stripePaymentActionSchemas, action)) return this.stripe!.authority(ctx, action, input);
+    if (['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action)) { const s = this.facts(ctx, input.checkout, 'CommerceCheckout'), d = parseCommerceEntity('CommerceCheckout', s.data); return { cost: { ...d.total, ...(action === 'SubmitCommerceUnpaidOrder' ? { minor: '0' } : {}), payeeId: d.merchantId }, operationScope: `commerce-order:${digest({ configuration: this.configurationDigest, merchant: d.merchantId, checkoutId: d.checkoutId })}` }; }
     const ref = input.quote ?? input.cart ?? input.product, s = this.facts(ctx, ref), d = s.data as { merchantId: string; unitPrice?: { currency: string }; estimatedTotal?: { currency: string }; buyerTotal?: { currency: string }; cartId?: string; revision?: string };
     const currency = d.unitPrice?.currency ?? d.estimatedTotal?.currency ?? d.buyerTotal?.currency ?? fail('A sandbox draft needs an explicit source currency');
     return { cost: { minor: '0', currency, payeeId: d.merchantId }, ...(['UpdateCommerceCart', 'CancelCommerceCart'].includes(action) ? { operationScope: `commerce-cart:${digest({ configuration: this.configurationDigest, cartId: d.cartId, revision: d.revision, action })}` } : action === 'PrepareCommerceCheckout' ? { operationScope: `commerce-checkout:${digest({ configuration: this.configurationDigest, quote: s.sourceId })}` } : {}) };
@@ -198,14 +220,16 @@ export class CommerceAgentProgram implements AgentProgram {
     if (action === 'CancelCommerceCart') { const c = get('cart', 'Cart').data; return { cartId: c.cartId, expectedRevision: c.revision }; }
     if (action === 'ReadCommerceCart') return { cartId: get('cart', 'Cart').data.cartId };
     if (action === 'PrepareCommerceCheckout') { const q = get('quote', 'LandedCostQuote'); return { quoteId: q.s.sourceId, sourceQuoteDigest: q.s.receipt.payloadDigest, quoteDigest: q.s.contentDigest, ...(input.cart ? { cartId: get('cart', 'Cart').data.cartId } : {}) }; }
-    if (action === 'SubmitCommerceOrder') { const c = get('checkout', 'CommerceCheckout').data; return { checkoutId: c.checkoutId, quoteDigest: c.quoteDigest, expectedTotal: c.total, expectedDestinationDigest: c.destinationDigest }; }
+    if (['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action)) { const c = get('checkout', 'CommerceCheckout').data; return { checkoutId: c.checkoutId, quoteDigest: c.quoteDigest, expectedTotal: c.total, expectedDestinationDigest: c.destinationDigest }; }
     const order = get('order', 'CommerceOrderObservation').data; return { orderId: order.orderId, merchantId: order.merchantId };
   }
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
+    if (Object.hasOwn(stripePaymentActionSchemas, action)) return this.stripe!.invoke(ctx, action, input, signal);
     const result = await this.connector.call(ctx, action as CommerceJourneyAction, this.transportInput(ctx, action as CommerceJourneyAction, input), signal);
     this.validateResult(action, result); return { value: result, evidenceRefs: [result.receipt.id] };
   }
   async recover(ctx: AgentActionContext, action: string, _input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined> {
+    if (Object.hasOwn(stripePaymentActionSchemas, action)) return this.stripe!.recover(ctx, action, _input, signal);
     const result = await this.connector.recover(ctx, signal); if (!result) return;
     this.validateResult(action, result); return { value: result, evidenceRefs: [result.receipt.id] };
   }
@@ -214,11 +238,11 @@ export class CommerceAgentProgram implements AgentProgram {
     if (result.payload.type !== m.type || result.receipt.source !== m.source) fail('Source returned a different business object or source role');
     parseCommerceEntity(result.payload.type, result.payload.data);
   }
-  project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult) { return projectCommerceObservation(ctx, action, input, result.value as CommerceSourceResult); }
+  project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult) { return Object.hasOwn(stripePaymentActionSchemas, action) ? this.stripe!.project(ctx, action, result) : projectCommerceObservation(ctx, action, input, result.value as CommerceSourceResult); }
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
     const proposal = completion.parse(raw), scope = this.scope(ctx);
-    for (const ref of [proposal.selected, proposal.cart, proposal.order, proposal.payment, proposal.delivery].filter((r): r is ObjectRef => !!r)) this.requireEvaluation(ctx, ref, reads, true);
-    const selected = this.facts(ctx, proposal.selected), expectedType = ({ quote: 'LandedCostQuote', cart: 'Cart', checkout: 'CommerceCheckout', order: 'CommerceOrderObservation', delivery: 'CommerceOrderObservation' } as const)[scope.target];
+    for (const ref of [proposal.selected, proposal.cart, proposal.order, proposal.payment, proposal.delivery].filter((r): r is ObjectRef => !!r && r.type !== 'StripePaymentObservation')) this.requireEvaluation(ctx, ref, reads, true);
+    const selected = this.facts(ctx, proposal.selected), expectedType = ({ quote: 'LandedCostQuote', cart: 'Cart', checkout: 'CommerceCheckout', order: 'CommerceOrderObservation', payment: 'CommerceOrderObservation', delivery: 'CommerceOrderObservation' } as const)[scope.target];
     if (selected.type !== expectedType) fail('Selected evidence does not match the requested completion endpoint');
     const conditions = ['commerce.sandbox_only'], evidenceRefs = [selected.receipt.id], data: Record<string, unknown> = { environment: 'sandbox', realOperationsAllowed: false, target: scope.target, selected: selected.data, source: proposal.selected, evidenceLevel: 'synthetic' };
     const facts: CandidateFacts = { conditions };
@@ -250,13 +274,20 @@ export class CommerceAgentProgram implements AgentProgram {
     if (scope.target === 'checkout') conditions.push('commerce.checkout_prepared');
     if (proposal.cart) { const cart = this.facts(ctx, proposal.cart, 'Cart'); if (cart.data.state === 'canceled') fail('A canceled cart cannot establish a current prepared cart'); data.cart = cart.data; conditions.push('commerce.cart_created'); evidenceRefs.push(cart.receipt.id); }
     let order: CommerceObservation | undefined;
-    if (scope.target === 'order' || scope.target === 'delivery') {
+    if (['order', 'payment', 'delivery'].includes(scope.target)) {
       order = this.facts(ctx, proposal.order ?? proposal.selected, 'CommerceOrderObservation');
       if (order.action !== 'ReadCommerceOrder' || !parseCommerceEntity('CommerceOrderObservation', order.data).independentRead || !quote) fail('Read the original order independently after submission before completing');
       if (!equal(order.data, selected.data)) fail('Selected completion order differs from the separately supplied order');
       conditions.push('commerce.order_confirmed', 'commerce.checkout_prepared'); data.order = order.data; evidenceRefs.push(order.receipt.id);
     }
-    if (proposal.payment) {
+    if (this.stripe && proposal.payment) {
+      const payment = this.stripe.complete(ctx, proposal.payment, proposal.order ?? proposal.selected, reads);
+      if (!order) fail('Stripe completion requires an independently selected original order');
+      data.payment = payment.data; data.paymentEvidenceLevel = payment.evidenceLevel; data.bankSettlementVerified = false;
+      conditions.push('commerce.payment_confirmed'); evidenceRefs.push(...payment.receipts.map(r => r.requestId));
+    }
+    if (scope.target === 'payment' && !conditions.includes('commerce.payment_confirmed')) fail('Payment completion requires independent Stripe test capture evidence');
+    if (!this.stripe && proposal.payment) {
       const p = this.facts(ctx, proposal.payment, 'CommercePaymentObservation'), payment = parseCommerceEntity('CommercePaymentObservation', p.data), o = order && parseCommerceEntity('CommerceOrderObservation', order.data);
       if (!o || payment.orderId !== o.orderId || payment.merchantId !== o.merchantId || !equal(payment.amount, o.total)) fail('Payment receipt does not match the selected order and amount');
       if (payment.state === 'settled') conditions.push('commerce.payment_settled'); data.payment = payment; evidenceRefs.push(p.receipt.id);
@@ -271,6 +302,6 @@ export class CommerceAgentProgram implements AgentProgram {
       data.delivery = delivery; evidenceRefs.push(d.receipt.id); conditions.push('commerce.delivery_verified');
     }
     data.provenance = { sourceRefs: [proposal.selected, proposal.cart, proposal.order, proposal.payment, proposal.delivery].filter(Boolean), receiptIds: [...new Set(evidenceRefs)], modelSelected: true, noRealTransaction: true };
-    return { artifact: { id: digest({ request: ctx.request.id, revision: ctx.request.revision, data }), name: 'commerce-sandbox-result.json', data: { goal: ctx.request.originalGoal, deliverable: `Agent 已核验沙箱 ${scope.target} 结果；商家、地址、库存、跨境费用及履约事实均按来源证据记录，未发生真实交易。`, execution: 'completed', result: data } }, facts, evidenceRefs };
+    return { artifact: { id: digest({ request: ctx.request.id, revision: ctx.request.revision, data }), name: this.stripe ? 'commerce-stripe-test-result.json' : 'commerce-sandbox-result.json', data: { goal: ctx.request.originalGoal, deliverable: this.stripe ? `Agent 已核验 ${scope.target} 测试结果；商品和订单属于隔离沙箱，Stripe 支付证据单独标记来源层级，未发生真实交易。` : `Agent 已核验沙箱 ${scope.target} 结果；商家、地址、库存、跨境费用及履约事实均按来源证据记录，未发生真实交易。`, execution: 'completed', result: data } }, facts, evidenceRefs };
   }
 }

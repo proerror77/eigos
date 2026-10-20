@@ -32,7 +32,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v11`，业务模型为 `eigos.business@10`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v12`，业务模型为 `eigos.business@11`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -63,3 +63,7 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 `npm run build` 后运行 `npm run setup:pa` 更新本人 macOS 常驻服务。现有 profile 和凭据引用沿用，默认服务改为 `eigos.delegate`。PA 应读取更新后的 `~/.local/share/eigos/grok-life/skill-install.md` 并保存到其技能库。Python 客户端只负责协议收发；实际 PA 必须自己发现、提交、处理问题和读回，固定脚本探针不能替代 PA 验收。
 
 默认新协调器启用。文档能力通过 `EIGOS_EXECUTOR=codex` 配置；个人美团读取通过绝对路径 `EIGOS_PAOTUI_SKILL_DIR` 配置，仅允许本机本人。`EIGOS_PAOTUI_ORDERS_ENABLED` 只能为 false。Gateway 与 Worker 共享持久任务库，模型及 Ontology MCP 查询只在 Worker 执行。见 [运行说明](gateway-worker.md)。
+
+## Stripe 测试付款
+
+`commerce.journey.stripe-test@1` 在配置测试账户后复用现有 MCP/A2A 任务、准确计划授权和独立结果回读。`target=payment` 必须以原 Stripe 测试 PaymentIntent 的独立捕获回读完成；当前验证为隔离 API/模型夹具，未连接 Stripe 账户。配置、动作、PA 请求及失败状态见 [Stripe 测试支付](stripe-test-integration.md)。

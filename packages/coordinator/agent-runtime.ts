@@ -254,6 +254,14 @@ export class AgentRuntime {
       this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); return true;
     }
     const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt };
+    context.assertDispatchAllowed = () => {
+      signal.throwIfAborted();
+      if (!this.store.claimActive(claim)) failure('Execution lease or task authority ended before the provider write');
+      if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
+      const current = this.context(claim);
+      validateAgentAuthority(program, current, plan, step);
+      if (step.effect !== 'read' && !agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) failure('Exact plan authority expired or was revoked before the provider write');
+    };
     let response: AgentActionResult | undefined, result: ActionResult;
     try {
       response = await program.invoke(context, step.action, input, signal);

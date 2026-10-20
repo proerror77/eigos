@@ -40,6 +40,10 @@ const schema = z.object({
   EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
   EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
+  EIGOS_STRIPE_TEST_ENABLED: z.enum(['false', 'true']).default('false'),
+  EIGOS_STRIPE_TEST_SECRET_KEY_FILE: z.string().optional(),
+  EIGOS_STRIPE_TEST_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]{1,100}$/).optional(),
+  EIGOS_STRIPE_TEST_MERCHANT_ID: z.string().trim().min(1).max(200).optional(),
   EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -112,8 +116,15 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (c.EIGOS_ACTION_SANDBOX !== 'true' || target.protocol !== 'http:' || target.hostname !== '127.0.0.1' || !target.port || target.pathname !== '/' || target.search || target.hash || target.username || target.password || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!)) throw new Error('Commerce sandbox must use the explicit local sandbox environment and 127.0.0.1 source');
   }
   if (c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR && (!c.EIGOS_COMMERCE_SANDBOX_URL || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR))) throw new Error('Commerce audit requires an enabled sandbox and an absolute private directory');
+  const stripeConfigured = !!(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || c.EIGOS_STRIPE_TEST_ACCOUNT_ID || c.EIGOS_STRIPE_TEST_MERCHANT_ID);
+  if (c.EIGOS_STRIPE_TEST_ENABLED === 'true') {
+    if (!c.EIGOS_COMMERCE_SANDBOX_URL || !c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || !isAbsolute(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) || !c.EIGOS_STRIPE_TEST_ACCOUNT_ID || !c.EIGOS_STRIPE_TEST_MERCHANT_ID || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production') throw new Error('Stripe test requires a local commerce sandbox, private absolute key file, exact account and merchant');
+  } else if (stripeConfigured) throw new Error('Stripe test configuration requires explicit EIGOS_STRIPE_TEST_ENABLED=true');
   return c;
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'gateway'); }
 export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Config { return parseConfig(env, 'worker'); }
+export function stripeTestConfig(c: Config) {
+  return c.EIGOS_STRIPE_TEST_ENABLED === 'true' ? { secretKeyFile: c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE!, accountId: c.EIGOS_STRIPE_TEST_ACCOUNT_ID!, merchantId: c.EIGOS_STRIPE_TEST_MERCHANT_ID! } : undefined;
+}

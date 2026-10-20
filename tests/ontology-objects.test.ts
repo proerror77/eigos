@@ -21,7 +21,7 @@ function fixture() {
 }
 
 test('Ontology compiles core, service, checkout and catalog types, inherited interfaces and bounded metadata', () => {
-  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 89);
+  assert.equal(BUSINESS_MODEL_DEFINITION.objects.length, 90);
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');
@@ -32,6 +32,8 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
     all.push(...page.types.map(t => (t as { id: string }).id)); after = page.next;
   } while (after);
   assert.equal(new Set(all).size, BUSINESS_MODEL_DEFINITION.objects.length + BUSINESS_MODEL_DEFINITION.interfaces.length);
+  assert(businessModel.implements('StripePaymentObservation', 'EvidenceBacked'));
+  assert.equal(businessModel.action('PayStripePayment').operation?.effect, 'payment');
   assert(businessModel.implements('CatalogRead', 'EvidenceBacked'));
   assert(businessModel.implements('CatalogObservation', 'EvidenceBacked'));
   assert(businessModel.implements('CatalogEndpoint', 'EvidenceBacked'));

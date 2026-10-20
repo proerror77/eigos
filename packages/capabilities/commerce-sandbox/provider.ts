@@ -38,6 +38,7 @@ const inputSchemas = {
   CancelCommerceCart: z.strictObject({ cartId: id, expectedRevision: id }),
   PrepareCommerceCheckout: z.strictObject({ quoteId: id, sourceQuoteDigest: z.string().length(64), quoteDigest: z.string().length(64), cartId: id.optional() }),
   SubmitCommerceOrder: z.strictObject({ checkoutId: id, quoteDigest: z.string().length(64), expectedTotal: z.strictObject({ minor: z.string().regex(/^\d+$/), currency }), expectedDestinationDigest: z.string().length(64) }),
+  SubmitCommerceUnpaidOrder: z.strictObject({ checkoutId: id, quoteDigest: z.string().length(64), expectedTotal: z.strictObject({ minor: z.string().regex(/^\d+$/), currency }), expectedDestinationDigest: z.string().length(64) }),
   ReadCommerceOrder: z.strictObject({ orderId: id, merchantId: id }), ReadCommercePayment: z.strictObject({ orderId: id, merchantId: id }), ReadCommerceDelivery: z.strictObject({ orderId: id, merchantId: id }),
 };
 class Rejected extends Error { constructor(readonly code: string, readonly status = 409) { super(code); } }
@@ -150,12 +151,12 @@ export async function createCommerceSandboxProvider(options: { databasePath?: st
       const checkoutId=`checkout-${randomUUID()}`,p=product(q.data.merchantId,q.data.variantId,q.data.unitPrice.currency);
       return put(ctx,'CommerceCheckout',checkoutId,{checkoutId,merchantId:q.data.merchantId,...(input.cartId?{cartId:input.cartId}:{}),quoteId:q.payload.sourceId,quoteDigest:input.quoteDigest,destinationDigest:q.data.destinationDigest,lines:[{merchantId:p.merchantId,variantId:p.variantId,title:p.title,quantity:q.data.quantity,unitPrice:q.data.unitPrice}],total:q.data.buyerTotal,costComponents:q.data.components,state:'ready',expiresAt:q.payload.expiresAt});
     }
-    if(action==='SubmitCommerceOrder'){
+    if(action==='SubmitCommerceOrder'||action==='SubmitCommerceUnpaidOrder'){
       const c=get(ctx,input.checkoutId,'CommerceCheckout');if(c.data.state!=='ready'||c.data.quoteDigest!==input.quoteDigest||!same(c.data.total,input.expectedTotal)||c.data.destinationDigest!==input.expectedDestinationDigest)return reject('CHECKOUT_CHANGED');
       const quote=get(ctx,c.data.quoteId,'LandedCostQuote');if(quote.data.inventoryVersion!==stockVersion())return reject('STOCK_CHANGED');
       const route=get(ctx,quote.data.fulfillmentId,'FulfillmentPlan'),context=contextData(route.data.contextKey),address=context.addresses.find(a=>a.id===route.data.addressId);
       if(!address||address.revision!==route.data.addressRevision||postalAddressDigest(address.address)!==quote.data.destinationDigest)return reject('DESTINATION_CHANGED');
-      const orderId=`order-${randomUUID()}`,order:CommerceEntityData<'CommerceOrderObservation'>={orderId,merchantId:c.data.merchantId,checkoutId:c.data.checkoutId,quoteId:c.data.quoteId,quoteDigest:c.data.quoteDigest,destinationDigest:c.data.destinationDigest,lines:c.data.lines,total:c.data.total,costComponents:c.data.costComponents,state:'confirmed',fulfillment:'pending',independentRead:false};
+      const orderId=`order-${randomUUID()}`,order:CommerceEntityData<'CommerceOrderObservation'>={orderId,merchantId:c.data.merchantId,checkoutId:c.data.checkoutId,quoteId:c.data.quoteId,quoteDigest:c.data.quoteDigest,destinationDigest:c.data.destinationDigest,lines:c.data.lines,total:c.data.total,costComponents:c.data.costComponents,state:'confirmed',fulfillment:'pending',independentRead:false,...(action==='SubmitCommerceUnpaidOrder'?{paymentProvider:'stripe_test' as const}:{})};
       put(ctx,'CommerceCheckout',c.payload.sourceId,{...c.data,state:'completed',orderId},c.payload.sourceVersion+1);bumpStock();
       return put(ctx,'CommerceOrderObservation',orderId,order);
     }
@@ -165,6 +166,7 @@ export async function createCommerceSandboxProvider(options: { databasePath?: st
     }
     if(action==='ReadCommercePayment'){
       const o=get(ctx,input.orderId,'CommerceOrderObservation',false);if(o.data.merchantId!==input.merchantId)return reject('ORDER_OWNER_MISMATCH');
+      if(o.data.paymentProvider==='stripe_test')return reject('STRIPE_PAYMENT_REQUIRES_PROCESSOR_READ');
       const paymentId=`payment:${o.data.orderId}`,prior=db.prepare('SELECT body FROM objects WHERE owner=? AND task=? AND id=?').get(ctx.ownerDigest,ctx.requestId,paymentId),old=prior?sandboxPayloadSchema.parse(JSON.parse(String(prior.body))):undefined;
       const state=scenario.paymentState??'settled',sameState=old?.data.state===state;
       return put(ctx,'CommercePaymentObservation',paymentId,{paymentId,orderId:o.data.orderId,merchantId:o.data.merchantId,amount:o.data.total,state,receiptId:`receipt:${paymentId}`,observedAt:sameState?String(old!.data.observedAt):now()},old?(sameState?old.sourceVersion:old.sourceVersion+1):1);

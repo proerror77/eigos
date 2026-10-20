@@ -12,7 +12,7 @@ export const postalAddressSchema = z.strictObject({
 export type PostalAddress = z.infer<typeof postalAddressSchema>;
 export const commerceJourneyInputSchema = z.strictObject({
   query: z.string().trim().min(1).max(300).nullable(), quantity: count.nullable(),
-  contextKey: id.nullable(), target: z.enum(['quote', 'cart', 'checkout', 'order', 'delivery']),
+  contextKey: id.nullable(), target: z.enum(['quote', 'cart', 'checkout', 'order', 'payment', 'delivery']),
 });
 export type CommerceJourneyInput = z.infer<typeof commerceJourneyInputSchema>;
 export const factRequirementSchema = z.strictObject({
@@ -90,7 +90,7 @@ export const commerceEntitySchemas = {
   Cart: z.strictObject({ cartId: id, merchantId: id, revision: id, state: z.enum(['active', 'canceled', 'converted']), lines: z.array(item).min(1).max(20), inventoryReserved: z.literal(false), estimatedTotal: moneySchema }),
   CartLine: item,
   CommerceCheckout: z.strictObject({ checkoutId: id, merchantId: id, cartId: id.optional(), quoteId: id, quoteDigest: sha, destinationDigest: sha, lines: z.array(item).min(1).max(20), total: moneySchema, costComponents: z.array(costComponent).min(1).max(30), state: z.enum(['ready', 'incomplete', 'completed', 'canceled']), orderId: id.optional(), expiresAt: instant }),
-  CommerceOrderObservation: z.strictObject({ orderId: id, merchantId: id, checkoutId: id, quoteId: id, quoteDigest: sha, destinationDigest: sha, lines: z.array(item).min(1).max(20), total: moneySchema, costComponents: z.array(costComponent).min(1).max(30), state: z.enum(['confirmed', 'canceled', 'unknown']), fulfillment: z.enum(['pending', 'partial', 'delivered', 'failed', 'unknown']), independentRead: z.boolean() }),
+  CommerceOrderObservation: z.strictObject({ orderId: id, merchantId: id, checkoutId: id, quoteId: id, quoteDigest: sha, destinationDigest: sha, lines: z.array(item).min(1).max(20), total: moneySchema, costComponents: z.array(costComponent).min(1).max(30), state: z.enum(['confirmed', 'canceled', 'unknown']), fulfillment: z.enum(['pending', 'partial', 'delivered', 'failed', 'unknown']), independentRead: z.boolean(), paymentProvider: z.literal('stripe_test').optional() }),
   CommercePaymentObservation: z.strictObject({ paymentId: id, orderId: id, merchantId: id, amount: moneySchema, state: z.enum(['authorized', 'captured', 'settled', 'refunded', 'failed', 'pending', 'unknown']), receiptId: id, observedAt: instant }),
   CommerceDeliveryObservation: z.strictObject({ orderId: id, merchantId: id, destinationDigest: sha, state: z.enum(['pending', 'partial', 'delivered', 'failed', 'unknown']), events: z.array(z.strictObject({ id, groupId: id, variantId: id, quantity: count, occurredAt: instant, milestone: z.enum(['shipped', 'customs_hold', 'delivered', 'returned']), destinationDigest: sha })).max(100) }),
   DeliveryPromise: promise,
@@ -144,6 +144,7 @@ export const commerceJourneyActionSchemas = {
   CancelCommerceCart: z.strictObject({ scope, cart: ref('Cart') }),
   PrepareCommerceCheckout: z.strictObject({ scope, quote: ref('LandedCostQuote'), cart: ref('Cart').optional() }),
   SubmitCommerceOrder: z.strictObject({ scope, checkout: ref('CommerceCheckout') }),
+  SubmitCommerceUnpaidOrder: z.strictObject({ scope, checkout: ref('CommerceCheckout') }),
   ReadCommerceOrder: z.strictObject({ scope, order: ref('CommerceOrderObservation') }),
   ReadCommercePayment: z.strictObject({ scope, order: ref('CommerceOrderObservation') }),
   ReadCommerceDelivery: z.strictObject({ scope, order: ref('CommerceOrderObservation') }),
@@ -163,6 +164,7 @@ export const commerceActionMetadata: Record<CommerceJourneyAction, { type: Comme
   CancelCommerceCart: { type: 'Cart', source: 'merchant', effect: 'cancel', description: 'Cancel this exact sandbox draft cart. Order cancellation is a different operation.' },
   PrepareCommerceCheckout: { type: 'CommerceCheckout', source: 'merchant', effect: 'change', description: 'Create a sandbox checkout from an independently evaluated firm quote, optionally using a matching cart. The exact source terms are pinned; no order or payment occurs.' },
   SubmitCommerceOrder: { type: 'CommerceOrderObservation', source: 'merchant', effect: 'order', additionalEffects: ['payment'], description: 'Submit the exact independently validated sandbox checkout with separate order and simulated payment authority. Read the original order and payment independently afterwards; never repeat an unknown submission.' },
+  SubmitCommerceUnpaidOrder: { type: 'CommerceOrderObservation', source: 'merchant', effect: 'order', description: 'Submit the exact evaluated sandbox checkout as an unpaid order for the configured Stripe test program. Order authority has zero payment cost; a separate exact payment permit is required later. Retains all goods, quote and shipping gates.' },
   ReadCommerceOrder: { type: 'CommerceOrderObservation', source: 'merchant', effect: 'read', description: 'Independently read the original sandbox order and compare its fixed items, destination and cost allocation.' },
   ReadCommercePayment: { type: 'CommercePaymentObservation', source: 'payment', effect: 'read', description: 'Read the original order\'s separate simulated payment receipt. Order confirmation alone proves no payment settlement.' },
   ReadCommerceDelivery: { type: 'CommerceDeliveryObservation', source: 'carrier', effect: 'read', description: 'Read original sandbox shipment events with package quantities and destination identity. A shipping event or fulfilled counter does not prove arrival.' },
@@ -185,7 +187,7 @@ export const commerceJourneyLinks: LinkDefinition[] = [
 ];
 export const commerceJourneyActions: ActionDefinition[] = Object.entries(commerceJourneyActionSchemas).map(([id, schema]) => {
   const m = commerceActionMetadata[id as CommerceJourneyAction];
-  return { id, description: m.description, inputs: { scope: 'CommerceTask' }, changes: [m.type], submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_inputs', 'fresh_dependencies', 'sandbox_only', ...(m.effect === 'read' ? [] : ['exact_plan_authority']), ...(['QuoteCommerceLandedCost', 'PrepareCommerceCheckout', 'SubmitCommerceOrder'].includes(id) ? ['current_customs_policy', 'model_evaluated_customs_gate', 'customs_gate_pass_sandbox'] : []), ...(['CreateCommerceCart', 'UpdateCommerceCart'].includes(id) ? ['supported_commodity_policy'] : [])],
+  return { id, description: m.description, inputs: { scope: 'CommerceTask' }, changes: [m.type], submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_inputs', 'fresh_dependencies', 'sandbox_only', ...(m.effect === 'read' ? [] : ['exact_plan_authority']), ...(['QuoteCommerceLandedCost', 'PrepareCommerceCheckout', 'SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(id) ? ['current_customs_policy', 'model_evaluated_customs_gate', 'customs_gate_pass_sandbox'] : []), ...(['CreateCommerceCart', 'UpdateCommerceCart'].includes(id) ? ['supported_commodity_policy'] : [])],
     ...(m.effect === 'read' ? { read: { version: '1', effect: 'read' as const, inputSchema: z.toJSONSchema(schema), resultType: m.type } } : { operation: { version: '1', effect: m.effect, ...(m.additionalEffects ? { additionalEffects: m.additionalEffects } : {}), environment: 'sandbox' as const, inputSchema: z.toJSONSchema(schema), resultType: m.type } }) };
 });
 export const commerceJourneyFunctions: FunctionDefinition[] = [

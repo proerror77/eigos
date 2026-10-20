@@ -39,7 +39,9 @@ test('Planning descriptions expose full action schemas on demand without repeati
     assert(JSON.stringify(summary).length < JSON.stringify(full).length * 0.6);
     assert.equal(f.session.receipts().length, 3);
     assert.equal(summary.conditionSchema, undefined);
-    const conditions = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [], includeConditionSchema: true }) as any;
+    // Condition-only discovery is an alternative to requesting every full schema;
+    // keep the per-decision context bound intact as the registry grows.
+    const conditions = new OntologyPlanningSession(f.graph, owner, f.request).call('describe_ontology', { search: 'ServiceRequest', actions: [], includeConditionSchema: true }) as any;
     assert.deepEqual(conditions.conditionSchema, z.toJSONSchema(businessConditionSchema));
   } finally { f.db.close(); }
 });

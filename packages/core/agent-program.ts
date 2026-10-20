@@ -13,6 +13,9 @@ export interface AgentProgramContext {
 }
 export interface AgentActionContext extends AgentProgramContext {
   planId: string; intentId: string; attemptId: string; modelRunId: string; operationKey?: string; recovery?: boolean; originalDispatchAt?: string;
+  /** Recheck the current lease, cancellation and exact grant immediately before
+   * each provider write in a multi-request atomic business operation. */
+  assertDispatchAllowed?: () => void;
 }
 export interface AgentActionResult { value: unknown; evidenceRefs: string[] }
 export interface AgentActionAuthority { cost: { minor: string; currency: string; payeeId: string }; operationScope?: string }

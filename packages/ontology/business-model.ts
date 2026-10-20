@@ -1,3 +1,4 @@
+import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
 import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } from './commerce.js';
@@ -100,7 +101,7 @@ const objects: ObjectTypeDefinition[] = [
   type('Payment', '付款记录', 'paymentId', { providerReference: str('Provider payment reference'), purpose: choice(['goods', 'deposit'], 'Payment business purpose'), amount: money('Observed payment amount'), paymentState: choice(['not_started', 'pending', 'paid', 'failed', 'unknown'], 'Payment source state'), observedAt: time('Payment observation') }),
   type('Refund', '退款记录', 'refundId', { providerReference: str('Provider refund reference'), amount: money('Observed refund amount'), refundState: choice(['not_started', 'pending', 'refunded', 'rejected', 'unknown'], 'Refund state; acceptance is not receipt of funds'), observedAt: time('Refund observation') }),
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
-  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
+  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
 // Only changed definitions advance. Historical object fingerprints are never rewritten.
 objects.find(o => o.id === 'ServiceRequest')!.version = '4';
@@ -160,14 +161,14 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '10', objects: [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '11', objects: [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
   actions: [
-    ...commerceJourneyActions,
+    ...commerceJourneyActions, ...stripePaymentActions,
     ...catalogAgentActions,
     ...commerceActions,
     ...domainActions,
@@ -176,7 +177,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
   ],
   functions: [
     ...customsPolicyFunctions,
-    ...commerceJourneyFunctions,
+    ...commerceJourneyFunctions, ...stripePaymentFunctions,
     ...catalogAgentFunctions,
     ...commerceFunctions,
     ...catalogReadFunctions,

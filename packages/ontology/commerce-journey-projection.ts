@@ -19,7 +19,7 @@ export function projectCommerceObservation(ctx: AgentActionContext, action: stri
     const snapshot = checkedCommerceObservation(graph.read(owner, ref.data).properties.snapshot);
     if (snapshot.requestId !== request.id || snapshot.requestRevision !== request.revision || digest(snapshot.scope) !== digest(state.scope)) throw new DomainError('CONFLICT', 'Commerce dependency belongs to another task revision');
     const identityRead = ['ReadCommerceCart', 'ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery'].includes(action);
-    const historical = identityRead || ['UpdateCommerceCart', 'CancelCommerceCart'].includes(action) && key === 'cart' || action === 'PrepareCommerceCheckout' && key === 'cart' || action === 'SubmitCommerceOrder';
+    const historical = identityRead || ['UpdateCommerceCart', 'CancelCommerceCart'].includes(action) && key === 'cart' || action === 'PrepareCommerceCheckout' && key === 'cart' || ['SubmitCommerceOrder', 'SubmitCommerceUnpaidOrder'].includes(action);
     return [{ ref: ref.data, contentDigest: snapshot.contentDigest, ...(historical ? { checkedAt: identityRead ? snapshot.observedAt : ctx.originalDispatchAt ?? receipt.startedAt } : {}) }];
   });
   const base = { ...payload, requestId: request.id, requestRevision: request.revision, configurationDigest: state.programDigest, scope: state.scope, action, actionInput: input, dependencies,
