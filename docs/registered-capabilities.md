@@ -1,6 +1,6 @@
 # Ontology + LLM 后端
 
-更新于 2026-10-19。当前通用委托使用 `ontology-execution-v8`，业务模型为 `eigos.business@7`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
+更新于 2026-10-20。当前通用委托使用 `ontology-execution-v8`，业务模型为 `eigos.business@9`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)，当前模型覆盖与待完成项见 [原则复审](ontology-principles-review-2026-10-20.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
@@ -20,6 +20,8 @@ flowchart LR
 ```
 
 LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函数；不能直接访问数据库、凭据或授予业务权限。它先读取最多16项能力摘要及输入契约，选定领域后再读取相关本体、最多8项候选、来源与逐条件检查。目录超限要缩小检索范围，不能静默截断或假装搜过全网。
+
+解释、规划和 Agent 决策首先调用内部 `read_task_context`，实际接收当前本体需求、相关定义和执行视图，并在结论中引用成功读取回执。宿主不再向原生模型附带完整 Job、候选或执行状态副本。长指令通过 `read_task_instructions` 分页读取原文；解释阶段须覆盖当前规格的全部指令。默认目录隐藏实现记录，历史计划、输入及尝试可按引用查询。已交付的稳定定义可复用，动态事实与当前权限仍重新检查。
 
 ## 对象与职责
 

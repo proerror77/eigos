@@ -119,7 +119,7 @@ test('Unregistered writes, unconfigured merchants and fabricated IDs cannot disp
 
 test('Skipping ontology reads cannot produce an action plan or HTTP request', async () => {
   const t = setup(ctx => decision(ctx, [step('find', 'SearchPublicCatalog', { scope: ctx.state.scope, merchantId: 'coffee', query: 'coffee', limit: 1 })]));
-  try { t.b.submit({ goal: 'Read Coffee' }); await t.b.run(); await assert.rejects(t.b.run(), /actual definition and object reads/); assert.equal(t.calls.length, 0); }
+  try { t.b.submit({ goal: 'Read Coffee' }); await t.b.run(); await assert.rejects(t.b.run(), /actual definition and object reads|cite successful receipts/); assert.equal(t.calls.length, 0); }
   finally { t.store.close(); }
 });
 

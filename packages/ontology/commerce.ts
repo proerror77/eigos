@@ -59,12 +59,15 @@ export const commerceLinks = [
   link('RequestCheckoutSession', 'ServiceRequest', 'checkoutSessions', 'CheckoutSession', 'usedByRequests', true, false),
   link('CheckoutSessionEvidence', 'CheckoutSession', 'sourceReceipts', 'SourceReceipt', 'checkoutSessions', true),
   link('OrderCheckout', 'Order', 'checkout', 'CheckoutSession', 'orders', false, false),
+  link('CheckoutSessionVariants', 'CheckoutSession', 'variants', 'ProductVariant', 'checkoutSessions', true, false),
+  link('ProductVariantCurrentCommerceReceipt', 'ProductVariant', 'currentCommerceReceipt', 'SourceReceipt', 'currentCommerceVariants', false, false),
+  link('OrderLineAgreementReceipt', 'OrderLine', 'agreementReceipt', 'SourceReceipt', 'agreedOrderLines', false, false),
 ];
 export const commerceFunctions: FunctionDefinition[] = [
   { id: 'checkoutReadiness', version: '1', inputTypes: ['CheckoutSession'], description: 'Source-backed readiness of this checkout; a prepared session does not prove purchase, payment or delivery' },
   { id: 'commerceOrderOutcome', version: '1', inputTypes: ['CheckoutSession'], description: 'Compare the independently read original order with fixed checkout items, total and budget; order confirmation is not fulfillment' },
 ];
 export const commerceActions: ActionDefinition[] = [
-  { id: 'PrepareCheckout', description: 'Prepare a local test checkout session; no order or payment. Requires a separate sandbox dispatch permit.', inputs: { request: 'ServiceRequest', requirements: 'CheckoutRequest' }, changes: ['CheckoutSession', 'ServiceRequest.progress'], submissionCriteria: ['same_owner', 'current_request_revision', 'current_requirements', 'within_authority'], providerOperation: 'ucp.checkout.create' },
-  { id: 'CompleteCheckout', description: 'Confirm the exact local test checkout. Both order and payment effects require authorization; this proposal never grants it.', inputs: { request: 'ServiceRequest', requirements: 'CheckoutRequest', checkout: 'CheckoutSession' }, changes: ['Order', 'OrderLine', 'ServiceRequest.progress'], submissionCriteria: ['same_owner', 'current_request_revision', 'current_requirements', 'checkout_ready', 'within_authority'], providerOperation: 'ucp.checkout.complete' },
+  { id: 'PrepareCheckout', version: '1', kind: 'business', effects: ['reserve'], resultTypes: ['CheckoutSession'], description: 'Prepare a local test checkout session; no order or payment. Requires a separate sandbox dispatch permit.', inputs: { request: 'ServiceRequest', requirements: 'CheckoutRequest' }, changes: ['CheckoutRequest', 'CheckoutSession', 'ProductVariant', 'SourceReceipt', 'ServiceRequest.progress'], submissionCriteria: ['same_owner', 'current_request_revision', 'current_requirements', 'within_authority'], providerOperation: 'ucp.checkout.create' },
+  { id: 'CompleteCheckout', version: '1', kind: 'business', effects: ['order', 'payment'], resultTypes: ['Order', 'CheckoutSession'], description: 'Confirm the exact local test checkout. Both order and payment effects require authorization; this proposal never grants it.', inputs: { request: 'ServiceRequest', requirements: 'CheckoutRequest', checkout: 'CheckoutSession' }, changes: ['CheckoutRequest', 'CheckoutSession', 'ProductVariant', 'Order', 'OrderLine', 'SourceReceipt', 'ServiceRequest.progress'], submissionCriteria: ['same_owner', 'current_request_revision', 'current_requirements', 'checkout_ready', 'within_authority'], providerOperation: 'ucp.checkout.complete' },
 ];

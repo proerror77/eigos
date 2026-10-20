@@ -14,6 +14,7 @@ import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
 import { canRecoverReadOnly } from './task-recovery.js';
+import { projectPreparedResolution } from '../ontology/capability-catalog.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -309,7 +310,11 @@ export class TaskService {
       if (prepared.recipe.some(s => !capability.actions.some(a => a.ref.id === s.actionTypeRef.id && a.ref.version === s.actionTypeRef.version && [args.action, 'read'].includes(a.effect)))) throw new DomainError('FORBIDDEN', 'Remediation cannot introduce other business effects');
       const candidate = { id: randomUUID(), binding, status: 'ready' as const, input: prepared.input, details: { ...prepared.details, originalPlanDigest: d.plan.digest, originalIntentId: operation.id }, facts: prepared.facts, evidenceRefs: prepared.evidenceRefs, requirementChecks: checkRequirements(ctx.request, prepared.facts, prepared.evidenceRefs), observedAt: prepared.observedAt, expiresAt: prepared.expiresAt, recipe: prepared.recipe };
       const plan = proposePlan(catalog, owner, ctx.request, capability, candidate, { kind: 'propose_plan', requestRevision: 1, candidateId: candidate.id, message: 'Bound to the owned original operation', steps: prepared.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) }, templatePlanning(ctx.request));
-      validatePlan(catalog, owner, ctx.request, plan); job.delegation.plan = plan; job.delegation.authorizationRequest = authorizationRequest(plan, plan.steps.flatMap(requiredEffects));
+      validatePlan(catalog, owner, ctx.request, plan);
+      this.store.save(owner, job);
+      job.delegation.resolution = { candidates: [candidate], scope: { capabilityRef: capability.ref, searchedBindingRefs: [binding.ref], observedAt: prepared.observedAt, realSupply: false } };
+      projectPreparedResolution(this.store.ontology, owner, ctx.request, job.delegation.resolution, capability);
+      job.delegation.plan = plan; job.delegation.authorizationRequest = authorizationRequest(plan, plan.steps.flatMap(requiredEffects));
       job.question = '售后任务已建立；须批准准确的沙箱动作和金额。受理不等于退款或取消完成。';
       this.store.save(owner, job); createActionIntents(this.store, owner, job, prepared.privateData);
       this.store.createAfterSales(owner, { id: caseId, owner, originalJobId: original.id, remedyJobId: job.id, action: args.action, state: 'requested', remoteRef: operation.remoteRef, createdAt: now, updatedAt: now });

@@ -127,23 +127,23 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
   const prompts: string[] = [];
   const model = { runStructured: async (prompt: string) => {
     prompts.push(prompt);
-    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request: ServiceRequest; conversation: unknown[]; finalSchema: { properties: Record<string, unknown> } };
-    const request = packet.request;
+    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request?: ServiceRequest; conversation: { result: { data: PlanningContext }; receipt: { id: string } }[]; finalSchema: { properties: Record<string, unknown> } };
+    assert.equal(packet.request, undefined, 'The model must obtain task data from its actual Ontology read');
+    const context = packet.conversation[0]?.result.data;
     const output = !packet.conversation.length ? { kind: 'read', calls: [
-      { tool: 'describe_ontology', argumentsJson: JSON.stringify({ search: 'ServiceRequest', limit: 1 }) },
-      { tool: 'query_ontology', argumentsJson: JSON.stringify({ type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: request.id }] }) },
-    ], finalJson: '' } : { kind: 'final', calls: [], finalJson: packet.finalSchema.properties.requirementsJson
-      ? JSON.stringify(interpretation(request))
-      : JSON.stringify(proposal(prompt.split('\n\n').map(part => { try { return JSON.parse(part); } catch { return undefined; } }).find(p => p?.resolution && p?.capability) as PlanningContext)) };
+      { tool: 'read_task_context', argumentsJson: '{}' },
+    ], receiptIds: [], finalJson: '' } : { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: packet.finalSchema.properties.requirementsJson
+      ? JSON.stringify(interpretation(context!.request))
+      : JSON.stringify(proposal(context!)) };
     return { output, evidence: evidence() };
   } };
   const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
   try {
     b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
     assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
-    assert.equal(done.delegation!.ontologyReads!.length, 4); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 2);
+    assert.equal(done.delegation!.ontologyReads!.length, 2); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 1);
     assert.equal(done.delegation!.plan!.version, '7');
-    assert(prompts.some(p => p.includes('propertiesDigest')) === false, 'Internal snapshot hashes need not be shown as business data');
+    assert(done.delegation!.ontologyReads!.every(read => read.tool === 'read_task_context' && read.status === 'ok'));
   } finally { b.store.close(); }
 });
 

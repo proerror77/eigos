@@ -15,6 +15,7 @@ import { proposePlan, validatePlan } from '../packages/coordinator/plan.js';
 import { PaotuiGeoDiscoverySource } from '../packages/capabilities/paotui-geo-discovery.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS } from '../packages/capabilities/paotui-ontology.js';
+import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import type { PaotuiQuery, PaotuiReader } from '../packages/capabilities/paotui-contracts.js';
 import type { OntologyReceipt } from '../packages/capabilities/paotui-mcp-server.js';
 import { backend, owner, principal, proposal, reasoner } from './backend-fixture.js';
@@ -78,7 +79,7 @@ test('application catalog opts into public discovery without duplicating the sta
     assert.deepEqual(optedIn.bindings(capability.ref, owner), []);
     assert.deepEqual(optedIn.discoverySources(capability.ref, 'another-owner'), []);
     assert.equal(optedIn.summaries(owner).filter(summary => summary.ref.id === 'geo.search').length, 1);
-    assert(optedIn.agentProgram({ id: 'address.book.read', version: '2' }, owner));
+    assert(optedIn.agentProgram(PAOTUI_AGENT_REFS.addresses, owner));
   } finally { store.close(); }
 });
 

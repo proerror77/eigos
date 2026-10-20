@@ -18,7 +18,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import { paotuiModel, programContext, programRead } from './fixtures/paotui-agent.js';
 const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
-const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: '3' }, providerId: 'meituan-paotui' };
+const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: PAOTUI_AGENT_REFS.quote.version }, providerId: 'meituan-paotui' };
 
 async function fixture() {
   let source!: ReturnType<typeof personalSourceFixture>;
@@ -150,7 +150,7 @@ test('JWT network inquiry uses the existing real reader path, preserves one Task
     const reply = await f.call('/a2a', { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), taskId, metadata: { expectedRevision: f.gateway.tasks.get(f.a.p, taskId).revision }, role: 'ROLE_USER', parts: [{ text: '1寄到2，只查价，不下单' }] } } }, { Authorization: `Bearer ${f.a.token}`, 'A2A-Version': '1.0' });
     assert.equal((await reply.json()).result.task.id, taskId); await run();
     const done = f.gateway.tasks.get(f.a.p, taskId); assert.equal(done.state, 'completed'); assert(done.delegation?.acceptance?.accepted);
-    assert(done.delegation!.agent!.completion); assert.equal(done.delegation!.agent!.programRef.version, '3');
+    assert(done.delegation!.agent!.completion); assert.equal(done.delegation!.agent!.programRef.version, PAOTUI_AGENT_REFS.quote.version);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
     assert.equal(f.gateway.store.list(ownerKey(f.a.p), { limit: 20, offset: 0 }).total, 1);
     assert.equal(f.gateway.store.list(ownerKey(f.b.p), { limit: 20, offset: 0 }).total, 0);

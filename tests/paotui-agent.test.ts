@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { owner, principal } from './backend-fixture.js';
-import { setup, observe, decide, step, bookChoice } from './fixtures/paotui-agent.js';
+import { setup, observe, decide, step, bookChoice, currentBusiness } from './fixtures/paotui-agent.js';
 import { paotuiAgentEvidence } from '../packages/ontology/paotui-agent-evidence.js';
 import { NetworkEvidence } from '../packages/network/evidence.js';
 
@@ -34,7 +34,12 @@ test('model selects book-only or separate detail/quote reads; same-task clarific
     const body = new NetworkEvidence(f.store.createNetworkStore(), f.store, f.catalog).resultSummary(owner, job.id);
     assert.equal(body.evidenceLevel, 'synthetic_validation'); assert.equal(body.outcome, 'query_completed'); assert.equal(Object.keys(body).length, 7); assert(!JSON.stringify(body).includes('PRIVATE_'));
   } finally { f.store.close(); }
-  const b = setup(bookChoice, 'addresses'); try { const job = b.b.submit({ goal: '只看本人地址簿' }); assert.equal((await b.finish(job.id)).state, 'completed'); assert.deepEqual(b.calls.map(c => c.operation), ['get_address_list']); } finally { b.store.close(); }
+  const b = setup(bookChoice, 'addresses'); try {
+    const job = b.b.submit({ goal: '只看本人地址簿' }); assert.equal((await b.finish(job.id)).state, 'completed'); assert.deepEqual(b.calls.map(c => c.operation), ['get_address_list']);
+    for (const type of ['Parcel', 'DeliveryRoute', 'DeliveryQuote']) assert.equal(b.store.ontology.query(owner, { type }).items.length, 0, `An address-book request does not create ${type}`);
+    for (const type of ['Provider', 'Channel']) assert.equal(b.store.ontology.query(owner, { type }).items.length, 1);
+    assert.equal(b.store.ontology.query(owner, { type: 'SavedAddress' }).items.length, 2);
+  } finally { b.store.close(); }
 });
 
 test('model can choose named addresses and inspect details before preview; connector never chooses next action', async () => {
@@ -45,7 +50,8 @@ test('model can choose named addresses and inspect details before preview; conne
     const sender = observations.find(o => o.summary.role === 'sender'), recipient = observations.find(o => o.summary.role === 'recipient');
     if (!sender) return decide(ctx, [step('origin', 'ReadSavedAddressDetail', { scope: ctx.state.scope, book: book.ref, selector: '家里', role: 'sender' })]);
     if (!recipient) return decide(ctx, [step('destination', 'ReadSavedAddressDetail', { scope: ctx.state.scope, book: book.ref, selector: '公司', role: 'recipient' })]);
-    return decide(ctx, [step('price', 'PreviewDeliveryQuote', { scope: ctx.state.scope, sender: sender.ref, recipient: recipient.ref, goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' })]);
+    const current = currentBusiness(ctx, access);
+    return decide(ctx, [step('price', 'PreviewDeliveryQuote', { scope: ctx.state.scope, parcel: current.parcel, route: current.route, sender: sender.ref, recipient: recipient.ref })]);
   });
   try { const job = f.b.submit({ goal: '从家里寄文件到公司，1公斤，普通送，只查价' }); const done = await f.finish(job.id); assert.equal(done.state, 'completed', JSON.stringify(done)); assert.deepEqual(f.calls.map(c => c.operation), ['get_address_list', 'get_address_info', 'get_address_info', 'delivery_preview']); assert.equal(done.delegation!.agent!.plans.length, 4); } finally { f.store.close(); }
 });

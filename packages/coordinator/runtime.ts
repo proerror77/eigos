@@ -11,6 +11,8 @@ import { checkRequirements, hardRequirementsPass } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { validatePlanningSnapshot } from './planning-session.js';
 import { projectReadResult } from '../ontology/task-projection.js';
+import { assertSemanticSubmission } from '../ontology/action-submission.js';
+import { assertFixedPlanProjection } from '../ontology/execution-projection.js';
 
 export function createActionIntents(store: JobStore, owner: string, job: Job, privateData: unknown): void {
   const plan = job.delegation!.plan!; const ids: string[] = [];
@@ -42,6 +44,7 @@ export class ActionRuntime {
     const job = this.store.get(claim.owner, claim.job.id); const d = job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION || !d.plan || !d.intentIds?.length) throw new DomainError('CONFLICT', 'Current execution plan and action intents required');
     const plan = d.plan; validatePlan(this.catalog, claim.owner, d.request, plan, Date.now(), 'observe');
+    assertFixedPlanProjection(this.store.ontology, claim.owner, plan, this.store.intents(claim.owner, job.id));
     validatePlanningSnapshot(this.store.ontology, claim.owner, d.request, plan.ontologyPlanning, false);
     const expired = Date.now() - Date.parse(job.createdAt) >= (this.options.maxTaskMs ?? 86400000);
     const queriesOnly = expired && !!d.manualReconciliation;
@@ -101,8 +104,10 @@ export class ActionRuntime {
     let attempt: ExecutionAttempt | undefined;
     try {
       if (!this.store.checkpoint(claim, job => {
+        const subject = job.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)?.ontologySubject;
+        const submission = freshPermit ? assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject) : undefined;
         if (freshPermit) authorizeDispatch(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true);
-        attempt = this.store.startAttempt(claim, intent.id, kind, digest(input), kind === 'resume' ? resumeKey : undefined);
+        attempt = this.store.startAttempt(claim, intent.id, kind, digest(input), kind === 'resume' ? resumeKey : undefined, submission);
         job.updatedAt = new Date().toISOString(); job.delegation!.phase = 'executing';
         job.delegation!.events.push({ at: job.updatedAt, event: `action_${kind}_started`, evidence: attempt.id });
       })) return false;
@@ -140,6 +145,11 @@ export class ActionRuntime {
       if (!this.store.checkpoint(claim, () => {
         const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: result.output!.ucpSnapshot !== undefined ? { ucpSnapshot: result.output!.ucpSnapshot } : { domainSnapshot: result.output!.domainSnapshot } });
         if (projection.state !== 'typed_result') throw new DomainError('CONFLICT', 'Verified domain observation could not be projected');
+        const latest = this.store.intent(claim.owner, intent.id);
+        if (projection.subject && latest.latestObservationId === recorded.id && latest.state === 'effect_confirmed') {
+          latest.ontologyOutput = { object: projection.subject, observationId: recorded.id };
+          this.store.saveIntent(claim.owner, latest);
+        }
       })) return false;
     }
     if (result.runEvidence) this.store.checkpoint(claim, job => { if (!(job.runs ?? []).some(r => r.id === result.runEvidence!.id)) job.runs = [...(job.runs ?? []), result.runEvidence!]; });

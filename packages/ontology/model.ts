@@ -32,6 +32,8 @@ export interface ObjectTypeDefinition {
   titleKey: string;
   properties: Record<string, PropertyDefinition>;
   interfaces?: { id: string; propertyMap?: Record<string, string> }[];
+  /** Discovery presentation only; never an object permission or data-schema change. */
+  visibility?: 'business' | 'technical';
 }
 export interface LinkDefinition {
   id: string;
@@ -41,6 +43,10 @@ export interface LinkDefinition {
 }
 export interface ActionDefinition {
   id: string;
+  version?: string;
+  kind?: 'decision' | 'source_read' | 'business';
+  effects?: import('./actions.js').EffectClass[];
+  resultTypes?: string[];
   description: string;
   inputs: Record<string, string>;
   changes: string[];
@@ -114,14 +120,20 @@ export class OntologyModel {
         const found = sides.find(s => s.side.name === constraint.name);
         if (!found || found.other.type !== constraint.target || found.side.many !== constraint.many) invalid(`Unresolved interface link on ${item.id}`);
       }
-      const { links: _links, ...objectDefinition } = this.describeType(item.id) as Record<string, unknown>;
+      const { links: _links, visibility: _visibility, ...objectDefinition } = this.describeType(item.id) as Record<string, unknown>;
       // Links pin their own definitions. Adding a relationship need not rewrite object data.
       this.fingerprints.set(item.id, digest(objectDefinition));
     }
     this.actions = structuredClone(definition.actions);
     if (new Set(this.actions.map(a => a.id)).size !== this.actions.length) invalid('Duplicate action');
+    const operations = this.actions.flatMap(a => a.providerOperation ? [a.providerOperation] : []);
+    if (new Set(operations).size !== operations.length || this.actions.some(a => a.providerOperation && this.actions.some(other => other !== a && other.id === a.providerOperation))) invalid('Ambiguous action operation binding');
     for (const a of this.actions) {
       nameSchema.parse(a.id);
+      if (a.version !== undefined && !a.version.trim()) invalid('Invalid action version');
+      if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)))) invalid('Invalid declared action effects');
+      if (a.resultTypes?.some(type => !this.hasType(type))) invalid('Unknown declared action result type');
+      if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
       for (const path of a.changes) {
@@ -188,7 +200,7 @@ export class OntologyModel {
   describeType(id: string): object {
     const i = this.interfaces.get(id), o = this.objects.get(id);
     if (!i && !o) invalid('Unknown ontology type');
-    return structuredClone({ kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [] } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id) }),
+    return structuredClone({ kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id) }),
       properties: Object.fromEntries(Object.entries(this.properties(id)).map(([k, p]) => [k, propertyMetadata(p)])),
       ...(o ? { links: this.sides(id).map(({ side, other, link }) => ({ id: link.id, name: side.name, target: other.type, many: side.many, required: !!side.required, description: link.description })) } : {}) });
   }
@@ -196,11 +208,18 @@ export class OntologyModel {
     const args = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional() }).strict().parse(input);
     const matches = [...this.objects.keys(), ...this.interfaces.keys()].sort().filter(id => {
       const o = this.objects.get(id), i = this.interfaces.get(id);
-      return (!args.after || id > args.after) && (!args.search || [id, o?.name, o?.description, ...(o?.aliases ?? []), i?.description].join(' ').toLowerCase().includes(args.search.toLowerCase()));
+      return (!args.after || id > args.after) && (args.search?.trim()
+        ? [id, o?.name, o?.description, ...(o?.aliases ?? []), i?.description].join(' ').toLowerCase().includes(args.search.trim().toLowerCase())
+        : o?.visibility !== 'technical');
     });
     const ids = matches.slice(0, args.limit);
     return { model: { ...this.ref }, types: ids.map(id => this.describeType(id)), functions: structuredClone(this.functions), actions: structuredClone(this.actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
+  /** Resolves only explicit registered operation aliases, never inferred names. */
+  actionForOperation(operation: string) {
+    const action = this.actions.find(a => a.id === operation || a.providerOperation === operation);
+    return action ? structuredClone(action) : undefined;
+  }
   function(id: string) { const f = this.functions.find(f => f.id === id); return f ? structuredClone(f) : invalid('Unknown ontology function'); }
 }

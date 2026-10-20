@@ -46,6 +46,12 @@ export function domainFixture<K extends ServiceDomain>(domain: K, now = Date.now
   const entities: DomainSnapshot['entities'] = serviceDomain(domain).objects.map(type => { const value = entityValues[type]!; const id = value.id ?? `${type}-synthetic`; return { type, id, title: `${type} 合成对象`, properties: { sourceId: id, sourceRevision: '1', ...value.properties } }; });
   if (domain === 'appointment') Object.assign(entities.find(e => e.type === 'PatientProfile')!.properties, { patientAlias: 'patient-alias-A', identityDocument: 'PRIVATE_PATIENT_FIXTURE', contact: 'PRIVATE_CONTACT_FIXTURE' });
   const snapshot: DomainSnapshot = { domain, environment: 'sandbox', requestId: 'domain-request', requestRevision: 1, parameters: parameters[domain], option: { id: 'option-1', providerId: 'synthetic-domain-provider', parametersDigest: digest(parameters[domain]), offeredParameters: parameters[domain], availability: 'available', eligibility: 'verified', observedAt: at(-2), expiresAt: at(30), total, feesComplete: true, commitmentBy: at(10), commitments: domain === 'ride' ? { pickup: at(10), arrival: at(10), completion: at(10) } : domain === 'appointment' ? { registration: at(10), completion: at(10) } : domain === 'food' ? { completion: at(10) } : { completion: at(10) }, ...(domain === 'vehicle' ? { deposit: results.vehicle.deposit } : {}), termsMatch: true }, sourceId: 'synthetic-domain-provider', sourceEventId: 'event-1', sourceVersion: 1, entities, relationships: domainBusinessLinks.filter(r => r.domain === domain).map(r => ({ type: r.id, fromId: entities.find(e => e.type === r.from)!.id, toId: entities.find(e => e.type === r.to)!.id })) };
+  if (domain === 'itinerary') for (const leg of parameters.itinerary.legs.slice(1)) {
+    const itemId = `itinerary-item-${leg.id}`;
+    entities.push({ type: 'TravelLeg', id: leg.id, title: '合成交通路段', properties: { sourceId: leg.id, sourceRevision: '1', ...leg, feasibility: 'verified' } },
+      { type: 'ItineraryItem', id: itemId, title: '合成行程事项', properties: { sourceId: itemId, sourceRevision: '1', startsAt: leg.startsAt, endsAt: leg.endsAt, location: leg.destination, bookingRequired: leg.bookingRequired } });
+    snapshot.relationships.push({ type: 'ItineraryItemLeg', fromId: itemId, toId: leg.id });
+  }
   return { now, at, parameters: parameters[domain], result: results[domain], snapshot };
 }
 

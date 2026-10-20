@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
+import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type InterfaceDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import type { RequirementRoleDefinition } from './execution.js';
 
 const text = z.string().trim().min(1).max(500);
@@ -94,6 +94,25 @@ export const domainObjects: ObjectTypeDefinition[] = [];
 export const domainLinks: LinkDefinition[] = [];
 const link = (id: string, from: string, name: string, to: string, reverse: string, many = false, required = true) => domainLinks.push({ id, description: `${from}.${name} ↔ ${to}.${reverse}`, from: { type: from, name, many, required }, to: { type: to, name: reverse, many: true } });
 export const domainEvidenceScopes: Record<string, string> = {};
+export const domainEntityObservationType = (entityType: string) => `${entityType}Observation`;
+export const domainEntityLinkName = (entityType: string) => entityType[0]!.toLowerCase() + entityType.slice(1);
+const sourceEntityObservationProperties: Record<string, PropertyDefinition> = {
+  sourceIdentity: prop(text, 'Verified source namespace', true),
+  providerIdentity: prop(text, 'Provider identity within the source namespace', true),
+  nativeIdentity: prop(text, 'Resource identity within that source and provider', true),
+  sourceRevision: prop(text, 'Source-issued resource revision, never a local row revision', true),
+  sourceVersion: prop(z.number().int().positive(), 'Monotonic source event version', true),
+  sourceEventId: prop(text, 'Original source event identity', true),
+  observedAt: { ...prop(instant, 'Source observation time', true), kind: 'timestamp' },
+  contentDigest: prop(z.string().regex(/^[a-f0-9]{64}$/), 'Digest of the exact validated source entity including restricted fields', true),
+  valuesDigest: prop(z.string().regex(/^[a-f0-9]{64}$/), 'Digest of the public normalized resource properties', true),
+  snapshot: prop(z.record(z.string(), z.unknown()), 'Immutable public property observation; restricted source fields are omitted', true),
+};
+export const domainInterfaces: InterfaceDefinition[] = [{
+  id: 'SourceEntityObservation', description: 'Immutable source observations of stable business resources across the six service domains.',
+  parents: ['EvidenceBacked'], properties: sourceEntityObservationProperties,
+  links: [{ name: 'provider', target: 'Provider', many: false }],
+}];
 const auxiliaryFields: Record<string, Record<string, z.ZodType>> = {
   RideRoute: { origin: text, destination: text },
   TransportVehicle: { vehicleClass: text, passengerCapacity: count, vehicleReference: text },
@@ -136,6 +155,23 @@ for (const d of serviceDomains) {
     }
     domainObjects.push(definition);
     link(`${d.requestType}${auxiliary}`, d.requestType, auxiliary[0]!.toLowerCase() + auxiliary.slice(1), auxiliary, 'serviceRequirements', ['MenuItem', 'ItineraryItem', 'TravelLeg'].includes(auxiliary), false);
+    // Existing entity properties/interfaces stay pinned. New source observations
+    // are separate immutable records, and source-derived resources belong to the
+    // candidate that actually returned them rather than overwriting user intent.
+    const observationType = domainEntityObservationType(auxiliary), name = domainEntityLinkName(auxiliary);
+    const observation = object(observationType, `${names[auxiliary]}来源观察`, {});
+    observation.interfaces = [{ id: 'SourceEntityObservation' }];
+    Object.assign(observation.properties, sourceEntityObservationProperties);
+    domainObjects.push(observation);
+    domainEvidenceScopes[auxiliary] = `domain_${d.id}`; domainEvidenceScopes[observationType] = `domain_${d.id}`;
+    const many = ['MenuItem', 'ItineraryItem', 'TravelLeg'].includes(auxiliary);
+    link(`${d.candidateType}${auxiliary}`, d.candidateType, name, auxiliary, 'sourceOptions', many, false);
+    link(`${d.candidateType}${observationType}`, d.candidateType, `${name}Observations`, observationType, 'options', many, false);
+    link(`${auxiliary}Evidence`, auxiliary, 'sourceReceipts', 'SourceReceipt', `${name}Entities`, true, false);
+    link(`${auxiliary}CurrentObservation`, auxiliary, 'currentObservation', observationType, 'currentEntities', false, false);
+    link(`${observationType}Entity`, observationType, 'entity', auxiliary, 'sourceObservations');
+    link(`${observationType}Provider`, observationType, 'provider', 'Provider', `${name}Observations`);
+    link(`${observationType}Evidence`, observationType, 'sourceReceipts', 'SourceReceipt', `${name}Observations`, true);
   }
 }
 export const domainBusinessLinks: { domain: ServiceDomain; id: string; from: string; name: string; to: string; reverse: string }[] = [
@@ -158,7 +194,14 @@ for (const d of serviceDomains) for (const o of domainObjects.filter(o => [d.req
     if (meanings[name]) property.description = meanings[name];
   }
 }
-export const domainActions: ActionDefinition[] = serviceDomains.map(d => ({ id: d.action, description: `${d.name}的版本化业务决策。${d.endpoint}。提交决策更新委托进度及沟通记录；来源回执另行产生业务结果。真实连接器尚未接通，模型调用只提案。`, inputs: { request: 'ServiceRequest', requirements: d.requestType, option: d.candidateType }, changes: ['ServiceRequest.progress', 'ServiceEngagement'], submissionCriteria: ['same_owner', 'current_request_revision', 'same_request', 'current_requirements', 'eligible_option', 'within_authority'], providerOperation: `domain.${d.id}.submit` }));
+export const domainActions: ActionDefinition[] = serviceDomains.map(d => ({
+  id: d.action, version: '1', kind: 'business', effects: [d.effect], resultTypes: [d.resultType],
+  description: `${d.name}的版本化业务决策。${d.endpoint}。来源回执产生独立验证的业务结果及资源观察。定义本身不授予执行权限；当前仅有显式授权的沙箱绑定，真实连接器尚未接通。`,
+  inputs: { request: 'ServiceRequest', requirements: d.requestType, option: d.candidateType },
+  changes: ['ServiceRequest.progress', 'ServiceEngagement', d.candidateType, d.resultType, 'SourceReceipt', ...d.objects, ...d.objects.map(domainEntityObservationType)],
+  submissionCriteria: ['same_owner', 'current_request_revision', 'same_request', 'current_requirements', 'eligible_option', 'within_authority'],
+  providerOperation: `domain.${d.id}.submit`,
+}));
 export const domainFunctions: FunctionDefinition[] = serviceDomains.flatMap(d => [
   { id: d.eligibleFunction, version: '2', inputTypes: [d.candidateType], description: `${d.name}候选条件：固定需求、来源、时效、资格、费用和条款；未知阻止执行` },
   { id: d.outcomeFunction, version: '1', inputTypes: [d.resultType], description: d.endpoint },

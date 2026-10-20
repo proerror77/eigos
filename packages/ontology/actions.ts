@@ -15,6 +15,8 @@ export interface ActionIntent {
   bindingRef: Ref; inputDigest: string; privateDigest: string; privateData: unknown; effect: EffectClass;
   state: IntentState; remoteRef?: string; latestVersion?: number; latestObservationId?: string;
   acceptedOutput?: Record<string, unknown>; delivery?: Delivery; nextAt: number; createdAt: string;
+  /** Normalized business output, bound to the exact verified source observation. */
+  ontologyOutput?: { object: import('./model.js').ObjectRef; observationId: string };
   lastResult?: ActionResult; failedQueries?: number;
   businessSnapshot?: { value: BusinessSnapshot; sourceVersion: number; evidenceRefs: string[] };
   lastAppliedAttemptOrdinal?: number;
@@ -26,6 +28,7 @@ export interface ExecutionAttempt {
   startedAt: string; claimToken: string; requestRevision: number; inputDigest: string;
   planDigest: string;
   ordinal: number;
+  submission?: import('./action-submission.js').SemanticSubmission;
 }
 export interface BusinessSnapshot {
   domain?: import('./domain-rules.js').DomainAssessment & { name: import('./service-domains.js').ServiceDomain };

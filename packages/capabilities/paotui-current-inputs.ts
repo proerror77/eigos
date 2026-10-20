@@ -48,6 +48,19 @@ export function preparePaotuiRequest(request: ServiceRequest): ServiceRequest {
   return copy;
 }
 
+/** Ground the short provider contents field once, before source authorization.
+ * It must be an exact current owner phrase, not a category default or a rewrite. */
+export function validatePaotuiGoodsName(request: ServiceRequest, goodsName?: string): string | undefined {
+  const goods = paotuiInputs(request).fields.goodsText;
+  if (goods?.status !== 'confirmed' || typeof goods.value !== 'string') {
+    if (goodsName !== undefined) throw new DomainError('CONFLICT', 'Current parcel contents are missing or ambiguous; do not infer a goodsName from an old message or category.');
+    return;
+  }
+  if (!goodsName) throw new DomainError('CONFLICT', 'Parcel contents are already stated. Supply goodsName as an exact short phrase from the current contents source in the grounding input; repair this interpretation without asking the owner again.');
+  if (goodsName.length > 100 || !goods.value.includes(goodsName)) throw new DomainError('CONFLICT', 'goodsName must be an exact current parcel contents phrase of at most 100 characters. Repair the grounding input from the current contents source; do not ask the owner to repeat it.');
+  return goodsName;
+}
+
 export function validatePaotuiParcel(request: ServiceRequest, input: { goodsName: string; category: string; weightKg: number; service: string }) {
   const facts = paotuiInputs(request).fields;
   for (const field of ['weightKg', 'category', 'service'] as const) {

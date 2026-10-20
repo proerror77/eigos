@@ -30,6 +30,8 @@ export interface AgentProgram {
   sourceAuthorization?(owner: string): { provider: string; state: string; nextAction: string } | undefined;
   /** Pure readiness check before spending another model turn; never a source read. */
   assertContext?(ctx: AgentProgramContext): void;
+  /** Current typed business references reachable from the owned scope. No source calls. */
+  contextRefs?(ctx: AgentProgramContext): ObjectRef[];
   /** Pure, deterministic owner-input revision; no provider calls or defaults. */
   prepareRequest?(request: ServiceRequest): ServiceRequest;
   validateRequest?(request: ServiceRequest): void;

@@ -18,7 +18,7 @@ import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import { paotuiModel, programContext, programRead, quoteChoice, observe, decide, step } from './fixtures/paotui-agent.js';
 import { digest } from '../packages/core/delegation.js';
 const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
-const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: '3' }, providerId: 'meituan-paotui' };
+const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: PAOTUI_AGENT_REFS.quote.version }, providerId: 'meituan-paotui' };
 
 async function fixture() {
   let source!: ReturnType<typeof memberTokenSource>;

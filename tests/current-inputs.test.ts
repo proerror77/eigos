@@ -57,13 +57,13 @@ test('parcel conditions combine retained service and corrected weight with indep
   assert.throws(() => groundConditions(updated, JSON.stringify([condition])), /latest confirmed/);
 });
 
-test('the same task rejects an obsolete model weight before source dispatch and can correct itself without another owner reply', async () => {
+test('the same task rejects restated model weight and prices the current Parcel after repair without another owner reply', async () => {
   let obsoleteOnce = true;
   const f = setup((ctx, access) => {
     // Validation feedback is a model repair, not a missing owner input.
     const d = quoteChoice({ ...ctx, state: { ...ctx.state, feedback: [] } }, access);
     if (d.kind === 'execute') for (const step of d.steps) if (step.action === 'PreviewDeliveryQuote') {
-      const input = JSON.parse(step.argumentsJson); input.weightKg = obsoleteOnce ? 0.5 : 1; obsoleteOnce = false; step.argumentsJson = JSON.stringify(input);
+      if (obsoleteOnce) { const input = JSON.parse(step.argumentsJson); input.weightKg = 0.5; obsoleteOnce = false; step.argumentsJson = JSON.stringify(input); }
     }
     return d;
   });

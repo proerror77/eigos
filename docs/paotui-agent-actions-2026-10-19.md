@@ -1,6 +1,8 @@
 # 美团查询：v8 Agent 与会员自有授权
 
-本轮合并主线 v8 AgentRuntime 与已有会员来源授权，再将当前美团地址簿和查价能力切换到模型选择动作。`delivery.quote@3` 和 `address.book.read@2` 的解释输入为空对象；解释阶段只建立受限范围。模型从本体读取范围、动作定义和已观察结果，自行选择 `ReadSavedAddresses`、`ReadSavedAddressDetail`、`PreviewDeliveryQuote`、参数、依赖、补问或完成。当前目录不再注册旧固定查价适配器。
+2026-10-19 的实现基线合并主线 v8 AgentRuntime 与会员来源授权，将美团地址簿和查价能力切换到模型选择动作。该基线的 `delivery.quote@3` 和 `address.book.read@2` 解释输入为空对象。模型自行选择 `ReadSavedAddresses`、`ReadSavedAddressDetail`、`PreviewDeliveryQuote`、依赖、补问或完成；当前目录不再注册旧固定查价适配器。
+
+2026-10-20 更新为 `delivery.quote@4`、`address.book.read@3`、读取 Action 契约版本 2。解释输入可携带有用户原文依据的 `goodsName`。报价前已经存在 `Parcel`、`DeliveryRoute` 及所选地址的关系；`PreviewDeliveryQuote` 仅接收 scope、parcel、route、sender、recipient 对象引用，物品和服务参数由当前本体事实解析。任务需求、动作、步骤、来源观察及读取回执进入统一任务上下文，详见 [原则复审](ontology-principles-review-2026-10-20.md)。下文的 @8、测试数量及部署记录均指当时基线。
 
 ## 复用与边界
 

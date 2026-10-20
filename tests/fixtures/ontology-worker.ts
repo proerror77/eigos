@@ -4,10 +4,11 @@ import { readWorkerConfig } from '../../packages/core/config.js';
 import type { Reasoner } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { SANDBOX_CAPABILITY } from '../../packages/capabilities/sandbox-service.js';
-import { observePlanning } from '../backend-fixture.js';
+import { observePlanning, observeTaskContext } from '../backend-fixture.js';
 const evidence = () => ({ id: randomUUID(), runtime: 'e2e-model-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'synthetic-decision' });
 const reasoner: Reasoner = {
-  ground: async (request, capabilities) => {
+  ground: async (request, capabilities, _signal, access) => {
+    request = observeTaskContext(access) ?? request;
     const value = JSON.parse(request.originalGoal) as { sandbox: boolean; quantity: number; unit: string; deadline?: string };
     const supported = value.sandbox === true && capabilities.some(c => c.ref.id === SANDBOX_CAPABILITY.ref.id);
     return { decision: { kind: supported ? 'resolve' : 'unsupported', capabilityRef: SANDBOX_CAPABILITY.ref, requestRevision: request.revision, message: 'Explicit sandbox test only',

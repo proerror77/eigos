@@ -4,6 +4,69 @@ import { domainResultSchemas, parseDomainParameters, type DomainParameters, type
 export interface DomainCriterion { id: string; result: 'pass' | 'fail' | 'unknown'; reason: string }
 export interface DomainAssessment { status: 'satisfied' | 'unsatisfied' | 'unknown'; criteria: DomainCriterion[]; endpoint: string }
 type Money = { minor: string; currency: string };
+export const requiredDomainResources: Record<ServiceDomain, readonly string[]> = {
+  ride: ['RideRoute', 'TransportVehicle'],
+  appointment: ['Hospital', 'MedicalDepartment', 'Practitioner', 'PatientProfile', 'AppointmentSlot'],
+  food: ['FoodMerchant', 'MenuItem'],
+  hotel: ['HotelProperty', 'RoomType', 'RoomInventory'],
+  itinerary: ['TravelLeg'],
+  vehicle: ['VehicleClass', 'RentalPolicy'],
+};
+/** Necessary resource facts supplement, and can disprove, an aggregate provider
+ * eligibility flag. Missing facts stay unknown; no source assurance is invented. */
+export function domainResourceCriteria(type: string, p: Record<string, unknown>, expected: Record<string, unknown>, now: number): DomainCriterion[] {
+  const checks: DomainCriterion[] = [];
+  const check = (id: string, value: boolean | undefined, reason: string) => checks.push({ id, result: value === undefined ? 'unknown' : value ? 'pass' : 'fail', reason });
+  const equal = (id: string, actual: unknown, wanted: unknown) => check(id, actual === undefined || wanted === undefined ? undefined : digest(actual) === digest(wanted), 'Authoritative resource facts must preserve the exact requested business value');
+  const capacity = (id: string, actual: unknown, wanted: unknown) => check(id, typeof actual === 'number' && typeof wanted === 'number' ? actual >= wanted : undefined, 'Observed resource capacity must cover the requested quantity');
+  const fresh = (id: string, expiresAt: unknown) => check(id, typeof expiresAt === 'string' && Number.isFinite(Date.parse(expiresAt)) ? Date.parse(expiresAt) > now ? true : undefined : undefined, 'Expired or missing availability evidence cannot establish eligibility');
+  if (type === 'RideRoute') { equal('route_origin', p.origin, expected.origin); equal('route_destination', p.destination, expected.destination); }
+  if (type === 'TransportVehicle') { equal('vehicle_service_class', p.vehicleClass, expected.serviceClass); capacity('vehicle_passenger_capacity', p.passengerCapacity, expected.passengers); }
+  if (type === 'Hospital' || type === 'HotelProperty') equal('resource_time_zone', p.timeZone, expected.timeZone);
+  if (type === 'MedicalDepartment' || type === 'Practitioner') equal('department_hospital', p.hospitalId, expected.hospitalId);
+  if (type === 'Practitioner') equal('practitioner_department', p.departmentId, expected.departmentId);
+  if (type === 'PatientProfile') {
+    equal('patient_identity', p.patientAlias, expected.patientKey);
+    check('patient_eligibility', p.eligibility === 'verified' ? true : p.eligibility === 'ineligible' ? false : undefined, 'Administrative eligibility requires source evidence and conveys no medical assessment');
+  }
+  if (type === 'AppointmentSlot') {
+    for (const name of ['hospitalId', 'departmentId', 'practitionerId', 'timeZone']) equal(`slot_${name}`, p[name], expected[name]);
+    check('slot_time', typeof p.startsAt === 'string' && typeof expected.startsAt === 'string' ? Date.parse(p.startsAt) === Date.parse(expected.startsAt) : undefined, 'The exact requested appointment time must be preserved');
+    capacity('slot_capacity', p.availableCount, 1); fresh('slot_freshness', p.expiresAt);
+  }
+  if (type === 'RoomType') capacity('room_guest_capacity', typeof p.guestCapacity === 'number' && typeof expected.rooms === 'number' ? p.guestCapacity * expected.rooms : undefined, expected.guests);
+  if (type === 'RoomInventory') {
+    equal('inventory_check_in', p.checkIn, expected.checkIn); equal('inventory_check_out', p.checkOut, expected.checkOut);
+    capacity('inventory_capacity', p.roomsAvailable, expected.rooms); fresh('inventory_freshness', p.expiresAt);
+  }
+  if (type === 'MenuItem') {
+    const items = expected.items as { sku: string; specification: string }[], selected = items.find(item => item.sku === p.sku);
+    check('menu_item_identity', p.sku === undefined ? undefined : !!selected, 'Every offered menu item must be a requested source SKU');
+    if (selected) equal('menu_item_specification', p.specification, selected.specification);
+    const normalized = (value: string) => value.normalize('NFKC').trim().toLocaleLowerCase('en-US');
+    const excluded = (expected.excludedIngredients as string[]).map(normalized), ingredients = Array.isArray(p.ingredients) && p.ingredients.every(v => typeof v === 'string') ? p.ingredients as string[] : undefined;
+    if (excluded.length) {
+      const contradicted = ingredients?.some(value => excluded.includes(normalized(value))) ?? false;
+      check('menu_item_excluded_ingredients', contradicted ? false : p.ingredientsKnown === true && ingredients ? true : undefined, 'Known excluded ingredients reject the option; incomplete ingredient knowledge cannot establish compliance');
+    }
+  }
+  if (type === 'TravelLeg') {
+    const legs = expected.legs as { id: string; [name: string]: unknown }[], selected = legs.find(leg => leg.id === p.id);
+    check('travel_leg_identity', p.id === undefined ? undefined : !!selected, 'Every evidenced travel leg must belong to the requested itinerary');
+    if (selected) for (const field of ['origin', 'destination', 'startsAt', 'endsAt', 'mode', 'transferMinutes', 'bookingRequired']) {
+      if (['startsAt', 'endsAt'].includes(field)) check(`travel_leg_${field}`, typeof p[field] === 'string' ? Date.parse(p[field] as string) === Date.parse(selected[field] as string) : undefined, 'The actual leg schedule must match the requested schedule');
+      else equal(`travel_leg_${field}`, p[field], selected[field]);
+    }
+    check('travel_leg_feasibility', p.feasibility === 'verified' ? true : p.feasibility === 'impossible' ? false : undefined, 'Transportation feasibility requires an explicit source fact');
+  }
+  if (type === 'VehicleClass') capacity('rental_passenger_capacity', p.passengerCapacity, expected.passengers);
+  if (type === 'RentalPolicy') {
+    for (const field of ['cancellationPolicyRef', 'insuranceTerms', ...(expected.mode === 'self_drive' ? ['driverEligibilityRule'] : [])]) {
+      check(`rental_${field}`, typeof p[field] === 'string' && p[field] !== 'unknown' && String(p[field]).trim() ? true : undefined, 'Applicable rental terms must be supplied by the source; generic eligibility does not fill missing policy facts');
+    }
+  }
+  return checks;
+}
 export function quoteRoleCriteria(domain: ServiceDomain, parameters: Record<string, unknown>, option: Record<string, unknown>): DomainCriterion[] {
   const criteria: DomainCriterion[] = [], commitments = option.commitments as Record<string, string> | undefined;
   const requiredTimes: Record<string, unknown> = domain === 'ride' ? { pickup: parameters.pickupBy, arrival: parameters.arriveBy } : domain === 'appointment' ? { registration: parameters.registerBy } : domain === 'food' ? { completion: parameters.deliverBy } : {};

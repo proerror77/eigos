@@ -8,7 +8,7 @@ import type { AgentDecision, AgentStep } from '../../packages/ontology/agent-act
 import type { Job } from '../../packages/core/domain.js';
 import { JobStore } from '../../packages/core/store.js';
 import { digest } from '../../packages/core/delegation.js';
-import { backend, evidence, interpretation, owner } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 import type { Reasoner, AgentPlanningContext, PlanningAccess } from '../../packages/coordinator/coordinator.js';
 
 export const merchant = { id: 'coffee', name: 'Coffee', shopId: 'gid://shopify/Shop/12', domain: 'coffee.myshopify.com' };
@@ -37,6 +37,7 @@ export function fixture() {
 export const step = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const decision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], completion?: unknown): AgentDecision => ({ kind: completion ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic decision based on this goal and the observed facts', steps, completionJson: completion ? JSON.stringify(completion) : '' });
 export function observe(ctx: AgentPlanningContext, access: PlanningAccess, evaluate = true) {
+  observeTaskContext(access);
   access.session.call('describe_ontology', { search: 'Catalog', limit: 5 });
   access.session.call('query_ontology', { object: { type: 'ServiceRequest', id: ctx.request.id } });
   access.session.call('query_ontology', { object: ctx.state.scope });
@@ -59,7 +60,7 @@ export const knownChoice: Choice = (ctx, access) => {
   return decision(ctx, [step('endpoint', 'DiscoverMerchantCatalog', { scope: ctx.state.scope, merchantId: 'coffee' }), step('known', 'ReadMerchantVariants', { scope: ctx.state.scope, merchantId: 'coffee', variantIds: [ids[1]] }, ['endpoint'], [{ stepId: 'endpoint', targetKey: 'endpoint' }])]);
 };
 export function model(choice: Choice = searchChoice): Reasoner {
-  return { ground: async request => ({ decision: interpretation(request, CATALOG_AGENT_REF.id, input), evidence: evidence() }), plan: async () => { throw new Error('Legacy candidate planner must never run for this program'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+  return { ground: async (request, _caps, _signal, access) => ({ decision: interpretation(observeTaskContext(access) ?? request, CATALOG_AGENT_REF.id, input), evidence: evidence() }), plan: async () => { throw new Error('Legacy candidate planner must never run for this program'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
 }
 export function setup(choice: Choice = searchChoice) {
   const f = fixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, shopifyCatalog: { merchants: [merchant], connector: f.connector } }), b = backend(catalog, model(choice), store);

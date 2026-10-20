@@ -20,9 +20,18 @@ export function proposal(context: PlanningContext, index = 0): PlanProposal {
     steps: candidate.recipe ? candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) : [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
 }
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
-  return { ground: async request => ({ decision: ground(request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
+  return { ground: async (request, _caps, _signal, access) => ({ decision: ground(observeTaskContext(access) ?? request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
 }
+/** The synthetic model explicitly reads and acknowledges its delivered context. */
+export function observeTaskContext(access: PlanningAccess): ServiceRequest | undefined {
+  if (!access.session.usesTaskContext()) return;
+  const result = access.session.call('read_task_context', {}) as { data: { request: ServiceRequest }; receipt: { id: string } };
+  access.session.acceptReceipts([result.receipt.id]);
+  return result.data.request;
+}
+export function acknowledgeReads(access: PlanningAccess) { if (access.session.usesTaskContext()) access.session.acceptReceipts(access.session.receipts().filter(r => r.status === 'ok').map(r => r.id)); }
 export function observePlanning(context: PlanningContext, access: PlanningAccess) {
+  if (observeTaskContext(access)) return;
   access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 });
   access.session.call('query_ontology', { type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: context.request.id }] });
 }

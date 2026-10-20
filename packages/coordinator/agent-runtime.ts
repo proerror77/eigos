@@ -15,6 +15,7 @@ import { checkRequirements } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { executionBudgetStatus, executionBudgetExceeded, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from '../core/execution-budget.js';
 import { scheduleTaskRecovery, resolveTaskRecovery } from '../core/task-recovery.js';
+import { assertAgentPlanProjection, executionStepRef, readExecutionContext, readOntologyRequest } from '../ontology/execution-projection.js';
 
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };
@@ -38,7 +39,9 @@ export class AgentRuntime {
     const d = this.store.get(claim.owner, claim.job.id).delegation!;
     const state = d.agent ?? failure('Agent state is missing');
     if (state.requestRevision !== d.request.revision) failure('Agent state belongs to an old request revision');
-    return { graph: this.store.ontology, owner: claim.owner, request: d.request, state };
+    const request = readOntologyRequest(this.store.ontology, claim.owner, d.request.id);
+    if (request.revision !== d.request.revision) failure('Current business request differs from its Ontology revision');
+    return { graph: this.store.ontology, owner: claim.owner, request, state };
   }
   private program(claim: WorkClaim) {
     const ctx = this.context(claim), program = this.catalog.agentProgram(ctx.state.programRef, claim.owner);
@@ -143,13 +146,13 @@ export class AgentRuntime {
         program.schema(step.action).parse(checked);
         for (const value of Object.values(input)) {
           const ref = objectRefSchema.safeParse(value);
-          if (ref.success && !reads.objects.some(o => equal(o.ref, ref.data))) failure('Read referenced ontology objects before selecting an action');
+          if (ref.success && !(reads.deliveredObjects ?? reads.objects).some(o => equal(o.ref, ref.data))) failure('Read referenced ontology objects before selecting an action');
         }
         if (!step.inputRefs.length) program.validate(ctx, step.action, input);
         const saved = { ...step, input, definitionDigest: digest(definition), intentId: randomUUID() };
         preceding.set(step.id, saved); return saved;
       });
-      if (!reads.objects.some(o => equal(o.ref, ctx.state.scope))) failure('Read the task scope before selecting actions');
+      if (!(reads.deliveredObjects ?? reads.objects).some(o => equal(o.ref, ctx.state.scope))) failure('Read the task scope before selecting actions');
       const body: Omit<AgentActionPlan, 'digest'> = { id: randomUUID(), version: '1', sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads };
       const plan = { ...body, digest: digest(body) };
       const saved = this.store.checkpoint(claim, current => {
@@ -171,6 +174,16 @@ export class AgentRuntime {
   }
   private async execute(claim: WorkClaim, program: AgentProgram, signal: AbortSignal) {
     const initial = this.context(claim), plan = initial.state.plans.find(p => p.id === initial.state.pendingPlanId) ?? failure('Pending agent plan is missing');
+    assertAgentPlanProjection(this.store.ontology, claim.owner, plan);
+    const execution = readExecutionContext(this.store.ontology, claim.owner, plan.requestId, plan.requestRevision);
+    const path = execution?.plans.find(p => p.planId === plan.id) ?? failure('Pending execution path is missing from Ontology');
+    if (execution?.pendingPlanId !== plan.id || path.planDigest !== plan.digest) failure('Pending execution path differs from Ontology');
+    const orderedSteps = path.steps.map(visible => {
+      const step = plan.steps.find(s => s.id === visible.stepId) ?? failure('Ontology execution step has no sealed invocation');
+      const refs = (items: typeof step.inputRefs) => [...items].sort((a, b) => a.targetKey.localeCompare(b.targetKey));
+      if (visible.action !== step.action || !equal([...visible.dependsOn].sort(), [...step.dependsOn].sort()) || !equal(refs(visible.inputRefs), refs(step.inputRefs))) failure('Ontology execution dependencies differ from the sealed invocation');
+      return step;
+    });
     const { digest: expected, ...body } = plan;
     if (digest(body) !== expected || plan.version !== '1' || plan.programDigest !== program.configurationDigest || !equal(plan.programRef, program.ref) || plan.requestId !== initial.request.id || plan.requestRevision !== initial.request.revision || !equal(plan.scope, initial.state.scope) || plan.scopeDigest !== digest(this.store.ontology.read(claim.owner, plan.scope).properties)) failure('Pinned agent plan changed');
     const receipt = this.store.get(claim.owner, claim.job.id).runs?.find(r => r.id === plan.modelRunId);
@@ -178,11 +191,12 @@ export class AgentRuntime {
       const { definitionDigest: _definition, input, intentId: _intent, ...selected } = step;
       return !equal(selected, plan.modelDecision.steps[i]) || !equal(input, JSON.parse(step.argumentsJson));
     })) failure('Executable steps differ from the recorded model decision');
-    for (const step of plan.steps) {
+    for (const step of orderedSteps) {
       signal.throwIfAborted(); if (!this.store.claimActive(claim)) return;
       if (!this.withinTaskBudget(claim)) return;
       const intent = this.store.intent(claim.owner, step.intentId);
       if (intent.planDigest !== plan.digest || intent.effect !== 'read') failure('Action ledger differs from its pinned plan');
+      if (this.store.ontology.read(claim.owner, executionStepRef(plan, step.id)).properties.state !== intent.state) failure('Ontology invocation state differs from the durable ledger');
       if (['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state)) continue;
       if (intent.state !== 'ready') {
         this.store.checkpoint(claim, job => this.feedback(job, 'runtime', 'A previous read was interrupted; its outcome is unknown. Choose an explicit new read if needed, retaining confirmed owner facts.', digest({ action: step.action, input: step.input })));

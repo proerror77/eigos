@@ -10,6 +10,7 @@ type Presentation = { generation: number; addresses: SavedAddress[]; presentedRe
 type Confirmed = { address: SavedAddress; messageIndex: number };
 type Choices = { generation: number; addresses: SavedAddress[]; presentedRevision?: number; presentedMessageCount?: number; presentations?: Presentation[]; confirmations?: Partial<Record<'sender' | 'recipient', Confirmed>>; confirmFromMessage?: number };
 type AccountContext = { authorizationEpoch: string; credentialContext: string; choiceContext: string; accountIdentity?: string };
+export type CurrentAddressSelection = { address: SavedAddress; source: ServiceRequest['messages'][number] };
 const normalize = (value: string) => value.normalize('NFKC').replace(/[\s，。；、：:]/g, '').toLowerCase();
 const display = (a: SavedAddress) => a.address + (a.houseNumber ? `（${a.houseNumber}）` : '');
 const sameBook = (a: SavedAddress[], b: SavedAddress[]) => digest([...a].sort((x, y) => x.addressId.localeCompare(y.addressId))) === digest([...b].sort((x, y) => x.addressId.localeCompare(y.addressId)));
@@ -148,6 +149,27 @@ export class PaotuiAddressSelection {
       }
       return route[0]!.addressId !== route[1]!.addressId && route[0]!.cityId === route[1]!.cityId;
     } catch { return false; }
+  }
+  /** Trusted current selections for the owned business projection. No private
+   * address payload from this method is delivered to an agent context. */
+  current(owner: string, request: ServiceRequest, connection: string, addresses?: SavedAddress[]) {
+    const c = this.choices(owner, request, connection), roles: Partial<Record<'sender' | 'recipient', CurrentAddressSelection>> = {};
+    const book = addresses ?? c?.addresses ?? [];
+    if (c) for (const role of ['sender', 'recipient'] as const) {
+      try {
+        const latest = this.latestChoice(c, request, role), address = this.select(owner, request, connection, book, latest.selector, role);
+        roles[role] = { address, source: request.messages[latest.messageIndex]! };
+      } catch { /* A changed or missing role remains incomplete; the other role survives. */ }
+    }
+    const account = this.account(owner, request);
+    const verifiedAccount = account?.credentialContext === connection ? account.accountIdentity : undefined;
+    // Entity identity and selection authority are separate. A verified provider
+    // account survives token refresh and new tasks; the private choice context
+    // still decides whether old instructions may be used under this grant.
+    const namespace = verifiedAccount
+      ? digest({ owner, provider: 'meituan-paotui', accountIdentity: verifiedAccount })
+      : digest({ owner, provider: 'meituan-paotui', provisional: this.context(owner, request, connection) });
+    return { namespace, addresses: book, roles };
   }
   select(owner: string, request: ServiceRequest, connection: string, addresses: SavedAddress[], selector: string, role: 'sender' | 'recipient', record = false): SavedAddress {
     const c = this.choices(owner, request, connection); if (!c || !sameBook(c.addresses, addresses) || addresses.length > 30) return failure();

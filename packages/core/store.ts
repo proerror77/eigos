@@ -15,6 +15,7 @@ import { projectTask } from '../ontology/task-projection.js';
 import { scheduleTaskRecovery } from './task-recovery.js';
 import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
 import type { RunEvidence } from '../capabilities/executor.js';
+import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
 
 export interface ListFilter {
   limit: number;
@@ -114,6 +115,32 @@ export class JobStore {
   }
   recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.get(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }
 
+  /** The execution graph and durable ledger share this transaction; neither is
+   * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
+   * business effects can update ledger truth without advancing the task. */
+  private projectExecution(owner: string, job: Job): void {
+    const current = this.intents(owner, job.id);
+    const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
+      JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
+    const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
+      WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
+    const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
+      JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
+      const result = JSON.parse(String(row.body)) as ActionResult;
+      // recordObservation only applies non-unknown results after verification.
+      // A later accepted observation does not revoke this historical fact.
+      // Unapplied/unknown rows do not prove either verification or rejection.
+      return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
+        verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
+    });
+    projectExecution(this.ontology, owner, job, { intents: [...archived, ...current], attempts, observations });
+  }
+  private executionMutation<T>(action: () => T): T {
+    this.db.exec('SAVEPOINT execution_ontology');
+    try { const result = action(); this.db.exec('RELEASE execution_ontology'); return result; }
+    catch (error) { this.db.exec('ROLLBACK TO execution_ontology; RELEASE execution_ontology'); throw error; }
+  }
+
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
     this.get(owner, jobId);
     const row = this.db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=? AND key=?').get(owner, jobId, key);
@@ -133,6 +160,7 @@ export class JobStore {
 
   // Called inside the same fenced checkpoint that saves the fixed plan.
   createIntent(owner: string, intent: ActionIntent): string {
+    return this.executionMutation(() => {
     this.get(owner, intent.jobId);
     if (intent.owner !== owner) throw new DomainError('FORBIDDEN', 'Action owner mismatch');
     const previous = this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND business_key=?').get(owner, intent.businessOperationKey);
@@ -142,11 +170,14 @@ export class JobStore {
       this.db.prepare('INSERT OR IGNORE INTO action_intent_versions VALUES(?,?,?,?)').run(old.id, owner, old.planDigest, JSON.stringify(old));
       const { privateData, ...body } = { ...intent, id: old.id };
       this.db.prepare('UPDATE action_intents SET state=?,private_data=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body), owner, old.id);
+      this.projectExecution(owner, this.get(owner, intent.jobId));
       return old.id;
     }
     const { privateData, ...body } = intent;
     this.db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id, owner, intent.jobId, intent.businessOperationKey, intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body));
+    this.projectExecution(owner, this.get(owner, intent.jobId));
     return intent.id;
+    });
   }
   intent(owner: string, id: string): ActionIntent {
     const row = this.db.prepare('SELECT * FROM action_intents WHERE owner=? AND id=?').get(owner, id);
@@ -162,23 +193,32 @@ export class JobStore {
     return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, jobId).map(r => this.intent(owner, String(r.id)));
   }
   saveIntent(owner: string, intent: ActionIntent): void {
+    this.executionMutation(() => {
     const current = this.intent(owner, intent.id);
     if (intent.owner !== owner || intent.businessOperationKey !== current.businessOperationKey || intent.planDigest !== current.planDigest) throw new DomainError('CONFLICT', 'Action identity changed');
     const { privateData, ...body } = intent;
     this.db.prepare('UPDATE action_intents SET state=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(body), owner, intent.id);
+    this.projectExecution(owner, this.get(owner, intent.jobId));
+    });
   }
   dispatchIntent(owner: string, id: string): void {
+    this.executionMutation(() => {
     const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
     if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
+    this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
+    });
   }
-  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string): ExecutionAttempt {
+  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string, submission?: ExecutionAttempt['submission']): ExecutionAttempt {
+    return this.executionMutation(() => {
     const intent = this.intent(claim.owner, intentId);
     if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
     if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
     else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
-    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
+    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}) };
     this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
+    this.projectExecution(claim.owner, this.get(claim.owner, intent.jobId));
     return attempt;
+    });
   }
   attempts(owner: string, intentId: string): ExecutionAttempt[] {
     this.intent(owner, intentId);
@@ -200,6 +240,7 @@ export class JobStore {
         if (duplicate) return { id: String(duplicate.id), applied: false };
         const id = randomUUID();
         this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+        this.projectExecution(owner, this.get(owner, intent.jobId));
         return { id, applied: false };
       }
       if (duplicate) {
@@ -209,6 +250,7 @@ export class JobStore {
           const event = `${result.eventId}:conflict:${hash}`; const previous = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, event);
           const id = previous ? String(previous.id) : randomUUID();
           if (!previous) this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, event, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+          this.projectExecution(owner, this.get(owner, intent.jobId));
           return { id, applied: false };
         }
         if (verified && result.kind !== 'unknown' && attempt.planDigest === intent.planDigest && intent.state !== 'needs_review' && (intent.latestVersion === undefined || result.sourceVersion >= intent.latestVersion) && attempt.ordinal >= (intent.lastAppliedAttemptOrdinal ?? 0)) {
@@ -447,6 +489,7 @@ export class JobStore {
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
       projectTask(this.ontology, owner, job);
+      this.projectExecution(owner, job);
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }

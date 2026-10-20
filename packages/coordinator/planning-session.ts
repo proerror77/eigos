@@ -11,13 +11,21 @@ import { assessConditions, hardConditionsPass } from './conditions.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import { businessConditionSchema } from '../ontology/business-model.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
+import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
+import { assertTaskContextCurrent, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES, readTaskContext, readTaskInstructions, taskContextSchema, taskInstructionsSchema, taskObjectMembership, type TaskContextBinding, type TaskContextRead } from './task-context.js';
 
 const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), includeSchemas: z.boolean().optional().describe('Request full property value schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
-export const planningToolSchemas = { describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
+export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningToolCatalog = (taskContext = false) => Object.entries(planningToolSchemas).filter(([name]) => taskContext || !['read_task_context', 'read_task_instructions'].includes(name)).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
+export interface PlanningSessionOptions { taskContext?: TaskContextBinding; priorReads?: readonly PlanningReadReceipt[] }
+function assertInstructionCoverage(context: NonNullable<PlanningReadReceipt['context']>, reads: PlanningReadReceipt[]) {
+  if (!context.requireCompleteInstructions) return;
+  const refs = [...new Map(reads.flatMap(receipt => receipt.instructionRefs ?? []).map(ref => [key(ref), ref])).values()];
+  if (refs.length !== context.instructionCount || instructionCoverageDigest(refs) !== context.instructionRefsDigest) throw new DomainError('CONFLICT', 'Read the remaining original instruction pages before interpreting this request');
+}
 
 function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
   if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
@@ -31,7 +39,14 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
   const { digest: expected, ...body } = snapshot;
   if (!['model_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
-  if (snapshot.mode === 'model_queries' && (!snapshot.reads.some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !snapshot.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new DomainError('CONFLICT', 'A model plan requires actual definition and object reads');
+  if (snapshot.mode === 'model_queries') {
+    if (snapshot.context) {
+      const receipt = snapshot.reads.find(r => r.id === snapshot.context!.receiptId && r.tool === 'read_task_context' && r.status === 'ok');
+      const { receiptId: _receiptId, ...context } = snapshot.context;
+      if (!receipt?.context || digest(receipt.context) !== digest(context) || context.ownerDigest !== digest(owner) || context.requestId !== request.id || context.requestRevision !== request.revision || !receipt.definitions || digest(receipt.definitions.payload) !== receipt.definitions.payloadDigest || receipt.definitions.modelDigest !== graph.model.ref.digest || receipt.definitions.bindingDigest !== context.bindingDigest) throw new DomainError('CONFLICT', 'The model plan does not cite its actual owned task-context receipt');
+      assertInstructionCoverage(context, snapshot.reads);
+    } else if (!snapshot.reads.some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !snapshot.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok')) throw new DomainError('CONFLICT', 'A model plan requires actual definition and object reads');
+  }
   if (!hardConditionsPass(snapshot.conditionChecks, 'precondition') || (request.conditions ?? []).some(c => c.phase === 'precondition' && c.strength === 'hard' && !snapshot.conditionChecks.some(r => r.conditionId === c.id && r.result === 'pass'))) throw new DomainError('CONFLICT', 'Hard business preconditions are unresolved');
   if (!fresh) return;
   for (const old of snapshot.objects) {
@@ -52,34 +67,73 @@ export class OntologyPlanningSession {
   private seen = new Map<string, ObjectSnapshot>();
   private proposals: DecisionActionProposal[] = [];
   private bytes = 0;
+  private instructionBytes = 0;
   private failures = new Map<string, number>();
+  private callObjects = new Map<string, ObjectSnapshot>();
+  private callDelivered = new Map<string, ObjectSnapshot>();
+  private acceptedIds?: Set<string>;
+  private acceptedReadCount = 0;
+  private knownRefs = new Map<string, ObjectRef>();
   constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
-    private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = []) {}
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+    private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = [], private options: PlanningSessionOptions = {}) {
+    if (options.taskContext) this.readScope = 'request';
+  }
+  usesTaskContext() { return !!this.options.taskContext; }
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(this.usesTaskContext()), readScope: this.readScope, ...(this.usesTaskContext() ? { contextReadRequired: true, finalReceiptIdsRequired: true, instructionPages: { maxResultBytes: MAX_INSTRUCTION_READ_BYTES, completeReadRequired: this.options.taskContext!.purpose === 'grounding' } } : {}), scopeNote: this.readScope === 'request' ? 'Only the current task and its retrieved business objects. Traverse only task-owned nodes; shared provider or address metadata cannot be used to navigate into another request. Restricted properties remain unavailable.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
   receipts() { return structuredClone(this.reads); }
+  lastReceipt() { return this.reads.length ? structuredClone(this.reads.at(-1)!) : undefined; }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
-  private remember(ref: ObjectRef, expectedRevision?: number) {
+  acceptReceipts(ids: string[]): void {
+    this.active();
+    if (!ids.length || ids.length > 20 || new Set(ids).size !== ids.length || ids.some(id => !this.reads.some(receipt => receipt.id === id && receipt.status === 'ok'))) throw new DomainError('CONFLICT', 'A decision must cite successful receipts actually returned in this model session');
+    if (this.usesTaskContext()) {
+      const current = this.reads.findLast(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok');
+      if (!current?.context || !ids.includes(current.id)) throw new DomainError('CONFLICT', 'A decision must cite the current task-context receipt');
+      assertTaskContextCurrent(this.graph, this.owner, current.context);
+      assertInstructionCoverage(current.context, this.reads.filter(receipt => ids.includes(receipt.id)));
+    }
+    this.acceptedIds = new Set(ids); this.acceptedReadCount = this.reads.length;
+  }
+  private remember(ref: ObjectRef, expectedRevision?: number, delivered = false) {
     const next = snapshotObject(this.graph, this.owner, ref, this.request), old = this.seen.get(key(ref));
     if (expectedRevision !== undefined && next.revision !== expectedRevision) throw new DomainError('CONFLICT', 'Object changed after its query result');
     if (old && (old.propertiesDigest !== next.propertiesDigest || old.linksDigest !== next.linksDigest || ref.type !== 'ServiceRequest' && old.revision !== next.revision)) throw new DomainError('CONFLICT', 'Object changed between reasoning reads');
     this.seen.set(key(ref), next);
+    this.callObjects.set(key(ref), next);
+    if (delivered) this.callDelivered.set(key(ref), next);
     if (this.seen.size > 150) throw new DomainError('CONFLICT', 'Planner object budget exceeded');
   }
   private retrieved(ref: ObjectRef, allowBoundQuery = false) {
     if (ref.type === 'ServiceRequest' && ref.id === this.request.id) return;
-    if (allowBoundQuery && this.boundRefs.some(bound => key(bound) === key(ref))) return;
+    if (allowBoundQuery && (this.boundRefs.some(bound => key(bound) === key(ref)) || this.knownRefs.has(key(ref)))) return;
     if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
   }
   call(tool: string, input: unknown): unknown {
     this.active();
     if (this.reads.length >= 20) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
-    const before = new Set(this.seen.keys());
+    const before = new Map(this.seen), proposalCount = this.proposals.length, receiptId = randomUUID();
+    this.callObjects = new Map(); this.callDelivered = new Map();
     const datasetRevision = this.graph.revision(this.owner);
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
+    let contextRead: TaskContextRead | undefined;
+    let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
-      if (tool === 'describe_ontology') {
+      if (tool === 'read_task_context') {
+        if (!this.options.taskContext) throw new DomainError('FORBIDDEN', 'This session has no task-context binding');
+        const args = taskContextSchema.parse(input);
+        contextRead = readTaskContext(this.graph, this.owner, this.request.id, this.request.revision, this.options.taskContext, receiptId, [...(this.options.priorReads ?? []), ...this.reads], args);
+        for (const ref of contextRead.deliveredRefs) this.remember(ref, undefined, true);
+        for (const ref of contextRead.data.graph.unreadRefs) this.knownRefs.set(key(ref), ref);
+        instructionRefs = contextRead.instructionRefs;
+        output = contextRead.data;
+      } else if (tool === 'read_task_instructions') {
+        if (!this.options.taskContext || !this.reads.some(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before its original instruction pages');
+        const result = readTaskInstructions(this.graph, this.owner, this.request.id, this.request.revision, taskInstructionsSchema.parse(input));
+        for (const object of result.items) this.remember(object.ref, object.revision, true);
+        instructionRefs = result.items.map(object => object.ref); instructionPage = true; output = result;
+      } else if (tool === 'describe_ontology') {
         const { includeSchemas = false, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
-        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
+        output = { ...result, ...(this.options.taskContext ? { actions: result.actions.filter(action => this.options.taskContext!.program?.actionIds.includes(action.id)) } : {}), schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
           const value = type as { properties: Record<string, Record<string, unknown>> };
           return { ...value, properties: Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
         }) };
@@ -91,12 +145,19 @@ export class OntologyPlanningSession {
             if (query.type !== 'ServiceRequest') throw new DomainError('FORBIDDEN', 'This delegation lacks tasks:read for owner-wide object search');
             const { type: _type, ...fields } = query;
             query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
-          } else if ('object' in query) this.retrieved(query.object, true);
-          else if (query.from.type !== 'ServiceRequest' || query.from.id !== this.request.id) throw new DomainError('FORBIDDEN', 'This delegation permits only relationships of the current request');
+          } else if ('object' in query) {
+            this.retrieved(query.object, true);
+            if (taskObjectMembership(this.graph, this.owner, this.request, query.object) === 'foreign') throw new DomainError('FORBIDDEN', 'Object belongs to another request or revision');
+          } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') throw new DomainError('FORBIDDEN', 'Relationships may be followed only from current task-owned objects');
         }
         if ('from' in query) this.retrieved(query.from);
         const result = this.graph.query(this.owner, query);
-        for (const object of result.items) this.remember(object.ref, object.revision);
+        for (const object of result.items) {
+          if (this.readScope === 'request' && taskObjectMembership(this.graph, this.owner, this.request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship points outside the current task revision');
+          this.remember(object.ref, object.revision, true);
+          if (object.ref.type === 'RequestInstruction' && typeof object.properties.text === 'string') instructionRefs.push(object.ref);
+        }
+        instructionPage = !!result.items.length && result.items.every(object => object.ref.type === 'RequestInstruction');
         output = result;
       } else if (tool === 'evaluate_ontology') {
         const args = functionCallSchema.parse(input);
@@ -167,22 +228,40 @@ export class OntologyPlanningSession {
     } catch (error) {
       if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
       status = 'rejected'; output = { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
+      this.seen = before; this.proposals.length = proposalCount;
+      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined;
+      instructionRefs = []; instructionPage = false;
       const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
       if (count >= 3) throw new DomainError('CONFLICT', 'Three identical planning read failures; stop and report the unresolved input');
     }
-    this.bytes += Buffer.byteLength(JSON.stringify(output));
+    if (instructionPage) this.instructionBytes += Buffer.byteLength(JSON.stringify(output));
+    else this.bytes += Buffer.byteLength(JSON.stringify(output));
     if (this.bytes > 200000) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
+    if (this.instructionBytes > MAX_INSTRUCTION_READ_BYTES) throw new DomainError('CONFLICT', 'Original instruction read budget exhausted for this reasoning session');
     this.active();
-    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v) });
-    this.onRead(this.reads.at(-1)!);
-    return output;
+    const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status,
+      objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}) };
+    this.reads.push(receipt);
+    this.onRead(receipt);
+    return contextRead ? { data: output, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, outputDigest: receipt.outputDigest } } : output;
   }
   finish(candidate?: ResolvedCandidate): PlanningSnapshot {
     this.active();
+    if (this.usesTaskContext() && (!this.acceptedIds || this.acceptedReadCount !== this.reads.length)) throw new DomainError('CONFLICT', 'The model must acknowledge the actual task-context and read receipts after its last read');
+    const reads = this.usesTaskContext() ? this.receipts().filter(receipt => this.acceptedIds!.has(receipt.id)) : this.receipts();
+    const contextReceipt = this.usesTaskContext() ? reads.findLast(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok') : undefined;
+    if (this.usesTaskContext()) {
+      if (!contextReceipt?.context) throw new DomainError('CONFLICT', 'The model skipped the required task-context read');
+      assertTaskContextCurrent(this.graph, this.owner, contextReceipt.context);
+    }
     const conditionChecks = assessConditions(this.graph, this.owner, this.request, candidate?.ontologySubject);
+    this.callObjects = new Map(); this.callDelivered = new Map();
     for (const check of conditionChecks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
+    const dependencies = this.usesTaskContext() ? new Map([...reads.flatMap(receipt => receipt.objects), ...this.callObjects.values()].map(object => [key(object.ref), object])) : this.seen;
+    const deliveredObjects = [...new Map(reads.flatMap(receipt => receipt.deliveredObjects ?? []).map(object => [key(object.ref), object])).values()];
     const result = planningSnapshot({ mode: 'model_queries', model: this.graph.model.ref, requestRevision: this.request.revision, conditionsDigest: digest(this.request.conditions ?? []),
-      reads: this.receipts(), objects: [...this.seen.values()], conditionChecks, actionProposals: structuredClone(this.proposals) });
+      reads, objects: [...dependencies.values()].filter(object => !this.usesTaskContext() || !isExecutionBookkeepingType(object.ref.type)), ...(this.usesTaskContext() ? { deliveredObjects, context: { ...contextReceipt!.context!, receiptId: contextReceipt!.id } } : {}),
+      conditionChecks, actionProposals: structuredClone(this.proposals) });
     validatePlanningSnapshot(this.graph, this.owner, this.request, result, true);
     return result;
   }

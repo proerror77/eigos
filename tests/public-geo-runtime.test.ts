@@ -15,7 +15,7 @@ import { validatePlan } from '../packages/coordinator/plan.js';
 import type { Job } from '../packages/core/domain.js';
 import type { Reasoner } from '../packages/coordinator/coordinator.js';
 import { PAOTUI_READ_CAPABILITIES } from '../packages/capabilities/paotui-ontology.js';
-import { owner, principal, proposal, observePlanning } from './backend-fixture.js';
+import { owner, principal, proposal, observePlanning, observeTaskContext } from './backend-fixture.js';
 
 const query = { city: '北京市', keyword: '天安门' };
 const deniedQuery = { city: '北京市', keyword: '故宫博物院' };
@@ -26,13 +26,13 @@ const evidence = () => ({ id: randomUUID(), runtime: 'synthetic-public-geo-runti
 
 function fixedReasoner(input = query): Reasoner {
   return {
-    ground: async request => ({ decision: {
+    ground: async (request, _caps, _signal, access) => { request = observeTaskContext(access) ?? request; return { decision: {
       kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
       message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input),
       // Reproduce the real PA interpreter's city requirement, rather than hiding it.
       requirementsJson: JSON.stringify([{ requirement: { id: 'public-location-scope', strength: 'hard', kind: 'location', expected: { ref: '北京市' } }, messageId: request.messages[0]!.id, quote: '北京市' }]),
       conditionsJson: '[]',
-    }, evidence: evidence() }),
+    }, evidence: evidence() }; },
     plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: context.resolution.candidates.some(candidate => candidate.status === 'ready')
       ? proposal(context) : { kind: 'no_feasible_plan', requestRevision: context.request.revision, candidateId: '', steps: [],
         message: 'Synthetic fixed planner received no verified public query result' }, evidence: evidence() }; },
