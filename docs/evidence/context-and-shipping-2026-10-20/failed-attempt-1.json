@@ -1,0 +1,214 @@
+{
+  "recordedAt": "2026-10-20T02:53:22.552610+00:00",
+  "taskId": "8327617f-24b2-4485-9c5f-489944f0b81a",
+  "sourceCommit": "c1ca8146475878a2305942c12e49d01fbbbab286",
+  "state": "failed",
+  "createdAt": "2026-10-20T02:46:46.710Z",
+  "completedAt": "2026-10-20T02:48:20.557Z",
+  "wallSeconds": 93.847,
+  "modelCalls": 6,
+  "modelRuns": [
+    {
+      "id": "d6780817-808a-4fc2-bba5-4bf5dc1a9bda",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:46:46.837Z",
+      "completedAt": "2026-10-20T02:47:00.873Z",
+      "outputSha256": "000ad78faef43bd9d8f8171cd12777304db330d364cffe0dcd44a9e5888e1c04",
+      "threadId": "01a15734-4b5c-7d71-82c3-54f2e2a8f5f2",
+      "usage": {
+        "input_tokens": 41879,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 128,
+        "reasoning_output_tokens": 0
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "407b5c0f-ab44-48b0-ae88-65cbaa549a21",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:47:00.891Z",
+      "completedAt": "2026-10-20T02:47:12.561Z",
+      "outputSha256": "5deade911ffbe5e8540cb5d5b3c74d4e7d142eab1739411ef45cbab80b66d2d4",
+      "threadId": "01a15734-806b-73b1-a443-a50a08d99cf6",
+      "usage": {
+        "input_tokens": 48185,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 142,
+        "reasoning_output_tokens": 56
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "0cb6e401-0077-4cc7-814a-f1ea5b39aa97",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:47:12.568Z",
+      "completedAt": "2026-10-20T02:47:23.750Z",
+      "outputSha256": "6b18099f3c3a4534aa63feebe86c50b9dc2230ccbcc4e82233be239d4350df6c",
+      "threadId": "01a15734-ae0e-7a70-9193-cc5823492ddf",
+      "usage": {
+        "input_tokens": 48229,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 105,
+        "reasoning_output_tokens": 31
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "e80e1fb6-766e-45ec-8f90-597dafcbab2b",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:47:23.765Z",
+      "completedAt": "2026-10-20T02:47:37.047Z",
+      "outputSha256": "e84dc59c7954737ef7e5c0f9dc4ddc380ec71af3db87821e8bd072f4188650b6",
+      "threadId": "01a15734-d9d3-7081-9efe-9ace19ddc5d9",
+      "usage": {
+        "input_tokens": 53623,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 70,
+        "reasoning_output_tokens": 24
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "01800247-f6ef-437c-8c1b-26dab166d730",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:47:37.060Z",
+      "completedAt": "2026-10-20T02:47:48.915Z",
+      "outputSha256": "114d41e96a4e6e8a2ca5877c5e546f920139902966b670685d35cf579c690de8",
+      "threadId": "01a15735-0dc0-75d1-be4b-dac0f965c873",
+      "usage": {
+        "input_tokens": 61012,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 159,
+        "reasoning_output_tokens": 10
+      },
+      "purpose": "grounding"
+    },
+    {
+      "id": "fdf76ca1-bfe5-4922-a3f1-e836a6b3c513",
+      "runtime": "codex-exec",
+      "startedAt": "2026-10-20T02:47:48.926Z",
+      "completedAt": "2026-10-20T02:48:20.536Z",
+      "outputSha256": "e2b2e79cf787afd7581ce1746584b6280307ca60efbba3aec0ba2e644109a77b",
+      "threadId": "01a15735-3c12-71d3-ae55-11a3824e4eb3",
+      "usage": {
+        "input_tokens": 61305,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1308,
+        "reasoning_output_tokens": 80
+      },
+      "decisionDigest": "df4fac190d2d913456cfde5e3df7265a22049f388ed802da85a33ef346ab920b",
+      "purpose": "grounding"
+    }
+  ],
+  "usage": {
+    "input_tokens": 314233,
+    "cached_input_tokens": 106880,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 1912,
+    "reasoning_output_tokens": 201
+  },
+  "sourceCalls": 0,
+  "businessWrites": 0,
+  "grants": 0,
+  "error": "Ontology backend could not validate a supported plan. No business action was dispatched.",
+  "evidenceLimit": "This pre-fix runtime retained the final interpretation digest but not its payload or validation exception, so the exact failing semantic check cannot be reconstructed. Rejected ontology reads are retained.",
+  "ontologyReads": [
+    {
+      "id": "14827a27-eb0f-4a32-8760-b37cfeec0882",
+      "at": "2026-10-20T02:47:00.884Z",
+      "tool": "describe_ontology",
+      "inputDigest": "089e1d92dda417f70d3fe95d8cc75ca6d0a7c06e03976561f4c02a772456d310",
+      "outputDigest": "2a4d52fb79ddd6d5d28246962aa1fa400a897cfb4c7d5e61595263bed4da98a9",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": []
+    },
+    {
+      "id": "838ec81c-beaf-4269-8299-8fdf3b1f45b5",
+      "at": "2026-10-20T02:47:00.889Z",
+      "tool": "query_ontology",
+      "inputDigest": "7344158f864271c691a8daddaa045ddfdb753a842145500d340e4f173e8fb502",
+      "outputDigest": "c5975a36140c665fe55bb7c6a0a632a46774cdbecc3c318bdbe6086b949aff7e",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "8327617f-24b2-4485-9c5f-489944f0b81a"
+          },
+          "revision": 2,
+          "propertiesDigest": "2e01320d2b0ab542b24b6d50e26ed489d9ee7c049c636b2fcb9285feea63ee3f",
+          "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      ]
+    },
+    {
+      "id": "5f5a711c-7305-4d63-9966-3af27cae6879",
+      "at": "2026-10-20T02:47:12.565Z",
+      "tool": "query_ontology",
+      "inputDigest": "69547fc4827b87240eb6979564a25ec50d841f4bdb56e5a66284a38b7965a995",
+      "outputDigest": "4d0d9d6acc2f1311c5187d94789c71f6cde26bbb8cff07e20777745f86641211",
+      "datasetRevision": 87,
+      "status": "rejected",
+      "objects": []
+    },
+    {
+      "id": "90a1c13e-cabc-4f26-8292-66d7e3508cb2",
+      "at": "2026-10-20T02:47:23.759Z",
+      "tool": "describe_ontology",
+      "inputDigest": "1cb66fd384523938ce8845f33198d4adca5d00c4ff6efe911c75163f5b1a9954",
+      "outputDigest": "7687d8a4442c250bd397cca74a40fe297db5d82edbba0923b1e3936265291519",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": []
+    },
+    {
+      "id": "a569f3ba-117c-4dba-96e5-c6c85acba4ec",
+      "at": "2026-10-20T02:47:23.762Z",
+      "tool": "query_ontology",
+      "inputDigest": "69547fc4827b87240eb6979564a25ec50d841f4bdb56e5a66284a38b7965a995",
+      "outputDigest": "4d0d9d6acc2f1311c5187d94789c71f6cde26bbb8cff07e20777745f86641211",
+      "datasetRevision": 87,
+      "status": "rejected",
+      "objects": []
+    },
+    {
+      "id": "ce0a518b-f8dd-41f0-a20d-c8c4e7e3edb0",
+      "at": "2026-10-20T02:47:37.056Z",
+      "tool": "describe_ontology",
+      "inputDigest": "bd0dd15ee7364845d822040949f32570fc6586e84c10e8dc0770364500b06e64",
+      "outputDigest": "6809d31fd6d6eec69d2f6b72fdbea34cca7e74f2d5b062a36ea45377a9a1db51",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": []
+    },
+    {
+      "id": "116e784a-754b-4264-a0b8-020639e8c3ec",
+      "at": "2026-10-20T02:47:48.920Z",
+      "tool": "query_ontology",
+      "inputDigest": "682070abb7e8efd16de302d75cc97f48a531f8aab830f7e214e999357ee1224a",
+      "outputDigest": "8fc8493dddfd2d885fdbe4f7619f46a99dac6b8f94b5d7b62b917ff814d791b5",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": []
+    },
+    {
+      "id": "0ee872a3-ddc0-44ff-acfc-88ccd8267871",
+      "at": "2026-10-20T02:47:48.921Z",
+      "tool": "query_ontology",
+      "inputDigest": "60032eb082f69771189c10cd33d7bf94806c26db4aa52f5dbe118bedb1c5b2e9",
+      "outputDigest": "51ff9e781b49a3e8d1cd9c7a31b15e4a9489e0fe0c3dc7ac3ca4e86c6d6b0ce3",
+      "datasetRevision": 87,
+      "status": "ok",
+      "objects": []
+    }
+  ],
+  "inputSha256": "d42144ba7bdc9481d68120e224603e4d85c101b517f022641cd6c24d1073f174"
+}

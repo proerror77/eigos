@@ -1,0 +1,15 @@
+{
+  "sourceCommit": "2516ed15665a94b072563dc62582122bda94c607",
+  "typecheck": "passed",
+  "tests": {
+    "passed": 399,
+    "failed": 0
+  },
+  "processE2E": {
+    "passed": 7,
+    "failed": 0
+  },
+  "build": "passed",
+  "diffCheck": "passed",
+  "regression": "An isolated test reproduced immutable-document reseeding failure before the fix, then passed without modifying the existing source documents."
+}
