@@ -3,6 +3,7 @@ import { DomainError, ownerKey, requireScope, type Principal } from '../core/dom
 import { MemberSourceVault, SOURCE_PROVIDER, type SourceActor } from '../core/member-source.js';
 import type { TaskService } from '../core/tasks.js';
 import type { MemberStore } from './store.js';
+import { PAOTUI_AGENT_REFS } from '../capabilities/paotui-agent.js';
 
 /** Identity comes exclusively from the verified registered PA, never upload arguments. */
 export class MemberSourceService {
@@ -17,7 +18,7 @@ export class MemberSourceService {
   }
   status(p: Principal, token: string) { return this.vault.status(this.actor(p, token).owner); }
   list(p: Principal, token: string) {
-    return { sources: [{ ...this.status(p, token), capabilityRefs: [{ id: 'delivery.quote', version: '2' }, { id: 'address.book.read', version: '1' }],
+    return { sources: [{ ...this.status(p, token), capabilityRefs: [PAOTUI_AGENT_REFS.quote, PAOTUI_AGENT_REFS.addresses],
       authorization: { provider: SOURCE_PROVIDER, method: 'pa_supplied_credential', beginTool: 'begin_source_connection', statusTool: 'get_source_connection', revokeTool: 'revoke_source_connection', resumeTool: 'resume_source_task', credentialInput: 'private_http_only', requiresUserOwnedAccount: true } }] };
   }
   begin(p: Principal, token: string, input: unknown) { return this.vault.begin(this.actor(p, token, true), input); }

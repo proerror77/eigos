@@ -23,7 +23,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前运行契约为 `ontology-execution-v8`、业务模型为 `eigos.business@7`。本机常驻服务已更新；Shopify 使用新的 Agent 动作循环，其他能力保留现有执行契约。历史任务及对象不自动迁移或重新执行。
+仓库当前运行契约为 `ontology-execution-v8`、业务模型为 `eigos.business@8`。本机常驻服务已更新；Shopify 使用新的 Agent 动作循环，其他能力保留现有执行契约。历史任务及对象不自动迁移或重新执行。
 
 ## 本地开发
 
@@ -45,6 +45,8 @@ npm run dev
 | A2A JSON-RPC | `http://127.0.0.1:3000/a2a` |
 
 新建任务返回 submitted，由 Worker 持久领取。缺少业务信息返回 input-required；PA 向用户转述真实问题，在同一个 taskId 回复。完成以服务端 accepted 验收和实际交付物为准。请求 ID 用于防重，网络超时后查询原任务。
+
+补充信息和来源续期在原任务开启新的有限执行窗口，累计模型调用、计划和动作记录保留。Agent 标准预算为每段32次／累计128次模型调用；长任务可选 `executionBudget: "extended"`，为每段64次／累计256次。已确认的地址选择经过当前来源重新核对后继续使用，无须因同凭据续期重复确认。详见[任务恢复与执行预算](docs/task-recovery-2026-10-20.md)。
 
 ## 本人的常驻 PA 连接
 

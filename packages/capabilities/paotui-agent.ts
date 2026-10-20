@@ -30,7 +30,7 @@ export class PaotuiAgentProgram implements AgentProgram {
   readonly completionSchema = z.toJSONSchema(paotuiCompletionSchema);
   readonly configurationDigest: string;
   private choices: PaotuiAddressSelection;
-  readonly guidance = 'Read PaotuiTask and the registered action definitions before deciding. Use query_ontology.object for state.scope and each current state.observations reference. An empty state.observations means this request revision has no usable observations; historical request relationships do not supply current evidence. Relationship queries use published link names, not relationship IDs. Choose ReadSavedAddresses, ReadSavedAddressDetail, or PreviewDeliveryQuote only as needed. Each action makes exactly one provider call; there is no prepared workflow. Full addresses, phone numbers and vendor IDs are private. ReadSavedAddresses gives a count. You may use exact address names from user messages in ReadSavedAddressDetail; ambiguous or invented choices are rejected. To show concrete options, issue clarify with [[saved_addresses]] after a book observation. The host inserts the private list in the owned task response, never in your context. Keep clarification in this task. Preserve an explicitly supplied item-count phrase in goodsName when possible; item count is declared content, not the priced mass or a fulfillment claim. Do not assume defaults for goods, category, weight or ordinary/express service. Ask when missing. Detail actions accept a book ref and an explicit user selector with sender/recipient role. A quote uses the two detail observation refs, with the owner\'s parcel facts. You may combine independent detail reads and a dependent quote frontier using inputRefs, or inspect results first. Read and evaluate every observation you select with paotuiObservationStatus. Complete only from a current quote for a quote goal, or a current book for an address-book goal; use the completion schema. A quote is an estimate, not delivery, an order, a payment, or a complete fee guarantee. Credentials must never appear in messages or arguments.';
+  readonly guidance = 'Read PaotuiTask and the registered action definitions before deciding. Use query_ontology.object for state.scope and each current state.observations reference. An empty state.observations means this request revision has no usable observations; historical request relationships do not supply current evidence. Previously confirmed parcel facts and address selectors in request.messages remain user intent after clarification or source renewal. Read a fresh book and reuse those explicit choices; a new scope or empty observations alone is not a reason to ask the user again. Ask again only for genuinely missing facts or a reported changed, ambiguous or unbound selection. Relationship queries use published link names, not relationship IDs. Choose ReadSavedAddresses, ReadSavedAddressDetail, or PreviewDeliveryQuote only as needed. Each action makes exactly one provider call; there is no prepared workflow. Full addresses, phone numbers and vendor IDs are private. ReadSavedAddresses gives a count. You may use exact address names from user messages in ReadSavedAddressDetail; ambiguous or invented choices are rejected. To show concrete options, issue clarify with [[saved_addresses]] after a book observation. The host inserts the private list in the owned task response, never in your context. Keep clarification in this task. Preserve an explicitly supplied item-count phrase in goodsName when possible; item count is declared content, not the priced mass or a fulfillment claim. Do not assume defaults for goods, category, weight or ordinary/express service. Ask when missing. Detail actions accept a book ref and an explicit user selector with sender/recipient role. A quote uses the two detail observation refs, with the owner\'s parcel facts. You may combine independent detail reads and a dependent quote frontier using inputRefs, or inspect results first. Read and evaluate every observation you select with paotuiObservationStatus. Complete only from a current quote for a quote goal, or a current book for an address-book goal; use the completion schema. A quote is an estimate, not delivery, an order, a payment, or a complete fee guarantee. Credentials must never appear in messages or arguments.';
   constructor(readonly kind: 'quote' | 'addresses', private options: Options) {
     if (options.vault && options.access) throw new Error('Mixed source identities are forbidden');
     this.ref = PAOTUI_AGENT_REFS[kind];
@@ -43,6 +43,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     return this.options.access ? this.options.access.permitted(owner) : owner === localOwner;
   }
   sourceAuthorization(owner: string) { const s = this.options.vault?.status(owner); return s ? { provider: s.provider, state: s.state, nextAction: s.nextAction } : undefined; }
+  assertContext(ctx: AgentProgramContext) { this.scope(ctx); }
   listingBinding(): ProviderBinding {
     return { ref: { id: `meituan:${this.ref.id}`, version: this.ref.version }, capabilityRef: this.ref, providerId: 'meituan-paotui', channelId: 'meituan', adapterId: `meituan:${this.ref.id}.agent`, protocol: 'mcp', enabled: true, configurationDigest: this.configurationDigest,
       verification: { level: 'read_only_probe', evidenceRefs: ['docs/meituan-paotui-integration.md'] }, recovery: { idempotency: 'none', lookup: false } };
@@ -65,7 +66,7 @@ export class PaotuiAgentProgram implements AgentProgram {
   }
   schema(action: string): z.ZodType<Record<string, unknown>> { if (!this.actionIds.some(a => a === action)) throw new DomainError('FORBIDDEN', 'Unregistered Paotui read'); return paotuiActionSchemas[action as PaotuiAction]; }
   definition(graph: OntologyObjectStore, action: string) { const def = graph.model.action(action); if (def.read?.effect !== 'read' || !equal(def.read.inputSchema, z.toJSONSchema(this.schema(action)))) invalid('Read definition differs from the binding'); return def; }
-  private scope(ctx: AgentProgramContext): { grant?: SourceGrant; connectionDigest: string } {
+  private scope(ctx: AgentProgramContext): { grant?: SourceGrant; connectionDigest: string; selectionContext: string } {
     if (!this.permitted(ctx.owner) || !equal(ctx.state.programRef, this.ref) || ctx.state.programDigest !== this.configurationDigest || ctx.state.requestRevision !== ctx.request.revision) invalid('Owned read scope changed');
     const s = ctx.graph.readPrivate(ctx.owner, ctx.state.scope), p = s.properties, root = ctx.graph.related(ctx.owner, s.ref, 'request', { remaining: 1000 });
     if (s.ref.type !== 'PaotuiTask' || p.requestRevision !== ctx.request.revision || p.configurationDigest !== this.configurationDigest || p.outcome !== this.kind || !equal(p.allowedActions, this.actionIds) || root?.length !== 1 || root[0]!.ref.id !== ctx.request.id || root[0]!.properties.revision !== ctx.request.revision) invalid('Source scope belongs to another task or revision');
@@ -75,7 +76,7 @@ export class PaotuiAgentProgram implements AgentProgram {
       if (grant.owner !== ctx.owner || digest(grant) !== p.connectionDigest) invalid('Source grant belongs to another identity');
       try { this.options.vault.assert(grant); } catch (e) { if (e instanceof ReplanRequired) throw new SourceAuthorizationRequired(); throw e; }
     } else { this.options.access?.assert(); if (p.connectionDigest !== (this.options.access?.configurationDigest ?? digest({ owner: ctx.owner, source: 'local-development' }))) invalid('Source configuration changed'); }
-    return { grant, connectionDigest: String(p.connectionDigest) };
+    return { grant, connectionDigest: String(p.connectionDigest), selectionContext: grant?.selectionContext ?? String(p.connectionDigest) };
   }
   private observation(ctx: AgentProgramContext, ref: ObjectRef, action?: PaotuiAction): PaotuiObservation {
     const source = this.scope(ctx);
@@ -92,7 +93,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     const latestBook = ctx.state.observations.map(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot)).filter(s => s.action === 'ReadSavedAddresses').at(-1);
     if (!latestBook || latestBook.id !== book.id) invalid('Choose details from the latest address-book observation');
     const addresses = atomicResultSchemas.get_address_list.parse(book.result).addresses;
-    const selected = this.choices.select(ctx.owner, ctx.request, book.connectionDigest, addresses, input.selector, input.role);
+    const selected = this.choices.select(ctx.owner, ctx.request, this.scope(ctx).selectionContext, addresses, input.selector, input.role);
     if (detail.providerInput.addressId !== selected.addressId) invalid('Address detail does not match the explicit selection');
     return { selected, book, role: input.role };
   }
@@ -104,7 +105,7 @@ export class PaotuiAgentProgram implements AgentProgram {
       const a = paotuiActionSchemas.ReadSavedAddressDetail.parse(input), book = this.observation(ctx, a.book, 'ReadSavedAddresses');
       const latestBook = ctx.state.observations.filter(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot).action === 'ReadSavedAddresses').at(-1);
       if (!equal(latestBook, a.book)) invalid('Read details only from the latest book');
-      this.choices.select(ctx.owner, ctx.request, book.connectionDigest, atomicResultSchemas.get_address_list.parse(book.result).addresses, a.selector, a.role);
+      this.choices.select(ctx.owner, ctx.request, this.scope(ctx).selectionContext, atomicResultSchemas.get_address_list.parse(book.result).addresses, a.selector, a.role);
     }
     if (action === 'PreviewDeliveryQuote') {
       const a = paotuiActionSchemas.PreviewDeliveryQuote.parse(input), sender = this.selected(ctx, this.observation(ctx, a.sender, 'ReadSavedAddressDetail')), recipient = this.selected(ctx, this.observation(ctx, a.recipient, 'ReadSavedAddressDetail'));
@@ -122,7 +123,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     let providerInput: Record<string, unknown> = {};
     if (name === 'ReadSavedAddressDetail') {
       const a = paotuiActionSchemas.ReadSavedAddressDetail.parse(value), book = this.observation(ctx, a.book, 'ReadSavedAddresses');
-      providerInput = { addressId: this.choices.select(ctx.owner, ctx.request, source.connectionDigest, atomicResultSchemas.get_address_list.parse(book.result).addresses, a.selector, a.role).addressId };
+      providerInput = { addressId: this.choices.select(ctx.owner, ctx.request, source.selectionContext, atomicResultSchemas.get_address_list.parse(book.result).addresses, a.selector, a.role).addressId };
     } else if (name === 'PreviewDeliveryQuote') {
       const a = paotuiActionSchemas.PreviewDeliveryQuote.parse(value), sender = this.observation(ctx, a.sender, 'ReadSavedAddressDetail'), recipient = this.observation(ctx, a.recipient, 'ReadSavedAddressDetail');
       providerInput = { sender: this.addressPayload(this.selected(ctx, sender).selected, sender), recipient: this.addressPayload(this.selected(ctx, recipient).selected, recipient), goodsName: a.goodsName, category: a.category, weightKg: a.weightKg, service: a.service };
@@ -139,7 +140,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     this.validate(ctx, action, input); const s = checkedPaotuiObservation(result.value), source = this.scope(ctx);
     if (s.action !== action || !equal(s.actionInput, input) || !equal(s.scope, ctx.state.scope) || s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== this.configurationDigest || s.connectionDigest !== source.connectionDigest || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || !equal(result.evidenceRefs, [s.receipt.id]) || s.receipt.evidenceKind !== (this.options.connector ? 'fixture' : 'live_readonly') || Date.parse(s.summary.expiresAt) <= ctx.graph.now()) invalid('Source result does not bind the exact owned model decision and attempt');
     const ref = projectPaotuiObservation(ctx.graph, ctx.owner, s);
-    if (s.action === 'ReadSavedAddresses') this.choices.observe(ctx.owner, ctx.request, source.connectionDigest, atomicResultSchemas.get_address_list.parse(s.result).addresses);
+    if (s.action === 'ReadSavedAddresses') this.choices.observe(ctx.owner, ctx.request, source.selectionContext, atomicResultSchemas.get_address_list.parse(s.result).addresses);
     return ref;
   }
   clarify(ctx: AgentProgramContext, message: string) {
@@ -148,7 +149,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     const bookRef = ctx.state.observations.filter(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot).action === 'ReadSavedAddresses').at(-1);
     if (!bookRef) invalid('Read a current address book before displaying choices');
     this.observation(ctx, bookRef!, 'ReadSavedAddresses');
-    return message.replaceAll('[[saved_addresses]]', this.choices.present(ctx.owner, ctx.request, source.connectionDigest));
+    return message.replaceAll('[[saved_addresses]]', this.choices.present(ctx.owner, ctx.request, source.selectionContext));
   }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     this.scope(ctx); const c = paotuiCompletionSchema.parse(proposal), s = this.observation(ctx, c.observation, this.kind === 'quote' ? 'PreviewDeliveryQuote' : 'ReadSavedAddresses');

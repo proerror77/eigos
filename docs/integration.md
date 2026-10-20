@@ -28,11 +28,19 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 {"taskId":"返回的任务UUID","answer":"寄件用地址1，收件用地址2。","requestId":"stable-reply-id"}
 ```
 
-地址选项来自真实本人地址簿，按任务私有保存。PA 不自行猜选地址、不索取内部地址 ID，不另建一个报价任务。用户未提供的物品、重量或服务由同一任务补问。地址簿变化会使旧选项失效并重新询问；跨城和含糊选择不能直接报价。
+地址选项来自真实本人地址簿，按任务私有保存。PA 不自行猜选地址、不索取内部地址 ID，不另建一个报价任务。用户未提供的物品、重量或服务由同一任务补问。已确认的编号绑定本人当时看到的列表；续期后仍须读取当前地址簿，所选地址的 ID 和内容一致才可沿用。无关地址增删或列表重排不要求重复选择；所选地址改变、匹配含糊或身份连续性无法确认时才重新询问。
+
+任务执行预算与支付金额无关。提交可带 `executionBudget: "standard"`（默认）或 `"extended"`。原任务等待输入时，回复可带 `executionBudget: "extended"` 提高执行上限，例如：
+
+```json
+{"taskId":"原任务UUID","answer":"保留已确认的信息，使用长任务预算继续。","executionBudget":"extended","requestId":"stable-budget-reply-id"}
+```
+
+有效补充或来源恢复只开启新的有限执行窗口，不删除累计用量，也不授予业务写权限。`get_task` 的 `delegation.executionBudgetStatus` 返回当前档位、单段和累计上限、已用次数及暂停原因。单段到限后在原任务继续；重复回复或凭据刷新不会清空累计次数，PA 不得用新建替代任务规避上限。具体上限、身份连续性和恢复边界见[任务恢复说明](task-recovery-2026-10-20.md)。
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-六类服务扩展复用这些接口和权限。当前运行契约为 `ontology-execution-v8`，业务模型为 `eigos.business@7`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+六类服务扩展复用这些接口和权限。当前运行契约为 `ontology-execution-v8`，业务模型为 `eigos.business@8`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 同类要求可带所选能力声明的 `role`：例如酒店 `room_count`／`guest_count`、打车 `pickup`／`arrival`、租车 `service_total`／`deposit`。模型保留各自原话与来源；校验只使用相应角色的事实，缺证据保持 unknown。未带 role 的要求保留原有单一语义，不自动匹配其他角色。v6 及更早计划只读，不自动迁移或恢复执行。修复及真实模型证据见 [六类验证](service-domain-validation-2026-10-18.md)。
 
@@ -48,7 +56,7 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 {"jsonrpc":"2.0","id":"rpc-1","method":"SendMessage","params":{"configuration":{"returnImmediately":true},"message":{"messageId":"stable-submit-id","role":"ROLE_USER","parts":[{"text":"帮我查1公斤文件普通送运费，先列出保存地址让我选。只查价。"}]}}}
 ```
 
-后续 SendMessage 带原 taskId，以新的 messageId 回复自然语言。也可使用单个 data part 携带与 MCP 相同的业务参数。`service`、requirements、executionEnvironment 是 EIGOS 字段，非 A2A 标准必填项。标准协议状态与 MCP 共用底层任务。
+后续 SendMessage 带原 taskId，以新的 messageId 回复自然语言。也可使用单个 data part 携带与 MCP 相同的业务参数。`service`、requirements、executionEnvironment、executionBudget 是 EIGOS 字段，非 A2A 标准必填项。标准协议状态、预算和继续执行规则与 MCP 共用底层任务。
 
 异步 submitted／working 继续查询同一个 taskId；有界 poll 超时不代表执行失败。input-required 转述问题并等待用户；auth-required 只能经独立授权 API 处理精确的本地模拟方案，普通“同意”回复不授予业务许可。相同请求 ID 重试必须保持原内容，不能用新任务替换结果不明的原操作。
 

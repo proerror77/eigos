@@ -1,4 +1,4 @@
-import { DELEGATE } from './delegation.js';
+import { DELEGATE, digest } from './delegation.js';
 import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
 import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import { proposePlan, validatePlan } from '../coordinator/plan.js';
@@ -12,6 +12,7 @@ import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
+import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -32,12 +33,19 @@ export class TaskService {
       assertConnected(owner);
       const intents = this.store.intents(owner, job.id);
       if (intents.some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
-      for (const i of intents) { i.state = 'rejected'; this.store.saveIntent(owner, i); }
-      if (d.agent) { d.agentHistory = [...(d.agentHistory ?? []), d.agent]; delete d.agent; }
+      // Retain confirmed reads and their provenance. Only unfinished execution is
+      // canceled; the next scope cannot reuse an old observation or attempt.
+      this.store.cancelActions(owner, job.id);
+      if (d.agent) {
+        d.suspendedAgent = { programRef: d.agent.programRef, programDigest: d.agent.programDigest, input: d.agent.input, requestDigest: digest({ ...d.request, revision: 0 }) };
+        d.agentHistory = [...(d.agentHistory ?? []), d.agent]; delete d.agent;
+      }
       if (d.plan) d.planHistory = [...(d.planHistory ?? []), d.plan];
       delete d.plan; delete d.intentId; delete d.intentIds; delete d.actions; delete d.resolution; delete d.sourceAuthorization; delete d.reasoning; delete d.ontologyReads; delete d.conditionChecks; delete d.authorizationRequest;
       job.revision = (job.revision ?? 0) + 1; d.request.revision = job.revision; d.phase = 'grounding'; d.nextAt = 0;
       job.state = 'submitted'; job.updatedAt = new Date().toISOString(); delete job.question; delete job.error;
+      continueExecutionBudget(job, 'source');
+      if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
       d.events.push({ at: job.updatedAt, event: 'owned_source_connected' });
       this.store.save(owner, job); return job;
     });
@@ -84,7 +92,7 @@ export class TaskService {
           executionEnvironment: args.executionEnvironment ?? 'live',
           requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
-          phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
+          executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
       this.store.save(owner, job);
       return job;
     });
@@ -119,9 +127,11 @@ export class TaskService {
           }
           else for (const intent of this.store.intents(owner, job.id)) if (intent.state === 'needs_review' || intent.state === 'effect_unknown') { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
           d.nextAt = 0; d.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+          continueExecutionBudget(job, 'input', args.executionBudget);
           this.store.save(owner, job); return job;
         }
         const request = job.delegation!.request;
+        delete job.delegation!.suspendedAgent;
         if (job.delegation!.agent) {
           this.store.cancelActions(owner, job.id);
           job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
@@ -135,6 +145,8 @@ export class TaskService {
         }
         if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
         job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
+        continueExecutionBudget(job, 'input', args.executionBudget);
+        if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
       }
       this.store.save(owner, job);
       return job;
@@ -273,6 +285,7 @@ export class TaskService {
     });
   }
   private view(owner: string, job: Job): Job {
+    if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.executionBudget) job.delegation.executionBudgetStatus = executionBudgetStatus(job);
     if (job.delegation?.backendVersion === BACKEND_VERSION && (job.delegation.plan || job.delegation.agent || job.delegation.agentHistory?.length)) {
       const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);
       job.delegation.actions = intents.map(i => ({ id: i.id, stepId: i.stepId, state: i.state, remoteRef: i.remoteRef, latestObservationId: i.latestObservationId }));

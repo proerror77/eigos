@@ -13,8 +13,8 @@ import type { PlanningAccess, Reasoner } from './coordinator.js';
 import { validatePlanningSnapshot } from './planning-session.js';
 import { checkRequirements } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
+import { executionBudgetStatus, executionBudgetExceeded, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from '../core/execution-budget.js';
 
-export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };
 const errorMessage = (error: unknown) => error instanceof DomainError || error instanceof AgentReadError ? error.message : error instanceof z.ZodError ? 'Input or source response does not match the registered schema' : 'Read action failed without a validated source response';
@@ -26,12 +26,10 @@ export class AgentRuntime {
     private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number } = {}) {}
   private withinTaskBudget(claim: WorkClaim) {
     const job = this.store.get(claim.owner, claim.job.id);
-    if (Date.now() <= Date.parse(job.createdAt) + (this.options.maxTaskMs ?? 86400000)) return true;
+    if (Date.now() <= Date.parse(executionBudgetStatus(job).window.startedAt) + (this.options.maxTaskMs ?? 86400000)) return true;
     this.store.finish(claim, current => {
       this.store.cancelActions(claim.owner, current.id);
-      current.state = 'failed'; current.delegation!.phase = 'failed'; current.updatedAt = new Date().toISOString();
-      current.error = '本次查询已超过任务等待时限；已有观察和未确认结果已保留，没有自动重试。请提交新任务。';
-      current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
+      pauseExecutionBudget(current, 'time', 'window');
     });
     return false;
   }
@@ -68,12 +66,13 @@ export class AgentRuntime {
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     if (!this.withinTaskBudget(claim)) return;
     const program = this.program(claim), ctx = this.context(claim);
+    program.assertContext?.(ctx);
     if (ctx.state.pendingPlanId) { await this.execute(claim, program, signal); return; }
     if (!this.reasoner.act) throw new DomainError('CONFLICT', 'This Worker has no agent action reasoner');
     const job = this.store.get(claim.owner, claim.job.id), histories = job.delegation!.agentHistory ?? [];
     const plans = [ctx.state, ...histories].flatMap(s => s.plans);
-    if ((job.runs?.length ?? 0) >= AGENT_LIMITS.modelTurns) {
-      this.pause(claim, true, '本次查询已达到有限执行预算，请缩小查询范围后继续。已有观察记录已保留。'); return;
+    if (remainingModelTurns(job) < MIN_REASONING_TURNS) {
+      this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window')); return;
     }
     const access = this.access(claim, signal);
     const response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema }, signal, access);
@@ -116,8 +115,10 @@ export class AgentRuntime {
     }
     try {
       if (!decision.steps.length || decision.completionJson) failure('An execute decision needs explicit read actions and no completion claim');
-      if (plans.length >= AGENT_LIMITS.plans) failure('Plan budget exceeded; complete from existing evidence or ask to narrow the task');
-      if (plans.reduce((n, p) => n + p.steps.length, 0) + decision.steps.length > AGENT_LIMITS.actions) failure('Action budget exceeded; narrow the frontier');
+      for (const [resource, additional] of [['plans', 1], ['actions', decision.steps.length]] as const) {
+        const exceeded = executionBudgetExceeded(this.store.get(claim.owner, claim.job.id), resource, additional);
+        if (exceeded) { this.store.finish(claim, current => pauseExecutionBudget(current, resource, exceeded)); return; }
+      }
       validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, reads, true);
       const preceding = new Map<string, AgentActionPlan['steps'][number]>();
       const steps = decision.steps.map(step => {

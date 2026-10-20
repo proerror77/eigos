@@ -236,12 +236,19 @@ test('The action model cannot search unrelated owner data or read another task o
   finally { t.store.close(); }
 });
 
-test('An expired task budget prevents new model decisions and source actions', async () => {
+test('An expired execution window pauses before model/source calls and resumes the SAME task after input', async () => {
   const t = setup(); try {
     const job = t.b.submit({ goal: 'Read Coffee' }); await t.b.run();
-    const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); t.store.save(owner, current);
+    const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); current.delegation!.executionBudget!.window.startedAt = current.createdAt; t.store.save(owner, current);
     const coordinator = new Coordinator(t.store, model(), t.catalog, { maxTaskMs: 1000 }), claim = t.store.claim(['eigos.delegate'], 15000)!;
     await coordinator.run(claim, new AbortController().signal);
-    const done = t.store.get(owner, job.id); assert.equal(done.state, 'failed'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
+    let done = t.store.get(owner, job.id); assert.equal(done.state, 'input-required'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
+    assert.equal(done.delegation!.executionBudget!.paused!.resource, 'time');
+    t.b.tasks.reply(principal, { taskId: job.id, requestId: 'continue-expired-window', answer: '继续原任务' });
+    for (let n = 0; n < 10; n++) {
+      const next = t.store.claim(['eigos.delegate'], 15000); if (!next) break;
+      await coordinator.run(next, new AbortController().signal);
+    }
+    done = t.store.get(owner, job.id); assert.equal(done.state, 'completed'); assert.equal(done.id, job.id); assert.equal(done.createdAt, current.createdAt);
   } finally { t.store.close(); }
 });

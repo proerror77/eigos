@@ -2,6 +2,7 @@ import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
 import { SourceAuthorizationRequired } from '../../packages/core/member-source.js';
+import { ReasoningBudgetExhausted, pauseExecutionBudget, executionBudgetExceeded, MIN_REASONING_TURNS } from '../../packages/core/execution-budget.js';
 
 export interface WorkerOptions {
   coordinator: Pick<Coordinator, 'run'>;
@@ -56,6 +57,10 @@ export class Worker {
       await this.options.coordinator.run(claim, controller.signal);
     }).catch(error => {
       this.store.finish(claim, current => {
+        if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation) {
+          pauseExecutionBudget(current, 'reasoning', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window');
+          return;
+        }
         if (error instanceof SourceAuthorizationRequired && !controller.signal.aborted && current.delegation && this.store.intents(owner, current.id).every(i => ['read', 'local'].includes(i.effect))) {
           const d = current.delegation;
           current.state = 'auth-required'; d.phase = 'awaiting_authorization';

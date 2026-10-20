@@ -3,6 +3,7 @@ import type { CodexExecutor, RunEvidence } from '../capabilities/executor.js';
 import { reasoningTurnSchema } from '../ontology/planning-contract.js';
 import type { OntologyPlanningSession } from './planning-session.js';
 import { digest } from '../core/delegation.js';
+import { ReasoningBudgetExhausted } from '../core/execution-budget.js';
 
 export async function reasonWithOntology(model: Pick<CodexExecutor, 'runStructured'>, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
   record: (evidence: RunEvidence) => void, maxTurns = 8) {
@@ -36,5 +37,5 @@ export async function reasonWithOntology(model: Pick<CodexExecutor, 'runStructur
       transcript.push({ call, result });
     }
   }
-  throw new Error('Ontology reasoning turn limit reached without a final decision');
+  throw new ReasoningBudgetExhausted();
 }

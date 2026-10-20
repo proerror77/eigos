@@ -38,6 +38,9 @@ export interface Delegation {
   agent?: import('../ontology/agent-actions.js').AgentExecutionState;
   agentHistory?: import('../ontology/agent-actions.js').AgentExecutionState[];
   planHistory?: ExecutionPlan[];
+  executionBudget?: import('./execution-budget.js').ExecutionBudget;
+  executionBudgetStatus?: ReturnType<typeof import('./execution-budget.js').executionBudgetStatus>;
+  suspendedAgent?: { programRef: import('../ontology/execution.js').Ref; programDigest: string; input: Record<string, unknown>; requestDigest: string };
   replans?: number;
   manualReconciliation?: string;
   resolution?: { candidates: ResolvedCandidate[]; scope: ResolutionScope; comparison?: import('../ontology/supply.js').Comparison };

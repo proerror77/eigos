@@ -28,6 +28,8 @@ export interface AgentProgram {
   capability(): ServiceCapability;
   listingBinding?(): ProviderBinding;
   sourceAuthorization?(owner: string): { provider: string; state: string; nextAction: string } | undefined;
+  /** Pure readiness check before spending another model turn; never a source read. */
+  assertContext?(ctx: AgentProgramContext): void;
   clarify?(ctx: AgentProgramContext, message: string): string;
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
   schema(action: string): z.ZodType<Record<string, unknown>>;

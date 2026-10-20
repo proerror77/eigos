@@ -49,7 +49,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. Discover the current scope first. Reuse requestId for identical retries.',
+    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. Use executionBudget=extended when longer work is requested. Discover the current scope first. Reuse requestId for identical retries; never create a replacement to escape a task budget.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => tasks.submit(principal, args)));
@@ -63,7 +63,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     annotations: read,
   }, args => result(() => tasks.list(principal, args)));
   server.registerTool('reply_to_task', {
-    description: 'Answer an owned ontology task waiting for input. A reply never grants business authorization. Reuse requestId only for identical retries.',
+    description: 'Supply missing information or continue the SAME owned task waiting for input. Established facts and cumulative usage remain; a valid reply opens a bounded execution window. executionBudget=extended can increase its execution allowance without replacing the task. A reply never grants business authorization. Reuse requestId only for identical retries.',
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));

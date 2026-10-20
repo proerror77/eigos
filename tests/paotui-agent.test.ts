@@ -123,6 +123,45 @@ test('private choice labels survive provider reorder and another question, but n
     choices.observe(owner, current, 'source-v1', [...addresses].reverse()); choices.present(owner, current, 'source-v1');
     assert.equal(choices.select(owner, current, 'source-v1', [...addresses].reverse(), '1', 'sender').addressId, 'a');
     assert.throws(() => choices.select(owner, { ...current, messages: [...request.messages, { ...answer, text: '重量1到2公斤' }] }, 'source-v1', addresses, '1', 'sender'));
+    assert.throws(() => choices.select(owner, { ...current, messages: [...request.messages, { ...answer, text: '寄出1公斤' }] }, 'source-v1', addresses, '1', 'sender'));
     assert.throws(() => choices.select(owner, current, 'source-v2', addresses, '1', 'sender'));
+  } finally { f.store.close(); }
+});
+
+test('confirmed choices survive unrelated book edits and retain direction; changed selected addresses require fresh input', () => {
+  const f = setup(); try {
+    const choices = new PaotuiAddressSelection(f.store), job = f.b.submit({ goal }), request = job.delegation!.request;
+    const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+    choices.observe(owner, request, 'same-credential', addresses); choices.present(owner, request, 'same-credential');
+    const reply = { id: randomUUID(), text: '地址1寄到地址2', receivedAt: new Date().toISOString() };
+    const selected = { ...request, revision: 2, messages: [...request.messages, reply] };
+    const changed = [...addresses, { addressId: 'c', address: 'Private C', cityId: '1', lat: 3, lng: 3 }];
+    choices.observe(owner, selected, 'same-credential', changed);
+    assert.equal(choices.select(owner, selected, 'same-credential', changed, '地址1', 'sender').addressId, 'a');
+    assert.equal(choices.select(owner, selected, 'same-credential', changed, '2', 'recipient').addressId, 'b');
+    assert.throws(() => choices.select(owner, selected, 'same-credential', changed, '地址2', 'sender'), 'Labels must honor the declared sender/recipient roles');
+    const moved = changed.map(a => a.addressId === 'a' ? { ...a, houseNumber: 'new unit' } : a);
+    choices.observe(owner, selected, 'same-credential', moved);
+    assert.throws(() => choices.select(owner, selected, 'same-credential', moved, '地址1', 'sender'));
+    assert(choices.present(owner, selected, 'same-credential').includes('新3-1'));
+    const stale = { ...selected, revision: 3, messages: [...selected.messages, { ...reply, id: randomUUID() }] };
+    assert.throws(() => choices.select(owner, stale, 'same-credential', moved, '地址1', 'sender'), 'A new reply cannot reinterpret old labels against a newly displayed list');
+    const fresh = { ...selected, revision: 3, messages: [...selected.messages, { ...reply, id: randomUUID(), text: '新3-1寄到新3-2' }] };
+    assert.equal(choices.select(owner, fresh, 'same-credential', moved, '新3-1', 'sender').houseNumber, 'new unit');
+    assert.throws(() => choices.select(owner, fresh, 'another-credential', moved, '新3-1', 'sender'));
+  } finally { f.store.close(); }
+});
+
+test('later owner direction changes replace earlier choices without re-presenting an unchanged book', () => {
+  const f = setup(); try {
+    const choices = new PaotuiAddressSelection(f.store), request = f.b.submit({ goal }).delegation!.request;
+    const addresses = [{ addressId: 'a', address: 'Private A', cityId: '1', lat: 1, lng: 1 }, { addressId: 'b', address: 'Private B', cityId: '1', lat: 2, lng: 2 }];
+    choices.observe(owner, request, 'source', addresses); choices.present(owner, request, 'source');
+    const current = { ...request, revision: 3, messages: [...request.messages, { id: 'first', text: '1寄到2', receivedAt: new Date().toISOString() }, { id: 'second', text: '改为寄件用地址2，收件用地址1', receivedAt: new Date().toISOString() }] };
+    assert.equal(choices.select(owner, current, 'source', addresses, '地址2', 'sender').addressId, 'b');
+    assert.equal(choices.select(owner, current, 'source', addresses, '地址1', 'recipient').addressId, 'a');
+    assert.throws(() => choices.select(owner, current, 'source', addresses, '地址1', 'sender'));
+    const renamed = { ...current, revision: 4, messages: [...current.messages, { id: 'third', text: '寄件改为Private A', receivedAt: new Date().toISOString() }] };
+    assert.equal(choices.select(owner, renamed, 'source', addresses, 'Private A', 'sender').addressId, 'a', 'A later explicit name can update an earlier numbered choice');
   } finally { f.store.close(); }
 });

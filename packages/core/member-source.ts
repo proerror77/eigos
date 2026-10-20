@@ -12,10 +12,11 @@ export const SOURCE_SCOPES = ['sources:read', 'sources:write'] as const;
 export class SourceAuthorizationRequired extends ConnectionAuthorizationRequired {
   constructor() { super('Check your own Meituan source connection. Connect or refresh it through the private channel if needed, then resume this task. Never put credentials in task messages.'); }
 }
-export const sourceGrantSchema = z.object({ provider: z.literal(SOURCE_PROVIDER), owner: z.string().max(2000), memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(400), connectionId: z.uuid(), revision: z.number().int().positive(), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const sourceGrantSchema = z.object({ provider: z.literal(SOURCE_PROVIDER), owner: z.string().max(2000), memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(400), connectionId: z.uuid(), revision: z.number().int().positive(), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/), selectionContext: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 export type SourceGrant = z.infer<typeof sourceGrantSchema>;
 export type SourceActor = Pick<SourceGrant, 'owner' | 'memberId' | 'installationId' | 'clientId'>;
 type CredentialRow = SourceGrant & { state: 'connected' | 'revoked'; expiresAt: string; fingerprint: string; ciphertext: string; iv: string; tag: string };
+const rowGrant = (row: CredentialRow) => sourceGrantSchema.parse(Object.fromEntries(Object.keys(sourceGrantSchema.shape).map(k => [k, row[k as keyof CredentialRow]])));
 type Ticket = SourceActor & { id: string; expectedRevision: number; expiresAt: number; used?: { connectionId: string; revision: number; fingerprint: string; credentialExpiresAt: string }; revoked?: boolean };
 export const sourceBeginSchema = z.object({ requestId: z.uuid(), expectedRevision: z.number().int().nonnegative() }).strict();
 export const sourceCompleteSchema = z.object({ requestId: z.uuid(), token: z.string().min(16).max(16384).regex(/^[\x21-\x7e]+$/), expiresAt: z.iso.datetime() }).strict();
@@ -123,7 +124,13 @@ export class MemberSourceVault {
         const collision = this.db.prepare('SELECT owner FROM member_source_fingerprints WHERE fingerprint=?').get(fingerprint);
         if (collision && collision.owner !== actor.owner) throw unavailable();
         this.db.prepare('INSERT OR IGNORE INTO member_source_fingerprints VALUES(?,?)').run(fingerprint, actor.owner);
-        const grant: SourceGrant = { ...actor, provider: SOURCE_PROVIDER, connectionId: old?.connectionId ?? randomUUID(), revision: (old?.revision ?? 0) + 1, configurationDigest: this.configurationDigest };
+        // Renewing the same credential preserves only user-choice provenance.
+        // Every read still binds the new full grant revision. Revocation, a
+        // different credential or installation starts a separate choice context.
+        const continuous = old?.state === 'connected' && old.fingerprint === fingerprint && old.memberId === actor.memberId
+          && old.installationId === actor.installationId && old.clientId === actor.clientId && old.configurationDigest === this.configurationDigest;
+        const selectionContext = continuous ? old.selectionContext ?? digest(rowGrant(old)) : digest({ owner: actor.owner, epoch: randomUUID(), purpose: 'saved-address-choice' });
+        const grant: SourceGrant = { ...actor, provider: SOURCE_PROVIDER, connectionId: old?.connectionId ?? randomUUID(), revision: (old?.revision ?? 0) + 1, configurationDigest: this.configurationDigest, selectionContext };
         const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv);
         cipher.setAAD(Buffer.from(digest({ grant, expiresAt: args.expiresAt, fingerprint })));
         const ciphertext = Buffer.concat([cipher.update(args.token, 'utf8'), cipher.final()]);
@@ -153,8 +160,7 @@ export class MemberSourceVault {
   }
   grant(owner: string): SourceGrant {
     if (this.status(owner).state !== 'connected') throw new SourceAuthorizationRequired();
-    const r = this.row(owner)!;
-    return sourceGrantSchema.parse(Object.fromEntries(Object.keys(sourceGrantSchema.shape).map(k => [k, r[k as keyof CredentialRow]])));
+    return rowGrant(this.row(owner)!);
   }
   assert(grant: SourceGrant) {
     if (digest(this.grant(grant.owner)) !== digest(grant)) throw new ReplanRequired('Source account connection changed; refresh owned address choices and quote');

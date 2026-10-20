@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { randomUUID } from 'node:crypto';
+import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -15,7 +15,8 @@ import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { JobStore } from '../packages/core/store.js';
 import { assertPersonalSourceConfig } from '../packages/core/config.js';
 import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
-import { paotuiModel, programContext, programRead } from './fixtures/paotui-agent.js';
+import { paotuiModel, programContext, programRead, quoteChoice, observe, decide, step } from './fixtures/paotui-agent.js';
+import { digest } from '../packages/core/delegation.js';
 const DELIVERY_REQUEST_CAPABILITY = { ref: PAOTUI_AGENT_REFS.quote };
 const DELIVERY_REQUEST_BINDING = { ref: { id: 'meituan:delivery.quote', version: '3' }, providerId: 'meituan-paotui' };
 
@@ -25,8 +26,8 @@ async function fixture() {
   const scopes = [...SCOPES, ...SOURCE_SCOPES, 'network:read', 'network:write'];
   const a = await f.makeAgent(f.alice, scopes), b = await f.makeAgent(f.bob, scopes), a2 = await f.makeAgent(f.alice, scopes);
   const call = (path = '', body?: unknown, who = a) => f.call('/sources/meituan-paotui' + path, body, { Authorization: `Bearer ${who.token}` });
-  const connect = async (token = sourceTokens.alice, who = a, expectedRevision = 0) => {
-    const requestId = randomUUID(), expiresAt = new Date(Date.now() + 3600000).toISOString();
+  const connect = async (token = sourceTokens.alice, who = a, expectedRevision = 0, ttlMs = 3600000) => {
+    const requestId = randomUUID(), expiresAt = new Date(Date.now() + ttlMs).toISOString();
     const begin = await call('/begin', { requestId, expectedRevision }, who); assert.equal(begin.status, 200, await begin.text());
     const body = { requestId, token, expiresAt }, upload = await call('/credential', body, who); assert.equal(upload.status, 200, await upload.clone().text());
     return { body, status: await upload.json() };
@@ -128,6 +129,77 @@ test('revocation during atomic CLI reads drops output; rotation requires fresh s
     f.gateway.members.agents.revoke(f.alice.id, f.a.id); assert.throws(() => f.vault.grant(owner), SourceAuthorizationRequired);
     assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 0);
   } finally { store.close(); process.env.PATH = previous; await f.close(); }
+});
+
+test('input completion and actual source expiry resume ONE task with its confirmed numeric choices and retained interpretation', async () => {
+  const f = await fixture(), previous = process.env.PATH; process.env.PATH = f.source.bin + ':' + previous;
+  let worker: ReturnType<typeof createWorker> | undefined, interpretations = 0;
+  const choice = paotuiModel((ctx, access) => {
+    if (!ctx.request.messages.some(m => m.text.includes('1寄到2'))) return quoteChoice(ctx, access);
+    if (ctx.request.messages.some(m => m.text.includes('重量1公斤'))) return quoteChoice(ctx, access);
+    const items = observe(ctx, access);
+    if (!items.length) return decide(ctx, [step('book', 'ReadSavedAddresses', { scope: ctx.state.scope })]);
+    return { ...decide(ctx), kind: 'clarify', message: '请补充物品重量；寄收地址和普通送已保留。' };
+  });
+  const ground = choice.ground; choice.ground = async (...args) => { interpretations++; return ground(...args); };
+  const wait = async (id: string) => {
+    const deadline = Date.now() + 30000;
+    while (['submitted', 'working'].includes(f.gateway.tasks.get(f.a.p, id).state) && Date.now() < deadline) await delay(20);
+    return f.gateway.tasks.get(f.a.p, id);
+  };
+  try {
+    await f.connect();
+    const firstGrant = f.vault.grant(ownerKey(f.a.p));
+    const job = f.gateway.tasks.submit(f.a.p, { goal: '文件普通送查价，先列地址', requestId: randomUUID(), executionBudget: 'extended' });
+    worker = createWorker(f.config, { reasoner: choice, timing: { pollMs: 10, leaseMs: 30000, timeoutMs: 30000 } });
+    const addressQuestion = await wait(job.id); assert.equal(addressQuestion.state, 'input-required');
+    f.gateway.tasks.reply(f.a.p, { taskId: job.id, requestId: randomUUID(), answer: '1寄到2' });
+    const weightQuestion = await wait(job.id); assert.equal(weightQuestion.state, 'input-required'); assert(weightQuestion.question?.includes('重量'));
+    const renewal = await f.connect(sourceTokens.alice, f.a, 1, 1600);
+    assert.equal(f.vault.grant(ownerKey(f.a.p)).selectionContext, firstGrant.selectionContext);
+    await delay(Math.max(0, Date.parse(renewal.body.expiresAt) - Date.now() + 20));
+    assert.equal((await (await f.sourceCall()).json()).state, 'expired');
+    f.gateway.tasks.reply(f.a.p, { taskId: job.id, requestId: randomUUID(), answer: '重量1公斤' });
+    const waiting = await wait(job.id); assert.equal(waiting.state, 'auth-required'); assert(waiting.delegation!.suspendedAgent);
+    const retainedRuns = waiting.runs!.map(r => r.id), groundingBeforeResume = interpretations;
+    await f.connect(sourceTokens.alice, f.a, 2);
+    const resume = { taskId: job.id, expectedRevision: waiting.revision!, requestId: randomUUID() };
+    const resumed = await f.sourceCall('/resume', resume); assert.equal(resumed.status, 200); const response = await resumed.json();
+    assert.equal((await f.sourceCall('/resume', resume)).status, 200, 'An identical retry does not allocate another window');
+    const done = await wait(job.id); assert.equal(done.state, 'completed', JSON.stringify(done)); assert.equal(done.id, job.id);
+    assert.equal(interpretations, groundingBeforeResume, 'A credential-only continuation retains the validated interpretation');
+    assert.deepEqual(done.runs!.slice(0, retainedRuns.length).map(r => r.id), retainedRuns);
+    assert.equal(done.delegation!.executionBudget!.window.sequence, response.delegation.executionBudget.window.sequence);
+    assert.equal(done.messages.filter(m => m.role === 'agent' && m.text.includes('请选择寄件')).length, 1, 'No repeated address confirmation');
+    assert.equal(f.gateway.tasks.list(f.a.p, { limit: 10, offset: 0 }).total, 1);
+    assert.equal(f.source.calls().filter(c => c.command === 'delivery_preview').length, 1);
+    assert(f.gateway.store.intents(ownerKey(f.a.p), job.id).every(i => i.state === 'effect_confirmed'), 'Confirmed historical reads remain confirmed');
+    assert(done.delegation!.acceptance!.accepted);
+  } finally { await worker?.close(); process.env.PATH = previous; await f.close(); }
+});
+
+test('credential renewal preserves legacy choice context; credential replacement, installation change and revoke isolate it', async () => {
+  const f = await fixture();
+  try {
+    await f.connect(); const owner = ownerKey(f.a.p), db = new DatabaseSync(f.config.DATABASE_PATH);
+    let legacyDigest: string;
+    try {
+      const row = JSON.parse(String(db.prepare('SELECT body FROM member_source_credentials WHERE owner=?').get(owner)!.body));
+      const grant = f.vault.grant(owner); delete grant.selectionContext; delete row.selectionContext;
+      const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', readFileSync(f.source.keyFile), iv);
+      cipher.setAAD(Buffer.from(digest({ grant, expiresAt: row.expiresAt, fingerprint: row.fingerprint })));
+      row.ciphertext = Buffer.concat([cipher.update(sourceTokens.alice, 'utf8'), cipher.final()]).toString('base64'); row.iv = iv.toString('base64'); row.tag = cipher.getAuthTag().toString('base64');
+      db.prepare('UPDATE member_source_credentials SET body=? WHERE owner=?').run(JSON.stringify(row), owner); legacyDigest = digest(grant);
+    } finally { db.close(); }
+    assert.equal(f.vault.token(f.vault.grant(owner)), sourceTokens.alice, 'Pre-change encrypted credentials still decrypt');
+    await f.connect(sourceTokens.alice, f.a, 1); const renewed = f.vault.grant(owner); assert.equal(renewed.selectionContext, legacyDigest);
+    await f.connect(sourceTokens.alice, f.a, 2); assert.equal(f.vault.grant(owner).selectionContext, renewed.selectionContext);
+    await f.connect(sourceTokens.rotated, f.a, 3); const replaced = f.vault.grant(owner); assert.notEqual(replaced.selectionContext, renewed.selectionContext);
+    await f.connect(sourceTokens.rotated, f.a2, 4); const otherInstallation = f.vault.grant(owner); assert.notEqual(otherInstallation.selectionContext, replaced.selectionContext);
+    assert.equal((await f.sourceCall('/revoke', { expectedRevision: 5 }, f.a2)).status, 200);
+    await f.connect(sourceTokens.rotated, f.a2, 6); assert.notEqual(f.vault.grant(owner).selectionContext, otherInstallation.selectionContext);
+    assert.equal(f.source.calls().length, 0, 'Connection lifecycle and identity checks never call the supplier');
+  } finally { await f.close(); }
 });
 
 test('vault authentication detects modified ciphertext and private key permissions; HTTP rejects browser token uploads', async () => {
