@@ -29,6 +29,18 @@ test('Agent reads request-scoped policy and source references before a successfu
   } finally { await t.close(); }
 });
 
+test('New policy references preserve immutable documents already seeded by a previous release', async () => {
+  const t = await setupCommerce({ target: 'quote' }), oldAt = '2026-10-20T00:54:23.388Z';
+  try {
+    const prior = CUSTOMS_REFERENCES.slice(0, 4).map((reference, index) => ({ ref: CUSTOMS_REFERENCE_REFS[index]!, properties: { id: CUSTOMS_REFERENCE_REFS[index]!.id, displayTitle: reference.title, snapshot: reference } }));
+    t.store.ontology.ingest(owner, { objects: prior }, { kind: 'provider', id: 'eigos-reviewed-policy-registry', observedAt: oldAt });
+    const before = prior.map(item => t.store.ontology.read(owner, item.ref));
+    const done = await t.finish(t.submit().id, false); assert.equal(done.state, 'completed');
+    for (const original of before) assert.deepEqual(t.store.ontology.read(owner, original.ref), original);
+    assert.equal(customsGateStatus(t.store.ontology, owner, done.delegation!.agent!.observations.find(r => r.type === 'CustomsAssessment')!).references.length, 6);
+  } finally { await t.close(); }
+});
+
 for (const mode of ['no_policy_read', 'no_gate_evaluation'] as const) test(`A model cannot skip ${mode} and obtain a firm quote`, async () => {
   const base = commerceChoice({ target: 'quote' });
   const t = await setupCommerce({ target: 'quote', includeCustomsPlanning: false, choice: (ctx, access) => {

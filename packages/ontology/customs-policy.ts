@@ -118,8 +118,20 @@ const ruleProperties = () => ({ id: CUSTOMS_RULE_REF.id, displayTitle: '运输�
 const referenceProperties = (reference: typeof CUSTOMS_REFERENCES[number]) => ({ id: referenceRef(reference).id, displayTitle: reference.title, snapshot: reference });
 
 export function seedCustomsPolicy(graph: OntologyObjectStore, owner: string, scope: ObjectRef, request: ObjectRef) {
+  const expected = [{ ref: CUSTOMS_RULE_REF, properties: ruleProperties() }, ...CUSTOMS_REFERENCES.map(r => ({ ref: referenceRef(r), properties: referenceProperties(r) }))];
+  const missing = expected.filter(object => {
+    try {
+      const existing = graph.read(owner, object.ref);
+      if (digest(existing.properties) !== digest(object.properties) || existing.source.kind !== 'provider' || existing.source.id !== 'eigos-reviewed-policy-registry') throw new DomainError('CONFLICT', 'An immutable policy document differs from its reviewed identity');
+      // A later catalog capture must not replace an older document's provenance.
+      return false;
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'NOT_FOUND') return true;
+      throw error;
+    }
+  });
   graph.ingest(owner, {
-    objects: [{ ref: CUSTOMS_RULE_REF, properties: ruleProperties() }, ...CUSTOMS_REFERENCES.map(r => ({ ref: referenceRef(r), properties: referenceProperties(r) }))],
+    objects: missing,
     links: [{ type: 'CommerceTaskCustomsRuleSet', from: scope, to: CUSTOMS_RULE_REF }, { type: 'RequestCustomsRuleSet', from: request, to: CUSTOMS_RULE_REF }, ...CUSTOMS_REFERENCES.flatMap(r => [{ type: 'CustomsRuleReference', from: CUSTOMS_RULE_REF, to: referenceRef(r) }, { type: 'RequestRegulatoryReference', from: request, to: referenceRef(r) }])],
   }, { kind: 'provider', id: 'eigos-reviewed-policy-registry', observedAt: CUSTOMS_REFERENCES.map(r => r.capturedAt).sort().at(-1)! });
 }
