@@ -64,14 +64,25 @@ function write(graph: OntologyObjectStore, owner: string, ref: ObjectRef, proper
     ExecutionInput: [], ExecutionAttempt: ['state'], ExecutionResult: ['verification', 'output'],
   };
   const omitted = mutable[ref.type];
+  let linksVerified = false;
   if (previous && omitted) {
     const bindingIntent = ref.type === 'ExecutionStep' && previous.properties.intentId === undefined && typeof values.intentId === 'string';
     const immutable = (record: Record<string, unknown>) => Object.fromEntries(Object.entries(record).filter(([name]) => !omitted.includes(name) && !(bindingIntent && name === 'intentId')));
     if (!same(immutable(previous.properties), immutable(values))) fail('Immutable execution graph data changed');
     const existingLinks = ref.type === 'ExecutionResult' && !previous.properties.output ? links.filter(link => !link.type.startsWith('ExecutionResultOutput')) : links;
     assertLinks(graph, owner, ref, existingLinks);
+    linksVerified = existingLinks.length === links.length;
   }
-  const objects = previous && same(previous.properties, values) ? [] : [{ ref, properties: values, ...(previous ? { expectedRevision: previous.revision } : {}) }];
+  const unchanged = previous && same(previous.properties, values);
+  if (unchanged && !removeLinks.length && links.every(link => link.from.type === ref.type && link.from.id === ref.id)) {
+    // The sealed-property and relationship checks above still run for every
+    // historical node. Avoid another import/cardinality pass only when nothing
+    // can change. relationshipDigest excludes SourceReceipt edges, so types
+    // that can carry those edges conservatively retain the normal import path.
+    const excludesNoEdges = !graph.model.sides(ref.type).some(side => side.direction === 'forward' && graph.model.implements('SourceReceipt', side.other.type));
+    if (excludesNoEdges && (linksVerified || graph.relationshipDigest(owner, ref, { remaining: 1000 }) === linkSnapshotDigest(ref, links))) return;
+  }
+  const objects = unchanged ? [] : [{ ref, properties: values, ...(previous ? { expectedRevision: previous.revision } : {}) }];
   graph.ingest(owner, { objects, links, removeLinks }, source);
 }
 function registered(graph: OntologyObjectStore, action: string): ActionDefinition | undefined {

@@ -125,7 +125,10 @@ export class Coordinator {
     const groundingAccess = this.access(claim, d.request, [], signal, 'request_interpreted');
     let decision: Grounding, request: ServiceRequest, selected: ServiceCapability | undefined;
     try {
-      const grounded = await this.reasoner.ground(structuredClone(d.request), summaries, signal, groundingAccess);
+      const groundingRequest = structuredClone(d.request);
+      signal.throwIfAborted();
+      if (!this.store.claimActive(claim)) return;
+      const grounded = await this.reasoner.ground(groundingRequest, summaries, signal, groundingAccess);
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) return;
       groundingAccess.session.finish();
@@ -176,7 +179,10 @@ export class Coordinator {
       }
       return;
     }
-    const resolution = await this.resolver.resolve({ owner: claim.owner, request }, capability.ref, JSON.parse(decision.inputJson), signal);
+    const resolutionInput = JSON.parse(decision.inputJson);
+    signal.throwIfAborted();
+    if (!this.store.claimActive(claim)) return;
+    const resolution = await this.resolver.resolve({ owner: claim.owner, request }, capability.ref, resolutionInput, signal);
     signal.throwIfAborted();
     if (!this.store.checkpoint(claim, job => {
       job.delegation!.request = request; job.delegation!.resolution = { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison };
@@ -199,8 +205,10 @@ export class Coordinator {
     })) return;
     if (this.pauseForModelBudget(claim)) return;
     const access = this.access(claim, request, resolution.candidates, signal, 'plan_proposed'), session = access.session;
-    const planned = await this.reasoner.plan({ request: structuredClone(request), capability, resolution: { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison } }, signal,
-      access);
+    const planningContext = { request: structuredClone(request), capability, resolution: { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison } };
+    signal.throwIfAborted();
+    if (!this.store.claimActive(claim)) return;
+    const planned = await this.reasoner.plan(planningContext, signal, access);
     signal.throwIfAborted();
     if (!this.recordRun(claim, planned.evidence, 'plan_proposed')) return;
     const proposal = proposalSchema.parse(planned.decision);

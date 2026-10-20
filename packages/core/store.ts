@@ -26,6 +26,9 @@ export interface ListFilter {
 }
 
 export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
+// Throwing through the shared transaction is essential: returning false from
+// inside it would commit a dispatch marker whose lease expired during the save.
+const lostClaimFence = Symbol('lost-claim-fence');
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -226,7 +229,7 @@ export class JobStore {
   }
   recordObservation(owner: string, intentId: string, attemptId: string, result: ActionResult, verified: boolean,
     fence?: { claim: WorkClaim; apply: (job: Job, intent: ActionIntent) => void }): { id: string; applied: boolean } {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       const intent = this.intent(owner, intentId);
       const attemptRow = this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId);
       if (!attemptRow) throw new DomainError('FORBIDDEN', 'Observation has no owned attempt');
@@ -286,8 +289,23 @@ export class JobStore {
         const job = this.get(owner, intent.jobId); fence.apply(job, intent);
         this.saveIntent(owner, intent); this.save(owner, job);
       } else this.saveIntent(owner, intent);
+      if (fence && !this.leaseOwned(fence.claim, Date.now())) throw lostClaimFence;
       return { id, applied: !!applied };
-    });
+    }); } catch (error) {
+      if (error !== lostClaimFence || !fence) throw error;
+      // The provider has already replied. Roll back its attempted task/graph
+      // application, then retain the exact receipt as audit-only evidence.
+      return this.transaction(() => {
+        const intent = this.intent(owner, intentId);
+        if (!this.db.prepare('SELECT 1 FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId)) throw new DomainError('FORBIDDEN', 'Observation has no owned attempt');
+        const existing = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, result.eventId);
+        if (existing) return { id: String(existing.id), applied: false };
+        const id = randomUUID();
+        this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), digest(result), 0, JSON.stringify(result));
+        this.projectExecution(owner, this.get(owner, intent.jobId));
+        return { id, applied: false };
+      });
+    }
   }
   observations(owner: string, intentId: string): unknown[] {
     this.intent(owner, intentId);
@@ -420,7 +438,10 @@ export class JobStore {
       const job = JSON.parse(String(row.body)) as Job;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
-      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
+      // Expiring previous claims and projecting the newly claimed task can be
+      // synchronous work. A new lease starts after that work, not before it.
+      const claimedAt = now ?? Date.now();
+      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
       return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
@@ -434,31 +455,41 @@ export class JobStore {
     });
   }
 
+  private leaseOwned(claim: WorkClaim, now: number): boolean {
+    const lease = this.db.prepare('SELECT token,expires_at,revision FROM work_claims WHERE job_id=?').get(claim.job.id);
+    return lease?.token === claim.token && Number(lease.expires_at) > now && Number(lease.revision) === (claim.job.revision ?? 0);
+  }
   private active(claim: WorkClaim, now: number): boolean {
-    const lease = this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(claim.job.id);
+    if (!this.leaseOwned(claim, now)) return false;
     const current = this.get(claim.owner, claim.job.id);
-    return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
+    return (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       const at = now ?? Date.now();
       if (!this.active(claim, at)) return false;
       const job = this.get(claim.owner, claim.job.id);
       update(job); this.save(claim.owner, job);
+      // The callback may intentionally complete/pause/revise the task. The
+      // initial active check plus SQLite's write transaction fences that state;
+      // the token and wall-clock deadline must still hold at commit.
+      if (!this.leaseOwned(claim, now ?? Date.now())) throw lostClaimFence;
       this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
       return true;
-    });
+    }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
   checkpoint(claim: WorkClaim, update: (job: Job) => void): boolean {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       if (!this.active(claim, Date.now())) return false;
       const job = this.get(claim.owner, claim.job.id);
-      update(job); this.save(claim.owner, job); return true;
-    });
+      update(job); this.save(claim.owner, job);
+      if (!this.leaseOwned(claim, Date.now())) throw lostClaimFence;
+      return true;
+    }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
   release(claim: WorkClaim): void {

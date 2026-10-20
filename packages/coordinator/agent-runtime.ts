@@ -78,7 +78,10 @@ export class AgentRuntime {
       this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window')); return;
     }
     const access = this.access(claim, signal);
-    const response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema }, signal, access);
+    const reasoningContext = { request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema };
+    signal.throwIfAborted();
+    if (!this.store.claimActive(claim)) return;
+    const response = await this.reasoner.act(reasoningContext, signal, access);
     signal.throwIfAborted(); access.record(response.evidence);
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
@@ -221,6 +224,8 @@ export class AgentRuntime {
         continue;
       }
       const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId };
+      signal.throwIfAborted();
+      if (!this.store.claimActive(claim)) return;
       let response: AgentActionResult | undefined, result: ActionResult, authorizationError: ConnectionAuthorizationRequired | undefined, technicalError = false;
       try {
         response = await program.invoke(context, step.action, input, signal);

@@ -12,7 +12,12 @@ const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean, label: string): Promise<T> {
   const deadline = Date.now() + 15000; let last: T | undefined;
   while (Date.now() < deadline) { last = await read(); if (accept(last)) return last; await pause(30); }
-  assert.fail(label + ': ' + JSON.stringify(last));
+  const diagnosticInput: unknown = last;
+  const job = diagnosticInput && typeof diagnosticInput === 'object' && 'delegation' in diagnosticInput ? diagnosticInput as Job : undefined;
+  const diagnostic = job ? { id: job.id, state: job.state, revision: job.revision, error: job.error, question: job.question,
+    phase: job.delegation?.phase, recovery: job.delegation?.recovery, actions: job.delegation?.actions,
+    authorizationBudget: job.delegation?.authorizationBudget, events: job.delegation?.events.slice(-12) } : last;
+  assert.fail(label + ': ' + JSON.stringify(diagnostic));
 }
 async function child(file: string, env: NodeJS.ProcessEnv) {
   const process = spawn(globalThis.process.execPath, [resolve('dist/tests/fixtures', file + '.js')], { env: { PATH: globalThis.process.env.PATH, HOME: globalThis.process.env.HOME, NODE_NO_WARNINGS: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });

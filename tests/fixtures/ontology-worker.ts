@@ -22,7 +22,10 @@ const reasoner: Reasoner = {
       steps: candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) }, evidence: evidence() };
   },
 };
-const runtime = createWorker(readWorkerConfig(), { reasoner, timing: { pollMs: 20, leaseMs: 300, timeoutMs: 30000 } });
+// Process E2E needs room for normal synchronous Ontology validation/projection
+// on shared CI CPUs. Deterministic short-lease boundaries are covered separately
+// by dispatch-lease-fence.test.ts; forced SIGKILL still exercises real expiry.
+const runtime = createWorker(readWorkerConfig(), { reasoner, timing: { pollMs: 20, leaseMs: 2000, timeoutMs: 30000 } });
 console.log(JSON.stringify({ ready: true, pid: process.pid }));
 let stopping = false;
 const stop = async () => { if (stopping) return; stopping = true; await runtime.close(); };
