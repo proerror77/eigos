@@ -29,6 +29,7 @@ const networkMembers = z.string().max(4096).default('[]').transform((value, ctx)
 });
 
 const schema = z.object({
+  EIGOS_INVITE_BETA: z.enum(['false', 'true']).default('false'),
   EIGOS_NETWORK_ENABLED: z.enum(['false', 'true']).default('false'),
   EIGOS_NETWORK_MEMBER_IDS: networkMembers,
   EIGOS_NETWORK_OPERATOR_MEMBER_IDS: networkMembers,
@@ -73,6 +74,7 @@ const schema = z.object({
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   OIDC_AGENT_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_MCP_CLIENT_ID: z.string().min(1).optional(),
   MEMBERSHIP_DATABASE_PATH: z.string().optional(),
   EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual', 'invite-only']).default('self-service'),
   ALLOWED_ORIGINS: z.string().default(''),
@@ -95,6 +97,18 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
   }
   c.PUBLIC_URL = publicUrl.origin;
+  if (c.EIGOS_INVITE_BETA === 'true') {
+    if (c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.OAUTH_AUDIENCE !== c.PUBLIC_URL
+      || c.EIGOS_MEMBERSHIP_APPROVAL !== 'invite-only' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.OIDC_MCP_CLIENT_ID
+      || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
+      || c.EIGOS_EXECUTOR !== 'codex') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
+    if (c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true' || c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
+      || c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length
+      || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
+      || c.EIGOS_ACTION_SANDBOX === 'true' || c.EIGOS_SANDBOX_PROVIDER_URL || c.EIGOS_SANDBOX_TOKEN_FILE
+      || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE
+      || c.EIGOS_STRIPE_TEST_ENABLED === 'true' || c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) throw new Error('Invite beta exposes document tasks only; private sources, development credentials, network publication and transaction fixtures cannot be enabled');
+  }
   if (c.EIGOS_NETWORK_ENABLED === 'true' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:')) throw new Error('Network pilot requires persistent JWT membership, browser/agent clients and explicit enrolled member IDs');
   if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
   if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');

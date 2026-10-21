@@ -2,16 +2,18 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
 import { parseArgs } from 'node:util';
+import { homedir } from 'node:os';
 import { auth0Plan, ensureAuth0ConnectionClients } from '../dist/packages/members/auth0.js';
 
 const { values } = parseArgs({ options: {
   'public-url': { type: 'string' }, 'agent-callback': { type: 'string' }, tenant: { type: 'string' },
   connection: { type: 'string' },
   'member-sources': { type: 'boolean', default: false },
+  'invite-beta': { type: 'boolean', default: false },
   output: { type: 'string', default: 'data/auth0-live' }, apply: { type: 'boolean', default: false },
 } });
 if (!values['public-url']) throw new Error('Usage: npm run setup:auth0 -- --public-url https://gateway-origin [--tenant tenant.auth0.com --apply]');
-const plan = auth0Plan(values['public-url'], values['agent-callback'], { memberSources: values['member-sources'] });
+const plan = auth0Plan(values['public-url'], values['agent-callback'], { memberSources: values['member-sources'], inviteBeta: values['invite-beta'] });
 const directory = resolve(values.output), localData = resolve('data');
 if (!relative(localData, directory) || relative(localData, directory).startsWith('..') || relative(localData, directory).startsWith('/')) throw new Error('Use a dedicated directory under ignored data/ for private Auth0 configuration');
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -66,6 +68,7 @@ if (!values.apply) {
     if (resources.length > 1) throw new Error('Multiple API resources require review');
     let resource = resources[0];
     if (resource && resource.name !== plan.api.name) throw new Error('An existing API at this identifier is not owned by this setup');
+    if (values['invite-beta'] && resource?.scopes?.some(scope => !plan.api.scopes.some(expected => expected.value === scope.value))) throw new Error('The existing API has scopes outside the invite beta; use its dedicated resource instead of changing another audience');
     if (!resource) resource = api('post', 'resource-servers', plan.api);
     else {
       const { identifier, signing_alg, ...settings } = plan.api;
@@ -78,6 +81,11 @@ if (!values.apply) {
     const portal = ownedClient('member-portal', plan.portal); state.portalId = portal.client_id; save('state.json', state);
     const agent = ownedClient('personal-agent', plan.agent); state.agentId = agent.client_id; save('state.json', state);
     const connector = ownedClient('agent-onboarding', plan.connector); state.connectorId = connector.client_id; save('state.json', state);
+    const mcp = plan.mcp ? ownedClient('native-mcp', plan.mcp) : undefined;
+    if (mcp) {
+      state.mcpId = mcp.client_id; save('state.json', state);
+      api('patch', `clients/${encodeURIComponent(mcp.client_id)}`, { grant_types: plan.mcp.grant_types, refresh_token: plan.mcp.refresh_token });
+    }
     api('patch', `clients/${encodeURIComponent(connector.client_id)}`, { grant_types: plan.connector.grant_types, refresh_token: plan.connector.refresh_token });
     const databases = list('connections', 'connections').filter(connection => connection.strategy === 'auth0');
     let connection = values.connection ? databases.find(connection => connection.name === values.connection)
@@ -85,7 +93,7 @@ if (!values.apply) {
     if (!connection && (values.connection || databases.length)) throw new Error('Choose the intended Auth0 database connection explicitly');
     if (!connection) connection = api('post', 'connections', { name: 'EIGOS-Members-' + plan.resource.replace(/[^a-zA-Z0-9]/g, '-').slice(-30), strategy: 'auth0' });
     state.connectionId = connection.id; state.connectionName = connection.name; save('state.json', state);
-    ensureAuth0ConnectionClients(api, connection.id, [portal.client_id, agent.client_id, connector.client_id]);
+    ensureAuth0ConnectionClients(api, connection.id, [portal.client_id, agent.client_id, connector.client_id, ...(mcp ? [mcp.client_id] : [])]);
     if (!portal.client_secret || /redact|\*{3,}/i.test(portal.client_secret)) throw new Error('The CLI did not return a private portal client secret');
     const code = readFileSync(new URL('../integrations/auth0/post-login.cjs', import.meta.url), 'utf8');
     const secrets = [
@@ -119,22 +127,30 @@ if (!values.apply) {
     }
     const apiReadback = api('get', `resource-servers/${encodeURIComponent(resource.id)}`);
     if (apiReadback.identifier !== plan.resource || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.allow_offline_access !== true || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
-    for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent], [connector, plan.connector]]) {
+    if (mcp && JSON.stringify((apiReadback.scopes ?? []).map(scope => scope.value).sort()) !== JSON.stringify(plan.api.scopes.map(scope => scope.value).sort())) throw new Error('Invite beta API scope readback differs from its reviewed task-only plan');
+    for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent], [connector, plan.connector], ...(mcp ? [[mcp, plan.mcp]] : [])]) {
       const actual = api('get', `clients/${encodeURIComponent(client.client_id)}`);
       if (JSON.stringify(actual.callbacks) !== JSON.stringify(expected.callbacks) || actual.token_endpoint_auth_method !== expected.token_endpoint_auth_method || actual.is_first_party !== expected.is_first_party) throw new Error('OAuth client readback did not confirm the callback/authentication/ownership contract');
     }
     const connectorReadback = api('get', `clients/${encodeURIComponent(connector.client_id)}`);
     if (!plan.connector.grant_types.every(grant => connectorReadback.grant_types?.includes(grant)) || connectorReadback.refresh_token?.rotation_type !== 'rotating' || connectorReadback.refresh_token?.expiration_type !== 'expiring') throw new Error('Agent device/refresh grant readback failed');
+    if (mcp) {
+      const actual = api('get', `clients/${encodeURIComponent(mcp.client_id)}`);
+      if (!plan.mcp.grant_types.every(grant => actual.grant_types?.includes(grant))
+        || Object.entries(plan.mcp.refresh_token).some(([key, value]) => actual.refresh_token?.[key] !== value)) throw new Error('Native MCP authorization/refresh grant readback failed');
+    }
     const bindingReadback = api('get', 'actions/triggers/post-login/bindings');
     if (!bindingReadback.bindings?.some(binding => binding.action?.id === action.id)) throw new Error('Action binding readback did not confirm deployment');
     const issuer = `https://${tenant}/`;
     const common = [
       `PUBLIC_URL=${plan.resource}`, `OAUTH_ISSUER=${issuer}`, `OAUTH_JWKS_URL=${issuer}.well-known/jwks.json`,
       `OAUTH_AUDIENCE=${plan.resource}`, `OAUTH_TENANT_CLAIM=${plan.tenantClaim}`, `OIDC_AGENT_CLIENT_ID=${connector.client_id}`,
+      ...(mcp ? [`OIDC_MCP_CLIENT_ID=${mcp.client_id}`, 'EIGOS_INVITE_BETA=true'] : []),
     ];
-    save('gateway.env', [...common, 'EIGOS_AUTH_MODE=jwt', 'HOST=127.0.0.1', 'PORT=3210', `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `OIDC_CLIENT_ID=${portal.client_id}`, `OIDC_CLIENT_SECRET=${portal.client_secret}`, 'EIGOS_MEMBERSHIP_APPROVAL=self-service', 'EIGOS_EXECUTOR=codex', 'EIGOS_COORDINATOR=codex', 'EIGOS_PAOTUI_ORDERS_ENABLED=false', 'EIGOS_CSV_PILOT=false', `EIGOS_AUDIT_PATH=${directory}/http-audit.jsonl`, ''].join('\n'));
-    save('agent.env', [...common, `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `EIGOS_AGENT_CLIENT_ID=${agent.client_id}`, `EIGOS_AGENT_CALLBACK_URL=${plan.agentCallback}`, `EIGOS_OAUTH_HANDOFF_PATH=${directory}/agent-login.json`, `EIGOS_OAUTH_EVIDENCE_DIR=${directory}/agent-evidence`, ''].join('\n'));
-    save('connector.env', [...common, `DATABASE_PATH=${directory}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${directory}/members.sqlite`, `EIGOS_AGENT_CREDENTIAL_PATH=${directory}/connector/credentials.json`, `EIGOS_ONBOARDING_HANDOFF_PATH=${directory}/connector-login.json`, `EIGOS_ONBOARDING_EVIDENCE_DIR=${directory}/connector-evidence`, ''].join('\n'));
+    const runtime = mcp ? join(homedir(), '.local/share/eigos/invite-beta') : directory;
+    save('gateway.env', [...common, ...(mcp ? ['NODE_ENV=production'] : []), 'EIGOS_AUTH_MODE=jwt', 'HOST=127.0.0.1', `PORT=${mcp ? 3212 : 3210}`, `DATABASE_PATH=${runtime}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${runtime}/members.sqlite`, `OIDC_CLIENT_ID=${portal.client_id}`, `OIDC_CLIENT_SECRET=${portal.client_secret}`, `EIGOS_MEMBERSHIP_APPROVAL=${mcp ? 'invite-only' : 'self-service'}`, 'EIGOS_EXECUTOR=codex', 'EIGOS_COORDINATOR=codex', 'EIGOS_PAOTUI_ORDERS_ENABLED=false', 'EIGOS_CSV_PILOT=false', `EIGOS_AUDIT_PATH=${runtime}/http-audit.jsonl`, ''].join('\n'));
+    save('agent.env', [...common, `DATABASE_PATH=${runtime}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${runtime}/members.sqlite`, `EIGOS_AGENT_CLIENT_ID=${mcp?.client_id ?? agent.client_id}`, `EIGOS_AGENT_CALLBACK_URL=${plan.agentCallback}`, `EIGOS_OAUTH_HANDOFF_PATH=${directory}/agent-login.json`, `EIGOS_OAUTH_EVIDENCE_DIR=${directory}/agent-evidence`, ''].join('\n'));
+    save('connector.env', [...common, `DATABASE_PATH=${runtime}/tasks.sqlite`, `MEMBERSHIP_DATABASE_PATH=${runtime}/members.sqlite`, `EIGOS_AGENT_CREDENTIAL_PATH=${directory}/connector/credentials.json`, `EIGOS_ONBOARDING_HANDOFF_PATH=${directory}/connector-login.json`, `EIGOS_ONBOARDING_EVIDENCE_DIR=${directory}/connector-evidence`, ''].join('\n'));
     state.configurationComplete = true; state.configuredAt = new Date().toISOString(); delete state.stoppedAtOperation; save('state.json', state);
     console.log('Auth0 API, portal/reference/Agent connector clients, rotating refresh grants and scoped identity Action configured. Private environment files saved; no credentials printed.');
   } catch (error) {

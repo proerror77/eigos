@@ -39,6 +39,18 @@ test('Auth0 connector refresh grants cannot authorize fresh installation enrollm
   }
 });
 
+test('the invite beta provisions only task scopes and a public native MCP authorization-code client with rotation', () => {
+  const plan = auth0Plan('https://beta.example', undefined, { inviteBeta: true });
+  assert.deepEqual(plan.api.scopes.map(scope => scope.value), ['services:read', 'tasks:read', 'tasks:write', 'members:write']);
+  assert(plan.mcp); assert.equal(plan.mcp.token_endpoint_auth_method, 'none');
+  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1/callback']);
+  assert.deepEqual(plan.mcp.grant_types, ['authorization_code', 'refresh_token']);
+  assert.equal(plan.mcp.refresh_token.rotation_type, 'rotating');
+  assert.equal(plan.mcp.client_metadata.eigos_resource, 'https://beta.example');
+  assert.notEqual(plan.mcp.client_metadata.eigos_component, plan.connector.client_metadata.eigos_component);
+  assert.throws(() => auth0Plan('https://beta.example', undefined, { inviteBeta: true, memberSources: true }), /private supplier/);
+});
+
 async function action(clientId: string, resource?: string, configured = true) {
   const id = new Map(), access = new Map(); let denied = false;
   await onExecutePostLogin({ client: { client_id: clientId }, resource_server: resource ? { identifier: resource } : undefined,

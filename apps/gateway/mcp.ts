@@ -26,7 +26,7 @@ function result(action: () => unknown): CallToolResult {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService): McpServer {
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean } = {}): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (network) mountNetworkMcp(server, network.service, principal, network.token);
@@ -86,12 +86,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));
-  server.registerTool('select_payment_route', {
+  if (options.payment !== false) server.registerTool('select_payment_route', {
     description: 'Select a payment route for the original unpaid booking using current PA wallet availability: prefer Link Agent Wallet, otherwise the provider Link checkout requiring user confirmation. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
     inputSchema: paPaymentRouteSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.selectPaymentRoute(principal, args))));
-  server.registerTool('report_payment_result', {
+  if (options.payment !== false) server.registerTool('report_payment_result', {
     description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment or booking completion.',
     inputSchema: paPaymentReportSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },

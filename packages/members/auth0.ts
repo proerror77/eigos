@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { SCOPES } from '../core/domain.js';
+import { SCOPES, TASK_SCOPES } from '../core/domain.js';
 import { SOURCE_SCOPES } from '../core/member-source.js';
 import { MEMBERSHIP_SCOPE } from './agents.js';
 
@@ -31,7 +31,8 @@ export function ensureAuth0ConnectionClients(api: ManagementApi, connectionId: s
   if ([...desired].some(id => !confirmed.has(id))) throw new Error('Connection readback did not confirm both OAuth clients');
 }
 
-export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback', options: { memberSources?: boolean } = {}) {
+export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback', options: { memberSources?: boolean; inviteBeta?: boolean } = {}) {
+  if (options.inviteBeta && options.memberSources) throw new Error('The invite beta does not publish private supplier-account scopes');
   const origin = new URL(publicUrl);
   if (origin.protocol !== 'https:' || origin.origin !== publicUrl || origin.username || origin.password) throw new Error('Auth0 requires an exact HTTPS Gateway origin');
   const callback = new URL(agentCallback);
@@ -52,7 +53,7 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
       skip_consent_for_verifiable_first_party_clients: false,
       // The self-service resource plan never provisions a global admin grant.
       // Operators must establish that issuer policy separately and explicitly.
-      scopes: [...SCOPES.filter(value => value !== 'ontology:admin').map(value => ({ value, description: scopeDescriptions[value] })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
+      scopes: [...SCOPES.filter(value => options.inviteBeta ? (TASK_SCOPES as readonly string[]).includes(value) : value !== 'ontology:admin').map(value => ({ value, description: scopeDescriptions[value] })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
     },
     portal: {
       name: `EIGOS member portal ${suffix}`, app_type: 'regular_web', oidc_conformant: true, is_first_party: true,
@@ -68,6 +69,15 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
       jwt_configuration: { alg: 'RS256' }, is_first_party: true, client_metadata: metadata('personal-agent'),
     },
     actionName: `EIGOS member identity ${suffix}`,
+    // This EIGOS-owned integration uses Codex's native OAuth transport. The
+    // public client ID is shared; every user still performs their own consent.
+    mcp: options.inviteBeta ? {
+      name: `EIGOS MCP for Codex ${suffix}`, app_type: 'native', oidc_conformant: true, is_first_party: true,
+      callbacks: ['http://127.0.0.1/callback'], token_endpoint_auth_method: 'none', jwt_configuration: { alg: 'RS256' },
+      grant_types: ['authorization_code', 'refresh_token'],
+      refresh_token: { rotation_type: 'rotating', expiration_type: 'expiring', token_lifetime: 2592000, idle_token_lifetime: 604800, infinite_token_lifetime: false, infinite_idle_token_lifetime: false, leeway: 5 },
+      client_metadata: metadata('native-mcp'),
+    } : undefined,
     connector: {
       name: `EIGOS Agent connector ${suffix}`, app_type: 'native', oidc_conformant: true, is_first_party: true,
       callbacks: [callback.href], token_endpoint_auth_method: 'none', jwt_configuration: { alg: 'RS256' },

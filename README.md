@@ -73,6 +73,8 @@ PA 读取 `~/.local/share/eigos/grok-life/skill-install.md` 更新现有接入�
 
 ## 认证与生产边界
 
+新增受限的 [MCP 邀请内测配置](docs/invite-beta-operations.md)：独立 HTTPS/JWT 入口、邀请制与原生 Codex OAuth，首批范围为文档交付和任务说明整理。用户步骤见[接入指南](docs/invite-beta.md)。代码与工程测试不代表公网或真实用户验收已完成；实际开放以对应运行回读为准。
+
 MCP、A2A 共用 OAuth/JWT、会员资格、任务归属和 scope 校验。生产认证默认拒绝缺失配置；本地随机开发令牌只允许 loopback。会员与客户端自助登记、续期见 [会员资料库](docs/membership.md)、[Agent 接入](docs/agent-onboarding.md) 和 [Auth0 配置](docs/auth0-integration.md)。[会员自有账号授权](docs/member-source-authorization.md)允许各会员的 PA 通过独立通道提交本人的只读来源凭据；按 owner 加密隔离，支持连接、轮换、撤销和原任务恢复。默认关闭，只限非生产 loopback HTTPS/JWT；没有部署或真实交易。原[单会员操作人连接](docs/member-source-connection.md)作为互斥兼容模式保留。
 
 Gateway 不运行模型或业务程序。Worker 事务外调用，任务领取、取消、租约、迟到观察及未知结果恢复由共享核心约束。当前部署限同机持久 SQLite，不支持网络文件系统或跨机器数据库副本。具体职责见 [Gateway／Worker](docs/gateway-worker.md)。

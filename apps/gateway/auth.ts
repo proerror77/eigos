@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { SCOPES, type Principal } from '../../packages/core/domain.js';
+import { SCOPES, TASK_SCOPES, type Principal } from '../../packages/core/domain.js';
 import { readTenantClaim } from '../../packages/core/identity-claims.js';
 
 export type VerifyToken = (token: string) => Promise<Principal>;
@@ -44,7 +44,8 @@ export function protectedResourceMetadata(c: Config): object {
     authorization_servers: c.OAUTH_ISSUER ? [c.OAUTH_ISSUER] : [],
     // Public OAuth discovery must not request an operator-only grant that the
     // self-service issuer setup deliberately does not provision.
-    scopes_supported: [...SCOPES.filter(scope => scope !== 'ontology:admin'), ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
+    scopes_supported: c.EIGOS_INVITE_BETA === 'true' ? ['openid', 'offline_access', ...TASK_SCOPES]
+      : [...SCOPES.filter(scope => scope !== 'ontology:admin'), ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     bearer_methods_supported: ['header'],
     resource_name: 'EIGOS task gateway',
     ...(c.OIDC_AGENT_CLIENT_ID ? { eigos_agent_registration: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}),

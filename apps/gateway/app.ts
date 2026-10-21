@@ -32,6 +32,7 @@ import { AgentAccessError } from '../../packages/members/agents.js';
 import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
 import { DefinitionService } from '../../packages/ontology/definition-service.js';
 import { mountDefinitionRoutes } from './ontology/routes.js';
+import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
@@ -102,6 +103,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     next();
   });
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
+  mountInviteBeta(app, config);
+  if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
@@ -115,7 +118,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '');
     try {
       if (!match?.[1]) throw new Error('Missing token');
-      const principal = await verify(match[1]);
+      const principal = inviteBetaPrincipal(config, await verify(match[1]));
+      if (!principal) { res.status(403).json({ error: 'client_not_admitted', membership_url: `${config.PUBLIC_URL}/members` }); return; }
       if (config.EIGOS_AUTH_MODE === 'jwt') {
         if (principal.clientId === config.OIDC_AGENT_CLIENT_ID) {
           try { members.agents.authorize(principal, match[1]); }
@@ -184,7 +188,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, definitions), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true' }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);

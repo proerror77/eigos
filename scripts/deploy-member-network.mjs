@@ -9,22 +9,31 @@ import { createConnection } from 'node:net';
 import { readConfig } from '../dist/packages/core/config.js';
 import { assertSourceProxy } from '../dist/packages/core/private-source-proxy.js';
 import { installReleaseDependencies } from '../dist/packages/deployment/dependencies.js';
+import { assertInviteBetaProxy } from '../dist/packages/deployment/invite-beta-proxy.js';
 
 // Separate from com.eigos.grok-life. No token acquisition, IdP changes or business calls.
-const { values } = parseArgs({ options: { config: { type: 'string' }, apply: { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, apply: { type: 'boolean', default: false } } });
+if (!['member-network', 'invite-beta'].includes(values.profile)) throw new Error('Choose member-network or invite-beta');
+const inviteBeta = values.profile === 'invite-beta';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const runtime = join(homedir(), '.local/share/eigos/member-network');
-const label = 'com.eigos.member-network', service = `gui/${process.getuid()}/${label}`;
+const runtime = join(homedir(), '.local/share/eigos', values.profile);
+const label = `com.eigos.${values.profile}`, service = `gui/${process.getuid()}/${label}`;
 const plistPath = join(homedir(), 'Library/LaunchAgents', `${label}.plist`), envPath = join(runtime, 'server.env');
 if (process.platform !== 'darwin' || !values.config || !isAbsolute(values.config)) throw new Error('Use --config with an absolute private environment file on macOS');
 const stat = lstatSync(values.config);
 if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid() || (stat.mode & 0o077)) throw new Error('Deployment configuration must be an owned private regular file');
 const originalSettings = readFileSync(values.config, 'utf8'), settings = parseEnv(originalSettings), config = readConfig(settings);
-if (!config.EIGOS_MEMBER_SOURCE_KEY_FILE || !config.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || config.DATABASE_PATH !== join(runtime, 'tasks.sqlite') || config.MEMBERSHIP_DATABASE_PATH !== join(runtime, 'members.sqlite') || !existsSync(config.MEMBERSHIP_DATABASE_PATH)) throw new Error('Configure the dedicated member-network database, seeded membership and private source mode');
-const keyStat = lstatSync(config.EIGOS_MEMBER_SOURCE_KEY_FILE);
-if (!keyStat.isFile() || keyStat.nlink !== 1 || keyStat.uid !== process.getuid() || keyStat.size !== 32 || (keyStat.mode & 0o077)) throw new Error('Deployment requires an owned private 32-byte source key');
+if (config.DATABASE_PATH !== join(runtime, 'tasks.sqlite') || config.MEMBERSHIP_DATABASE_PATH !== join(runtime, 'members.sqlite')) throw new Error('Configure the exact dedicated task and membership database paths for this deployment profile');
+if (inviteBeta) {
+  if (config.EIGOS_INVITE_BETA !== 'true') throw new Error('The invite-beta deployment requires its constrained application profile');
+} else {
+  if (config.EIGOS_INVITE_BETA === 'true' || !config.EIGOS_MEMBER_SOURCE_KEY_FILE || !config.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || !existsSync(config.MEMBERSHIP_DATABASE_PATH)) throw new Error('Configure the dedicated member-network database, seeded membership and private source mode');
+  const keyStat = lstatSync(config.EIGOS_MEMBER_SOURCE_KEY_FILE);
+  if (!keyStat.isFile() || keyStat.nlink !== 1 || keyStat.uid !== process.getuid() || keyStat.size !== 32 || (keyStat.mode & 0o077)) throw new Error('Deployment requires an owned private 32-byte source key');
+}
 if (config.OAUTH_AUDIENCE !== config.PUBLIC_URL) throw new Error('The member deployment must use its exact existing OAuth audience');
-assertSourceProxy(config);
+const assertProxy = () => inviteBeta ? assertInviteBetaProxy(config) : assertSourceProxy(config);
+if (!inviteBeta || values.apply) assertProxy();
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Deploy a reviewed committed checkout');
 const ownership = join(runtime, 'owner.json');
@@ -39,7 +48,7 @@ if (oldPlist && !oldPlist.includes(envPath)) throw new Error('LaunchAgent is not
 const loaded = () => { try { execFileSync('launchctl', ['print', service], { stdio: 'ignore' }); return true; } catch { return false; } };
 const listening = () => new Promise(resolveListening => { const socket = createConnection({ host: '127.0.0.1', port: config.PORT }); const done = value => { socket.destroy(); resolveListening(value); }; socket.once('connect', () => done(true)); socket.once('error', () => done(false)); socket.setTimeout(500, () => done(true)); });
 if (!loaded() && await listening()) throw new Error('The intended port belongs to another process');
-if (!values.apply) { console.log(JSON.stringify({ status: 'prepared', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, label, runtime, privateProxyVerified: true })); process.exit(0); }
+if (!values.apply) { console.log(JSON.stringify({ status: 'prepared', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, label, runtime, profile: values.profile, proxyVerification: inviteBeta ? 'required_before_apply' : 'private_verified', ...(!inviteBeta ? { privateProxyVerified: true } : {}) })); process.exit(0); }
 const write = (p, value) => { writeFileSync(p, value, { mode: 0o600 }); chmodSync(p, 0o600); };
 for (const p of [runtime, release, dirname(plistPath)]) mkdirSync(p, { recursive: true, mode: 0o700 });
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
@@ -68,14 +77,18 @@ try {
     try { const health = await fetch(config.PUBLIC_URL + '/health', { redirect: 'error', signal: AbortSignal.timeout(1000) }).then(r => r.json()); if (health.releaseDigest === buildDigest) { ready = true; break; } } catch {} await pause(250);
   }
   if (!ready) throw new Error('The deployed member network did not become healthy');
-  assertSourceProxy(config);
+  assertProxy();
   const metadata = await fetch(config.PUBLIC_URL + '/.well-known/oauth-protected-resource', { redirect: 'error', signal: AbortSignal.timeout(5000) }).then(r => r.json());
-  if (!['sources:read', 'sources:write'].every(s => metadata.scopes_supported?.includes(s))) throw new Error('Deployed source discovery mismatch');
-  const denied = await fetch(config.PUBLIC_URL + '/sources/meituan-paotui', { redirect: 'error', signal: AbortSignal.timeout(5000) });
+  if (inviteBeta) {
+    if (JSON.stringify(metadata.scopes_supported) !== JSON.stringify(['openid', 'offline_access', 'services:read', 'tasks:read', 'tasks:write'])) throw new Error('Deployed beta scope discovery mismatch');
+    const registration = await fetch(config.PUBLIC_URL + '/.well-known/eigos-agent-registration', { redirect: 'error', signal: AbortSignal.timeout(5000) }).then(r => r.json());
+    if (registration.admission_policy !== 'invite-only' || registration.audience !== config.PUBLIC_URL) throw new Error('Deployed beta admission mismatch');
+  } else if (!['sources:read', 'sources:write'].every(s => metadata.scopes_supported?.includes(s))) throw new Error('Deployed source discovery mismatch');
+  const denied = await fetch(config.PUBLIC_URL + (inviteBeta ? '/mcp' : '/sources/meituan-paotui'), { redirect: 'error', signal: AbortSignal.timeout(5000) });
   if (denied.status !== 401) throw new Error('Unauthenticated source access was not rejected');
   write(ownership, JSON.stringify({ sourceRoot: root }) + '\n');
-  write(join(runtime, 'release.json'), JSON.stringify({ sourceCommit, buildDigest, release, files, endpoint: config.PUBLIC_URL, updatedAt: new Date().toISOString() }) + '\n');
-  console.log(JSON.stringify({ status: 'ready', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, privateProxyVerified: true, unauthenticatedStatus: denied.status, backup }));
+  write(join(runtime, 'release.json'), JSON.stringify({ sourceCommit, buildDigest, release, files, profile: values.profile, endpoint: config.PUBLIC_URL, updatedAt: new Date().toISOString() }) + '\n');
+  console.log(JSON.stringify({ status: 'ready', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, profile: values.profile, proxyVerified: true, ...(!inviteBeta ? { privateProxyVerified: true } : {}), unauthenticatedStatus: denied.status, backup }));
 } catch {
   await stop().catch(() => {});
   for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json')].entries()) { const saved = join(backup, String(i)); if (existsSync(saved)) cpSync(saved, p); else if (existsSync(p)) unlinkSync(p); }

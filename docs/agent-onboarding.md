@@ -1,5 +1,7 @@
 # Agent 自助登记、邀请与自动续期
 
+原生 Codex MCP 邀请内测的用户入口见[内测接入](invite-beta.md)。它使用预登记的公开 OAuth 客户端 ID，沿用会员和客户端连接检查；下文的 Node AgentConnector 则额外管理独立安装实例，两者的停用粒度分别说明。
+
 客户的 Agent 从公开发现入口开始登记，Auth0 验证真实用户并签发令牌，EIGOS 校验会员资格、邀请和安装实例的停用状态。Gateway 不持有 Agent 的刷新令牌，也不另建 OAuth 授权服务器。
 
 需要本人服务账号的能力另走[会员自有账号授权](member-source-authorization.md)：启用后发现文档列出 `sources:read`／`sources:write`，PA 经用户同意后在独立通道传输供应商 Token。`AgentConnector.connectSource` 和 `examples/connect-member-source.ts` 提供宿主侧入口；Token 不进入模型或任务，EIGOS 的 OAuth 登录令牌与供应商凭据分别管理。
