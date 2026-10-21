@@ -55,12 +55,13 @@ test('HTTP: approve exact draft, concurrent publication consumes once, recipient
   } finally { await f.close(); }
 });
 
-test('HTTP and MCP share actor checks; MCP never exposes publication approval or raw tokens', async () => {
+test('HTTP and MCP share actor checks; MCP never exposes network publication approval or raw tokens', async () => {
   const f = await fixture(); const client = new Client({ name: 't06-test', version: '1' });
   try {
     const { profileId } = await f.init();
     await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', f.http), { requestInit: { headers: { Authorization: `Bearer ${f.a.token}` } } }));
-    const list = await client.listTools(); assert(list.tools.some(t => t.name === 'network_command')); assert(!list.tools.some(t => t.name.includes('approve')));
+    const list = await client.listTools(); assert(list.tools.some(t => t.name === 'network_command'));
+    assert.deepEqual(list.tools.filter(t => t.name.includes('approve')).map(t => t.name), ['approve_ontology_action'], 'Managed-data approval does not expose network publication approval');
     const body = { version: 1, asProfileId: profileId, requestId: randomUUID(), operation: 'draft.create', content: { kind: 'profile', body: { displayName: 'PA', summary: 'test', roleTags: [] } } };
     const result = await client.callTool({ name: 'network_command', arguments: body }); assert(!result.isError, JSON.stringify(result));
     const again = await f.api('commands', body); assert.equal(again.status, 200); assert.equal((await again.json()).replayed, true);

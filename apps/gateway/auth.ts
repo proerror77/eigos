@@ -42,7 +42,9 @@ export function protectedResourceMetadata(c: Config): object {
   return {
     resource: c.OAUTH_AUDIENCE ?? c.PUBLIC_URL,
     authorization_servers: c.OAUTH_ISSUER ? [c.OAUTH_ISSUER] : [],
-    scopes_supported: [...SCOPES, ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
+    // Public OAuth discovery must not request an operator-only grant that the
+    // self-service issuer setup deliberately does not provision.
+    scopes_supported: [...SCOPES.filter(scope => scope !== 'ontology:admin'), ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     bearer_methods_supported: ['header'],
     resource_name: 'EIGOS task gateway',
     ...(c.OIDC_AGENT_CLIENT_ID ? { eigos_agent_registration: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}),

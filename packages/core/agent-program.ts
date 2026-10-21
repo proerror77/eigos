@@ -12,7 +12,7 @@ export interface AgentProgramContext {
   graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
 }
 export interface AgentActionContext extends AgentProgramContext {
-  planId: string; intentId: string; attemptId: string; modelRunId: string; operationKey?: string; recovery?: boolean; originalDispatchAt?: string;
+  planId: string; intentId: string; attemptId: string; modelRunId?: string; callerRequestId?: string; operationKey?: string; recovery?: boolean; originalDispatchAt?: string;
   /** Recheck the current lease, cancellation and exact grant immediately before
    * each provider write in a multi-request atomic business operation. */
   assertDispatchAllowed?: () => void;
@@ -21,7 +21,9 @@ export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];
   paPayment?: { mode: 'request' | 'wait'; terms: import('./pa-payment.js').PAPaymentTerms };
 }
-export interface AgentActionAuthority { cost: { minor: string; currency: string; payeeId: string }; operationScope?: string }
+export type AgentActionAuthority =
+  | { cost: { minor: string; currency: string; payeeId: string }; objectWrite?: undefined; operationScope?: string }
+  | { objectWrite: import('../ontology/actions.js').ObjectWriteScope; cost?: undefined; operationScope?: string };
 /** A connector failure with a deliberately safe, credential-free diagnostic. */
 export class AgentReadError extends Error {}
 export class AgentOperationRejected extends AgentReadError {
@@ -31,6 +33,9 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  /** Trusted host marker for the generic declarative engine only. Metadata
+   * cannot make an external source program accept caller-origin execution. */
+  readonly callerManagedActions?: true;
   readonly ref: Ref;
   readonly configurationDigest: string;
   readonly actionIds: readonly string[];
@@ -49,7 +54,7 @@ export interface AgentProgram {
   prepareRequest?(request: ServiceRequest): ServiceRequest;
   validateRequest?(request: ServiceRequest): void;
   clarify?(ctx: AgentProgramContext, message: string): string;
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown>; managedActionIds?: string[] };
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;

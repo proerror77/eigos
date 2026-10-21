@@ -45,14 +45,14 @@ export class NetworkEvidence {
   constructor(private store: NetworkStore, private jobs: JobStore, private catalog: ExecutionCatalog) {
     if (!jobs.sharesNetworkStore(store)) throw new Error('Evidence projection requires the existing business database');
   }
-  policyVersion() { return digest(['eigos.network.evidence@1', BACKEND_VERSION, this.jobs.ontology.model.ref, labels, outcomes, limits]); }
+  policyVersion() { return digest(['eigos.network.evidence@1', BACKEND_VERSION, this.jobs.definitions.legacy().model.ref, labels, outcomes, limits]); }
   private material(owner: string, taskId: string, projection: EvidenceProjection) {
     const job = this.jobs.get(owner, taskId), d = job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION) return fail('EVIDENCE_SOURCE_UNSUPPORTED');
     if (projection.kind === 'result' && ['submitted', 'working'].includes(job.state)) fail('RESULT_NOT_READY');
     const feedback = this.jobs.resultFeedback(owner, taskId), parsedFeedback = feedbackSchema.safeParse(feedback);
     const intents = this.jobs.intents(owner, taskId).filter(i => i.planDigest === d.plan?.digest);
-    const budget = { remaining: 4000 }, graph = this.jobs.ontology, requestRef = { type: 'ServiceRequest', id: taskId };
+    const budget = { remaining: 4000 }, graph = this.jobs.ontologyForJob(owner, job), requestRef = { type: 'ServiceRequest', id: taskId };
     const root = graph.read(owner, requestRef, budget);
     if (root.properties.revision !== d.request.revision || d.request.id !== taskId) fail('EVIDENCE_SOURCE_STALE');
     const receipts = graph.related(owner, requestRef, 'sourceReceipts', budget); if (!receipts) fail('RESOURCE_BUDGET', 429);

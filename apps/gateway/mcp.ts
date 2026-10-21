@@ -10,6 +10,9 @@ import { taskSummary } from '../../packages/core/task-summary.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import type { DefinitionService } from '../../packages/ontology/definition-service.js';
+import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
+import { mountDefinitionMcp } from './ontology/mcp.js';
 
 function result(action: () => unknown): CallToolResult {
   try {
@@ -23,10 +26,12 @@ function result(action: () => unknown): CallToolResult {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }): McpServer {
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
+  if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+  const ontologyContext = { ontologyId: ontologyIdSchema.optional(), taskId: taskIdSchema.optional(), release: ontologyReleaseRefSchema.optional() };
   if (sources) {
     server.registerTool('list_source_connections', { description: 'Discover available account-backed services and the current user\'s own connection status. Visibility does not lend another member\'s credential.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.list(principal, sources.token)));
     server.registerTool('get_source_connection', { description: 'Read this user\'s Meituan connection state, expiry and next action. Accepted credential is not provider verification.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.status(principal, sources.token)));
@@ -36,15 +41,15 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
+    inputSchema: z.object({ ...ontologyContext, search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
   }, args => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',
-    inputSchema: objectQuerySchema, annotations: read,
+    inputSchema: z.union(objectQuerySchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
   }, args => result(() => tasks.queryOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('evaluate_ontology', {
     description: 'Run a registered, bounded, read-only business calculation. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
-    inputSchema: functionCallSchema, annotations: read,
+    inputSchema: z.union(functionCallSchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
   }, args => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('list_services', {
     description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',

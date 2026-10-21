@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { digest } from '../core/delegation.js';
 import { objectRefSchema, type ActionDefinition, type InterfaceDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { refSchema } from './execution.js';
 
@@ -65,7 +66,7 @@ export const executionObjects: ObjectTypeDefinition[] = [
     inputs: p('struct', z.record(z.string(), z.string()), 'Named typed object inputs'),
     inputSchema: p('struct', z.record(z.string(), z.unknown()), 'Published argument schema', false),
     resultType: s('Registered result object type', 80, false),
-    effect: p('string', z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'definition_only']), 'Registered effect, not permission'),
+    effect: p('string', z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'object_write', 'definition_only']), 'Registered effect, not permission'),
     kind: p('string', z.enum(['decision', 'source_read', 'business']), 'Registered action meaning', false),
     effects: strings('Declared effects; never a permission grant'), resultTypes: strings('Registered normalized result object types'),
     changes: strings('Declared object changes'), submissionCriteria: strings('Checks required before invocation'),
@@ -155,10 +156,11 @@ export const executionLinks: LinkDefinition[] = [
 export type ExecutionReferenceKind = 'input' | 'output' | 'scope' | 'observation';
 export function executionReferenceLink(kind: ExecutionReferenceKind, target: string): { id: string; name: string } {
   const prefix = { input: 'ExecutionInputObject', output: 'ExecutionResultOutput', scope: 'ExecutionContextScope', observation: 'ExecutionContextObservation' }[kind];
-  return { id: `${prefix}${target}`, name: `${{ input: 'object', output: 'output', scope: 'scope', observation: 'observed' }[kind]}${target}` };
+  const bounded = (value: string) => value.length <= 80 ? value : `${value.slice(0, 47)}${digest(value).slice(0, 32)}`;
+  return { id: bounded(`${prefix}${target}`), name: bounded(`${{ input: 'object', output: 'output', scope: 'scope', observation: 'observed' }[kind]}${target}`) };
 }
 /** Concrete endpoint typing is preserved without modifying any business object's interfaces. */
-export function executionReferenceLinks(businessTypes: readonly ObjectTypeDefinition[], actions: readonly ActionDefinition[], interfaces: readonly InterfaceDefinition[] = []): LinkDefinition[] {
+export function executionReferenceLinks(businessTypes: readonly Pick<ObjectTypeDefinition, 'id' | 'interfaces'>[], actions: readonly ActionDefinition[], interfaces: readonly Pick<InterfaceDefinition, 'id' | 'parents'>[] = []): LinkDefinition[] {
   const implementsInterface = (id: string, target: string): boolean => id === target || !!interfaces.find(i => i.id === id)?.parents?.some(parent => implementsInterface(parent, target));
   const expand = (types: string[]) => new Set(businessTypes.filter(object => types.includes(object.id) || object.interfaces?.some(i => types.some(target => implementsInterface(i.id, target)))).map(o => o.id));
   const outputs = actions.flatMap(action => [...(action.read ? [action.read.resultType] : []), ...(action.operation ? [action.operation.resultType] : []), ...(action.resultTypes ?? [])]);

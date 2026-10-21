@@ -100,6 +100,7 @@ export class CatalogAgentProgram implements AgentProgram {
     }
   }
   async invoke(ctx: AgentActionContext, action: string, value: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
+    if (!ctx.modelRunId || ctx.callerRequestId) throw new DomainError('FORBIDDEN', 'Catalog source calls require an original model-selected plan');
     this.validate(ctx, action, value);
     const input = this.schema(action).parse(value), merchant = this.merchants.find(m => m.id === input.merchantId)!;
     const context = { address_country: 'US' };

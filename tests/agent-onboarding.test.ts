@@ -107,6 +107,7 @@ test('non-members can register and query admission; invitation gate protects bot
     const discovery = await (await f.call('/.well-known/eigos-agent-registration')).json(); assert.equal(discovery.client_id, 'connector');
     assert.equal(discovery.registration_credential.length, 43); assert(discovery.registration_request.schema.required.includes('registrationId'));
     assert.equal(discovery.membership_application.required_scope, MEMBERSHIP_SCOPE); assert.equal(discovery.membership_application.schema.properties.consent.const, true);
+    assert.deepEqual(discovery.scopes, ['openid', 'offline_access', MEMBERSHIP_SCOPE, 'services:read', 'tasks:read', 'tasks:write'], 'Existing Agent onboarding must not silently request model editing, publishing or administrator permissions');
     const card = await (await f.call('/.well-known/agent-card.json')).json();
     assert(card.capabilities.extensions.some((value: { uri: string }) => value.uri === f.base + '/.well-known/eigos-agent-registration'));
     const created = await f.request('/agents/registrations', secret, undefined, { registrationId: id, displayName: 'External Agent' }); assert.equal(created.status, 201);

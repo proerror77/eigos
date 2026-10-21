@@ -21,18 +21,23 @@ export type AgentStep = z.infer<typeof agentStepSchema>;
 export interface AgentActionPlan {
   id: string; version: '2'; sequence: number; requestId: string; requestRevision: number;
   programRef: Ref; programDigest: string; scope: ObjectRef; scopeDigest: string;
-  modelRunId: string; modelDecision: AgentDecision; reasoning: string; createdAt: string;
-  steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; operationScope?: string })[];
+  modelRunId?: string; modelDecision?: AgentDecision;
+  callerDecision?: { requestId: string; envelopeDigest: string; decision: AgentDecision };
+  reasoning: string; createdAt: string;
+  steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; objectWrite?: import('./actions.js').ObjectWriteScope; operationScope?: string })[];
   ontologyPlanning: PlanningSnapshot; digest: string;
 }
 export interface AgentExecutionState {
   version: '1'; programRef: Ref; programDigest: string; scope: ObjectRef;
   input: Record<string, unknown>; requestRevision: number;
+  /** Explicit action subset initialized by the trusted declarative program. */
+  managedActionIds?: string[];
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
   paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion' | 'runtime'; message: string; inputDigest: string }[];
   informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
   completion?: { modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
+  callerCompletion?: { requestId: string; planDigest: string; intentIds: string[]; ontologyPlanning: PlanningSnapshot };
 }
 export const agentObjectRefSchema = objectRefSchema;

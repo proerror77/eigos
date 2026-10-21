@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
@@ -86,8 +87,14 @@ test('N2 preserves the existing numeric source-price contract when projecting ex
 });
 
 test('N1 invalid receipt projection is explicit and atomic while the canonical task remains readable', async () => {
-  const source = runner(1);
+  const directory = mkdtempSync(join(tmpdir(), 'eigos-n1-import-')), sourcePath = join(directory, 'source.sqlite'), baseline = join(directory, 'definition-baseline.sqlite');
+  const source = runner(1, new JobStore(sourcePath));
   try {
+    // Preserve the exact release identities while importing no task, source
+    // objects or execution ledger. A task pin must never be rewritten merely
+    // because the receiving fixture created its own random bootstrap IDs.
+    const snapshot = new DatabaseSync(sourcePath);
+    try { snapshot.prepare('VACUUM INTO ?').run(baseline); } finally { snapshot.close(); }
     source.submit(); const done = await source.run();
     for (const change of [
       (r: Record<string, unknown>) => { (r.ontologyReceipt as Record<string, unknown>).resultDigest = '0'.repeat(64); },
@@ -99,7 +106,9 @@ test('N1 invalid receipt projection is explicit and atomic while the canonical t
         const { ontologyReceipt, ...business } = r; (ontologyReceipt as Record<string, unknown>).resultDigest = digest(business);
       },
     ]) {
-      const store = new JobStore(':memory:');
+      const importedPath = join(directory, `import-${randomUUID()}.sqlite`);
+      copyFileSync(baseline, importedPath);
+      const store = new JobStore(importedPath);
       try {
         const copy = structuredClone(done); change(copy.artifact!.data.result as Record<string, unknown>);
         store.save(owner, copy);
@@ -118,7 +127,7 @@ test('N1 invalid receipt projection is explicit and atomic while the canonical t
     assert.equal(source.store.ontology.read(owner, { type: 'ServiceRequest', id: done.id }).properties.projectionState, 'invalid_source');
     assert.deepEqual(source.store.ontology.query(owner, { type: 'ExecutionPlan' }).items, plansBefore);
     assert.deepEqual(source.store.ontology.query(owner, { type: 'ExecutionInput' }).items, inputsBefore, 'Invalid later source does not rewrite earlier valid execution evidence');
-  } finally { source.store.close(); }
+  } finally { source.store.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('N1 task and graph writes roll back together, isolate owners and do not reinterpret historical tasks', () => {

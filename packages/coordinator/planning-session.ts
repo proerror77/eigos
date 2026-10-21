@@ -150,12 +150,14 @@ export class OntologyPlanningSession {
         const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
         const describedActions = selected.filter(action => !this.options.taskContext?.program || this.options.taskContext.program.actionIds.includes(action.id)).map(action => {
           if (includeSchemas || actions) return action;
-          const { read, operation, ...summary } = action;
+          const { read, operation, inputSchema, implementation, ...summary } = action;
           const compact = (metadata: NonNullable<typeof read | typeof operation>) => {
             const { inputSchema, ...rest } = metadata;
             return { ...rest, inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), schemaAvailable: true };
           };
-          return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}) };
+          return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}),
+            ...(inputSchema ? { inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), inputSchemaAvailable: true } : {}),
+            ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
         });
         output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
           const value = type as { properties: Record<string, Record<string, unknown>> };
@@ -199,7 +201,7 @@ export class OntologyPlanningSession {
         output = { checks, grantsAuthority: false };
       } else if (tool === 'propose_action') {
         const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
-        if (definition.read || definition.operation) throw new DomainError('INVALID_INPUT', 'Source reads and sandbox operations are selected in an agent execute decision with their registered input and authorization checks; this tool only describes business decision proposals');
+        if (definition.read || definition.operation || this.graph.model.actionImplementation(definition.id)?.kind === 'declarative') throw new DomainError('INVALID_INPUT', 'Source reads, managed writes and sandbox operations are selected in an agent execute decision with their registered input and authorization checks; this tool only describes business decision proposals');
         if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
         const inputs: DecisionActionProposal['inputs'] = {};
         for (const item of args.inputs) {

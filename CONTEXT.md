@@ -142,3 +142,15 @@ _Avoid_：把供应商端点或协议方法直接当成跨服务统一业务语�
 - `*Observation`、`SourceReceipt`、`ExecutionAttempt`、`ExecutionResult` 在此表示记录；实际观测、调用或履约过程是这些记录描述的对象。调用过程与供应方履约过程也分别判断。
 - 来源规格、申报值、实际测量和用户要求分别标明。目录属性、角色分配、能力声明和逻辑一致性均不能单独证明真实履约。
 - 读取一条关系只覆盖该关系。没有读到准确交易角色，不代表不存在渠道参与者；没有调查的范围应保留未核实，不能表述为全图缺失。
+
+## 定义与执行版本
+
+**本体命名空间（Ontology）**：拥有独立定义版本与实例范围的业务模型容器；命名空间不替代对象 owner 或来源授权。
+
+**定义资源（Definition Resource）**：Object Type、Link Type、Interface 或 Action Type 的稳定资源身份；API 名称发布后不复用，显示信息可独立演进。
+
+**本体发布（Ontology Release）**：四类定义和准确校验／处理器引用组成的不可变快照。激活决定新任务采用的版本，在途任务保持原版本。
+
+**受管数据动作（Managed Data Action）**：以 `object_write` 效果改变用户可管理的对象或关系，经过准确预览、授权、Worker 提交和回读；不会自动产生订单、付款或供应商履约事实。
+
+管理入口、兼容策略和验证见[动态本体实现](docs/dynamic-ontology-implementation-2026-10-21.md)。

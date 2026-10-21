@@ -10,7 +10,7 @@ import { businessRef, writeBusiness } from './business-chain-write.js';
 /** Decision material only. No order, authorization grant or provider invocation. */
 export function quoteSelectionMaterial(jobs: JobStore, inquiry: Inquiry, input: SelectionInput) {
   if (input.quote.type !== 'DeliveryQuote') return fail('CANDIDATE_SELECTION_UNAVAILABLE', 422);
-  const job = jobs.get(inquiry.owner, inquiry.taskId), request = job.delegation?.request, graph = jobs.ontology;
+  const job = jobs.get(inquiry.owner, inquiry.taskId), request = job.delegation?.request, graph = jobs.ontologyForJob(inquiry.owner, inquiry.taskId);
   if (!request || request.revision !== input.expectedRequestRevision) return fail('REQUIREMENTS_CHANGED');
   if (job.state !== 'completed' || !job.delegation?.acceptance?.accepted) return fail('QUOTE_REPORT_NOT_READY');
   const quoteRef = { type: 'DeliveryQuote' as const, id: input.quote.id }, quote = graph.read(inquiry.owner, quoteRef);
@@ -51,7 +51,7 @@ export function quoteSelectionMaterial(jobs: JobStore, inquiry: Inquiry, input: 
 
 export function recordSelectedProposal(jobs: JobStore, inquiry: Inquiry, proposalId: string, material: ReturnType<typeof quoteSelectionMaterial>, at: string) {
   jobs.assertTransaction();
-  const graph = jobs.ontology, old = graph.related(inquiry.owner, material.requestRef, 'selectedProposal', { remaining: 1000 });
+  const graph = jobs.ontologyForJob(inquiry.owner, inquiry.taskId), old = graph.related(inquiry.owner, material.requestRef, 'selectedProposal', { remaining: 1000 });
   if (!old) return fail('RESOURCE_BUDGET', 429);
   const proposalRef = { type: 'Proposal', id: proposalId };
   graph.ingest(inquiry.owner, {

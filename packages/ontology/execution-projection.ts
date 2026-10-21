@@ -89,9 +89,10 @@ function registered(graph: OntologyObjectStore, action: string): ActionDefinitio
   return graph.model.actionForOperation(action);
 }
 export function actionProperties(definition: ActionDefinition) {
+  const managed = definition.implementation?.kind === 'declarative';
   return { contractKind: 'semantic_definition', actionId: definition.id, actionVersion: definition.version ?? definition.read?.version ?? definition.operation?.version ?? digest(definition), definitionDigest: digest(definition),
-    description: definition.description, inputs: definition.inputs, ...((definition.read ?? definition.operation) ? { inputSchema: (definition.read ?? definition.operation)!.inputSchema, resultType: (definition.read ?? definition.operation)!.resultType } : {}),
-    effect: definition.read?.effect ?? definition.operation?.effect ?? 'definition_only', ...(definition.kind ? { kind: definition.kind } : {}),
+    description: definition.description, inputs: definition.inputs, ...((definition.read ?? definition.operation) ? { inputSchema: (definition.read ?? definition.operation)!.inputSchema, resultType: (definition.read ?? definition.operation)!.resultType } : managed ? { inputSchema: definition.inputSchema, resultType: definition.resultTypes?.[0] ?? 'ServiceRequest' } : {}),
+    effect: definition.read?.effect ?? definition.operation?.effect ?? (managed ? 'object_write' : 'definition_only'), ...(definition.kind ? { kind: definition.kind } : {}),
     effects: definition.effects ?? (definition.read ? ['read'] : definition.operation ? [definition.operation.effect, ...(definition.operation.additionalEffects ?? [])] : []), resultTypes: definition.resultTypes ?? (definition.read ? [definition.read.resultType] : definition.operation ? [definition.operation.resultType] : []),
     changes: definition.changes, submissionCriteria: definition.submissionCriteria, execution: 'definition_only' };
 }
@@ -442,7 +443,14 @@ export function projectExecution(graph: OntologyObjectStore, owner: string, job:
       observationOrder: current?.observations ?? [], feedback: current?.feedback.slice(-20) ?? [] }, links, source, removeLinks);
   }
   for (const state of states) {
-    const scope = graph.read(owner, state.scope), candidates = Array.isArray(scope.properties.allowedActions) ? scope.properties.allowedActions as string[] : [];
+    const scope = graph.read(owner, state.scope);
+    if (state.managedActionIds) {
+      const release = graph.releaseRef, all = graph.model.actionDefinitions().filter(action => graph.model.actionImplementation(action.id)?.kind === 'declarative').map(action => action.id).sort();
+      if (!release || state.programRef.id !== `ontology.managed.${release.ontologyId}` || state.programRef.version !== release.digest
+        || state.programDigest !== digest({ engine: 'eigos.declarative-actions@1', releaseRef: release, modelDigest: graph.model.ref.digest, actionIds: all })
+        || new Set(state.managedActionIds).size !== state.managedActionIds.length || !state.managedActionIds.length || state.managedActionIds.some(id => !all.includes(id))) fail('Managed action binding differs from its exact registered engine and release');
+    }
+    const candidates = state.managedActionIds ?? (Array.isArray(scope.properties.allowedActions) ? scope.properties.allowedActions as string[] : []);
     const definitions = candidates.map(id => registered(graph, id)).filter((value): value is ActionDefinition => !!value);
     for (const definition of definitions) write(graph, owner, actionRef(request.id, definition), actionProperties(definition), [requestEdge(actionRef(request.id, definition), request.id)], source);
     const binding = bindingRef(request.id, state), context = executionContextRef(request.id, state.requestRevision);

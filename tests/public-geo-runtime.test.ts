@@ -142,7 +142,7 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
     assert.deepEqual(reopened.delegation!.resolution, completed.delegation!.resolution);
     assert.deepEqual(reopened.delegation!.acceptance, completed.delegation!.acceptance);
     if (mode === 'success') {
-      validatePlan(gateway.catalog, owner, reopened.delegation!.request, reopened.delegation!.plan!);
+      validatePlan(gateway.catalog, owner, reopened.delegation!.request, reopened.delegation!.plan!, gateway.store.ontologyForJob(owner, reopened).model.ref);
       assert.equal(reopened.delegation!.actions!.length, 1);
       assert.equal(reopened.delegation!.actions![0]!.state, 'effect_confirmed');
       assert.deepEqual(reopened.delegation!.businessFacts, []);

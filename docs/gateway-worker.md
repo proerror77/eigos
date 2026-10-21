@@ -81,3 +81,9 @@ Docker 镜像默认启动 Gateway，也包含构建后的 Worker 代码。Worker
 
 
 单会员只读来源可按[个人来源连接](member-source-connection.md)接入 JWT 邀请网络。Gateway 校验连接记录与会员库后，把无凭据的准入摘要写入共享业务库；Worker 和 stdio MCP 只读该摘要及持久撤权记录，不读取会员会话库。Gateway 的读取器明确禁止实际查询，凭据工具只由 Worker 路径调用。连接记录变化会改变 binding 配置摘要，过期、撤销、停用或配置不一致时拒绝访问；原本机开发身份不会自动取得会员连接。
+
+## 动态定义的共享运行版本
+
+Gateway 和 Worker 在同一业务库中使用不可变本体发布。Gateway 管理草稿、校验、发布和激活，并在创建任务时锁定准确 release；Worker 领取后按任务版本编译／缓存模型。权限、来源撤销、对象 revision 和租约仍实时核对。新模型发布不要求重启两端，也不重新解释旧任务。
+
+显式受管数据 Action 的 Gateway 入口只创建预览、待授权任务及原 Intent；对象变更仍由 Worker 在持久事务内提交。该路径记录 caller decision，不生成虚假的模型回执。基础审查页面及范围见[动态定义实现](dynamic-ontology-implementation-2026-10-21.md)。

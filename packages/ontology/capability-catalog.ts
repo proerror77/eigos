@@ -83,7 +83,7 @@ const preparedStepSchema = z.strictObject({
 });
 const quoteSchema = z.strictObject({ id: text, digest: sha, amount: moneySchema, expiresAt: timestamp, environment: z.literal('local_simulation'),
   requestDigest: sha, bindingRef: ref, bindingDigest: sha, inputDigest: sha, detailsDigest: sha });
-const effect = z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund']);
+const effect = z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'object_write']);
 const capabilityActionsSchema = z.array(z.strictObject({ ref, effect, additionalEffects: z.array(effect).max(8).optional() })).min(1).max(32);
 const candidateSchema = z.strictObject({
   id: text, binding: bindingSchema, status: z.enum(['ready', 'needs_input', 'unavailable']), question: z.string().max(10000).optional(),

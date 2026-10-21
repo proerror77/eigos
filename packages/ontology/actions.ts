@@ -1,7 +1,32 @@
 import type { Ref, CandidateFacts, ExecutionPlan, PlanStep } from './execution.js';
 import type { Delivery } from '../core/catalog.js';
+import { z } from 'zod';
+import { objectRefSchema, type ObjectRef } from './model.js';
+import type { OntologyReleaseRef } from './definition-contracts.js';
 
-export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | 'change' | 'cancel' | 'refund';
+export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | 'change' | 'cancel' | 'refund' | 'object_write';
+export interface ObjectWriteScope {
+  ontologyRelease: OntologyReleaseRef; actionId: string; actionDigest: string; inputDigest: string; previewDigest: string;
+  targets: { ref: ObjectRef; revision: number | null; fields: string[]; operation: 'create' | 'update' | 'tombstone' | 'link' }[];
+  links: { type: string; from: ObjectRef; to: ObjectRef; operation: 'add' | 'remove' }[];
+}
+const sha = z.string().regex(/^[a-f0-9]{64}$/);
+export const objectWriteScopeSchema = z.strictObject({
+  ontologyRelease: z.strictObject({ ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/), releaseId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9:._-]{0,239}$/), digest: sha }),
+  actionId: z.string().min(1).max(80), actionDigest: sha, inputDigest: sha, previewDigest: sha,
+  targets: z.array(z.strictObject({ ref: objectRefSchema, revision: z.number().int().positive().nullable(), fields: z.array(z.string().min(1).max(80)).max(100), operation: z.enum(['create', 'update', 'tombstone', 'link']) })).max(200),
+  links: z.array(z.strictObject({ type: z.string().min(1).max(80), from: objectRefSchema, to: objectRefSchema, operation: z.enum(['add', 'remove']) })).max(500),
+});
+export interface ObjectWriteAuthorizationRequest {
+  kind: 'object_write'; planDigest: string; effects: EffectClass[]; objectWrite: ObjectWriteScope;
+  maxAmount?: never; payeeIds?: never;
+  environment: 'managed'; realOperationsAllowed: false;
+}
+export interface FinancialAuthorizationRequest {
+  planDigest: string; effects: EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[];
+  environment: 'sandbox'; realOperationsAllowed: false;
+}
+export type PlanAuthorizationRequest = FinancialAuthorizationRequest | ObjectWriteAuthorizationRequest;
 export interface InputReference { stepId: string; path: string; targetKey: string }
 export interface PreparedStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef?: Ref; capabilityRef?: Ref;
@@ -54,11 +79,17 @@ export interface ActionContext {
   intent: ActionIntent; attempt: ExecutionAttempt; input: Record<string, unknown>;
   reply?: { messageId: string; answer: string };
 }
-export interface PlanGrant {
+interface GrantBase {
   id: string; owner: string; jobId: string; planDigest: string; bindingRefs: Ref[]; allowedEffects: EffectClass[];
-  maxAmount: { minor: string; currency: string }; payeeIds: string[]; expiresAt: string; revoked: boolean;
-  environment: 'sandbox'; approvedAt: string; revokedAt?: string;
+  expiresAt: string; revoked: boolean; approvedAt: string; revokedAt?: string;
 }
+export interface FinancialPlanGrant extends GrantBase {
+  kind?: 'financial'; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox';
+}
+export interface ObjectWritePlanGrant extends GrantBase {
+  kind: 'object_write'; objectWrite: ObjectWriteScope; environment: 'managed'; maxAmount?: never; payeeIds?: never;
+}
+export type PlanGrant = FinancialPlanGrant | ObjectWritePlanGrant;
 export interface OutcomeAssessment {
   requestId: string; requestRevision: number; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human';
   criterionResults: { requirementId: string; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human'; evidenceRefs: string[] }[];

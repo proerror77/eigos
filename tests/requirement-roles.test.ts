@@ -1,3 +1,4 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -89,7 +90,7 @@ test('declared step costs respect separate service/deposit caps and reject an un
   const facts = { amounts: { service_total: { minor: '40000', currency: 'CNY' }, deposit: { minor: '150000', currency: 'CNY' } } };
   const catalog = new ExecutionCatalog([capability], [binding], [fixtureAdapter(binding.adapterId, facts)]);
   const candidate = { id: 'cost-candidate', binding, status: 'ready' as const, input: {}, details: {}, facts, evidenceRefs: ['synthetic-quote'], requirementChecks: checkRequirements(r, facts, ['synthetic-quote']), observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(), recipe: (['service_total', 'deposit'] as const).map((purpose, i) => ({ id: purpose, operationId: purpose, actionTypeRef: action, input: {}, inputRefs: [], dependsOn: [], cost: { minor: i === 0 ? '40000' : '150000', currency: 'CNY', payeeId: binding.providerId, purpose } })) };
-  const plan = (value: typeof candidate) => proposePlan(catalog, owner, r, capability, value, { kind: 'propose_plan', requestRevision: 1, candidateId: value.id, message: 'Synthetic cost declaration only; no execution or approval', steps: value.recipe.map(s => ({ id: s.id, actionTypeRef: action, bindingRef: binding.ref, inputJson: '{}', dependsOn: [] })) }, templatePlanning(r));
+  const plan = (value: typeof candidate) => proposePlan(catalog, owner, r, capability, value, { kind: 'propose_plan', requestRevision: 1, candidateId: value.id, message: 'Synthetic cost declaration only; no execution or approval', steps: value.recipe.map(s => ({ id: s.id, actionTypeRef: action, bindingRef: binding.ref, inputJson: '{}', dependsOn: [] })) }, templatePlanning(r, businessModel.ref));
   assert.equal(plan(candidate).steps.length, 2);
   const missing = structuredClone(candidate); delete (missing.recipe[1]!.cost as { purpose?: string }).purpose;
   assert.throws(() => plan(missing), /fixed request budget/);

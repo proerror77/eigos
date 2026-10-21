@@ -38,7 +38,7 @@ test('UCP preparation and confirmation share the runtime but require distinct au
     assert.equal(prepared.delegation!.plan!.completionTarget, 'artifact');
     const waiting = await t.confirmation(); assert.equal(waiting.state, 'auth-required');
     assert.deepEqual(waiting.delegation!.authorizationRequest!.effects, ['order', 'payment']);
-    assert.equal(waiting.delegation!.authorizationRequest!.maxAmount.minor, '7500');
+    assert.equal(waiting.delegation!.authorizationRequest!.maxAmount?.minor, '7500');
     t.approve(waiting, ['order']); const stillWaiting = await t.b.run(); assert.equal(stillWaiting.state, 'auth-required'); assert.equal(t.merchant.counts().completes, 0);
     t.approve(stillWaiting); const done = await t.b.run(); assert.equal(done.state, 'completed'); assert.equal(done.delegation!.acceptance!.accepted, true);
     assert.deepEqual(t.merchant.counts(), { creates: 1, completes: 1 }); assert.equal(t.merchant.flags.signatureMissing, false);

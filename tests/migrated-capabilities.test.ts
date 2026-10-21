@@ -59,9 +59,9 @@ test('same-version provider/definition drift and recomputed plan tampering canno
   try {
     b.submit(); const offered = await b.run(); const plan = offered.delegation!.plan!;
     const switched = new ExecutionCatalog([CSV_CAPABILITY], [{ ...CSV_BINDING, providerId: 'different-provider' }], [new CsvAuditAdapter(dir)]);
-    assert.throws(() => validatePlan(switched, owner, offered.delegation!.request, plan), /Pinned provider/);
+    assert.throws(() => validatePlan(switched, owner, offered.delegation!.request, plan, b.store.ontologyForJob(owner, offered).model.ref), /Pinned provider/);
     const changed = new ExecutionCatalog([{ ...CSV_CAPABILITY, completion: 'delivery' }], [CSV_BINDING], [new CsvAuditAdapter(dir)]);
-    assert.throws(() => validatePlan(changed, owner, offered.delegation!.request, plan), /Pinned capability/);
+    assert.throws(() => validatePlan(changed, owner, offered.delegation!.request, plan, b.store.ontologyForJob(owner, offered).model.ref), /Pinned capability/);
     plan.steps[0]!.input.fileName = 'different.csv'; const { digest: _old, ...body } = plan; plan.digest = digest(body); b.store.save(owner, offered);
     assert.throws(() => b.tasks.authorize(principal, offered.id, { requestId: 'old-quote', action: 'confirm_simulated_payment', quoteId: plan.quote!.id, quoteDigest: plan.quote!.digest }), /Quote is not bound/);
   } finally { b.store.close(); rmSync(dir, { recursive: true, force: true }); }

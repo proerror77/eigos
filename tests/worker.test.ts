@@ -61,8 +61,9 @@ test('two database connections: exclusive claims, durable queue, expiry fencing 
 
 test('migration never automatically replays legacy in-flight work', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-migration-')); const path = join(dir, 'tasks.sqlite');
-  const a = new JobStore(path); const tasks = new TaskService(a, { catalog: createExecutionCatalog() });
-  const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'legacy', requestId: 'one' }); job.service = 'retired.service'; job.state = 'working'; delete job.delegation; a.save(ownerKey(principal), job); a.close();
+  const a = new JobStore(path), now = new Date().toISOString();
+  const job: Job = { id: randomUUID(), contextId: randomUUID(), service: 'retired.service', goal: 'legacy', state: 'working', messages: [], createdAt: now, updatedAt: now };
+  a.save(ownerKey(principal), job); a.close();
   const legacy = new DatabaseSync(path); legacy.exec('DROP TABLE work_claims'); legacy.close();
   const migrated = new JobStore(path);
   try { assert.equal(migrated.get(ownerKey(principal), job.id).state, 'working'); assert.equal(migrated.claim(['eigos.delegate'], 100), undefined); }

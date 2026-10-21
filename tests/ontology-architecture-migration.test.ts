@@ -5,17 +5,19 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { z } from 'zod';
-import { BUSINESS_MODEL_DEFINITION, businessModel, businessModelV9 } from '../packages/ontology/business-model.js';
+import { businessModelV9 } from '../packages/ontology/business-model.js';
 import { digest } from '../packages/core/delegation.js';
 import { ownerKey, SCOPES } from '../packages/core/domain.js';
 import { JobStore } from '../packages/core/store.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
-import { OntologyModel } from '../packages/ontology/model.js';
+import { OntologyModel, type ModelDefinition } from '../packages/ontology/model.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { FROZEN_V14, integrationPredecessor, parseHistoricalProperties } from '../packages/ontology/history-schema.js';
 import { INTEGRATION_PREDECESSORS, migrateIntegratedOntology } from '../packages/ontology/integration-migration.js';
+import { createSeedDefinition, LEGACY_SEED_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import pins from './fixtures/ontology-v14-fingerprints.json' with { type: 'json' };
 import examples from './fixtures/ontology-v14-migration-objects.json' with { type: 'json' };
 
@@ -23,6 +25,15 @@ const at = '2026-10-20T10:00:00.000Z';
 const source = { kind: 'synthetic' as const, id: 'frozen-v14-original-observation', observedAt: at };
 type OldRow = { type: string; id: string; properties: Record<string, unknown> };
 const oldRows = examples.rows as OldRow[];
+// This suite proves the named v14 → original-v15 migration. The active kernel
+// may evolve separately; its new fields must not redefine this historical gate.
+const seed = createSeedDefinition(), migrationTarget = compileOntologyDocument(seed.document, seed.registry);
+const migrationDefinition: ModelDefinition = {
+  id: migrationTarget.ref.id, version: migrationTarget.ref.version,
+  objects: seed.document.objects.map(type => migrationTarget.object(type.id)),
+  interfaces: seed.document.interfaces.map(({ resourceId: _resourceId, properties, ...metadata }) => ({ ...metadata, properties: Object.fromEntries(Object.keys(properties).map(name => [name, migrationTarget.properties(metadata.id)[name]!])) })),
+  links: seed.document.links.map(link => migrationTarget.link(link.id)), actions: migrationTarget.actionDefinitions(), functions: migrationTarget.functionDefinitions(),
+};
 const rowFor = (type: string): OldRow => structuredClone(oldRows.find(row => row.type === type)!);
 function insert(db: DatabaseSync, row: OldRow, fingerprint = FROZEN_V14.objects[row.type]!.fingerprint, owner = 'original-owner') {
   db.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run(owner, row.type, row.id, 7, fingerprint,
@@ -32,12 +43,18 @@ const objects = (db: DatabaseSync) => db.prepare('SELECT * FROM ontology_objects
 const links = (db: DatabaseSync) => db.prepare('SELECT * FROM ontology_links ORDER BY owner,type,from_id,to_id').all();
 const revisions = (db: DatabaseSync) => db.prepare('SELECT * FROM ontology_revisions ORDER BY owner').all();
 const unchangedFacts = (rows: ReturnType<typeof objects>) => rows.map(({ definition_digest: _definition, ...record }) => record);
-function database() { const db = new DatabaseSync(':memory:'); new OntologyObjectStore(db); return db; }
+function migrationGraph(db: DatabaseSync) {
+  const graph = new OntologyObjectStore(db, migrationTarget);
+  migrateIntegratedOntology(db, businessModelV9, migrationTarget);
+  return graph;
+}
+function database() { const db = new DatabaseSync(':memory:'); migrationGraph(db); return db; }
 
 test('the v14 migration uses actual frozen schemas and independent pins for every changed old object/link', () => {
   assert.equal(pins.model.version, '14'); assert.equal(Object.keys(pins.objects).length, 137); assert.equal(Object.keys(pins.links).length, 575);
   assert.deepEqual(FROZEN_V14.model, pins.model); assert.deepEqual(examples.model, pins.model);
-  const changed = Object.entries(pins.objects).filter(([type, pin]) => businessModel.fingerprint(type) !== pin);
+  assert.deepEqual(migrationTarget.ref, LEGACY_SEED_MODEL_REF);
+  const changed = Object.entries(pins.objects).filter(([type, pin]) => migrationTarget.fingerprint(type) !== pin);
   assert(changed.length >= 46);
   for (const [type, pin] of changed) {
     assert.equal(FROZEN_V14.objects[type]?.fingerprint, pin, `Missing frozen schema for ${type}`);
@@ -46,7 +63,7 @@ test('the v14 migration uses actual frozen schemas and independent pins for ever
     assert.deepEqual(parseHistoricalProperties(FROZEN_V14.objects[type]!, row.properties), row.properties);
   }
   for (const [type, pin] of Object.entries(pins.links)) {
-    if (digest(businessModel.link(type)) !== pin) assert.equal(FROZEN_V14.links[type]?.digest, pin, `Missing frozen link for ${type}`);
+    if (digest(migrationTarget.link(type)) !== pin) assert.equal(FROZEN_V14.links[type]?.digest, pin, `Missing frozen link for ${type}`);
   }
   for (const [type, object] of Object.entries(FROZEN_V14.objects)) assert.equal(object.fingerprint, (pins.objects as Record<string, string>)[type]);
   assert.equal(FROZEN_V14.objects.SourceReceipt!.definition.version, '4');
@@ -65,14 +82,14 @@ test('all affected v14 object definitions migrate atomically, preserving every f
     for (const [type, fromType, toType] of [['OfferRequest', 'DeliveryQuote', 'ServiceRequest'], ['OrderLineVariant', 'OrderLine', 'ProductVariant']] as const) {
       db.prepare('INSERT INTO ontology_links VALUES(?,?,?,?,?,?,?)').run('original-owner', type, fromType, rowFor(fromType).id, toType, rowFor(toType).id, (pins.links as Record<string, string>)[type]!);
     }
-    const before = objects(db), beforeLinks = links(db), beforeRevisions = revisions(db), graph = new OntologyObjectStore(db);
+    const before = objects(db), beforeLinks = links(db), beforeRevisions = revisions(db), graph = migrationGraph(db);
     const after = objects(db);
     assert.deepEqual(unchangedFacts(after), unchangedFacts(before)); assert.deepEqual(links(db), beforeLinks); assert.deepEqual(revisions(db), beforeRevisions);
     for (const row of oldRows) {
-      assert.equal(after.find(record => record.type === row.type && record.owner === 'original-owner')!.definition_digest, businessModel.fingerprint(row.type));
+      assert.equal(after.find(record => record.type === row.type && record.owner === 'original-owner')!.definition_digest, migrationTarget.fingerprint(row.type));
       assert.deepEqual(graph.read('original-owner', { type: row.type, id: row.id }).properties, row.properties);
     }
-    new OntologyObjectStore(db); assert.deepEqual(objects(db), after); assert.deepEqual(links(db), beforeLinks); assert.deepEqual(revisions(db), beforeRevisions);
+    migrationGraph(db); assert.deepEqual(objects(db), after); assert.deepEqual(links(db), beforeLinks); assert.deepEqual(revisions(db), beforeRevisions);
     assert.throws(() => graph.read('third-owner', { type: 'Provider', id: rowFor('Provider').id }), /not found/);
     assert.equal(db.prepare("SELECT count(*) AS n FROM ontology_objects WHERE type LIKE 'Network%'").get()!.n, 0, 'Migration creates no network authority or facts');
   } finally { db.close(); }
@@ -88,16 +105,16 @@ test('a v14 fingerprint cannot smuggle new optional fields, nested product attri
   for (const [type, fields] of additions) {
     const db = database(); try {
       const old = rowFor(type); old.properties = { ...old.properties, ...fields };
-      assert.deepEqual(businessModel.parseProperties(type, old.properties), old.properties, `${type}: new facts are valid only under a new definition`);
+      assert.deepEqual(migrationTarget.parseProperties(type, old.properties), old.properties, `${type}: new facts are valid only under a new definition`);
       insert(db, rowFor('Provider')); insert(db, old); const before = objects(db);
-      assert.throws(() => new OntologyObjectStore(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
+      assert.throws(() => migrationGraph(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
     } finally { db.close(); }
   }
   const db = database(); try {
     const old = rowFor('CatalogObservation'), snapshot = old.properties.snapshot as Record<string, unknown>;
     snapshot.items = [{ productId: 'original-product', variantId: 'gid://shopify/ProductVariant/1', title: 'Original title', typedAttributes: { schemaVersion: '1', profile: 'general_goods', color: 'black' } }];
-    businessModel.parseProperties(old.type, old.properties); insert(db, old); const before = objects(db);
-    assert.throws(() => new OntologyObjectStore(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
+    migrationTarget.parseProperties(old.type, old.properties); insert(db, old); const before = objects(db);
+    assert.throws(() => migrationGraph(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
   } finally { db.close(); }
 });
 
@@ -106,8 +123,8 @@ test('known pre-integration pins also reject fields and scopes added after their
     const old = rowFor('SourceReceipt'); old.properties.scope = 'identity_mapping';
     const pin = INTEGRATION_PREDECESSORS.SourceReceipt![0]!;
     assert.equal(integrationPredecessor('SourceReceipt', pin).definition.version, '4');
-    businessModel.parseProperties(old.type, old.properties); insert(db, rowFor('Provider')); insert(db, old, pin);
-    const before = objects(db); assert.throws(() => new OntologyObjectStore(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
+    migrationTarget.parseProperties(old.type, old.properties); insert(db, rowFor('Provider')); insert(db, old, pin);
+    const before = objects(db); assert.throws(() => migrationGraph(db), /pinned predecessor schema/); assert.deepEqual(objects(db), before);
   } finally { db.close(); }
 });
 
@@ -119,7 +136,7 @@ test('unknown v14 predecessors, primary-key mismatches and invalid old bodies ne
       if (mode === 'old-schema') record.properties.unregisteredOldFact = 'not in v14';
       insert(db, record, mode === 'unknown' ? digest('unknown-schema') : FROZEN_V14.objects.SourceReceipt!.fingerprint);
       if (mode === 'body') db.prepare("UPDATE ontology_objects SET body='not-json' WHERE type='SourceReceipt'").run();
-      const before = objects(db); assert.throws(() => new OntologyObjectStore(db), /Unknown predecessor|change recorded facts|pinned predecessor schema|Invalid historical object body/);
+      const before = objects(db); assert.throws(() => migrationGraph(db), /Unknown predecessor|change recorded facts|pinned predecessor schema|Invalid historical object body/);
       assert.deepEqual(objects(db), before);
     } finally { db.close(); }
   }
@@ -128,10 +145,10 @@ test('unknown v14 predecessors, primary-key mismatches and invalid old bodies ne
 test('frozen old validity is insufficient when the new schema would reject or transform the original facts', () => {
   const db = database(); try {
     const old = rowFor('Provider'); parseHistoricalProperties(FROZEN_V14.objects.Provider!, old.properties); insert(db, old);
-    const stricter = new OntologyModel({ ...BUSINESS_MODEL_DEFINITION, objects: BUSINESS_MODEL_DEFINITION.objects.map(type => type.id === 'Provider'
-      ? { ...type, properties: { ...type.properties, displayTitle: { ...type.properties.displayTitle!, schema: z.literal('new-only-title') } } } : type) });
+    const stricter = new OntologyModel({ ...migrationDefinition, objects: migrationDefinition.objects.map(type => type.id === 'Provider'
+      ? { ...type, properties: { ...type.properties, displayTitle: { ...type.properties.displayTitle!, schemaMetadata: undefined, schema: z.literal('new-only-title') } } } : type) });
     const before = objects(db); assert.throws(() => migrateIntegratedOntology(db, businessModelV9, stricter), /properties violate/); assert.deepEqual(objects(db), before);
-    const addsDefault = new OntologyModel({ ...BUSINESS_MODEL_DEFINITION, objects: BUSINESS_MODEL_DEFINITION.objects.map(type => type.id === 'Provider'
+    const addsDefault = new OntologyModel({ ...migrationDefinition, objects: migrationDefinition.objects.map(type => type.id === 'Provider'
       ? { ...type, properties: { ...type.properties, newDefault: { kind: 'string' as const, schema: z.string().default('invented'), description: 'Must not be invented for historical facts', source: 'test only', required: true } } } : type) });
     assert.throws(() => migrateIntegratedOntology(db, businessModelV9, addsDefault), /change recorded facts/); assert.deepEqual(objects(db), before);
   } finally { db.close(); }
@@ -149,7 +166,7 @@ test('a later integration or business-chain error rolls back the prior architect
       if (later === 'business-chain') insert(db, { type: 'Authorization', id: 'unknown-authorization', properties: { authorizationId: 'unknown-authorization', displayTitle: 'Unknown historical authorization' } }, digest('unknown-business-chain-definition'));
       if (later === 'link') db.prepare('INSERT INTO ontology_links VALUES(?,?,?,?,?,?,?)').run('original-owner', 'ProposalOffer', 'Proposal', proposal.id, 'ProductOffer', 'historical-target', digest('unknown-link-definition'));
       const before = objects(db), beforeLinks = links(db);
-      assert.throws(() => new OntologyObjectStore(db), /Unknown predecessor/);
+      assert.throws(() => migrationGraph(db), /Unknown predecessor/);
       assert.deepEqual(objects(db), before); assert.deepEqual(links(db), beforeLinks);
     } finally { db.close(); }
   }

@@ -108,3 +108,11 @@ T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿�
 `booking.pa-payment.sandbox@2` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
 
 Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求、路线选择与通知 Schema。Python 客户端支持 `payment-route`、`payment-result`，并通过 `reconcile` 复用已有原操作回读接口。此路径没有 EIGOS 付款动作，不需要 EIGOS Stripe 账户；旧商家付款环境开关已禁用。所有测试均在隔离服务商和 PA 钱包夹具中完成，真实钱包及服务商未接入。详见 [PA 预约付款流程](pa-booking-payment-flow.md)。
+
+## 动态本体定义与受管数据动作
+
+四类定义使用共享管理服务：`POST /ontology/v1/query`、`/commands`，对应 MCP `query_ontology_definitions`、`manage_ontology_definitions`。`/ontology/manager` 提供基础审查发布页面。查看、编辑、发布和实例执行分别使用 `ontology:read`、`ontology:write`、`ontology:publish`、`ontology:object_write`；共享默认本体管理另需 `ontology:admin`。新任务可选择有权访问的 `ontologyId`，由服务锁定 active release；客户端不能覆盖已有任务的版本。
+
+`prepare_ontology_action`（HTTP `/ontology/v1/actions/prepare`）预览发布的数据动作或接口动作；`approve_ontology_action`（HTTP `/ontology/v1/actions/approve`）批准准确对象范围和过期时间。执行和完成由原 Worker／Intent 账本核对，不能把批准响应当作已完成。它们只处理受管对象数据；原订单、付款和来源凭据边界继续成立。接口字段、分页、版本及兼容限制见[动态定义说明](dynamic-ontology-implementation-2026-10-21.md)。
+
+普通 Agent 自动接入仍仅默认请求原有任务权限；建模权限须另行授予。默认 Auth0 资源配置不登记 `ontology:admin`，管理员授权由可信发行者的独立操作人策略负责。此仓库更新不会自动改变线上认证配置。

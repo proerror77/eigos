@@ -1,0 +1,812 @@
+{
+  "version": 1,
+  "verificationDate": "2026-10-21",
+  "passed": true,
+  "startedAt": "2026-10-21T09:44:43.051Z",
+  "completedAt": "2026-10-21T09:46:18.341Z",
+  "elapsedMs": 95290,
+  "scope": "Actual native Codex reasoning against an isolated synthetic internal-data Gateway and Worker. No deployment, provider operation, order, payment or real booking.",
+  "bounds": {
+    "maximumWorkerClaims": 10,
+    "actualWorkerClaims": 4,
+    "maximumWallMs": 590000,
+    "claimLimitReached": false,
+    "executionBudget": {
+      "version": "1",
+      "profile": "standard",
+      "limits": {
+        "window": {
+          "modelTurns": 32,
+          "plans": 8,
+          "actions": 16
+        },
+        "task": {
+          "modelTurns": 128,
+          "plans": 32,
+          "actions": 64
+        }
+      },
+      "used": {
+        "modelTurns": 8,
+        "plans": 1,
+        "actions": 1
+      },
+      "windowUsed": {
+        "modelTurns": 8,
+        "plans": 1,
+        "actions": 1
+      },
+      "window": {
+        "sequence": 1,
+        "reason": "initial",
+        "requestRevision": 1,
+        "startedAt": "2026-10-21T09:44:45.546Z",
+        "baseline": {
+          "modelTurns": 0,
+          "plans": 0,
+          "actions": 0
+        }
+      }
+    }
+  },
+  "initialization": {
+    "gatewayReadyAt": "2026-10-21T09:44:44.139Z",
+    "coordinatorReadyAt": "2026-10-21T09:44:44.139Z",
+    "workerStartedAt": "2026-10-21T09:44:44.140Z",
+    "definitionsPublishedAt": "2026-10-21T09:44:45.543Z",
+    "gatewayAndWorkerCreatedBeforePublication": true,
+    "restarted": false
+  },
+  "code": {
+    "revision": "4530e009adf88c24a8ac5942f3b9cf01ab1d36da",
+    "runtimeSourceSha256": {
+      "examples/verify-dynamic-ontology.ts": "c89cd78b1dd464d0bf89c286475100da600f1747b9a62c729c37297f58f370a6",
+      "apps/worker/worker.ts": "ac8d587f00d11319e436e474512e517956290cbb8af8db2fabce9f003e59155d",
+      "packages/capabilities/executor.ts": "43190dd7bb8d20515d6d9f6c16b5d1fce3a3420e7250449945bdfffec5e93783",
+      "packages/coordinator/coordinator.ts": "877eecb9ec473f80c05a8d23a43585526252e16cff07ae6114239749def1a14d",
+      "packages/coordinator/reasoning-loop.ts": "45b581e9493662a4d3d5d4685e8a6705275b55d42b2b487b7bb122df7a73b3cb",
+      "packages/coordinator/agent-runtime.ts": "284b2652d440bb2ba8b0304e815b5badb975f8d63cf6fa693d03d4e0313ca42c",
+      "packages/coordinator/planning-session.ts": "df01063325e3588b3699376bd45a5931d0ae7b738332f216bb8036eb2fe3e8e4",
+      "packages/coordinator/task-context.ts": "d5e091689e8fca5f923e04c83b4f1ca1cc32b856caa95fc17cc53ef4ece52cdf",
+      "packages/core/store.ts": "5f1890c235a99eeea0ecc0813ae021a970fb58fb68e977ae4f9df2c50405b5d4",
+      "packages/core/tasks.ts": "ce28dc1f189b9152edc6a42c0360f51a398d5bf8c90a2d5849a82c79e4b1192d",
+      "packages/core/agent-authorization.ts": "545b6f6b0f799d38aece8c5dce191a299031b4288bc0484f062dc11f96ae8373",
+      "packages/capabilities/dynamic-ontology.ts": "59ffd6c57e3acac138f14c9038c765f0f5dc91fc2a035d094513ba7998213c2d",
+      "packages/ontology/definition-store.ts": "ceae32a46053714497251c67a73ec0088f5115fa14fd88a3837bf2ce62586b8a",
+      "packages/ontology/model-compiler.ts": "703427fa96d4970f57487cb74af8e873f018be72cdce0cdc5177be98aac38c38",
+      "packages/ontology/declarative-actions.ts": "b015e12a534b8c222a57d719a3f7e7aae3d9805b33da61fa8c0f6a6883d00767",
+      "packages/ontology/object-store.ts": "ee530d05d5120cffc92b4e386e358b65cfc5842b00c8a666be5ba0614a2d05cf",
+      "tests/fixtures/ontology-management.ts": "7ae922009f3359c52230292fd3a23e68b23439f8e1c87a16e11afb9573406305"
+    }
+  },
+  "ontology": {
+    "release": {
+      "ontologyId": "office.operations",
+      "releaseId": "5c9866b1-b664-4bbc-92c8-78e829eaa72b",
+      "digest": "969dc09ac248316439450ee6084b8be26c5dbf8d368f0e8748926141b9b60304"
+    },
+    "model": {
+      "id": "office.operations",
+      "version": "release-2",
+      "digest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546"
+    }
+  },
+  "task": {
+    "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354",
+    "state": "completed",
+    "phase": "accepted",
+    "backendVersion": "ontology-execution-v16",
+    "requestRevision": 1,
+    "goalDigest": "412d47071aa4fb2f44a4063f361b5bb487287ea19e7d651910bc1eee1005ebae",
+    "callerPlan": false,
+    "acceptance": {
+      "accepted": true,
+      "reason": "The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed",
+      "at": "2026-10-21T09:46:17.935Z",
+      "checks": [
+        {
+          "requirementId": "managed-data-readback",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "a34a054c-8327-4591-9d34-899cf73c80ef"
+          ]
+        }
+      ],
+      "evidenceRefs": [
+        "a34a054c-8327-4591-9d34-899cf73c80ef"
+      ]
+    }
+  },
+  "modelSelection": "Native Codex default without a provider or model override; a null model field means the CLI did not report its exact model name.",
+  "modelRuns": [
+    {
+      "id": "f13df60f-84ea-421c-be64-3b66d343b143",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dd9-5252-76b3-b162-bfdbaad3ffd9",
+      "startedAt": "2026-10-21T09:44:45.607Z",
+      "completedAt": "2026-10-21T09:44:56.384Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "grounding"
+    },
+    {
+      "id": "d73c3b21-1dd7-493e-83d5-088ce0ab2d17",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dd9-7b99-7dd1-a6f7-0287a599c2e6",
+      "startedAt": "2026-10-21T09:44:56.400Z",
+      "completedAt": "2026-10-21T09:45:06.117Z",
+      "outputSha256": "fe13787a36b2170d4f9bb93a1e90e57cdc2d2a4743ee137ef5c28c09e8fbcf0f",
+      "purpose": "grounding"
+    },
+    {
+      "id": "2c9b9284-8ed7-4498-b953-7ec7104b385a",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dd9-a19a-7320-8747-1393f6bc2288",
+      "startedAt": "2026-10-21T09:45:06.133Z",
+      "completedAt": "2026-10-21T09:45:23.978Z",
+      "outputSha256": "26c5dd9fe384e33524c5f6fe2f2abb0a03d3db100d331828cbe2b75013b81f1f",
+      "decisionDigest": "dca9f0b707f3bc74e97b1f8028ddfc045503160ecd4c1ee5a04658eda34fed92",
+      "purpose": "grounding"
+    },
+    {
+      "id": "033cec92-06b7-4be0-9c97-005d727d1332",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dd9-e7c7-7263-8028-ab87fc882ddf",
+      "startedAt": "2026-10-21T09:45:24.091Z",
+      "completedAt": "2026-10-21T09:45:32.836Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning"
+    },
+    {
+      "id": "552d5e9d-dabb-4039-a7dd-291420aef0e6",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dda-0a07-74e3-99e9-43026046413c",
+      "startedAt": "2026-10-21T09:45:32.868Z",
+      "completedAt": "2026-10-21T09:45:45.495Z",
+      "outputSha256": "3f499504d784b525aaaedf4682e0b20881149b94fed654de92027b5d25cceb57",
+      "decisionDigest": "cf8df1832743b7f4b7fc590c3dbf4b6141acce6b0654051abd7d83b195151145",
+      "purpose": "planning"
+    },
+    {
+      "id": "a9016c62-5c5d-4a62-8a9a-b7478f6f35a4",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dda-3d8b-7862-bfbe-218c056d98a5",
+      "startedAt": "2026-10-21T09:45:46.058Z",
+      "completedAt": "2026-10-21T09:45:55.648Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning"
+    },
+    {
+      "id": "a62f44bd-0761-4a38-8ad9-8f81ac0d2e02",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dda-633a-76b3-a1a5-b6fe704d4bd9",
+      "startedAt": "2026-10-21T09:45:55.698Z",
+      "completedAt": "2026-10-21T09:46:05.724Z",
+      "outputSha256": "52b8a87cd2f2362a9d1905817faf4386928f50144ee4293cb732c9c3b52d0b2f",
+      "purpose": "planning"
+    },
+    {
+      "id": "5aa9715c-9087-4be0-890f-26f169857375",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a15dda-8b7b-7a92-ab7c-7c1770e134a3",
+      "startedAt": "2026-10-21T09:46:05.943Z",
+      "completedAt": "2026-10-21T09:46:17.881Z",
+      "outputSha256": "64cdc66834538a0c2f843969c0786b8446024ea24f14c96312eccdda22ea6923",
+      "decisionDigest": "66bc1f7e95b2bb00dd9da46437d791ec085ae4333fd168cacef2d0f4e570d5da",
+      "purpose": "planning"
+    }
+  ],
+  "groundingChoices": [
+    {
+      "modelRunId": "2c9b9284-8ed7-4498-b953-7ec7104b385a",
+      "kind": "resolve",
+      "capabilityRef": {
+        "id": "ontology.managed.office.operations",
+        "version": "969dc09ac248316439450ee6084b8be26c5dbf8d368f0e8748926141b9b60304"
+      },
+      "input": {
+        "actionIds": [
+          "CreateOfficeRoom"
+        ],
+        "objects": []
+      }
+    }
+  ],
+  "readReceipts": [
+    {
+      "id": "7761ddb1-efe3-43a9-b29c-71b8bf1f69d4",
+      "at": "2026-10-21T09:44:56.394Z",
+      "tool": "read_task_context",
+      "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "outputDigest": "8cc11ecd2ce715296e7150b975ecb8c8d15e5c68663c39240a13eadd8aaad0a3",
+      "datasetRevision": 11,
+      "status": "ok",
+      "objects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 2,
+          "propertiesDigest": "0413f4659dfa7aba991c8d9b2bba3a9ad0ab4a9001a08ebfc151a7f66c061dd2",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 1,
+          "propertiesDigest": "e53c9cdb96a1628ce026e0d5d6bc4c08032b066406bd27db2fce88c6c15655e7",
+          "linksDigest": "6490597004327a644158fbe468291bfc2300886cadc538b20adeaefe0d646278"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "ce0d6a9a28171ac2b7c38e42b779731a7a0148ff3b0fd4978ec2121c2e65771c",
+          "linksDigest": "273ff6926acf074cd1427fc154e26d5b8626b5f0eb410b621739b4535004ff83"
+        }
+      ],
+      "deliveredObjects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 2,
+          "propertiesDigest": "0413f4659dfa7aba991c8d9b2bba3a9ad0ab4a9001a08ebfc151a7f66c061dd2",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 1,
+          "propertiesDigest": "e53c9cdb96a1628ce026e0d5d6bc4c08032b066406bd27db2fce88c6c15655e7",
+          "linksDigest": "6490597004327a644158fbe468291bfc2300886cadc538b20adeaefe0d646278"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "ce0d6a9a28171ac2b7c38e42b779731a7a0148ff3b0fd4978ec2121c2e65771c",
+          "linksDigest": "273ff6926acf074cd1427fc154e26d5b8626b5f0eb410b621739b4535004ff83"
+        }
+      ],
+      "definitions": {
+        "modelDigest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546",
+        "bindingDigest": "c6efc26af35bde63a46d9a8a4b5e335a562075e292996210c2cf24166bddca98",
+        "payloadDigest": "7b3381015c53b4b77498c96d2bec000bbf1bf5661f505cc8e2f8ff155989db95",
+        "originalReceiptId": "7761ddb1-efe3-43a9-b29c-71b8bf1f69d4",
+        "actionSchemas": []
+      }
+    },
+    {
+      "id": "2446c40a-90d9-410e-96e1-e4c0f2c375cd",
+      "at": "2026-10-21T09:45:06.127Z",
+      "tool": "describe_ontology",
+      "inputDigest": "101ef51ece8b393703f206a336bf1afe319a847748ea7704dc81723ead88bb40",
+      "outputDigest": "26d0b42c30fb5cea1fdeb75b7d4d8f016762897727531a6943524ac20430066f",
+      "datasetRevision": 11,
+      "status": "ok",
+      "objects": [],
+      "deliveredObjects": []
+    },
+    {
+      "id": "a0854748-a320-4cd9-a184-c78a1c3dd30c",
+      "at": "2026-10-21T09:45:32.859Z",
+      "tool": "read_task_context",
+      "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "outputDigest": "f37490e1c38d0831c89d59e54e3c85ec20ba5bcbcc62babfcd6c8a02a124c992",
+      "datasetRevision": 23,
+      "status": "ok",
+      "objects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 3,
+          "propertiesDigest": "84863cd3af4c64e13f9365b2e1c499d2b482a1c7f2705c0928f0084f2d32800a",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "fcb839f38b74693aca2596d8d3ee0bdc2797e1a4a445d3ff59326f8af06c7814",
+          "linksDigest": "5bd69ac628879d8064a4b5d5ee5441bf42d0e349262ed017c7167f0f19d916a0"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "RequestConstraint",
+            "id": "d71231007de817820215d63b2a940f31b3b5189ae74ffd8de6bc043d9f532f05"
+          },
+          "revision": 1,
+          "propertiesDigest": "81d809f9911852a2a8e611a9095deed7f1fd964929958f6cb6887f704e879f57",
+          "linksDigest": "41afc7d186f059cc32a9f97245a6824dc00c555941ef760dc890b66e25dd0d14"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 3,
+          "propertiesDigest": "1cd0c335e57cfc9c143838db4d397917d91e8fc381c99b551313d5e94a9c372a",
+          "linksDigest": "b6f52e0f46d3d3b0b24625ab3e46b78f89884665d295a7f6cba44bba30dd1642"
+        }
+      ],
+      "deliveredObjects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 3,
+          "propertiesDigest": "84863cd3af4c64e13f9365b2e1c499d2b482a1c7f2705c0928f0084f2d32800a",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "fcb839f38b74693aca2596d8d3ee0bdc2797e1a4a445d3ff59326f8af06c7814",
+          "linksDigest": "5bd69ac628879d8064a4b5d5ee5441bf42d0e349262ed017c7167f0f19d916a0"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "RequestConstraint",
+            "id": "d71231007de817820215d63b2a940f31b3b5189ae74ffd8de6bc043d9f532f05"
+          },
+          "revision": 1,
+          "propertiesDigest": "81d809f9911852a2a8e611a9095deed7f1fd964929958f6cb6887f704e879f57",
+          "linksDigest": "41afc7d186f059cc32a9f97245a6824dc00c555941ef760dc890b66e25dd0d14"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 3,
+          "propertiesDigest": "1cd0c335e57cfc9c143838db4d397917d91e8fc381c99b551313d5e94a9c372a",
+          "linksDigest": "b6f52e0f46d3d3b0b24625ab3e46b78f89884665d295a7f6cba44bba30dd1642"
+        }
+      ],
+      "definitions": {
+        "modelDigest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546",
+        "bindingDigest": "7e7b3c894d3277e720728385f0c10cbbe936fd70862afbf3136a23c6bd0441a3",
+        "payloadDigest": "5e18ea5024c2b0479a4fbc3696be356dee85627c673b7d5c41099783e96e6fe4",
+        "originalReceiptId": "a0854748-a320-4cd9-a184-c78a1c3dd30c",
+        "actionSchemas": [
+          {
+            "id": "CreateOfficeRoom",
+            "inputSchemaDigest": "5d18ad8bbf9bed7913cfdf683d4a3d324509efdab034c53edee33e9b1dce3cf2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fa36e6d5-c8dc-49af-a261-5bc1bd042e6c",
+      "at": "2026-10-21T09:45:55.684Z",
+      "tool": "read_task_context",
+      "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "outputDigest": "96e4662fab29411731cbea65ebc227e1d83d709cc0679036202a990bd5761dcd",
+      "datasetRevision": 51,
+      "status": "ok",
+      "objects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 6,
+          "propertiesDigest": "84863cd3af4c64e13f9365b2e1c499d2b482a1c7f2705c0928f0084f2d32800a",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "fcb839f38b74693aca2596d8d3ee0bdc2797e1a4a445d3ff59326f8af06c7814",
+          "linksDigest": "5bd69ac628879d8064a4b5d5ee5441bf42d0e349262ed017c7167f0f19d916a0"
+        },
+        {
+          "ref": {
+            "type": "OfficeRoom",
+            "id": "model-room"
+          },
+          "revision": 1,
+          "propertiesDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+          "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "RequestConstraint",
+            "id": "d71231007de817820215d63b2a940f31b3b5189ae74ffd8de6bc043d9f532f05"
+          },
+          "revision": 1,
+          "propertiesDigest": "81d809f9911852a2a8e611a9095deed7f1fd964929958f6cb6887f704e879f57",
+          "linksDigest": "41afc7d186f059cc32a9f97245a6824dc00c555941ef760dc890b66e25dd0d14"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 9,
+          "propertiesDigest": "77f8cbeec285040094522d1483fca40be93098d3220461b62fb4f8c310c3c02e",
+          "linksDigest": "87ed0c66cdc91d3a792736008b103244c449534656c574c253aed4a6eaa25970"
+        },
+        {
+          "ref": {
+            "type": "ExecutionPlan",
+            "id": "3efd17e1f2c8f527bb066abab8c8a8a8bd4ac3c43f9ccf857a216601ba43d0c9"
+          },
+          "revision": 2,
+          "propertiesDigest": "9266d2ddbe0bbc74658c126f8bd76f5b68c3eabe67093e1e1de5aefe393ecec2",
+          "linksDigest": "1e7c54371278120318a29cfad1bf906a96f829a25c06dfeb98732422be84798e"
+        },
+        {
+          "ref": {
+            "type": "ExecutionStep",
+            "id": "a9108dbec235135f9bef241f46b4f85f0ed271226b73bc6d32b9ed9d58da84ef"
+          },
+          "revision": 3,
+          "propertiesDigest": "830571e177b1956dac52290ad9f4ddbd2b5aae2ef9ba7ad889d537b11d80f663",
+          "linksDigest": "e24abcaed4dae631f2a1c0299f04fb84faa33f20ee5372d80144540d8bcf859b"
+        }
+      ],
+      "deliveredObjects": [
+        {
+          "ref": {
+            "type": "ServiceRequest",
+            "id": "b3c3793f-dde0-4a30-ae6c-7b7540fb7354"
+          },
+          "revision": 6,
+          "propertiesDigest": "84863cd3af4c64e13f9365b2e1c499d2b482a1c7f2705c0928f0084f2d32800a",
+          "linksDigest": "4437a2d0cd17ed3bc3417e3f067b8f7d31b44baaf22e586645c3d898d71e3648"
+        },
+        {
+          "ref": {
+            "type": "RequestSpecification",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 2,
+          "propertiesDigest": "fcb839f38b74693aca2596d8d3ee0bdc2797e1a4a445d3ff59326f8af06c7814",
+          "linksDigest": "5bd69ac628879d8064a4b5d5ee5441bf42d0e349262ed017c7167f0f19d916a0"
+        },
+        {
+          "ref": {
+            "type": "OfficeRoom",
+            "id": "model-room"
+          },
+          "revision": 1,
+          "propertiesDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+          "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        },
+        {
+          "ref": {
+            "type": "RequestInstruction",
+            "id": "090919331d892671503cd6367da7bfe6e474a0d938c9a6ffcd18074323f717d7"
+          },
+          "revision": 1,
+          "propertiesDigest": "d9988385b1d79937562561c682c5238e78f8c4e0a74c426208ce8ed8fb0c0a64",
+          "linksDigest": "be02e4d90ceea1e24524853a97c5d8a6781949ff712c555705551b1fb664aa5c"
+        },
+        {
+          "ref": {
+            "type": "RequestConstraint",
+            "id": "d71231007de817820215d63b2a940f31b3b5189ae74ffd8de6bc043d9f532f05"
+          },
+          "revision": 1,
+          "propertiesDigest": "81d809f9911852a2a8e611a9095deed7f1fd964929958f6cb6887f704e879f57",
+          "linksDigest": "41afc7d186f059cc32a9f97245a6824dc00c555941ef760dc890b66e25dd0d14"
+        },
+        {
+          "ref": {
+            "type": "ExecutionContext",
+            "id": "c79537de15a36729283be9586bad5689d3d6a771ddf290cbd9777aad6dfaeba4"
+          },
+          "revision": 9,
+          "propertiesDigest": "77f8cbeec285040094522d1483fca40be93098d3220461b62fb4f8c310c3c02e",
+          "linksDigest": "87ed0c66cdc91d3a792736008b103244c449534656c574c253aed4a6eaa25970"
+        },
+        {
+          "ref": {
+            "type": "ExecutionPlan",
+            "id": "3efd17e1f2c8f527bb066abab8c8a8a8bd4ac3c43f9ccf857a216601ba43d0c9"
+          },
+          "revision": 2,
+          "propertiesDigest": "9266d2ddbe0bbc74658c126f8bd76f5b68c3eabe67093e1e1de5aefe393ecec2",
+          "linksDigest": "1e7c54371278120318a29cfad1bf906a96f829a25c06dfeb98732422be84798e"
+        },
+        {
+          "ref": {
+            "type": "ExecutionStep",
+            "id": "a9108dbec235135f9bef241f46b4f85f0ed271226b73bc6d32b9ed9d58da84ef"
+          },
+          "revision": 3,
+          "propertiesDigest": "830571e177b1956dac52290ad9f4ddbd2b5aae2ef9ba7ad889d537b11d80f663",
+          "linksDigest": "e24abcaed4dae631f2a1c0299f04fb84faa33f20ee5372d80144540d8bcf859b"
+        }
+      ],
+      "definitions": {
+        "modelDigest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546",
+        "bindingDigest": "7e7b3c894d3277e720728385f0c10cbbe936fd70862afbf3136a23c6bd0441a3",
+        "payloadDigest": "5e18ea5024c2b0479a4fbc3696be356dee85627c673b7d5c41099783e96e6fe4",
+        "originalReceiptId": "a0854748-a320-4cd9-a184-c78a1c3dd30c",
+        "actionSchemas": [
+          {
+            "id": "CreateOfficeRoom",
+            "inputSchemaDigest": "5d18ad8bbf9bed7913cfdf683d4a3d324509efdab034c53edee33e9b1dce3cf2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "27ff1253-6dd6-43d0-87c4-a1d5461ef16a",
+      "at": "2026-10-21T09:46:05.884Z",
+      "tool": "query_ontology",
+      "inputDigest": "90bfb9629fbb210eb2f7d6efa470488c8310090188b3bd9cf4f8dcb6533e694e",
+      "outputDigest": "1d799de8ab4d1a7628118e64ad70054d4444988b3873d262d57ca63e0843d08b",
+      "datasetRevision": 51,
+      "status": "ok",
+      "objects": [
+        {
+          "ref": {
+            "type": "OfficeRoom",
+            "id": "model-room"
+          },
+          "revision": 1,
+          "propertiesDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+          "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      ],
+      "deliveredObjects": [
+        {
+          "ref": {
+            "type": "OfficeRoom",
+            "id": "model-room"
+          },
+          "revision": 1,
+          "propertiesDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+          "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+        }
+      ]
+    }
+  ],
+  "plans": [
+    {
+      "id": "aeb6a546-0136-4c6f-8442-2fa7c6be71cc",
+      "digest": "f6bc3beaea0de5ea905c7ad34572c94c0e50eff9c0c96beef295af2bcf845406",
+      "modelRunId": "552d5e9d-dabb-4039-a7dd-291420aef0e6",
+      "modelDecisionDigest": "cf8df1832743b7f4b7fc590c3dbf4b6141acce6b0654051abd7d83b195151145",
+      "planningDigest": "b9105c27163d06fdc0fc3d8f63b0d1c45ff9a205c1e34258c4d20e94a469c782",
+      "receiptIds": [
+        "a0854748-a320-4cd9-a184-c78a1c3dd30c"
+      ],
+      "steps": [
+        {
+          "id": "createModelRoom",
+          "action": "CreateOfficeRoom",
+          "input": {
+            "id": "model-room",
+            "label": "模型验收会议室"
+          },
+          "effect": "object_write",
+          "definitionDigest": "5a1a21c8732d050e2b7ce34fd4d83bfce606c2d98357f63d19f9a3cfc4536ad6",
+          "objectWrite": {
+            "ontologyRelease": {
+              "ontologyId": "office.operations",
+              "releaseId": "5c9866b1-b664-4bbc-92c8-78e829eaa72b",
+              "digest": "969dc09ac248316439450ee6084b8be26c5dbf8d368f0e8748926141b9b60304"
+            },
+            "actionId": "CreateOfficeRoom",
+            "actionDigest": "5a1a21c8732d050e2b7ce34fd4d83bfce606c2d98357f63d19f9a3cfc4536ad6",
+            "inputDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+            "previewDigest": "378fb44a308d9d33fa1529625e2b44f238a0d09572dd5d7846bb947c02221b1d",
+            "targets": [
+              {
+                "ref": {
+                  "type": "OfficeRoom",
+                  "id": "model-room"
+                },
+                "revision": null,
+                "fields": [
+                  "id",
+                  "label"
+                ],
+                "operation": "create"
+              }
+            ],
+            "links": []
+          },
+          "intentId": "a34a054c-8327-4591-9d34-899cf73c80ef"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "a34a054c-8327-4591-9d34-899cf73c80ef",
+      "stepId": "createModelRoom",
+      "state": "effect_confirmed",
+      "effect": "object_write",
+      "planDigest": "f6bc3beaea0de5ea905c7ad34572c94c0e50eff9c0c96beef295af2bcf845406",
+      "inputDigest": "1a53cc9eab6a5f5774ba49037d2f87a2f4dcb629e3c630059e25e431f3f647a2",
+      "latestObservationId": "134e7a1a-852b-4f0a-a2ca-9b03288d211b",
+      "acceptedOutput": {
+        "object": {
+          "type": "OfficeRoom",
+          "id": "model-room"
+        }
+      },
+      "attempts": [
+        {
+          "id": "9f3cad5e-da28-4429-8645-8b261e4c45f5",
+          "kind": "dispatch",
+          "startedAt": "2026-10-21T09:45:45.975Z",
+          "ordinal": 1,
+          "inputDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+          "planDigest": "f6bc3beaea0de5ea905c7ad34572c94c0e50eff9c0c96beef295af2bcf845406"
+        }
+      ],
+      "observationCount": 1,
+      "verifiedResultDigest": "a4f81b682485cc9475a95e01e45e0fa4c5285e31591d2eddf6fa00e2baaaa2b2"
+    }
+  ],
+  "grants": [
+    {
+      "id": "a16e1e8f-e76e-4d1a-a9c2-efd527c35d79",
+      "kind": "object_write",
+      "planDigest": "f6bc3beaea0de5ea905c7ad34572c94c0e50eff9c0c96beef295af2bcf845406",
+      "allowedEffects": [
+        "object_write"
+      ],
+      "environment": "managed",
+      "revoked": false,
+      "expiresAt": "2026-10-21T09:50:45.883Z",
+      "objectWrite": {
+        "ontologyRelease": {
+          "ontologyId": "office.operations",
+          "releaseId": "5c9866b1-b664-4bbc-92c8-78e829eaa72b",
+          "digest": "969dc09ac248316439450ee6084b8be26c5dbf8d368f0e8748926141b9b60304"
+        },
+        "actionId": "CreateOfficeRoom",
+        "actionDigest": "5a1a21c8732d050e2b7ce34fd4d83bfce606c2d98357f63d19f9a3cfc4536ad6",
+        "inputDigest": "ba7b73d22f2336a4f1e2d479c2f24f765bd110293500e8f546f7617245b8bb51",
+        "previewDigest": "378fb44a308d9d33fa1529625e2b44f238a0d09572dd5d7846bb947c02221b1d",
+        "targets": [
+          {
+            "ref": {
+              "type": "OfficeRoom",
+              "id": "model-room"
+            },
+            "revision": null,
+            "fields": [
+              "id",
+              "label"
+            ],
+            "operation": "create"
+          }
+        ],
+        "links": []
+      },
+      "financialFieldsPresent": false
+    }
+  ],
+  "autoApprovedGrantIds": [
+    "a16e1e8f-e76e-4d1a-a9c2-efd527c35d79"
+  ],
+  "queryReadback": {
+    "model": {
+      "id": "office.operations",
+      "version": "release-2",
+      "digest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546"
+    },
+    "items": [
+      {
+        "ref": {
+          "type": "OfficeRoom",
+          "id": "model-room"
+        },
+        "revision": 1,
+        "properties": {
+          "id": "model-room",
+          "label": "模型验收会议室"
+        },
+        "source": {
+          "kind": "user",
+          "id": "a34a054c-8327-4591-9d34-899cf73c80ef",
+          "observedAt": "2026-10-21T09:45:45.996Z"
+        },
+        "createdAt": "2026-10-21T09:45:45.996Z"
+      }
+    ],
+    "page": {
+      "limit": 20,
+      "scanned": 1,
+      "hasMore": false
+    },
+    "datasetRevision": 60
+  },
+  "completion": {
+    "modelRunId": "5aa9715c-9087-4be0-890f-26f169857375",
+    "modelDecisionDigest": "66bc1f7e95b2bb00dd9da46437d791ec085ae4333fd168cacef2d0f4e570d5da",
+    "planningDigest": "489a2cc65a2b0beaafa49706a4c449152c059e24c96a9965fc3acc79d2fe6c1c",
+    "artifactDigest": "d17163fa41d9a0cf0e995d9e778992cf1bdde357170043a7dc6d7e51a06f40ca"
+  },
+  "counts": {
+    "modelRuns": 8,
+    "readReceipts": 5,
+    "plans": 1,
+    "actions": 1,
+    "grants": 1
+  },
+  "workerFailures": []
+}

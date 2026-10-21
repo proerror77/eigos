@@ -1,3 +1,4 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -76,7 +77,7 @@ test('new domain plans reject missing candidate subjects and missing planning sn
     assert.throws(() => selectedCandidateSubject(f.plan), /Current candidate differs/);
     assert.throws(() => selectedCandidateSubject(f.plan, { ...f.candidate, id: 'not-selected' }), /Current candidate differs/);
     const withoutBinding = structuredClone(f.plan); delete withoutBinding.candidateBinding;
-    assert.throws(() => validatePlan(f.catalog, owner, f.request, withoutBinding), /Plan or fixed request has changed/);
+    assert.throws(() => validatePlan(f.catalog, owner, f.request, withoutBinding, businessModel.ref), /Plan or fixed request has changed/);
     assert.equal(f.counters().submits, 0);
   } finally { f.store.close(); }
 });
@@ -142,7 +143,7 @@ test('candidate context cannot cross tasks or request revisions even with a reco
       const forged = structuredClone(f.plan); Object.assign(forged.candidateBinding!, change);
       const { digest: _digest, ...body } = forged; forged.digest = digest(body);
       assert.throws(() => f.validateGraph(forged), /sealed request or object snapshot/);
-      assert.throws(() => validatePlan(f.catalog, owner, f.request, forged), /selected plan or request revision/);
+      assert.throws(() => validatePlan(f.catalog, owner, f.request, forged, businessModel.ref), /selected plan or request revision/);
     }
     const input = f.contextInput();
     f.store.ontology.ingest(owner, { objects: [{ ref: input.ref, expectedRevision: input.revision, properties: { ...input.properties, requestRevision: f.request.revision + 1 } }] }, f.graphSource);

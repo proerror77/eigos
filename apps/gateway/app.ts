@@ -30,6 +30,8 @@ import type { LoginProvider } from './members/oidc.js';
 import { mountAgentRoutes } from './members/agent-routes.js';
 import { AgentAccessError } from '../../packages/members/agents.js';
 import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
+import { DefinitionService } from '../../packages/ontology/definition-service.js';
+import { mountDefinitionRoutes } from './ontology/routes.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
 
@@ -143,6 +145,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
   const sources = config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
   mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
+  const definitions = new DefinitionService(store, tasks, catalog);
+  mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
   for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
@@ -180,7 +184,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, definitions), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);
@@ -215,5 +219,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, network, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, network, catalog, definitions, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
 }

@@ -103,6 +103,7 @@ async function pendingOrder(t: Awaited<ReturnType<typeof setupCommerce>>, id: st
 test('Order and simulated payment need both exact effects; changed payees or excess amounts cannot be approved', async () => {
   const t=await setupCommerce();try{
     const id=t.submit().id,waiting=await pendingOrder(t,id),a=waiting.delegation!.authorizationRequest!;
+    assert(a.environment === 'sandbox');
     assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);
     assert.throws(()=>t.b.tasks.authorize(principal,id,{requestId:randomUUID(),action:'approve_plan',planDigest:a.planDigest,allowedEffects:a.effects,maxAmount:{...a.maxAmount,minor:String(BigInt(a.maxAmount.minor)+1n)},payeeIds:a.payeeIds,expiresAt:new Date(Date.now()+60000).toISOString(),environment:'sandbox'}),/exceeds/);
     t.approve(waiting,['order']);const held=await t.b.run();assert.equal(held.state,'auth-required');assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);

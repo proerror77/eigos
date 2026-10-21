@@ -109,6 +109,8 @@ test('public discovery is accurate and authenticated endpoints reject missing cr
   const metadata = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
   assert.equal(metadata.resource, audience);
   assert.deepEqual(metadata.authorization_servers, [issuer]);
+  assert(!metadata.scopes_supported.includes('ontology:admin'), 'Public OAuth discovery must not solicit a separately provisioned operator grant');
+  assert(metadata.scopes_supported.includes('ontology:read'));
   for (const path of ['/mcp', '/a2a']) {
     const response = await fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(response.status, 401);
@@ -121,8 +123,9 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 16);
-    for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
+    assert.equal(catalog.tools.length, 20);
+    for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology', 'query_ontology_definitions']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
+    for (const name of ['manage_ontology_definitions', 'prepare_ontology_action', 'approve_ontology_action']) assert(catalog.tools.some(tool => tool.name === name));
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });
     assert.equal(job.state, 'input-required');
     assert(job.question);

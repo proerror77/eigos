@@ -18,13 +18,14 @@ export function paotuiAgentEvidence(jobs: JobStore, _catalog: ExecutionCatalog, 
     // records. A newly installed program or expired grant cannot rewrite it.
     if (completion.modelDecision.kind !== 'complete' || completion.modelDecision.requestRevision !== d.request.revision
       || !same(JSON.parse(completion.modelDecision.completionJson), completion.proposal) || !job.runs?.some(r => r.id === completion.modelRunId && r.decisionDigest === digest(completion.modelDecision))) return;
-    const selected = paotuiCompletionSchema.parse(completion.proposal), graph = jobs.ontology, seen = new Set<string>(), material: unknown[] = [], kinds = new Set<string>();
+    const selected = paotuiCompletionSchema.parse(completion.proposal), graph = jobs.ontologyForJob(owner, job), seen = new Set<string>(), material: unknown[] = [], kinds = new Set<string>();
     const check = (ref: ObjectRef) => {
       if (seen.has(ref.id)) return; seen.add(ref.id);
       if (!state.observations.some(r => same(r, ref)) || ref.type !== 'PaotuiObservation') throw new Error('Unowned observation');
       const s = checkedPaotuiObservation(graph.readPrivate(owner, ref).properties.privateSnapshot), proof = sourceProof(graph, owner, ref, { remaining: 1000 });
       if (!proof || s.requestId !== job.id || s.requestRevision !== d.request.revision || s.configurationDigest !== state.programDigest || !same(s.scope, state.scope)) throw new Error('Invalid source scope');
       const plan = state.plans.find(p => p.id === s.planId); if (!plan) throw new Error('Missing plan');
+      if (!plan.modelDecision || !plan.modelRunId || plan.callerDecision) throw new Error('Source evidence requires its original model decision');
       const { digest: planDigest, ...body } = plan;
       if (!['1', '2'].includes(plan.version) || digest(body) !== planDigest || plan.modelDecision.kind !== 'execute' || !same(plan.programRef, state.programRef) || plan.programDigest !== state.programDigest
         || plan.requestId !== s.requestId || plan.requestRevision !== s.requestRevision || !same(plan.scope, s.scope)
@@ -32,7 +33,7 @@ export function paotuiAgentEvidence(jobs: JobStore, _catalog: ExecutionCatalog, 
       const step = plan.steps.find(x => x.intentId === s.intentId), intent = jobs.intent(owner, s.intentId), attempts = jobs.attempts(owner, s.intentId);
       if (!step || step.action !== s.action || intent.planDigest !== planDigest || intent.state !== 'effect_confirmed' || intent.effect !== 'read' || !same(intent.acceptedOutput?.object, ref) || !same(intent.lastVerifiedResult, intent.lastResult) || !same(intent.lastVerifiedResult?.output?.source, s)
         || !attempts.some(a => a.id === s.attemptId && a.planDigest === planDigest && a.inputDigest === digest(s.actionInput))) throw new Error('Missing accepted source attempt');
-      const chosen = plan.modelDecision.steps.find(x => x.id === step.id), { definitionDigest: _d, input: _i, intentId: _id, effect: _effect, additionalEffects: _additional, cost: _cost, operationScope: _scope, operationKey: _key, ...decisionStep } = step;
+      const chosen = plan.modelDecision.steps.find(x => x.id === step.id), { definitionDigest: _d, input: _i, intentId: _id, effect: _effect, additionalEffects: _additional, cost: _cost, objectWrite: _write, operationScope: _scope, operationKey: _key, ...decisionStep } = step;
       if (plan.version === '2' && (step.effect !== 'read' || step.additionalEffects?.length || step.cost || step.operationScope || step.operationKey !== intent.businessOperationKey)) throw new Error('Read authority changed');
       if (!same(chosen, decisionStep) || !same(step.input, JSON.parse(step.argumentsJson))) throw new Error('Changed model-selected action');
       const args = structuredClone(step.input);

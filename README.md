@@ -2,9 +2,11 @@
 
 Consider It Done. — The Execution Network for AI Agents.
 
-EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端唯一执行路径为 **Ontology + LLM**：理解原始需求、取得受控来源的事实、校验计划、执行和独立验收。Personal Agent 可通过 MCP 或 A2A 调用同一任务与认证系统。
+EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。业务委托使用 **Ontology + LLM**：理解原始需求、取得受控来源的事实、校验计划、执行和独立验收。Personal Agent 可通过 MCP 或 A2A 调用同一任务与认证系统。
 
 ## 当前能力
+
+- 四类动态定义：Object Type、Link Type、Interface、Action Type 支持持久草稿、校验、不可变发布及原子激活；新任务锁定发布版本。声明式受管数据动作复用现有授权与 Worker，配 HTTP/MCP 管理入口和基础审查页面。见[动态定义实现与边界](docs/dynamic-ontology-implementation-2026-10-21.md)。
 
 - `eigos.delegate` 是统一业务入口。模型根据实际注册的本体选择能力，不要求 PA 知道内部能力 ID 或提供者地址 ID。
 - `delivery.quote@3`：Agent 读取本体，选择本人地址簿、已选地址详情和费用预估动作；每个动作只调用一个官方只读接口。缺少信息在同一任务补充，会员各用自己的授权。[实现与验证边界](docs/paotui-agent-actions-2026-10-19.md)。只查价，不下单、不付款。
@@ -23,7 +25,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前运行契约为 `ontology-execution-v16`、业务模型为 `eigos.business@15`。Agent 通过本体读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。Shopify 和跑腿使用 Agent 动作循环，固定操作保留显式实现绑定。网络协作保留原始权威存储，通过按当前身份和可见范围校验的只读本体视图追溯；领域属性、来源身份和执行输入的补足范围见 [架构验证记录](docs/ontology-architecture-completion-2026-10-21.md)。业务链已把委托主体、执行方案、真实许可账本、已验证结果、逐项验收和售后关联，见 [业务链实现与验证](docs/business-chain-implementation-2026-10-20.md)。增量兼容只接受已核验的定义摘要，保留事实和历史；旧模型计划不自动重新执行，私有运行版本以对应部署回读为准。
+仓库当前运行契约为 `ontology-execution-v16`；本体由持久发布注册库解析，初始 active 内核为 `eigos.business@16`，原始 v15 保留为不可变历史基线。Agent 通过本体读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。Shopify 和跑腿使用 Agent 动作循环，固定操作保留显式实现绑定。网络协作保留原始权威存储，通过按当前身份和可见范围校验的只读本体视图追溯；领域属性、来源身份和执行输入的补足范围见 [架构验证记录](docs/ontology-architecture-completion-2026-10-21.md)。业务链已把委托主体、执行方案、真实许可账本、已验证结果、逐项验收和售后关联，见 [业务链实现与验证](docs/business-chain-implementation-2026-10-20.md)。增量兼容只接受已核验的定义摘要，保留事实和历史；旧模型计划不自动重新执行，私有运行版本以对应部署回读为准。
 
 主干与会员实现的整合、增量兼容边界及认证接口回读见 [2026-10-21 整合记录](docs/ontology-integration-readback-2026-10-21.md)。Agent 沙箱业务步骤也关联准确的方案、许可和验收；类型登记不表示真实供应商已经接通。 通用概念分层另参考 [BFO／CCO／IAO／PROV-O 对照](docs/research/bfo-foundation-alignment-2026-10-21.md)，当前仅完成术语澄清与参考映射，未声明形式本体对齐。
 

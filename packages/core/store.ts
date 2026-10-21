@@ -19,6 +19,10 @@ import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelRe
 import type { RunEvidence } from '../capabilities/executor.js';
 import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
+import { DefinitionStore } from '../ontology/definition-store.js';
+import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
+import { businessModelV9 } from '../ontology/business-model.js';
+import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
 
 export interface ListFilter {
   limit: number;
@@ -33,6 +37,12 @@ export interface WorkClaim { owner: string; job: Job; token: string; recovery?: 
 // inside it would commit a dispatch marker whose lease expired during the save.
 const lostClaimFence = Symbol('lost-claim-fence');
 
+/** An unavailable immutable definition is a runtime repair condition. Never
+ * replace it with the currently active model to make an old task executable. */
+export class OntologyReleaseUnavailable extends DomainError {
+  constructor() { super('CONFLICT', 'The task\'s pinned ontology release is unavailable; restore that exact release before resuming'); }
+}
+
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
   const normalize = (value: unknown): unknown => Array.isArray(value) ? value.map(normalize)
@@ -44,7 +54,9 @@ function equivalentFingerprint(a: string, b: string): boolean {
 export class JobStore {
   private db: DatabaseSync;
   private ontologyCatalog?: ExecutionCatalog;
-  readonly ontology: OntologyObjectStore;
+  readonly definitions: DefinitionStore;
+  private readonly baseOntology: OntologyObjectStore;
+  private readonly ontologyViews = new Map<string, OntologyObjectStore>();
   readonly databasePath: string;
 
   constructor(path: string) {
@@ -96,12 +108,48 @@ export class JobStore {
       `);
       initializeMemberUsage(this.db);
     });
-    this.ontology = new OntologyObjectStore(this.db);
-    this.ontology.setReadOverlayFactory((owner, requestId) => {
+    // Run the explicitly supported historical migrations once before the
+    // persistent definition registry becomes the authority for every view.
+    this.definitions = new DefinitionStore(this.db);
+    const legacyModel = this.definitions.legacyImplementation();
+    this.baseOntology = new OntologyObjectStore(this.db, legacyModel, Date.now, undefined, { skipLegacyMigration: true });
+    if (!this.definitions.hasBaseline()) migrateIntegratedOntology(this.db, businessModelV9, legacyModel);
+    this.definitions.bootstrap();
+    this.baseOntology.setReadOverlayFactory((owner, requestId) => {
       const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
     });
     initializeMemberSources(this.db);
+  }
+  /** Unbound discovery follows the current default release. Task execution
+   * must use ontologyForJob, including projections and historical readback. */
+  get ontology(): OntologyObjectStore { return this.ontologyForRelease(this.definitions.active().ref); }
+  ontologyForRelease(ref: OntologyReleaseRef): OntologyObjectStore {
+    let release: ReturnType<DefinitionStore['resolve']>;
+    try { release = this.definitions.resolve(ref); }
+    catch { throw new OntologyReleaseUnavailable(); }
+    const key = digest(ref);
+    let graph = this.ontologyViews.get(key);
+    if (graph) {
+      this.ontologyViews.delete(key);
+      this.ontologyViews.set(key, graph);
+    } else {
+      graph = this.baseOntology.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref,
+        ...(release.compatibleDefinition ? { compatibleDefinition: release.compatibleDefinition } : {}) });
+      this.ontologyViews.set(key, graph);
+      if (this.ontologyViews.size > 16) this.ontologyViews.delete(this.ontologyViews.keys().next().value!);
+    }
+    return graph;
+  }
+  ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
+    const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
+    if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks have no current executable ontology context');
+    // Absence is an explicit compatibility rule for pre-registry v16 records.
+    // It must never mean "whatever release is active now" or rewrite receipts.
+    return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
+  }
+  ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
+    return this.ontologyForRelease(this.ontologyReleaseForJob(owner, jobOrId));
   }
   setOntologyCatalog(catalog: ExecutionCatalog): void { this.ontologyCatalog = catalog; }
 
@@ -132,8 +180,10 @@ export class JobStore {
    * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
    * business effects can update ledger truth without advancing the task. */
   private projectExecution(owner: string, job: Job): void {
+    if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) return;
+    const graph = this.ontologyForJob(owner, job);
     if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
-      && this.ontology.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState === 'invalid_source') {
+      && graph.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState === 'invalid_source') {
       // Keep the canonical completed record available for diagnosis. An invalid
       // imported result cannot reconstruct missing candidate evidence, execution
       // history or permissions, nor replace an earlier valid projected history.
@@ -155,9 +205,9 @@ export class JobStore {
         verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
     });
     const ledger = { intents: [...archived, ...current], attempts, observations };
-    projectExecution(this.ontology, owner, job, ledger);
+    projectExecution(graph, owner, job, ledger);
     const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
-    projectBusinessChain(this.ontology, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+    projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
   }
   private executionMutation<T>(action: () => T): T {
     this.db.exec('SAVEPOINT execution_ontology');
@@ -347,6 +397,7 @@ export class JobStore {
     });
   }
   reserveBudget(owner: string, intentId: string, grant: PlanGrant, amount: { minor: string; currency: string }): void {
+    if (grant.kind === 'object_write') throw new DomainError('FORBIDDEN', 'Managed object-write authority has no financial budget');
     this.intent(owner, intentId);
     if (this.db.prepare('SELECT 1 FROM budget_reservations WHERE intent_id=?').get(intentId)) return;
     const rows = this.db.prepare("SELECT b.minor,b.currency FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, grant.jobId);
@@ -427,6 +478,18 @@ export class JobStore {
 
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
   // Expired calls are never automatically replayed: their external outcome is unknown.
+  private parkUnavailableOntology(owner: string, job: Job, now: number): boolean {
+    try { this.ontologyForJob(owner, job); return false; }
+    catch (error) {
+      if (!(error instanceof OntologyReleaseUnavailable)) throw error;
+      scheduleTaskRecovery(job, 'validation_stalled', error.message, { now, automatic: false, operation: 'ontology_release' });
+      // No graph can be safely projected under a missing contract. Persist only
+      // the canonical technical pause, retaining every original pin and fact.
+      this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
+        .run(job.state, job.updatedAt, JSON.stringify(job), owner, job.id);
+      return true;
+    }
+  }
   private expireClaims(now: number): void {
     const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision,c.token AS claim_token FROM work_claims c
       JOIN jobs j ON j.id=c.job_id WHERE c.expires_at<=?`).all(now);
@@ -434,6 +497,7 @@ export class JobStore {
       const job = JSON.parse(String(row.body)) as Job;
       markModelUsageUnknown(this.db, String(row.owner), job.id, digest(String(row.claim_token)));
       if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
+      if (this.parkUnavailableOntology(String(row.owner), job, now)) continue;
       if ((job.delegation?.plan || job.delegation?.agent) && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
@@ -463,6 +527,7 @@ export class JobStore {
         AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
+      if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
       // Expiring previous claims and projecting the newly claimed task can be
@@ -540,13 +605,20 @@ export class JobStore {
   save(owner: string, job: Job): void {
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
+      const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
+      if (previous) {
+        if (previous.owner !== owner) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
+        const original = JSON.parse(String(previous.body)) as Job;
+        if (digest(original.delegation?.ontologyRelease ?? null) !== digest(job.delegation?.ontologyRelease ?? null)) throw new DomainError('CONFLICT', 'A task\'s ontology release is immutable');
+        if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
+      }
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      projectTask(this.ontology, owner, job);
+      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.ontologyForJob(owner, job), owner, job);
       this.projectExecution(owner, job);
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }

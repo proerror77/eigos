@@ -18,6 +18,10 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
   assert(!plan.api.scopes.some(s => s.value.startsWith('sources:')));
+  assert(!plan.api.scopes.some(s => s.value === 'ontology:admin'), 'Self-service OAuth setup cannot provision global ontology administration');
+  assert.deepEqual(plan.api.scopes.filter(scope => scope.value.startsWith('ontology:')).map(scope => scope.value), ['ontology:read', 'ontology:write', 'ontology:publish', 'ontology:object_write']);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:object_write')!.description, /exact preview/);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:publish')!.description, /your own ontology/);
   assert.deepEqual(auth0Plan('https://eigos.example', undefined, { memberSources: true }).api.scopes.filter(s => s.value.startsWith('sources:')).map(s => s.value), ['sources:read', 'sources:write']);
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));

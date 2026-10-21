@@ -60,6 +60,7 @@ try{
     const grants=db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner,job.id).map(r=>JSON.parse(String(r.body)) as PlanGrant);
     assert.equal(intents.length,plans.reduce((n,p)=>n+p.steps.length,0));assert(intents.every(i=>['effect_confirmed','rejected','canceled_before_dispatch'].includes(i.state)));
     for(const plan of plans){
+      assert(plan.modelRunId && plan.modelDecision && !plan.callerDecision, 'Expected original model-selected source evidence');
       const {digest:hash,...body}=plan;assert.equal(digest(body),hash);assert.equal(plan.version,'2');assert.equal(plan.requestId,job.id);assert.equal(plan.programDigest,program.configurationDigest);assert.deepEqual(plan.ontologyPlanning.model,businessModel.ref);
       assert.equal(run(plan.modelRunId).decisionDigest,digest(plan.modelDecision));assert.equal(plan.steps.length,plan.modelDecision.steps.length);
       assert(plan.ontologyPlanning.reads.some(r=>r.tool==='describe_ontology'&&r.status==='ok'));assert(plan.ontologyPlanning.reads.some(r=>r.tool==='query_ontology'&&r.status==='ok'&&r.objects.some(o=>digest(o.ref)===digest(plan.scope))));
@@ -91,7 +92,7 @@ try{
     const rows=lines(join(config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR!,'http.jsonl'),baseline.commerceAuditBytes).filter(r=>r.requestId===job.id);
     assert(rows.length>0);
     for(const row of rows){
-      const plan=plans.find(p=>p.id===row.planId)!;assert(plan);const step=plan.steps.find(s=>s.intentId===row.intentId)!;assert(step);assert.equal(row.action,step.action);assert.equal(row.modelRunId,plan.modelRunId);assert.equal(row.operationKey,step.operationKey);
+      const plan=plans.find(p=>p.id===row.planId)!;assert(plan && plan.modelRunId && plan.modelDecision && !plan.callerDecision);const step=plan.steps.find(s=>s.intentId===row.intentId)!;assert(step);assert.equal(row.action,step.action);assert.equal(row.modelRunId,plan.modelRunId);assert.equal(row.operationKey,step.operationKey);
       const attempt=JSON.parse(String(db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner,row.attemptId,row.intentId)!.body)) as ExecutionAttempt;
       assert(Date.parse(run(plan.modelRunId).completedAt)<=Date.parse(attempt.startedAt));assert(Date.parse(attempt.startedAt)<=Date.parse(row.startedAt));assert.equal(attempt.kind,row.recovery?'reconcile':'dispatch');
       const materialized=structuredClone(step.input);
@@ -108,7 +109,7 @@ try{
       else {assert.equal(typeof raw.error.applied,'boolean');if(raw.error.applied)assert(rows.some(r=>r.intentId===row.intentId&&r.recovery&&r.status===200&&Date.parse(r.receivedAt)>Date.parse(row.receivedAt)),'An applied or uncertain write needs original-operation readback');}
       if(row.recovery)assert(row.path.startsWith('/operations/'));else assert.equal(row.path,`/actions/${step.action}`);
       if(step.effect!=='read'&&!row.recovery){
-        const grant=grants.find(g=>g.planDigest===plan.digest&&!g.revoked&&g.bindingRefs.some(r=>digest(r)===digest(program.ref))&&[step.effect,...(step.additionalEffects??[])].every(e=>g.allowedEffects.includes(e))&&g.payeeIds.includes(step.cost!.payeeId)&&g.maxAmount.currency===step.cost!.currency&&BigInt(g.maxAmount.minor)>=BigInt(step.cost!.minor)&&Date.parse(g.approvedAt)<=Date.parse(attempt.startedAt)&&Date.parse(g.expiresAt)>Date.parse(attempt.startedAt));assert(grant,'Missing exact pre-dispatch PA authority');
+        const grant=grants.find(g=>g.kind!=='object_write'&&g.planDigest===plan.digest&&!g.revoked&&g.bindingRefs.some(r=>digest(r)===digest(program.ref))&&[step.effect,...(step.additionalEffects??[])].every(e=>g.allowedEffects.includes(e))&&g.payeeIds.includes(step.cost!.payeeId)&&g.maxAmount.currency===step.cost!.currency&&BigInt(g.maxAmount.minor)>=BigInt(step.cost!.minor)&&Date.parse(g.approvedAt)<=Date.parse(attempt.startedAt)&&Date.parse(g.expiresAt)>Date.parse(attempt.startedAt));assert(grant,'Missing exact pre-dispatch PA authority');
       }
     }
     const sourceDb=new DatabaseSync(join(sandboxRuntime,'sandbox.sqlite'),{readOnly:true});let sourceAudit:any[];

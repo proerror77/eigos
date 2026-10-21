@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { moneySchema, refSchema } from './execution.js';
 import { type ActionDefinition, type LinkDefinition, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
+import { objectWriteScopeSchema } from './actions.js';
 
 const text = z.string().min(1).max(200), hash = z.string().regex(/^[a-f0-9]{64}$/), timestamp = z.iso.datetime({ offset: true });
-const effects = z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund']);
+const effects = z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'object_write']);
 const p = (kind: PropertyDefinition['kind'], schema: z.ZodType, description: string, required = true): PropertyDefinition =>
   ({ kind, schema, description, required, source: 'Authenticated task, fixed proposal, policy ledger or independently verified observation; never inferred authority' });
 const s = (description: string, max = 200, required = true) => p('string', z.string().min(1).max(max), description, required);
@@ -16,11 +17,11 @@ const object = (id: string, name: string, primaryKey: string, description: strin
 const edge = (id: string, fromType: string, fromName: string, toType: string, toName: string, many = false, reverseMany = true): LinkDefinition =>
   ({ id, description: `${fromType}.${fromName} ↔ ${toType}.${toName}`, from: { type: fromType, name: fromName, many }, to: { type: toType, name: toName, many: reverseMany } });
 
-const controlActions = (actions: ActionDefinition[]): ActionDefinition[] => actions.map(action => ({ ...action, version: '1', kind: 'decision', effects: ['local'] }));
+const controlActions = (actions: ActionDefinition[]): ActionDefinition[] => actions.map(action => ({ ...action, version: action.version ?? '1', kind: 'decision', effects: ['local'] }));
 export const businessControlActions = controlActions([
   { id: 'SubmitServiceRequest', inputs: { request: 'ServiceRequest' }, changes: ['ServiceRequest', 'RequestingParty', 'ServiceRequest.requester'], submissionCriteria: ['authenticated_owner', 'task_write_scope', 'idempotent_command'], providerOperation: 'eigos.submit_request', description: 'Record an authenticated service mandate; it grants no order or payment permission.' },
   { id: 'ProposeServiceExecution', inputs: { request: 'ServiceRequest', proposal: 'Proposal' }, changes: ['Proposal', 'ServiceEngagement'], submissionCriteria: ['same_owner', 'current_request_revision', 'sealed_execution_scope'], providerOperation: 'eigos.propose_execution', description: 'Record the selected service arrangement and immutable scope, separately from its technical steps.' },
-  { id: 'AuthorizeProposal', inputs: { request: 'ServiceRequest', proposal: 'Proposal' }, changes: ['Authorization'], submissionCriteria: ['authenticated_owner', 'task_write_scope', 'exact_proposal', 'scope_within_proposal', 'sandbox_only'], providerOperation: 'eigos.authorize_plan', description: 'Issue the existing exact-plan sandbox permit; the Ontology record is not an alternative authority store.' },
+  { id: 'AuthorizeProposal', version: '2', inputs: { request: 'ServiceRequest', proposal: 'Proposal' }, changes: ['Authorization'], submissionCriteria: ['authenticated_owner', 'task_write_scope', 'exact_proposal', 'scope_within_proposal', 'supported_plan_environment'], providerOperation: 'eigos.authorize_plan', description: 'Issue the existing exact-plan permit for configured sandbox business effects or managed data changes. Managed data changes require their separate object-write scope; the Ontology record is not an alternative authority store.' },
   { id: 'ConfirmSimulationQuote', inputs: { request: 'ServiceRequest', proposal: 'Proposal' }, changes: ['Authorization'], submissionCriteria: ['authenticated_owner', 'task_write_scope', 'exact_proposal', 'exact_simulation_quote'], providerOperation: 'eigos.confirm_simulation_quote', description: 'Record an exact local simulation approval, never a real payment or source authorization.' },
   { id: 'RevokeProposalAuthorization', inputs: { request: 'ServiceRequest', proposal: 'Proposal' }, changes: ['Authorization.revoked'], submissionCriteria: ['authenticated_owner', 'task_write_scope', 'exact_proposal'], providerOperation: 'eigos.revoke_authorization', description: 'Revoke future permission while retaining already observed business effects.' },
   { id: 'AssessServiceOutcome', inputs: { request: 'ServiceRequest' }, changes: ['OutcomeAssessment', 'AssessmentFinding'], submissionCriteria: ['same_owner', 'exact_request_revision', 'independent_verification', 'criterion_results_preserved'], providerOperation: 'eigos.assess_outcome', description: 'Record the actual goal-specific verdict and every criterion; an unresolved result cannot be promoted to completion.' },
@@ -145,11 +146,12 @@ export function extendBusinessChain(base: ModelDefinition, shapes: { quantity: z
       kind: p('string', z.enum(['plan_grant', 'simulation_approval']), 'Actual existing authority record kind', false),
       ledgerDigest: p('string', hash, 'Exact current policy ledger record digest; the graph cannot mint authority', false),
       planDigest: p('string', hash, 'Exact authorized plan', false), approvedAt: t('Original approval time', false), revokedAt: t('Recorded revocation time', false),
-      environment: p('string', z.enum(['sandbox', 'local_simulation']), 'Explicit simulation boundary', false),
+      environment: p('string', z.enum(['sandbox', 'local_simulation', 'managed']), 'Explicit simulation boundary', false),
       allowedEffects: p('array', z.array(effects).max(8), 'Actual allowed effect classes', false),
       bindingRefs: p('array', z.array(refSchema).max(32), 'Exact authorized implementation versions', false),
       payeeIds: p('array', z.array(text).max(32), 'Source-qualified payee identifiers in the actual permit', false),
       limits: p('struct', moneySchema, 'Actual permitted amount and currency', false),
+      objectWriteScope: p('struct', objectWriteScopeSchema, 'Exact nonfinancial mutation scope; never payment or source authority', false),
       effectiveStatus: p('string', z.enum(['active', 'revoked', 'expired', 'unknown']), 'Time-sensitive record status; not a dispatch permission', false),
     },
     OutcomeAssessment: {

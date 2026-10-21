@@ -34,7 +34,7 @@ test('EIGOS pauses on an unpaid booking, PA pays separately, then both independe
     const payment = handoff.delegation!.agent!.paPayment!;
     assert.equal(payment.status, 'awaiting_pa'); assert.equal(payment.request.terms.amount.minor, '12500'); assert.equal(t.provider.countBookings(), 1);
     assert.equal(t.wallet.attempts.length, 0); assert(t.provider.audit().every(a => a.caller === 'eigos_source'));
-    assert.equal(t.store.grants(owner, id).length, 1); assert.deepEqual(t.store.grants(owner, id)[0]!.allowedEffects, ['reserve']); assert.equal(t.store.grants(owner, id)[0]!.maxAmount.minor, '0');
+    assert.equal(t.store.grants(owner, id).length, 1); assert.deepEqual(t.store.grants(owner, id)[0]!.allowedEffects, ['reserve']); assert.equal(t.store.grants(owner, id)[0]!.maxAmount?.minor, '0');
     const grant = t.store.grants(owner, id)[0]!;
     const authorization = t.store.ontology.read(owner, { type: 'Authorization', id: grant.id });
     assert.deepEqual(authorization.properties.allowedActions, ['CreatePendingBooking']);

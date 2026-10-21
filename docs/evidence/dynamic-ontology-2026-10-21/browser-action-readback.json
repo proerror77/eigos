@@ -1,0 +1,256 @@
+{
+  "environment": "isolated loopback fixture; no supplier, payment or production instance",
+  "createdAt": "2026-10-21T09:14:54.114Z",
+  "uiActions": [
+    "edited display name through page; reviewed field diff; validated; published; activated release3",
+    "preview separated from exact authorization and Worker completion",
+    "human-readable exact target and changed fields; detailed grant and readback remain expandable",
+    "browser explicit result refresh, followed by a separate object API read"
+  ],
+  "browserConsoleWarningsAndErrors": [],
+  "namespace": {
+    "id": "office.operations",
+    "owner": "[\"https://metadata-fixture.test\",\"office\",\"alice\"]",
+    "name": "办公室资源",
+    "active": {
+      "ontologyId": "office.operations",
+      "releaseId": "74fbcf44-d281-4238-a8e7-87f97c26b343",
+      "digest": "b8c553050ed9b8662e0b6f838b0dac00061e15645bee902ab388fc6481893c87"
+    },
+    "generation": 3,
+    "createdAt": "2026-10-21T09:05:55.675Z",
+    "permissions": {
+      "read": true,
+      "createOntology": true,
+      "edit": true,
+      "publish": true,
+      "execute": true
+    }
+  },
+  "task": {
+    "view": "summary",
+    "id": "bf251128-ea0a-41f8-9abb-5d34715c77c3",
+    "contextId": "e596abdd-149d-4ffc-bfc4-342cc248371f",
+    "service": "eigos.delegate",
+    "goal": "执行已发布的数据动作 CreateOfficeRoom",
+    "state": "completed",
+    "revision": 2,
+    "createdAt": "2026-10-21T09:13:51.345Z",
+    "updatedAt": "2026-10-21T09:14:04.943Z",
+    "artifact": {
+      "id": "39b52087-1d26-4f2d-a0c5-71bbb4755469",
+      "name": "ontology-action-result.json",
+      "data": {
+        "goal": "执行已发布的数据动作 CreateOfficeRoom",
+        "deliverable": "已完成并回读授权的本体受管数据变更。",
+        "execution": "completed",
+        "result": {
+          "ontologyRelease": {
+            "ontologyId": "office.operations",
+            "releaseId": "74fbcf44-d281-4238-a8e7-87f97c26b343",
+            "digest": "b8c553050ed9b8662e0b6f838b0dac00061e15645bee902ab388fc6481893c87"
+          },
+          "managedChanges": [
+            {
+              "intentId": "1bff6372-eaa6-4e62-ab8c-9e13b8f47121",
+              "actionId": "CreateOfficeRoom",
+              "previewDigest": "30c24ce2931473d6911614ca988ede1894c04066d21d2fa96bbaa0d794ee7c19",
+              "objects": [
+                {
+                  "operation": "create",
+                  "ref": {
+                    "type": "OfficeRoom",
+                    "id": "qa-room-final"
+                  },
+                  "expectedRevision": null,
+                  "fields": [
+                    "id",
+                    "label"
+                  ],
+                  "after": {
+                    "id": "qa-room-final",
+                    "label": "最终验收会议室"
+                  }
+                }
+              ],
+              "links": []
+            }
+          ]
+        }
+      }
+    },
+    "memberUsage": {
+      "scope": "current_member",
+      "accounting": "recorded_lifetime",
+      "limitsEnforced": false,
+      "remaining": null,
+      "resetsAt": null,
+      "taskSafetyBudgetsApply": true,
+      "models": {
+        "attempts": 0,
+        "states": {},
+        "reportedUsage": {},
+        "attemptsWithoutReportedUsage": 0
+      },
+      "actions": {
+        "attempts": 1,
+        "byEffectAndKind": [
+          {
+            "effect": "object_write",
+            "kind": "dispatch",
+            "attempts": 1
+          }
+        ]
+      },
+      "openTasks": 0,
+      "usageCoverage": "EIGOS Worker attempts and provider-reported model usage. Unreported usage is unknown; external PA model usage is not included."
+    },
+    "latestInput": {
+      "id": "5e824382-aa04-48cb-a160-3bac04454d46",
+      "text": "执行已发布的数据动作 CreateOfficeRoom",
+      "receivedAt": "2026-10-21T09:13:51.345Z"
+    },
+    "counts": {
+      "messages": 2,
+      "modelRuns": 0
+    },
+    "delegation": {
+      "backendVersion": "ontology-execution-v16",
+      "phase": "accepted",
+      "request": {
+        "id": "bf251128-ea0a-41f8-9abb-5d34715c77c3",
+        "revision": 1,
+        "executionEnvironment": "live"
+      },
+      "acceptance": {
+        "accepted": true,
+        "reason": "The authenticated caller action committed under its exact grant and independent managed-object readback passed",
+        "at": "2026-10-21T09:14:04.943Z",
+        "checks": [],
+        "evidenceRefs": [
+          "1bff6372-eaa6-4e62-ab8c-9e13b8f47121"
+        ]
+      },
+      "authorizationRequest": {
+        "kind": "object_write",
+        "planDigest": "cfc65fb28bddfceb047f1915cb6bd9c0d3a852ccdf8f40bbdb7675b67b2867d7",
+        "effects": [
+          "object_write"
+        ],
+        "objectWrite": {
+          "ontologyRelease": {
+            "ontologyId": "office.operations",
+            "releaseId": "74fbcf44-d281-4238-a8e7-87f97c26b343",
+            "digest": "b8c553050ed9b8662e0b6f838b0dac00061e15645bee902ab388fc6481893c87"
+          },
+          "actionId": "CreateOfficeRoom",
+          "actionDigest": "5a1a21c8732d050e2b7ce34fd4d83bfce606c2d98357f63d19f9a3cfc4536ad6",
+          "inputDigest": "66d1134a16564ea5488095a12dccc18cc5425923b8b0ef1325f6627158bccfa1",
+          "previewDigest": "30c24ce2931473d6911614ca988ede1894c04066d21d2fa96bbaa0d794ee7c19",
+          "targets": [
+            {
+              "ref": {
+                "type": "OfficeRoom",
+                "id": "qa-room-final"
+              },
+              "revision": null,
+              "fields": [
+                "id",
+                "label"
+              ],
+              "operation": "create"
+            }
+          ],
+          "links": []
+        },
+        "environment": "managed",
+        "realOperationsAllowed": false
+      },
+      "authorizationBudget": [],
+      "actions": [
+        {
+          "id": "1bff6372-eaa6-4e62-ab8c-9e13b8f47121",
+          "stepId": "managedAction",
+          "state": "effect_confirmed",
+          "latestObservationId": "aee2d066-ed92-497e-b617-5bd2f2421e6f"
+        }
+      ],
+      "businessFacts": [],
+      "executionBudgetStatus": {
+        "version": "1",
+        "profile": "standard",
+        "limits": {
+          "window": {
+            "modelTurns": 32,
+            "plans": 8,
+            "actions": 16
+          },
+          "task": {
+            "modelTurns": 128,
+            "plans": 32,
+            "actions": 64
+          }
+        },
+        "used": {
+          "modelTurns": 0,
+          "plans": 1,
+          "actions": 1
+        },
+        "windowUsed": {
+          "modelTurns": 0,
+          "plans": 1,
+          "actions": 1
+        },
+        "window": {
+          "sequence": 1,
+          "reason": "initial",
+          "requestRevision": 1,
+          "startedAt": "2026-10-21T09:13:51.345Z",
+          "baseline": {
+            "modelTurns": 0,
+            "plans": 0,
+            "actions": 0
+          }
+        }
+      }
+    }
+  },
+  "objectReadback": {
+    "model": {
+      "id": "office.operations",
+      "version": "release-3",
+      "digest": "6abbc2ca1a296bbb6d188a1ab985cd53c9614c9225519d0eaf979c701631eb52"
+    },
+    "items": [
+      {
+        "ref": {
+          "type": "OfficeRoom",
+          "id": "qa-room-final"
+        },
+        "revision": 1,
+        "properties": {
+          "id": "qa-room-final",
+          "label": "最终验收会议室"
+        },
+        "source": {
+          "kind": "user",
+          "id": "1bff6372-eaa6-4e62-ab8c-9e13b8f47121",
+          "observedAt": "2026-10-21T09:14:04.908Z"
+        },
+        "createdAt": "2026-10-21T09:14:04.908Z"
+      }
+    ],
+    "page": {
+      "limit": 20,
+      "scanned": 1,
+      "hasMore": false
+    },
+    "datasetRevision": 51
+  },
+  "uiStateReset": {
+    "previousApprovalVisibleAfterSelection": false,
+    "previousReadbackVisibleAfterSelection": false,
+    "previousCompletionVisibleAfterSelection": false,
+    "disconnectReturnedToCredentialForm": true
+  }
+}

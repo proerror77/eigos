@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
+import type { ActionImplementation } from './action-dsl.js';
 
 export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(v => !['constructor', 'prototype', '__proto__'].includes(v));
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
@@ -10,17 +11,30 @@ export interface PropertyDefinition {
   description: string;
   kind: ScalarKind;
   schema: z.ZodType;
+  /** Trusted compiler-only metadata pin; validation still uses schema. Never accepted from definition JSON. */
+  schemaMetadata?: Record<string, unknown>;
   source: string;
   required?: boolean;
   restricted?: boolean;
   derived?: string;
+  /** Field write authority is independent from its human-readable source label. */
+  authority?: 'managed' | 'source';
+  /** Compiler evidence: an added source field has no registered source mapping. */
+  sourceBinding?: 'unbound';
 }
+export interface InterfaceActionConstraint {
+  id: string; inputs: Record<string, string>; effects: import('./actions.js').EffectClass[]; resultTypes?: string[]; optional?: boolean;
+}
+export interface InterfaceActionMapping { actionId: string; inputMap: Record<string, string> }
 export interface InterfaceDefinition {
   id: string;
   description: string;
   parents?: string[];
   properties: Record<string, PropertyDefinition>;
-  links?: { name: string; target: string; many: boolean }[];
+  /** A capability may be absent from an implementing type; required still governs stored values. */
+  optionalProperties?: string[];
+  links?: { name: string; target: string; many: boolean; optional?: boolean }[];
+  actions?: InterfaceActionConstraint[];
 }
 export interface ObjectTypeDefinition {
   id: string;
@@ -31,15 +45,18 @@ export interface ObjectTypeDefinition {
   primaryKey: string;
   titleKey: string;
   properties: Record<string, PropertyDefinition>;
-  interfaces?: { id: string; propertyMap?: Record<string, string> }[];
+  interfaces?: { id: string; propertyMap?: Record<string, string>; actionMap?: Record<string, InterfaceActionMapping> }[];
   /** Discovery presentation only; never an object permission or data-schema change. */
   visibility?: 'business' | 'technical';
+  /** Missing policy means source-authoritative, preserving pre-registry contracts. */
+  writePolicy?: 'managed' | 'source';
 }
 export interface LinkDefinition {
   id: string;
   description: string;
   from: { type: string; name: string; many: boolean; required?: boolean };
   to: { type: string; name: string; many: boolean; required?: boolean };
+  writePolicy?: 'managed' | 'source';
 }
 export interface ActionDefinition {
   id: string;
@@ -56,11 +73,33 @@ export interface ActionDefinition {
   // it, validate its schema and scope, and enforce read-only dispatch separately.
   read?: { version: string; effect: 'read'; inputSchema: object; resultType: string };
   operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox'; inputSchema: object; resultType: string };
+  inputSchema?: Record<string, unknown>;
+  implementation?: ActionImplementation;
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
 export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[] }
 function invalid(message: string): never { throw new DomainError('INVALID_INPUT', message); }
-const propertyMetadata = (p: PropertyDefinition) => ({ description: p.description, kind: p.kind, source: p.source, required: !!p.required, restricted: !!p.restricted, derived: p.derived, schema: z.toJSONSchema(p.schema) });
+/** Freeze public metadata only. Zod owns mutable parser caches and is deliberately excluded. */
+function freezeMetadata<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeMetadata(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+function immutableProperties(properties: Record<string, PropertyDefinition>): Record<string, PropertyDefinition> {
+  return Object.freeze(Object.fromEntries(Object.entries(properties).map(([name, property]) => {
+    const { schema, ...metadata } = property;
+    return [name, Object.freeze({ ...freezeMetadata(structuredClone(metadata)), schema })];
+  })));
+}
+const propertyMetadata = (p: PropertyDefinition) => ({ description: p.description, kind: p.kind, source: p.source, required: !!p.required, restricted: !!p.restricted, derived: p.derived, schema: p.schemaMetadata ?? z.toJSONSchema(p.schema), ...(p.authority ? { authority: p.authority } : {}), ...(p.sourceBinding ? { sourceBinding: p.sourceBinding } : {}) });
+const propertyContract = (p: PropertyDefinition) => { const { sourceBinding: _sourceBinding, ...metadata } = propertyMetadata(p); return metadata; };
+export interface OntologyModelOptions { trustedActionImplementations?: Record<string, ActionImplementation> }
+export type ActionBindingStatus =
+  | { state: 'unbound'; executable: false }
+  | { state: 'declarative_supported'; version: '1'; authorizationRequired: true }
+  | { state: 'trusted_contract_available'; handlerRef: { id: string; version: string; digest: string }; runtimeBindingRequired: true; authorizationRequired: true };
 
 /** Compiles trusted definitions once. No executable expressions or provider URLs are accepted. */
 export class OntologyModel {
@@ -74,11 +113,13 @@ export class OntologyModel {
   private typeDescriptions = new Map<string, object>();
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
-  constructor(definition: ModelDefinition) {
+  constructor(definition: ModelDefinition, private options: OntologyModelOptions = {}) {
+    this.options = freezeMetadata(structuredClone(options));
     for (const item of definition.interfaces) {
       nameSchema.parse(item.id);
       if (this.interfaces.has(item.id)) invalid('Duplicate interface');
-      this.interfaces.set(item.id, { ...item, parents: [...(item.parents ?? [])], links: structuredClone(item.links ?? []), properties: Object.fromEntries(Object.entries(item.properties).map(([k, p]) => [k, Object.freeze({ ...p })])) });
+      const { properties, ...metadata } = item;
+      this.interfaces.set(item.id, Object.freeze({ ...freezeMetadata(structuredClone(metadata)), parents: freezeMetadata([...(item.parents ?? [])]), links: freezeMetadata(structuredClone(item.links ?? [])), properties: immutableProperties(properties) }));
     }
     for (const item of definition.objects) {
       nameSchema.parse(item.id);
@@ -87,13 +128,22 @@ export class OntologyModel {
         nameSchema.parse(name);
         if (!p.description || !p.source || p.required && p.derived) invalid('Incomplete property semantics');
       }
-      for (const key of [item.primaryKey, item.titleKey]) if (item.properties[key]?.kind !== 'string' || !item.properties[key]?.required || item.properties[key]?.restricted || item.properties[key]?.derived) invalid('Keys must be required visible strings');
-      this.objects.set(item.id, { ...item, aliases: [...item.aliases], interfaces: structuredClone(item.interfaces ?? []), properties: Object.fromEntries(Object.entries(item.properties).map(([k, p]) => [k, Object.freeze({ ...p })])) });
+      for (const key of [item.primaryKey, item.titleKey]) {
+        const property = item.properties[key];
+        if (property?.kind !== 'string' || !property.required || property.restricted || property.derived || [null, 1, ''].some(value => property.schema.safeParse(value).success)) invalid('Keys must be required visible strings');
+      }
+      const { properties, ...metadata } = item;
+      this.objects.set(item.id, Object.freeze({ ...freezeMetadata(structuredClone(metadata)), interfaces: freezeMetadata(structuredClone(item.interfaces ?? [])), properties: immutableProperties(properties) }));
       const shape = Object.fromEntries(Object.entries(item.properties).filter(([, p]) => !p.derived).map(([k, p]) => [k, p.required ? p.schema : p.schema.optional()]));
       this.schemas.set(item.id, z.object(shape).strict());
     }
-    for (const id of this.interfaces.keys()) this.interfaceProperties(id);
-    this.functions = structuredClone(definition.functions);
+    for (const id of this.interfaces.keys()) {
+      const properties = this.interfaceProperties(id);
+      const optional = this.interfaceOptionalProperties(id);
+      if (optional.some(name => !Object.hasOwn(properties, name))) invalid('Unknown optional interface property');
+      for (const constraint of this.interfaceLinks(id)) if (!nameSchema.safeParse(constraint.name).success || !this.hasType(constraint.target)) invalid('Invalid or unresolved interface link constraint');
+    }
+    this.functions = freezeMetadata(structuredClone(definition.functions));
     if (new Set(this.functions.map(f => f.id)).size !== this.functions.length) invalid('Duplicate function');
     for (const f of this.functions) {
       nameSchema.parse(f.id);
@@ -106,11 +156,12 @@ export class OntologyModel {
       const expected = this.interfaceProperties(implementation.id);
       for (const [alias, p] of Object.entries(expected)) {
         const actual = item.properties[this.propertyName(item.id, implementation.id, alias)];
-        if (!actual || digest(propertyMetadata(actual)) !== digest(propertyMetadata(p))) invalid(`Incompatible interface property: ${item.id}.${alias}`);
+        if (!actual && this.interfaceOptionalProperties(implementation.id).includes(alias) && !Object.hasOwn(implementation.propertyMap ?? {}, alias)) continue;
+        if (!actual || digest(propertyContract(actual)) !== digest(propertyContract(p))) invalid(`Incompatible interface property: ${item.id}.${alias}`);
       }
       if (Object.keys(implementation.propertyMap ?? {}).some(k => !Object.hasOwn(expected, k))) invalid('Unknown interface property mapping');
     }
-    this.links = structuredClone(definition.links);
+    this.links = freezeMetadata(structuredClone(definition.links));
     if (new Set(this.links.map(l => l.id)).size !== this.links.length) invalid('Duplicate link');
     for (const link of this.links) for (const side of [link.from, link.to]) {
       nameSchema.parse(link.id); nameSchema.parse(side.name);
@@ -121,55 +172,109 @@ export class OntologyModel {
       if (new Set(sides.map(s => s.side.name)).size !== sides.length) invalid(`Ambiguous link name on ${item.id}`);
       for (const implementation of item.interfaces ?? []) for (const constraint of this.interfaceLinks(implementation.id)) {
         const found = sides.find(s => s.side.name === constraint.name);
+        if (!found && constraint.optional) continue;
         if (!found || found.other.type !== constraint.target || found.side.many !== constraint.many) invalid(`Unresolved interface link on ${item.id}`);
       }
       const { links: _links, visibility: _visibility, ...objectDefinition } = this.describeType(item.id) as Record<string, unknown>;
       // Links pin their own definitions. Adding a relationship need not rewrite object data.
       this.fingerprints.set(item.id, digest(objectDefinition));
     }
-    this.actions = structuredClone(definition.actions);
+    this.actions = freezeMetadata(structuredClone(definition.actions));
     if (new Set(this.actions.map(a => a.id)).size !== this.actions.length) invalid('Duplicate action');
     const operations = this.actions.flatMap(a => a.providerOperation ? [a.providerOperation] : []);
     if (new Set(operations).size !== operations.length || this.actions.some(a => a.providerOperation && this.actions.some(other => other !== a && other.id === a.providerOperation))) invalid('Ambiguous action operation binding');
     for (const a of this.actions) {
       nameSchema.parse(a.id);
       if (a.version !== undefined && !a.version.trim()) invalid('Invalid action version');
-      if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)))) invalid('Invalid declared action effects');
+      if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)))) invalid('Invalid declared action effects');
       if (a.resultTypes?.some(type => !this.hasType(type))) invalid('Unknown declared action result type');
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
-      if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['local', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');
+      if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');
         if (field && this.properties(type)[field]?.derived) invalid('Actions cannot write derived properties');
       }
     }
-    this.ref = { id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions }) };
+    for (const id of this.interfaces.keys()) for (const constraint of this.interfaceActions(id)) {
+      nameSchema.parse(constraint.id);
+      if (!Object.keys(constraint.inputs).length || Object.entries(constraint.inputs).some(([name, type]) => !nameSchema.safeParse(name).success || !this.hasType(type)) || !constraint.effects.length || constraint.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)) || constraint.resultTypes?.some(type => !this.hasType(type))) invalid('Invalid interface action constraint');
+    }
+    for (const item of definition.objects) for (const implementation of item.interfaces ?? []) {
+      const constraints = this.interfaceActions(implementation.id);
+      if (Object.keys(implementation.actionMap ?? {}).some(id => !constraints.some(constraint => constraint.id === id))) invalid('Unknown interface action mapping');
+      for (const constraint of constraints) {
+        const mapping = implementation.actionMap?.[constraint.id];
+        if (!mapping && constraint.optional) continue;
+        if (!mapping) invalid(`Missing interface action implementation: ${item.id}.${constraint.id}`);
+        const action = this.actions.find(action => action.id === mapping.actionId);
+        if (!action) invalid('Unresolved interface action implementation');
+        const actualInputs = Object.keys(action.inputs), mappedInputs = Object.keys(mapping.inputMap);
+        if (actualInputs.length !== mappedInputs.length || actualInputs.some(input => !Object.hasOwn(mapping.inputMap, input))
+          || new Set(Object.values(mapping.inputMap)).size !== Object.keys(constraint.inputs).length
+          || Object.entries(mapping.inputMap).some(([actual, expected]) => {
+            const target = constraint.inputs[expected], actualType = action.inputs[actual];
+            if (!target || !actualType || !this.assignableType(actualType, target)) return true;
+            return (target === implementation.id || this.interfaceAncestors(implementation.id).includes(target)) && !this.implements(item.id, actualType);
+          })
+          || !action.effects || digest([...new Set(action.effects)].sort()) !== digest([...new Set(constraint.effects)].sort())
+          || constraint.resultTypes?.some(expected => !action.resultTypes?.some(actual => this.assignableType(actual, expected)))) invalid('Incompatible interface action mapping');
+      }
+    }
+    this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions }) });
+    Object.defineProperty(this, 'ref', { writable: false, configurable: false });
   }
   private interfaceProperties(id: string, active = new Set<string>()): Record<string, PropertyDefinition> {
     const value = this.interfaces.get(id);
     if (!value || active.has(id)) invalid('Unresolved or cyclic interface');
     const next = new Set(active).add(id), result: Record<string, PropertyDefinition> = {};
     for (const parent of value.parents ?? []) for (const [name, p] of Object.entries(this.interfaceProperties(parent, next))) {
-      if (result[name] && digest(propertyMetadata(result[name])) !== digest(propertyMetadata(p))) invalid('Conflicting inherited property');
+      if (result[name] && digest(propertyContract(result[name])) !== digest(propertyContract(p))) invalid('Conflicting inherited property');
       result[name] = p;
     }
     for (const [name, p] of Object.entries(value.properties)) {
       nameSchema.parse(name);
-      if (result[name] && digest(propertyMetadata(result[name])) !== digest(propertyMetadata(p))) invalid('Conflicting inherited property');
+      if (result[name] && digest(propertyContract(result[name])) !== digest(propertyContract(p))) invalid('Conflicting inherited property');
       result[name] = p;
     }
     return result;
   }
   private interfaceLinks(id: string): NonNullable<InterfaceDefinition['links']> {
     const i = this.interfaces.get(id)!;
-    return [...(i.parents ?? []).flatMap(p => this.interfaceLinks(p)), ...(i.links ?? [])];
+    const result = new Map<string, NonNullable<InterfaceDefinition['links']>[number]>();
+    for (const constraint of [...(i.parents ?? []).flatMap(p => this.interfaceLinks(p)), ...(i.links ?? [])]) {
+      const prior = result.get(constraint.name);
+      if (prior && digest(prior) !== digest(constraint)) invalid('Conflicting inherited interface link');
+      result.set(constraint.name, constraint);
+    }
+    return [...result.values()];
   }
+  private interfaceOptionalProperties(id: string): string[] {
+    const i = this.interfaces.get(id)!;
+    const own = i.optionalProperties ?? [];
+    const inherited = (i.parents ?? []).flatMap(parent => this.interfaceOptionalProperties(parent));
+    for (const parent of i.parents ?? []) for (const name of own) if (Object.hasOwn(this.interfaceProperties(parent), name) && !this.interfaceOptionalProperties(parent).includes(name)) invalid('An inherited required interface capability cannot become optional');
+    return [...new Set([...inherited, ...own])];
+  }
+  private interfaceActions(id: string): InterfaceActionConstraint[] {
+    const i = this.interfaces.get(id)!;
+    const actions = new Map<string, InterfaceActionConstraint>();
+    for (const action of [...(i.parents ?? []).flatMap(parent => this.interfaceActions(parent)), ...(i.actions ?? [])]) {
+      const prior = actions.get(action.id);
+      if (prior && digest(prior) !== digest(action)) invalid('Conflicting inherited interface action');
+      actions.set(action.id, action);
+    }
+    return [...actions.values()];
+  }
+  private assignableType(actual: string, expected: string): boolean { if (actual === expected) return true; return this.isInterface(actual) ? this.interfaceAncestors(actual).includes(expected) : this.implements(actual, expected); }
   hasType(id: string) { return this.objects.has(id) || this.interfaces.has(id); }
   isInterface(id: string) { return this.interfaces.has(id); }
   object(id: string) { return this.objects.get(id) ?? invalid('Unknown concrete object type'); }
+  objectWritePolicy(id: string): 'managed' | 'source' { return this.object(id).writePolicy ?? 'source'; }
+  propertyAuthority(type: string, property: string): 'managed' | 'source' { return this.properties(type)[property]?.authority ?? this.objectWritePolicy(type); }
+  linkWritePolicy(id: string): 'managed' | 'source' { return this.link(id).writePolicy ?? 'source'; }
   implements(type: string, target: string): boolean {
     if (type === target) return this.objects.has(type);
     const matches = (id: string): boolean => id === target || (this.interfaces.get(id)?.parents ?? []).some(matches);
@@ -182,8 +287,10 @@ export class OntologyModel {
   propertyName(type: string, target: string, name: string): string {
     if (!this.implements(type, target) && type !== target) invalid('Object does not implement requested type');
     if (!this.isInterface(target)) return name;
-    for (const i of this.object(type).interfaces ?? []) if (i.id === target || this.interfaceAncestors(i.id).includes(target)) return i.propertyMap?.[name] ?? name;
-    return invalid('Unresolved property mapping');
+    const mappings = (this.object(type).interfaces ?? []).filter(i => i.id === target || this.interfaceAncestors(i.id).includes(target)).map(i => i.propertyMap?.[name] ?? name);
+    if (!mappings.length) return invalid('Unresolved property mapping');
+    if (new Set(mappings).size > 1) invalid('Ambiguous interface property mapping');
+    return mappings[0]!;
   }
   private interfaceAncestors(id: string): string[] { return (this.interfaces.get(id)?.parents ?? []).flatMap(p => [p, ...this.interfaceAncestors(p)]); }
   properties(target: string) { return this.isInterface(target) ? this.interfaceProperties(target) : this.object(target).properties; }
@@ -213,7 +320,7 @@ export class OntologyModel {
     if (cached) return structuredClone(cached);
     const i = this.interfaces.get(id), o = this.objects.get(id);
     if (!i && !o) invalid('Unknown ontology type');
-    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id) }),
+    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}), ...(o.writePolicy ? { writePolicy: o.writePolicy } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id), ...(i!.optionalProperties ? { optionalProperties: this.interfaceOptionalProperties(id) } : {}), ...(this.interfaceActions(id).length ? { actionConstraints: this.interfaceActions(id) } : {}) }),
       properties: Object.fromEntries(Object.entries(this.properties(id)).map(([k, p]) => [k, propertyMetadata(p)])),
       ...(o ? { links: this.sides(id).map(({ side, other, link }) => ({ id: link.id, name: side.name, target: other.type, many: side.many, required: !!side.required, description: link.description })) } : {}) };
     this.typeDescriptions.set(id, description);
@@ -258,6 +365,21 @@ export class OntologyModel {
     return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => this.describeType(id)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
+  actionImplementation(id: string): ActionImplementation | undefined { const implementation = this.action(id).implementation ?? this.options.trustedActionImplementations?.[id]; return implementation ? structuredClone(implementation) : undefined; }
+  actionBindingStatus(id: string): ActionBindingStatus {
+    const implementation = this.actionImplementation(id);
+    if (!implementation) return { state: 'unbound', executable: false };
+    if (implementation.kind === 'declarative') return { state: 'declarative_supported', version: implementation.version, authorizationRequired: true };
+    return { state: 'trusted_contract_available', handlerRef: { ...implementation.handlerRef }, runtimeBindingRequired: true, authorizationRequired: true };
+  }
+  resolveInterfaceAction(type: string, interfaceId: string, actionId: string): { action: ActionDefinition; inputMap: Record<string, string> } {
+    if (!this.isInterface(interfaceId) || !this.implements(type, interfaceId)) invalid('Object does not implement the action interface');
+    if (!this.interfaceActions(interfaceId).some(action => action.id === actionId)) invalid('Unknown interface action constraint');
+    const mappings = (this.object(type).interfaces ?? []).filter(i => i.id === interfaceId || this.interfaceAncestors(i.id).includes(interfaceId)).flatMap(i => i.actionMap?.[actionId] ? [i.actionMap[actionId]!] : []);
+    if (!mappings.length) invalid('Optional interface action is not implemented by this type');
+    if (mappings.some(mapping => digest(mapping) !== digest(mappings[0]))) invalid('Ambiguous interface action mapping');
+    return { action: this.action(mappings[0]!.actionId), inputMap: structuredClone(mappings[0]!.inputMap) };
+  }
   /** Resolves only explicit registered operation aliases, never inferred names. */
   actionForOperation(operation: string) {
     const action = this.actions.find(a => a.id === operation || a.providerOperation === operation);

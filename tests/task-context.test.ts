@@ -1,3 +1,4 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
@@ -341,7 +342,7 @@ test('a long task reads a compact business context and can explicitly inspect ol
         programRef: state.programRef, programDigest: state.programDigest, scope: state.scope, scopeDigest: digest(f.store.ontology.read(owner, state.scope).properties),
         modelRunId: `synthetic-run-${sequence}`, modelDecision: { kind: 'execute', requestRevision: request.revision, message: 'Synthetic historical choice', steps: [chosen], completionJson: '' },
         reasoning: 'Synthetic historical choice', createdAt: job.createdAt, steps: [{ ...chosen, input, effect: 'read', operationKey: `operation-${sequence}`, definitionDigest: digest(f.store.ontology.model.action(chosen.action)), intentId: `intent-${sequence}` }],
-        ontologyPlanning: templatePlanning(request) };
+        ontologyPlanning: templatePlanning(request, businessModel.ref) };
       state.plans.push({ ...body, digest: digest(body) });
     }
     state.pendingPlanId = 'plan-24'; f.store.save(owner, job);

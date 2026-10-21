@@ -5,6 +5,7 @@ import type { DiscoveredBinding, DiscoveryCoverage, ProductOfferSnapshot } from 
 import type { ActionContext, ActionResult, PreparedStep } from '../ontology/actions.js';
 import { digest } from './delegation.js';
 import type { AgentProgram } from './agent-program.js';
+import type { OntologyObjectStore } from '../ontology/object-store.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 export type Preparation = { kind: 'needs_input'; question: string; details?: Record<string, unknown> } | { kind: 'unavailable'; reason: string; details?: Record<string, unknown> } | {
@@ -64,7 +65,10 @@ export class ExecutionCatalog {
   private sources: DiscoverySource[];
   private programBindings = new Map<string, { binding: ProviderBinding; program: AgentProgram }>();
   private programs = new Map<string, AgentProgram>();
-  constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = []) {
+  private dynamicBase?: ExecutionCatalog;
+  private ontologyScope?: string;
+  constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = [],
+    private readonly dynamicFactory?: (graph: OntologyObjectStore, owner: string) => AgentProgram | undefined) {
     for (const adapter of adapters) {
       if (this.adapters.has(adapter.id)) throw new Error('Duplicate adapter');
       this.adapters.set(adapter.id, adapter);
@@ -92,6 +96,56 @@ export class ExecutionCatalog {
     if (new Set(sources.map(s => s.id)).size !== sources.length) throw new Error('Duplicate discovery source');
     for (const source of sources) if (!this.adapters.has(source.adapterId) || source.capabilityRefs.some(r => !this.services.has(key(r)))) throw new Error('Unresolved discovery source');
     this.sources = sources;
+  }
+  /** A task receives the executable program for its immutable release. Existing
+   * adapter permission closures remain live; no mutable global model is swapped. */
+  forOntology(graph: OntologyObjectStore, owner: string): ExecutionCatalog {
+    const base = this.dynamicBase ?? this;
+    if (!base.dynamicFactory || !graph.releaseRef) return base;
+    const scope = digest({ owner, release: graph.releaseRef });
+    if (this.ontologyScope === scope) return this;
+    const program = base.dynamicFactory(graph, owner);
+    if (!program) return base;
+    const catalog = new ExecutionCatalog([...base.services.values(), program.capability()], [...base.providers.values()], [...base.adapters.values()], base.sources,
+      [...base.programs.values(), program], base.dynamicFactory);
+    catalog.dynamicBase = base; catalog.ontologyScope = scope;
+    // Discovery records remain owner/request/version bound and are checked
+    // against the source's current permission on every subsequent use.
+    catalog.discovered = base.discovered;
+    return catalog;
+  }
+  managedProgram(owner: string): AgentProgram | undefined {
+    const programs = [...this.programs.values()].filter(program => program.callerManagedActions === true && program.permitted(owner));
+    if (programs.length > 1) throw new DomainError('CONFLICT', 'Managed action program is ambiguous');
+    return programs[0];
+  }
+  /** Runtime readiness is separate from authorization to invoke an action. */
+  actionAvailability(graph: OntologyObjectStore, owner: string, actionId: string): { status: 'executable' | 'definition_only' | 'handler_unavailable'; kind?: 'declarative' | 'trusted'; reason: string } {
+    const implementation = graph.model.actionImplementation(actionId);
+    if (!implementation) return { status: 'definition_only', reason: 'This definition has no registered executable implementation' };
+    const catalog = this.forOntology(graph, owner);
+    const candidates = [...catalog.programs.values()].filter(program => program.actionIds.includes(actionId) && program.permitted(owner));
+    for (const program of candidates) {
+      if (implementation.kind === 'declarative' && !program.callerManagedActions) continue;
+      if (implementation.kind === 'trusted' && program.callerManagedActions) continue;
+      try {
+        const definition = program.definition(graph, actionId);
+        if (digest(definition) !== digest(graph.model.action(actionId))) continue;
+        return { status: 'executable', kind: implementation.kind, reason: 'A permitted configured runtime supports this exact definition; invocation still requires task scope and current authorization' };
+      } catch { /* A registered definition cannot substitute for a matching runtime. */ }
+    }
+    if (implementation.kind === 'trusted') {
+      const definition = graph.model.action(actionId), requiredEffects = [...(definition.effects ?? [])].sort();
+      for (const capability of catalog.services.values()) {
+        const supported = capability.actions.some(action => action.ref.id === definition.providerOperation
+          && action.ref.version === implementation.handlerRef.version
+          && digest([action.effect, ...(action.additionalEffects ?? [])].sort()) === digest(requiredEffects));
+        if (supported && catalog.bindings(capability.ref, owner).some(binding => isActionAdapter(catalog.adapters.get(binding.adapterId)!))) {
+          return { status: 'executable', kind: 'trusted', reason: 'An enabled permitted provider binding supports this exact operation version and effects; task preparation and current authorization are still required' };
+        }
+      }
+    }
+    return { status: 'handler_unavailable', kind: implementation.kind, reason: 'No permitted configured runtime supports this exact action contract for this identity' };
   }
   // Metadata only, for the configured operator's listing review; never installs discovered code.
   configuredBinding(ref: Ref): ProviderBinding | undefined { const value = this.providers.get(key(ref)) ?? this.programBindings.get(key(ref))?.binding; return value ? structuredClone(value) : undefined; }

@@ -4,7 +4,10 @@ import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema } from '../ontology/execution.js';
 import { executionBudgetProfileSchema } from './execution-budget.js';
 
-export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
+/** Existing PA onboarding requests task access only. Modeling and administration
+ * are separately requested grants, never implicit upgrades to an installation. */
+export const TASK_SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
+export const SCOPES = [...TASK_SCOPES, 'ontology:read', 'ontology:write', 'ontology:publish', 'ontology:admin', 'ontology:object_write'] as const;
 export type Scope = (typeof SCOPES)[number] | 'sources:read' | 'sources:write';
 export interface Principal {
   issuer: string;
@@ -44,6 +47,7 @@ export const submitSchema = z.union([z.object({
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
   executionBudget: executionBudgetProfileSchema.optional(),
+  ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,

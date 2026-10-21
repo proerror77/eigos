@@ -166,7 +166,12 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));
   const types = [...names].sort().map(type => safeDefinition(graph.model.describeType(type), names));
-  return { model: graph.model.ref, types, actions: actions.map(action => ({ ...action, execution: 'definition_only' })), functions };
+  return { model: graph.model.ref, types, actions: actions.map(action => {
+    const { implementation, ...contract } = action;
+    return { ...contract, execution: 'definition_only', ...(implementation ? { implementationSummary: implementation.kind === 'declarative'
+      ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length }
+      : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
+  }), functions };
 }
 
 function priorDefinition(receipts: readonly PlanningReadReceipt[], requested: string | undefined, context: PlanningContextReceipt, modelDigest: string, payload: Record<string, unknown>): PlanningDefinitionReceipt | undefined {

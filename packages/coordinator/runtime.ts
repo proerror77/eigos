@@ -43,9 +43,9 @@ export class ActionRuntime {
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     const job = this.store.get(claim.owner, claim.job.id); const d = job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION || !d.plan || !d.intentIds?.length) throw new DomainError('CONFLICT', 'Current execution plan and action intents required');
-    const plan = d.plan; validatePlan(this.catalog, claim.owner, d.request, plan, Date.now(), 'observe');
-    assertFixedPlanProjection(this.store.ontology, claim.owner, plan, this.store.intents(claim.owner, job.id));
-    validatePlanningSnapshot(this.store.ontology, claim.owner, d.request, plan.ontologyPlanning, false);
+    const plan = d.plan; validatePlan(this.catalog, claim.owner, d.request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref, Date.now(), 'observe');
+    assertFixedPlanProjection(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, plan, this.store.intents(claim.owner, job.id));
+    validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, d.request, plan.ontologyPlanning, false);
     const expired = Date.now() - Date.parse(job.createdAt) >= (this.options.maxTaskMs ?? 86400000);
     const queriesOnly = expired && !!d.manualReconciliation;
     if (expired && !queriesOnly) {
@@ -96,8 +96,8 @@ export class ActionRuntime {
     if (claim.recovery && kind === 'dispatch') return false;
     const freshPermit = kind === 'dispatch' || kind === 'resume' && !['local', 'read'].includes(intent.effect);
     if (freshPermit) {
-      validatePlan(this.catalog, claim.owner, ctx.request, plan, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
-      validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, plan.ontologyPlanning, true);
+      validatePlan(this.catalog, claim.owner, ctx.request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
+      validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, plan.ontologyPlanning, true);
       const approval = current.delegation!.approval;
       if (plan.quote && (!approval?.simulationOnly || approval.planDigest !== plan.digest || approval.quoteDigest !== plan.quote.digest)) { this.pause(claim, 'auth-required', '请批准当前准确的本地模拟报价。'); return false; }
     }
@@ -105,7 +105,7 @@ export class ActionRuntime {
     try {
       if (!this.store.checkpoint(claim, job => {
         const subject = freshPermit ? selectedCandidateSubject(plan, job.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)) : undefined;
-        const submission = freshPermit ? assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject) : undefined;
+        const submission = freshPermit ? assertSemanticSubmission(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, step, subject) : undefined;
         const grant = freshPermit ? authorizeDispatch(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true) : undefined;
         const authorizationId = grant?.id ?? (freshPermit && plan.quote && job.delegation!.approval ? digest(job.delegation!.approval) : undefined);
         attempt = this.store.startAttempt(claim, intent.id, kind, digest(input), kind === 'resume' ? resumeKey : undefined, submission, authorizationId);
@@ -120,10 +120,10 @@ export class ActionRuntime {
     // lease itself remains valid. Recheck without reserving the budget twice.
     try {
       if (freshPermit) {
-        validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, plan.ontologyPlanning, true);
+        validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, plan.ontologyPlanning, true);
         const subject = selectedCandidateSubject(plan, current.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId));
-        assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject);
-        validatePlan(this.catalog, claim.owner, ctx.request, plan, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
+        assertSemanticSubmission(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, step, subject);
+        validatePlan(this.catalog, claim.owner, ctx.request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
         checkDispatchPermit(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true);
       }
     } catch (error) {
@@ -160,7 +160,7 @@ export class ActionRuntime {
     const recorded = this.store.recordObservation(claim.owner, intent.id, attempt!.id, result, verified);
     if (recorded.applied && verified && result.kind !== 'unknown' && (result.output?.domainSnapshot !== undefined || result.output?.ucpSnapshot !== undefined)) {
       if (!this.store.checkpoint(claim, () => {
-        const projection = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: result.output!.ucpSnapshot !== undefined ? { ucpSnapshot: result.output!.ucpSnapshot } : { domainSnapshot: result.output!.domainSnapshot } });
+        const projection = projectReadResult(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: undefined, result: result.output!.ucpSnapshot !== undefined ? { ucpSnapshot: result.output!.ucpSnapshot } : { domainSnapshot: result.output!.domainSnapshot } });
         if (projection.state !== 'typed_result') throw new DomainError('CONFLICT', 'Verified domain observation could not be projected');
         const latest = this.store.intent(claim.owner, intent.id);
         if (projection.subject && latest.latestObservationId === recorded.id) {
@@ -182,9 +182,9 @@ export class ActionRuntime {
     const verdict = adapter.verify(ctx, plan, intent.privateData, delivery);
     let subject: import('../ontology/model.js').ObjectRef | undefined;
     if (verdict.accepted && delivery.artifact.data.result && !this.store.checkpoint(claim, () => {
-      subject = projectReadResult(this.store.ontology, claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: plan.details.ontologyReceipt, result: delivery.artifact.data.result }).subject;
+      subject = projectReadResult(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, { request: ctx.request, capabilityId: plan.capabilityRef.id, input: plan.steps[0]!.input, preparedReceipt: plan.details.ontologyReceipt, result: delivery.artifact.data.result }).subject;
     })) return;
-    const conditionChecks = assessConditions(this.store.ontology, claim.owner, ctx.request, subject, 'result');
+    const conditionChecks = assessConditions(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, subject, 'result');
     const outcomeRequest = { ...ctx.request, requirements: [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])] };
     const definition = this.catalog.capability(plan.capabilityRef);
     const checks = checkRequirements(outcomeRequest, delivery.facts, delivery.evidenceRefs, definition.predicates.map(p => p.id), definition.locationSemantics);

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { JobStore } from '../packages/core/store.js';
+import type { Job } from '../packages/core/domain.js';
 import { ActionRuntime } from '../packages/coordinator/runtime.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
@@ -174,7 +175,9 @@ test('new backend does not advertise or accept legacy direct-execution fallbacks
   try {
     assert.deepEqual(b.tasks.services().map(s => s.id), ['eigos.delegate']);
     for (const service of ['brief.prepare', 'agent.execute', 'meituan.paotui.read']) assert.throws(() => b.tasks.submit(principal, { service, goal: 'fixture', requestId: randomUUID() }), /Invalid input/);
-    const old = b.submit(); old.service = 'brief.prepare'; old.state = 'input-required'; delete old.delegation; b.store.save(owner, old);
+    const now = new Date().toISOString();
+    const old: Job = { id: randomUUID(), contextId: randomUUID(), service: 'brief.prepare', goal: 'Historical direct-service fixture', state: 'input-required', messages: [{ id: 'legacy-request', role: 'user', text: 'Historical direct-service fixture', at: now }], createdAt: now, updatedAt: now };
+    b.store.save(owner, old);
     assert.throws(() => b.tasks.reply(principal, { taskId: old.id, answer: 'continue', requestId: 'old-reply' }), /read-only/);
     assert.throws(() => b.tasks.cancel(principal, old.id), /read-only/);
   } finally { b.store.close(); }

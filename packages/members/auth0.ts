@@ -38,13 +38,21 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
   if (callback.protocol !== 'http:' || callback.hostname !== '127.0.0.1' || !callback.port || Number(callback.port) < 1024 || callback.pathname !== '/callback' || callback.search || callback.hash || callback.username || callback.password) throw new Error('The native Agent callback must be an exact loopback /callback URL on an unprivileged port');
   const suffix = createHash('sha256').update(publicUrl).digest('hex').slice(0, 10);
   const metadata = (component: string) => ({ eigos_component: component, eigos_resource: publicUrl });
+  const scopeDescriptions: Record<(typeof SCOPES)[number], string> = {
+    'services:read': 'View EIGOS services', 'tasks:read': 'Read your EIGOS tasks', 'tasks:write': 'Submit, reply to and cancel your EIGOS tasks',
+    'ontology:read': 'Read ontology definitions available to your identity', 'ontology:write': 'Create and edit drafts in your own ontology namespaces',
+    'ontology:publish': 'Publish and activate versions in your own ontology namespaces', 'ontology:object_write': 'Authorize an exact preview of your managed object and relationship changes',
+    'ontology:admin': 'Administer shared or other owner ontology definitions under a separately configured operator policy',
+  };
   return {
     resource: publicUrl, tenantClaim: `${publicUrl}/claims/tenant_id`, agentCallback: callback.href,
     api: {
       name: `EIGOS API ${suffix}`, identifier: publicUrl, signing_alg: 'RS256', token_dialect: 'rfc9068_profile',
       token_lifetime: 900, token_lifetime_for_web: 900, allow_offline_access: true,
       skip_consent_for_verifiable_first_party_clients: false,
-      scopes: [...SCOPES.map(value => ({ value, description: value === 'services:read' ? 'View EIGOS services' : value === 'tasks:read' ? 'Read your EIGOS tasks' : 'Submit, reply to and cancel your EIGOS tasks' })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
+      // The self-service resource plan never provisions a global admin grant.
+      // Operators must establish that issuer policy separately and explicitly.
+      scopes: [...SCOPES.filter(value => value !== 'ontology:admin').map(value => ({ value, description: scopeDescriptions[value] })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
     },
     portal: {
       name: `EIGOS member portal ${suffix}`, app_type: 'regular_web', oidc_conformant: true, is_first_party: true,

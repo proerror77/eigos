@@ -24,6 +24,7 @@ export type NetworkOntologyQueryResult = ReturnType<JobStore['ontology']['query'
  * in the owned object store; only the declared virtual navigation is handled. */
 export interface NetworkOntologyReadAdapter {
   readonly owner: string; readonly taskId?: string;
+  readonly ontologyRelease?: import('./definition-contracts.js').OntologyReleaseRef;
   canHandle(input: ObjectQuery): boolean;
   read(ref: ObjectRef, budget?: ReadBudget): ObjectView;
   query(input: ObjectQuery, budget?: ReadBudget): NetworkOntologyQueryResult;
@@ -65,7 +66,7 @@ export function createNetworkOntologyReader(options: {
   jobs: JobStore; store: NetworkStore; owner: string; taskId?: string;
   authorize: () => NetworkReadIdentity; catalog?: ExecutionCatalog;
 }): NetworkOntologyReadAdapter {
-  const { jobs, store, owner, taskId } = options, graph = jobs.ontology;
+  const { jobs, store, owner, taskId } = options, graph = taskId ? jobs.ontologyForJob(owner, taskId) : jobs.ontology;
   const cursorKey = () => createHash('sha256').update('eigos.network.ontology.cursor@1\0').update(store.activityKey()).digest();
   const guarded = <T>(fn: () => T): T => { try { return store.readSnapshot(fn); } catch (error) { return normalizeError(error); } };
   function snapshot(scope: SnapshotScope, budget: ReadBudget = { remaining: 1000 }): Snapshot {
@@ -325,7 +326,7 @@ export function createNetworkOntologyReader(options: {
         cursor: hasMore ? encodeCursor(current.context, queryDigest, items.at(-1)!.ref, current.identity) : undefined }, datasetRevision: revision(current.context) };
     });
   }
-  return { owner, ...(taskId ? { taskId } : {}), canHandle, query,
+  return { owner, ...(taskId ? { taskId } : {}), ...(graph.releaseRef ? { ontologyRelease: graph.releaseRef } : {}), canHandle, query,
     read(ref, budget) { return guarded(() => { if (!isVirtualRef(ref)) return invalid('Canonical objects must be read through the owned object store'); const current = snapshot(queryScope({ object: ref }), budget); return structuredClone(current.objects.get(key(ref)) ?? notFound()); }); },
     related(ref, link, budget) { const result = query({ from: ref, link, limit: 50 }, budget); return result.page.hasMore ? undefined : result.items; },
     relationshipDigest(ref, budget) { return guarded(() => {

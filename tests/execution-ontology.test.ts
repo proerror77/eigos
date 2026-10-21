@@ -22,6 +22,8 @@ import { OntologyModel } from '../packages/ontology/model.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { templatePlanning } from '../packages/ontology/planning-contract.js';
 import { projectTask } from '../packages/ontology/task-projection.js';
+import { createSeedDefinition, LEGACY_SEED_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 
 const at = '2026-10-20T03:00:00.000Z', owner = 'execution-test-owner';
 function fixture() {
@@ -44,7 +46,7 @@ function fixture() {
   const body: Omit<AgentActionPlan, 'digest'> = { id: 'plan', version: '2', sequence: 1, requestId: request.id, requestRevision: 1, programRef: state.programRef,
     programDigest: state.programDigest, scope, scopeDigest: digest(graph.read(owner, scope).properties), modelRunId: 'model-receipt',
     modelDecision: { kind: 'execute', requestRevision: 1, message: 'PRIVATE_REASONING', steps: selected, completionJson: '' }, reasoning: 'PRIVATE_REASONING', createdAt: at,
-    ontologyPlanning: templatePlanning(request),
+    ontologyPlanning: templatePlanning(request, businessModel.ref),
     steps: selected.map(step => ({ ...step, effect: 'read', operationKey: `PRIVATE_KEY_${step.id}`, input: JSON.parse(step.argumentsJson) as Record<string, unknown>, definitionDigest: digest(graph.model.action(step.action)), intentId: `intent-${step.id}` })) };
   const plan: AgentActionPlan = { ...body, digest: digest(body) }; state.plans.push(plan); state.pendingPlanId = plan.id;
   const intents: ActionIntent[] = plan.steps.map(step => ({ id: step.intentId, owner, jobId: request.id, stepId: step.id, businessOperationKey: `PRIVATE_KEY_${step.id}`,
@@ -77,7 +79,7 @@ function fixedFixture(adapterOnly = false) {
   const candidate = { id: 'fixed-candidate', binding, status: 'ready' as const, input: domain.parameters, details: {}, facts: {}, evidenceRefs: ['synthetic'],
     requirementChecks: [], observedAt: domain.snapshot.option.observedAt, expiresAt: domain.snapshot.option.expiresAt, ontologySubject: projected.subject };
   projectPreparedResolution(f.graph, owner, f.request, { candidates: [candidate], scope: { capabilityRef: capability.ref, searchedBindingRefs: [binding.ref], observedAt: at, realSupply: false } }, capability);
-  const body: Omit<ExecutionPlan, 'digest'> = { id: 'fixed-plan', version: '7', ontologyPlanning: templatePlanning(f.request), requestId: f.request.id,
+  const body: Omit<ExecutionPlan, 'digest'> = { id: 'fixed-plan', version: '7', ontologyPlanning: templatePlanning(f.request, businessModel.ref), requestId: f.request.id,
     requestRevision: 1, requestDigest: digest(f.request), capabilityRef: capability.ref, ontologyRef: capability.ontologyRef, candidateId: candidate.id,
     bindingRef: binding.ref, bindingSnapshots: [], definitionDigests: [{ ref: capability.ref, digest: digest(capability) }],
     bindingDigests: [{ ref: binding.ref, digest: bindingDigest(binding) }], completionTarget: 'domain', verifierRef: capability.verifierRef,
@@ -90,13 +92,15 @@ function fixedFixture(adapterOnly = false) {
 }
 
 test('execution graph preserves frozen v14 definitions or names their exact migration predecessor and concrete reference endpoints', () => {
+  const seed = createSeedDefinition(), migrationTarget = compileOntologyDocument(seed.document, seed.registry);
+  assert.deepEqual(migrationTarget.ref, LEGACY_SEED_MODEL_REF);
   for (const [type, fingerprint] of Object.entries(v14Pins.objects)) {
-    if (businessModel.fingerprint(type) !== fingerprint) assert.equal(FROZEN_V14.objects[type]?.fingerprint, fingerprint, `${type} requires its independently frozen predecessor schema`);
+    if (migrationTarget.fingerprint(type) !== fingerprint) assert.equal(FROZEN_V14.objects[type]?.fingerprint, fingerprint, `${type} requires its independently frozen predecessor schema`);
   }
   for (const [type, previous] of Object.entries(v14Pins.links)) {
-    if (digest(businessModel.link(type)) !== previous) assert.equal(FROZEN_V14.links[type]?.digest, previous, `${type} requires its independently frozen predecessor link`);
+    if (digest(migrationTarget.link(type)) !== previous) assert.equal(FROZEN_V14.links[type]?.digest, previous, `${type} requires its independently frozen predecessor link`);
   }
-  assert.equal(businessModel.link('ExecutionInputObjectPaotuiTask').to.type, 'PaotuiTask');
+  assert.equal(migrationTarget.link('ExecutionInputObjectPaotuiTask').to.type, 'PaotuiTask');
   assert(isExecutionBookkeepingType('ExecutionStep'));
   assert(!isExecutionBookkeepingType('RequestConstraint'));
 });

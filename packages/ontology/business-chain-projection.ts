@@ -107,13 +107,14 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     const ref = { type: 'Authorization', id: grant.id };
     const steps = fixed ? fixed.steps.map(step => ({ ...step, actionId: step.actionTypeRef.id }))
       : agent!.plans.find(value => value.digest === grant.planDigest)!.steps.map(step => ({ ...step, actionId: step.action, bindingRef: agent!.programRef }));
-    const permittedActions = steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => grant.allowedEffects.includes(effect))
+    const permittedActions = steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => (grant.allowedEffects as readonly import('./actions.js').EffectClass[]).includes(effect))
       && grant.bindingRefs.some(binding => digest(binding) === digest(step.bindingRef))
-      && (!step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionId);
+      && (grant.kind === 'object_write' ? step.effect === 'object_write' && 'objectWrite' in step && digest(step.objectWrite) === digest(grant.objectWrite)
+        : !step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionId);
     write(graph, owner, ref, { actor: party.id, allowedActions: [...new Set(permittedActions)],
-      dataScope: [job.id], limits: grant.maxAmount, expiresAt: grant.expiresAt, revoked: grant.revoked,
+      dataScope: [job.id], ...(grant.kind === 'object_write' ? { objectWriteScope: grant.objectWrite } : { limits: grant.maxAmount, payeeIds: grant.payeeIds }), expiresAt: grant.expiresAt, revoked: grant.revoked,
       kind: 'plan_grant', ledgerDigest: digest(grant), planDigest: grant.planDigest, approvedAt: grant.approvedAt,
-      ...(grant.revokedAt ? { revokedAt: grant.revokedAt } : {}), environment: grant.environment, allowedEffects: grant.allowedEffects, bindingRefs: grant.bindingRefs, payeeIds: grant.payeeIds },
+      ...(grant.revokedAt ? { revokedAt: grant.revokedAt } : {}), environment: grant.environment, allowedEffects: grant.allowedEffects, bindingRefs: grant.bindingRefs },
     [edge('AuthorizationProposal', ref, proposal), edge('AuthorizationRequest', ref, request), edge('AuthorizationActor', ref, party), edge('AuthorizationPlan', ref, executionPlanRef(plan)),
       ...grant.bindingRefs.flatMap(value => { const binding = fixed ? fixedBindingRef(fixed, value) : agent && digest(value) === digest(agent.programRef) ? bindingRef(job.id, agent) : undefined; return binding && optionalObject(graph, owner, binding) ? [edge('AuthorizationBinding', ref, binding)] : []; })], source);
     const { revoked: _revoked, revokedAt: _revokedAt, ...issued } = grant;

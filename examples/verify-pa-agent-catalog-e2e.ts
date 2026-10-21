@@ -54,6 +54,7 @@ try {
   assert(job.runs!.every(r => r.runtime === 'codex-exec' && r.threadId && /^[a-f0-9]{64}$/.test(r.outputSha256)));
   const modelRun = (id: string) => { const run = job.runs!.find(r => r.id === id); assert(run); return run; };
   for (const plan of state.plans) {
+    assert(plan.modelRunId && plan.modelDecision && !plan.callerDecision, 'Expected original model-selected source evidence');
     const { digest: hash, ...body } = plan; assert.equal(digest(body), hash);
     assert.deepEqual(plan.programRef, CATALOG_AGENT_REF); assert.equal(plan.programDigest, program.configurationDigest); assert.deepEqual(plan.scope, state.scope);
     assert.equal(plan.requestId, job.id); assert.equal(plan.requestRevision, d.request.revision); assert.deepEqual(plan.ontologyPlanning.model, businessModel.ref);
@@ -98,7 +99,7 @@ try {
     for (const row of sourceReads) {
       assert.equal(row.requestRevision, 1); assert.equal(row.configurationDigest, program.configurationDigest);
       assert.equal(row.receipt.authentication, 'anonymous'); assert(['discovery', 'search_catalog', 'get_product', 'lookup_catalog'].includes(row.receipt.operation));
-      const plan = state.plans.find(p => p.id === row.planId)!; assert(plan);
+      const plan = state.plans.find(p => p.id === row.planId)!; assert(plan && plan.modelRunId && plan.modelDecision && !plan.callerDecision);
       const step = plan.steps.find(s => s.intentId === row.intentId)!; assert(step); assert.equal(step.action, row.action); assert.equal(row.modelRunId, plan.modelRunId);
       const intent = intents.find(i => i.id === step.intentId)!; assert.equal(intent.planDigest, plan.digest);
       const attempts = db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=?').all(owner, intent.id).map(r => JSON.parse(String(r.body)) as ExecutionAttempt);

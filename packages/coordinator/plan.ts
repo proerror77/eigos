@@ -5,7 +5,7 @@ import { digest, validPlanDigest, type PlanProposal } from '../core/delegation.j
 import { amountRoles, FIXED_CANDIDATE_CONTEXT_PARAMETER, moneySchema, type ExecutionPlan, type FixedCandidateBinding, type ServiceCapability, type ServiceRequest } from '../ontology/execution.js';
 import { fixedCandidateBindingSchema } from '../ontology/execution-model.js';
 import type { PreparedStep } from '../ontology/actions.js';
-import { businessModel } from '../ontology/business-model.js';
+import type { OntologyModel } from '../ontology/model.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { hardRequirementsPass, type ResolvedCandidate } from './resolver.js';
 import { requiredEffects } from '../core/policy.js';
@@ -73,11 +73,11 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
   assertCandidateBindingSeal(plan);
   return plan;
 }
-export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
+export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, model: OntologyModel['ref'], now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
   if (plan.version !== '7' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
   assertCandidateBindingSeal(plan);
   const { digest: proofDigest, ...proof } = plan.ontologyPlanning;
-  if (digest(proof) !== proofDigest || digest(proof.model) !== digest(businessModel.ref) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
+  if (digest(proof) !== proofDigest || digest(proof.model) !== digest(model) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
   const capability = catalog.capability(plan.capabilityRef);
   for (const snapshot of plan.bindingSnapshots) catalog.registerDiscovered({ owner, request }, snapshot);
   const { binding } = catalog.binding(plan.bindingRef, owner, request.id);
