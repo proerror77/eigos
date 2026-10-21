@@ -11,6 +11,9 @@ import { compileJsonSchema } from '../ontology/model-compiler.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { applyDeclarativeAction, previewDeclarativeAction, type ManagedActionPreview } from '../ontology/declarative-actions.js';
+import { readManagedResultFacts, mergeManagedResultFacts } from '../ontology/managed-result-facts.js';
+import type { ManagedResultFact } from '../ontology/action-dsl.js';
+import { checkRequirements } from '../ontology/requirement-checks.js';
 
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
@@ -42,10 +45,16 @@ export class DynamicOntologyProgram implements AgentProgram {
   capability(): ServiceCapability {
     return {
       ref: this.ref, ontologyRef: { id: this.releaseRef.ontologyId, version: this.releaseRef.digest }, name: '本体内受管数据操作',
-      description: '根据已发布 Action 定义创建、更新或逻辑删除本人受管对象及关系。每次变更先预览并取得准确授权；不执行订单、付款或供应商操作。',
-      tags: ['ontology', 'managed-data', 'dynamic-actions'], environment: 'local', completion: 'artifact', inputSchema: z.toJSONSchema(taskInputSchema),
+      description: '根据已发布 Action 定义发现、比较并创建、更新或逻辑删除本人受管对象及关系。发现仅覆盖获准的本体内受管输入，记录中的金额、日期等条件须按原请求与动作规则核验。每次变更先预览并取得准确授权；只交付内部记录及回读，不执行订单、付款或供应商操作。',
+      tags: ['ontology', 'managed-data', 'dynamic-actions'], environment: 'local', completion: 'artifact', inputSchema: z.toJSONSchema(taskInputSchema.extend({
+        actionIds: z.array(z.enum(this.actionIds)).min(1).max(64).describe('Exact published Actions available in this pinned program. Select only the actions needed for the user goal; inspect their contracts by exact ID before resolving.'),
+      })),
       ontology: { release: this.releaseRef, actions: this.actionIds, execution: 'declarative_managed_data' },
       actions: this.actionIds.map(id => ({ ref: { id, version: this.model.action(id).version ?? '1' }, effect: 'object_write' as const })),
+      requirementRoles: [...new Map(this.actionIds.flatMap(id => {
+        const implementation = this.model.actionImplementation(id);
+        return implementation?.kind === 'declarative' ? (implementation.resultFacts ?? []).flatMap(fact => fact.role ? [{ kind: fact.kind, role: fact.role, description: `Managed result ${fact.kind} from ${fact.amountProperty}` }] : []) : [];
+      }).map(role => [`${role.kind}:${role.role}`, role])).values()],
       predicates: [{ id: 'ontology.managed_data_readback', description: '已授权变更与原 Intent、对象版本及关系回读相符' }], outcomePredicates: ['ontology.managed_data_readback'],
       verifierRef: { id: 'ontology.managed-data-readback', version: '1' },
     };
@@ -92,7 +101,13 @@ export class DynamicOntologyProgram implements AgentProgram {
   validate(ctx: AgentProgramContext, actionId: string, input: Record<string, unknown>): void {
     if (!this.scope(ctx).actionIds.includes(actionId)) throw new DomainError('FORBIDDEN', 'Action is outside the approved task scope');
     this.definition(ctx.graph, actionId);
-    previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input);
+    const preview = previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input), implementation = this.model.actionImplementation(actionId);
+    const bindings = implementation?.kind === 'declarative' ? implementation.resultFacts : undefined;
+    if (bindings) {
+      const requirements = [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].filter(requirement => bindings.some(binding => binding.kind === requirement.kind && binding.role === ('role' in requirement ? requirement.role : undefined)));
+      const checks = checkRequirements({ ...ctx.request, requirements }, preview.resultFacts ?? {}, [preview.digest]);
+      if (requirements.some(requirement => requirement.strength === 'hard' && !checks.some(check => check.requirementId === requirement.id && check.result === 'pass'))) fail('Managed result preview does not meet the fixed numeric requirements');
+    }
   }
   validatePlanning(ctx: AgentProgramContext, actionId: string, input: Record<string, unknown>, reads: PlanningSnapshot): void {
     const preview = previewDeclarativeAction(ctx.graph, ctx.owner, actionId, input);
@@ -148,12 +163,18 @@ export class DynamicOntologyProgram implements AgentProgram {
     if (!confirmed.length || !equal([...completion.intentIds].sort(), confirmed.map(intent => intent.id).sort()) || new Set(completion.intentIds).size !== completion.intentIds.length) fail('Completion must account for every confirmed managed Intent');
     if ((ctx.intents ?? []).some(intent => intent.effect === 'object_write' && ['ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(intent.state))) fail('Managed effects still require reconciliation');
     const finalObjects = new Map<string, ManagedActionPreview['objects'][number]>(), finalLinks = new Map<string, ManagedActionPreview['links'][number]>();
+    const resultBindings = new Map<string, { ref: ObjectRef; bindings: ManagedResultFact[] }>();
     const changes = confirmed.map(intent => {
       const value = intent.lastVerifiedResult?.output?.source as ManagedInvocationResult | undefined;
       const entry = ordered.get(intent.id)!;
       if (!value || value.version !== '1' || value.intentId !== intent.id || value.planId !== entry.plan.id || value.requestId !== ctx.request.id || value.requestRevision !== ctx.request.revision || value.programDigest !== this.configurationDigest || value.preview.ontologyRelease.digest !== this.releaseRef.digest || value.preview.actionId !== entry.step.action || !equal(value.preview.scope, entry.step.objectWrite)) fail('Managed completion requires an original verified mutation record');
       for (const object of value.preview.objects) finalObjects.set(digest(object.ref), object);
       for (const link of value.preview.links) finalLinks.set(digest(link.link), link);
+      const implementation = this.model.actionImplementation(value.preview.actionId);
+      if (implementation?.kind === 'declarative' && implementation.resultFacts) {
+        if (!value.preview.result || !value.preview.objects.some(object => equal(object.ref, value.preview.result) && object.operation !== 'tombstone')) fail('Verified result facts have no changed result object');
+        resultBindings.set(digest(value.preview.result), { ref: value.preview.result, bindings: implementation.resultFacts });
+      }
       return { intentId: intent.id, actionId: value.preview.actionId, previewDigest: value.preview.digest, objects: value.preview.objects, links: value.preview.links };
     });
     for (const change of finalObjects.values()) {
@@ -166,8 +187,10 @@ export class DynamicOntologyProgram implements AgentProgram {
       }
     }
     for (const change of finalLinks.values()) if (ctx.graph.containsLinks(ctx.owner, [change.link]) !== (change.operation === 'add')) fail('Managed relationship readback differs from the committed action');
+    const resultFacts = mergeManagedResultFacts([...resultBindings.values()].filter(result => finalObjects.get(digest(result.ref))?.operation !== 'tombstone')
+      .map(result => readManagedResultFacts(ctx.graph.read(ctx.owner, result.ref).properties, result.bindings)));
     const deliverable = '已完成并回读授权的本体受管数据变更。';
-    return { artifact: { id: randomUUID(), name: 'ontology-action-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { ontologyRelease: this.releaseRef, managedChanges: changes, ...(completion.rationale ? { rationale: completion.rationale } : {}) } } }, facts: { conditions: ['ontology.managed_data_readback'] }, evidenceRefs: confirmed.map(intent => intent.id) };
+    return { artifact: { id: randomUUID(), name: 'ontology-action-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { ontologyRelease: this.releaseRef, managedChanges: changes, ...(completion.rationale ? { rationale: completion.rationale } : {}) } } }, facts: { ...resultFacts, conditions: ['ontology.managed_data_readback'] }, evidenceRefs: confirmed.map(intent => intent.id) };
   }
 }
 

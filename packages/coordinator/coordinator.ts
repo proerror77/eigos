@@ -25,6 +25,7 @@ import { projectCapabilityCatalog, projectPreparedResolution } from '../ontology
 import { readOntologyRequest } from '../ontology/execution-projection.js';
 import { assertSemanticSubmission } from '../ontology/action-submission.js';
 import { agentModelContext } from './model-context.js';
+import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
 
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
 const capabilitySelectionFeedback = 'Choose an exact capability reference and version listed by read_task_context for this task; the selected capability was not available.';
@@ -58,6 +59,7 @@ export class CodexReasoner implements Reasoner {
       'When a capability explicitly supports gathering missing business inputs, resolve it with its documented null fields so its adapter can obtain real options and ask the user. Do not preempt that workflow by asking for technical IDs. Otherwise return kind=clarify for necessary missing input; unsupported if no capability can deliver the actual outcome; resolve otherwise. Preserve requestRevision. inputJson is the selected capability input object as JSON text. For clarify/unsupported use capabilityRef={id:"none",version:"none"} and inputJson="{}".',
       'requirementsJson is a JSON array of {requirement, messageId, quote}. Extract explicit quantity, budget, deadline, location and conditions for the ACTUAL requested outcome, with an EXACT substring quote and its request message id. Details to record inside a brief are brief input, not requirements that the brief provider deliver physical goods. Do not invent constraints or weaken/remove existing ones. requirementsJson contains only NEW explicit constraints not already covered by the supplied structured requirements. For an existing kind and role, preserve its supplied value, original wording and provenance by omitting it from this extraction; the host carries it forward unchanged. Do not re-derive an existing relative deadline from the current time. Extract CNY budgets in integer minor units; ask for structured minor units for other currencies. Relative deadlines use the message receivedAt and explicit timezone; ask if ambiguous. Preserve the original deadline quote. Requirement schema:',
       JSON.stringify(z.toJSONSchema(requirementSchema)),
+      'For a declarative_managed_data capability, the deliverable is an internal record mutation and its readback. Preserve explicit budget and quantity requirements; do not drop them because execution is data-only. Published resultFacts bindings map result properties to independently checked amounts and quantities; missing bindings remain unknown. Other record constraints stay explicit in the request and must be checked against retrieved facts and Action conditions. Record facts do not mean this service spends money, delivers physical goods or fulfills a real reservation. Do not remove existing structured requirements or use managed records to substitute for an actual external fulfillment goal.',
       'When the selected capability declares requirementRoles, assign the matching declared role to each new quantity, budget, deadline or location constraint. Preserve distinct business roles even when their kind or value is the same: origins and destinations, milestone deadlines, room and guest counts, service charges and deposits. Use only supported kind/role pairs. Do not relabel an existing structured requirement. A missing role is the original task-wide meaning, not a wildcard for every role. Scheduled dates and terms remain in the typed capability input; do not invent deadline roles for them. Preserve every constraint in its typed input and relevant requirement, rather than dropping a duplicate-looking requirement.',
       'For condition requirements, expected.predicate must use the relevant capability\'s registered predicate id, never a paraphrase of the user text. Preserve the original wording in quote. If a condition has no compatible registered predicate, retain it as an unresolved predicate and clarify; do not pretend it is supported. Input schema fields such as the audit checks array are not item-quantity requirements.',
       'Never ask the requester for internal predicate IDs, schemas or ontology artifacts. Map conditions already covered by registered business descriptions to those predicates. For unsupported conditions explain the actual business limitation or ask a concrete business question. Search limits such as maxStores are retrieval scope, not product quantities.',
@@ -268,7 +270,15 @@ export class Coordinator {
     const job = this.store.get(claim.owner, claim.job.id), state = job.delegation?.agent;
     const program = state ? this.catalog.agentProgram(state.programRef, claim.owner) : undefined;
     const programContext = state && program ? { graph: this.store.ontologyForJob(claim.owner, claim.job), owner: claim.owner, request, state } : undefined;
-    const refs = [...(bounds?.refs ?? []), ...(programContext ? program?.contextRefs?.(programContext) ?? [] : [])];
+    const discoveryTypes = programContext && program?.callerManagedActions && job.delegation?.ontologyReadScope === 'owner'
+      ? managedDiscoveryTypes(programContext.graph.model, program.actionIds) : undefined;
+    // Bind only references actually delivered to this task. The bounded cache is
+    // a navigation aid; each decision reads their current values again. It does
+    // not authorize writes or claim that a discovery page was exhaustive.
+    const discovered = discoveryTypes ? [...new Map((job.delegation?.ontologyReads ?? []).filter(read => read.status === 'ok' && read.tool === 'query_ontology')
+      .flatMap(read => read.deliveredObjects ?? []).reverse().filter(object => discoveryTypes.includes(object.ref.type))
+      .map(object => [JSON.stringify(object.ref), object.ref])).values()].slice(0, 64).filter(ref => programContext!.graph.managedObject(claim.owner, ref)) : [];
+    const refs = [...(bounds?.refs ?? []), ...(programContext ? program?.contextRefs?.(programContext) ?? [] : []), ...discovered];
     const session = new OntologyPlanningSession(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, readOntologyRequest(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, request.id), candidates, () => {
       signal.throwIfAborted(); if (!this.store.claimActive(claim)) throw new DomainError('CONFLICT', 'Planning claim is no longer active');
       if (programContext) program?.assertContext?.(programContext);
@@ -277,6 +287,7 @@ export class Coordinator {
     }, bounds?.readScope ?? (job.delegation?.ontologyReadScope === 'owner' ? 'owner' : 'request'), refs, {
       priorReads: job.delegation?.ontologyReads,
       taskContext: { purpose: purpose === 'request_interpreted' ? 'grounding' : state ? 'agent' : 'planning', refs,
+        ...(discoveryTypes ? { managedDiscoveryTypes: discoveryTypes } : {}),
         ...(state && program ? { program: { ref: state.programRef, configurationDigest: state.programDigest, actionIds: state.managedActionIds ?? program.actionIds } } : {}) },
     });
     return { session, ...(purpose === 'request_interpreted' ? { groundingFeedback: job.delegation?.groundingFeedback?.filter(f => f.requestRevision === request.revision).slice(-3) } : {}), executionBudget: executionBudgetStatus(job), recovery: job.delegation?.recovery, maxTurns: Math.min(remainingModelTurns(job), program?.limits ? Math.max(0, agentLimits(program).modelTurns - (job.runs?.length ?? 0)) : Infinity), record: evidence => { if (!this.recordRun(claim, evidence, purpose)) throw new DomainError('CONFLICT', 'Reasoning turn arrived after cancellation or lease loss'); } };

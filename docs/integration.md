@@ -115,4 +115,10 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 
 `prepare_ontology_action`（HTTP `/ontology/v1/actions/prepare`）预览发布的数据动作或接口动作；`approve_ontology_action`（HTTP `/ontology/v1/actions/approve`）批准准确对象范围和过期时间。执行和完成由原 Worker／Intent 账本核对，不能把批准响应当作已完成。它们只处理受管对象数据；原订单、付款和来源凭据边界继续成立。接口字段、分页、版本及兼容限制见[动态定义说明](dynamic-ontology-implementation-2026-10-21.md)。
 
+PA 提交自然语言需求后，Worker 可在已授权的 `owner` 读取范围内发现当前锁定本体中、已发布声明式程序的受管输入类型；PA 无需提供供给对象 ID 或动作名。能力输入契约的 `actionIds` 枚举给出当前版本准确的可选动作，解释 Agent 可按 ID 检查定义；`read_task_context` 返回准确的可发现类型。发现排除请求绑定类型、执行账本、来源控制及派生字段；私有字段仍不可读取或筛选。实际读取回执中的引用形成至多 64 项的任务导航缓存，下轮重新读取当前值，已删除对象不继续进入缓存。共享受管对象只允许沿正向受管关系读取；不能借共享节点反向进入其他任务。分页游标同时绑定本体、身份、任务、请求版本、程序及数据版本。发现和缓存不产生写入许可。
+
+声明式 Action 可用 `implementation.resultFacts` 把实际结果对象的字段绑定到金额和数量验收。例如 `[{"kind":"budget","amountProperty":"rentalTotalMinor","currencyProperty":"currency"},{"kind":"quantity","amountProperty":"rentalDays","unit":"天"}]`；字段名由各自业务模型声明，可按既有金额／数量角色增加 `role`。绑定只读取本动作创建或更新的结果记录中可见、已存储的受管字段，不接受模型填写的验收值或付款／履约声明。数值必须为非负安全整数，币种符合既有金额契约。已声明的硬约束在写入前检查，完成时再从当前持久记录回读核验；多个结果的同一计量有冲突时拒绝完成。未声明的验收事实保持未知，不删除原预算或数量约束。记录中的报价不代表扣款或真实租赁。
+
+真实 PA 的租相机内部申请验证见[验收证据](evidence/camera-rental-pa-2026-10-21/README.md)：后端自主发现、准确授权、持久变更及独立回读共 28 项通过；使用合成供给，申请仍待用户确认。
+
 普通 Agent 自动接入仍仅默认请求原有任务权限；建模权限须另行授予。默认 Auth0 资源配置不登记 `ontology:admin`，管理员授权由可信发行者的独立操作人策略负责。此仓库更新不会自动改变线上认证配置。

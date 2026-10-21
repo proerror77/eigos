@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DomainError } from '../core/domain.js';
 import type { ActionDefinition, OntologyModel } from './model.js';
+import { amountRoles, quantityRoles } from './execution.js';
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 export type ActionValue = { literal: JsonValue } | { parameter: string; path?: string[] } | { property: string; object: ActionObjectRef };
@@ -11,7 +12,10 @@ export type ActionMutation =
   | { op: 'update'; object: ActionObjectRef; expectedRevision: ActionValue; properties: Record<string, ActionValue> }
   | { op: 'tombstone'; object: ActionObjectRef; expectedRevision: ActionValue }
   | { op: 'add_link' | 'remove_link'; type: string; from: ActionObjectRef; to: ActionObjectRef };
-export interface DeclarativeActionImplementation { kind: 'declarative'; version: '1'; conditions: ActionCondition[]; mutations: ActionMutation[]; result?: ActionObjectRef }
+export type ManagedResultFact =
+  | { kind: 'budget'; amountProperty: string; currencyProperty: string; role?: typeof amountRoles[number] }
+  | { kind: 'quantity'; amountProperty: string; unit: string; role?: typeof quantityRoles[number] };
+export interface DeclarativeActionImplementation { kind: 'declarative'; version: '1'; conditions: ActionCondition[]; mutations: ActionMutation[]; result?: ActionObjectRef; resultFacts?: ManagedResultFact[] }
 export interface TrustedActionImplementation { kind: 'trusted'; handlerRef: { id: string; version: string; digest: string } }
 export type ActionImplementation = DeclarativeActionImplementation | TrustedActionImplementation;
 
@@ -40,6 +44,10 @@ export const actionMutationSchema: z.ZodType<ActionMutation> = z.union([
 export const declarativeActionImplementationSchema: z.ZodType<DeclarativeActionImplementation> = z.strictObject({
   kind: z.literal('declarative'), version: z.literal('1'), conditions: z.array(actionConditionSchema).max(32),
   mutations: z.array(actionMutationSchema).min(1).max(64), result: actionObjectRefSchema.optional(),
+  resultFacts: z.array(z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('budget'), amountProperty: name, currencyProperty: name, role: z.enum(amountRoles).optional() }),
+    z.strictObject({ kind: z.literal('quantity'), amountProperty: name, unit: z.string().min(1).max(80), role: z.enum(quantityRoles).optional() }),
+  ])).min(1).max(16).optional(),
 });
 export const actionImplementationSchema: z.ZodType<ActionImplementation> = z.union([
   declarativeActionImplementationSchema,
@@ -137,4 +145,16 @@ export function validateActionImplementation(implementation: ActionImplementatio
   const firstObject = implementation.mutations.find(mutation => mutation.op === 'create' || mutation.op === 'update');
   const result = implementation.result ? types(implementation.result) : firstObject?.op === 'create' ? [firstObject.type] : firstObject?.op === 'update' ? types(firstObject.object) : [];
   if (result.some(type => !(action.resultTypes ?? []).some(target => model.implements(type, target)))) fail('Action result must match its declared result types');
+  if (implementation.resultFacts) {
+    if (!result.length) fail('Result facts require a managed result object');
+    const slots = implementation.resultFacts.map(fact => `${fact.kind}:${fact.role ?? ''}`);
+    if (new Set(slots).size !== slots.length) fail('Result facts must have unique kind and role bindings');
+    for (const type of result) for (const fact of implementation.resultFacts) {
+      managed([type]);
+      for (const [field, kind] of [[fact.amountProperty, 'integer'], ...(fact.kind === 'budget' ? [[fact.currencyProperty, 'string']] : [])]) {
+        const property = model.properties(type)[field!];
+        if (!property || property.kind !== kind || property.restricted || property.derived || model.propertyAuthority(type, field!) !== 'managed') fail('Result facts require visible stored managed amount and currency properties');
+      }
+    }
+  }
 }

@@ -6,7 +6,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。业务�
 
 ## 当前能力
 
-- 四类动态定义：Object Type、Link Type、Interface、Action Type 支持持久草稿、校验、不可变发布及原子激活；新任务锁定发布版本。声明式受管数据动作复用现有授权与 Worker，配 HTTP/MCP 管理入口和基础审查页面。见[动态定义实现与边界](docs/dynamic-ontology-implementation-2026-10-21.md)。
+- 四类动态定义：Object Type、Link Type、Interface、Action Type 支持持久草稿、校验、不可变发布及原子激活；新任务锁定发布版本。声明式受管数据动作复用现有授权与 Worker；后端在受限范围发现输入并绑定任务上下文，以声明的结果字段核验金额和数量。配 HTTP/MCP 管理入口和基础审查页面。见[动态定义实现与边界](docs/dynamic-ontology-implementation-2026-10-21.md)及[受管任务接入](docs/integration.md#动态本体定义与受管数据动作)。
 
 - `eigos.delegate` 是统一业务入口。模型根据实际注册的本体选择能力，不要求 PA 知道内部能力 ID 或提供者地址 ID。
 - `delivery.quote@3`：Agent 读取本体，选择本人地址簿、已选地址详情和费用预估动作；每个动作只调用一个官方只读接口。缺少信息在同一任务补充，会员各用自己的授权。[实现与验证边界](docs/paotui-agent-actions-2026-10-19.md)。只查价，不下单、不付款。

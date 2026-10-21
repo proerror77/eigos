@@ -399,13 +399,13 @@ export class OntologyObjectStore {
     }
     return { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
   }
-  query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }): OntologyQueryResult {
+  query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }, readScope?: string): OntologyQueryResult {
     const args = objectQuerySchema.parse(input);
     this.assertReaderOwner(owner);
     const networkQuery = 'object' in args ? isVirtualRef(args.object) : 'type' in args ? isVirtualRef({ type: args.type })
       : isVirtualRef(args.from) || networkLinkIds.has(this.model.navigation(args.from.type, args.link).link.id);
     if (networkQuery) return this.overlay(owner).query(args, budget);
-    const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined });
+    const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined, ...(readScope ? { readScope } : {}) });
     let last: ObjectRef | undefined;
     if (args.cursor) {
       let cursor: z.infer<typeof cursorSchema>;

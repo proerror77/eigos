@@ -12,6 +12,7 @@ import { serviceDomains } from '../ontology/service-domains.js';
 import { businessConditionSchema } from '../ontology/business-model.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
+import { isSharedManagedType } from '../ontology/managed-discovery.js';
 import { assertTaskContextCurrent, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES, readTaskContext, readTaskInstructions, taskContextSchema, taskInstructionsSchema, taskObjectMembership, type TaskContextBinding, type TaskContextRead } from './task-context.js';
 
 const describeSchema = z.object({ kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
@@ -121,6 +122,16 @@ export class OntologyPlanningSession {
     if (allowBoundQuery && (this.boundRefs.some(bound => key(bound) === key(ref)) || this.knownRefs.has(key(ref)))) return;
     if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
   }
+  private managedDiscovery() {
+    return this.options.taskContext?.managedDiscoveryTypes && this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')
+      ? this.options.taskContext.managedDiscoveryTypes : undefined;
+  }
+  private managedRelationship(from: ObjectRef, link: string): boolean {
+    if (!this.managedDiscovery() || !isSharedManagedType(this.graph.model, from.type)) return false;
+    const navigation = this.graph.model.navigation(from.type, link);
+    return navigation.direction === 'forward' && this.graph.model.linkWritePolicy(navigation.link.id) === 'managed'
+      && this.graph.model.concreteTypes(navigation.other.type).every(type => isSharedManagedType(this.graph.model, type));
+  }
   call(tool: string, input: unknown): unknown {
     this.active();
     if (this.reads.length >= MAX_PLANNING_READS) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
@@ -157,7 +168,7 @@ export class OntologyPlanningSession {
           };
           return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}),
             ...(inputSchema ? { inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), inputSchemaAvailable: true } : {}),
-            ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
+            ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
         });
         output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
           const value = type as { properties: Record<string, Record<string, unknown>> };
@@ -166,18 +177,28 @@ export class OntologyPlanningSession {
       }
       else if (tool === 'query_ontology') {
         let query = objectQuerySchema.parse(input);
+        let discovery = false;
         if (this.readScope === 'request') {
           if ('type' in query) {
-            if (query.type !== 'ServiceRequest') throw new DomainError('FORBIDDEN', 'This delegation lacks tasks:read for owner-wide object search');
-            const { type: _type, ...fields } = query;
-            query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
+            if (query.type === 'ServiceRequest') {
+              const { type: _type, ...fields } = query;
+              query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
+            } else {
+              const allowed = this.managedDiscovery(), types = this.graph.model.concreteTypes(query.type);
+              if (!allowed || !types.length || types.some(type => !allowed.includes(type) || !isSharedManagedType(this.graph.model, type))) throw new DomainError('FORBIDDEN', 'This task permits only bound objects and its host-authorized managed discovery types');
+              discovery = true;
+            }
           } else if ('object' in query) {
             this.retrieved(query.object, true);
             if (taskObjectMembership(this.graph, this.owner, this.request, query.object) === 'foreign') throw new DomainError('FORBIDDEN', 'Object belongs to another request or revision');
-          } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') throw new DomainError('FORBIDDEN', 'Relationships may be followed only from current task-owned objects');
+          } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') {
+            if (!this.managedRelationship(query.from, query.link)) throw new DomainError('FORBIDDEN', 'Relationships require a current task object or an authorized forward managed link');
+            discovery = true;
+          }
         }
         if ('from' in query) this.retrieved(query.from);
-        const result = this.graph.query(this.owner, query);
+        const queryScope = discovery ? digest({ requestId: this.request.id, requestRevision: this.request.revision, binding: this.options.taskContext?.program, types: this.managedDiscovery() }) : undefined;
+        const result = this.graph.query(this.owner, query, undefined, queryScope);
         for (const object of result.items) {
           if (this.readScope === 'request' && taskObjectMembership(this.graph, this.owner, this.request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship points outside the current task revision');
           this.remember(object.ref, object.revision, true);

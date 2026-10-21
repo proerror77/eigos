@@ -1,0 +1,32 @@
+[
+  {
+    "id": "RequestBodyOffer",
+    "resultFacts": [
+      {
+        "kind": "budget",
+        "amountProperty": "rentalTotalMinor",
+        "currencyProperty": "currency"
+      },
+      {
+        "kind": "quantity",
+        "amountProperty": "rentalDays",
+        "unit": "天"
+      }
+    ]
+  },
+  {
+    "id": "RequestKitOffer",
+    "resultFacts": [
+      {
+        "kind": "budget",
+        "amountProperty": "rentalTotalMinor",
+        "currencyProperty": "currency"
+      },
+      {
+        "kind": "quantity",
+        "amountProperty": "rentalDays",
+        "unit": "天"
+      }
+    ]
+  }
+]

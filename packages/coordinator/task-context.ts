@@ -8,6 +8,7 @@ import { readCapabilityCatalog, readPreparedCapability, readPreparedResolution, 
 import { actionProperties, readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import type { PlanningContextReceipt, PlanningDefinitionReceipt, PlanningReadReceipt } from '../ontology/planning-contract.js';
+import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
 
 export const taskContextSchema = z.strictObject({
   definitionReceiptId: z.string().min(1).max(200).optional().describe('Reuse a previously returned definition bundle only when its current model and binding still match'),
@@ -26,6 +27,8 @@ export interface TaskContextBinding {
   /** An authority boundary to verify against the graph, never an injected business state. */
   program?: { ref: Ref; configurationDigest: string; actionIds: readonly string[] };
   refs?: readonly ObjectRef[];
+  /** Host-authorized, owner-readable inputs of a pinned managed program. */
+  managedDiscoveryTypes?: readonly string[];
 }
 export interface TaskContextPayload {
   version: '1';
@@ -37,6 +40,7 @@ export interface TaskContextPayload {
   resolution?: PreparedResolution;
   capability?: PreparedCapability;
   graph: { objects: ObjectView[]; links: LinkWrite[]; unreadRefs: ObjectRef[]; pendingRelationships: { from: ObjectRef; link: string; cursor?: string }[] };
+  managedDiscovery?: { types: string[]; relationships: 'forward_managed_only' };
   definitions: { digest: string; originalReceiptId: string; reused: boolean; bundle: Record<string, unknown> };
 }
 export interface TaskContextRead {
@@ -150,8 +154,9 @@ function safeDefinition(type: object, relevantTypes: Set<string>): object {
 
 /** Return a compact, exact subset of the registered model. Action input schemas
  * remain complete; unrelated action definitions are not repeatedly transported. */
-function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], actions: ActionDefinition[]): Record<string, unknown> {
+function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], actions: ActionDefinition[], discoveryTypes: readonly string[] = []): Record<string, unknown> {
   const names = new Set(objects.map(object => object.ref.type));
+  discoveryTypes.forEach(type => names.add(type));
   names.add('ServiceRequest'); names.add('SourceReceipt');
   for (const action of actions) {
     Object.values(action.inputs).forEach(type => names.add(type));
@@ -169,7 +174,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
   return { model: graph.model.ref, types, actions: actions.map(action => {
     const { implementation, ...contract } = action;
     return { ...contract, execution: 'definition_only', ...(implementation ? { implementationSummary: implementation.kind === 'declarative'
-      ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length }
+      ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) }
       : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
   }), functions };
 }
@@ -208,6 +213,10 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       const p = object.properties;
       return Object.entries(actionProperties(action)).every(([name, value]) => same(p[name], value));
     })) return conflict('The active action definition is missing or changed in its Ontology binding');
+  }
+  if (binding.managedDiscoveryTypes) {
+    const allowed = managedDiscoveryTypes(graph.model, graph.model.actionDefinitions().map(action => action.id));
+    if (!binding.program || binding.purpose !== 'agent' || binding.managedDiscoveryTypes.some(type => !allowed.includes(type))) return conflict('Managed discovery differs from the current published program');
   }
   const capabilities = readCapabilityCatalog(graph, owner, requestId);
   const resolution = readPreparedResolution(graph, owner, requestId);
@@ -317,10 +326,11 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     }
   }
   const execution = executionView ? (({ objects: _objects, links: _links, ...view }) => view)(executionView) : undefined;
-  const bindingDigest = digest({ purpose: binding.purpose, program: binding.program ? { ref: binding.program.ref, configurationDigest: binding.program.configurationDigest, actionIds: [...binding.program.actionIds].sort() } : undefined });
+  const bindingDigest = digest({ purpose: binding.purpose, program: binding.program ? { ref: binding.program.ref, configurationDigest: binding.program.configurationDigest, actionIds: [...binding.program.actionIds].sort() } : undefined,
+    ...(binding.managedDiscoveryTypes ? { managedDiscoveryTypes: [...binding.managedDiscoveryTypes].sort() } : {}) });
   const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(execution ?? null),
     instructionCount: instructionProjection.rows.length, instructionRefsDigest: instructionCoverageDigest(instructionProjection.rows.map(row => row.ref)), requireCompleteInstructions: binding.purpose === 'grounding' };
-  const bundle = definitionBundle(graph, [...objects.values()], actions);
+  const bundle = definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes);
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
   const definitions: PlanningDefinitionReceipt = reused ?? { modelDigest: graph.model.ref.digest, bindingDigest, payloadDigest: digest(bundle), originalReceiptId: receiptId, payload: bundle };
   const modelRequest: TaskRequestView = { ...request, messages: [...initial.selected].sort((a, b) => a - b).map(index => request.messages[index]!), messageView: initial.selected.size === request.messages.length ? 'complete' : 'partial' };
@@ -330,6 +340,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       ...(initial.missing >= 0 ? { nextCursor: instructionCursor(graph, owner, request, initial.missing - 1) } : {}),
       ...(initial.goalSource ? { originalGoalSource: { ref: initial.goalSource.ref, messageId: String(initial.goalSource.properties.messageId), content: 'request.originalGoal' as const } } : {}) },
     ...(execution ? { execution } : {}), capabilities, ...(resolution ? { resolution } : {}), ...(capability ? { capability } : {}),
+    ...(binding.managedDiscoveryTypes ? { managedDiscovery: { types: [...binding.managedDiscoveryTypes], relationships: 'forward_managed_only' as const } } : {}),
     graph: { objects: [...objects.values()], links: [...links.values()].filter(edge => objects.has(refKey(edge.from)) && objects.has(refKey(edge.to))), unreadRefs: [...unread.values()], pendingRelationships },
     definitions: { digest: definitions.payloadDigest, originalReceiptId: definitions.originalReceiptId, reused: !!reused, bundle: structuredClone(definitions.payload) } };
   if (Buffer.byteLength(JSON.stringify(data)) > 180000) return conflict('Task context byte bound exceeded; narrow the active execution context');

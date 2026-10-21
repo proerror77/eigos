@@ -6,6 +6,8 @@ import type { ObjectWriteScope } from './actions.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 import type { LinkWrite, ManagedObjectBatch, ObjectSource, OntologyObjectStore } from './object-store.js';
 import { assertActionDataBounds, declarativeActionImplementationSchema, validateActionImplementation, type ActionObjectRef, type ActionValue } from './action-dsl.js';
+import { readManagedResultFacts } from './managed-result-facts.js';
+import type { CandidateFacts } from './execution.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -24,7 +26,7 @@ export interface ManagedLinkChange { operation: 'add' | 'remove'; link: LinkWrit
 export interface ManagedActionPreview {
   version: '1'; ontologyRelease: OntologyReleaseRef; modelDigest: string; actionId: string; actionDigest: string; inputDigest: string;
   reads: ManagedActionRead[]; objects: ManagedObjectChange[]; links: ManagedLinkChange[]; batch: ManagedObjectBatch;
-  result?: ObjectRef; digest: string; scope: ObjectWriteScope;
+  result?: ObjectRef; resultFacts?: CandidateFacts; digest: string; scope: ObjectWriteScope;
 }
 
 /** Resolve an interface capability using the actual owned concrete target. */
@@ -149,7 +151,10 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
     if (!batch.creates!.some(ref => key(ref) === key(result))) read(result);
   }
   graph.previewManaged(owner, batch, previewSource);
-  const body = { version: '1' as const, ontologyRelease: structuredClone(graph.releaseRef!), modelDigest: graph.model.ref.digest, actionId, actionDigest: digest(action), inputDigest: digest(input), reads: [...reads.values()].sort((a, b) => key(a.ref).localeCompare(key(b.ref))), objects, links, batch, ...(result ? { result } : {}) };
+  const resultChange = result && objects.find(change => key(change.ref) === key(result) && change.operation !== 'tombstone');
+  if (implementation.resultFacts && !resultChange?.after) fail('Result facts must bind an object changed by this action');
+  const resultFacts = implementation.resultFacts ? readManagedResultFacts(resultChange!.after!, implementation.resultFacts) : undefined;
+  const body = { version: '1' as const, ontologyRelease: structuredClone(graph.releaseRef!), modelDigest: graph.model.ref.digest, actionId, actionDigest: digest(action), inputDigest: digest(input), reads: [...reads.values()].sort((a, b) => key(a.ref).localeCompare(key(b.ref))), objects, links, batch, ...(result ? { result } : {}), ...(resultFacts ? { resultFacts } : {}) };
   const previewDigest = digest(body);
   const targets: ObjectWriteScope['targets'] = objects.map(change => ({ ref: change.ref, revision: change.expectedRevision, fields: change.fields, operation: change.operation }));
   for (const link of links) for (const ref of [link.link.from, link.link.to]) if (!targets.some(item => key(item.ref) === key(ref))) targets.push({ ref, revision: reads.get(key(ref))?.revision ?? null, fields: [], operation: 'link' });
