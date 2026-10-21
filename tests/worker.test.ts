@@ -79,6 +79,12 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   const token = 'process-test-token-'.repeat(3);
   const config = readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, DATABASE_PATH: path, EIGOS_EXECUTOR: 'codex', EIGOS_CODEX_BIN: '/must-not-run-in-gateway' });
   let gateway = createApp(config);
+  let gatewayClosed = false;
+  const closeGateway = async () => {
+    if (gatewayClosed) return;
+    gatewayClosed = true;
+    await gateway.close();
+  };
   let server = gateway.app.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert(address && typeof address !== 'string'); const base = `http://127.0.0.1:${address.port}`;
   let client = new Client({ name: 'process-test', version: '1' });
@@ -113,8 +119,8 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     const input = { service: 'eigos.delegate', goal: 'document', requestId: 'queued' };
     const submitted = await call('submit_task', input);
     await pause(100); assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted'); // Gateway never executes.
-    await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close(); await pause(75);
-    gateway = createApp(config); server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
+    await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await closeGateway(); await pause(75);
+    gateway = createApp(config); gatewayClosed = false; server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
     client = new Client({ name: 'process-test-restart', version: '1' }); await connect();
     assert.equal((await call('get_task', { taskId: submitted.id })).state, 'submitted');
     await Promise.all([launch(), launch()]);
@@ -136,8 +142,8 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     await until(() => events, value => value.some(e => e.event === 'started' && e.taskId === slow.id));
     assert.throws(() => gateway.tasks.get({ ...principal, subject: 'other' }, slow.id), /not found/);
     // Restarting only Gateway must preserve a live Worker's claim.
-    await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close(); await pause(75);
-    gateway = createApp(config); server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
+    await client.close(); await new Promise<void>(resolve => server.close(() => resolve())); await closeGateway(); await pause(75);
+    gateway = createApp(config); gatewayClosed = false; server = gateway.app.listen(address.port, '127.0.0.1'); await once(server, 'listening');
     client = new Client({ name: 'process-test-cancel', version: '1' }); await connect();
     assert.equal((await call('get_task', { taskId: slow.id })).state, 'working');
     await call('cancel_task', { taskId: slow.id });
@@ -157,7 +163,7 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
 
   } finally {
     await client.close(); await Promise.all(children.map(stop));
-    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close();
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await closeGateway();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from '../core/domain.js';
+import { assertBusinessTransaction, businessTransaction } from '../core/transaction.js';
 import { digest } from '../core/delegation.js';
 import type { OntologyModel } from './model.js';
 import { migrateBusinessChain } from './business-chain-migration.js';
@@ -29,6 +30,18 @@ export const INTEGRATION_PREDECESSORS: Readonly<Record<string, readonly string[]
 };
 
 export function migrateIntegratedOntology(db: DatabaseSync, previousBusinessChain: OntologyModel, current: OntologyModel): void {
+  let owned = false;
+  try { assertBusinessTransaction(db); owned = true; }
+  catch (error) { if (!(error instanceof DomainError && error.code === 'CONFLICT')) throw error; }
+  const migrate = () => migrateInSavepoint(db, previousBusinessChain, current);
+  // A standalone SAVEPOINT starts a deferred transaction. A competing Worker
+  // can then commit after our first read, making its later writer upgrade fail
+  // immediately even with busy_timeout. Reserve the writer before reading.
+  // An existing shared transaction keeps its own commit/rollback authority.
+  if (owned) migrate(); else businessTransaction(db, migrate);
+}
+
+function migrateInSavepoint(db: DatabaseSync, previousBusinessChain: OntologyModel, current: OntologyModel): void {
   db.exec('SAVEPOINT integrated_ontology_migration');
   try {
     migrateArchitectureOntology(db, current, {

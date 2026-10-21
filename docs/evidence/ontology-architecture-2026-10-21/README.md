@@ -10,6 +10,7 @@
 - `schema-audit.json`：六类服务参数、共享 Data Schema、类型变化与冻结迁移覆盖；类型数量不作为业务完成指标。
 - `metadata-performance-check.json`、`aborted-load-run.json`：静态元数据耗时诊断、单次前后对照和未计为通过的中止运行。
 - `verification-local.json`：源码摘要、完整本地检查的两个失败、修复后定向回归、Worker 独立复查及 9/9 E2E；远端完整门禁必须以同一提交的 GitHub Checks 为准。
+- `ci-migration-repair.json`：首轮 CI 的 835/836、确定性迁移竞争复现、事务边界修复与重新验证；原失败不计作通过。
 
 完整原始查询日志保留在本地忽略目录，文件摘要和字节数写入基线审计。宿主访问令牌、成员凭据和原始源快照不进入证据目录。结果解释见 [架构验证记录](../../ontology-architecture-completion-2026-10-21.md)。
 
