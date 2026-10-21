@@ -11,6 +11,7 @@ import type { NetworkQueryResult } from './service.js';
 import { NetworkStore } from './store.js';
 import { conversionSchema, selectionSchema, type ConversionInput, type SelectionInput, type Inquiry, type InquiryChoice, type InquirySource, type QuoteSelection } from './inquiry-contracts.js';
 import { validateInquirySource } from './inquiry-source.js';
+import { assertCandidateSelectionPolicy } from './candidate-policy.js';
 
 export class InquiryBridge {
   constructor(private store: NetworkStore, private jobs: JobStore, private tasks: TaskService, private catalog: ExecutionCatalog,
@@ -51,12 +52,14 @@ export class InquiryBridge {
     }
     return { source, preview: { needTitle: postView.content?.kind === 'need' ? postView.content.body.title : '', listingTitle: listingView.content.body.title, buyerGoal, request: input.request, ...(taskMaterial ? { existingPrivateRequest: taskMaterial } : {}) }, materialDigest: digest({ input, source, taskMaterial }), provenance: {
       postPublicationId: post.currentPublicationId, postContentRevision: post.contentRevision, listingPublicationId: input.listing.publicationId,
-      ...(input.message ? { messagePublicationId: input.message.publicationId } : {}),
+      postPublicationRevision: postView.ref!.revision, listingPublicationRevision: input.listing.revision,
+      ...(input.message ? { messagePublicationId: input.message.publicationId, messagePublicationRevision: input.message.revision } : {}),
     } };
   }
   private material(choice: Pick<InquiryChoice, 'kind' | 'input' | 'owner' | 'memberId' | 'profileId'>) {
     if (choice.kind === 'convert') return this.conversion(choice, conversionSchema.parse(choice.input));
     const input = selectionSchema.parse(choice.input), inquiry = this.store.get('inquiry', input.inquiryId, choice.owner);
+    assertCandidateSelectionPolicy(this.catalog, inquiry.source.capabilityRef, input.quote.type);
     try { validateInquirySource(this.store, this.catalog, choice.owner, inquiry.source); } catch { return fail('SOURCE_NOT_AVAILABLE'); }
     const material = quoteSelectionMaterial(this.jobs, inquiry, input);
     return { materialDigest: material.snapshotDigest, material, inquiry, preview: { taskId: inquiry.taskId, quote: input.quote, selectionKind: input.selectionKind, terms: material.snapshot.quoteTerms, checks: material.snapshot.checks, conditions: material.snapshot.conditions, evidenceLevels: material.snapshot.evidenceLevels } };
@@ -92,7 +95,7 @@ export class InquiryBridge {
     c.status = 'revoked'; c.revision++; this.store.put('choice', c); this.store.event('inquiry_choice_revoked', c.id);
     return [{ kind: 'choice', id }];
   }
-  apply(p: Principal, a: NetworkActor, id: string, kind: InquiryChoice['kind']): ResultRef[] {
+  apply(p: Principal, a: NetworkActor, id: string, kind: InquiryChoice['kind'], networkReadAdmitted = false): ResultRef[] {
     this.jobs.assertTransaction(); const c = this.store.get('choice', id, a.owner);
     if (c.kind !== kind || c.profileId !== a.profileId || c.bindingId !== a.bindingId || c.bindingRevision !== a.bindingRevision) fail('ACTOR_NOT_BOUND', 403);
     if (c.status === 'consumed') return [{ kind: kind === 'convert' ? 'inquiry' : 'selection', id: c.resultId! }];
@@ -104,6 +107,7 @@ export class InquiryBridge {
         if (previous.selectionDigest !== c.materialDigest) fail('INQUIRY_ALREADY_EXISTS');
         result = { kind: 'inquiry', id: previous.id };
       } else {
+        if (!networkReadAdmitted || !p.scopes.includes('network:read')) fail('SCOPE_REQUIRED', 403);
         const checked = this.conversion(a, input); if (checked.materialDigest !== c.materialDigest) fail('REVIEW_STALE');
         this.store.quota('inquiry', a.owner); const inquiryId = randomUUID();
         const job = input.request.kind === 'create' ? this.tasks.submitInTransaction(p, { service: 'eigos.delegate', goal: input.request.buyerGoal, requirements: input.request.requirements,
@@ -111,6 +115,10 @@ export class InquiryBridge {
         if (input.request.kind === 'attach') { job.revision = (job.revision ?? 0) + 1; job.delegation!.request.revision++; job.updatedAt = new Date(this.store.now()).toISOString(); this.jobs.save(a.owner, job); }
         const inquiry: Inquiry = { id: inquiryId, owner: a.owner, profileId: a.profileId, postId: input.postId, taskId: job.id, selectionDigest: c.materialDigest, inputDigest: digest(input),
           source: { ...checked.source, inquiryId }, provenance: checked.provenance, selectedAtRequestRevision: job.delegation!.request.revision, createdAt: new Date(this.store.now()).toISOString() };
+        inquiry.readAdmission = { version: 1, scope: 'network:read', owner: a.owner, taskId: job.id, inquiryId,
+          memberId: a.memberId, installationId: a.installationId, clientId: a.clientId, profileId: a.profileId,
+          bindingId: a.bindingId, bindingRevision: a.bindingRevision, choiceId: c.id, issuedAt: inquiry.createdAt,
+          expiresAt: new Date(this.store.now() + 86400000).toISOString() };
         this.jobs.bindInquiryContext(a.owner, job.id, inquiry.source); this.store.put('inquiry', inquiry); this.store.event('inquiry_linked', inquiry.id);
         result = { kind: 'inquiry', id: inquiry.id };
       }
@@ -137,6 +145,7 @@ export class InquiryBridge {
     const s = this.store.get('selection', id, owner); let current = false;
     try {
       const inquiry = this.store.get('inquiry', s.inquiryId, owner); validateInquirySource(this.store, this.catalog, owner, inquiry.source);
+      assertCandidateSelectionPolicy(this.catalog, inquiry.source.capabilityRef, s.quoteRef.type);
       current = quoteSelectionMaterial(this.jobs, inquiry, { inquiryId: inquiry.id, expectedRequestRevision: s.requestRevision, quote: { ...s.quoteRef, revision: s.quoteRevision }, selectionKind: s.kind }).snapshotDigest === s.snapshotDigest;
     } catch { /* Historical decision remains private; it never grants ongoing authority. */ }
     return { id, inquiryId: s.inquiryId, quoteRef: s.quoteRef, quoteRevision: s.quoteRevision, kind: s.kind, proposalId: s.proposalId, current,

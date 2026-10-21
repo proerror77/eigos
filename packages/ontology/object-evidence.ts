@@ -9,6 +9,7 @@ export function sourceProof(store: OntologyObjectStore, owner: string, ref: Obje
   const scopes: Record<string, string> = { CheckoutSession: 'checkout_session', DeliveryQuote: 'delivery_quote', ProductOffer: 'goods_offer', FulfillmentOffer: 'goods_offer', ReservationOffer: 'reservation', ReservationSlot: 'reservation', Order: 'order', Shipment: 'delivery', DeliveryEvent: 'delivery', DeliveryAllocation: 'delivery', Reservation: 'reservation', Payment: 'payment', Refund: 'refund', ...domainEvidenceScopes };
   const linksDigest = store.relationshipDigest(owner, ref, budget);
   scopes.PaotuiObservation = 'delivery_quote';
+  scopes.EntityIdentityAssertion = 'identity_mapping'; scopes.TransactionPartyRole = 'party_role';
   scopes.BookingOffers = 'reservation'; scopes.BookingObservation = 'reservation'; scopes.BookingPaymentObservation = 'payment';
   scopes.StripePaymentObservation = 'payment';
   scopes.CatalogRead = 'goods_offer';

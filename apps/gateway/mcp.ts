@@ -36,16 +36,16 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict(), annotations: read,
+    inputSchema: z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
   }, args => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',
     inputSchema: objectQuerySchema, annotations: read,
-  }, args => result(() => tasks.queryOntology(principal, args)));
+  }, args => result(() => tasks.queryOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('evaluate_ontology', {
     description: 'Run a registered, bounded, read-only business calculation. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
     inputSchema: functionCallSchema, annotations: read,
-  }, args => result(() => tasks.evaluateOntology(principal, args)));
+  }, args => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('list_services', {
     description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',
     inputSchema: z.object({}), annotations: read,

@@ -1,10 +1,10 @@
-import { digest } from '../core/delegation.js';
+import { digest, validPlanDigest } from '../core/delegation.js';
 import { bindingDigest as providerBindingDigest } from '../core/catalog.js';
 import { DomainError, type Job } from '../core/domain.js';
 import type { AgentActionPlan, AgentExecutionState } from './agent-actions.js';
 import type { ActionIntent, ActionResult, ExecutionAttempt } from './actions.js';
-import { BACKEND_VERSION, requirementSchema, type ActionType, type ConfirmedInputs, type ExecutionPlan, type ProviderBinding, type Ref, type ServiceRequest } from './execution.js';
-import { executionProviderContractSchema, executionReferenceLink, executionSubmissionSchema, type ExecutionReferenceKind } from './execution-model.js';
+import { BACKEND_VERSION, FIXED_CANDIDATE_CONTEXT_PARAMETER, requirementSchema, type ActionType, type ConfirmedInputs, type ExecutionPlan, type FixedCandidateBinding, type ProviderBinding, type Ref, type ServiceRequest } from './execution.js';
+import { executionProviderContractSchema, executionReferenceLink, executionSubmissionSchema, fixedCandidateBindingSchema, type ExecutionReferenceKind } from './execution-model.js';
 import { readPreparedCapability, readPreparedResolution } from './capability-catalog.js';
 import { objectRefSchema, type ActionDefinition, type ObjectRef } from './model.js';
 import { linkSnapshotDigest, type LinkWrite, type ObjectSource, type ObjectView, type OntologyObjectStore } from './object-store.js';
@@ -197,6 +197,7 @@ interface StepShape {
   id: string; action: string; definitionDigest?: string; input: Record<string, unknown>;
   inputRefs: { stepId: string; targetKey: string; path?: string }[]; dependsOn: string[]; intentId?: string; effect: string;
   binding?: ObjectRef; contract?: { ref: ObjectRef; properties: Record<string, unknown> };
+  candidateBinding?: FixedCandidateBinding;
 }
 interface PlanShape {
   id: string; digest: string; requestId: string; requestRevision: number; kind: 'agent' | 'fixed'; sequence: number;
@@ -214,7 +215,10 @@ function inputValues(step: StepShape) {
     return { parameter, sourceKind: parsed.success ? 'object' : 'literal', valueDigest: digest(value),
       valueType: parsed.success ? parsed.data.type : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value, ...(parsed.success ? { object: parsed.data } : {}) };
   }), ...step.inputRefs.map(input => ({ parameter: input.targetKey, sourceKind: 'step_output', valueDigest: digest(input), valueType: 'output_reference',
-    sourceStepId: input.stepId, ...(input.path ? { sourcePath: input.path } : {}) }))].sort((a, b) => a.parameter.localeCompare(b.parameter));
+    sourceStepId: input.stepId, ...(input.path ? { sourcePath: input.path } : {}) })),
+  ...(step.candidateBinding ? [{ parameter: FIXED_CANDIDATE_CONTEXT_PARAMETER, sourceKind: 'candidate_context', valueDigest: digest(step.candidateBinding), valueType: step.candidateBinding.subject.ref.type,
+    object: step.candidateBinding.subject.ref, candidateId: step.candidateBinding.candidateId, requestRevision: step.candidateBinding.requestRevision,
+    objectRevision: step.candidateBinding.subject.revision, objectPropertiesDigest: step.candidateBinding.subject.propertiesDigest, objectLinksDigest: step.candidateBinding.subject.linksDigest }] : [])].sort((a, b) => a.parameter.localeCompare(b.parameter));
 }
 function planStructure(plan: PlanShape) {
   return { planId: plan.id, planDigest: plan.digest, requestId: plan.requestId, requestRevision: plan.requestRevision, kind: plan.kind,
@@ -278,7 +282,41 @@ export function fixedBindingRef(plan: ExecutionPlan, ref: Ref): ObjectRef | unde
   return pinned ? node('ActionBinding', { requestId: plan.requestId, requestRevision: plan.requestRevision, planDigest: plan.digest, bindingRef: ref, bindingDigest: pinned.digest }) : undefined;
 }
 interface FixedGraphShape { shape: PlanShape; bindings: { ref: ObjectRef; properties: Record<string, unknown>; contracts: NonNullable<StepShape['contract']>[] }[] }
-function fixedGraphShape(graph: OntologyObjectStore, owner: string, plan: ExecutionPlan, sequence: number, createdAt: string, state: string): FixedGraphShape {
+function fixedCandidateContext(graph: OntologyObjectStore, owner: string, plan: ExecutionPlan, fresh: boolean): FixedCandidateBinding | undefined {
+  if (plan.candidateBinding === undefined) return;
+  const parsed = fixedCandidateBindingSchema.safeParse(plan.candidateBinding);
+  if (!parsed.success) return fail('Fixed candidate context does not match the sealed schema');
+  if (!validPlanDigest(plan)) fail('Fixed candidate context is not sealed by this plan');
+  const binding = parsed.data, selected = plan.ontologyPlanning.objects.filter(object => same(object.ref, binding.subject.ref));
+  if (binding.requestId !== plan.requestId || binding.requestRevision !== plan.requestRevision || binding.candidateId !== plan.candidateId || selected.length !== 1 || !same(selected[0], binding.subject)) fail('Fixed candidate context differs from the sealed request or object snapshot');
+  if (plan.steps.some(step => Object.hasOwn(step.input, FIXED_CANDIDATE_CONTEXT_PARAMETER) || step.inputRefs.some(input => input.targetKey === FIXED_CANDIDATE_CONTEXT_PARAMETER))) fail('Candidate context is not a provider payload parameter');
+  const candidates = related(graph, owner, root(plan.requestId), 'preparedCandidates', [{ property: 'candidateId', op: 'eq', value: binding.candidateId }, { property: 'requestRevision', op: 'eq', value: binding.requestRevision }])
+    .filter(candidate => candidate.properties.candidateDigest === binding.candidateDigest);
+  if (candidates.length !== 1) fail('The exact sealed prepared candidate is missing or ambiguous');
+  const candidate = candidates[0]!, p = candidate.properties;
+  const { id: _id, name: _name, candidateId, requestRevision: _revision, sequence: _sequence, candidateDigest, ...fields } = p;
+  if (digest({ ...fields, id: candidateId }) !== candidateDigest || !p.ontologySubject || !same(p.ontologySubject, binding.subject.ref) || p.status !== 'ready') fail('Sealed prepared candidate facts or subject changed');
+  const roots = related(graph, owner, candidate.ref, 'request'), resolutions = related(graph, owner, candidate.ref, 'resolution');
+  if (roots.length !== 1 || roots[0]!.ref.id !== plan.requestId || resolutions.length !== 1 || resolutions[0]!.properties.requestRevision !== plan.requestRevision) fail('Prepared candidate belongs to another task or revision');
+  const resolutionRequests = related(graph, owner, resolutions[0]!.ref, 'request');
+  if (resolutionRequests.length !== 1 || resolutionRequests[0]!.ref.id !== plan.requestId) fail('Prepared resolution belongs to another task');
+  const expectedLink = graph.model.implements(binding.subject.ref.type, 'EvidenceBacked') ? 'subject' : binding.subject.ref.type === 'CheckoutRequest' ? 'checkoutRequirements' : undefined;
+  if (!expectedLink) fail('Candidate business subject has no registered relationship');
+  for (const name of ['subject', 'checkoutRequirements']) {
+    const subjects = related(graph, owner, candidate.ref, name);
+    if (name === expectedLink ? subjects.length !== 1 || !same(subjects[0]!.ref, binding.subject.ref) : subjects.length !== 0) fail('Prepared candidate business relationship differs from the sealed selection');
+  }
+  const subject = graph.read(owner, binding.subject.ref);
+  if (subject.properties.requestRevision !== undefined && subject.properties.requestRevision !== binding.requestRevision) fail('Selected business object belongs to another request revision');
+  if (graph.model.sides(subject.ref.type).some(side => side.side.name === 'request' && side.other.type === 'ServiceRequest')) {
+    const requests = related(graph, owner, subject.ref, 'request');
+    if (requests.length !== 1 || requests[0]!.ref.id !== plan.requestId) fail('Selected business object belongs to another task');
+  }
+  if (fresh && (subject.revision !== binding.subject.revision || digest(subject.properties) !== binding.subject.propertiesDigest || graph.relationshipDigest(owner, subject.ref, { remaining: 1000 }) !== binding.subject.linksDigest)) fail('Selected business object changed since the sealed plan');
+  return binding;
+}
+function fixedGraphShape(graph: OntologyObjectStore, owner: string, plan: ExecutionPlan, sequence: number, createdAt: string, state: string, freshCandidate = false): FixedGraphShape {
+  const candidateBinding = fixedCandidateContext(graph, owner, plan, freshCandidate);
   const prepared = readPreparedResolution(graph, owner, plan.requestId), capability = readPreparedCapability(graph, owner, plan.requestId);
   const bindings: FixedGraphShape['bindings'] = [];
   for (const pinned of plan.bindingDigests) {
@@ -328,7 +366,7 @@ function fixedGraphShape(graph: OntologyObjectStore, owner: string, plan: Execut
     const binding = bindings.find(value => same(value.properties.bindingRef, step.bindingRef));
     if (binding && contract && !binding.contracts.some(value => same(value.ref, contract!.ref))) binding.contracts.push(contract);
     return { id: step.id, action: step.actionTypeRef.id, ...(contract ? { definitionDigest: String(contract.properties.definitionDigest), contract } : {}),
-      ...(binding ? { binding: binding.ref } : {}), input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, effect: step.effect };
+      ...(binding ? { binding: binding.ref } : {}), ...(candidateBinding ? { candidateBinding } : {}), input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, effect: step.effect };
   });
   for (const binding of bindings) binding.properties.actionIds = binding.contracts.map(contract => String(contract.properties.actionId));
   const primary = bindings.find(binding => same(binding.properties.bindingRef, plan.bindingRef));
@@ -464,7 +502,8 @@ export function assertAgentPlanProjection(graph: OntologyObjectStore, owner: str
 /** Fixed plans pin provider metadata and adapter contracts separately from
  * semantic business definitions. Actual intent IDs come from the durable ledger. */
 export function assertFixedPlanProjection(graph: OntologyObjectStore, owner: string, plan: ExecutionPlan, intents: readonly ActionIntent[]): void {
-  const { shape, bindings } = fixedGraphShape(graph, owner, plan, 0, '', 'current'), planRef = executionPlanRef(plan), actualPlan = graph.read(owner, planRef);
+  const next = plan.steps.map(step => intents.find(intent => intent.planDigest === plan.digest && intent.stepId === step.id)).find(intent => intent?.state !== 'effect_confirmed');
+  const { shape, bindings } = fixedGraphShape(graph, owner, plan, 0, '', 'current', next?.state === 'ready'), planRef = executionPlanRef(plan), actualPlan = graph.read(owner, planRef);
   if (!shape.binding || shape.steps.some(step => !step.binding || !step.contract)) fail('Fixed execution lacks a pinned binding or declared action contract');
   if (actualPlan.properties.planId !== plan.id || actualPlan.properties.planDigest !== plan.digest || actualPlan.properties.requestRevision !== plan.requestRevision
     || actualPlan.properties.kind !== 'fixed' || actualPlan.properties.structureDigest !== digest(planStructure(shape))) fail('Fixed execution graph plan differs from the sealed plan');

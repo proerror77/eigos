@@ -148,7 +148,9 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
     try {
       const p = principals.get(req)!;
-      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body) : tasks.evaluateOntology(p, req.body));
+      const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
+      const reader = operation === 'describe' ? undefined : network?.ontologyReader(p, token);
+      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : tasks.evaluateOntology(p, req.body, reader));
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }

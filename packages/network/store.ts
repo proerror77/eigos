@@ -1,5 +1,6 @@
 import type { EvidenceCard } from './evidence-contracts.js';
-import { businessTransaction } from '../core/transaction.js';
+import { assertBusinessTransaction, businessTransaction } from '../core/transaction.js';
+import { DomainError } from '../core/domain.js';
 import type { Inquiry, InquiryChoice, QuoteSelection } from './inquiry-contracts.js';
 import type { FollowEdge, NetworkEvent } from './activity-contracts.js';
 import type { NeedPost, EngagementMessage } from './collaboration-contracts.js';
@@ -11,10 +12,12 @@ import { fail, type Profile, type Binding, type Draft, type Approval, type Grant
 
 export type Records = { evidence: EvidenceCard; inquiry: Inquiry; choice: InquiryChoice; selection: QuoteSelection; follow: FollowEdge; need: NeedPost; message: EngagementMessage; space: Space; membership: Membership; invitation: Invitation; representation: Representation; listing: Listing; profile: Profile; binding: Binding; draft: Draft; approval: Approval; grant: Grant; publication: Publication };
 const tables = { evidence: 'network_evidence_cards', inquiry: 'network_inquiries', choice: 'network_inquiry_choices', selection: 'network_quote_selections', follow: 'network_follows', need: 'network_needs', message: 'network_messages', space: 'network_spaces', membership: 'network_memberships', invitation: 'network_invitations', representation: 'network_representations', listing: 'network_listings', profile: 'network_profiles', binding: 'network_bindings', draft: 'network_drafts', approval: 'network_approval_requests', grant: 'network_grants', publication: 'network_publications' } as const;
+export interface NetworkReadMember { id: string; owner: string; installations: { id: string; clientId: string }[] }
 
 /** Gateway-only access over the existing business database connection. No member credentials. */
 export class NetworkStore {
-  constructor(private db: DatabaseSync, readonly now: () => number = Date.now) {
+  constructor(private db: DatabaseSync, readonly now: () => number = Date.now, initialize = true) {
+    if (!initialize) return;
     db.exec(`
       CREATE TABLE IF NOT EXISTS network_state (key TEXT PRIMARY KEY,value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS network_commands (actor TEXT NOT NULL,operation TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,result_refs TEXT NOT NULL,PRIMARY KEY(actor,operation,request_id));
@@ -78,6 +81,14 @@ export class NetworkStore {
   get spaceId() { return String(this.db.prepare('SELECT value FROM network_state WHERE key=?').get('space_id')!.value); }
   transaction<T>(fn: () => T): T {
     return businessTransaction(this.db, fn);
+  }
+  /** A read-only projection may participate in its caller's owned transaction;
+   * it never nests, commits or rolls back that transaction. */
+  readSnapshot<T>(fn: () => T): T {
+    let owned = false;
+    try { assertBusinessTransaction(this.db); owned = true; }
+    catch (error) { if (!(error instanceof DomainError && error.code === 'CONFLICT')) throw error; }
+    return owned ? fn() : this.transaction(fn);
   }
   get<K extends keyof Records>(kind: K, id: string, owner?: string): Records[K] {
     const row = this.db.prepare(`SELECT owner,body FROM ${tables[kind]} WHERE id=?`).get(id);
@@ -166,6 +177,26 @@ export class NetworkStore {
   }
   assertLease(holder: string) {
     if (!this.db.prepare('SELECT 1 FROM network_lease WHERE id=1 AND holder=? AND expires>?').get(holder, this.now())) fail('NETWORK_LEASE_LOST', 503);
+  }
+  /** Short-lived Gateway verification of existing member/installation authority.
+   * This is not writable by callers and never contains credentials or publishes
+   * network content. A Worker must also recheck the durable revocation fences. */
+  publishReadAdmission(holder: string, members: NetworkReadMember[]) {
+    this.transaction(() => {
+      this.assertLease(holder);
+      const lease = this.db.prepare('SELECT expires FROM network_lease WHERE id=1 AND holder=?').get(holder)!;
+      const body = { version: 1, holder, checkedAt: this.now(), validUntil: Math.min(this.now() + 15000, Number(lease.expires)), members };
+      this.db.prepare("INSERT INTO network_state VALUES('ontology_read_admission',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(body));
+    });
+  }
+  currentReadMembers(): NetworkReadMember[] {
+    const row = this.db.prepare("SELECT value FROM network_state WHERE key='ontology_read_admission'").get();
+    if (!row) return fail('NETWORK_READ_ADMISSION_REQUIRED', 403);
+    const value = JSON.parse(String(row.value)) as { version: number; holder: string; checkedAt: number; validUntil: number; members: NetworkReadMember[] };
+    if (value.version !== 1 || !Number.isFinite(value.checkedAt) || !Number.isFinite(value.validUntil) || value.checkedAt > this.now()
+      || value.validUntil <= this.now() || value.validUntil > value.checkedAt + 15000 || !Array.isArray(value.members)) return fail('NETWORK_READ_ADMISSION_EXPIRED', 403);
+    this.assertLease(value.holder);
+    return structuredClone(value.members);
   }
   release(holder: string) { this.db.prepare('DELETE FROM network_lease WHERE id=1 AND holder=?').run(holder); }
   receipt(actor: string, operation: string, requestId: string): { fingerprint: string; refs: ResultRef[] } | undefined {

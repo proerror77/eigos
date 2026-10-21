@@ -25,7 +25,7 @@ export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: 
 
 export class TaskService {
   private stopping = false;
-  constructor(private store: JobStore, private options: TaskOptions) {}
+  constructor(private store: JobStore, private options: TaskOptions) { store.setOntologyCatalog(options.catalog); }
 
   services() {
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
@@ -60,16 +60,18 @@ export class TaskService {
 
   describeOntology(p: Principal, input: unknown) {
     requireScope(p, 'services:read');
-    const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict().parse(input);
+    const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(input);
     return this.store.ontology.model.describe(query);
   }
-  queryOntology(p: Principal, input: unknown) {
+  queryOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter) {
     requireScope(p, 'tasks:read');
-    return this.store.ontology.query(ownerKey(p), input as import('../ontology/object-store.js').ObjectQuery);
+    const graph = reader ? this.store.ontology.withReadOverlay(reader) : this.store.ontology;
+    return graph.query(ownerKey(p), input as import('../ontology/object-store.js').ObjectQuery);
   }
-  evaluateOntology(p: Principal, input: unknown) {
+  evaluateOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter) {
     requireScope(p, 'tasks:read');
-    return this.store.ontology.evaluate(ownerKey(p), input);
+    const graph = reader ? this.store.ontology.withReadOverlay(reader) : this.store.ontology;
+    return graph.evaluate(ownerKey(p), input);
   }
 
   submit(p: Principal, input: unknown, contextId?: string): Job { return this.submitInternal(p, input, contextId, false); }

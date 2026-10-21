@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { catalogReceiptSchema, shopifyMerchantSchema } from '../capabilities/shopify/contracts.js';
+import { productAttributesSchema } from './product-attributes.js';
 
 const text = z.string().min(1).max(1000), sha = z.string().regex(/^[a-f0-9]{64}$/), time = z.iso.datetime({ offset: true });
 export const variantIdSchema = z.string().regex(/^gid:\/\/shopify\/ProductVariant\/[0-9]+$/);
@@ -19,6 +20,7 @@ export type CatalogAction = keyof typeof catalogActionSchemas;
 export const catalogActionIds = Object.keys(catalogActionSchemas) as CatalogAction[];
 export const catalogObservedItemSchema = z.strictObject({
   productId: text, variantId: variantIdSchema, title: text, sku: z.string().max(500).optional(),
+  typedAttributes: productAttributesSchema.optional(),
   displayPrice: z.strictObject({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.string().regex(/^[A-Z]{3}$/) }).optional(),
   availableReported: z.boolean().optional(), nativeCheckoutEligibleReported: z.boolean().optional(),
 });

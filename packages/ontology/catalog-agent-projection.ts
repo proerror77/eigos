@@ -69,7 +69,8 @@ export function projectAgentCatalogObservation(graph: OntologyObjectStore, owner
       const ref = catalogEntityRefs(s, item.variantId).variant!, title = item.title.slice(0, 500);
       const specification = [{ name: 'variant_id', value: item.variantId }, ...(item.sku ? [{ name: 'sku', value: item.sku }] : [])];
       const variant = current(ref, title, { name: title, sourceProductRef: { namespace: 'shopify', id: item.variantId }, specification,
-        specificationRevision: digest({ title: item.title, productId: item.productId, variantId: item.variantId, sku: item.sku }) });
+        ...(item.typedAttributes ? { typedAttributes: item.typedAttributes } : {}),
+        specificationRevision: digest({ title: item.title, productId: item.productId, variantId: item.variantId, sku: item.sku, ...(item.typedAttributes ? { typedAttributes: item.typedAttributes } : {}) }) });
       links.push({ type: 'CatalogObservationVariants', from: subject, to: ref });
       let previous;
       if (variant.old) {

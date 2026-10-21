@@ -106,8 +106,18 @@ test('N1 invalid receipt projection is explicit and atomic while the canonical t
         assert.deepEqual(store.get(owner, copy.id), copy);
         assert.equal(store.ontology.read(owner, { type: 'ServiceRequest', id: copy.id }).properties.projectionState, 'invalid_source');
         for (const type of ['DeliveryQuote', 'Parcel', 'DeliveryRoute', 'SourceReceipt', 'Provider']) assert.deepEqual(store.ontology.query(owner, { type }).items, []);
+        for (const type of ['ExecutionPlan', 'ExecutionInput', 'Authorization']) assert.deepEqual(store.ontology.query(owner, { type }).items, [], 'Invalid imported source cannot reconstruct execution or authority');
+        assert.equal(store.intents(owner, copy.id).length, 0);
       } finally { store.close(); }
     }
+    const plansBefore = source.store.ontology.query(owner, { type: 'ExecutionPlan' }).items;
+    const inputsBefore = source.store.ontology.query(owner, { type: 'ExecutionInput' }).items;
+    const damaged = structuredClone(done);
+    (damaged.artifact!.data.result as { ontologyReceipt: { resultDigest: string } }).ontologyReceipt.resultDigest = '0'.repeat(64);
+    source.store.save(owner, damaged);
+    assert.equal(source.store.ontology.read(owner, { type: 'ServiceRequest', id: done.id }).properties.projectionState, 'invalid_source');
+    assert.deepEqual(source.store.ontology.query(owner, { type: 'ExecutionPlan' }).items, plansBefore);
+    assert.deepEqual(source.store.ontology.query(owner, { type: 'ExecutionInput' }).items, inputsBefore, 'Invalid later source does not rewrite earlier valid execution evidence');
   } finally { source.store.close(); }
 });
 

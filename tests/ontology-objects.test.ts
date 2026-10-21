@@ -142,7 +142,8 @@ test('N1 version checks reject stale updates and changed definitions without leg
     const page = f.graph.query('alice', { type: 'Offer', limit: 1 });
     f.graph.ingest('alice', { objects: [{ ref: { type: 'Provider', id: 'new' }, properties: { providerId: 'new', displayTitle: 'new', name: 'new' } }] }, f.source);
     assert.throws(() => f.graph.query('alice', { type: 'Offer', limit: 1, cursor: page.page.cursor }), /context changed/);
-    const d = definition(); d.objects.find(o => o.id === 'Parcel')!.version = '2';
+    const d = definition(), parcel = d.objects.find(o => o.id === 'Parcel')!;
+    parcel.version = `${parcel.version}-changed`;
     assert.throws(() => new OntologyObjectStore(f.db, new OntologyModel(d)).read('alice', f.ids.parcel!), /definition changed/);
   } finally { f.db.close(); }
 });

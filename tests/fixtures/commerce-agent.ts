@@ -13,18 +13,38 @@ import { digest } from '../../packages/core/delegation.js';
 import { backend, evidence, interpretation, owner, principal, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import type { AgentDecision, AgentStep } from '../../packages/ontology/agent-actions.js';
-import type { CommerceObservation, CommerceEntityType } from '../../packages/ontology/commerce-journey.js';
+import { commerceObservationSchema, type CommerceObservation, type CommerceEntityType } from '../../packages/ontology/commerce-journey.js';
 import { commerceDestinationChoice } from '../../packages/ontology/commerce-journey-functions.js';
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
+import type { ObjectView } from '../../packages/ontology/object-store.js';
 
 export const commerceStep = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const commerceDecision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], result?: unknown): AgentDecision => ({ kind: result ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic decision from currently observed commerce facts', steps, completionJson: result ? JSON.stringify(result) : '' });
+type ObservedCommerceFact = { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } };
+const receivedCommerceContexts = new WeakMap<PlanningAccess['session'], { objects: ObjectView[]; facts: Map<string, ObservedCommerceFact> }>();
 export function commerceReads(ctx: AgentPlanningContext, access: PlanningAccess) {
-  observeTaskContext(access);
-  if (!access.session.usesTaskContext()) access.session.call('describe_ontology', { search: 'CommerceTask', limit: 1 });
-  access.session.call('query_ontology', { object: ctx.state.scope });
-  const cache = new Map<string, { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } }>();
+  let received = receivedCommerceContexts.get(access.session);
+  if (!received) {
+    const objects: ObjectView[] = [];
+    if (access.session.usesTaskContext()) {
+      const context = access.session.call('read_task_context', {}) as { data?: { graph?: { objects?: ObjectView[] } }; receipt?: { id: string; status: string } };
+      if (context.receipt?.status !== 'ok' || !context.data?.graph?.objects) throw new Error('Synthetic commerce decision did not receive its current task context');
+      access.session.acceptReceipts([context.receipt.id]);
+      objects.push(...context.data.graph.objects);
+    } else access.session.call('describe_ontology', { search: 'CommerceTask', limit: 1 });
+    const facts = new Map<string, ObservedCommerceFact>();
+    // These snapshots were actually returned by this session's context tool.
+    // Unread references and observations from earlier turns are never cached.
+    // Source-status and customs-gate evaluations remain explicit fresh calls.
+    for (const object of objects) {
+      const parsed = commerceObservationSchema.safeParse(object.properties.snapshot);
+      if (parsed.success && parsed.data.type === object.ref.type) facts.set(object.ref.id, { ref: object.ref, snapshot: parsed.data });
+    }
+    received = { objects, facts }; receivedCommerceContexts.set(access.session, received);
+  }
+  if (!received.objects.some(object => object.ref.type === ctx.state.scope.type && object.ref.id === ctx.state.scope.id)) access.session.call('query_ontology', { object: ctx.state.scope });
+  const cache = received.facts;
   const read = (ref: ObjectRef, evaluate = false) => {
     let value = cache.get(ref.id);
     if (!value) { const query = access.session.call('query_ontology', { object: ref, select: ['snapshot'] }) as { items: { properties: { snapshot: CommerceObservation } }[] }; value = { ref, snapshot: query.items[0]!.properties.snapshot }; cache.set(ref.id, value); }

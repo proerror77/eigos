@@ -14,7 +14,7 @@ import type { DomainAssessment } from '../ontology/domain-rules.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import { assertTaskContextCurrent, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES, readTaskContext, readTaskInstructions, taskContextSchema, taskInstructionsSchema, taskObjectMembership, type TaskContextBinding, type TaskContextRead } from './task-context.js';
 
-const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
@@ -46,6 +46,7 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
   return { ref, revision: object.revision, propertiesDigest: digest(relevantProperties(ref, object.properties, request)), linksDigest: graph.relationshipDigest(owner, ref, { remaining: 1000 }) };
 }
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
+  graph = graph.forRequestReader(owner, request.id);
   const { digest: expected, ...body } = snapshot;
   if (!['model_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
   if (snapshot.mode === 'model_queries') {
@@ -86,6 +87,7 @@ export class OntologyPlanningSession {
   private knownRefs = new Map<string, ObjectRef>();
   constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
     private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = [], private options: PlanningSessionOptions = {}) {
+    this.graph = graph.forRequestReader(owner, request.id);
     if (options.taskContext) this.readScope = 'request';
   }
   usesTaskContext() { return !!this.options.taskContext; }
@@ -197,7 +199,7 @@ export class OntologyPlanningSession {
         output = { checks, grantsAuthority: false };
       } else if (tool === 'propose_action') {
         const args = actionSchema.parse(input), definition = this.graph.model.action(args.action);
-        if (definition.read) throw new DomainError('INVALID_INPUT', 'Read actions are selected in an agent execute decision; this proposal-only tool never executes them');
+        if (definition.read || definition.operation) throw new DomainError('INVALID_INPUT', 'Source reads and sandbox operations are selected in an agent execute decision with their registered input and authorization checks; this tool only describes business decision proposals');
         if (args.inputs.length !== Object.keys(definition.inputs).length || new Set(args.inputs.map(i => i.name)).size !== args.inputs.length) throw new DomainError('INVALID_INPUT', 'Action inputs must match the registered definition');
         const inputs: DecisionActionProposal['inputs'] = {};
         for (const item of args.inputs) {

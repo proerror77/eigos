@@ -7,7 +7,9 @@ import { JobStore } from '../packages/core/store.js';
 import type { Job } from '../packages/core/domain.js';
 import type { AgentActionPlan, AgentExecutionState } from '../packages/ontology/agent-actions.js';
 import type { ActionIntent, ExecutionAttempt } from '../packages/ontology/actions.js';
-import { BUSINESS_MODEL_DEFINITION, businessModel, businessModelV9 } from '../packages/ontology/business-model.js';
+import { businessModel } from '../packages/ontology/business-model.js';
+import { FROZEN_V14 } from '../packages/ontology/history-schema.js';
+import v14Pins from './fixtures/ontology-v14-fingerprints.json' with { type: 'json' };
 import { executionObjects, executionLinks, executionReferenceLinks, isExecutionBookkeepingType } from '../packages/ontology/execution-model.js';
 import { assertAgentPlanProjection, assertFixedPlanProjection, executionContextRef, executionPlanRef, executionStepRef, projectExecution, readExecutionContext, readOntologyRequest, type ExecutionLedger } from '../packages/ontology/execution-projection.js';
 import { BACKEND_VERSION, type ExecutionPlan, type ProviderBinding, type ServiceRequest } from '../packages/ontology/execution.js';
@@ -87,10 +89,12 @@ function fixedFixture(adapterOnly = false) {
   return { ...f, fixedPlan: plan, fixedIntent: intent, subject: projected.subject!, binding, domain };
 }
 
-test('execution graph preserves old object fingerprints and concrete reference endpoints', () => {
-  const migrated = new Set(['Proposal', 'Authorization', 'OutcomeAssessment', 'RequestSpecification']);
-  for (const object of BUSINESS_MODEL_DEFINITION.objects) {
-    if (businessModelV9.hasType(object.id) && !migrated.has(object.id)) assert.equal(businessModelV9.fingerprint(object.id), businessModel.fingerprint(object.id), object.id);
+test('execution graph preserves frozen v14 definitions or names their exact migration predecessor and concrete reference endpoints', () => {
+  for (const [type, fingerprint] of Object.entries(v14Pins.objects)) {
+    if (businessModel.fingerprint(type) !== fingerprint) assert.equal(FROZEN_V14.objects[type]?.fingerprint, fingerprint, `${type} requires its independently frozen predecessor schema`);
+  }
+  for (const [type, previous] of Object.entries(v14Pins.links)) {
+    if (digest(businessModel.link(type)) !== previous) assert.equal(FROZEN_V14.links[type]?.digest, previous, `${type} requires its independently frozen predecessor link`);
   }
   assert.equal(businessModel.link('ExecutionInputObjectPaotuiTask').to.type, 'PaotuiTask');
   assert(isExecutionBookkeepingType('ExecutionStep'));

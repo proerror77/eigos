@@ -1,4 +1,10 @@
 import { evaluateBookingFunction } from './booking-functions.js';
+import { productAttributeFunctionSchemas } from './product-attributes.js';
+import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
+import { identityFunctionSchemas } from './identity-model.js';
+import { evaluateIdentityFunction } from './identity-mapping.js';
+import { errandFunctionSchemas } from './errand-model.js';
+import { evaluateErrandFunction } from './errand-domain.js';
 import { evaluateStripePaymentFunction } from './stripe-payment-functions.js';
 import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -19,6 +25,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
@@ -60,6 +67,12 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const productResult = evaluateProductAttributeFunction(store, owner, input, budget);
+  if (productResult) return productResult;
+  const identityResult = evaluateIdentityFunction(store, owner, input, budget);
+  if (identityResult) return identityResult;
+  const errandResult = evaluateErrandFunction(store, owner, input, budget);
+  if (errandResult) return errandResult;
   const paotuiResult = evaluatePaotuiFunction(store, owner, input, budget);
   if (paotuiResult) return paotuiResult;
   const bookingResult = evaluateBookingFunction(store, owner, input, budget);

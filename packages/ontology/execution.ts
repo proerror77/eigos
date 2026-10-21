@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v15' as const;
+export const BACKEND_VERSION = 'ontology-execution-v16' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -110,6 +110,14 @@ export interface PlanStep {
   input: Record<string, unknown>; inputRefs: import('./actions.js').InputReference[]; dependsOn: string[];
   cost?: { minor: string; currency: string; payeeId: string; purpose?: typeof amountRoles[number] };
 }
+/** Business context for a new fixed plan. This is never a provider argument or
+ * an accepted-output reference; dispatch input materialization ignores it. */
+export interface FixedCandidateBinding {
+  version: '1'; requestId: string; requestRevision: number;
+  candidateId: string; candidateDigest: string;
+  subject: import('./planning-contract.js').ObjectSnapshot;
+}
+export const FIXED_CANDIDATE_CONTEXT_PARAMETER = '@selected_candidate';
 export interface ExecutionPlan {
   id: string;
   version: '7';
@@ -120,6 +128,7 @@ export interface ExecutionPlan {
   capabilityRef: Ref;
   ontologyRef: Ref;
   candidateId: string;
+  candidateBinding?: FixedCandidateBinding;
   bindingRef: Ref;
   bindingSnapshots: import('./supply.js').DiscoveredBinding[];
   definitionDigests: { ref: Ref; digest: string }[];

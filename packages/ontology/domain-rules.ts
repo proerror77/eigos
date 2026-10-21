@@ -1,8 +1,10 @@
 import { digest } from '../core/delegation.js';
 import { domainResultSchemas, parseDomainParameters, type DomainParameters, type DomainResults, type ServiceDomain } from './service-domains.js';
+import { detailedOutcomeCriteria, detailedResourceCriteria, requiresHotelRatePlan, type DomainResultResources } from './domain-detail-rules.js';
+export type { DomainResultResources } from './domain-detail-rules.js';
 
 export interface DomainCriterion { id: string; result: 'pass' | 'fail' | 'unknown'; reason: string }
-export interface DomainAssessment { status: 'satisfied' | 'unsatisfied' | 'unknown'; criteria: DomainCriterion[]; endpoint: string }
+export interface DomainAssessment { status: 'satisfied' | 'unsatisfied' | 'unknown'; criteria: DomainCriterion[]; endpoint: string; serviceVariant?: 'instant' | 'chauffeured' | 'self_drive'; variantEndpoint?: string }
 type Money = { minor: string; currency: string };
 export const requiredDomainResources: Record<ServiceDomain, readonly string[]> = {
   ride: ['RideRoute', 'TransportVehicle'],
@@ -12,6 +14,9 @@ export const requiredDomainResources: Record<ServiceDomain, readonly string[]> =
   itinerary: ['TravelLeg'],
   vehicle: ['VehicleClass', 'RentalPolicy'],
 };
+export function requiredDomainResourceTypes(domain: ServiceDomain, parameters: Record<string, unknown>): readonly string[] {
+  return domain === 'hotel' && requiresHotelRatePlan(parameters) ? [...requiredDomainResources.hotel, 'HotelRatePlan'] : requiredDomainResources[domain];
+}
 /** Necessary resource facts supplement, and can disprove, an aggregate provider
  * eligibility flag. Missing facts stay unknown; no source assurance is invented. */
 export function domainResourceCriteria(type: string, p: Record<string, unknown>, expected: Record<string, unknown>, now: number): DomainCriterion[] {
@@ -65,7 +70,7 @@ export function domainResourceCriteria(type: string, p: Record<string, unknown>,
       check(`rental_${field}`, typeof p[field] === 'string' && p[field] !== 'unknown' && String(p[field]).trim() ? true : undefined, 'Applicable rental terms must be supplied by the source; generic eligibility does not fill missing policy facts');
     }
   }
-  return checks;
+  return [...checks, ...detailedResourceCriteria(type, p, expected)];
 }
 export function quoteRoleCriteria(domain: ServiceDomain, parameters: Record<string, unknown>, option: Record<string, unknown>): DomainCriterion[] {
   const criteria: DomainCriterion[] = [], commitments = option.commitments as Record<string, string> | undefined;
@@ -77,7 +82,7 @@ export function quoteRoleCriteria(domain: ServiceDomain, parameters: Record<stri
   }
   return criteria;
 }
-export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown, raw: unknown, now: number): DomainAssessment {
+export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown, raw: unknown, now: number, resources?: DomainResultResources): DomainAssessment {
   const expected = parseDomainParameters(domain, input), observed = domainResultSchemas[domain].parse(raw) as DomainResults[K];
   const checks: DomainCriterion[] = [];
   const check = (id: string, result: boolean | undefined, reason: string) => checks.push({ id, result: result === undefined ? 'unknown' : result ? 'pass' : 'fail', reason });
@@ -116,6 +121,10 @@ export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown,
       const exact = unique && p.items.length === delivered.length && p.items.every(i => delivered.some(a => a.sku === i.sku && a.quantity === i.quantity && a.specification === i.specification));
       const wrong = !unique || delivered.some(a => !p.items.some(i => i.sku === a.sku && i.specification === a.specification && a.quantity <= i.quantity));
       check('items', exact ? true : wrong || r.finalDelivery === true || failed ? false : undefined, 'Partial delivery stays unresolved until final delivery is evidenced; duplicate or substituted lines never count as success');
+      for (const item of p.items) if (item.selections !== undefined) {
+        const actual = delivered.find(line => line.sku === item.sku);
+        check('item_configuration', actual?.selections === undefined ? undefined : digest(actual.selections) === digest(item.selections), 'Delivered menu options must preserve the requested source option identities');
+      }
     }
     happened('delivery_deadline', r.deliveredAt, p.deliverBy); within('complete_total', r.total, p.budget, r.feesComplete);
     if (p.excludedIngredients.length) check('excluded_ingredients', r.ingredientCheck === 'unknown' || r.ingredientCheck === undefined ? undefined : r.ingredientCheck === 'verified', 'Only source-backed verification of the stated ingredient constraints is accepted');
@@ -137,7 +146,11 @@ export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown,
     if (!r.legs) check('legs', undefined, 'The actual itinerary is missing');
     else {
       const actual = r.legs, unique = new Set(actual.map(l => l.id)).size === actual.length;
-      check('leg_coverage', unique && actual.length === p.legs.length && p.legs.every(l => actual.some(a => a.id === l.id && digest({ id: a.id, origin: a.origin, destination: a.destination, startsAt: a.startsAt, endsAt: a.endsAt, mode: a.mode, transferMinutes: a.transferMinutes, bookingRequired: a.bookingRequired }) === digest(l))), 'Every fixed leg and dependency must be represented without substitutions');
+      check('leg_coverage', unique && actual.length === p.legs.length && p.legs.every(l => actual.some(a => a.id === l.id && digest({ id: a.id, origin: a.origin, destination: a.destination, startsAt: a.startsAt, endsAt: a.endsAt, mode: a.mode, transferMinutes: a.transferMinutes, bookingRequired: a.bookingRequired }) === digest({ id: l.id, origin: l.origin, destination: l.destination, startsAt: l.startsAt, endsAt: l.endsAt, mode: l.mode, transferMinutes: l.transferMinutes, bookingRequired: l.bookingRequired }))), 'Every fixed leg must be represented without substitutions');
+      for (const leg of p.legs) if (leg.dependsOn !== undefined) {
+        const dependencies = actual.find(item => item.id === leg.id)?.dependsOn;
+        check('leg_dependencies', dependencies === undefined ? undefined : digest(dependencies) === digest(leg.dependsOn), 'Each requested dependency must retain its exact predecessor leg identities');
+      }
       const sorted = [...actual].sort((a, b) => Date.parse(a.startsAt) - Date.parse(b.startsAt));
       check('time_windows', sorted.every(l => Date.parse(l.startsAt) < Date.parse(l.endsAt) && Date.parse(l.startsAt) >= Date.parse(p.startsAt) && Date.parse(l.endsAt) <= Date.parse(p.endsAt)), 'Each leg must fit the absolute itinerary window');
       check('connections', sorted.every((l, i) => !i || sorted[i - 1]!.destination === l.origin && Date.parse(sorted[i - 1]!.endsAt) + l.transferMinutes * 60000 <= Date.parse(l.startsAt)), 'Adjacent endpoints and transfer buffers must connect');
@@ -148,7 +161,7 @@ export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown,
     within('itinerary_total', r.total, p.budget, r.feesComplete);
   } else {
     const p = expected as DomainParameters['vehicle'], r = observed as DomainResults['vehicle']; endpoint = p.endpoint === 'confirmed' ? 'vehicle_confirmed' : 'vehicle_use_completed';
-    complete(p.endpoint === 'confirmed' ? ['confirmed', 'in_use', 'completed', 'returned'].includes(r.state) : p.mode === 'self_drive' ? r.state === 'returned' : r.state === 'completed');
+    complete(p.endpoint === 'confirmed' ? ['confirmed', 'assigned', 'at_pickup', 'in_use', 'completed', 'returned'].includes(r.state) : p.mode === 'self_drive' ? r.state === 'returned' : r.state === 'completed');
     for (const key of ['mode', 'pickup', 'returnLocation', 'startsAt', 'endsAt', 'timeZone', 'vehicleClass', 'passengers'] as const) equal(key, r[key], p[key]);
     if (p.mode === 'self_drive') equal('driverKey', r.driverKey, p.driverKey);
     check('vehicle_confirmation', r.confirmationCode ? true : undefined, 'A specific booking reference is required');
@@ -161,5 +174,8 @@ export function assessDomain<K extends ServiceDomain>(domain: K, input: unknown,
       if (p.mode === 'self_drive') { check('return_acceptance', r.returnAccepted, 'Physical return needs source acceptance'); check('deposit_settled', r.depositState === 'settled' ? true : r.depositState === 'disputed' ? false : undefined, 'Pending deposit release remains unknown after a vehicle return'); }
     }
   }
-  return { status: checks.some(c => c.result === 'fail') ? 'unsatisfied' : checks.some(c => c.result === 'unknown') ? 'unknown' : 'satisfied', criteria: checks, endpoint };
+  checks.push(...detailedOutcomeCriteria(domain, expected, observed, resources, now));
+  const vehicle = expected as DomainParameters['vehicle'];
+  const variant = domain === 'ride' ? { serviceVariant: 'instant' as const, variantEndpoint: 'passenger_delivered' } : domain === 'vehicle' ? { serviceVariant: vehicle.mode, variantEndpoint: vehicle.endpoint === 'confirmed' ? vehicle.mode === 'chauffeured' ? 'chauffeured_booking_confirmed' : 'rental_booking_confirmed' : vehicle.mode === 'chauffeured' ? 'passenger_delivered' : 'vehicle_returned_and_deposit_settled' } : {};
+  return { status: checks.some(c => c.result === 'fail') ? 'unsatisfied' : checks.some(c => c.result === 'unknown') ? 'unknown' : 'satisfied', criteria: checks, endpoint, ...variant };
 }

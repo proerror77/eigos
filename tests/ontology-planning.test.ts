@@ -30,12 +30,12 @@ function observe(f: ReturnType<typeof fixture>, type = 'DeliveryQuote') {
 test('Planning descriptions expose full action schemas on demand without repeating every registered input contract', () => {
   const f = fixture();
   try {
-    const summary = f.session.call('describe_ontology', { search: 'ServiceRequest' }) as any;
+    const summary = f.session.call('describe_ontology', { search: 'BookingTask' }) as any;
     const action = summary.actions.find((a: any) => a.read || a.operation);
     assert(action); assert.equal((action.read ?? action.operation).inputSchema, undefined);
-    const exact = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [action.id] }) as any;
+    const exact = f.session.call('describe_ontology', { search: 'BookingTask', actions: [action.id] }) as any;
     assert.equal(exact.actions.length, 1); assert((exact.actions[0].read ?? exact.actions[0].operation).inputSchema);
-    const full = f.graph.model.describe({ search: 'ServiceRequest' });
+    const full = f.graph.model.describe({ search: 'BookingTask' });
     const executable = (actions: any[]) => actions.filter(action => action.read || action.operation);
     assert(JSON.stringify(executable(summary.actions)).length < JSON.stringify(executable(full.actions)).length * 0.6);
     assert.equal(f.session.receipts().length, 2);
@@ -113,6 +113,20 @@ test('N2 model reads are bounded, owner-scoped, schema-checked and cannot execut
     assert.equal((other.call('query_ontology', { from: { type: 'ServiceRequest', id: f.request.id }, link: 'offers' }) as { error: string }).error, 'NOT_FOUND');
     for (let i = 0; i < 2; i++) f.session.call('query_ontology', { type: 'Offer', limit: 999 });
     assert.throws(() => f.session.call('query_ontology', { type: 'Offer', limit: 999 }), /Three identical/);
+  } finally { f.db.close(); }
+});
+
+test('proposal-only tools identify agent operations as a different execution path rather than a foreign request', () => {
+  const f = fixture();
+  try {
+    const before = f.graph.revision(owner);
+    for (const action of ['ReadSavedAddresses', 'SubmitCommerceOrder', 'CreatePendingBooking']) {
+      const result = f.session.call('propose_action', { action, inputs: [{ name: 'scope', object: { type: 'CommerceTask', id: 'not-used' }, revision: 1 }] }) as { error: string; message: string };
+      assert.equal(result.error, 'INVALID_INPUT');
+      assert.match(result.message, /selected in an agent execute decision/);
+      assert(!result.message.includes('another request'));
+    }
+    assert.equal(f.graph.revision(owner), before);
   } finally { f.db.close(); }
 });
 

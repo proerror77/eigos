@@ -6,7 +6,7 @@ import { actionOperationKey, digest } from '../core/delegation.js';
 import { authorizeDispatch, checkDispatchPermit } from '../core/policy.js';
 import { BACKEND_VERSION, type ExecutionPlan, type PlanStep } from '../ontology/execution.js';
 import type { ActionContext, ActionIntent, ActionResult, ExecutionAttempt, OutcomeAssessment } from '../ontology/actions.js';
-import { validatePlan } from './plan.js';
+import { selectedCandidateSubject, validatePlan } from './plan.js';
 import { checkRequirements, hardRequirementsPass } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { validatePlanningSnapshot } from './planning-session.js';
@@ -104,7 +104,7 @@ export class ActionRuntime {
     let attempt: ExecutionAttempt | undefined;
     try {
       if (!this.store.checkpoint(claim, job => {
-        const subject = job.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)?.ontologySubject;
+        const subject = freshPermit ? selectedCandidateSubject(plan, job.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)) : undefined;
         const submission = freshPermit ? assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject) : undefined;
         const grant = freshPermit ? authorizeDispatch(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true) : undefined;
         const authorizationId = grant?.id ?? (freshPermit && plan.quote && job.delegation!.approval ? digest(job.delegation!.approval) : undefined);
@@ -121,7 +121,7 @@ export class ActionRuntime {
     try {
       if (freshPermit) {
         validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, plan.ontologyPlanning, true);
-        const subject = current.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId)?.ontologySubject;
+        const subject = selectedCandidateSubject(plan, current.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId));
         assertSemanticSubmission(this.store.ontology, claim.owner, ctx.request, step, subject);
         validatePlan(this.catalog, claim.owner, ctx.request, plan, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
         checkDispatchPermit(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true);

@@ -8,7 +8,7 @@ import { digest, groundingSchema, proposalSchema, type Grounding, type PlanPropo
 import { BACKEND_VERSION, requirementSchema, type ServiceCapability, type ServiceRequest } from '../ontology/execution.js';
 import { CodexExecutor, type RunEvidence } from '../capabilities/executor.js';
 import { CapabilityResolver, type Resolution } from './resolver.js';
-import { proposePlan, validatePlan } from './plan.js';
+import { proposePlan, selectedCandidateSubject, validatePlan } from './plan.js';
 import { groundRequirements } from './requirements.js';
 import { ActionRuntime, createActionIntents } from './runtime.js';
 import { authorizationRequest, requiredEffects } from '../core/policy.js';
@@ -96,6 +96,7 @@ export class Coordinator {
   private runtime: ActionRuntime;
   private agentRuntime: AgentRuntime;
   constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, private options: { allowSandbox?: boolean; maxTaskMs?: number } = {}, private inquiryScoped = false) {
+    if (!inquiryScoped) store.setOntologyCatalog(catalog);
     this.resolver = new CapabilityResolver(catalog, (owner, ref, fingerprint) => store.providerEvidenceView(owner, ref, fingerprint)); this.runtime = new ActionRuntime(store, catalog, options);
     this.agentRuntime = new AgentRuntime(store, catalog, reasoner, (claim, signal) => {
       const d = this.store.get(claim.owner, claim.job.id).delegation!;
@@ -224,7 +225,7 @@ export class Coordinator {
     const candidate = resolution.candidates.find(c => c.id === proposal.candidateId);
     if (!candidate) throw new DomainError('CONFLICT', 'Model selected an undiscovered candidate');
     const plan = proposePlan(this.catalog, claim.owner, request, capability, candidate, proposal, session.finish(candidate)); validatePlan(this.catalog, claim.owner, request, plan);
-    for (const step of plan.steps) assertSemanticSubmission(this.store.ontology, claim.owner, request, step, candidate.ontologySubject);
+    for (const step of plan.steps) assertSemanticSubmission(this.store.ontology, claim.owner, request, step, selectedCandidateSubject(plan, candidate));
     const requiresPermit = plan.steps.some(s => !['local', 'read'].includes(s.effect));
     const savePlan = (job: Job) => {
       job.updatedAt = new Date().toISOString();

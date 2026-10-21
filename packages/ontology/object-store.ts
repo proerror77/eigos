@@ -6,6 +6,10 @@ import { businessModel, businessModelV9 } from './business-model.js';
 import { migrateIntegratedOntology } from './integration-migration.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
 import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
+import { isVirtualRef, networkLinkIds } from './network-model.js';
+import type { NetworkOntologyReadAdapter } from './network-read.js';
+import { assertIdentityAssertionWrite } from './identity-mapping.js';
+import { assertTransactionPartyRoleWrite } from './errand-domain.js';
 
 const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
@@ -15,7 +19,7 @@ export const objectQuerySchema = z.union([
   z.object({ type: nameSchema, ...queryFields }).strict(),
   z.object({ from: objectRefSchema, link: nameSchema, ...queryFields }).strict(),
   z.object({ object: objectRefSchema, ...queryFields }).strict(),
-]);
+]).describe('Each response covers only the requested object, type, or named relationship. Empty results on one relationship do not prove that other relationships or participants are absent. Inspect pagination and state the scope actually read; unqueried information remains unverified.');
 export type ObjectQuery = z.input<typeof objectQuerySchema>;
 export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number }
 export interface LinkWrite { type: string; from: ObjectRef; to: ObjectRef }
@@ -27,6 +31,11 @@ export interface ObjectBatch { objects: ObjectWrite[]; links?: LinkWrite[]; remo
 interface StoredObject { ref: ObjectRef; revision: number; createdAt: string; properties: Record<string, unknown>; source: ObjectSource }
 export interface ObjectView extends StoredObject { derived?: Record<string, { status: 'known' | 'unknown'; reason?: string; functionRef: { id: string; version: string }; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }> }
 export interface ReadBudget { remaining: number }
+export interface OntologyQueryResult {
+  model: OntologyModel['ref']; items: ObjectView[];
+  page: { limit: number; scanned: number; hasMore: boolean; cursor?: string };
+  datasetRevision: number;
+}
 const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
 const cursorSchema = z.object({ owner: z.string(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
@@ -35,8 +44,13 @@ function failure(message: string): never { throw new DomainError('INVALID_INPUT'
 /** Owned business objects only. Writes are internal source mappings, never public query operations. */
 export class OntologyObjectStore {
   readonly model: OntologyModel;
-  constructor(private db: DatabaseSync, model = businessModel, readonly now: () => number = Date.now) {
+  private readerFactory?: (owner: string, requestId: string) => NetworkOntologyReadAdapter | undefined;
+  private backingStore?: OntologyObjectStore;
+  constructor(private db: DatabaseSync, model = businessModel, readonly now: () => number = Date.now, private readOverlay?: NetworkOntologyReadAdapter) {
     this.model = model;
+    // A read view shares the existing owned connection, but neither initializes
+    // nor migrates it, and cannot import or rewrite source facts.
+    if (readOverlay) return;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ontology_objects (owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,type,id));
       CREATE TABLE IF NOT EXISTS ontology_links (owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(owner,type,from_type,from_id,to_type,to_id));
@@ -46,6 +60,36 @@ export class OntologyObjectStore {
     `);
     if (model === businessModel) migrateIntegratedOntology(this.db, businessModelV9, businessModel);
   }
+  setReadOverlayFactory(factory: (owner: string, requestId: string) => NetworkOntologyReadAdapter | undefined): void {
+    if (this.readOverlay) throw new DomainError('FORBIDDEN', 'A read view cannot change its authority resolver');
+    this.readerFactory = factory;
+  }
+  withReadOverlay(overlay: NetworkOntologyReadAdapter): OntologyObjectStore {
+    const view = new OntologyObjectStore(this.db, this.model, this.now, overlay);
+    view.readerFactory = this.readerFactory;
+    view.backingStore = this.backingStore ?? this;
+    return view;
+  }
+  forRequestReader(owner: string, requestId: string): OntologyObjectStore {
+    if (this.readOverlay) {
+      this.assertReaderOwner(owner);
+      if (this.readOverlay.taskId && this.readOverlay.taskId !== requestId) throw new DomainError('FORBIDDEN', 'Network read admission belongs to another task');
+      return this;
+    }
+    const overlay = this.readerFactory?.(owner, requestId);
+    return overlay ? this.withReadOverlay(overlay) : this;
+  }
+  virtualMembership(owner: string, request: { id: string; revision: number }, ref: ObjectRef): 'current' | 'foreign' | 'shared' | undefined {
+    return isVirtualRef(ref) ? this.overlay(owner).requestMembership(ref, request) : undefined;
+  }
+  private assertReaderOwner(owner: string) {
+    if (this.readOverlay && this.readOverlay.owner !== owner) throw new DomainError('FORBIDDEN', 'Read context belongs to another owner');
+  }
+  private overlay(owner: string): NetworkOntologyReadAdapter {
+    this.assertReaderOwner(owner);
+    if (!this.readOverlay) throw new DomainError('FORBIDDEN', 'Network objects require a current authorized read context');
+    return this.readOverlay;
+  }
   private charge(budget: ReadBudget, count = 1) {
     budget.remaining -= count;
     if (budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query');
@@ -53,6 +97,8 @@ export class OntologyObjectStore {
   revision(owner: string): number { return Number(this.db.prepare('SELECT revision FROM ontology_revisions WHERE owner=?').get(owner)?.revision ?? 0); }
   private raw(owner: string, ref: ObjectRef, budget: ReadBudget): StoredObject {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
+    this.assertReaderOwner(owner);
+    if (isVirtualRef(ref)) return this.overlay(owner).read(ref, budget);
     const row = this.db.prepare('SELECT * FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, ref.type, ref.id);
     if (!row) throw new DomainError('NOT_FOUND', 'Ontology object not found');
     if (row.definition_digest !== this.model.fingerprint(ref.type)) throw new DomainError('CONFLICT', 'Object definition changed; historical data cannot be reinterpreted');
@@ -63,9 +109,11 @@ export class OntologyObjectStore {
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
+    if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Private source facts are unavailable through a read view');
     return structuredClone(this.raw(owner, ref, budget));
   }
   relationshipDigest(owner: string, ref: ObjectRef, budget: ReadBudget): string {
+    if (isVirtualRef(ref)) return this.overlay(owner).relationshipDigest(ref, budget);
     this.raw(owner, ref, budget);
     const rows = this.db.prepare("SELECT * FROM ontology_links WHERE owner=? AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201").all(owner, ref.type, ref.id);
     this.charge(budget, rows.length);
@@ -88,15 +136,22 @@ export class OntologyObjectStore {
   }
   /** Atomic import with schema, identity, revision, endpoint and cardinality checks. */
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void {
+    if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Read views cannot import facts');
     z.string().min(1).max(2000).parse(owner);
     if (Buffer.byteLength(JSON.stringify(input)) > 1_000_000) failure('Ontology import byte limit exceeded');
     const batch = batchSchema.parse(input), source = sourceSchema.parse(provenance);
+    if (batch.objects.some(o => isVirtualRef(o.ref)) || [...batch.links, ...batch.removeLinks].some(l => isVirtualRef(l.from) || isVirtualRef(l.to) || networkLinkIds.has(l.type))) {
+      throw new DomainError('FORBIDDEN', 'Network facts must remain in the authorized network read view');
+    }
     if (new Set(batch.objects.map(o => key(o.ref))).size !== batch.objects.length) failure('Duplicate object in import');
     this.db.exec('SAVEPOINT ontology_import');
     let changed = false;
     const touched = new Map<string, ObjectRef>();
+    const inserted = new Set<string>();
     try {
       for (const object of batch.objects) {
+        assertIdentityAssertionWrite(this, owner, object, source);
+        assertTransactionPartyRoleWrite(this, owner, object, source);
         const def = this.model.object(object.ref.type);
         const properties = this.model.parseProperties(object.ref.type, object.properties);
         if (properties[def.primaryKey] !== object.ref.id) failure('Primary key does not match object identity');
@@ -109,12 +164,43 @@ export class OntologyObjectStore {
         if (old) {
           if (old.definition_digest !== this.model.fingerprint(object.ref.type)) throw new DomainError('CONFLICT', 'Pinned object definition changed');
           if (String(old.body) === body) { touched.set(key(object.ref), object.ref); continue; }
+          const previous = JSON.parse(String(old.body)).properties as Record<string, unknown>;
+          if (object.ref.type === 'OrderLine' && (previous.sourceAgreement !== undefined || properties.sourceAgreement !== undefined)) {
+            throw new DomainError('CONFLICT', 'An existing order line cannot acquire or replace its sealed source agreement');
+          }
+          if (object.ref.type === 'Shipment' && digest(previous.expectedAllocation ?? null) !== digest(properties.expectedAllocation ?? null)) {
+            throw new DomainError('CONFLICT', 'An existing shipment cannot acquire or replace its original expected allocation');
+          }
           if (Number(old.revision) !== object.expectedRevision) throw new DomainError('CONFLICT', 'Object revision changed; explicit current revision required');
         } else if (object.expectedRevision !== undefined) throw new DomainError('CONFLICT', 'Expected object revision does not exist');
+        if (!old) inserted.add(key(object.ref));
         this.db.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?) ON CONFLICT(owner,type,id) DO UPDATE SET revision=excluded.revision,body=excluded.body').run(owner, object.ref.type, object.ref.id, Number(old?.revision ?? 0) + 1, this.model.fingerprint(object.ref.type), body);
         changed = true; touched.set(key(object.ref), object.ref);
       }
       for (const [remove, edges] of [[true, batch.removeLinks], [false, batch.links]] as const) for (const edge of edges) {
+        if (edge.from.type === 'OrderLine' && !inserted.has(key(edge.from))) {
+          const row = this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, edge.from.type, edge.from.id);
+          const agreed = row && JSON.parse(String(row.body)).properties.sourceAgreement !== undefined;
+          if (edge.type.startsWith('OrderLineAgreed') || edge.type === 'OrderLineAgreementReceipt' || agreed && ['OrderLineVariant', 'OrderLineOrder'].includes(edge.type)) {
+            const present = this.containsLinks(owner, [edge]);
+            if (remove && present || !remove && !present) throw new DomainError('CONFLICT', 'Order agreement relationships are immutable');
+          }
+        }
+        if (edge.from.type === 'Shipment' && !inserted.has(key(edge.from))) {
+          const row = this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, edge.from.type, edge.from.id);
+          const planned = row && JSON.parse(String(row.body)).properties.expectedAllocation !== undefined;
+          if (['ShipmentExpectedOrderLine', 'ShipmentExpectedSourceQuote'].includes(edge.type) || planned && edge.type === 'ShipmentOrder') {
+            const present = this.containsLinks(owner, [edge]);
+            if (remove && present || !remove && !present) throw new DomainError('CONFLICT', 'Shipment expected-allocation relationships are immutable');
+          }
+        }
+        if (['EntityIdentityAssertion', 'TransactionPartyRole'].includes(edge.from.type)) {
+          const existed = this.db.prepare('SELECT 1 FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, edge.from.type, edge.from.id);
+          if (existed && !inserted.has(key(edge.from))) {
+            const present = this.containsLinks(owner, [edge]);
+            if (remove && present || !remove && !present) throw new DomainError('CONFLICT', 'Identity and party-role relationships are immutable; append a successor');
+          }
+        }
         const def = this.model.link(edge.type);
         if (!this.model.implements(edge.from.type, def.from.type) || !this.model.implements(edge.to.type, def.to.type)) failure('Link endpoint type mismatch');
         for (const ref of [edge.from, edge.to]) { this.raw(owner, ref, { remaining: 1 }); touched.set(key(ref), ref); }
@@ -174,8 +260,12 @@ export class OntologyObjectStore {
     }
     return { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
   }
-  query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }) {
+  query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }): OntologyQueryResult {
     const args = objectQuerySchema.parse(input);
+    this.assertReaderOwner(owner);
+    const networkQuery = 'object' in args ? isVirtualRef(args.object) : 'type' in args ? isVirtualRef({ type: args.type })
+      : isVirtualRef(args.from) || networkLinkIds.has(this.model.navigation(args.from.type, args.link).link.id);
+    if (networkQuery) return this.overlay(owner).query(args, budget);
     const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined });
     let last: ObjectRef | undefined;
     if (args.cursor) {
@@ -257,10 +347,15 @@ export class OntologyObjectStore {
     return result.page.hasMore ? undefined : result.items;
   }
   evaluate(owner: string, input: unknown, budget: ReadBudget = { remaining: 1000 }) {
+    this.assertReaderOwner(owner);
     const revision = this.revision(owner);
     const args = functionCallSchema.parse(input), definition = this.model.function(args.function);
     if (!definition.inputTypes.some(t => this.model.implements(args.object.type, t))) failure('Function requires its registered object type');
-    const result = { ...evaluateFunction(this, owner, args, budget), functionRef: { id: definition.id, version: definition.version }, model: this.model.ref };
+    // Registered canonical calculations already own a deliberately narrow
+    // private-evidence check. A read overlay must not disable that check or
+    // expose it as a general private-read method to query callers.
+    const calculationStore = this.backingStore && !isVirtualRef(args.object) ? this.backingStore : this;
+    const result = { ...evaluateFunction(calculationStore, owner, args, budget), functionRef: { id: definition.id, version: definition.version }, model: this.model.ref };
     if (Buffer.byteLength(JSON.stringify(result)) > 64000) throw new DomainError('CONFLICT', 'Function response limit exceeded; narrow the investigation');
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during calculation; retry against the current revision');
     return result;

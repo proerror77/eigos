@@ -262,6 +262,13 @@ export class PaotuiAgentProgram implements AgentProgram {
     const latest = ctx.state.observations.map(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot)).filter(o => o.action === s.action).at(-1);
     if (latest?.id !== s.id) invalid('Complete from the latest observation for this result');
     if (this.kind === 'quote') { this.validate(ctx, s.action, s.actionInput); const match = ctx.graph.evaluate(ctx.owner, { function: 'deliveryQuoteMatches', object: { type: 'DeliveryQuote', id: s.id }, request: { type: 'ServiceRequest', id: ctx.request.id }, serviceLevel: s.summary.service }); if (match.status !== 'known' || match.value !== 'pass') invalid('Typed quote no longer matches the request'); }
+    if (this.kind === 'quote') for (const condition of ctx.request.conditions ?? []) {
+      if (String(condition.predicateRef.id) !== 'errand.quote_matches' || condition.strength !== 'hard') continue;
+      const object = { type: 'DeliveryQuote', id: s.id };
+      if (condition.subject.object && !equal(condition.subject.object, object)) invalid('Errand condition names a different fixed quote');
+      const checked = ctx.graph.evaluate(ctx.owner, { function: 'errandQuoteMatches', object, constraints: condition.expected });
+      if (checked.status !== 'known' || !checked.value || typeof checked.value !== 'object' || !('matches' in checked.value) || checked.value.matches !== true) invalid('Requested errand subtype, handling or time conditions are unsupported or not established by the source quote');
+    }
     const facts = { conditions: ['execution.no_order'], ...(s.summary.totalPrice ? { totalPrice: s.summary.totalPrice, quantity: { amount: String(s.summary.weightKg), unit: '公斤' } } : {}) };
     const addresses = this.kind === 'addresses' ? atomicResultSchemas.get_address_list.parse(s.result).addresses.map((a, i) => ({ label: `地址${i + 1}`, address: a.address, houseNumber: a.houseNumber })) : undefined;
     return { ...(this.kind === 'quote' ? { conditionSubject: { type: 'DeliveryQuote', id: s.id } } : {}), artifact: { id: randomUUID(), name: this.kind === 'quote' ? 'agent-delivery-quote.json' : 'owned-addresses.json', data: { goal: ctx.request.originalGoal, execution: 'completed', deliverable: this.kind === 'quote' ? '已按本人选择的地址和物品完成美团费用预估，价格仅为当前预估。未下单、未付款。' : '已读取本人授权地址簿。未下单、未付款。', result: { paotuiAnswer: { observation: c.observation, ...s.summary, ...(addresses ? { addresses } : { quote: { type: 'DeliveryQuote', id: s.id } }), receiptId: s.receipt.id, evidenceKind: s.receipt.evidenceKind, rationale: c.rationale } } } }, facts, evidenceRefs: [s.receipt.id] };

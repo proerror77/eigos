@@ -70,6 +70,8 @@ export class OntologyModel {
   private schemas = new Map<string, z.ZodType>();
   private fingerprints = new Map<string, string>();
   private links: LinkDefinition[];
+  private linkSides = new Map<string, { link: LinkDefinition; side: LinkDefinition['from']; other: LinkDefinition['to']; direction: 'forward' | 'reverse' }[]>();
+  private typeDescriptions = new Map<string, object>();
   private actions: ActionDefinition[];
   private functions: FunctionDefinition[];
   constructor(definition: ModelDefinition) {
@@ -193,29 +195,67 @@ export class OntologyModel {
   fingerprint(type: string) { return this.fingerprints.get(type) ?? invalid('Unknown concrete object type'); }
   link(id: string) { return this.links.find(l => l.id === id) ?? invalid('Unknown link type'); }
   sides(type: string) {
-    return this.links.flatMap(link => [
-      ...(this.implements(type, link.from.type) ? [{ link, side: link.from, other: link.to, direction: 'forward' as const }] : []),
-      ...(this.implements(type, link.to.type) ? [{ link, side: link.to, other: link.from, direction: 'reverse' as const }] : []),
-    ]);
+    let sides = this.linkSides.get(type);
+    if (!sides) {
+      sides = this.links.flatMap(link => [
+        ...(this.implements(type, link.from.type) ? [{ link, side: link.from, other: link.to, direction: 'forward' as const }] : []),
+        ...(this.implements(type, link.to.type) ? [{ link, side: link.to, other: link.from, direction: 'reverse' as const }] : []),
+      ]);
+      this.linkSides.set(type, sides);
+    }
+    // The compiled model is static. Cache only definitions, never owned objects,
+    // source observations, current grants or request-membership results.
+    return sides.map(side => ({ ...side }));
   }
   navigation(type: string, name: string) { return this.sides(type).find(s => s.side.name === name) ?? invalid('Unknown relationship on this object type'); }
   describeType(id: string): object {
+    const cached = this.typeDescriptions.get(id);
+    if (cached) return structuredClone(cached);
     const i = this.interfaces.get(id), o = this.objects.get(id);
     if (!i && !o) invalid('Unknown ontology type');
-    return structuredClone({ kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id) }),
+    const description = { kind: i ? 'interface' : 'object', id, ...(o ? { version: o.version, name: o.name, aliases: o.aliases, description: o.description, primaryKey: o.primaryKey, titleKey: o.titleKey, interfaces: o.interfaces ?? [], ...(o.visibility ? { visibility: o.visibility } : {}) } : { description: i!.description, parents: i!.parents ?? [], linkConstraints: this.interfaceLinks(id) }),
       properties: Object.fromEntries(Object.entries(this.properties(id)).map(([k, p]) => [k, propertyMetadata(p)])),
-      ...(o ? { links: this.sides(id).map(({ side, other, link }) => ({ id: link.id, name: side.name, target: other.type, many: side.many, required: !!side.required, description: link.description })) } : {}) });
+      ...(o ? { links: this.sides(id).map(({ side, other, link }) => ({ id: link.id, name: side.name, target: other.type, many: side.many, required: !!side.required, description: link.description })) } : {}) };
+    this.typeDescriptions.set(id, description);
+    return structuredClone(description);
   }
-  describe(input: { search?: string; limit?: number; after?: string } = {}) {
-    const args = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional() }).strict().parse(input);
+  actionDefinitions() { return structuredClone(this.actions); }
+  functionDefinitions() { return structuredClone(this.functions); }
+  describe(input: { search?: string; limit?: number; after?: string; kind?: 'types' | 'actions' | 'functions' } = {}) {
+    const args = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: nameSchema.optional(), kind: z.enum(['types', 'actions', 'functions']).default('types') }).strict().parse(input);
+    const search = args.search?.trim().toLowerCase();
+    const matched = (values: (string | undefined)[]) => !search || values.filter(Boolean).join(' ').toLowerCase().includes(search);
+    const page = <T extends { id: string }>(values: T[]) => {
+      const sorted = values.filter(value => !args.after || value.id > args.after).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      const items = sorted.slice(0, args.limit), hasMore = sorted.length > items.length;
+      return { items, hasMore, next: hasMore ? items.at(-1)?.id : undefined };
+    };
+    const catalog = { objectTypes: this.objects.size, interfaces: this.interfaces.size, actions: this.actions.length, functions: this.functions.length };
+    if (args.kind === 'actions') {
+      const result = page(this.actions.filter(a => matched([a.id, a.description, a.providerOperation])));
+      return { model: { ...this.ref }, kind: args.kind, catalog, types: [], actions: structuredClone(result.items).map(a => ({ ...a, execution: 'definition_only' })), functions: [], hasMore: result.hasMore, next: result.next };
+    }
+    if (args.kind === 'functions') {
+      const result = page(this.functions.filter(f => matched([f.id, f.description])));
+      return { model: { ...this.ref }, kind: args.kind, catalog, types: [], actions: [], functions: structuredClone(result.items), hasMore: result.hasMore, next: result.next };
+    }
     const matches = [...this.objects.keys(), ...this.interfaces.keys()].sort().filter(id => {
       const o = this.objects.get(id), i = this.interfaces.get(id);
-      return (!args.after || id > args.after) && (args.search?.trim()
-        ? [id, o?.name, o?.description, ...(o?.aliases ?? []), i?.description].join(' ').toLowerCase().includes(args.search.trim().toLowerCase())
+      return (!args.after || id > args.after) && (search
+        ? matched([id, o?.name, o?.description, ...(o?.aliases ?? []), i?.description])
         : o?.visibility !== 'technical');
     });
     const ids = matches.slice(0, args.limit);
-    return { model: { ...this.ref }, types: ids.map(id => this.describeType(id)), functions: structuredClone(this.functions), actions: structuredClone(this.actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
+    // Common roots appear on almost every action. They are not useful relevance
+    // signals; explicit action/function pages remain available for full discovery.
+    const generic = new Set(['ServiceRequest', 'Provider', 'Channel', 'SourceReceipt', 'EvidenceBacked']);
+    const relevant = (type: string) => ids.some(id => !generic.has(id) && (id === type || this.implements(id, type)));
+    const actions = this.actions.filter(a => Object.values(a.inputs).some(relevant)
+      || a.changes.some(change => relevant(change.split('.')[0]!))
+      || !!a.read && relevant(a.read.resultType) || !!a.operation && relevant(a.operation.resultType)
+      || !!search && matched([a.id]));
+    const functions = this.functions.filter(f => f.inputTypes.some(relevant) || !!search && matched([f.id]));
+    return { model: { ...this.ref }, kind: args.kind, catalog, types: ids.map(id => this.describeType(id)), functions: structuredClone(functions), actions: structuredClone(actions).map(a => ({ ...a, execution: 'definition_only' })), hasMore: matches.length > ids.length, next: matches.length > ids.length ? ids.at(-1) : undefined };
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
   /** Resolves only explicit registered operation aliases, never inferred names. */

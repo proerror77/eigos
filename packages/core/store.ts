@@ -2,6 +2,8 @@ import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './pers
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
 import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
+import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
+import type { ExecutionCatalog } from './catalog.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -41,6 +43,7 @@ function equivalentFingerprint(a: string, b: string): boolean {
 
 export class JobStore {
   private db: DatabaseSync;
+  private ontologyCatalog?: ExecutionCatalog;
   readonly ontology: OntologyObjectStore;
   readonly databasePath: string;
 
@@ -94,12 +97,18 @@ export class JobStore {
       initializeMemberUsage(this.db);
     });
     this.ontology = new OntologyObjectStore(this.db);
+    this.ontology.setReadOverlayFactory((owner, requestId) => {
+      const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
+      return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
+    });
     initializeMemberSources(this.db);
   }
+  setOntologyCatalog(catalog: ExecutionCatalog): void { this.ontologyCatalog = catalog; }
 
   memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
 
   createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
+  createNetworkReadStore(): NetworkStore { return new NetworkStore(this.db, undefined, false); }
 
   // Gateway calls this only after validating the enrolled member and acquiring its network lease.
   admitPersonalSource(c?: PersonalSource, configurationDigest?: string): void {
@@ -123,6 +132,14 @@ export class JobStore {
    * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
    * business effects can update ledger truth without advancing the task. */
   private projectExecution(owner: string, job: Job): void {
+    if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
+      && this.ontology.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState === 'invalid_source') {
+      // Keep the canonical completed record available for diagnosis. An invalid
+      // imported result cannot reconstruct missing candidate evidence, execution
+      // history or permissions, nor replace an earlier valid projected history.
+      // Fresh dispatch still requires its complete sealed execution graph.
+      return;
+    }
     const current = this.intents(owner, job.id);
     const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
       JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);

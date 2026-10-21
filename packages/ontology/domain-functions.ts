@@ -4,8 +4,8 @@ import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 import type { Computation } from './object-functions.js';
 import { sourceProof } from './object-evidence.js';
-import { assessDomain, domainResourceCriteria, requiredDomainResources, quoteRoleCriteria, type DomainAssessment } from './domain-rules.js';
-import { domainEntityLinkName, parseDomainParameters, serviceDomains, type DomainDefinition } from './service-domains.js';
+import { assessDomain, domainResourceCriteria, requiredDomainResourceTypes, quoteRoleCriteria, type DomainAssessment, type DomainResultResources } from './domain-rules.js';
+import { domainBusinessLinksFor, domainEntityLinkName, parseDomainParameters, serviceDomains, type DomainDefinition } from './service-domains.js';
 import type { ObjectView } from './object-store.js';
 
 function candidateEntityChecks(store: OntologyObjectStore, owner: string, definition: DomainDefinition, candidate: ObjectView,
@@ -38,7 +38,7 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
       check(`${name}_selection`, 'fail', 'This candidate does not preserve the explicitly selected resource identities');
     }
     if (!entities.length && !observations.length) {
-      if (requiredDomainResources[definition.id].includes(type)) check(`${name}_required`, 'unknown', 'A necessary requested resource has no authoritative typed observation');
+      if (requiredDomainResourceTypes(definition.id, parameters).includes(type)) check(`${name}_required`, 'unknown', 'A necessary requested resource has no authoritative typed observation');
       continue;
     }
     if (entities.length !== observations.length || providers?.length !== 1) {
@@ -65,9 +65,10 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
       }
       check(`${name}_source`, 'pass', 'Candidate resource identity and exact source observation are retained');
       validated.set(type, [...(validated.get(type) ?? []), entity]);
-      const identity: Record<string, string> = { Hospital: 'hospitalId', MedicalDepartment: 'departmentId', Practitioner: 'practitionerId', FoodMerchant: 'merchantId', HotelProperty: 'hotelId', RoomType: 'roomTypeId', VehicleClass: 'vehicleClass' };
-      if (identity[type]) check(`${name}_identity`, o.nativeIdentity === parameters[identity[type]!] ? 'pass' : 'fail', 'The source-native resource identity must match the explicit request within this provider namespace');
-      if (identity[type] && explicitNamespaces.size === 0) {
+      const identity: Record<string, string> = { Hospital: 'hospitalId', MedicalDepartment: 'departmentId', Practitioner: 'practitionerId', FoodMerchant: 'merchantId', HotelProperty: 'hotelId', RoomType: 'roomTypeId', HotelRatePlan: 'ratePlanId', VehicleClass: 'vehicleClass' };
+      const requestedIdentity = identity[type] && parameters[identity[type]!] !== undefined;
+      if (requestedIdentity) check(`${name}_identity`, o.nativeIdentity === parameters[identity[type]!] ? 'pass' : 'fail', 'The source-native resource identity must match the explicit request within this provider namespace');
+      if (requestedIdentity && explicitNamespaces.size === 0) {
         const matching = new Set<string>();
         for (const alternative of alternatives ?? []) {
           if (alternative.properties.requestRevision !== candidate.properties.requestRevision || !alternative.properties.expiresAt || Date.parse(String(alternative.properties.expiresAt)) <= store.now()) continue;
@@ -78,6 +79,12 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
         if (!alternatives || matching.size > 1) check(`${name}_namespace`, 'unknown', 'The requested native identifier matches different source-qualified resources; select an exact resource or provide a verified identity mapping');
       }
       criteria.push(...domainResourceCriteria(type, p, parameters, store.now()));
+    }
+  }
+  if (definition.id === 'hotel') {
+    const plans = validated.get('HotelRatePlan') ?? [];
+    for (const inventory of validated.get('RoomInventory') ?? []) if (inventory.properties.ratePlanId !== undefined) {
+      check('inventory_rate_plan', plans.some(plan => plan.properties.sourceId === inventory.properties.ratePlanId) ? 'pass' : 'unknown', 'Rate-specific availability needs the same source rate-plan resource');
     }
   }
   if (definition.id === 'food') {
@@ -100,6 +107,40 @@ function candidateEntityChecks(store: OntologyObjectStore, owner: string, defini
     }
   }
   return { criteria, refs, levels };
+}
+
+function resultEntityChecks(store: OntologyObjectStore, owner: string, definition: DomainDefinition, result: ObjectView, option: ObjectView, budget: ReadBudget) {
+  const resources: DomainResultResources = { entities: [], relationships: [] }, criteria: DomainAssessment['criteria'] = [], refs: ObjectRef[] = [], levels: string[] = [];
+  const providers = store.related(owner, result.ref, 'provider', budget);
+  if (definition.id === 'hotel') {
+    resources.preparedEntities = [];
+    const observations = store.related(owner, option.ref, 'hotelRatePlanObservations', budget);
+    if (!observations) criteria.push({ id: 'selected_rate_plan_scope', result: 'unknown', reason: 'Selected rate-plan observations exceed the bounded read contract' });
+    for (const observation of observations ?? []) {
+      const proof = sourceProof(store, owner, observation.ref, budget), snapshot = observation.properties.snapshot as Record<string, unknown>, provider = store.related(owner, observation.ref, 'provider', budget);
+      if (!proof || !snapshot || provider?.length !== 1 || providers?.length !== 1 || provider[0]!.ref.id !== providers[0]!.ref.id || observation.properties.valuesDigest !== digest(snapshot) || snapshot.sourceId !== observation.properties.nativeIdentity) { criteria.push({ id: 'selected_rate_plan_source', result: 'unknown', reason: 'The selected rate plan lacks exact immutable source evidence' }); continue; }
+      resources.preparedEntities.push({ type: 'HotelRatePlan', id: String(observation.properties.nativeIdentity), properties: snapshot });
+      refs.push(observation.ref, ...proof.refs); levels.push(...proof.levels);
+    }
+  }
+  for (const type of definition.resultObjects) {
+    const name = domainEntityLinkName(type), entities = store.related(owner, result.ref, name, budget), observations = store.related(owner, result.ref, `${name}Observations`, budget);
+    if (!entities || !observations || entities.length !== observations.length) { criteria.push({ id: `${name}_scope`, result: 'unknown', reason: 'Result resources need bounded, one-to-one source observations' }); continue; }
+    for (const observation of observations) {
+      const proof = sourceProof(store, owner, observation.ref, budget), entity = store.related(owner, observation.ref, 'entity', budget), provider = store.related(owner, observation.ref, 'provider', budget);
+      const snapshot = observation.properties.snapshot as Record<string, unknown> | undefined, nativeId = observation.properties.nativeIdentity;
+      if (!proof || !snapshot || !nativeId || entity?.length !== 1 || !entities.some(value => value.ref.type === entity[0]!.ref.type && value.ref.id === entity[0]!.ref.id) || provider?.length !== 1 || providers?.length !== 1 || provider[0]!.ref.id !== providers[0]!.ref.id || observation.properties.valuesDigest !== digest(snapshot) || snapshot.sourceId !== nativeId || snapshot.sourceRevision !== observation.properties.sourceRevision) {
+        criteria.push({ id: `${name}_source`, result: 'unknown', reason: 'Actual resource identity, provider or immutable observation proof is missing or inconsistent' }); continue;
+      }
+      refs.push(observation.ref, entity[0]!.ref, ...proof.refs); levels.push(...proof.levels);
+      resources.entities.push({ type, id: String(nativeId), properties: snapshot });
+      for (const relation of domainBusinessLinksFor(definition.id).filter(relation => relation.from === type && ['TransportAssignment', 'VehicleInspection'].includes(type))) {
+        const targets = store.related(owner, observation.ref, relation.name, budget);
+        if (targets?.length === 1) resources.relationships.push({ type: relation.id, fromId: String(nativeId), toId: String(targets[0]!.properties.sourceId) });
+      }
+    }
+  }
+  return { resources, criteria, refs, levels };
 }
 
 export function evaluateDomainFunction(store: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
@@ -128,8 +169,12 @@ export function evaluateDomainFunction(store: OntologyObjectStore, owner: string
     if (optionRequest?.length !== 1 || optionRequest[0]!.ref.id !== request.ref.id || optionRequirements?.length !== 1 || optionRequirements[0]!.ref.id !== requirement.ref.id) return unknown('The selected option belongs to another business request');
     refs.push(options[0]!.ref);
     const { objectId: _a, displayTitle: _b, requestRevision: _c, sourceVersion: _v, ...result } = object.properties;
+    const entities = resultEntityChecks(store, owner, definition, object, options[0]!, budget);
+    refs.push(...entities.refs); levels.push(...entities.levels);
     let value: DomainAssessment;
-    try { value = assessDomain(definition.id, parameters, result, store.now()); } catch { return unknown('Domain result does not satisfy the registered observation schema'); }
+    try { value = assessDomain(definition.id, parameters, result, store.now(), entities.resources); } catch { return unknown('Domain result does not satisfy the registered observation schema'); }
+    value.criteria.push(...entities.criteria);
+    value.status = value.criteria.some(criterion => criterion.result === 'fail') ? 'unsatisfied' : value.criteria.some(criterion => criterion.result === 'unknown') ? 'unknown' : 'satisfied';
     return { status: 'known', value, evidenceRefs: refs, evidenceLevels: levels };
   }
   const p = object.properties;

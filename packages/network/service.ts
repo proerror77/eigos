@@ -15,6 +15,8 @@ import { ownerKey, DomainError, type Principal } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import type { Member, MemberStore } from '../members/store.js';
 import { NetworkStore } from './store.js';
+import { baseNetworkPublication, readNetworkPublication } from './read-policy.js';
+import { createNetworkOntologyReader, type NetworkOntologyReadAdapter } from '../ontology/network-read.js';
 import { NetworkError, fail, networkCommandSchema, controlCommandSchema, networkQuerySchema, receiptQuerySchema,
   type Content, type NetworkActor, type Draft, type Approval, type Grant, type Publication, type ResultRef, type Binding } from './contracts.js';
 
@@ -45,8 +47,8 @@ export class NetworkService {
     if (options.jobs && options.catalog) this.evidence = new NetworkEvidence(store, options.jobs, options.catalog);
     store.acquire(this.holder);
     this.directory = new NetworkDirectory(store, id => this.member(id), options.operatorIds ?? [], options.catalog);
-    try { this.directory.bootstrap(options.memberIds, id => members.get(id)); } catch (error) { store.release(this.holder); throw error; }
-    this.timer = setInterval(() => { try { store.renew(this.holder); } catch { this.leaseLost = true; } }, 3000);
+    try { this.directory.bootstrap(options.memberIds, id => members.get(id)); this.refreshReadAdmission(); } catch (error) { store.release(this.holder); throw error; }
+    this.timer = setInterval(() => { try { store.renew(this.holder); this.refreshReadAdmission(); } catch { this.leaseLost = true; } }, 3000);
     this.timer.unref();
     members.setRevocationObserver(change => store.fence(change.memberId, change.kind, change.target));
   }
@@ -56,6 +58,19 @@ export class NetworkService {
     this.lease(); const m = this.members.get(memberId);
     if (!this.options.memberIds.includes(memberId) || m.status !== 'active') fail('NETWORK_MEMBERSHIP_REQUIRED', 403);
     this.store.checkFence(memberId); return m;
+  }
+  private refreshReadAdmission() {
+    const admitted = this.options.memberIds.flatMap(id => {
+      try {
+        const member = this.member(id), connections = this.members.connections(id);
+        const installations = this.members.agents.list(id).flatMap(registration => {
+          if (registration.revoked || !registration.clientId || !connections.some(c => c.clientId === registration.clientId && !c.blocked)) return [];
+          try { this.store.checkFence(id, registration.id, registration.clientId); return [{ id: registration.id, clientId: registration.clientId }]; } catch { return []; }
+        });
+        return [{ id, owner: ownerKey({ ...member, clientId: '', scopes: [] }), installations }];
+      } catch (error) { if (error instanceof NetworkError && error.status === 403 || error instanceof DomainError && error.code === 'NOT_FOUND') return []; throw error; }
+    });
+    this.store.publishReadAdmission(this.holder, admitted);
   }
   private identity(p: Principal, token: string, scope: string) {
     this.lease();
@@ -67,6 +82,17 @@ export class NetworkService {
     const installation = this.members.agents.authorize(p, token);
     this.store.checkFence(m.id, installation.id, p.clientId);
     return { member: m, installation };
+  }
+  /** Public Ontology reads use the same live identity and installation checks as
+   * the network API on every operation, including snapshot revalidation. */
+  ontologyReader(p: Principal, token: string): NetworkOntologyReadAdapter {
+    const jobs = this.options.jobs ?? fail('INQUIRY_UNAVAILABLE', 503), owner = ownerKey(p);
+    return createNetworkOntologyReader({ jobs, store: this.store, owner, catalog: this.options.catalog, authorize: () => {
+      if (!p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
+      const { member, installation } = this.identity(p, token, 'network:read');
+      return { memberId: member.id, installationId: installation.id, identityDigest: digest([owner, member.id, installation.id, p.clientId, p.scopes.slice().sort()]),
+        publication: publication => this.publicView(publication, member.id) };
+    } });
   }
   actor(p: Principal, token: string, profileId: string, scope: string, command?: string): NetworkActor {
     const { member: m, installation } = this.identity(p, token, scope), owner = ownerKey(p);
@@ -173,12 +199,15 @@ export class NetworkService {
     if (!this.store.get('binding', a.bindingId, a.owner).allowedCommands.includes('evidence.manage')) fail('ACTOR_NOT_BOUND', 403);
   }
   private inquiryService() { return this.inquiry ?? fail('INQUIRY_UNAVAILABLE', 503); }
-  private inquiryScope(p: Principal) { if (!p.scopes.includes('tasks:write') || !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403); }
+  private inquiryScope(p: Principal) { if (!p.scopes.includes('tasks:write') || !p.scopes.includes('tasks:read') || !p.scopes.includes('network:read')) fail('SCOPE_REQUIRED', 403); }
   command(p: Principal, token: string, input: unknown) {
     const args = networkCommandSchema.parse(input);
     if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
     if (args.operation.startsWith('evidence.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
     let actor = this.actor(p, token, args.asProfileId, 'network:write', requiredCommand[args.operation]);
+    if (args.operation === 'inquiry.convert' || args.operation === 'inquiry.select_quote') {
+      this.identity(p, token, 'network:read'); this.refreshReadAdmission();
+    }
     const committed = this.store.once(this.actorKey(actor), args.operation, args.requestId, args, () => {
       if (args.operation.startsWith('inquiry.')) this.inquiryScope(p);
       if (args.operation.startsWith('evidence.') && !p.scopes.includes('tasks:read')) fail('SCOPE_REQUIRED', 403);
@@ -193,7 +222,10 @@ export class NetworkService {
       }
       if (args.operation === 'inquiry.request_conversion') return this.inquiryService().request(a, 'convert', args.input);
       if (args.operation === 'inquiry.request_selection') return this.inquiryService().request(a, 'select_quote', args.input);
-      if (args.operation === 'inquiry.convert' || args.operation === 'inquiry.select_quote') return this.inquiryService().apply(p, a, args.choiceId, args.operation === 'inquiry.convert' ? 'convert' : 'select_quote');
+      if (args.operation === 'inquiry.convert' || args.operation === 'inquiry.select_quote') {
+        this.identity(p, token, 'network:read');
+        return this.inquiryService().apply(p, a, args.choiceId, args.operation === 'inquiry.convert' ? 'convert' : 'select_quote', true);
+      }
       if (args.operation === 'follow.set') return this.activity.follow(a, args);
       if (args.operation === 'need.close') return this.collaboration.close(a, args.postId, args.expectedRevision);
       if (isDirectoryCommand(args)) return this.directory.command(a, args);
@@ -384,30 +416,14 @@ export class NetworkService {
     return { version: 1, result: this.ownView(a.owner, { kind: 'approval', id: r.id }) };
   }
   private baseView(pub: Publication, viewerId: string) {
-    try {
-      const grant = this.store.get('grant', pub.grantId);
-      if (pub.state !== 'active' || grant.status !== 'consumed' || grant.usedPublicationId !== pub.id || Date.parse(pub.visibleUntil) <= this.store.now()) return undefined;
-      this.directory.profile(pub.profileId, pub.owner); this.directory.mayRead(grant, pub.memberId, viewerId);
-      this.directory.validateContent(pub.content, pub.owner, pub.profileId);
-      this.validateEvidence(pub.content, pub.owner, pub.profileId);
-      const content = pub.content;
-      return { version: 1, ref: { kind: 'publication', id: pub.id, revision: pub.revision }, profileId: pub.profileId, spaceId: grant.spaceId, content, visibleUntil: pub.visibleUntil,
-        ...(content.kind === 'listing' ? { capabilityState: this.directory.candidateState(content.listingId, ownerKey({ ...this.member(viewerId), clientId: '', scopes: [] })) } : {}) };
-    } catch (error) {
-      if (error instanceof NetworkError && error.status < 500 && error.status !== 429 || error instanceof DomainError) return undefined;
-      throw error;
-    }
+    return baseNetworkPublication({ store: this.store, directory: this.directory,
+      evidence: publication => this.validateEvidence(publication.content, publication.owner, publication.profileId),
+      candidateState: (listingId, viewer) => this.directory.candidateState(listingId, ownerKey({ ...this.member(viewer), clientId: '', scopes: [] })) }, pub, viewerId);
   }
   private publicView(pub: Publication, viewerId: string): NetworkQueryResult | undefined {
-    const base = this.baseView(pub, viewerId); if (!base) return undefined;
-    try {
-      if (!this.collaboration.readable(pub, viewerId)) return undefined;
-      return { ...base, ...(pub.content.kind === 'need' ? { need: this.collaboration.view(this.collaboration.need(pub.needId ?? pub.id)) } : {}),
-        ...(pub.content.kind === 'message' ? { message: { id: pub.messageId ?? pub.id, revision: this.store.get('message', pub.messageId ?? pub.id).revision } } : {}) };
-    } catch (error) {
-      if (error instanceof NetworkError && error.status < 500 || error instanceof DomainError) return undefined;
-      throw error;
-    }
+    return readNetworkPublication({ store: this.store, directory: this.directory, collaboration: this.collaboration,
+      evidence: publication => this.validateEvidence(publication.content, publication.owner, publication.profileId),
+      candidateState: (listingId, viewer) => this.directory.candidateState(listingId, ownerKey({ ...this.member(viewer), clientId: '', scopes: [] })) }, pub, viewerId);
   }
   directoryQuery(memberId: string, input: unknown): NetworkQueryResult {
     this.member(memberId); const args = networkQuerySchema.parse(input);

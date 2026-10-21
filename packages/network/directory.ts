@@ -7,13 +7,14 @@ import { NetworkError, fail, type NetworkActor, type Content, type Approval, typ
 import type { DirectoryCommand, DirectoryControl, Space, Membership, Representation, Listing } from './directory-contracts.js';
 import { NetworkStore } from './store.js';
 
-const ownerOf = (member: Member) => ownerKey({ ...member, clientId: '', scopes: [] });
+export type DirectoryMember = Pick<Member, 'id' | 'issuer' | 'tenant' | 'subject'>;
+const ownerOf = (member: DirectoryMember) => ownerKey({ ...member, clientId: '', scopes: [] });
 const rev = (actual: number, expected: number) => { if (actual !== expected) fail('REVISION_CONFLICT'); };
 
 /** Network domain operations only. No supplier calls, model runs or task mutations. */
 export class NetworkDirectory {
-  constructor(readonly store: NetworkStore, private member: (id: string) => Member, private operatorIds: string[], private catalog?: ExecutionCatalog) {}
-  bootstrap(ids: string[], lookup: (id: string) => Member = this.member) {
+  constructor(readonly store: NetworkStore, private member: (id: string) => DirectoryMember, private operatorIds: string[], private catalog?: ExecutionCatalog) {}
+  bootstrap(ids: string[], lookup: (id: string) => DirectoryMember = this.member) {
     this.store.transaction(() => {
       if (this.store.scan('space').some(s => s.id === this.store.spaceId)) return;
       const members = ids.map(lookup); if (!members.length) fail('NETWORK_MEMBERSHIP_REQUIRED', 403);

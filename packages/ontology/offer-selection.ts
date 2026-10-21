@@ -9,6 +9,7 @@ import { businessRef, writeBusiness } from './business-chain-write.js';
 
 /** Decision material only. No order, authorization grant or provider invocation. */
 export function quoteSelectionMaterial(jobs: JobStore, inquiry: Inquiry, input: SelectionInput) {
+  if (input.quote.type !== 'DeliveryQuote') return fail('CANDIDATE_SELECTION_UNAVAILABLE', 422);
   const job = jobs.get(inquiry.owner, inquiry.taskId), request = job.delegation?.request, graph = jobs.ontology;
   if (!request || request.revision !== input.expectedRequestRevision) return fail('REQUIREMENTS_CHANGED');
   if (job.state !== 'completed' || !job.delegation?.acceptance?.accepted) return fail('QUOTE_REPORT_NOT_READY');

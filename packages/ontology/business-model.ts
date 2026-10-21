@@ -8,6 +8,10 @@ import { paotuiAgentActions, paotuiAgentFunctions, paotuiAgentLinks, paotuiAgent
 import { catalogAgentActions, catalogAgentFunctions, catalogAgentLinks, catalogAgentObjects } from './catalog-agent.js';
 import { executionObjects, executionLinks, executionReferenceLinks } from './execution-model.js';
 import { extendBusinessChain } from './business-chain-model.js';
+import { extendProductAttributesModel, productAttributeConstraintsSchema } from './product-attributes.js';
+import { extendIdentityMappingModel } from './identity-model.js';
+import { extendErrandDomainModel, errandConstraintsSchema } from './errand-model.js';
+import { networkObjects, networkLinks, isVirtualRef } from './network-model.js';
 import { capabilityCatalogObjects, capabilityCatalogLinks } from './capability-catalog.js';
 import { commerceJourneyActions, commerceJourneyFunctions, commerceJourneyLinks, commerceJourneyObjects } from './commerce-journey.js';
 import { customsPolicyObjects, customsPolicyLinks, customsPolicyFunctions } from './customs-policy.js';
@@ -37,6 +41,8 @@ export const businessConditionSchema = z.union([
   condition('parcel.quote_matches_request', ['DeliveryQuote'], 'parcel_quote', ['result'], 'eq', z.object({ weight: quantitySchema.refine(v => ['kg', 'g'].includes(v.unit)), serviceLevel: z.enum(['ordinary', 'express']), parcel: objectRefSchema.extend({ type: z.literal('Parcel') }).optional(), route: objectRefSchema.extend({ type: z.literal('DeliveryRoute') }).optional() }).strict()),
   condition('offer.total_within_budget', ['DeliveryQuote', 'ProductOffer'], 'total_price', ['precondition'], 'lte', z.object({ amount: moneyValueSchema, priceBasis: z.enum(['estimate', 'firm_quote']), scope: z.literal('all_mandatory_fees') }).strict()),
   condition('goods.variant_matches', ['ProductOffer', 'OrderLine'], 'product_variant', ['precondition', 'result'], 'eq', objectRefSchema.extend({ type: z.literal('ProductVariant') })),
+  condition('goods.attributes_match', ['ProductVariant', 'ProductOffer', 'CommerceProduct'], 'product_attributes', ['precondition', 'result'], 'eq', productAttributeConstraintsSchema),
+  condition('errand.quote_matches', ['DeliveryQuote'], 'errand_requirements', ['result'], 'eq', errandConstraintsSchema),
   condition('goods.capacity_covers_quantity', ['ProductOffer'], 'capacity', ['precondition'], 'gte', quantitySchema),
   condition('delivery.commitment_covers_deadline', ['ProductOffer'], 'delivery_commitment', ['precondition'], 'lte', z.object({ at: z.iso.datetime({ offset: true }), timeZone: timeZoneSchema, originalText: z.string().min(1).max(200) }).strict()),
   condition('delivery.receipt_matches_request', ['OrderLine'], 'actual_delivery', ['result'], 'eq', z.object({ quantity: quantitySchema, specificationRef: z.string().min(1).max(200), destination: addressValueSchema, deadline: z.iso.datetime({ offset: true }) }).strict()),
@@ -106,9 +112,10 @@ const objects: ObjectTypeDefinition[] = [
   type('Payment', '付款记录', 'paymentId', { providerReference: str('Provider payment reference'), purpose: choice(['goods', 'deposit'], 'Payment business purpose'), amount: money('Observed payment amount'), paymentState: choice(['not_started', 'pending', 'paid', 'failed', 'unknown'], 'Payment source state'), observedAt: time('Payment observation') }),
   type('Refund', '退款记录', 'refundId', { providerReference: str('Provider refund reference'), amount: money('Observed refund amount'), refundState: choice(['not_started', 'pending', 'refunded', 'rejected', 'unknown'], 'Refund state; acceptance is not receipt of funds'), observedAt: time('Refund observation') }),
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
-  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
+  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', 'identity_mapping', 'party_role', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
-// Only changed definitions advance. The named v9 → v10 migration below is the sole compatibility transition.
+// Object and model versions are separate. Historical compatibility accepts only
+// the named frozen predecessors in the migration modules.
 objects.find(o => o.id === 'ServiceRequest')!.version = '4';
 objects.find(o => o.id === 'Order')!.version = '2';
 const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
@@ -201,8 +208,12 @@ const predecessorDefinition: ModelDefinition = { id: 'eigos.business', version: 
 };
 predecessorDefinition.links.push(...executionReferenceLinks(businessObjects, predecessorDefinition.actions, predecessorDefinition.interfaces));
 export const businessModelV9 = new OntologyModel(predecessorDefinition);
-export const BUSINESS_MODEL_DEFINITION = extendBusinessChain(predecessorDefinition, { quantity: quantitySchema, pricing: pricingSchema, condition: businessConditionSchema });
-BUSINESS_MODEL_DEFINITION.version = '14';
+const businessChain = extendBusinessChain(predecessorDefinition, { quantity: quantitySchema, pricing: pricingSchema, condition: businessConditionSchema });
+const productAndIdentity = extendIdentityMappingModel(extendProductAttributesModel(businessChain));
+export const BUSINESS_MODEL_DEFINITION = extendErrandDomainModel(productAndIdentity);
+BUSINESS_MODEL_DEFINITION.version = '15';
+BUSINESS_MODEL_DEFINITION.objects.push(...networkObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...networkLinks);
 const knownLinks = new Set(BUSINESS_MODEL_DEFINITION.links.map(link => link.id));
-BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(BUSINESS_MODEL_DEFINITION.objects.filter(type => type.visibility !== 'technical'), BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces).filter(link => !knownLinks.has(link.id)));
+BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(BUSINESS_MODEL_DEFINITION.objects.filter(type => type.visibility !== 'technical' && !isVirtualRef({ type: type.id })), BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces).filter(link => !knownLinks.has(link.id)));
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);

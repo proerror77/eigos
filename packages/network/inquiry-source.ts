@@ -1,18 +1,13 @@
-import { paotuiActionIds, paotuiAgentActions } from '../ontology/paotui-agent.js';
-import { PAOTUI_AGENT_REFS } from '../capabilities/paotui-agent.js';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { bindingDigest, sameRef, isActionAdapter, type ExecutionCatalog } from '../core/catalog.js';
 import type { NetworkStore } from './store.js';
 import type { InquirySource } from './inquiry-contracts.js';
+import { validateQuoteCapability } from './candidate-policy.js';
 
 // Trusted read policies, not names/tags supplied by a seller or a model.
 export function quoteCapability(catalog: ExecutionCatalog, ref: InquirySource['capabilityRef']) {
-  const c = catalog.capability(ref);
-  const legacy = ['1', '2'].includes(c.ref.version) && c.actions.length === 1 && c.actions[0]!.effect === 'read' && c.actions[0]!.ref.id === 'delivery.quote.read' && c.actions[0]!.ref.version === c.ref.version;
-  const agent = sameRef(c.ref, PAOTUI_AGENT_REFS.quote) && c.ontologyRef.id === 'paotui.agent.actions' && c.actions.length === paotuiActionIds.length && paotuiActionIds.every(id => c.actions.some(a => a.ref.id === id && a.ref.version === paotuiAgentActions.find(definition => definition.id === id)!.read!.version && a.effect === 'read'));
-  if (c.ref.id !== 'delivery.quote' || c.environment === 'sandbox' || !(legacy || agent)) throw new DomainError('FORBIDDEN', 'No registered quote-only policy for this capability');
-  return c;
+  return validateQuoteCapability(catalog.capability(ref));
 }
 export function validateInquirySource(store: NetworkStore, catalog: ExecutionCatalog, owner: string, source: InquirySource) {
   store.checkFence(source.buyerMemberId);

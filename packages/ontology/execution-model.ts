@@ -18,6 +18,10 @@ const type = (id: string, description: string, properties: Record<string, Proper
 });
 const requestRevision = integer('Owning business request revision');
 const intentState = z.enum(['unprepared', 'ready', 'dispatching', 'awaiting_remote', 'effect_unknown', 'effect_confirmed', 'rejected', 'canceled_before_dispatch', 'canceled_after_dispatch', 'needs_review']);
+export const fixedCandidateBindingSchema = z.object({ version: z.literal('1'), requestId: text, requestRevision: z.number().int().positive(),
+  candidateId: text, candidateDigest: sha,
+  subject: z.object({ ref: objectRefSchema, revision: z.number().int().positive(), propertiesDigest: sha, linksDigest: sha }).strict(),
+}).strict();
 export const executionFeedbackSchema = z.strictObject({
   at: time, kind: z.enum(['validation', 'action', 'completion', 'runtime']), message: z.string().min(1).max(4000), inputDigest: sha,
 });
@@ -95,11 +99,15 @@ export const executionObjects: ObjectTypeDefinition[] = [
     effect: s('Permitted effect class'), state: p('string', intentState, 'Durable execution state, not business completion'),
     structureDigest: hash('Immutable step structure digest'), acceptedOutput: objectRef('Accepted normalized business object only', false),
   }),
-  type('ExecutionInput', 'A named argument or output binding. Private argument values are omitted; exact values remain digest-bound.', {
-    parameter: s('Target argument name'), sourceKind: p('string', z.enum(['literal', 'object', 'step_output']), 'Argument source'),
+  type('ExecutionInput', 'A named provider argument, output binding, or explicitly separate selected-candidate business context. Candidate context is never materialized into the provider payload. Private argument values are omitted; exact values remain digest-bound.', {
+    parameter: s('Target argument name or reserved business-context role'), sourceKind: p('string', z.enum(['literal', 'object', 'step_output', 'candidate_context']), 'Provider argument source or context-only candidate selection'),
     valueDigest: hash('Exact sealed value or output-binding digest'), valueType: s('Value shape or typed object name'),
     sourceStepId: s('Producing step identifier', 200, false), sourcePath: s('Selected output path', 500, false),
     object: objectRef('Referenced public business object', false),
+    candidateId: s('Exact prepared candidate identity for a context-only binding', 200, false), requestRevision: p('integer', z.number().int().positive(), 'Request revision sealed with the selected candidate', false),
+    objectRevision: p('integer', z.number().int().positive(), 'Exact business-object revision observed by the planner', false),
+    objectPropertiesDigest: p('string', sha, 'Public business properties sealed with the candidate context', false),
+    objectLinksDigest: p('string', sha, 'Business relationships sealed with the candidate context', false),
   }),
   type('ExecutionAttempt', 'One actual invocation or reconciliation attempt. Claim tokens, dispatch keys and private arguments are never exposed.', {
     attemptId: s('Durable attempt identity'), intentId: s('Original intent identity'), planDigest: hash('Original pinned plan version'),
@@ -167,5 +175,6 @@ export function executionReferenceLinks(businessTypes: readonly ObjectTypeDefini
   }));
 }
 const bookkeeping = new Set(executionObjects.map(o => o.id).filter(id => !id.startsWith('Request')));
+executionObjects.find(object => object.id === 'ExecutionInput')!.version = '2';
 export const isExecutionBookkeepingType = (type: string): boolean => bookkeeping.has(type);
 for (const object of executionObjects) if (bookkeeping.has(object.id)) object.visibility = 'technical';

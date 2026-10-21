@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { requirementsSchema, refSchema, type Ref } from '../ontology/execution.js';
+import { networkCandidateTypes, type NetworkCandidateType } from './candidate-policy.js';
 
 const id = z.uuid(), revision = z.number().int().positive();
 const publicationRef = z.object({ publicationId: id, revision }).strict();
@@ -11,7 +12,7 @@ export const conversionSchema = z.object({
   ]),
 }).strict();
 export const selectionSchema = z.object({ inquiryId: id, expectedRequestRevision: revision,
-  quote: z.object({ type: z.literal('DeliveryQuote'), id: z.string().min(1).max(200), revision }).strict(),
+  quote: z.object({ type: z.enum(networkCandidateTypes), id: z.string().min(1).max(200), revision }).strict(),
   selectionKind: z.enum(['reviewed', 'proposal']),
 }).strict();
 export type ConversionInput = z.infer<typeof conversionSchema>;
@@ -24,7 +25,16 @@ export interface InquirySource {
 export interface Inquiry {
   id: string; owner: string; profileId: string; postId: string; taskId: string; selectionDigest: string; inputDigest: string;
   source: InquirySource; createdAt: string; selectedAtRequestRevision: number;
-  provenance: { postPublicationId: string; postContentRevision: number; listingPublicationId: string; messagePublicationId?: string };
+  provenance: { postPublicationId: string; postContentRevision: number; listingPublicationId: string; messagePublicationId?: string;
+    postPublicationRevision?: number; listingPublicationRevision?: number; messagePublicationRevision?: number };
+  readAdmission?: NetworkTaskReadAdmission;
+}
+/** A task-limited delegation receipt, not a bearer or a replacement authority.
+ * Existing choice/binding/member policy and fresh Gateway admission remain required. */
+export interface NetworkTaskReadAdmission {
+  version: 1; scope: 'network:read'; owner: string; taskId: string; inquiryId: string;
+  memberId: string; installationId: string; clientId: string; profileId: string;
+  bindingId: string; bindingRevision: number; choiceId: string; issuedAt: string; expiresAt: string;
 }
 export interface InquiryChoice {
   id: string; owner: string; memberId: string; profileId: string; bindingId: string; bindingRevision: number;
@@ -33,7 +43,7 @@ export interface InquiryChoice {
   status: 'pending' | 'approved' | 'consumed' | 'revoked'; preview: Record<string, unknown>; approvedBy?: string; approvedAt?: string; resultId?: string;
 }
 export interface QuoteSelection {
-  id: string; owner: string; inquiryId: string; taskId: string; profileId: string; quoteRef: { type: 'DeliveryQuote'; id: string };
+  id: string; owner: string; inquiryId: string; taskId: string; profileId: string; quoteRef: { type: NetworkCandidateType; id: string };
   quoteRevision: number; requestRevision: number; kind: 'reviewed' | 'proposal'; proposalId?: string;
   snapshot: Record<string, unknown>; snapshotDigest: string; createdAt: string;
 }

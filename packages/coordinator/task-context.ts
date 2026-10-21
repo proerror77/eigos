@@ -118,6 +118,8 @@ export function readTaskInstructions(graph: OntologyObjectStore, owner: string, 
  * reverse-navigation bridge into another task. */
 export function taskObjectMembership(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): 'current' | 'foreign' | 'shared' {
   if (ref.type === 'ServiceRequest') return ref.id === request.id ? 'current' : 'foreign';
+  const virtual = graph.virtualMembership(owner, request, ref);
+  if (virtual) return virtual;
   const object = graph.read(owner, ref);
   // Attempt.requestRevision is the durable Job/claim fence. A technical resume
   // can advance it without changing the business request. Membership follows
@@ -161,7 +163,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     if (graph.model.isInterface(type)) continue;
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
-  const allFunctions = graph.model.describe({ limit: 1 }).functions;
+  const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));
   const types = [...names].sort().map(type => safeDefinition(graph.model.describeType(type), names));
   return { model: graph.model.ref, types, actions: actions.map(action => ({ ...action, execution: 'definition_only' })), functions };

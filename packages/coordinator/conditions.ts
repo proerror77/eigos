@@ -9,6 +9,7 @@ import type { ConditionCheck } from '../ontology/planning-contract.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
 import { operativeText } from '../core/current-inputs.js';
+import { assertTypedConditionGrounding, assertTypedConditionCurrent } from './typed-condition-grounding.js';
 
 const conditionsSchema = z.array(businessConditionSchema).max(40);
 const refEqual = (a: ObjectRef, b: ObjectRef) => a.type === b.type && a.id === b.id;
@@ -33,6 +34,9 @@ export function groundConditions(request: ServiceRequest, json: string, retrieve
     const message = request.messages.find(m => m.id === c.source.messageId);
     if (!message || !message.text.includes(c.source.quote)) throw new DomainError('CONFLICT', 'Condition requires an exact quote from the current request');
     const id = c.predicateRef.id, expected = c.expected as Record<string, unknown>;
+    assertTypedConditionGrounding(id, expected, c.source.quote);
+    assertTypedConditionGrounding(id, expected, message.text);
+    assertTypedConditionCurrent(id, expected, request.messages, c.source.messageId);
     const verifyReferences = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
       const ref = value as ObjectRef;
@@ -87,6 +91,14 @@ function scopedObjects(graph: OntologyObjectStore, owner: string, requestId: str
   const domain = serviceDomains.find(d => [d.candidateType, d.resultType].includes(type));
   if (domain) return graph.related(owner, root, `${domain.id}${type === domain.candidateType ? 'Options' : 'Results'}`, budget);
   if (['DeliveryQuote', 'ProductOffer', 'ReservationOffer'].includes(type)) return graph.related(owner, root, 'offers', budget)?.filter(o => o.ref.type === type).map(o => graph.read(owner, o.ref, budget));
+  if (type === 'CommerceProduct') return graph.related(owner, root, 'commerceCommerceProduct', budget);
+  if (type === 'ProductVariant') {
+    const offers = graph.related(owner, root, 'offers', budget), catalogs = graph.related(owner, root, 'catalogObservations', budget), products = graph.related(owner, root, 'commerceCommerceProduct', budget);
+    if (!offers || !catalogs || !products) return;
+    const groups = [...offers.filter(o => o.ref.type === 'ProductOffer').map(o => graph.related(owner, o.ref, 'productVariant', budget)),
+      ...catalogs.map(o => graph.related(owner, o.ref, 'variants', budget)), ...products.map(o => graph.related(owner, o.ref, 'productVariant', budget))];
+    return groups.some(group => !group) ? undefined : [...new Map(groups.flatMap(group => group!).map(object => [JSON.stringify(object.ref), object])).values()];
+  }
   if (type === 'Reservation') return graph.related(owner, root, 'reservations', budget);
   if (type === 'OrderLine') {
     const orders = graph.related(owner, root, 'orders', budget); if (!orders) return;
@@ -136,6 +148,9 @@ export function assessConditions(graph: OntologyObjectStore, owner: string, requ
       return apply(value, () => status === 'satisfied');
     }
     if (rule === 'offer.total_within_budget') return apply(evaluate({ function: 'withinBudget', object: object.ref, budget: expected.amount, priceBasis: expected.priceBasis }), v => v === 'pass');
+    if (rule === 'goods.attributes_match' || rule === 'errand.quote_matches') {
+      return apply(evaluate({ function: rule === 'goods.attributes_match' ? 'productAttributesMatch' : 'errandQuoteMatches', object: object.ref, constraints: c.expected }), v => !!v && typeof v === 'object' && (v as { matches?: boolean }).matches === true);
+    }
     if (rule === 'parcel.quote_matches_request') {
       const value = evaluate({ function: 'deliveryQuoteMatches', object: object.ref, request: { type: 'ServiceRequest', id: request.id }, serviceLevel: expected.serviceLevel });
       const parcel = graph.related(owner, object.ref, 'parcel', budget), route = graph.related(owner, object.ref, 'route', budget);
