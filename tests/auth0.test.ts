@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/auth0.js';
+import { inviteBetaCodexConfig } from '../packages/members/native-mcp.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
 
@@ -43,7 +44,10 @@ test('the invite beta provisions only task scopes and a public native MCP author
   const plan = auth0Plan('https://beta.example', undefined, { inviteBeta: true });
   assert.deepEqual(plan.api.scopes.map(scope => scope.value), ['services:read', 'tasks:read', 'tasks:write', 'members:write']);
   assert(plan.mcp); assert.equal(plan.mcp.token_endpoint_auth_method, 'none');
-  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1/callback']);
+  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1:64517/callback']);
+  const nativeConfig = inviteBetaCodexConfig('https://beta.example', 'public-client');
+  assert.match(nativeConfig, /callback_url = "http:\/\/127\.0\.0\.1:64517\/callback"\ncallback_port = 64517/);
+  assert.match(nativeConfig, /url = "https:\/\/beta\.example\/mcp"/);
   assert.deepEqual(plan.mcp.grant_types, ['authorization_code', 'refresh_token']);
   assert.equal(plan.mcp.refresh_token.rotation_type, 'rotating');
   assert.equal(plan.mcp.client_metadata.eigos_resource, 'https://beta.example');

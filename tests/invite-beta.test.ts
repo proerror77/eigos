@@ -64,7 +64,10 @@ test('invited native MCP members share protocol access but cannot cross owners, 
     assert.equal((await request('/mcp')).status, 401);
     const metadata = await (await request('/.well-known/oauth-protected-resource')).json();
     assert.deepEqual(metadata.scopes_supported, ['openid', 'offline_access', ...TASK_SCOPES]);
-    assert.match(await (await request('/')).text(), /--oauth-client-id native-mcp/);
+    const landing = await (await request('/')).text();
+    assert.match(landing, /client_id = &quot;native-mcp&quot;/);
+    assert.match(landing, /callback_port = 64517/);
+    assert.match(landing, /http:\/\/127\.0\.0\.1:64517\/callback/);
     assert.equal((await request('/.well-known/eigos-pa-payment')).status, 404);
     assert(!JSON.stringify(await (await request('/.well-known/agent-card.json')).json()).includes('eigos-pa-payment'));
     const alice = gateway.members.login(principal('alice'));

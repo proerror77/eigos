@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { SCOPES, TASK_SCOPES } from '../core/domain.js';
 import { SOURCE_SCOPES } from '../core/member-source.js';
 import { MEMBERSHIP_SCOPE } from './agents.js';
+import { INVITE_BETA_MCP_CALLBACK_URL } from './native-mcp.js';
 
 type ManagementApi = (method: 'get' | 'patch', path: string, body?: unknown) => unknown;
 const clientPage = z.object({ clients: z.array(z.object({ client_id: z.string().min(1) })), next: z.string().min(1).optional() });
@@ -73,7 +74,7 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
     // public client ID is shared; every user still performs their own consent.
     mcp: options.inviteBeta ? {
       name: `EIGOS MCP for Codex ${suffix}`, app_type: 'native', oidc_conformant: true, is_first_party: true,
-      callbacks: ['http://127.0.0.1/callback'], token_endpoint_auth_method: 'none', jwt_configuration: { alg: 'RS256' },
+      callbacks: [INVITE_BETA_MCP_CALLBACK_URL], token_endpoint_auth_method: 'none', jwt_configuration: { alg: 'RS256' },
       grant_types: ['authorization_code', 'refresh_token'],
       refresh_token: { rotation_type: 'rotating', expiration_type: 'expiring', token_lifetime: 2592000, idle_token_lifetime: 604800, infinite_token_lifetime: false, infinite_idle_token_lifetime: false, leeway: 5 },
       client_metadata: metadata('native-mcp'),

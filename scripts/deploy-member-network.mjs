@@ -10,11 +10,15 @@ import { readConfig } from '../dist/packages/core/config.js';
 import { assertSourceProxy } from '../dist/packages/core/private-source-proxy.js';
 import { installReleaseDependencies } from '../dist/packages/deployment/dependencies.js';
 import { assertInviteBetaProxy } from '../dist/packages/deployment/invite-beta-proxy.js';
+import { assertCloudflareFrontend, readCloudflareFrontend } from '../dist/packages/deployment/cloudflare-frontend.js';
 
-// Separate from com.eigos.grok-life. No token acquisition, IdP changes or business calls.
-const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, apply: { type: 'boolean', default: false } } });
+// Separate from com.eigos.grok-life. Frontend readback uses the operator's
+// existing login; IdP provisioning and business execution are separate steps.
+const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, 'cloudflare-frontend': { type: 'string' }, apply: { type: 'boolean', default: false } } });
 if (!['member-network', 'invite-beta'].includes(values.profile)) throw new Error('Choose member-network or invite-beta');
 const inviteBeta = values.profile === 'invite-beta';
+if (values['cloudflare-frontend'] && !inviteBeta) throw new Error('Cloudflare publication is only supported for the invite-beta profile');
+const cloudflareFrontend = values['cloudflare-frontend'] ? readCloudflareFrontend(values['cloudflare-frontend']) : undefined;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = join(homedir(), '.local/share/eigos', values.profile);
 const label = `com.eigos.${values.profile}`, service = `gui/${process.getuid()}/${label}`;
@@ -32,7 +36,7 @@ if (inviteBeta) {
   if (!keyStat.isFile() || keyStat.nlink !== 1 || keyStat.uid !== process.getuid() || keyStat.size !== 32 || (keyStat.mode & 0o077)) throw new Error('Deployment requires an owned private 32-byte source key');
 }
 if (config.OAUTH_AUDIENCE !== config.PUBLIC_URL) throw new Error('The member deployment must use its exact existing OAuth audience');
-const assertProxy = () => inviteBeta ? assertInviteBetaProxy(config) : assertSourceProxy(config);
+const assertProxy = () => inviteBeta ? (cloudflareFrontend ? assertCloudflareFrontend(config, cloudflareFrontend) : assertInviteBetaProxy(config)) : assertSourceProxy(config);
 if (!inviteBeta || values.apply) assertProxy();
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Deploy a reviewed committed checkout');
@@ -48,7 +52,7 @@ if (oldPlist && !oldPlist.includes(envPath)) throw new Error('LaunchAgent is not
 const loaded = () => { try { execFileSync('launchctl', ['print', service], { stdio: 'ignore' }); return true; } catch { return false; } };
 const listening = () => new Promise(resolveListening => { const socket = createConnection({ host: '127.0.0.1', port: config.PORT }); const done = value => { socket.destroy(); resolveListening(value); }; socket.once('connect', () => done(true)); socket.once('error', () => done(false)); socket.setTimeout(500, () => done(true)); });
 if (!loaded() && await listening()) throw new Error('The intended port belongs to another process');
-if (!values.apply) { console.log(JSON.stringify({ status: 'prepared', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, label, runtime, profile: values.profile, proxyVerification: inviteBeta ? 'required_before_apply' : 'private_verified', ...(!inviteBeta ? { privateProxyVerified: true } : {}) })); process.exit(0); }
+if (!values.apply) { console.log(JSON.stringify({ status: 'prepared', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, label, runtime, profile: values.profile, frontend: cloudflareFrontend ? 'cloudflare-tunnel' : 'tailscale', proxyVerification: inviteBeta ? 'required_before_apply' : 'private_verified', ...(!inviteBeta ? { privateProxyVerified: true } : {}) })); process.exit(0); }
 const write = (p, value) => { writeFileSync(p, value, { mode: 0o600 }); chmodSync(p, 0o600); };
 for (const p of [runtime, release, dirname(plistPath)]) mkdirSync(p, { recursive: true, mode: 0o700 });
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
@@ -87,7 +91,7 @@ try {
   const denied = await fetch(config.PUBLIC_URL + (inviteBeta ? '/mcp' : '/sources/meituan-paotui'), { redirect: 'error', signal: AbortSignal.timeout(5000) });
   if (denied.status !== 401) throw new Error('Unauthenticated source access was not rejected');
   write(ownership, JSON.stringify({ sourceRoot: root }) + '\n');
-  write(join(runtime, 'release.json'), JSON.stringify({ sourceCommit, buildDigest, release, files, profile: values.profile, endpoint: config.PUBLIC_URL, updatedAt: new Date().toISOString() }) + '\n');
+  write(join(runtime, 'release.json'), JSON.stringify({ sourceCommit, buildDigest, release, files, profile: values.profile, frontend: cloudflareFrontend ? 'cloudflare-tunnel' : 'tailscale', endpoint: config.PUBLIC_URL, updatedAt: new Date().toISOString() }) + '\n');
   console.log(JSON.stringify({ status: 'ready', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, profile: values.profile, proxyVerified: true, ...(!inviteBeta ? { privateProxyVerified: true } : {}), unauthenticatedStatus: denied.status, backup }));
 } catch {
   await stop().catch(() => {});
