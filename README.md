@@ -1,92 +1,72 @@
 # EIGOS · 艾戈斯
 
-Consider It Done. — The Execution Network for AI Agents.
+**Consider It Done.** — The Execution Network for AI Agents.
 
-EIGOS 面向 Personal Agent（PA），探索一个承接业务目标的 **AI Agent 执行网络**。PA 保有用户关系、个人上下文和总目标；EIGOS 在受委托范围内组织服务发现、业务决策、受控执行、进度恢复和结果核验，实际交易与履约由服务提供者完成。
+EIGOS 正在构建一个 **Agentic Network**，让 AI Agent 能够连接现实世界的商家与服务，将用户需求推进为订单、预约和实际交付。
 
-**当前阶段：开发原型。** 已验证的范围包括本人本机的美团地点／地址／运费只读查询、受限 Shopify 公开商品查询，以及合成数据和本地测试商家上的交易／预约付款沙箱。真实下单、付款和履约尚未接通；沙箱通过不代表现实业务完成。具体能力、启用条件与证据见下文。
+用户向自己的 Personal Agent（PA，个人 Agent）表达需求，PA 将需要执行的业务委托给 EIGOS。我们的 Agent 理解目标、寻找合适的服务、确认条件，在授权范围内推进下单与预约，并跟踪后续结果。
 
-后端采用 **Ontology + LLM**：Ontology 定义业务对象、关系和规则，模型读取受控事实并提出动作，程序校验计划、权限和结果。独立 Gateway／Worker 共用持久任务库；MCP 和 A2A 是 PA 访问同一任务与认证系统的接入方式。
+我们希望建立一个让个人 Agent、商家和服务提供者协作的网络，使“帮我办这件事”成为可以交接、执行和核验的业务委托。
 
-PA 可直接使用现成 MCP，也可将明确业务目标委托给 EIGOS。Ontology 维护业务语义与验收规则，来源连接器复用提供者接口；后续接入与重构的分工建议见 [PA／MCP／Ontology 职责边界](docs/agent-mcp-ontology-responsibilities-2026-10-22.md)。该文档不新增运行能力或改变现行权限。
+## 这个网络连接谁
 
-## 当前能力
-
-- `eigos.delegate` 是统一业务入口。模型根据实际注册的本体选择能力，不要求 PA 知道内部能力 ID 或提供者地址 ID。
-- `delivery.quote@2`：读取本人美团保存地址，在同一任务提供选项并收集寄件、收件、物品、重量和服务；选择明确后，经 Ontology MCP 查询并复查真实运费。只查价，不下单、不付款。
-- `geo.search@1`、`address.book.read@1`：本人地点／地址只读查询。
-- `brief.prepare@2`：生成任务说明，底层业务仍 `execution=not_started`。
-- `document.compose@1`：显式开启文档模型后产生 Markdown 草稿；不代表执行文档中的业务。
-- `data.quality.audit.simulated@2`：专用本地 CSV 的完整五项审计、模拟许可与独立验收。
-- N1 业务对象模型：28 个具体类型、Offer／EvidenceBacked 接口、双向关系、有界查询和九个只读计算。MCP 与 HTTP 使用现有认证；[接口与验证](docs/ontology-n1.md) 已用三个场景合成数据验证。
-- 六类服务本体：新增打车、医院挂号、外卖、酒店、行程安排、预约用车／自驾租车的对象、关系、规则、决策 Action、沙箱执行和独立验收。含 Agent 商品查询、交易履约、海关关卡与预约付款扩展的全模型现有 95 类型、31 个函数；[实现与真实接口缺口](docs/service-domains-2026-10-18.md)。[六类真实模型与 18 题独立调查](docs/service-domain-validation-2026-10-18.md) 已在合成来源上通过，真实接口仍未接通。
-- N2 模型规划：解释和规划阶段可主动读取对象、核对类型化条件并提出不执行的业务决策提案。固定证据／版本、权限及取消边界由程序检查；[实现与验证](docs/ontology-n2.md) 使用独立 Agent 和真实模型、合成业务数据。
-- UCP 本地商家接入：通过正式签名 HTTP 请求创建结账、取得准确模拟许可、确认并独立读取原订单；已用真实模型和独立官方商家进程验证。[实现与边界](docs/ucp-local-integration-2026-10-18.md)。交易执行仅支持显式配置的本地测试商家。
-- Shopify 公开商品查询 `commerce.catalog.query@2`：EIGOS Agent 读取本体，选择和组合搜索、变体详情、商家发现及店铺读取；连接器每次只调用一个接口。来源观察写回本体后，模型继续决策并选择最终结果，程序独立验收。[实现与验证状态](docs/catalog-agent-actions-2026-10-19.md)。默认关闭，仅限本机本人、配置商家、美国市场和匿名只读；库存数量、配送、商家合作、账号令牌及交易未验证。
-- 订单、模拟支付、交付、取消退款的恢复状态机仅在明确配置的本机沙箱验证。现实业务副作用仍禁止。
-
-旧需求登记、直接执行、跑腿订单和 CSV pilot 的独立业务入口及执行器已经删除。历史记录可以按原归属读取，不自动迁移或恢复执行。当前接口与配置见 [接入指南](docs/integration.md)，各能力与证据边界见 [后端说明](docs/registered-capabilities.md)。
-
-后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
-
-仓库当前代码运行契约为 `ontology-execution-v14`、业务模型为 `eigos.business@13`。Shopify 目录读取与显式启用的交易沙箱使用 Agent 动作循环；其他能力保留现有执行契约。默认关闭的预约付款能力保留两条 Link 路线：优先 PA 的 Link Agent Wallet，不可用时交给用户在服务商的普通 Link 结账页确认；EIGOS 再独立回读原付款与预约。当前钱包与结账页均为隔离测试实现。见 [PA 预约付款流程](docs/pa-booking-payment-flow.md)。历史任务及对象不自动迁移或重新执行，常驻实例版本以健康检查和发布文件回读为准。
-
-模型上下文精简、按依赖并发读取及国内／跨关境运输关卡见 [实现与性能对比](docs/context-and-shipping-2026-10-20.md)。
-
-[Stripe Treasury 官方 MCP 接入预留](docs/stripe-treasury-integration.md)已增加默认关闭的配置。当前未授权、未连接、未调用，不作为可执行能力发布；启用需要后续独立实现和验证。
-
-交易沙箱从未知商家、国家和地址开始，Agent 查询授权 PA 上下文、商家、库存、运输、清关及完整费用，再按准确计划取得沙箱许可。购物车、订单、支付和实际交付各有独立证据；所有新业务来源均为合成数据，真实订单和付款仍禁止。实现、启用方式与验证范围见 [Agent 交易履约沙箱](docs/commerce-agent-sandbox-2026-10-19.md)。
-
-`commerce.journey.sandbox@2` 将[海关资料与硬关卡](docs/customs-policy-2026-10-20.md)接入同一循环。Agent 实际读取当前任务的规则与官方参考资料，并在报价、结账、下单前计算 `customsGateStatus`；运行时再次核对，PA 授权不能覆盖未知、过期、冲突或缺失证据。当前通过状态仅为 `pass_sandbox`，不构成真实进口许可。
-
-## 本地开发
-
-要求 Node.js 22.13+；新后端使用已安装并登录的 Codex CLI。
-
-```sh
-npm ci
-npm run setup:dev
-npm run dev
-```
-
-`dev` 启动独立 Gateway 和 Worker，共用同一个本机 SQLite 文件。默认启用新协调器。`EIGOS_COORDINATOR=disabled` 和 `EIGOS_PAOTUI_ORDERS_ENABLED=true` 均被拒绝，不会进入旧模式。
-
-| 入口 | 默认地址 |
+| 参与者 | 在网络中的角色 |
 | --- | --- |
-| 健康与运行版本 | `http://127.0.0.1:3000/health` |
-| MCP | `http://127.0.0.1:3000/mcp` |
-| A2A Agent Card | `http://127.0.0.1:3000/.well-known/agent-card.json` |
-| A2A JSON-RPC | `http://127.0.0.1:3000/a2a` |
+| 用户与 Personal Agent | 表达目标、提供必要的偏好与约束、作出业务授权，并接收进度和结果 |
+| EIGOS Agent | 承接受委托的业务，发现服务、比较方案、协调执行，并核验结果 |
+| 商家与服务提供者 | 提供商品、报价、预约和订单接口，完成其系统中的交易与实际履约 |
 
-新建任务返回 submitted，由 Worker 持久领取。缺少业务信息返回 input-required；PA 向用户转述真实问题，在同一个 taskId 回复。完成以服务端 accepted 验收和实际交付物为准。请求 ID 用于防重，网络超时后查询原任务。
+PA 保有与用户的关系和整体目标。EIGOS 专注于交给它的那段业务；商家和服务提供者继续使用自己的业务系统。网络通过已有 API、MCP 和其他适合的连接方式接入这些能力。
 
-## 本人的常驻 PA 连接
+## 一次委托如何完成
 
-```sh
-npm run build
-npm run setup:pa
+以“帮我购买一件商品，在预算内送到指定地址”为例，EIGOS 要实现的流程是：
+
+1. **理解需求**：明确商品、规格、预算、目的地和交付时间；缺少的信息通过 PA 补充。
+2. **连接服务**：查询可接入的商家，取得商品、价格、可供数量与配送条件。
+3. **形成方案**：根据用户约束比较选择，核对完整费用、服务规则和可执行条件。
+4. **确认授权**：将需要授权的具体订单、金额和条款交给用户或有相应权限的 PA。
+5. **推进交易**：在授权范围内下单，并按服务接入方式衔接付款与履约。
+6. **跟踪结果**：读取原订单和服务状态，核验是否达到交付目标；遇到异常时继续查证或进入售后处理。
+
+这也是我们希望延伸到预约、出行和生活服务的协作方式。下图表示网络的目标流程：
+
+```mermaid
+flowchart LR
+    U[用户] <--> P[Personal Agent]
+    P <-->|业务委托与进度| E[EIGOS Agent]
+    E <-->|发现、查询、下单与预约| S[商家与服务提供者]
+    S --> F[商品交付与服务履约]
+    F -->|状态与结果证据| E
 ```
 
-macOS 的既有 `com.eigos.grok-life` launchd 服务使用新架构，保留 `127.0.0.1:3430`、原凭据和任务库。部署生成不可变代码快照、私有数据库备份，并核对健康端点的构建摘要。`-- --restart` 可验证重启；旧运行快照只在私有备份保留。
+## 为什么建设这个网络
 
-PA 读取 `~/.local/share/eigos/grok-life/skill-install.md` 更新现有接入技能，使用同目录的 Python 客户端与 profile。新默认和允许的服务均为 `eigos.delegate`。运行在用户 Mac 上的 PA 才能访问 loopback；Mac 休眠、离线或上游授权失效会影响查询。见 [常驻连接](docs/life-request-intake.md) 和 [地址选择／查价](docs/meituan-paotui-integration.md)。
+完成一件业务，需要把分散的信息与动作连起来：商品是否符合要求、报价包含哪些费用、用户允许执行什么、订单进行到哪一步，以及最终是否交付。
 
-## 认证与生产边界
+EIGOS 希望为这些环节建立持续的业务上下文和共同的判断规则。个人 Agent 可以交出明确目标；商家和服务提供者可以把已有能力接入 Agent 使用的执行流程。每一次委托都应有清楚的范围、执行进度和完成依据。
 
-MCP、A2A 共用 OAuth/JWT、会员资格、任务归属和 scope 校验。生产认证默认拒绝缺失配置；本地随机开发令牌只允许 loopback。会员与客户端自助登记、续期见 [会员资料库](docs/membership.md)、[Agent 接入](docs/agent-onboarding.md) 和 [Auth0 配置](docs/auth0-integration.md)。个人美团授权只限本人本机，不是多用户凭据代理。
+## 核心设计
 
-Gateway 不运行模型或业务程序。Worker 事务外调用，任务领取、取消、租约、迟到观察及未知结果恢复由共享核心约束。当前部署限同机持久 SQLite，不支持网络文件系统或跨机器数据库副本。具体职责见 [Gateway／Worker](docs/gateway-worker.md)。
+- **由 Agent 根据目标选择动作**：读取可用服务和来源事实，形成方案，并根据执行反馈继续决策。
+- **用 Ontology 表达业务**：把商品、报价、订单、预约、授权和履约结果组织成有关系的业务对象，为决策和核验提供共同语义。
+- **将授权落实到具体操作**：执行前核对动作、对象、金额和有效范围，付款通过相应的 PA／用户支付工具与服务商流程衔接。
+- **保留可恢复的任务与结果记录**：持续跟踪原业务操作，处理补充信息、中断和未知结果，并依据服务商记录判断完成情况。
 
-## 验证与证据
+技术上，项目采用 TypeScript／Node.js，使用 Ontology + LLM 组织业务执行，通过 MCP 和 A2A 接收 Agent 委托。独立 Gateway／Worker 与共享任务核心负责接入、持久执行和状态恢复。
 
-```sh
-npm run check
-npm test
-npm run build
-npm run test:e2e:run
-git diff --check
-```
+## 当前进展
 
-常规及工程 E2E 使用明确标记的模型／提供方 fixtures，验证协议、权限、计划、恢复与失败边界。真实 PA、模型和美团查询另行实测，不能由 CI 代替。阶段目标见 [实施记录](docs/backend-implementation-goals.md)；[2026-10-17 两段 E2E](docs/evidence/service-network-e2e-2026-10-17/README.md) 是临时实例历史证据，本次 [常驻自然语言流程](docs/evidence/persistent-pa-2026-10-18/README.md) 已验证地址选择、重启续接与真实查价。[公开地点发现验收](docs/evidence/public-geo-pa-2026-10-18/README.md) 已验证现有 PA 经 A2A、真实模型和新 DiscoverySource 读回“北京市／天安门”的 20 个地点；常驻新来源仅启用这一公开查询组合。
+项目处于开发原型阶段，已实现 Agent 委托入口、本体驱动的规划与动作循环、授权校验、任务恢复和结果核验机制。
 
-品牌与候选名称边界见 [品牌说明](docs/brand-brief.md)。项目规则见 [AGENTS.md](AGENTS.md)。
+真实来源接入目前覆盖受限的美团地点、地址与运费查询，以及 Shopify 公开商品查询。下单、付款衔接、交付跟踪和售后流程正在本地测试商家与合成数据环境中验证；真实交易与履约仍待接入。上面的购买流程描述建设目标，具体可用能力以接入文档为准。
+
+## 进一步了解与参与开发
+
+- [Agent 接入指南](docs/integration.md)：通过 MCP／A2A 发现能力、提交委托和接收结果。
+- [PA、EIGOS 与服务提供者的分工](docs/agent-mcp-ontology-responsibilities-2026-10-22.md)：委托边界、连接复用与业务责任。
+- [本体设计](docs/ontology-spec-v0.2-2026-10-18.md)：业务对象、关系、规则与执行模型。
+- [开发与运行](docs/gateway-worker.md)：环境准备、启动方式和 Gateway／Worker 架构。
+- [能力实现与验证范围](docs/registered-capabilities.md)：各项接入的具体状态及验证记录。
+
+EIGOS（艾戈斯）为项目当前候选品牌，商标可用性尚待核查；详见[品牌说明](docs/brand-brief.md)。
