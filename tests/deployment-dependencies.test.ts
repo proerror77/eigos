@@ -1,10 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, mkdirSync, mkdtempSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installReleaseDependencies } from '../packages/deployment/dependencies.js';
+import { releaseFiles } from '../packages/deployment/files.js';
+
+test('immutable release retains JSON assets required by relocated runtime imports', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eigos-release-assets-')), source = join(dir, 'source'), release = join(dir, 'release');
+  const put = (path: string, content: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
+  try {
+    put(join(source, 'apps/gateway/main.ts'), "import value from '../../packages/ontology/history/seed.json' with { type: 'json' }; console.log(value.version);");
+    put(join(source, 'packages/ontology/history/seed.json'), '{"version":15}');
+    put(join(source, 'dist/apps/gateway/main.js'), "import value from '../../packages/ontology/history/seed.json' with { type: 'json' }; console.log(value.version);");
+    put(join(source, 'dist/packages/ontology/history/seed.json'), '{"version":15}');
+    put(join(source, 'package.json'), '{"type":"module"}');
+    put(join(source, 'package-lock.json'), '{}');
+    put(join(source, 'scripts/run-local.mjs'), '');
+    put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
+    const files = releaseFiles(source);
+    assert(!files.some(path => path.endsWith('/orphan.js')));
+    for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }
+    rmSync(source, { recursive: true });
+    assert.equal(execFileSync(process.execPath, ['dist/apps/gateway/main.js'], { cwd: release, encoding: 'utf8' }).trim(), '15');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('immutable release resolves transitive ESM imports from its relocated dependency cache', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-dependency-layout-')), source = join(dir, 'source'), runtime = join(dir, 'runtime'), release = join(runtime, 'release');

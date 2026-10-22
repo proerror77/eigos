@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import { readConfig } from '../dist/packages/core/config.js';
 import { assertSourceProxy } from '../dist/packages/core/private-source-proxy.js';
 import { installReleaseDependencies } from '../dist/packages/deployment/dependencies.js';
+import { releaseFiles } from '../dist/packages/deployment/files.js';
 import { assertInviteBetaProxy } from '../dist/packages/deployment/invite-beta-proxy.js';
 import { assertCloudflareFrontend, readCloudflareFrontend } from '../dist/packages/deployment/cloudflare-frontend.js';
 
@@ -42,9 +43,7 @@ const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, enc
 if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Deploy a reviewed committed checkout');
 const ownership = join(runtime, 'owner.json');
 if (existsSync(ownership) && JSON.parse(readFileSync(ownership, 'utf8')).sourceRoot !== root) throw new Error('Member network runtime belongs to another checkout');
-const scan = p => readdirSync(p, { withFileTypes: true }).flatMap(e => e.isDirectory() ? scan(join(p, e.name)) : e.name.endsWith('.ts') ? [join(p, e.name)] : []);
-const files = [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort().map(p => 'dist/' + p.slice(root.length + 1).replace(/\.ts$/, '.js'));
-files.push('scripts/run-local.mjs', 'package.json', 'package-lock.json');
+const files = releaseFiles(root);
 const hash = createHash('sha256'); for (const p of files) { hash.update(p + '\0'); hash.update(readFileSync(join(root, p))); }
 const buildDigest = hash.digest('hex'), release = join(runtime, 'releases', buildDigest);
 const oldPlist = existsSync(plistPath) ? readFileSync(plistPath, 'utf8') : undefined;
