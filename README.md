@@ -4,6 +4,8 @@ Consider It Done. — The Execution Network for AI Agents.
 
 EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端唯一执行路径为 **Ontology + LLM**：理解原始需求、取得受控来源的事实、校验计划、执行和独立验收。Personal Agent 可通过 MCP 或 A2A 调用同一任务与认证系统。
 
+PA 可直接使用现成 MCP，也可将明确业务目标委托给 EIGOS。Ontology 维护业务语义与验收规则，来源连接器复用提供者接口；后续接入与重构的分工建议见 [PA／MCP／Ontology 职责边界](docs/agent-mcp-ontology-responsibilities-2026-10-22.md)。该文档不新增运行能力或改变现行权限。
+
 ## 当前能力
 
 - `eigos.delegate` 是统一业务入口。模型根据实际注册的本体选择能力，不要求 PA 知道内部能力 ID 或提供者地址 ID。

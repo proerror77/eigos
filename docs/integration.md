@@ -2,6 +2,8 @@
 
 后端统一使用 Ontology + LLM，公共业务入口只有 `eigos.delegate`，以及显式沙箱配置下的 `eigos.aftersales`。旧直接服务名被输入 Schema 拒绝；历史任务只读，不作为执行兼容层。
 
+PA 可选择直接调用已有来源，或通过下述现行接口委托明确业务范围。避免重复规划、来源操作与授权询问的分工建议见 [PA／MCP／Ontology 职责边界](agent-mcp-ontology-responsibilities-2026-10-22.md)；其中的交接清单不是新接口 Schema，不能据此假定支持任意 PA 计划导入或客户本机工具回调。
+
 ## 发现与认证
 
 先读取 `/.well-known/agent-card.json`（A2A），或认证后调用 MCP `list_services`。Card 和服务描述来自同一目录。生产使用 OAuth/JWT 与会员资格，权限 scope 为 `services:read`、`tasks:read`、`tasks:write`；任务由受信 `issuer + tenant + sub` 隔离。401 的 `WWW-Authenticate` 指向资源元数据；403 表示资格或 scope 不足。客户端不得从用户输入中指定所有者。
