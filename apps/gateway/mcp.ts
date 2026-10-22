@@ -14,9 +14,9 @@ import type { DefinitionService } from '../../packages/ontology/definition-servi
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 
-function result(action: () => unknown): CallToolResult {
+async function result(action: () => unknown): Promise<CallToolResult> {
   try {
-    const value = action();
+    const value = await action();
     return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
   } catch (error) {
     if (error instanceof DomainError) {
@@ -61,9 +61,9 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => taskSummary(tasks.submit(principal, args))));
   server.registerTool('get_task', {
-    description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
-    inputSchema: z.object({ taskId: taskIdSchema }).strict(), annotations: read,
-  }, ({ taskId }) => result(() => taskSummary(tasks.get(principal, taskId))));
+    description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. While submitted/working, use waitMs up to 30000 to await a terminal state or needed action without rapid repeated calls. Timeout returns the unchanged original task and never cancels execution. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
+    inputSchema: z.object({ taskId: taskIdSchema, waitMs: z.number().int().min(0).max(30000).optional() }).strict(), annotations: read,
+  }, ({ taskId, waitMs }) => result(async () => taskSummary(await tasks.getAfterWait(principal, taskId, waitMs))));
   server.registerTool('get_member_usage', {
     description: 'Read only the authenticated member’s recorded EIGOS Worker usage across tasks. Member limits are disabled. Unknown/unreported usage is separate; task safety budgets still apply.',
     inputSchema: z.object({}).strict(), annotations: read,

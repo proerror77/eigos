@@ -10,7 +10,7 @@ import { businessTransaction } from './transaction.js';
 export const SOURCE_PROVIDER = 'meituan-paotui' as const;
 export const SOURCE_SCOPES = ['sources:read', 'sources:write'] as const;
 export class SourceAuthorizationRequired extends ConnectionAuthorizationRequired {
-  constructor() { super('Check your own Meituan source connection. Connect or refresh it through the private channel if needed, then resume this task. Never put credentials in task messages.'); }
+  constructor() { super('Check your own Meituan source connection. Connect or refresh it through the private channel if needed, then resume this task. Never put credentials in task messages.', { provider: SOURCE_PROVIDER, nextAction: 'begin_source_connection', resumeAction: 'resume_source_task' }); }
 }
 export const sourceGrantSchema = z.object({ provider: z.literal(SOURCE_PROVIDER), owner: z.string().max(2000), memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(400), connectionId: z.uuid(), revision: z.number().int().positive(), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/), selectionContext: z.string().regex(/^[a-f0-9]{64}$/).optional(), authorizationEpoch: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 export type SourceGrant = z.infer<typeof sourceGrantSchema>;

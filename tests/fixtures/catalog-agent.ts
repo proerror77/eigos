@@ -64,6 +64,7 @@ export function model(choice: Choice = searchChoice): Reasoner {
 }
 export function setup(choice: Choice = searchChoice) {
   const f = fixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, shopifyCatalog: { merchants: [merchant], connector: f.connector } }), b = backend(catalog, model(choice), store);
+  const submit = b.submit; b.submit = (extra: object = {}) => submit({ executionEnvironment: 'sandbox', ...extra });
   const finish = async (id: string) => { for (let i = 0; i < 12; i++) { const job = store.get(owner, id); if (!['working', 'submitted'].includes(job.state)) return job; await b.run(); } throw new Error('Task did not settle'); };
   return { ...f, b, store, catalog, finish };
 }

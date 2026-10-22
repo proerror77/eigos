@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { DomainError } from '../core/domain.js';
 import { nameSchema, type ActionDefinition, type FunctionDefinition, type InterfaceDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { actionImplementationSchema, type ActionImplementation } from './action-dsl.js';
+import { compositionContractSchema, compositionPortSchema } from './composition-contract.js';
 
 /** Definition JSON is data. It cannot contain executable code or remote schema references. */
 export type JsonSchema = Record<string, unknown>;
@@ -38,7 +39,7 @@ const propertySchema = z.strictObject({
 });
 const properties = z.record(nameSchema, propertySchema).refine(value => Object.keys(value).length <= 300, 'Too many properties');
 const inputTypes = z.record(nameSchema, nameSchema).refine(value => Object.keys(value).length <= 100, 'Too many inputs');
-const actionMap = z.record(nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema) }));
+const actionMap = z.record(nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema), outputMap: z.record(nameSchema, nameSchema).optional() }));
 const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.record(nameSchema, nameSchema).optional(), actionMap: actionMap.optional() });
 export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
@@ -49,7 +50,7 @@ export const serializableInterfaceSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, description: text, parents: names.optional(), properties,
   optionalProperties: names.optional(),
   links: z.array(z.strictObject({ name: nameSchema, target: nameSchema, many: z.boolean(), optional: z.boolean().optional() })).max(200).optional(),
-  actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional() })).max(100).optional(),
+  actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),
 });
 const endpoint = z.strictObject({ type: nameSchema, name: nameSchema, many: z.boolean(), required: z.boolean().optional() });
 export const serializableLinkSchema = z.strictObject({ resourceId: resourceIdSchema, id: nameSchema, description: text, from: endpoint, to: endpoint, writePolicy: z.enum(['managed', 'source']) });
@@ -59,8 +60,8 @@ export const serializableActionSchema = z.strictObject({
   changes: z.array(z.string().min(1).max(200)).min(1).max(200), submissionCriteria: z.array(z.string().min(1).max(200)).min(1).max(100),
   providerOperation: z.string().min(1).max(200).optional(),
   read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema }).optional(),
-  operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund']), additionalEffects: effects.optional(), environment: z.literal('sandbox'), inputSchema: schema, resultType: nameSchema }).optional(),
-  inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(),
+  operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local']), inputSchema: schema, resultType: nameSchema }).optional(),
+  inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(), composition: compositionContractSchema.optional(),
 });
 export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, handlerRef: handlerRefSchema.optional() });
 export const ontologyDocumentSchema = z.strictObject({

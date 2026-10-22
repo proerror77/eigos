@@ -57,7 +57,9 @@ export class StripeTestPayments {
   authority(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) {
     this.validate(ctx, action, input);
     const o = this.order(ctx, input);
-    return { cost: { ...o.data.total, minor: action === 'PayStripePayment' ? o.data.total.minor : '0', payeeId: `stripe-test:${this.client.options.accountId}:${o.data.merchantId}` }, operationScope: `stripe-test:${action}:${digest({ account: this.client.options.accountId, merchant: o.data.merchantId, order: o.data.orderId })}` };
+    return { cost: { ...o.data.total, minor: action === 'PayStripePayment' ? o.data.total.minor : '0', payeeId: `stripe-test:${this.client.options.accountId}:${o.data.merchantId}` },
+      budgetImpact: { key: `commerce-checkout:${digest({ merchant: o.data.merchantId, checkoutId: o.data.checkoutId })}`, kind: action === 'PayStripePayment' ? 'spend' as const : 'commitment' as const, role: 'service_total' as const, amount: o.data.total },
+      operationScope: `stripe-test:${action}:${digest({ account: this.client.options.accountId, merchant: o.data.merchantId, order: o.data.orderId })}` };
   }
   private normalize(raw: unknown, ctx: AgentActionContext, input: Record<string, unknown>, prepareDigest: string): StripePaymentData {
     const parsed = apiIntent.safeParse(raw);

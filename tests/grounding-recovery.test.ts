@@ -22,7 +22,7 @@ test('rejected item-count interpretation returns feedback and corrects mass in t
     const decision = value(r, calls++ ? 'mass' : 'bad-count'); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
   } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal });
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' });
     const rejected = await b.run(); assert.equal(rejected.id, job.id); assert.equal(rejected.state, 'working'); assert.equal(rejected.delegation!.phase, 'grounding'); assert.equal(rejected.delegation!.groundingFeedback!.length, 1);
     assert.equal(rejected.delegation!.request.requirements.length, 0); assert.equal(f.calls.length, 0); assert.equal(f.store.intents(owner, job.id).length, 0);
     const scoped = await b.run(); assert.equal(scoped.id, job.id); assert(scoped.delegation!.agent); assert.equal(scoped.runs!.length, 2); assert.equal(f.calls.length, 0);
@@ -34,7 +34,7 @@ test('rejected item-count interpretation returns feedback and corrects mass in t
 test('three identical interpretation failures stop safely with no guessed weight or provider call', async () => {
   const f = setup(), model: Reasoner = { ...paotuiModel(), ground: async (r, _caps, _signal, access) => { observeTaskContext(access); return { decision: value(r, 'wrong-mass'), evidence: evidence() }; } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal }); for (let i = 0; i < 3; i++) await b.run();
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' }); for (let i = 0; i < 3; i++) await b.run();
     const paused = f.store.get(owner, job.id); assert.equal(paused.state, 'paused'); assert.equal(paused.question, undefined); assert.equal(paused.delegation!.groundingFeedback!.length, 3); assert.equal(f.calls.length, 0); assert.equal(paused.delegation!.request.requirements.length, 0); assert(!paused.artifact);
   } finally { f.store.close(); }
 });
@@ -47,7 +47,7 @@ test('invalid agent input rolls back scope and fixed requirements before a corre
     return { decision, evidence: evidence() };
   } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal }); await b.run();
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' }); await b.run();
     assert.equal(f.store.ontology.query(owner, { type: 'PaotuiTask' }).items.length, 0); assert.equal(f.store.get(owner, job.id).delegation!.request.requirements.length, 0);
     await b.run(); assert(f.store.get(owner, job.id).delegation!.agent); assert.equal(f.calls.length, 0);
   } finally { f.store.close(); }
@@ -57,7 +57,7 @@ test('a late invalid interpretation cannot change a canceled task', async () => 
   const f = setup(); let id = '';
   const model: Reasoner = { ...paotuiModel(), ground: async (r, _caps, _signal, access) => { observeTaskContext(access); f.b.tasks.cancel(principal, id); return { decision: value(r, 'wrong-mass'), evidence: evidence() }; } };
   try {
-    const b = backend(f.catalog, model, f.store); id = b.submit({ goal }).id; await b.run();
+    const b = backend(f.catalog, model, f.store); id = b.submit({ goal, executionEnvironment: 'sandbox' }).id; await b.run();
     const canceled = f.store.get(owner, id); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.delegation!.groundingFeedback, undefined); assert.equal(f.calls.length, 0);
   } finally { f.store.close(); }
 });
@@ -73,7 +73,7 @@ test('an unlisted model capability version gets bounded feedback before the exac
     return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
   } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal });
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' });
     const rejected = await b.run();
     assert.equal(rejected.state, 'working'); assert.equal(rejected.delegation!.phase, 'grounding');
     assert.equal(rejected.delegation!.groundingFeedback!.length, 1); assert.equal(rejected.delegation!.agent, undefined);
@@ -94,7 +94,7 @@ test('three identical unlisted capability selections pause without mapping the v
     return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
   } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal });
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' });
     for (let index = 0; index < 3; index++) await b.run();
     const paused = f.store.get(owner, job.id);
     assert.equal(paused.state, 'paused'); assert.equal(paused.delegation!.recovery!.code, 'validation_stalled');
@@ -111,37 +111,35 @@ test('actual permission failures remain forbidden and are not converted into mod
     throw new DomainError('FORBIDDEN', 'Source permission was revoked');
   } };
   try {
-    const b = backend(f.catalog, model, f.store), job = b.submit({ goal });
+    const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' });
     await assert.rejects(b.run(), error => error instanceof DomainError && error.code === 'FORBIDDEN');
     assert.equal(f.store.get(owner, job.id).delegation!.groundingFeedback, undefined);
     assert.equal(f.calls.length, 0);
   } finally { f.store.close(); }
 });
 
-test('native grounding publishes exact available capability reference pairs and still reads Ontology', async () => {
+test('native grounding fixes whole-goal criteria after its actual Ontology read without selecting a root program', async () => {
   const f = setup(), schemas: any[] = []; let turns = 0;
   const model = { runStructured: async (prompt: string) => {
     const packet = JSON.parse(prompt.split('\n\n').at(-1)!);
     schemas.push(packet.finalSchema);
     const current = packet.conversation[0]?.result?.data?.request as ServiceRequest | undefined;
-    const output = turns++ ? { kind: 'final', calls: [], receiptIds: [packet.conversation[0].receipt.id], finalJson: JSON.stringify(value(current!, 'mass')) }
+    const output = turns++ ? { kind: 'final', calls: [], receiptIds: [packet.conversation[0].receipt.id], finalJson: JSON.stringify({ kind: 'compose', requestRevision: current!.revision, message: 'Keep the original read-only parcel quote goal', requirementsJson: value(current!, 'mass').requirementsJson, conditionsJson: '[]', criteriaJson: JSON.stringify([{ id: 'quote', description: 'Original parcel quote', predicate: 'paotui.quote_observed', phase: 'quote', messageId: current!.messages[0]!.id, quote: current!.originalGoal, requirementIds: ['quantity'] }]) }) }
       : { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' };
     return { output, evidence: evidence() };
   } };
   try {
-    const b = backend(f.catalog, new CodexReasoner(model), f.store), job = b.submit({ goal }), selected = await b.run();
-    assert.equal(selected.id, job.id); assert.deepEqual(selected.delegation!.agent!.programRef, PAOTUI_AGENT_REFS.quote);
+    const b = backend(f.catalog, new CodexReasoner(model), f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' }), selected = await b.run();
+    assert.equal(selected.id, job.id); assert.equal(selected.delegation!.agent!.programRef.id, 'eigos.goal');
+    assert.equal(selected.delegation!.agent!.composition!.contexts.length, 0);
+    assert.equal(selected.delegation!.agent!.composition!.goal.criteria[0]!.predicate, 'paotui.quote_observed');
     assert.equal(turns, 2); assert.equal(f.calls.length, 0);
-    const expected = [...f.catalog.summaries(owner, 16, 'live').map(capability => capability.ref), { id: 'none', version: 'none' }];
     for (const schema of schemas) {
-      const pairs = schema.properties.capabilityRef.anyOf.map((variant: any) => {
-        assert.equal(variant.additionalProperties, false);
-        assert.deepEqual(variant.required, ['id', 'version']);
-        assert.equal(variant.properties.id.enum.length, 1); assert.equal(variant.properties.version.enum.length, 1);
-        return { id: variant.properties.id.enum[0], version: variant.properties.version.enum[0] };
-      });
-      assert.deepEqual(pairs, expected);
-      assert(!pairs.some((ref: { id: string; version: string }) => ref.id === PAOTUI_AGENT_REFS.quote.id && ref.version === PAOTUI_AGENT_REFS.addresses.version), 'IDs and versions are paired, not separate permissive enums');
+      assert.equal(schema.properties.capabilityRef, undefined);
+      assert.equal(schema.properties.inputJson, undefined);
+      assert(schema.properties.kind.enum.includes('compose'));
+      assert(schema.required.includes('criteriaJson'));
+      assert(schema.required.includes('requestRevision'));
     }
   } finally { f.store.close(); }
 });

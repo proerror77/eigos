@@ -22,7 +22,7 @@ export function projectCheckoutRequest(graph: OntologyObjectStore, owner: string
   graph.ingest(owner, { objects: [upsert(graph, owner, ref, '固定结账要求', properties)], links: [{ type: 'CheckoutRequestTask', from: ref, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
   return ref;
 }
-export function projectCommerceSnapshot(graph: OntologyObjectStore, owner: string, request: { id: string; revision: number }, capabilityId: string, input: Record<string, unknown>, raw: unknown): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+export function projectCommerceSnapshot(graph: OntologyObjectStore, owner: string, request: { id: string; revision: number }, capabilityId: string, input: Record<string, unknown>, raw: unknown, componentScope?: ObjectRef): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
   const parsed = commerceSnapshotSchema.safeParse(raw); if (!parsed.success) return { state: 'invalid_source' };
   const s = parsed.data;
   if (capabilityId !== `commerce.ucp.${s.operation}.sandbox` || s.requestId !== request.id || s.requestRevision !== request.revision || s.inputDigest !== digest(input)) return { state: 'invalid_source' };
@@ -41,7 +41,7 @@ export function projectCommerceSnapshot(graph: OntologyObjectStore, owner: strin
   } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   const objects: ObjectWrite[] = [], links: LinkWrite[] = [], removeLinks: LinkWrite[] = [];
   const add = (ref: ObjectRef, title: string, properties: Record<string, unknown>) => { const o = upsert(graph, owner, ref, title, properties); objects.push(o); return o; };
-  const requirement = add({ type: 'CheckoutRequest', id: `${request.id}:r${request.revision}` }, '固定结账要求', { requestRevision: request.revision, operation: s.operation, expectedItems: s.expectedItems, preparationTaskId: s.preparationTaskId, ...(s.budget ? { budget: s.budget } : {}) });
+  const requirement = add({ type: 'CheckoutRequest', id: `${request.id}:r${request.revision}${componentScope ? `:c${componentScope.id}` : ''}` }, '固定结账要求', { requestRevision: request.revision, operation: s.operation, expectedItems: s.expectedItems, preparationTaskId: s.preparationTaskId, ...(s.budget ? { budget: s.budget } : {}) });
   links.push({ type: 'CheckoutRequestTask', from: requirement.ref, to: root.ref }, { type: 'CheckoutRequestSession', from: requirement.ref, to: session }, { type: 'CheckoutSessionTask', from: session, to: { type: 'ServiceRequest', id: s.preparationTaskId } }, { type: 'RequestCheckoutSession', from: root.ref, to: session });
   const record = add(session, 'UCP 本地测试结账会话', { merchantId: s.merchantId, merchantOrigin: s.merchantOrigin, providerCheckoutId: s.checkout.id, protocolVersion: s.protocolVersion, state: s.checkout.state, items: s.checkout.items, total: s.checkout.total, quoteDigest: s.checkout.quoteDigest, sourceStartedAt: observed.startedAt, snapshot: s });
   const variantSubjects: ObjectWrite[] = [];

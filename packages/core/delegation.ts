@@ -16,12 +16,20 @@ export const digest = (value: unknown) => createHash('sha256').update(canonical(
 export const actionOperationKey = (owner: string, scope: string, operationId: string) => digest({ owner, requestId: scope, operationId });
 export function validPlanDigest(plan: ExecutionPlan): boolean { const { digest: expected, ...body } = plan; return digest(body) === expected; }
 
-export const groundingSchema = z.object({
+const legacyGroundingSchema = z.object({
   kind: z.enum(['clarify', 'resolve', 'unsupported']), requestRevision: z.number().int().positive(),
   capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
   requirementsJson: z.string().max(16000),
   conditionsJson: z.string().max(24000),
 }).strict();
+export type LegacyGrounding = z.infer<typeof legacyGroundingSchema>;
+export const goalGroundingSchema = z.strictObject({
+  kind: z.enum(['compose', 'clarify', 'unsupported']), requestRevision: z.number().int().positive(),
+  message: z.string().trim().min(1).max(4000), requirementsJson: z.string().max(16000), conditionsJson: z.string().max(24000), criteriaJson: z.string().max(24000),
+});
+/** The native model uses only goalGroundingSchema. Legacy decisions remain
+ * decodable for explicit compatibility fixtures and original audit records. */
+export const groundingSchema = z.union([goalGroundingSchema, legacyGroundingSchema]);
 export type Grounding = z.infer<typeof groundingSchema>;
 export const proposalSchema = z.object({
   kind: z.enum(['propose_plan', 'clarify', 'no_feasible_plan']), requestRevision: z.number().int().positive(),
@@ -67,9 +75,9 @@ export interface Delegation {
   actionReply?: { intentId: string; messageId: string; answer: string };
   actions?: { id: string; stepId: string; state: import('../ontology/actions.js').IntentState; remoteRef?: string; latestObservationId?: string }[];
   authorizationRequest?: import('../ontology/actions.js').PlanAuthorizationRequest;
-  sourceAuthorization?: { provider: 'meituan-paotui'; nextAction: 'begin_source_connection'; resumeAction: 'resume_source_task' };
+  sourceAuthorization?: { provider: string; nextAction: string; resumeAction: string };
   businessFacts?: { intentId: string; snapshot: import('../ontology/actions.js').BusinessSnapshot; sourceVersion: number; evidenceRefs: string[] }[];
-  authorizationBudget?: { minor: string; currency: string; state: string; intentId: string }[];
+  authorizationBudget?: { minor: string; currency: string; state: string; intentId: string; role?: string }[];
   approval?: { planDigest: string; quoteDigest: string; at: string; simulationOnly: true };
   acceptance?: { accepted: boolean; reason: string; at: string; checks: RequirementCheck[]; evidenceRefs: string[] };
   events: { at: string; event: string; evidence?: string }[];

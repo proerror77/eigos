@@ -72,7 +72,7 @@ test('A cart-only goal needs no destination, customs, order or payment calls', a
 
 test('An explicit user quantity remains known when grounding leaves the nullable field empty',async()=>{
   const t=await setupCommerce({target:'quote'});try{
-    const ground=t.model.ground.bind(t.model);t.model.ground=async(...args)=>{const response=await ground(...args);response.decision.inputJson=JSON.stringify({...JSON.parse(response.decision.inputJson),quantity:null});return response;};
+    const ground=t.model.ground.bind(t.model);t.model.ground=async(...args)=>{const response=await ground(...args);assert('inputJson' in response.decision);response.decision.inputJson=JSON.stringify({...JSON.parse(response.decision.inputJson),quantity:null});return response;};
     const done=await t.finish(t.submit().id);assert.equal(done.state,'completed');assert.equal(done.delegation!.agent!.input.quantity,2);assert.equal(done.delegation!.agent!.informationRequests?.length??0,0);
   }finally{await t.close();}
 });

@@ -91,6 +91,7 @@ export function setup(choice: Choice = quoteChoice, kind: 'quote' | 'addresses' 
     return { result, receipt: atomicReceiptSchema.parse({ id: randomUUID(), version: '1', server: 'eigos-ontology', transport: 'mcp-stdio', operation, tool: atomicTool(operation), evidenceKind: 'fixture', inputDigest: digest(input), resultDigest: digest(result), observedAt: new Date().toISOString(), sourceCalls: [operation], readOnly: true }) };
   } };
   const program = new PaotuiAgentProgram(kind, { store, directory: '/private/synthetic-not-opened', connector }), catalog = new ExecutionCatalog([program.capability()], [], [], [], [program]), b = backend(catalog, paotuiModel(choice, kind), store);
+  const submit = b.submit; b.submit = (extra: object = {}) => submit({ executionEnvironment: 'sandbox', ...extra });
   const finish = async (id: string) => { for (let i = 0; i < 15; i++) { const j = store.get(owner, id); if (!['working', 'submitted'].includes(j.state)) return j; await b.run(); } throw new Error('Task did not settle'); };
   return { store, calls, flags, program, catalog, b, finish };
 }

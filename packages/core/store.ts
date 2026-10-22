@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
-import { BACKEND_VERSION } from '../ontology/execution.js';
+import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSalesCase } from '../ontology/actions.js';
 import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
@@ -106,6 +106,10 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS personal_source_binding (slot TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, configuration_digest TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
+      const budgetColumns = new Set(this.db.prepare('PRAGMA table_info(budget_reservations)').all().map(row => String(row.name)));
+      if (!budgetColumns.has('economic_key')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN economic_key TEXT');
+      if (!budgetColumns.has('role')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN role TEXT');
+      if (!budgetColumns.has('additional_impacts')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN additional_impacts TEXT');
       initializeMemberUsage(this.db);
     });
     // Run the explicitly supported historical migrations once before the
@@ -396,17 +400,52 @@ export class JobStore {
     this.projectExecution(owner, this.get(owner, jobId));
     });
   }
-  reserveBudget(owner: string, intentId: string, grant: PlanGrant, amount: { minor: string; currency: string }): void {
-    if (grant.kind === 'object_write') throw new DomainError('FORBIDDEN', 'Managed object-write authority has no financial budget');
-    this.intent(owner, intentId);
-    if (this.db.prepare('SELECT 1 FROM budget_reservations WHERE intent_id=?').get(intentId)) return;
-    const rows = this.db.prepare("SELECT b.minor,b.currency FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, grant.jobId);
-    if (amount.currency !== grant.maxAmount.currency || rows.some(r => r.currency !== amount.currency) || rows.reduce((n, r) => n + BigInt(String(r.minor)), 0n) + BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Cumulative action budget exceeds the grant');
-    this.db.prepare('INSERT INTO budget_reservations VALUES(?,?,?,?,?,?)').run(intentId, owner, grant.id, amount.minor, amount.currency, 'held');
+  reserveBudget(owner: string, intentId: string, grant: PlanGrant, amountInput: { minor: string; currency: string }): void {
+    this.executionMutation(() => {
+      if (grant.kind === 'object_write') throw new DomainError('FORBIDDEN', 'Managed object-write authority has no financial budget');
+      const amount = moneySchema.parse({ minor: amountInput.minor, currency: amountInput.currency }); moneySchema.parse(grant.maxAmount);
+      const intent = this.intent(owner, intentId), job = this.get(owner, intent.jobId), composed = !!job.delegation?.agent?.composition;
+      if (grant.owner !== owner || grant.jobId !== intent.jobId || grant.planDigest !== intent.planDigest || grant.revoked || !Number.isFinite(Date.parse(grant.expiresAt)) || Date.parse(grant.expiresAt) <= Date.now()
+        || !grant.bindingRefs.some(ref => digest(ref) === digest(intent.bindingRef)) || amount.currency !== grant.maxAmount.currency || BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Exact action budget exceeds its current grant');
+      if (composed && !this.grants(owner, intent.jobId).some(current => current.id === grant.id && digest(current) === digest(grant))) throw new DomainError('FORBIDDEN', 'The current durable action grant is missing or changed');
+      const plan = composed ? job.delegation!.agent!.plans.find(plan => plan.digest === intent.planDigest) : undefined;
+      const step = plan?.steps.find(step => step.intentId === intentId);
+      if (composed && (!step?.binding || digest(step.cost && { minor: step.cost.minor, currency: step.cost.currency }) !== digest(amount)
+        || digest(step.budgetImpact ?? null) !== digest(grant.budgetImpact ?? null))) throw new DomainError('CONFLICT', 'Budget reservation differs from the sealed action');
+      const exposure = step?.budgetImpact?.amount ?? amount, role = step?.budgetImpact?.role ?? 'service_total';
+      moneySchema.parse(exposure);
+      const keyFor = (role: string, key: string) => digest({ owner, requestId: intent.jobId, program: step!.binding!.programRef, configuration: step!.binding!.configurationDigest, role, key });
+      const economicKey = composed ? keyFor(role, step!.budgetImpact?.key ?? intent.businessOperationKey) : undefined;
+      const additional = composed ? (step!.budgetImpact?.additional ?? []).map(value => ({ key: keyFor(value.role, value.key), ...moneySchema.parse(value.amount), role: value.role })) : [];
+      if (new Set([economicKey, ...additional.map(value => value.key)]).size !== additional.length + 1) throw new DomainError('CONFLICT', 'One operation repeats an economic obligation');
+      const previous = this.db.prepare('SELECT * FROM budget_reservations WHERE intent_id=?').get(intentId);
+      if (previous) {
+        if (previous.owner !== owner || previous.minor !== exposure.minor || previous.currency !== exposure.currency || (previous.economic_key ?? undefined) !== economicKey || digest(JSON.parse(String(previous.additional_impacts ?? '[]'))) !== digest(additional) || previous.state === 'released') throw new DomainError('CONFLICT', 'Original budget reservation cannot be reinterpreted or reopened');
+        return;
+      }
+      const rows = this.db.prepare("SELECT b.intent_id,b.minor,b.currency,b.economic_key,b.role,b.additional_impacts FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, intent.jobId);
+      if (composed) {
+        const proposed = [...rows.map(row => ({ key: String(row.economic_key ?? row.intent_id), minor: String(row.minor), currency: String(row.currency), role: String(row.role ?? 'service_total') })),
+          { key: economicKey!, ...exposure, role }, ...additional,
+          ...rows.flatMap(row => JSON.parse(String(row.additional_impacts ?? '[]')) as { key: string; minor: string; currency: string; role: string }[])];
+        const groups = new Map<string, typeof proposed[number]>();
+        for (const row of proposed) {
+          const prior = groups.get(row.key);
+          if (prior && (prior.currency !== row.currency || prior.role !== row.role)) throw new DomainError('CONFLICT', 'Economic commitment currency or role changed');
+          if (!prior || BigInt(row.minor) > BigInt(prior.minor)) groups.set(row.key, row);
+        }
+        for (const requirement of [...job.delegation!.request.requirements, ...(job.delegation!.request.successCriteria ?? [])]) if (requirement.kind === 'budget' && requirement.strength === 'hard') {
+          const selected = [...groups.values()].filter(row => row.role === (requirement.role ?? 'service_total'));
+          if (selected.some(row => row.currency !== requirement.expected.currency && BigInt(row.minor) !== 0n)
+            || selected.reduce((total, row) => total + BigInt(row.minor), 0n) > BigInt(requirement.expected.minor)) throw new DomainError('FORBIDDEN', 'Cumulative task commitments exceed the fixed task budget');
+        }
+      } else if (rows.some(row => row.currency !== amount.currency) || rows.reduce((total, row) => total + BigInt(String(row.minor)), 0n) + BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Cumulative action budget exceeds the grant');
+      this.db.prepare('INSERT INTO budget_reservations(intent_id,owner,grant_id,minor,currency,state,economic_key,role,additional_impacts) VALUES(?,?,?,?,?,?,?,?,?)').run(intentId, owner, grant.id, exposure.minor, exposure.currency, 'held', economicKey ?? null, composed ? role : null, additional.length ? JSON.stringify(additional) : null);
+    });
   }
   budget(owner: string, jobId: string) {
     this.get(owner, jobId);
-    return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId);
+    return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id,b.role,b.additional_impacts FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId).map(row => ({ minor: row.minor, currency: row.currency, state: row.state, intent_id: row.intent_id, ...(row.role ? { role: String(row.role) } : {}), ...(row.additional_impacts ? { additionalImpacts: JSON.parse(String(row.additional_impacts)) as { key: string; minor: string; currency: string; role: string }[] } : {}) }));
   }
   cancelActions(owner: string, jobId: string): boolean {
     let pending = false;
@@ -424,6 +463,11 @@ export class JobStore {
     this.db.prepare('INSERT INTO aftersales_cases VALUES(?,?,?,?,?)').run(value.id, owner, value.originalJobId, value.remedyJobId, JSON.stringify(value));
   }
   afterSales(owner: string, originalJobId: string): AfterSalesCase[] { this.get(owner, originalJobId); return this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND original_job_id=?').all(owner, originalJobId).map(r => JSON.parse(String(r.body))); }
+  afterSalesCase(owner: string, caseId: string): AfterSalesCase {
+    const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId);
+    if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
+    return JSON.parse(String(row.body)) as AfterSalesCase;
+  }
   updateAfterSales(owner: string, caseId: string, state: AfterSalesCase['state']): void {
     const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId); if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
     const value = JSON.parse(String(row.body)) as AfterSalesCase;

@@ -187,6 +187,7 @@ test('a future create target mistakenly supplied as existing context returns cor
     const corrected = await b.run(); assert(corrected.delegation!.agent); assert.deepEqual(corrected.delegation!.agent!.input.objects, []);
     assert.equal(groundingTurns, 2); assert.equal(corrected.delegation!.request.messages.length, 1); assert.equal(corrected.delegation!.request.revision, 1);
     const choices = corrected.delegation!.groundingDecisions!;
+    assert('inputJson' in choices[0]!.decision); assert('inputJson' in choices[1]!.decision);
     assert.deepEqual(JSON.parse(choices[0]!.decision.inputJson).objects, [target]); assert.deepEqual(JSON.parse(choices[1]!.decision.inputJson).objects, []);
     const waiting = await b.run(), permission = waiting.delegation!.authorizationRequest!; assert(permission.environment === 'managed');
     assert.equal(fixture.graph.query(owner, { type: target.type }).items.length, 0);

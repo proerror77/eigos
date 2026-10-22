@@ -54,7 +54,7 @@ export class PaotuiReadAdapter implements ExecutionAdapter {
     return { kind: 'ready', input: normalized, details: { readOnly: true, queryKind: action, evidenceKind: (result.ontologyReceipt as { evidenceKind?: string } | undefined)?.evidenceKind ?? 'fixture', resultDigest: digest(snapshot(result)), ...(result.ontologyReceipt ? { ontologyReceipt: result.ontologyReceipt } : {}) }, facts: readFacts(query, result), evidenceRefs: [`meituan:read:${digest(snapshot(result))}`],
       observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300000).toISOString(), privateData: { query, result } };
   }
-  async execute(ctx: AdapterContext, plan: ExecutionPlan, data: unknown, signal: AbortSignal): Promise<Delivery> {
+  async execute(ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, data: unknown, signal: AbortSignal): Promise<Delivery> {
     if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal read source is unavailable');
     const payload = data as { query: PaotuiQuery; result: Record<string, unknown> };
     let result = payload.result;
@@ -63,7 +63,7 @@ export class PaotuiReadAdapter implements ExecutionAdapter {
     if (!this.permitted(ctx.owner)) throw new DomainError('FORBIDDEN', 'Personal read source is unavailable');
     return { artifact: { id: randomUUID(), name: `${PAOTUI_READ_CAPABILITIES[this.capabilityIndex]!.ref.id}.json`, data: { goal: ctx.request.originalGoal, deliverable: '只读结果已取得；不代表订单、支付或履约完成。', execution: 'completed', result } }, facts: readFacts(payload.query, result), evidenceRefs: [`meituan:read:${digest(snapshot(result))}`] };
   }
-  verify(ctx: AdapterContext, _plan: ExecutionPlan, data: unknown, delivery: Delivery) {
+  verify(ctx: AdapterContext, _plan: import('../core/catalog.js').AdapterPlan, data: unknown, delivery: Delivery) {
     const payload = data as { query: PaotuiQuery; result: Record<string, unknown> }; const result = delivery.artifact.data.result as Record<string, unknown>;
     const accepted = this.permitted(ctx.owner) && result?.source === 'meituan' && digest(snapshot(result)) === digest(snapshot(payload.result)) && (payload.query.action === 'preview' ? result.previewOnly === true && result.orderCreated === false : result.readOnly === true);
     return { accepted, reason: accepted ? 'Owner-scoped read receipt, source and no-order boundary verified; no fulfillment asserted' : 'Read receipt/source mismatch' };

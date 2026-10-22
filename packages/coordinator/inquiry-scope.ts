@@ -19,14 +19,33 @@ export function inquiryCatalog(jobs: JobStore, owner: string, jobId: string, cat
     const original = selected.program;
     const program: AgentProgram = {
       ref: original.ref, configurationDigest: original.configurationDigest, actionIds: original.actionIds, guidance: original.guidance, completionSchema: original.completionSchema,
+      ...(original.limits ? { limits: original.limits } : {}),
+      ...(original.modelCallsPerAction ? { modelCallsPerAction: original.modelCallsPerAction } : {}),
+      ...(original.callerManagedActions ? { callerManagedActions: original.callerManagedActions } : {}),
       permitted(candidate) { if (candidate !== owner) return false; guard(); return original.permitted(candidate); },
       capability: () => selected.capability, listingBinding: () => selected.binding,
       sourceAuthorization: candidate => { if (candidate !== owner) throw new DomainError('FORBIDDEN', 'Inquiry owner changed'); guard(); return original.sourceAuthorization?.(candidate); },
-      initialize(graph, candidate, request, input) { guard({ owner: candidate, request }); return original.initialize(graph, candidate, request, input); },
+      initialize(graph, candidate, request, input, component) { guard({ owner: candidate, request }); return original.initialize(graph, candidate, request, input, component); },
+      ...(original.assertSourceAvailable ? { assertSourceAvailable(candidate: string) { if (candidate !== owner) throw new DomainError('FORBIDDEN', 'Inquiry owner changed'); guard(); original.assertSourceAvailable!(candidate); } } : {}),
+      ...(original.assertContext ? { assertContext: (ctx) => { guard(ctx); original.assertContext!(ctx); } } : {}),
+      ...(original.contextRefs ? { contextRefs: (ctx) => { guard(ctx); return original.contextRefs!(ctx); } } : {}),
+      ...(original.prepareRequest ? { prepareRequest: request => { guard({ owner, request }); return original.prepareRequest!(request); } } : {}),
+      ...(original.validateRequest ? { validateRequest: request => { guard({ owner, request }); original.validateRequest!(request); } } : {}),
       schema: action => original.schema(action), definition: (graph, action) => original.definition(graph, action),
       validate(ctx, action, input) { guard(ctx); original.validate(ctx, action, input); },
+      ...(original.validatePlanning ? { validatePlanning: (ctx, action, input, reads) => { guard(ctx); original.validatePlanning!(ctx, action, input, reads); } } : {}),
+      ...(original.validatePause ? { validatePause: (ctx, decision, reads) => { guard(ctx); original.validatePause!(ctx, decision, reads); } } : {}),
+      ...(original.simulatedApproval ? { simulatedApproval: (ctx, action, input) => { guard(ctx); return original.simulatedApproval!(ctx, action, input); } } : {}),
+      ...(original.privateInput ? { privateInput: (ctx, action, input) => { guard(ctx); return original.privateInput!(ctx, action, input); } } : {}),
+      ...(original.authority ? { authority: (ctx, action, input) => { guard(ctx); return original.authority!(ctx, action, input); } } : {}),
       async invoke(ctx, action, input, signal) { guard(ctx); const result = await original.invoke(ctx, action, input, signal); signal.throwIfAborted(); guard(ctx); return result; },
+      ...(original.recover ? { recover: async (ctx, action, input, signal) => { guard(ctx); const result = await original.recover!(ctx, action, input, signal); signal.throwIfAborted(); guard(ctx); return result; } } : {}),
       project(ctx, action, input, result) { guard(ctx); return original.project(ctx, action, input, result); },
+      ...(original.projectOutputs ? { projectOutputs: (ctx, action, input, result, object) => { guard(ctx); return original.projectOutputs!(ctx, action, input, result, object); } } : {}),
+      ...(original.validateOutput ? { validateOutput: (ctx, output) => { guard(ctx); original.validateOutput!(ctx, output); } } : {}),
+      ...(original.onAccepted ? { onAccepted: (ctx, action, input, result, object, job) => { guard(ctx); original.onAccepted!(ctx, action, input, result, object, job); } } : {}),
+      ...(original.onCompletionAccepted ? { onCompletionAccepted: (ctx, job) => { guard(ctx); original.onCompletionAccepted!(ctx, job); } } : {}),
+      ...(original.terminalHandoff ? { terminalHandoff: ctx => { guard(ctx); return original.terminalHandoff!(ctx); } } : {}),
       complete(ctx, proposal, reads) { guard(ctx); return original.complete(ctx, proposal, reads); },
       clarify(ctx, message) { guard(ctx); return original.clarify?.(ctx, message) ?? message; },
     };
@@ -34,9 +53,9 @@ export function inquiryCatalog(jobs: JobStore, owner: string, jobId: string, cat
   }
   const original = selected.adapter;
   if (isActionAdapter(original)) throw new DomainError('FORBIDDEN', 'Inquiry source must be read-only');
-  const planGuard = (ctx: AdapterContext, plan: ExecutionPlan) => {
+  const planGuard = (ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan) => {
     guard(ctx);
-    if (!sameRef(plan.capabilityRef, source.capabilityRef) || !sameRef(plan.bindingRef, source.bindingRef) || plan.quote
+    if (!sameRef(plan.capabilityRef, source.capabilityRef) || !sameRef(plan.bindingRef, source.bindingRef) || ('quote' in plan && plan.quote)
       || plan.steps.some(s => s.effect !== 'read' || !sameRef(s.capabilityRef, source.capabilityRef) || !sameRef(s.bindingRef, source.bindingRef)
         || !sameRef(s.actionTypeRef, selected.capability.actions[0]!.ref))) throw new DomainError('FORBIDDEN', 'Inquiry is restricted to the chosen quote-only source');
   };

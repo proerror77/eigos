@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "passed": true,
+  "taskId": "dae82f85-b135-43dd-9284-a616194be8da",
+  "firstAttempt": {
+    "startedAt": "2026-10-22T12:52:55.323Z",
+    "taskId": "dae82f85-b135-43dd-9284-a616194be8da",
+    "passed": false,
+    "failure": {
+      "name": "AssertionError",
+      "message": "The expression evaluated to a falsy value:\n\n  assert(state?.composition && state.programRef.id === 'eigos.goal')\n"
+    },
+    "runtimeManifestDigest": "03141d1264a4d67ee4950eda1e18bf55e1dbd0d0c5d9df18628567828c812e1c"
+  },
+  "correction": "Exact Chinese quantity provenance now recognizes 两款 as two result units; ordinals and partial numerals remain rejected.",
+  "resumedOriginalTask": true,
+  "paCalledResumeTask": true,
+  "finalState": "completed",
+  "cumulativeModelRuns": 30,
+  "artifactDigest": "228dab0b7a5426ee3518bbbfe8d5f494eae6fcf819205021caaf5865d547300d",
+  "completedAt": "2026-10-22T13:11:44.725Z",
+  "note": "Earlier diagnosis/recovery evidence. Final frozen-source scenarios are recorded separately in native-summary.json."
+}

@@ -57,7 +57,7 @@ test('cancel aborts execution and late model results cannot complete canceled ta
     await tasks.close();
     assert.equal(tasks.get(p, job.id).state, 'canceled');
     assert.equal(tasks.get(p, job.id).artifact, undefined);
-  } finally { store.close(); }
+  } finally { release?.(result('complete')); await tasks.close(); store.close(); }
 });
 
 test('failed execution is visible and never silently replaced with a template', async () => {

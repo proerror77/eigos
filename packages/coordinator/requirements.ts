@@ -10,7 +10,7 @@ function quantityMatches(quote: string, amount: string, unit: string): boolean {
   if (quantityAppearsInQuote(quote, { amount, unit })) return true;
   let position = -1;
   while ((position = quote.indexOf(amount, position + 1)) >= 0) {
-    if (/[\d.]/.test(quote[position - 1] ?? '')) continue;
+    if (/[第\d.零〇一二两三四五六七八九十百千万亿]/.test(quote[position - 1] ?? '')) continue;
     const following = quote.slice(position + amount.length).trimStart();
     if (!following.startsWith(unit)) continue;
     if (/[A-Za-z]$/.test(unit) && /^[A-Za-z]/.test(following.slice(unit.length))) continue;

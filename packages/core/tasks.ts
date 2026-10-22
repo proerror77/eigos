@@ -13,18 +13,19 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
 import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
-import { canRecoverReadOnly } from './task-recovery.js';
+import { canRecoverReadOnly, canResumeSource } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
 import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
 import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
-import { readBookingObservation } from '../ontology/booking-functions.js';
-import { bookingDataSchema, bookingPaymentDataSchema } from '../ontology/booking.js';
+import { assertPaymentRouteReadback } from '../capabilities/booking/payment-route.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { objectWriteScopeSchema } from '../ontology/actions.js';
 import { objectRefSchema } from '../ontology/model.js';
 import type { AgentActionPlan, AgentDecision, AgentExecutionState } from '../ontology/agent-actions.js';
 import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.js';
+import { GoalProgram } from '../coordinator/goal-program.js';
+import { componentContext, resolveComposedStep } from './composed-actions.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 export interface OntologyReadContext { ontologyId?: string; release?: OntologyReleaseRef; taskId?: string }
@@ -73,10 +74,27 @@ export class TaskService {
       if (job.service !== DELEGATE || d?.backendVersion !== BACKEND_VERSION || job.state !== 'auth-required' || !d.sourceAuthorization || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Task is not waiting for this source authorization');
       assertConnected(owner);
       const intents = this.store.intents(owner, job.id);
-      if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Source connection cannot resume a business effect');
+      if (!canResumeSource(job, intents)) throw new DomainError('FORBIDDEN', 'Source connection cannot resume an unconfirmed business effect');
       // Retain confirmed reads and their provenance. Only unfinished execution is
       // canceled; the next scope cannot reuse an old observation or attempt.
       this.store.cancelActions(owner, job.id);
+      if (d.agent?.composition) {
+        const state = d.agent, composition = state.composition!, catalog = this.catalogForJob(owner, job), at = new Date().toISOString();
+        // Existing source-grant snapshots remain evidence, never silently rebound.
+        for (const component of composition.contexts) {
+          if (composition.retiredContexts?.some(value => value.id === component.id)) continue;
+          const program = catalog.agentProgram(component.programRef, owner);
+          if (program?.sourceAuthorization?.(owner)?.provider !== d.sourceAuthorization.provider) continue;
+          (composition.retiredContexts ??= []).push({ id: component.id, at, reason: 'source_authorization_renewed' });
+        }
+        delete state.pendingPlanId; delete d.sourceAuthorization; delete d.authorizationRequest;
+        job.revision = (job.revision ?? 0) + 1; d.phase = 'planning'; d.nextAt = 0;
+        job.state = 'submitted'; job.updatedAt = at; delete job.question; delete job.error;
+        continueExecutionBudget(job, 'source');
+        if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
+        d.events.push({ at, event: 'owned_source_connected', evidence: composition.goal.digest });
+        this.store.save(owner, job); return job;
+      }
       if (d.agent) {
         d.suspendedAgent = { programRef: d.agent.programRef, programDigest: d.agent.programDigest, input: d.agent.input, requestDigest: digest({ ...d.request, revision: 0 }) };
         d.agentHistory = [...(d.agentHistory ?? []), d.agent]; delete d.agent;
@@ -317,18 +335,12 @@ export class TaskService {
       if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
       const payment = verifyPAPaymentRequest(job, owner);
       if (payment.request.id !== args.handoffId || payment.request.digest !== args.handoffDigest) throw new DomainError('CONFLICT', 'Payment route must reference the exact original handoff');
-      const program = this.catalogForJob(owner, job).agentProgram(job.delegation.agent!.programRef, owner);
+      const state = job.delegation.agent!, component = state.composition?.contexts.find(value => value.id === state.composition?.paymentContextId);
+      const program = this.catalogForJob(owner, job).agentProgram(component?.programRef ?? state.programRef, owner);
       if (!this.options.allowSandboxActions || job.delegation.request.executionEnvironment !== 'sandbox' || !program || program.configurationDigest !== payment.request.configurationDigest) throw new DomainError('FORBIDDEN', 'The original payment source is no longer enabled with the same configuration');
-      if (job.delegation.request.requirements.some(r => r.kind === 'deadline' && r.strength === 'hard' && (!r.role || r.role === 'completion') && Date.parse(r.expected.at) <= Date.now())) throw new DomainError('CONFLICT', 'The requested booking completion deadline expired before payment route selection');
-      const latest = (type: string) => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1);
-      const bookingRef = latest('BookingObservation'), paymentRef = latest('BookingPaymentObservation');
-      if (!bookingRef || !paymentRef) throw new DomainError('CONFLICT', 'Read the original provider booking and payment before selecting a route');
-      const booked = readBookingObservation(this.store.ontologyForJob(owner, job), owner, bookingRef), paid = readBookingObservation(this.store.ontologyForJob(owner, job), owner, paymentRef);
-      const b = bookingDataSchema.parse(booked.payload.data), money = bookingPaymentDataSchema.parse(paid.payload.data);
+      const root = { graph: this.store.ontologyForJob(owner, job), owner, request: job.delegation.request, state, intents: this.store.intents(owner, job.id), modelRuns: job.runs };
+      assertPaymentRouteReadback(component ? componentContext(root, component, program) : root, payment);
       const terms = payment.request.terms;
-      if ([booked, paid].some(s => s.receipt.requestId !== job.id || s.receipt.requestRevision !== payment.request.requestRevision || s.configurationDigest !== payment.request.configurationDigest || s.receipt.readbackSequence !== payment.readbackSequence)) throw new DomainError('CONFLICT', 'Payment route requires the current owned provider readback');
-      if (b.providerId !== terms.providerId || b.holdExpiresAt !== terms.expiresAt || digest(b.checkout) !== digest(terms.checkout) || digest(b.paymentHandler) !== digest(terms.handler) || digest(b.offer.total) !== digest(terms.amount)) throw new DomainError('CONFLICT', 'Payment routes must retain the original independently read provider terms');
-      if (booked.receipt.action !== 'ReadProviderBooking' || paid.receipt.action !== 'ReadProviderPayment' || b.bookingId !== terms.bookingId || b.termsDigest !== terms.bookingTermsDigest || b.state !== 'awaiting_payment' || money.bookingId !== terms.bookingId || money.bookingTermsDigest !== terms.bookingTermsDigest || money.state !== 'unpaid' || money.paidAmount.minor !== '0' || money.paymentId || money.capturedAt) throw new DomainError('CONFLICT', 'The original provider booking must still be unpaid; reconcile instead of switching payment routes');
       const selected = recordPAPaymentSelection(payment, args.wallet);
       job.updatedAt = selected.selectedAt;
       job.question = selected.route === 'link_agent_wallet'
@@ -414,17 +426,32 @@ export class TaskService {
       if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only');
       const d = job.delegation;
       if (d.agent) {
-        const plan = d.agent.plans.find(p => p.id === d.agent!.pendingPlanId), program = this.catalogForJob(owner, job).agentProgram(d.agent.programRef, owner);
+        const catalog = this.catalogForJob(owner, job), plan = d.agent.plans.find(p => p.id === d.agent!.pendingPlanId);
+        const program: import('./agent-program.js').AgentProgram | undefined = d.agent.composition ? new GoalProgram(d.agent.composition.goal) : catalog.agentProgram(d.agent.programRef, owner);
         if (!plan || !program || program.configurationDigest !== d.agent.programDigest) throw new DomainError('FORBIDDEN', 'No current configured Agent plan');
         assertAgentDecisionOrigin(program, job, owner, plan);
         validatePlanningSnapshot(this.store.ontologyForJob(owner, job), owner, d.request, plan.ontologyPlanning, true);
-        const ctx = { graph: this.store.ontologyForJob(owner, job), owner, request: d.request, state: d.agent, intents: this.store.intents(owner, job.id) };
-        for (const step of plan.steps) if (step.effect !== 'read') { validateAgentAuthority(program, ctx, plan, step); program.validatePlanning?.(ctx, step.action, step.input, plan.ontologyPlanning); }
+        const ctx = { graph: this.store.ontologyForJob(owner, job), owner, request: d.request, state: d.agent, intents: this.store.intents(owner, job.id), modelRuns: job.runs };
+        program.assertContext?.(ctx);
+        if (plan.quote) {
+          const approval = z.object({ requestId: z.string().min(1).max(128), action: z.literal('confirm_simulated_payment'), quoteId: z.uuid(), quoteDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(input);
+          if (plan.quote.id !== approval.quoteId || plan.quote.digest !== approval.quoteDigest || plan.steps.length !== 1) throw new DomainError('CONFLICT', 'Exact local simulation quote approval required');
+          const step = plan.steps[0]!, selected = d.agent.composition ? resolveComposedStep(catalog, ctx, step) : { program, context: ctx };
+          validateAgentAuthority(selected.program, selected.context, plan, step);
+          selected.program.validate(selected.context, step.action, step.input);
+          job.updatedAt = new Date().toISOString();
+          d.approval = { planDigest: plan.digest, quoteDigest: plan.quote.digest, at: job.updatedAt, simulationOnly: true };
+          d.events.push({ at: job.updatedAt, event: 'plan_authorized', evidence: plan.digest });
+          d.phase = 'executing'; d.nextAt = 0; job.state = 'submitted'; job.revision = (job.revision ?? 0) + 1; delete job.question;
+          this.store.save(owner, job); return job;
+        }
+        const writes = plan.steps.filter(step => !['read', 'local'].includes(step.effect)).map(step => ({ step, ...(d.agent!.composition ? resolveComposedStep(catalog, ctx, step) : { program, context: ctx }) }));
+        for (const { step, program, context } of writes) { validateAgentAuthority(program, context, plan, step); program.validatePlanning?.(context, step.action, step.input, plan.ontologyPlanning); }
         if (args.action === 'approve_object_write') {
           requireScope(p, 'ontology:object_write');
           const permit = z.object({ action: z.literal('approve_object_write'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), objectWrite: objectWriteScopeSchema, expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('managed') }).strict().parse(input);
           this.store.definitions.assertAccess(owner, this.store.ontologyReleaseForJob(owner, job).ontologyId, p.scopes.includes('ontology:admin'));
-          if (!program.callerManagedActions) throw new DomainError('FORBIDDEN', 'Managed write authority is restricted to the registered declarative engine');
+          if (!writes.length || writes.some(write => !write.program.callerManagedActions)) throw new DomainError('FORBIDDEN', 'Managed write authority is restricted to the registered declarative engine');
           this.store.grant(owner, createAgentObjectWriteGrant(owner, id, plan, permit));
         } else {
           const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('sandbox') }).strict().parse(input);
@@ -433,6 +460,7 @@ export class TaskService {
         }
         d.phase = 'executing'; d.nextAt = 0; job.updatedAt = new Date().toISOString(); job.state = 'submitted'; job.revision = (job.revision ?? 0) + 1; delete job.question;
         d.events.push({ at: job.updatedAt, event: 'agent_plan_authorized', evidence: plan.digest });
+        if (d.afterSalesCaseId) this.store.updateAfterSales(owner, d.afterSalesCaseId, 'processing');
         this.store.save(owner, job); return job;
       }
       const plan = d.plan;
@@ -498,6 +526,13 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
+      const simulationPlan = d?.agent?.plans.find(plan => plan.id === d.agent?.pendingPlanId && plan.quote);
+      if (d?.backendVersion === BACKEND_VERSION && simulationPlan && !['completed', 'failed', 'canceled'].includes(job.state)) {
+        delete d.approval; job.revision = (job.revision ?? 0) + 1; d.nextAt = 0;
+        job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString();
+        d.events.push({ at: job.updatedAt, event: 'authorization_revoked', evidence: simulationPlan.digest });
+        this.store.save(owner, job); return job;
+      }
       if (d?.backendVersion === BACKEND_VERSION && d.agent && d.authorizationRequest && !['completed', 'failed', 'canceled'].includes(job.state)) {
         this.store.revokeGrants(owner, id);
         const intents = this.store.intents(owner, id);
@@ -522,6 +557,7 @@ export class TaskService {
     if (!catalog) throw new DomainError('CONFLICT', 'Ontology backend is required for after-sales');
     return this.store.once(owner, `aftersales:${args.originalTaskId}`, args.requestId, JSON.stringify(args), () => {
       const original = this.store.get(owner, args.originalTaskId); const d = original.delegation;
+      if (d?.backendVersion === BACKEND_VERSION && d.agent?.composition) return this.requestComposedRemediation(owner, original, args);
       if (d?.backendVersion !== BACKEND_VERSION || !d.plan) throw new DomainError('CONFLICT', 'Original task has no current owned business plan');
       const existing = this.store.afterSales(owner, original.id).find(c => c.action === args.action); if (existing) return this.store.get(owner, existing.remedyJobId);
       validatePlan(catalog, owner, d.request, d.plan, this.store.ontologyForJob(owner, original).model.ref, Date.now(), 'observe');
@@ -555,6 +591,37 @@ export class TaskService {
       return job;
     });
   }
+  private requestComposedRemediation(owner: string, original: Job, args: z.infer<typeof remediationSchema>): Job {
+    const d = original.delegation!, existing = this.store.afterSales(owner, original.id).find(value => value.action === args.action);
+    if (existing) return this.store.get(owner, existing.remedyJobId);
+    if (!this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Only configured sandbox remediation is enabled');
+    const catalog = this.catalogForJob(owner, original), root = { graph: this.store.ontologyForJob(owner, original), owner, request: d.request, state: d.agent!, intents: this.store.intents(owner, original.id), modelRuns: original.runs };
+    const targets = d.agent!.composition!.contexts.flatMap(component => {
+      if (d.agent!.composition!.retiredContexts?.some(value => value.id === component.id)) return [];
+      // An unrelated read/report source cannot prevent handling an already
+      // observed business effect. Only remedy providers need fresh access here.
+      if (!catalog.agentProgram(component.programRef, owner)?.remediationTarget) return [];
+      const program = catalog.resolveActionBinding(root.graph, owner, d.request, component.initializedBy.binding).program;
+      const target = program.remediationTarget?.(componentContext(root, component, program), args.action);
+      return target ? [{ program, target }] : [];
+    });
+    if (targets.length !== 1) throw new DomainError('CONFLICT', targets.length ? 'The task has multiple original business operations; select an unambiguous owned operation before after-sales' : 'No verified original operation supports this remediation');
+    const { program, target } = targets[0]!, operation = this.store.intent(owner, target.originalIntentId);
+    if (operation.jobId !== original.id || operation.remoteRef !== target.remoteRef || !program.capability().goalOutcomes?.some(value => value.predicate === target.predicate)
+      || !program.capability().effectConstraints?.some(value => value.predicate === target.constraintPredicate)) throw new DomainError('CONFLICT', 'Remediation target lacks its exact original operation and effect boundary');
+    const now = new Date().toISOString(), caseId = randomUUID(), id = randomUUID();
+    const goal = `${args.action === 'refund' ? '退款' : '取消业务'}：原任务 ${original.id}；${args.reason}`;
+    const job: Job = { id, contextId: original.contextId, service: DELEGATE, goal, state: 'submitted', revision: 1, executionMode: 'worker', runs: [], messages: [{ id: args.requestId, role: 'user', text: goal, at: now }], createdAt: now, updatedAt: now,
+      delegation: { backendVersion: BACKEND_VERSION, ontologyRelease: this.store.ontologyReleaseForJob(owner, original), ontologyReadScope: d.ontologyReadScope,
+        request: { id, revision: 1, originalGoal: goal, executionEnvironment: 'sandbox', messages: [{ id: args.requestId, text: goal, receivedAt: now }], outcome: args.action, businessScopeId: `aftersales:${operation.businessOperationKey}:${args.action}`,
+          requirements: [target.predicate, target.constraintPredicate].map((predicate, index) => ({ id: index ? 'remedy_effect_boundary' : 'remedy_outcome', kind: 'condition', strength: 'hard', expected: { predicate }, provenance: { source: 'pa', interpretation: 'structured', messageId: args.requestId, receivedAt: now } })) },
+        executionBudget: initialExecutionBudget(now), phase: 'grounding', afterSalesCaseId: caseId, events: [{ at: now, event: 'aftersales_requested', evidence: original.id }] } };
+    this.store.save(owner, job);
+    this.store.createAfterSales(owner, { id: caseId, owner, originalJobId: original.id, remedyJobId: id, action: args.action, state: 'requested', remoteRef: target.remoteRef, originalIntentId: target.originalIntentId, programRef: program.ref, configurationDigest: program.configurationDigest, reason: args.reason, createdAt: now, updatedAt: now });
+    this.store.save(owner, job);
+    if (['working', 'submitted', 'input-required', 'auth-required'].includes(original.state)) { original.state = 'canceled'; d.phase = 'canceled'; d.recoveryPending = this.store.cancelActions(owner, original.id); d.nextAt = 0; original.updatedAt = now; this.store.save(owner, original); }
+    return job;
+  }
   private view(owner: string, job: Job): Job {
     job.memberUsage = this.store.memberUsage(owner);
     if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.executionBudget) job.delegation.executionBudgetStatus = executionBudgetStatus(job);
@@ -562,9 +629,20 @@ export class TaskService {
       const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);
       job.delegation.actions = intents.map(i => ({ id: i.id, stepId: i.stepId, state: i.state, remoteRef: i.remoteRef, latestObservationId: i.latestObservationId }));
       job.delegation.businessFacts = intents.flatMap(i => i.businessSnapshot ? [{ intentId: i.id, snapshot: i.businessSnapshot.value, sourceVersion: i.businessSnapshot.sourceVersion, evidenceRefs: i.businessSnapshot.evidenceRefs }] : []);
-      job.delegation.authorizationBudget = this.store.budget(owner, job.id).map(b => ({ minor: String(b.minor), currency: String(b.currency), state: String(b.state), intentId: String(b.intent_id) }));
+      job.delegation.authorizationBudget = this.store.budget(owner, job.id).flatMap(b => [{ minor: String(b.minor), currency: String(b.currency), state: String(b.state), intentId: String(b.intent_id), ...(b.role ? { role: b.role } : {}) }, ...(b.additionalImpacts ?? []).map(value => ({ minor: value.minor, currency: value.currency, state: String(b.state), intentId: String(b.intent_id), role: value.role }))]);
     }
     const cases = this.store.afterSales(owner, job.id); if (cases.length) job.afterSales = cases.map(({ owner: _owner, ...c }) => c);
+    return job;
+  }
+
+  async getAfterWait(p: Principal, id: string, waitMs = 0): Promise<Job> {
+    if (!Number.isInteger(waitMs) || waitMs < 0 || waitMs > 30000) throw new DomainError('INVALID_INPUT', 'Task read wait must be between 0 and 30000 milliseconds');
+    const deadline = Date.now() + waitMs;
+    let job = this.get(p, id);
+    while (!this.stopping && ['submitted', 'working'].includes(job.state) && Date.now() < deadline) {
+      await delay(Math.min(250, Math.max(1, deadline - Date.now())));
+      job = this.get(p, id);
+    }
     return job;
   }
 

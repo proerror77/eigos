@@ -95,13 +95,14 @@ export class PaotuiGeoDiscoverySource implements DiscoverySource {
     if (observedAt > now || observedAt + 300000 <= now) throw new DomainError('CONFLICT', 'Public-location receipt is expired or has an invalid observation time');
     return result;
   }
-  private checkedPreparation(ctx: AdapterContext, plan: ExecutionPlan, data: unknown) {
+  private checkedPreparation(ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, data: unknown) {
     this.requireOwner(ctx.owner);
     const payload = z.object({ query: querySchema, result: z.unknown() }).strict().parse(data);
     const { action: _action, ...query } = payload.query; const input = this.allowedInput(query);
+    const boundRef = 'sourcePlan' in plan ? { id: `${binding.ref.id}.atomic`, version: '1' } : binding.ref;
     if (plan.steps.length !== 1 || digest(plan.steps[0]!.input) !== digest(input)
-      || !sameRef(plan.bindingRef, binding.ref)
-      || !plan.bindingSnapshots.some(snapshot => sameRef(snapshot.ref, binding.ref) && snapshot.configurationDigest === this.configurationDigest)) {
+      || !sameRef(plan.bindingRef, boundRef)
+      || !plan.bindingSnapshots.some(snapshot => sameRef(snapshot.ref, boundRef) && snapshot.configurationDigest === this.configurationDigest)) {
       throw new DomainError('CONFLICT', 'Public-location result is not bound to this plan and source configuration');
     }
     return { input, result: this.checkedResult(payload.result, input) };

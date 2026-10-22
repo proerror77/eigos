@@ -9,6 +9,7 @@ import { actionProperties, readExecutionContext, readOntologyRequest, type Execu
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import type { PlanningContextReceipt, PlanningDefinitionReceipt, PlanningReadReceipt } from '../ontology/planning-contract.js';
 import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
+import { compositionSummary } from '../ontology/composition-contract.js';
 
 export const taskContextSchema = z.strictObject({
   definitionReceiptId: z.string().min(1).max(200).optional().describe('Reuse a previously returned definition bundle only when its current model and binding still match'),
@@ -29,6 +30,7 @@ export interface TaskContextBinding {
   refs?: readonly ObjectRef[];
   /** Host-authorized, owner-readable inputs of a pinned managed program. */
   managedDiscoveryTypes?: readonly string[];
+  capabilityDirectory?: { bootstrapComplete: boolean; discoveryTool: 'discover_actions' };
 }
 export interface TaskContextPayload {
   version: '1';
@@ -37,6 +39,7 @@ export interface TaskContextPayload {
   instructions: { total: number; complete: boolean; included: { ref: ObjectRef; messageId: string; sequence: number }[]; nextCursor?: string; originalGoalSource?: { ref: ObjectRef; messageId: string; content: 'request.originalGoal' } };
   execution?: Omit<ExecutionContextView, 'objects' | 'links'>;
   capabilities: ReturnType<typeof readCapabilityCatalog>;
+  capabilityDirectory?: TaskContextBinding['capabilityDirectory'];
   resolution?: PreparedResolution;
   capability?: PreparedCapability;
   graph: { objects: ObjectView[]; links: LinkWrite[]; unreadRefs: ObjectRef[]; pendingRelationships: { from: ObjectRef; link: string; cursor?: string }[] };
@@ -154,7 +157,7 @@ function safeDefinition(type: object, relevantTypes: Set<string>): object {
 
 /** Return a compact, exact subset of the registered model. Action input schemas
  * remain complete; unrelated action definitions are not repeatedly transported. */
-function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], actions: ActionDefinition[], discoveryTypes: readonly string[] = []): Record<string, unknown> {
+function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], actions: ActionDefinition[], discoveryTypes: readonly string[] = [], composed = false): Record<string, unknown> {
   const names = new Set(objects.map(object => object.ref.type));
   discoveryTypes.forEach(type => names.add(type));
   names.add('ServiceRequest'); names.add('SourceReceipt');
@@ -164,16 +167,24 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     if (action.operation) names.add(action.operation.resultType);
     for (const type of action.resultTypes ?? []) names.add(type);
   }
-  for (const type of [...names].filter(name => !isExecutionBookkeepingType(name) && name !== 'ServiceRequest')) {
+  for (const type of (composed ? [] : [...names]).filter(name => !isExecutionBookkeepingType(name) && name !== 'ServiceRequest')) {
     if (graph.model.isInterface(type)) continue;
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));
-  const types = [...names].sort().map(type => safeDefinition(graph.model.describeType(type), names));
-  return { model: graph.model.ref, types, actions: actions.map(action => {
-    const { implementation, ...contract } = action;
-    return { ...contract, execution: 'definition_only', ...(implementation ? { implementationSummary: implementation.kind === 'declarative'
+  const types: object[] = [], deferredTypes: string[] = [];
+  let typeBytes = 0;
+  for (const name of [...names].sort((a, b) => a === 'ServiceRequest' ? -1 : b === 'ServiceRequest' ? 1 : a.localeCompare(b))) {
+    const type = safeDefinition(graph.model.describeType(name), names), bytes = Buffer.byteLength(JSON.stringify(type));
+    if (composed && typeBytes + bytes > 50000) deferredTypes.push(name);
+    else { types.push(type); typeBytes += bytes; }
+  }
+  // Definition availability is not a requirement to transport every schema in
+  // every decision. Exact omitted definitions remain available through discovery.
+  return { model: graph.model.ref, types, ...(deferredTypes.length ? { deferredTypes, definitionRetrieval: 'describe_ontology' } : {}), actions: actions.map(action => {
+    const { implementation, composition, ...contract } = action;
+    return { ...contract, ...(composition ? { compositionSummary: compositionSummary(composition) } : {}), execution: 'definition_only', ...(implementation ? { implementationSummary: implementation.kind === 'declarative'
       ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) }
       : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
   }), functions };
@@ -216,7 +227,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   }
   if (binding.managedDiscoveryTypes) {
     const allowed = managedDiscoveryTypes(graph.model, graph.model.actionDefinitions().map(action => action.id));
-    if (!binding.program || binding.purpose !== 'agent' || binding.managedDiscoveryTypes.some(type => !allowed.includes(type))) return conflict('Managed discovery differs from the current published program');
+    if (!binding.program && !executionView?.composition || binding.purpose !== 'agent' || binding.managedDiscoveryTypes.some(type => !allowed.includes(type))) return conflict('Managed discovery differs from the current published program');
   }
   const capabilities = readCapabilityCatalog(graph, owner, requestId);
   const resolution = readPreparedResolution(graph, owner, requestId);
@@ -284,7 +295,13 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       cursor = page.page.cursor;
     } while (cursor);
   }
-  for (const ref of binding.refs ?? []) if (!unread.has(refKey(ref))) addObject(graph.read(owner, ref));
+  for (const ref of binding.refs ?? []) if (!unread.has(refKey(ref))) {
+    const deleted = graph.model.objectWritePolicy(ref.type) === 'managed' ? graph.tombstone(owner, ref) : undefined;
+    if (deleted && executionView) {
+      executionView.tombstonedRefs ??= [];
+      if (!executionView.tombstonedRefs.some(value => same(value.ref, ref))) executionView.tombstonedRefs.push(deleted);
+    } else addObject(graph.read(owner, ref));
+  }
   for (const specification of [...objects.values()].filter(object => object.ref.type === 'RequestSpecification')) {
     const instructionNavigation = graph.model.navigation(specification.ref.type, 'instructions');
     for (const instruction of instructionProjection.rows) {
@@ -330,7 +347,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     ...(binding.managedDiscoveryTypes ? { managedDiscoveryTypes: [...binding.managedDiscoveryTypes].sort() } : {}) });
   const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(execution ?? null),
     instructionCount: instructionProjection.rows.length, instructionRefsDigest: instructionCoverageDigest(instructionProjection.rows.map(row => row.ref)), requireCompleteInstructions: binding.purpose === 'grounding' };
-  const bundle = definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes);
+  const bundle = definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition);
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
   const definitions: PlanningDefinitionReceipt = reused ?? { modelDigest: graph.model.ref.digest, bindingDigest, payloadDigest: digest(bundle), originalReceiptId: receiptId, payload: bundle };
   const modelRequest: TaskRequestView = { ...request, messages: [...initial.selected].sort((a, b) => a - b).map(index => request.messages[index]!), messageView: initial.selected.size === request.messages.length ? 'complete' : 'partial' };
@@ -339,7 +356,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       included: [...initial.delivered].sort((a, b) => a - b).map(sequence => ({ ref: instructionProjection.rows[sequence]!.ref, messageId: request.messages[sequence]!.id, sequence })),
       ...(initial.missing >= 0 ? { nextCursor: instructionCursor(graph, owner, request, initial.missing - 1) } : {}),
       ...(initial.goalSource ? { originalGoalSource: { ref: initial.goalSource.ref, messageId: String(initial.goalSource.properties.messageId), content: 'request.originalGoal' as const } } : {}) },
-    ...(execution ? { execution } : {}), capabilities, ...(resolution ? { resolution } : {}), ...(capability ? { capability } : {}),
+    ...(execution ? { execution } : {}), capabilities, ...(binding.capabilityDirectory ? { capabilityDirectory: binding.capabilityDirectory } : {}), ...(resolution ? { resolution } : {}), ...(capability ? { capability } : {}),
     ...(binding.managedDiscoveryTypes ? { managedDiscovery: { types: [...binding.managedDiscoveryTypes], relationships: 'forward_managed_only' as const } } : {}),
     graph: { objects: [...objects.values()], links: [...links.values()].filter(edge => objects.has(refKey(edge.from)) && objects.has(refKey(edge.to))), unreadRefs: [...unread.values()], pendingRelationships },
     definitions: { digest: definitions.payloadDigest, originalReceiptId: definitions.originalReceiptId, reused: !!reused, bundle: structuredClone(definitions.payload) } };

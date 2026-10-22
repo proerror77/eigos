@@ -3,7 +3,7 @@ import { DomainError, type Job } from '../core/domain.js';
 import type { AfterSalesCase, PlanGrant } from './actions.js';
 import { BACKEND_VERSION, type ExecutionPlan } from './execution.js';
 import type { AgentExecutionState } from './agent-actions.js';
-import { actionProperties, actionRef, bindingRef, executionContextRef, executionPlanRef, executionStepRef, fixedBindingRef, resultRef, type ExecutionLedger } from './execution-projection.js';
+import { actionProperties, actionRef, bindingRef, composedBindingRef, executionContextRef, executionPlanRef, executionStepRef, fixedBindingRef, resultRef, type ExecutionLedger } from './execution-projection.js';
 import { businessRef as node, businessEdge as edge, businessRelated as related, optionalObject, writeBusiness as write } from './business-chain-write.js';
 import type { LinkWrite, ObjectSource, OntologyObjectStore } from './object-store.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -78,21 +78,25 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
   }
   for (const [index, state] of states.entries()) {
     const ref = agentProposalRef(job.id, state), old = optionalObject(graph, owner, ref), at = String(old?.properties.selectedAt ?? job.updatedAt);
-    write(graph, owner, ref, { requestRevision: state.requestRevision, selectedAt: at, termsVersion: ref.id, kind: 'read_scope',
+    write(graph, owner, ref, { requestRevision: state.requestRevision, selectedAt: at, termsVersion: ref.id, kind: state.composition ? 'goal' : 'read_scope',
       capabilityRef: state.programRef, scopeDigest: digest({ scope: state.scope, input: state.input, programDigest: state.programDigest }),
-      completionTarget: 'artifact', authorizationMode: 'not_required', decisionReason: 'Configured read scope selected for the agent-owned request' },
+      completionTarget: state.composition ? 'domain' : 'artifact', authorizationMode: 'not_required', decisionReason: state.composition ? 'Whole user goal fixed; every action retains its own source binding and authority' : 'Configured read scope selected for the agent-owned request' },
     [edge('ProposalRequest', ref, request), edge('ProposalSpecification', ref, specificationRef(job.id, state.requestRevision)), edge('ProposalExecutionContext', ref, executionContextRef(job.id, state.requestRevision)),
       ...(index > 0 && agentProposalRef(job.id, states[index - 1]!).id !== ref.id ? [edge('ProposalPredecessor', ref, agentProposalRef(job.id, states[index - 1]!))] : [])], source, true);
-    engagement(bindingRef(job.id, state), ref, at, state.plans.map(plan => plan.digest), state.scope);
+    if (!state.composition) engagement(bindingRef(job.id, state), ref, at, state.plans.map(plan => plan.digest), state.scope);
     for (const plan of state.plans) {
-      const requiresPermit = plan.steps.some(step => [step.effect, ...(step.additionalEffects ?? [])].some(effect => !['read', 'local'].includes(effect)));
-      if (!requiresPermit) { planProposals.set(plan.digest, ref); continue; }
+      const requiresPermit = !!plan.quote || plan.steps.some(step => [step.effect, ...(step.additionalEffects ?? [])].some(effect => !['read', 'local'].includes(effect)));
+      if (!requiresPermit) {
+        if (state.composition) for (const step of plan.steps) engagement(composedBindingRef(step), ref, plan.createdAt, [plan.digest], step.contextScope);
+        planProposals.set(plan.digest, ref); continue;
+      }
       const proposal = proposalRef(plan);
       write(graph, owner, proposal, { requestRevision: plan.requestRevision, selectedAt: plan.createdAt, termsVersion: plan.digest, kind: 'execution',
-        capabilityRef: state.programRef, scopeDigest: plan.digest, completionTarget: 'domain', authorizationMode: 'required', decisionReason: plan.reasoning },
+        capabilityRef: state.programRef, scopeDigest: plan.digest, completionTarget: 'domain', authorizationMode: plan.quote ? 'simulation_only' : 'required', decisionReason: plan.reasoning },
       [edge('ProposalRequest', proposal, request), edge('ProposalSpecification', proposal, specificationRef(job.id, plan.requestRevision)),
         edge('ProposalPlan', proposal, executionPlanRef(plan)), edge('ProposalPredecessor', proposal, ref)], source, true);
-      engagement(bindingRef(job.id, state), proposal, plan.createdAt, [plan.digest], state.scope);
+      if (state.composition) for (const step of plan.steps) engagement(composedBindingRef(step), proposal, plan.createdAt, [plan.digest], step.contextScope);
+      else engagement(bindingRef(job.id, state), proposal, plan.createdAt, [plan.digest], state.scope);
       planProposals.set(plan.digest, proposal);
       decide('ProposeServiceExecution', 'agent_decision', plan.digest, plan.createdAt, plan.requestRevision, { planDigest: plan.digest }, proposal);
     }
@@ -106,27 +110,31 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     if (!plan || !proposal) continue; // An orphan historical record cannot mint an execution proposal.
     const ref = { type: 'Authorization', id: grant.id };
     const steps = fixed ? fixed.steps.map(step => ({ ...step, actionId: step.actionTypeRef.id }))
-      : agent!.plans.find(value => value.digest === grant.planDigest)!.steps.map(step => ({ ...step, actionId: step.action, bindingRef: agent!.programRef }));
+      : agent!.plans.find(value => value.digest === grant.planDigest)!.steps.map(step => ({ ...step, actionId: step.action, bindingRef: step.binding?.ref ?? agent!.programRef }));
     const permittedActions = steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => (grant.allowedEffects as readonly import('./actions.js').EffectClass[]).includes(effect))
       && grant.bindingRefs.some(binding => digest(binding) === digest(step.bindingRef))
       && (grant.kind === 'object_write' ? step.effect === 'object_write' && 'objectWrite' in step && digest(step.objectWrite) === digest(grant.objectWrite)
         : !step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionId);
     write(graph, owner, ref, { actor: party.id, allowedActions: [...new Set(permittedActions)],
-      dataScope: [job.id], ...(grant.kind === 'object_write' ? { objectWriteScope: grant.objectWrite } : { limits: grant.maxAmount, payeeIds: grant.payeeIds }), expiresAt: grant.expiresAt, revoked: grant.revoked,
+      dataScope: [job.id], ...(grant.kind === 'object_write' ? { objectWriteScope: grant.objectWrite } : { limits: grant.maxAmount, payeeIds: grant.payeeIds, ...(grant.budgetImpact ? { budgetImpact: grant.budgetImpact } : {}) }), expiresAt: grant.expiresAt, revoked: grant.revoked,
       kind: 'plan_grant', ledgerDigest: digest(grant), planDigest: grant.planDigest, approvedAt: grant.approvedAt,
       ...(grant.revokedAt ? { revokedAt: grant.revokedAt } : {}), environment: grant.environment, allowedEffects: grant.allowedEffects, bindingRefs: grant.bindingRefs },
     [edge('AuthorizationProposal', ref, proposal), edge('AuthorizationRequest', ref, request), edge('AuthorizationActor', ref, party), edge('AuthorizationPlan', ref, executionPlanRef(plan)),
-      ...grant.bindingRefs.flatMap(value => { const binding = fixed ? fixedBindingRef(fixed, value) : agent && digest(value) === digest(agent.programRef) ? bindingRef(job.id, agent) : undefined; return binding && optionalObject(graph, owner, binding) ? [edge('AuthorizationBinding', ref, binding)] : []; })], source);
+      ...grant.bindingRefs.flatMap(value => {
+        const step = agent?.plans.find(plan => plan.digest === grant.planDigest)?.steps.find(step => step.binding && digest(step.binding.ref) === digest(value));
+        const binding = fixed ? fixedBindingRef(fixed, value) : step ? composedBindingRef(step) : agent && digest(value) === digest(agent.programRef) ? bindingRef(job.id, agent) : undefined;
+        return binding && optionalObject(graph, owner, binding) ? [edge('AuthorizationBinding', ref, binding)] : [];
+      })], source);
     const { revoked: _revoked, revokedAt: _revokedAt, ...issued } = grant;
     decide('AuthorizeProposal', 'policy_grant', grant.id, grant.approvedAt, plan.requestRevision, issued, ref, 'requester');
     if (grant.revokedAt) decide('RevokeProposalAuthorization', 'policy_revocation', grant.id, grant.revokedAt, plan.requestRevision, { grantId: grant.id, revokedAt: grant.revokedAt }, ref, 'requester');
   }
   for (const event of d.events.filter(event => event.event === 'plan_authorized')) {
-    const plan = plans.find(plan => plan.digest === event.evidence);
+    const plan = [...plans, ...states.flatMap(state => state.plans)].find(plan => plan.digest === event.evidence);
     if (!plan?.quote) continue;
     const approval = { planDigest: plan.digest, quoteDigest: plan.quote.digest, at: event.at, simulationOnly: true };
     const ref = node('Authorization', approval), revokedAt = d.events.find(item => item.event === 'authorization_revoked' && item.evidence === plan.digest && item.at >= event.at)?.at;
-    write(graph, owner, ref, { actor: party.id, allowedActions: plan.steps.map(step => step.actionTypeRef.id), dataScope: [job.id], limits: plan.quote.amount,
+    write(graph, owner, ref, { actor: party.id, allowedActions: plan.steps.map(step => 'actionTypeRef' in step ? step.actionTypeRef.id : step.action), dataScope: [job.id], limits: plan.quote.amount,
       expiresAt: plan.quote.expiresAt, revoked: !!revokedAt, kind: 'simulation_approval', ledgerDigest: digest({ approval, revokedAt }), planDigest: plan.digest,
       approvedAt: event.at, ...(revokedAt ? { revokedAt } : {}), environment: 'local_simulation' },
     [edge('AuthorizationProposal', ref, proposalRef(plan)), edge('AuthorizationRequest', ref, request), edge('AuthorizationActor', ref, party), edge('AuthorizationPlan', ref, executionPlanRef(plan))], source);
@@ -159,7 +167,8 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
       edge('BusinessResultStep', ref, executionStepRef(plan, intent.stepId)), edge('BusinessResultObservation', ref, resultRef(job.id, attempt, observation)),
       ...subjects.map(subject => edge('BusinessResultSubject', ref, subject)), ...receipts.map(receipt => edge('BusinessResultEvidence', ref, receipt))];
     const state = states.find(state => state.plans.some(value => value.digest === plan.digest));
-    const binding = 'bindingDigests' in plan ? fixedBindingRef(plan, intent.bindingRef) : state ? bindingRef(job.id, state) : undefined;
+    const action = !('bindingDigests' in plan) ? plan.steps.find(step => step.intentId === intent.id) : undefined;
+    const binding = 'bindingDigests' in plan ? fixedBindingRef(plan, intent.bindingRef) : action?.binding ? composedBindingRef(action) : state ? bindingRef(job.id, state) : undefined;
     const engaged = binding && engagements.get(`${proposal.id}:${binding.id}`); if (engaged) links.push(edge('BusinessResultEngagement', ref, engaged));
     const artifact = observation.result.delivery?.artifact;
     if (artifact) {
@@ -174,7 +183,12 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
   }
   const currentProposal = d.agent ? agentProposalRef(job.id, d.agent) : d.plan ? proposalRef(d.plan) : undefined;
   const acceptance = d.acceptance;
-  const assessment = d.outcome ?? (acceptance ? { requestRevision: d.request.revision, assessedAt: acceptance.at,
+  const combined = d.agent?.composition?.assessment;
+  const assessment = d.outcome ?? (combined ? { requestRevision: d.request.revision, assessedAt: combined.at,
+    status: combined.accepted ? 'satisfied' : 'unknown', reason: combined.accepted ? 'All fixed goal criteria independently verified' : 'Partial results retained; required goal evidence remains missing',
+    criterionResults: [...combined.criteria.map(check => ({ requirementId: `goal.${check.id}`, status: check.result === 'pass' ? 'satisfied' : check.result === 'fail' ? 'unsatisfied' : 'unknown', evidenceRefs: check.evidenceRefs })),
+      ...combined.requirements.map(check => ({ requirementId: check.requirementId, status: check.result === 'pass' ? 'satisfied' : check.result === 'fail' ? 'unsatisfied' : 'unknown', evidenceRefs: check.evidenceRefs })),
+      ...combined.conditions.map(check => ({ requirementId: check.conditionId, status: check.result === 'pass' ? 'satisfied' : check.result === 'fail' ? 'unsatisfied' : 'unknown', evidenceRefs: check.evidenceRefs.map(ref => JSON.stringify(ref)) }))] } : acceptance ? { requestRevision: d.request.revision, assessedAt: acceptance.at,
     status: acceptance.accepted ? 'satisfied' : 'unsatisfied', reason: acceptance.reason,
     criterionResults: [...acceptance.checks.map(check => ({ requirementId: check.requirementId, status: check.result === 'pass' ? 'satisfied' : check.result === 'fail' ? 'unsatisfied' : 'unknown', evidenceRefs: check.evidenceRefs })),
       ...(d.conditionChecks ?? []).map(check => ({ requirementId: check.conditionId, status: check.result === 'pass' ? 'satisfied' : check.result === 'fail' ? 'unsatisfied' : 'unknown', evidenceRefs: check.evidenceRefs.map(ref => JSON.stringify(ref)) })),
@@ -183,7 +197,9 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
   if (assessment && currentProposal) {
     const ref = node('OutcomeAssessment', { requestId: job.id, assessment });
     const specification = specificationRef(job.id, assessment.requestRevision);
-    const results = related(graph, owner, currentProposal, 'businessResults').filter(item => item.properties.requestRevision === assessment.requestRevision && String(item.properties.observedAt) <= assessment.assessedAt);
+    const proposals = d.agent?.composition ? [...new Map([currentProposal, ...d.agent.plans.flatMap(plan => planProposals.get(plan.digest) ? [planProposals.get(plan.digest)!] : [])].map(ref => [ref.id, ref])).values()] : [currentProposal];
+    const results = [...new Map(proposals.flatMap(proposal => related(graph, owner, proposal, 'businessResults')).map(item => [item.ref.id, item])).values()]
+      .filter(item => item.properties.requestRevision === assessment.requestRevision && String(item.properties.observedAt) <= assessment.assessedAt);
     const links = [edge('AssessmentRequest', ref, request), edge('AssessmentProposal', ref, currentProposal), edge('AssessmentSpecification', ref, specification), ...results.map(result => edge('AssessmentResult', ref, result.ref))];
     if (job.state === 'completed' && job.artifact && assessment.status === 'satisfied') {
       const artifact = node('ServiceArtifact', { requestId: job.id, artifactDigest: digest(job.artifact), publication: 'task' });

@@ -28,6 +28,7 @@ export const capabilityCatalogLinks: LinkDefinition[] = [{ id: 'CapabilityReques
 
 const canonical = (s: CapabilitySummary): CapabilitySummary => ({ ref: s.ref, name: s.name, description: s.description, tags: s.tags, inputSchema: s.inputSchema,
   predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
+  ...(s.goalOutcomes ? { goalOutcomes: s.goalOutcomes } : {}),
   // Source readiness is mutable owner state, never part of a definition's identity.
   locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, sourceAuthorization: undefined });
 
@@ -40,6 +41,7 @@ export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: stri
     const s = canonical(item), hash = digest(s), object = { type: 'RegisteredCapability', id: `capability:${hash}` };
     const properties = { id: object.id, capabilityRef: s.ref, name: s.name, description: s.description, tags: s.tags, inputSchema: s.inputSchema,
       predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
+      ...(s.goalOutcomes ? { goalOutcomes: s.goalOutcomes } : {}),
       ...(s.constraintEvaluation ? { constraintEvaluation: s.constraintEvaluation } : {}),
       ...(s.locationSemantics ? { locationSemantics: s.locationSemantics } : {}), definitionDigest: hash };
     try { if (digest(graph.read(owner, object).properties) !== digest(properties)) throw new DomainError('CONFLICT', 'Registered capability snapshot changed'); }
@@ -56,7 +58,7 @@ export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string,
   return objects.map(object => {
     const p = object.properties;
     const value = canonical({ ref: p.capabilityRef, name: p.name, description: p.description, tags: p.tags, inputSchema: p.inputSchema, predicates: p.predicates,
-      outcomePredicates: p.outcomePredicates, requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, constraintEvaluation: p.constraintEvaluation, sourceAuthorization: undefined } as CapabilitySummary);
+      outcomePredicates: p.outcomePredicates, ...(p.goalOutcomes ? { goalOutcomes: p.goalOutcomes } : {}), requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, constraintEvaluation: p.constraintEvaluation, sourceAuthorization: undefined } as CapabilitySummary);
     if (digest(value) !== p.definitionDigest || object.ref.id !== `capability:${p.definitionDigest}`) throw new DomainError('CONFLICT', 'Registered capability evidence changed');
     return value;
   });

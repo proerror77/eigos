@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { compositionSummary } from '../ontology/composition-contract.js';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
@@ -14,12 +15,14 @@ import type { DomainAssessment } from '../ontology/domain-rules.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import { isSharedManagedType } from '../ontology/managed-discovery.js';
 import { assertTaskContextCurrent, instructionCoverageDigest, MAX_INSTRUCTION_READ_BYTES, readTaskContext, readTaskInstructions, taskContextSchema, taskInstructionsSchema, taskObjectMembership, type TaskContextBinding, type TaskContextRead } from './task-context.js';
+import { actionDiscoverySchema, type ActionDiscoveryPage } from '../core/action-bindings.js';
+import type { ExecutionCatalog } from '../core/catalog.js';
 
 const describeSchema = z.object({ kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
-export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = (taskContext = false) => Object.entries(planningToolSchemas).filter(([name]) => taskContext || !['read_task_context', 'read_task_instructions'].includes(name)).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
+export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningToolCatalog = (taskContext = false, actionCatalog = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const MAX_CONTEXT_READ_BYTES = 200000;
 const MAX_PLANNING_READS = 20;
@@ -30,7 +33,7 @@ const contextFeedbackReserve = MAX_PLANNING_READS * Buffer.byteLength(JSON.strin
 class ContextReadBudgetExceeded extends DomainError {
   constructor() { super('CONFLICT', contextBudgetFeedback.message); }
 }
-export interface PlanningSessionOptions { taskContext?: TaskContextBinding; priorReads?: readonly PlanningReadReceipt[] }
+export interface PlanningSessionOptions { taskContext?: TaskContextBinding; priorReads?: readonly PlanningReadReceipt[]; actionCatalog?: ExecutionCatalog }
 function assertInstructionCoverage(context: NonNullable<PlanningReadReceipt['context']>, reads: PlanningReadReceipt[]) {
   if (!context.requireCompleteInstructions) return;
   const refs = [...new Map(reads.flatMap(receipt => receipt.instructionRefs ?? []).map(ref => [key(ref), ref])).values()];
@@ -93,7 +96,7 @@ export class OntologyPlanningSession {
   }
   usesTaskContext() { return !!this.options.taskContext; }
   requiresFinalResponse() { return this.contextBudgetExhausted; }
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(this.usesTaskContext()), readScope: this.readScope, ...(this.usesTaskContext() ? { contextReadRequired: true, finalReceiptIdsRequired: true, instructionPages: { maxResultBytes: MAX_INSTRUCTION_READ_BYTES, completeReadRequired: this.options.taskContext!.purpose === 'grounding' } } : {}), scopeNote: this.readScope === 'request' ? 'Only the current task and its retrieved business objects. Traverse only task-owned nodes; shared provider or address metadata cannot be used to navigate into another request. Restricted properties remain unavailable.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: MAX_PLANNING_READS, maxResultBytes: MAX_CONTEXT_READ_BYTES, remainingResultBytes: Math.max(0, MAX_CONTEXT_READ_BYTES - contextFeedbackReserve - this.bytes), finalResponseRequired: this.requiresFinalResponse() }; }
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(this.usesTaskContext(), !!this.options.actionCatalog), readScope: this.readScope, ...(this.usesTaskContext() ? { contextReadRequired: true, finalReceiptIdsRequired: true, instructionPages: { maxResultBytes: MAX_INSTRUCTION_READ_BYTES, completeReadRequired: this.options.taskContext!.purpose === 'grounding' } } : {}), scopeNote: this.readScope === 'request' ? 'Only the current task and its retrieved business objects. Traverse only task-owned nodes; shared provider or address metadata cannot be used to navigate into another request. Restricted properties remain unavailable.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: MAX_PLANNING_READS, maxResultBytes: MAX_CONTEXT_READ_BYTES, remainingResultBytes: Math.max(0, MAX_CONTEXT_READ_BYTES - contextFeedbackReserve - this.bytes), finalResponseRequired: this.requiresFinalResponse() }; }
   receipts() { return structuredClone(this.reads); }
   lastReceipt() { return this.reads.length ? structuredClone(this.reads.at(-1)!) : undefined; }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
@@ -140,6 +143,7 @@ export class OntologyPlanningSession {
     const datasetRevision = this.graph.revision(this.owner);
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     let contextRead: TaskContextRead | undefined;
+    let actionDiscovery: ActionDiscoveryPage | undefined;
     let instructionRefs: ObjectRef[] = [], instructionPage = false;
     try {
       if (this.contextBudgetExhausted) throw new ContextReadBudgetExceeded();
@@ -156,17 +160,23 @@ export class OntologyPlanningSession {
         const result = readTaskInstructions(this.graph, this.owner, this.request.id, this.request.revision, taskInstructionsSchema.parse(input));
         for (const object of result.items) this.remember(object.ref, object.revision, true);
         instructionRefs = result.items.map(object => object.ref); instructionPage = true; output = result;
+      } else if (tool === 'discover_actions') {
+        if (!this.options.actionCatalog) throw new DomainError('FORBIDDEN', 'This planning session has no action catalog binding');
+        if (this.usesTaskContext() && !this.reads.some(read => read.tool === 'read_task_context' && read.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before discovering action bindings');
+        actionDiscovery = this.options.actionCatalog.discoverActions(this.graph, this.owner, this.request, actionDiscoverySchema.parse(input));
+        output = actionDiscovery;
       } else if (tool === 'describe_ontology') {
         const { includeSchemas = false, includeConditionSchema = false, actions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
         const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
         const describedActions = selected.filter(action => !this.options.taskContext?.program || this.options.taskContext.program.actionIds.includes(action.id)).map(action => {
           if (includeSchemas || actions) return action;
-          const { read, operation, inputSchema, implementation, ...summary } = action;
+          const { read, operation, inputSchema, implementation, composition, ...summary } = action;
           const compact = (metadata: NonNullable<typeof read | typeof operation>) => {
             const { inputSchema, ...rest } = metadata;
             return { ...rest, inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), schemaAvailable: true };
           };
           return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}),
+            ...(composition ? { compositionSummary: compositionSummary(composition) } : {}),
             ...(inputSchema ? { inputKeys: Object.keys((inputSchema as { properties?: object }).properties ?? {}), inputSchemaAvailable: true } : {}),
             ...(implementation ? { implementationSummary: implementation.kind === 'declarative' ? { kind: implementation.kind, version: implementation.version, mutations: implementation.mutations.length, conditions: implementation.conditions.length, ...(implementation.resultFacts ? { resultFacts: implementation.resultFacts } : {}) } : { kind: implementation.kind, handlerRef: implementation.handlerRef } } : {}) };
         });
@@ -280,7 +290,7 @@ export class OntologyPlanningSession {
       if (!(error instanceof DomainError || error instanceof z.ZodError)) throw error;
       status = 'rejected'; output = error instanceof ContextReadBudgetExceeded ? { ...contextBudgetFeedback } : { error: error instanceof DomainError ? error.code : 'INVALID_INPUT', message: error instanceof DomainError ? error.message : 'Input does not match the published tool schema' };
       this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
-      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined;
+      this.callObjects.clear(); this.callDelivered.clear(); contextRead = undefined; actionDiscovery = undefined;
       instructionRefs = []; instructionPage = false;
       if (!(error instanceof ContextReadBudgetExceeded)) {
         const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
@@ -293,7 +303,8 @@ export class OntologyPlanningSession {
     if (this.instructionBytes > MAX_INSTRUCTION_READ_BYTES) throw new DomainError('CONFLICT', 'Original instruction read budget exhausted for this reasoning session');
     this.active();
     const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status,
-      objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}) };
+      objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}),
+      ...(actionDiscovery ? { actionBindings: { snapshotDigest: actionDiscovery.snapshotDigest, pins: actionDiscovery.items.flatMap(item => item.bindings.map(binding => binding.pin)) } } : {}) };
     this.reads.push(receipt);
     this.onRead(receipt);
     return contextRead ? { data: output, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, outputDigest: receipt.outputDigest } } : output;

@@ -17,12 +17,14 @@ export interface ExecutionLedger { intents: ActionIntent[]; attempts: ExecutionA
 export interface ExecutionContextView {
   ref: ObjectRef; requestId: string; requestRevision: number; phase: string; state: string;
   programRef?: Ref; programDigest?: string; scope?: ObjectRef; observations: ObjectRef[];
+  composition?: { goal: Pick<import('../core/goal-contract.js').GoalContract, 'digest' | 'criteria'>; components: { id: string; programRef: Ref; configurationDigest: string; scope: ObjectRef; digest: string; retired?: boolean }[]; assessment?: unknown };
   feedback: AgentExecutionState['feedback']; pendingPlanId?: string; actionIds: string[];
   history: { planCount: number; omittedPlanCount: number; olderPlanRefs: ObjectRef[] };
   unreadRefs: ObjectRef[];
+  tombstonedRefs?: { ref: ObjectRef; revision: number; deletedAt: string }[];
   plans: { ref: ObjectRef; planId: string; planDigest: string; state: string; steps: {
     ref: ObjectRef; stepId: string; action: string; state: string; dependsOn: string[];
-    inputRefs: { stepId: string; targetKey: string }[]; inputDigest: string; output?: ObjectRef;
+    inputRefs: { stepId: string; targetKey: string; port?: string }[]; acceptedInputs?: { intentId: string; port: string; targetKey: string }[]; inputDigest: string; output?: ObjectRef;
   }[] }[];
   objects: ObjectView[]; links: LinkWrite[];
 }
@@ -42,6 +44,7 @@ export const resultRef = (requestId: string, attempt: ExecutionAttempt, observat
 export const actionRef = (requestId: string, definition: ActionDefinition): ObjectRef => node('RegisteredActionType', { requestId, actionId: definition.id, definitionDigest: digest(definition) });
 export const bindingRef = (requestId: string, state: Pick<AgentExecutionState, 'programRef' | 'programDigest' | 'scope' | 'requestRevision'>): ObjectRef =>
   node('ActionBinding', { requestId, requestRevision: state.requestRevision, programRef: state.programRef, programDigest: state.programDigest, scope: state.scope });
+export const composedBindingRef = (step: AgentActionPlan['steps'][number]): ObjectRef => node('ActionBinding', { pin: step.binding!.digest, contextDigest: step.contextDigest });
 const referenceEdge = (kind: ExecutionReferenceKind, from: ObjectRef, to: ObjectRef): LinkWrite => edge(executionReferenceLink(kind, to.type).id, from, to);
 
 function readOptional(graph: OntologyObjectStore, owner: string, ref: ObjectRef): ObjectView | undefined {
@@ -94,7 +97,7 @@ export function actionProperties(definition: ActionDefinition) {
     description: definition.description, inputs: definition.inputs, ...((definition.read ?? definition.operation) ? { inputSchema: (definition.read ?? definition.operation)!.inputSchema, resultType: (definition.read ?? definition.operation)!.resultType } : managed ? { inputSchema: definition.inputSchema, resultType: definition.resultTypes?.[0] ?? 'ServiceRequest' } : {}),
     effect: definition.read?.effect ?? definition.operation?.effect ?? (managed ? 'object_write' : 'definition_only'), ...(definition.kind ? { kind: definition.kind } : {}),
     effects: definition.effects ?? (definition.read ? ['read'] : definition.operation ? [definition.operation.effect, ...(definition.operation.additionalEffects ?? [])] : []), resultTypes: definition.resultTypes ?? (definition.read ? [definition.read.resultType] : definition.operation ? [definition.operation.resultType] : []),
-    changes: definition.changes, submissionCriteria: definition.submissionCriteria, execution: 'definition_only' };
+    changes: definition.changes, submissionCriteria: definition.submissionCriteria, ...(definition.composition ? { composition: definition.composition } : {}), execution: 'definition_only' };
 }
 function safeRequest(request: ServiceRequest): ServiceRequest {
   return { id: request.id, revision: request.revision, originalGoal: request.originalGoal,
@@ -196,7 +199,8 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
 
 interface StepShape {
   id: string; action: string; definitionDigest?: string; input: Record<string, unknown>;
-  inputRefs: { stepId: string; targetKey: string; path?: string }[]; dependsOn: string[]; intentId?: string; effect: string;
+  inputRefs: { stepId: string; targetKey: string; path?: string; port?: string }[]; dependsOn: string[]; intentId?: string; effect: string;
+  acceptedInputs?: AgentActionPlan['steps'][number]['acceptedInputs']; acceptedInputSources?: AgentActionPlan['steps'][number]['acceptedInputSources'];
   binding?: ObjectRef; contract?: { ref: ObjectRef; properties: Record<string, unknown> };
   candidateBinding?: FixedCandidateBinding;
 }
@@ -206,7 +210,7 @@ interface PlanShape {
 }
 function immutableStep(step: StepShape) {
   return { stepId: step.id, actionId: step.action, ...(step.definitionDigest ? { definitionDigest: step.definitionDigest } : {}),
-    inputDigest: digest({ input: step.input, inputRefs: step.inputRefs }), ...(step.intentId ? { intentId: step.intentId } : {}), effect: step.effect,
+    inputDigest: digest({ input: step.input, inputRefs: step.inputRefs, ...(step.acceptedInputs ? { acceptedInputs: step.acceptedInputs } : {}) }), ...(step.intentId ? { intentId: step.intentId } : {}), effect: step.effect,
     ...(step.binding ? { binding: step.binding } : {}), ...(step.contract ? { contract: step.contract.ref } : {}),
     dependsOn: step.dependsOn, inputs: inputValues(step) };
 }
@@ -216,7 +220,8 @@ function inputValues(step: StepShape) {
     return { parameter, sourceKind: parsed.success ? 'object' : 'literal', valueDigest: digest(value),
       valueType: parsed.success ? parsed.data.type : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value, ...(parsed.success ? { object: parsed.data } : {}) };
   }), ...step.inputRefs.map(input => ({ parameter: input.targetKey, sourceKind: 'step_output', valueDigest: digest(input), valueType: 'output_reference',
-    sourceStepId: input.stepId, ...(input.path ? { sourcePath: input.path } : {}) })),
+    sourceStepId: input.stepId, ...(input.path ? { sourcePath: input.path } : {}), ...(input.port ? { sourcePort: input.port } : {}) })),
+  ...(step.acceptedInputs ?? []).map(input => ({ parameter: input.targetKey, sourceKind: 'accepted_output', valueDigest: digest(input), valueType: 'accepted_named_output', sourceIntentId: input.intentId, sourcePort: input.port })),
   ...(step.candidateBinding ? [{ parameter: FIXED_CANDIDATE_CONTEXT_PARAMETER, sourceKind: 'candidate_context', valueDigest: digest(step.candidateBinding), valueType: step.candidateBinding.subject.ref.type,
     object: step.candidateBinding.subject.ref, candidateId: step.candidateBinding.candidateId, requestRevision: step.candidateBinding.requestRevision,
     objectRevision: step.candidateBinding.subject.revision, objectPropertiesDigest: step.candidateBinding.subject.propertiesDigest, objectLinksDigest: step.candidateBinding.subject.linksDigest }] : [])].sort((a, b) => a.parameter.localeCompare(b.parameter));
@@ -236,7 +241,8 @@ function agentShape(requestId: string, state: AgentExecutionState, plan: AgentAc
   return { id: plan.id, digest: plan.digest, requestId, requestRevision: plan.requestRevision, kind: 'agent', sequence: plan.sequence, createdAt: plan.createdAt,
     modelRunId: plan.modelRunId, binding: bindingRef(requestId, state),
     state: planStatus(plan.steps.map(step => ledger.intents.find(i => i.id === step.intentId && i.planDigest === plan.digest)), state.pendingPlanId === plan.id, historical),
-    steps: plan.steps.map(step => ({ id: step.id, action: step.action, definitionDigest: step.definitionDigest, input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, intentId: step.intentId, effect: step.effect })) };
+    steps: plan.steps.map(step => ({ id: step.id, action: step.action, definitionDigest: step.definitionDigest, input: step.input, inputRefs: step.inputRefs, dependsOn: step.dependsOn, intentId: step.intentId, effect: step.effect,
+      ...(step.binding ? { binding: composedBindingRef(step) } : {}), ...(step.acceptedInputs ? { acceptedInputs: step.acceptedInputs, acceptedInputSources: step.acceptedInputSources } : {}) })) };
 }
 function stepLinks(plan: PlanShape, step: StepShape, definition?: ActionDefinition): LinkWrite[] {
   const ref = executionStepRef(plan, step.id);
@@ -250,7 +256,8 @@ function inputLinks(plan: PlanShape, step: StepShape, properties: ReturnType<typ
   const stepRef = executionStepRef(plan, step.id), ref = inputRef(stepRef, properties.parameter);
   return [edge('ExecutionInputStep', ref, stepRef),
     ...('object' in properties && properties.object ? [referenceEdge('input', ref, properties.object)] : []),
-    ...('sourceStepId' in properties ? [edge('ExecutionInputSource', ref, executionStepRef(plan, properties.sourceStepId))] : [])];
+    ...('sourceStepId' in properties ? [edge('ExecutionInputSource', ref, executionStepRef(plan, properties.sourceStepId))] : []),
+    ...('sourceIntentId' in properties ? [edge('ExecutionInputSource', ref, step.acceptedInputSources?.find(source => source.targetKey === properties.parameter)?.sourceStep ?? fail('Accepted input has no sealed producing step'))] : [])];
 }
 function acceptedObject(intent: ActionIntent | undefined, requiresProjectedPointer = false): ObjectRef | undefined {
   if (intent?.state !== 'effect_confirmed') return;
@@ -439,6 +446,8 @@ export function projectExecution(graph: OntologyObjectStore, owner: string, job:
     if (revision !== request.revision && previous) continue;
     write(graph, owner, context, { requestRevision: revision, phase: revision === request.revision ? delegation.phase : 'historical', state: revision === request.revision ? job.state : 'historical',
       ...(current ? { programRef: current.programRef, programDigest: current.programDigest, scope: current.scope, activeBinding: bindingRef(request.id, current),
+        ...(current.composition ? { goal: { digest: current.composition.goal.digest, criteria: current.composition.goal.criteria }, components: current.composition.contexts.map(component => ({ id: component.id, programRef: component.programRef, configurationDigest: component.programDigest, scope: component.scope, digest: component.digest, ...(current.composition!.retiredContexts?.some(value => value.id === component.id) ? { retired: true } : {}) })),
+          ...(current.composition.assessment ? { goalAssessment: { accepted: current.composition.assessment.accepted, criteria: current.composition.assessment.criteria, requirements: current.composition.assessment.requirements, conditions: current.composition.assessment.conditions } } : {}) } : {}),
         ...(current.pendingPlanId ? { pendingPlanId: current.pendingPlanId } : {}) } : {}),
       observationOrder: current?.observations ?? [], feedback: current?.feedback.slice(-20) ?? [] }, links, source, removeLinks);
   }
@@ -457,7 +466,18 @@ export function projectExecution(graph: OntologyObjectStore, owner: string, job:
     write(graph, owner, binding, { requestRevision: state.requestRevision, bindingRef: state.programRef, configurationDigest: state.programDigest, kind: 'agent_program',
       actionIds: definitions.map(d => d.id), active: state === delegation.agent, authorization: 'runtime_check_required' },
     [requestEdge(binding, request.id), edge('ExecutionContextBinding', binding, context), ...definitions.map(d => edge('ExecutionBindingAction', binding, actionRef(request.id, d)))], source);
-    for (const plan of state.plans) projectPlan(graph, owner, agentShape(request.id, state, plan, ledger, state !== delegation.agent), ledger, source);
+    for (const plan of state.plans) {
+      for (const step of plan.steps.filter(step => !!step.binding)) {
+        const pinned = step.binding!, ref = composedBindingRef(step), definition = graph.model.action(step.action);
+        write(graph, owner, actionRef(request.id, definition), actionProperties(definition), [requestEdge(actionRef(request.id, definition), request.id)], source);
+        write(graph, owner, ref, { requestRevision: plan.requestRevision, bindingRef: pinned.ref, configurationDigest: pinned.configurationDigest,
+          bindingDigest: pinned.digest, kind: 'action', actionIds: [step.action], active: state === delegation.agent, authorization: 'runtime_check_required',
+          ...(pinned.providerSnapshot ? { providerContract: providerContract(pinned.providerSnapshot) } : {}),
+          programRef: pinned.programRef, contextId: step.contextId, contextDigest: step.contextDigest, scope: step.contextScope, definitionDigest: step.definitionDigest },
+        [requestEdge(ref, request.id), edge('ExecutionContextBinding', ref, context), edge('ExecutionBindingAction', ref, actionRef(request.id, definition))], source);
+      }
+      projectPlan(graph, owner, agentShape(request.id, state, plan, ledger, state !== delegation.agent), ledger, source);
+    }
   }
   // Fixed plans can be represented without inventing an executable definition or binding.
   for (const [sequence, plan] of [...(delegation.planHistory ?? []), ...(delegation.plan ? [delegation.plan] : [])].entries()) {
@@ -495,6 +515,16 @@ export function assertAgentPlanProjection(graph: OntologyObjectStore, owner: str
       || actual.properties.stepId !== step.id || actual.properties.actionId !== step.action || actual.properties.definitionDigest !== step.definitionDigest
       || actual.properties.inputDigest !== immutable.inputDigest || actual.properties.intentId !== step.intentId || actual.properties.planDigest !== plan.digest || actual.properties.effect !== step.effect) fail('Execution graph invocation differs from the sealed plan');
     assertLinks(graph, owner, stepRef, stepLinks(shape, step, definition));
+    const sealed = plan.steps[sequence]!;
+    if (sealed.binding) {
+      const binding = graph.read(owner, composedBindingRef(sealed)), pin = sealed.binding;
+      const { active: _active, ...actual } = binding.properties;
+      if (!same(actual, { id: binding.ref.id, displayTitle: binding.ref.type, requestRevision: plan.requestRevision, bindingRef: pin.ref,
+        configurationDigest: pin.configurationDigest, bindingDigest: pin.digest, kind: 'action', actionIds: [sealed.action], authorization: 'runtime_check_required',
+        ...(pin.providerSnapshot ? { providerContract: providerContract(pin.providerSnapshot) } : {}),
+        programRef: pin.programRef, contextId: sealed.contextId, contextDigest: sealed.contextDigest, scope: sealed.contextScope, definitionDigest: sealed.definitionDigest })) fail('Per-action graph binding differs from the sealed invocation');
+      assertLinks(graph, owner, binding.ref, [requestEdge(binding.ref, plan.requestId), edge('ExecutionContextBinding', binding.ref, executionContextRef(plan.requestId, plan.requestRevision)), edge('ExecutionBindingAction', binding.ref, actionRef(plan.requestId, definition))]);
+    }
     const action = graph.read(owner, actionRef(plan.requestId, definition));
     if (!same(action.properties, { id: action.ref.id, displayTitle: action.ref.type, ...actionProperties(definition) })) fail('Registered action graph differs from registry truth');
     const inputs = related(graph, owner, stepRef, 'inputs'), expectedInputs = inputValues(step);
@@ -555,7 +585,12 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
   if (rootView.properties.revision !== requestRevision) fail('Execution context belongs to a superseded request');
   const context = readOptional(graph, owner, executionContextRef(requestId, requestRevision)); if (!context) return;
   const objects = new Map<string, ObjectView>([[key(context.ref), context]]), links = new Map<string, LinkWrite>(), unread = new Map<string, ObjectRef>();
-  const add = (object: ObjectView) => { objects.set(key(object.ref), object); return object; };
+  const tombstoned = new Map<string, { ref: ObjectRef; revision: number; deletedAt: string }>();
+  const add = (object: ObjectView) => {
+    if (object.tombstone) tombstoned.set(key(object.ref), { ref: object.ref, ...object.tombstone });
+    else objects.set(key(object.ref), object);
+    return object;
+  };
   const addLink = (link: LinkWrite) => { links.set(digest(link), link); };
   const traverse = (from: ObjectRef, name: string, select?: (values: ObjectView[]) => ObjectView[]) => {
     const nav = graph.model.navigation(from.type, name), all = related(graph, owner, from, name), values = select ? select(all) : all;
@@ -572,7 +607,11 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
   };
   addLink(requestEdge(context.ref, requestId));
   if (scope) { add(graph.read(owner, scope)); addLink(referenceEdge('scope', context.ref, scope)); }
-  for (const ref of observations.slice(-12)) { add(graph.read(owner, ref)); addLink(referenceEdge('observation', context.ref, ref)); }
+  for (const ref of observations.slice(-12)) {
+    const deleted = graph.model.objectWritePolicy(ref.type) === 'managed' ? graph.tombstone(owner, ref) : undefined;
+    if (deleted) tombstoned.set(key(ref), deleted); else add(graph.read(owner, ref));
+    addLink(referenceEdge('observation', context.ref, ref));
+  }
   for (const ref of observations.slice(0, -12)) unread.set(key(ref), ref);
   const binding = p.activeBinding ? add(graph.read(owner, p.activeBinding as ObjectRef)) : undefined;
   if (binding) { addLink(edge('ExecutionContextBinding', binding.ref, context.ref)); traverse(binding.ref, 'actionTypes'); }
@@ -585,7 +624,7 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
       const dependencies = traverse(step.ref, 'dependencies'), inputs = traverse(step.ref, 'inputs');
       for (const input of inputs) {
         if (input.properties.object) linkedObject('input', input.ref, input.properties.object as ObjectRef);
-        if (input.properties.sourceStepId) traverse(input.ref, 'sourceStep');
+        if (input.properties.sourceStepId || input.properties.sourceIntentId) traverse(input.ref, 'sourceStep');
       }
       traverse(step.ref, 'actionType'); traverse(step.ref, 'binding');
       for (const attempt of traverse(step.ref, 'attempts', rows => rows.sort((a, b) => Number(a.properties.ordinal) - Number(b.properties.ordinal)).slice(-2))) for (const result of traverse(attempt.ref, 'results', rows => rows.sort((a, b) => String(a.properties.receivedAt).localeCompare(String(b.properties.receivedAt)) || a.ref.id.localeCompare(b.ref.id)).slice(-2))) {
@@ -594,16 +633,19 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
       }
       return { ref: step.ref, stepId: String(step.properties.stepId), action: String(step.properties.actionId), state: String(step.properties.state),
         dependsOn: dependencies.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map(d => String(d.properties.stepId)),
-        inputRefs: inputs.filter(i => i.properties.sourceKind === 'step_output').map(i => ({ stepId: String(i.properties.sourceStepId), targetKey: String(i.properties.parameter) })),
+        inputRefs: inputs.filter(i => i.properties.sourceKind === 'step_output').map(i => ({ stepId: String(i.properties.sourceStepId), targetKey: String(i.properties.parameter), ...(i.properties.sourcePort ? { port: String(i.properties.sourcePort) } : {}) })),
+        ...(inputs.some(i => i.properties.sourceKind === 'accepted_output') ? { acceptedInputs: inputs.filter(i => i.properties.sourceKind === 'accepted_output').map(i => ({ intentId: String(i.properties.sourceIntentId), port: String(i.properties.sourcePort), targetKey: String(i.properties.parameter) })) } : {}),
         inputDigest: String(step.properties.inputDigest), ...(step.properties.acceptedOutput ? { output: step.properties.acceptedOutput as ObjectRef } : {}) };
     });
     return { ref: plan.ref, planId: String(plan.properties.planId), planDigest: String(plan.properties.planDigest), state: String(plan.properties.state), steps };
   });
   return { ref: context.ref, requestId, requestRevision, phase: String(p.phase), state: String(p.state),
     ...(p.programRef ? { programRef: p.programRef as Ref, programDigest: String(p.programDigest) } : {}), ...(scope ? { scope } : {}),
+    ...(p.goal ? { composition: { goal: p.goal as NonNullable<ExecutionContextView['composition']>['goal'], components: p.components as NonNullable<ExecutionContextView['composition']>['components'], ...(p.goalAssessment ? { assessment: p.goalAssessment } : {}) } } : {}),
     observations, feedback: p.feedback as AgentExecutionState['feedback'], ...(p.pendingPlanId ? { pendingPlanId: String(p.pendingPlanId) } : {}),
     actionIds: (binding?.properties.actionIds ?? []) as string[], plans,
     history: { planCount: allPlans.length, omittedPlanCount: olderPlans.length, olderPlanRefs: olderPlans.map(plan => plan.ref) },
     unreadRefs: [...unread.values()].filter(ref => !objects.has(key(ref))),
+    ...(tombstoned.size ? { tombstonedRefs: [...tombstoned.values()] } : {}),
     objects: [...objects.values()], links: [...links.values()] };
 }

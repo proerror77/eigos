@@ -11,7 +11,7 @@ const clone = <T>(v: T): T => structuredClone(v);
 export async function ucpMerchant() {
   const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }), keyId = 'test-platform';
   const requests: { method: string; path: string; key?: string; body: Json }[] = [], checkouts = new Map<string, Json>(), orders = new Map<string, Json>(), keys = new Map<string, { input: string; value: Json }>();
-  const flags = { dropCreate: false, dropComplete: false, badOrderItems: false, badOrderDestination: false, badOrderApartment: false, badOrderCostTerms: false, signatureMissing: false, profileVersion: '2026-04-08', foreignEndpoint: false, redirectCreate: false, businessError200: false, noMockHandler: false, beforeCompleteResponse: undefined as (() => Promise<void>) | undefined };
+  const flags = { dropCreate: false, dropComplete: false, badOrderItems: false, badOrderDestination: false, badOrderApartment: false, badOrderCostTerms: false, signatureMissing: false, profileVersion: '2026-04-08', foreignEndpoint: false, redirectCreate: false, businessError200: false, noMockHandler: false, beforeCompleteResponse: undefined as (() => Promise<void>) | undefined, beforeCheckoutReadResponse: undefined as (() => Promise<void>) | undefined };
   let origin = '', creates = 0, completes = 0;
   const meta = (cap: string) => ({ version: '2026-04-08', capabilities: { [cap]: [{ version: '2026-04-08' }] }, payment_handlers: {} });
   const platform = createServer((_req, res) => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ ucp: meta('dev.ucp.shopping.checkout'), signing_keys: [{ ...pair.publicKey.export({ format: 'jwk' }), kid: keyId, alg: 'ES256' }] })); });
@@ -30,7 +30,7 @@ export async function ucpMerchant() {
       if (flags.badOrderCostTerms) value.totals.unshift({ type: 'duty', amount: 0, payer: 'buyer_on_arrival' });
       return send(value);
     }
-    if (method === 'GET' && path.startsWith('/checkout-sessions/')) return send(checkouts.get(path.split('/')[2]!) ?? { ucp: { status: 'error' } }, checkouts.has(path.split('/')[2]!) ? 200 : 404);
+    if (method === 'GET' && path.startsWith('/checkout-sessions/')) { await flags.beforeCheckoutReadResponse?.(); return send(checkouts.get(path.split('/')[2]!) ?? { ucp: { status: 'error' } }, checkouts.has(path.split('/')[2]!) ? 200 : 404); }
     const key = String(req.headers['idempotency-key'] ?? ''), fingerprint = JSON.stringify({ method, path, input }), prior = keys.get(key);
     if (!key) return send({ ucp: { status: 'error' } }, 400);
     if (prior) return send(prior.input === fingerprint ? prior.value : { ucp: { status: 'error' } }, prior.input === fingerprint ? 200 : 409);

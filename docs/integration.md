@@ -16,6 +16,8 @@
 
 A2A 使用相同的业务摘要生成 metadata，保留原有状态与完整 artifacts；默认不附历史消息，显式 `historyLength` 可读取相应业务对话。HTTP 授权、对账和来源恢复响应也使用同一投影。内部账本不删减，结果正文不截断；返回大小主要随业务交付物变化，不随内部模型回合和重复定义增长。
 
+组合任务的 `delegation.goalProgress` 逐项返回固定目标的通过／未知状态。`artifact.data.result.components` 保留各已核验组件的原始交付物，例如文档正文仍在对应组件的 `artifact.data.markdown`；父任务完成必须同时通过全部目标。未完成时可返回 `execution: "partial"` 的有界部分成果，不能将其报告为整个业务完成。实现、版本与范围见[跨服务组合说明](ontology-composition-implementation-2026-10-22.md)。
+
 N1 增加三个只读工具：`describe_ontology`（services:read）、`query_ontology`、`evaluate_ontology`（tasks:read）。对应认证 HTTP POST 为 `/ontology/describe`、`/ontology/query`、`/ontology/evaluate`；均按同一 owner 隔离。支持类型／接口发现、分页对象集、单跳关系和登记计算，不开放对象写入或业务 Action。输入、边界和来源投影见 [N1 使用说明](ontology-n1.md)。现有 PA 的任务提交、补问及读回方式保持。 `describe_ontology` 默认按类型返回相关函数和动作；用 `kind: "actions"` 或 `kind: "functions"` 分页浏览完整目录，沿用 `limit` / `after`。网络对象还要求当前 `network:read` 身份与发布可见性；普通任务的 `tasks:read` 不因此失效。
 
 N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和计划快照。`query_ontology` 还支持 `{"object":{"type":"具体类型","id":"对象ID"}}` 精确读取。只有 tasks:write 的客户端仍能获得本次写操作的回执，但模型的数据范围限于当前委托及其已取得对象，不能据此搜索其他委托。完整 owner 查询仍要求 tasks:read。业务决策提案保持不执行；详情见 [N2 说明](ontology-n2.md)。
@@ -48,11 +50,11 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_member_usage` 需要 `tasks:read`，按当前认证会员汇总其任务和不同安装的用量，不接受其他会员 ID。`get_task.memberUsage` 返回同样统计。当前 `limitsEnforced=false`，不设会员额度上限、余额或重置周期；任务防失控上限仍生效。已报告模型 token、未报告用量的尝试、供应商动作次数分开计数；外部 PA 自己的模型用量不在此账本中。
 
-`get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
+`get_task` 可传 `waitMs`（0–30000 毫秒），在原任务仍为 submitted／working 时等待状态变化至终态或需要处理；超时返回原任务当前状态，不取消执行。PA 应使用有界等待，避免快速重复查询。`get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
 原始交付要求、更正、执行关系以及默认业务摘要的真实 PA 验证见[2026-10-20 验收记录](evidence/ontology-graph-live-2026-10-20/README.md)。业务验收时的有效报价与之后的历史回读分别记载，不以过期结果承诺当前价格或来源授权。
 
-六类服务扩展复用这些接口和权限。当前运行契约为 `ontology-execution-v16`，业务模型为 `eigos.business@15`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v17`，新建注册库默认内核为 `eigos.business@17`；历史 v15/v16 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -112,6 +114,8 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 ## 动态本体定义与受管数据动作
 
 四类定义使用共享管理服务：`POST /ontology/v1/query`、`/commands`，对应 MCP `query_ontology_definitions`、`manage_ontology_definitions`。`/ontology/manager` 提供基础审查发布页面。查看、编辑、发布和实例执行分别使用 `ontology:read`、`ontology:write`、`ontology:publish`、`ontology:object_write`；共享默认本体管理另需 `ontology:admin`。新任务可选择有权访问的 `ontologyId`，由服务锁定 active release；客户端不能覆盖已有任务的版本。
+
+查询操作 `discover_task_actions` 接受 `ontologyId`、本人 `taskId` 和 `query`（可按 `actionId`、`inputType`、`outputType`、`effects`、`search` 筛选，使用 `limit`／`cursor` 分页）。它返回该任务锁定版本下的动作、各独立执行绑定和当前来源状态；相同动作可以有多个绑定，不能只按动作名称派发。分页同时固定身份、请求版本、来源配置和权限状态，状态变化须重新查询。Worker 的 `discover_actions` 使用同一解析器，并将实际返回的绑定写入本轮读取回执。`ready` 仍需通过具体输入、来源授权和动作许可检查；缺少组合契约的旧绑定明确标为 `contract_missing`。
 
 `prepare_ontology_action`（HTTP `/ontology/v1/actions/prepare`）预览发布的数据动作或接口动作；`approve_ontology_action`（HTTP `/ontology/v1/actions/approve`）批准准确对象范围和过期时间。执行和完成由原 Worker／Intent 账本核对，不能把批准响应当作已完成。它们只处理受管对象数据；原订单、付款和来源凭据边界继续成立。接口字段、分页、版本及兼容限制见[动态定义说明](dynamic-ontology-implementation-2026-10-21.md)。
 

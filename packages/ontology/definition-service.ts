@@ -10,6 +10,7 @@ import { previewDeclarativeAction } from './declarative-actions.js';
 import type { ManagedActionPreview } from './declarative-actions.js';
 import { objectWriteScopeSchema } from './actions.js';
 import { objectRefSchema } from './model.js';
+import { actionDiscoverySchema } from '../core/action-bindings.js';
 
 const ontology = { ontologyId: ontologyIdSchema.default('eigos.business') };
 const page = { limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).max(10000).default(0) };
@@ -28,6 +29,7 @@ export const definitionQuerySchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('get_release'), ...ontology, release: ontologyReleaseRefSchema }),
   z.strictObject({ operation: z.literal('history'), ...ontology, limit: z.number().int().min(1).max(50).default(20) }),
   z.strictObject({ operation: z.literal('get_action_task'), ...ontology, taskId: taskIdSchema }),
+  z.strictObject({ operation: z.literal('discover_task_actions'), ...ontology, taskId: taskIdSchema, query: actionDiscoverySchema }),
 ]);
 export const definitionCommandSchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create_ontology'), id: ontologyIdSchema.optional(), name: z.string().trim().min(1).max(160) }),
@@ -83,6 +85,12 @@ export class DefinitionService {
     requireScope(principal, 'ontology:read'); const query = definitionQuerySchema.parse(input), store = this.jobs.definitions;
     if (query.operation === 'list_ontologies') return envelope(paginate(store.namespaces(ownerKey(principal), principal.scopes.includes('ontology:admin')).map(namespace => ({ ...namespace, permissions: this.permission(principal, namespace) })), query));
     this.context(principal, query.ontologyId);
+    if (query.operation === 'discover_task_actions') {
+      const job = this.tasks.get(principal, query.taskId), owner = ownerKey(principal);
+      const graph = this.jobs.ontologyForJob(owner, job);
+      if (graph.ontologyId !== query.ontologyId || !job.delegation) throw new DomainError('NOT_FOUND', 'Task is not available in this ontology');
+      return envelope(this.catalog.discoverActions(graph, owner, job.delegation.request, query.query));
+    }
     if (query.operation === 'get_ontology') { const namespace = store.namespace(query.ontologyId); return envelope({ ...namespace, permissions: this.permission(principal, namespace) }); }
     if (query.operation === 'list_definitions' || query.operation === 'get_definition') {
       const selected = this.document(principal, query), all = resources(selected.document);

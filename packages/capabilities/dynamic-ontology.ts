@@ -14,6 +14,7 @@ import { applyDeclarativeAction, previewDeclarativeAction, type ManagedActionPre
 import { readManagedResultFacts, mergeManagedResultFacts } from '../ontology/managed-result-facts.js';
 import type { ManagedResultFact } from '../ontology/action-dsl.js';
 import { checkRequirements } from '../ontology/requirement-checks.js';
+import { stepBindingRef, stepInputDigest } from '../core/composed-actions.js';
 
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
@@ -56,6 +57,7 @@ export class DynamicOntologyProgram implements AgentProgram {
         return implementation?.kind === 'declarative' ? (implementation.resultFacts ?? []).flatMap(fact => fact.role ? [{ kind: fact.kind, role: fact.role, description: `Managed result ${fact.kind} from ${fact.amountProperty}` }] : []) : [];
       }).map(role => [`${role.kind}:${role.role}`, role])).values()],
       predicates: [{ id: 'ontology.managed_data_readback', description: '已授权变更与原 Intent、对象版本及关系回读相符' }], outcomePredicates: ['ontology.managed_data_readback'],
+      goalOutcomes: [{ predicate: 'ontology.managed_data_readback', phase: 'artifact', description: 'Committed internal records and independently checked readback; no external business fulfillment' }],
       verifierRef: { id: 'ontology.managed-data-readback', version: '1' },
     };
   }
@@ -141,6 +143,11 @@ export class DynamicOntologyProgram implements AgentProgram {
     const value = original?.lastVerifiedResult?.output?.source as ManagedInvocationResult | undefined;
     return original?.state === 'effect_confirmed' && value ? { value: structuredClone(value), evidenceRefs: [ctx.intentId] } : undefined;
   }
+  projectOutputs(ctx: AgentActionContext, actionId: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const value = result.value as ManagedInvocationResult, definition = this.definition(ctx.graph, actionId);
+    return { values: { receipt: { intentId: ctx.intentId, actionId, previewDigest: value.preview.digest }, ...(definition.composition?.outputs.result ? { result: object } : {}) },
+      evidence: { origin: 'managed' as const, refs: result.evidenceRefs, observedAt: new Date(ctx.graph.now()).toISOString() } };
+  }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     this.scope(ctx);
     const completion = completionSchema.parse(proposal), confirmed = (ctx.intents ?? []).filter(intent => intent.effect === 'object_write' && intent.state === 'effect_confirmed');
@@ -148,16 +155,18 @@ export class DynamicOntologyProgram implements AgentProgram {
     const sequences = new Set<number>();
     for (const plan of [...ctx.state.plans].sort((a, b) => a.sequence - b.sequence)) {
       const { digest: planDigest, ...body } = plan;
-      if (sequences.has(plan.sequence) || digest(body) !== planDigest || plan.requestId !== ctx.request.id || plan.requestRevision !== ctx.request.revision || plan.programDigest !== this.configurationDigest || !equal(plan.programRef, this.ref)) fail('Managed completion requires an unambiguous sealed plan order');
+      if (sequences.has(plan.sequence) || digest(body) !== planDigest || plan.requestId !== ctx.request.id || plan.requestRevision !== ctx.request.revision
+        || !ctx.state.composition && (plan.programDigest !== this.configurationDigest || !equal(plan.programRef, this.ref))) fail('Managed completion requires an unambiguous sealed plan order');
       sequences.add(plan.sequence);
-      for (const step of plan.steps.filter(step => step.effect === 'object_write')) {
+      for (const step of plan.steps.filter(step => step.effect === 'object_write' && (!ctx.state.composition || !!ctx.intents?.some(intent => intent.id === step.intentId)))) {
+        if (ctx.state.composition && (!step.binding || !equal(step.binding.programRef, this.ref) || step.binding.configurationDigest !== this.configurationDigest)) fail('Managed step has another bound implementation');
         if (ordered.has(step.intentId)) fail('Managed completion repeats an Intent in its sealed plans');
         ordered.set(step.intentId, { ordinal: ordered.size, plan, step });
       }
     }
     for (const intent of confirmed) {
       const entry = ordered.get(intent.id);
-      if (!entry || intent.jobId !== ctx.request.id || intent.planDigest !== entry.plan.digest || intent.stepId !== entry.step.id || !equal(intent.bindingRef, this.ref) || intent.inputDigest !== digest({ input: entry.step.input, inputRefs: entry.step.inputRefs })) fail('Managed Intent does not match its sealed plan and step');
+      if (!entry || intent.jobId !== ctx.request.id || intent.planDigest !== entry.plan.digest || intent.stepId !== entry.step.id || !equal(intent.bindingRef, stepBindingRef(entry.plan, entry.step)) || intent.inputDigest !== stepInputDigest(entry.step)) fail('Managed Intent does not match its sealed plan and step');
     }
     confirmed.sort((a, b) => ordered.get(a.id)!.ordinal - ordered.get(b.id)!.ordinal);
     if (!confirmed.length || !equal([...completion.intentIds].sort(), confirmed.map(intent => intent.id).sort()) || new Set(completion.intentIds).size !== completion.intentIds.length) fail('Completion must account for every confirmed managed Intent');

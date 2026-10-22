@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { JobStore } from '../packages/core/store.js';
+import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from '../packages/capabilities/brief.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { Coordinator, type Reasoner } from '../packages/coordinator/coordinator.js';
@@ -59,8 +61,8 @@ test('metadata activation during planning leaves the in-flight fixed plan pinned
   } finally { store.close(); }
 });
 
-test('pre-registry v16 tasks stay on the exact imported baseline without writing a new pin into history', async () => {
-  const store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store }), b = backend(catalog, reasoner(), store);
+test('explicit unpinned compatibility records stay on the imported baseline while new tasks use v17', async () => {
+  const store = new JobStore(':memory:'), catalog = new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), b = backend(catalog, reasoner(), store);
   try {
     const current = b.submit(), legacy = structuredClone(current), id = randomUUID();
     legacy.id = id; legacy.contextId = randomUUID(); legacy.delegation!.request.id = id;
@@ -68,7 +70,7 @@ test('pre-registry v16 tasks stay on the exact imported baseline without writing
     store.save(owner, legacy);
     const requestDigest = digest(legacy.delegation!.request);
     assert.equal(store.ontologyForJob(owner, legacy).model.ref.version, '15');
-    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '16');
+    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '17');
     const oldAuthorization = store.ontologyForJob(owner, legacy).model.action('AuthorizeProposal');
     const currentAuthorization = store.ontologyForJob(owner, current).model.action('AuthorizeProposal');
     assert.equal(oldAuthorization.version, '1'); assert(oldAuthorization.submissionCriteria.includes('sandbox_only'));

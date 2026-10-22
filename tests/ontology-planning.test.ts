@@ -11,6 +11,10 @@ import { checkRequirements } from '../packages/coordinator/resolver.js';
 import { CodexReasoner, type PlanningContext } from '../packages/coordinator/coordinator.js';
 import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import type { TaskContextPayload } from '../packages/coordinator/task-context.js';
+import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
+import type { AgentDecision } from '../packages/ontology/agent-actions.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from '../packages/capabilities/brief.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import { businessConditionSchema, type BusinessCondition } from '../packages/ontology/business-model.js';
@@ -157,29 +161,40 @@ test('N2 plans require actual reads and reject changed object snapshots before a
   } finally { f.db.close(); }
 });
 
-test('N2 Codex reasoning transport drives real host queries in both interpretation and planning', async () => {
+test('N2 Codex reasoning transport drives host queries for whole-goal interpretation and bound-action planning', async () => {
   const prompts: string[] = [];
   const model = { runStructured: async (prompt: string) => {
     prompts.push(prompt);
-    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request?: ServiceRequest; conversation: { result: { data: PlanningContext }; receipt: { id: string } }[]; finalSchema: { properties: Record<string, unknown> } };
-    assert.equal(packet.request, undefined, 'The model must obtain task data from its actual Ontology read');
-    const context = packet.conversation[0]?.result.data;
-    const output = !packet.conversation.length ? { kind: 'read', calls: [
-      { tool: 'read_task_context', argumentsJson: '{}' },
-    ], receiptIds: [], finalJson: '' } : { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: packet.finalSchema.properties.requirementsJson
-      ? JSON.stringify(interpretation(context!.request))
-      : JSON.stringify(proposal(context!)) };
+    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request?: ServiceRequest; conversation: { result: unknown; receipt: { id: string } }[]; finalSchema: { properties: Record<string, unknown> } };
+    assert.equal(packet.request, undefined, 'Task facts must arrive through an actual Ontology read');
+    const context = (packet.conversation[0]?.result as { data: TaskContextPayload } | undefined)?.data;
+    let output: unknown;
+    if (!context) output = { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' };
+    else if (packet.finalSchema.properties.criteriaJson) output = { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: JSON.stringify({ kind: 'compose', requestRevision: context.request.revision, message: 'Keep the task brief as its only requested artifact', requirementsJson: '[]', conditionsJson: '[]', criteriaJson: JSON.stringify([{ id: 'brief', predicate: 'brief.json', phase: 'artifact', description: 'An actual brief, with underlying execution not started', messageId: context.request.messages[0]!.id, quote: context.request.originalGoal, requirementIds: [] }]) }) };
+    else if (packet.conversation.length === 1) output = { kind: 'read', calls: [{ tool: 'discover_actions', argumentsJson: JSON.stringify({ actionId: 'PrepareTaskBrief' }) }], receiptIds: [], finalJson: '' };
+    else {
+      const pin = (packet.conversation[1]!.result as ActionDiscoveryPage).items[0]!.bindings[0]!.pin;
+      const base: AgentDecision = { kind: 'execute', requestRevision: context.request.revision, message: 'Synthetic transport selects a current exact action', steps: [], completionJson: '' };
+      const component = context.execution?.composition?.components[0], result = context.graph.objects.find(value => value.ref.type === 'TaskBrief');
+      const decision: AgentDecision = !component ? { ...base, kind: 'prepare', contexts: [{ id: 'brief', bindingDigest: pin.digest, inputJson: JSON.stringify({ goal: context.request.originalGoal, deliverable: context.request.requestedDeliverable }) }] }
+        : result ? { ...base, kind: 'complete', completionJson: JSON.stringify({ components: [{ contextId: 'brief', proposalJson: JSON.stringify({ result: result.ref }) }], criteria: [{ id: 'brief', contextIds: ['brief'] }], conditions: [] }) }
+        : { ...base, steps: [{ id: 'brief', action: 'PrepareTaskBrief', contextId: 'brief', bindingDigest: pin.digest, argumentsJson: JSON.stringify({ scope: component.scope }), dependsOn: [], inputRefs: [], contributesTo: ['brief'] }] };
+      output = { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: JSON.stringify(decision) };
+    }
     return { output, evidence: evidence() };
   } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(createExecutionCatalog(), new CodexReasoner(model));
   try {
-    b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
-    assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
+    const submitted = b.submit({ deliverable: 'Record acceptance requirements' });
+    for (let i = 0; i < 6 && ['working', 'submitted'].includes(b.store.get(owner, submitted.id).state); i++) await b.run();
+    const done = b.store.get(owner, submitted.id);
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+    assert.equal(done.runs!.length, prompts.length); assert(prompts.length >= 8);
     assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
-    assert.equal(done.delegation!.groundingDecisions!.length, 1);
-    assert.equal(done.delegation!.ontologyReads!.length, 2); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 1);
-    assert.equal(done.delegation!.plan!.version, '7');
-    assert(done.delegation!.ontologyReads!.every(read => read.tool === 'read_task_context' && read.status === 'ok'));
+    assert.equal(done.delegation!.groundingDecisions!.length, 1); assert.equal(done.delegation!.plan, undefined);
+    const plan = done.delegation!.agent!.plans[0]!; assert.equal(plan.version, '3');
+    assert(plan.steps[0]!.binding); assert(plan.ontologyPlanning.reads.some(read => read.tool === 'discover_actions' && read.status === 'ok'));
+    assert(done.delegation!.ontologyReads!.filter(read => read.tool === 'read_task_context').every(read => read.status === 'ok'));
   } finally { b.store.close(); }
 });
 

@@ -7,6 +7,12 @@ export function canRecoverReadOnly(job: Job, intents: Pick<ActionIntent, 'effect
   return intents.every(intent => readOnly(intent.effect))
     && (job.delegation?.plan?.steps ?? []).every(step => [step.effect, ...(step.additionalEffects ?? [])].every(readOnly));
 }
+/** Source renewal may preserve already confirmed effects. Unknown writes must
+ * first be reconciled under their original authority and operation identity. */
+export function canResumeSource(job: Job, intents: Pick<ActionIntent, 'effect' | 'state'>[]): boolean {
+  return canRecoverReadOnly(job, intents) || !!job.delegation?.agent?.composition
+    && intents.every(intent => ['read', 'local'].includes(intent.effect) || ['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state));
+}
 
 export type RecoveryCode = 'worker_interrupted' | 'worker_timeout' | 'model_unavailable' | 'provider_read_unavailable' | 'reasoning_incomplete' | 'validation_stalled';
 export interface TaskRecovery {

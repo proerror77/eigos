@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-22T15:49:44.781622+00:00",
+  "passedFinalRequiredTargetedChecks": true,
+  "checks": [
+    {
+      "command": "npm run check; targeted composition, binding, grounding, task-summary and requirement suites",
+      "tests": 82,
+      "pass": 82,
+      "fail": 0,
+      "logSha256": "d9549236a7a1e0df6b99b47b7b355d1be52c6b50c7941ce267ef1eaa5d4dfce1"
+    },
+    {
+      "command": "npm run check; composed-ucp and ucp-integration suites",
+      "tests": 26,
+      "pass": 26,
+      "fail": 0,
+      "logSha256": "563193eb74336cc3e5a2e1f7e08ee4882ff32e9fe08ebd27917e83d2eb80145a"
+    },
+    {
+      "command": "action-runtime, composed-domains, composed-booking and composed-sandbox suites",
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "logSha256": "86b141cb639bb17be23899531ef6da2eab3225814a5ea33f06a026cfbc4c013a"
+    },
+    {
+      "command": "migrated-capabilities, dynamic-runtime-versions and ontology-query-gateway suites",
+      "tests": 12,
+      "pass": 12,
+      "fail": 0,
+      "logSha256": "7fd1d726243e209143e498054695b8fc0be204128575e5c92d42a551f4fc7407"
+    },
+    {
+      "command": "composed Stripe and N2 native transport regressions",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "logSha256": "47439bf3156549983f5986558b6bcd14eafe94a5d58ff89473bf4dd2fe622f5b"
+    },
+    {
+      "command": "npm run build && npm run test:e2e:run",
+      "tests": 9,
+      "pass": 9,
+      "fail": 0,
+      "logSha256": "e81045bd166233e4224f67c5a6c3032345db028345375c4453029d3c9c1ccc32"
+    }
+  ],
+  "localWholeSuite": {
+    "initialCommand": "npm test",
+    "initialOutcome": "interrupted_after_concrete_fixture_failures_and_an_unclosed_test_worker; not recorded as a successful whole run",
+    "continuation": {
+      "scope": "all test files from executor.test.ts onward, file inventory retained in the private verification directory",
+      "tests": 657,
+      "passed": 656,
+      "failed": 1,
+      "failure": "Old N2 Codex transport fixture still returned the retired single-program grounding contract",
+      "resolvedBy": "Updated whole-goal transport fixture passed targeted recheck; original receipt and per-action binding assertions retained"
+    },
+    "otherCorrections": "Historical-only document fixtures explicitly select the retained old adapter; active kernel expectation now v17; provider drift test keeps the unchanged current capability snapshot. Their final rechecks passed.",
+    "finalAuthoritativeWholeSuite": "The exact pushed commit CI runs npm test, type check, build and E2E without filtering."
+  },
+  "codeReview": {
+    "scope": "actual tracked and new implementation, semantic/evidence boundaries, per-action grants, cumulative money roles, immutable source inputs, lease/cancel/recovery and historical contracts",
+    "resolvedFindings": [
+      "UCP revalidates lease and exact grant after asynchronous preflight and before a provider mutation",
+      "An unrelated source with no remedy binding cannot block original-order after-sales",
+      "Tombstoned managed references remain audit facts and no longer break current task context reads",
+      "Exact Chinese result counts are recognized without accepting ordinals or partial numerals"
+    ]
+  },
+  "runtimeManifestDigest": "c04832a5bc19e21c3b28172e6211174c5e8c95a59eb010100f51d4de74cc3daf"
+}

@@ -16,9 +16,9 @@ import { merchant, input, ids, decision, step, observe, model, setup, fixture, k
 test('Catalog program is absent by default, owner scoped, configured consistently and construction makes no HTTP', () => {
   assert(!createExecutionCatalog().summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id));
   const t = setup(); try {
-    assert(t.catalog.summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id && c.ref.version === '2'));
+    assert(t.catalog.summaries(owner, 16, 'sandbox').some(c => c.ref.id === CATALOG_AGENT_REF.id && c.ref.version === '2'));
     assert(!t.catalog.summaries('other-owner').some(c => c.ref.id === CATALOG_AGENT_REF.id));
-    assert(!t.catalog.summaries(owner, 16, 'sandbox').some(c => c.ref.id === CATALOG_AGENT_REF.id));
+    assert(!t.catalog.summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id), 'synthetic sources cannot satisfy a live task');
     assert.deepEqual(t.catalog.bindings(CATALOG_AGENT_REF, owner), [], 'no legacy provider workflow is registered');
     const env = { EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(40), EIGOS_SHOPIFY_CATALOG_MERCHANTS: JSON.stringify([merchant]), EIGOS_SHOPIFY_AUDIT_DIR: '/tmp/shopify-private-test' };
     assert.deepEqual(readConfig(env).EIGOS_SHOPIFY_CATALOG_MERCHANTS, readWorkerConfig(env).EIGOS_SHOPIFY_CATALOG_MERCHANTS);
@@ -182,7 +182,7 @@ test('Source observations from another task cannot be used as action inputs even
       observe(ctx, access); access.session.call('query_ontology', { object: foreign });
       return decision(ctx, [step('detail', 'InspectCatalogVariant', { scope: ctx.state.scope, merchantId: 'coffee', observation: foreign, variantId: ids[0] })]);
     }), t.store);
-    const job = second.submit({ goal: 'Read another Coffee' }); for (let i = 0; i < 4; i++) await second.run();
+    const job = second.submit({ goal: 'Read another Coffee', executionEnvironment: 'sandbox' }); for (let i = 0; i < 4; i++) await second.run();
     assert.equal(t.store.get(owner, job.id).state, 'paused'); assert.equal(t.calls.length, 1);
     const program = new CatalogAgentProgram([merchant], { connector: t.connector }); assert.throws(() => program.initialize(t.store.ontology, 'other-owner', done.delegation!.request, input));
   } finally { t.store.close(); }
@@ -193,7 +193,7 @@ test('A restarted Worker continues from accepted observations without repeating 
   let store = new JobStore(path);
   const catalog = () => createExecutionCatalog({ store, shopifyCatalog: { merchants: [merchant], connector: f.connector } });
   try {
-    let b = backend(catalog(), model(), store); const job = b.submit({ goal: 'Read Coffee' });
+    let b = backend(catalog(), model(), store); const job = b.submit({ goal: 'Read Coffee', executionEnvironment: 'sandbox' });
     await b.run(); await b.run(); assert.equal(f.calls.length, 1); const before = store.get(owner, job.id).delegation!.agent!;
     store.close(); store = new JobStore(path); b = backend(catalog(), model(), store);
     const done = await b.run(); assert.equal(done.id, job.id); assert.equal(done.state, 'completed'); assert.equal(f.calls.length, 1);
@@ -205,7 +205,7 @@ test('Altered choices cannot dispatch under an unchanged model-output receipt', 
   const t = setup(); try {
     const reasoner = model(), original = reasoner.act!;
     reasoner.act = async (...args) => { const result = await original(...args); result.decision.steps[0]!.argumentsJson = JSON.stringify({ scope: args[0].state.scope, merchantId: 'coffee', query: 'changed after model return', limit: 1 }); return result; };
-    const b = backend(t.catalog, reasoner, t.store); b.submit({ goal: 'Read Coffee' }); await b.run();
+    const b = backend(t.catalog, reasoner, t.store); b.submit({ goal: 'Read Coffee', executionEnvironment: 'sandbox' }); await b.run();
     await assert.rejects(b.run(), /differs from the recorded model output/); assert.equal(t.calls.length, 0);
   } finally { t.store.close(); }
 });

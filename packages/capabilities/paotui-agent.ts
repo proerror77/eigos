@@ -45,6 +45,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     return this.options.access ? this.options.access.permitted(owner) : owner === localOwner;
   }
   sourceAuthorization(owner: string) { const s = this.options.vault?.status(owner); return s ? { provider: s.provider, state: s.state, nextAction: s.nextAction } : undefined; }
+  assertSourceAvailable(owner: string) { if (this.options.vault) this.options.vault.grant(owner); this.options.access?.assert(); }
   assertContext(ctx: AgentProgramContext) { this.scope(ctx); }
   prepareRequest(request: ServiceRequest) { return preparePaotuiRequest(request); }
   validateRequest(request: ServiceRequest) { validatePaotuiRequest(request); }
@@ -53,12 +54,16 @@ export class PaotuiAgentProgram implements AgentProgram {
       verification: { level: 'read_only_probe', evidenceRefs: ['docs/meituan-paotui-integration.md'] }, recovery: { idempotency: 'none', lookup: false } };
   }
   capability(): ServiceCapability {
-    return { ref: this.ref, ontologyRef: { id: 'paotui.agent.actions', version: '2' }, name: this.kind === 'quote' ? 'Agent 本人地址查价' : 'Agent 本人地址簿查询', environment: 'live', completion: 'artifact', tags: ['meituan', 'read-only', 'agent'],
+    return { ref: this.ref, ontologyRef: { id: 'paotui.agent.actions', version: '2' }, name: this.kind === 'quote' ? 'Agent 本人地址查价' : 'Agent 本人地址簿查询', environment: this.options.connector ? 'sandbox' : 'live', completion: 'artifact', tags: ['meituan', 'read-only', 'agent'],
       description: this.kind === 'quote' ? '根据用户目标，由 Agent 读取当前包裹、路线、本人地址及查询观察后选择单次只读动作。解释阶段 input.goodsName 使用当前用户原文中的简短物品词组，保留明确件数，不可改写或用分类默认替代；物品确实未说明时省略。其他参数从当前已确认输入生成业务对象，费用预览只接受对象引用。缺少地址、物品、重量、服务时在同一任务补充；即使信息不全或尚未连接账号也选择此能力，由 Worker 返回本人授权提示；不得在消息中索取凭据。数量约束只表示计价重量；一个／一份文件等件数是物品描述，不是实际交付件数要求。报价是预估，不下单付款。' : '读取本人已授权的美团地址簿。input 使用空对象。尚未连接时也选择此能力，由 Worker 返回本人授权提示，不得在消息中索取凭据。若用户要查价，请选择 delivery.quote。详细地址仅返回本人，模型只见安全摘要和不透明对象身份。',
       inputSchema: z.toJSONSchema(paotuiTaskInputSchema), ontology: { objects: ['PaotuiTask', 'SavedAddress', 'Provider', 'Channel', 'PaotuiObservation', 'SourceReceipt', ...(this.kind === 'quote' ? ['Parcel', 'DeliveryRoute', 'DeliveryQuote'] : [])], planning: 'Current owned business objects precede independently model-selected source reads; observations and quotes pin the exact priced versions' },
-      actions: this.actionIds.map(id => ({ ref: { id, version: '2' }, effect: 'read' as const })), verifierRef: { id: 'paotui.agent.source-readback', version: '2' }, predicates: [{ id: 'execution.no_order', description: '本人授权只读查询，不下单付款' }] };
+      actions: this.actionIds.map(id => ({ ref: { id, version: '2' }, effect: 'read' as const })), verifierRef: { id: 'paotui.agent.source-readback', version: '2' },
+      predicates: [{ id: 'execution.no_order', description: '本人授权只读查询，不下单付款' }, { id: this.kind === 'quote' ? 'paotui.quote_observed' : 'paotui.addresses_observed', description: this.kind === 'quote' ? '当前报价与本人确认的包裹及路线相符' : '已读取本人当前地址簿' }],
+      outcomePredicates: [this.kind === 'quote' ? 'paotui.quote_observed' : 'paotui.addresses_observed'],
+      goalOutcomes: [{ predicate: this.kind === 'quote' ? 'paotui.quote_observed' : 'paotui.addresses_observed', phase: this.kind === 'quote' ? 'quote' : 'fact', description: this.kind === 'quote' ? 'Current owned delivery fee estimate; no order, payment or delivery' : 'Current owned address book with private fields restricted to the requester' }],
+      effectConstraints: [{ predicate: 'execution.no_order', allowedEffects: ['read', 'local', 'object_write'] }] };
   }
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown) {
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Owned Paotui program is unavailable');
     const input = paotuiTaskInputSchema.parse(value);
     // Repair a model omission before suspending for source authorization. Owner
@@ -67,7 +72,7 @@ export class PaotuiAgentProgram implements AgentProgram {
     const grant = this.options.vault?.grant(owner);
     this.options.access?.assert();
     const connectionDigest = grant ? digest(grant) : this.options.access?.configurationDigest ?? digest({ owner, source: 'local-development' });
-    const scope = { type: 'PaotuiTask', id: digest({ requestId: request.id, revision: request.revision, binding: this.configurationDigest, connectionDigest }) }, root = { type: 'ServiceRequest', id: request.id };
+    const scope = { type: 'PaotuiTask', id: digest({ requestId: request.id, revision: request.revision, binding: this.configurationDigest, connectionDigest, ...(component ? { component: component.id } : {}) }) }, root = { type: 'ServiceRequest', id: request.id };
     if (graph.read(owner, root).properties.revision !== request.revision) invalid('Request revision changed before source initialization');
     {
       // The coordinator owns the shared fenced business transaction.
@@ -269,8 +274,24 @@ export class PaotuiAgentProgram implements AgentProgram {
       const checked = ctx.graph.evaluate(ctx.owner, { function: 'errandQuoteMatches', object, constraints: condition.expected });
       if (checked.status !== 'known' || !checked.value || typeof checked.value !== 'object' || !('matches' in checked.value) || checked.value.matches !== true) invalid('Requested errand subtype, handling or time conditions are unsupported or not established by the source quote');
     }
-    const facts = { conditions: ['execution.no_order'], ...(s.summary.totalPrice ? { totalPrice: s.summary.totalPrice, quantity: { amount: String(s.summary.weightKg), unit: '公斤' } } : {}) };
+    const facts = { conditions: ['execution.no_order', this.kind === 'quote' ? 'paotui.quote_observed' : 'paotui.addresses_observed'], ...(s.summary.totalPrice ? { totalPrice: s.summary.totalPrice, quantity: { amount: String(s.summary.weightKg), unit: '公斤' } } : {}) };
     const addresses = this.kind === 'addresses' ? atomicResultSchemas.get_address_list.parse(s.result).addresses.map((a, i) => ({ label: `地址${i + 1}`, address: a.address, houseNumber: a.houseNumber })) : undefined;
     return { ...(this.kind === 'quote' ? { conditionSubject: { type: 'DeliveryQuote', id: s.id } } : {}), artifact: { id: randomUUID(), name: this.kind === 'quote' ? 'agent-delivery-quote.json' : 'owned-addresses.json', data: { goal: ctx.request.originalGoal, execution: 'completed', deliverable: this.kind === 'quote' ? '已按本人选择的地址和物品完成美团费用预估，价格仅为当前预估。未下单、未付款。' : '已读取本人授权地址簿。未下单、未付款。', result: { paotuiAnswer: { observation: c.observation, ...s.summary, ...(addresses ? { addresses } : { quote: { type: 'DeliveryQuote', id: s.id } }), receiptId: s.receipt.id, evidenceKind: s.receipt.evidenceKind, rationale: c.rationale } } } }, facts, evidenceRefs: [s.receipt.id] };
+  }
+  projectOutputs(ctx: AgentActionContext, action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const snapshot = checkedPaotuiObservation(result.value);
+    const role = action === 'ReadSavedAddressDetail' ? paotuiActionSchemas.ReadSavedAddressDetail.parse(snapshot.actionInput).role : undefined;
+    return { values: { result: object, ...(role ? { [role]: object } : {}), ...(ctx.graph.model.action(action).composition?.outputs.citations ? { citations: [object] } : {}) }, evidence: { origin: snapshot.receipt.evidenceKind === 'fixture' ? 'synthetic' as const : 'provider' as const,
+      refs: result.evidenceRefs, observedAt: snapshot.summary.observedAt, expiresAt: snapshot.summary.expiresAt } };
+  }
+  validateOutput(ctx: AgentProgramContext, output: import('../ontology/composition-contract.js').AcceptedPortValue) {
+    const values = output.definition.cardinality === 'many' ? output.value as ObjectRef[] : [output.value as ObjectRef];
+    for (const value of values) {
+    const snapshot = this.observation(ctx, value);
+    const latest = ctx.state.observations.map(ref => checkedPaotuiObservation(ctx.graph.readPrivate(ctx.owner, ref).properties.privateSnapshot)).filter(value => value.action === snapshot.action && value.summary.role === snapshot.summary.role).at(-1);
+    if (latest?.id !== snapshot.id) invalid('A later source observation supersedes this accepted output');
+    if (snapshot.action === 'ReadSavedAddressDetail') this.selected(ctx, snapshot);
+    if (snapshot.action === 'PreviewDeliveryQuote') this.validate(ctx, snapshot.action, snapshot.actionInput);
+    }
   }
 }

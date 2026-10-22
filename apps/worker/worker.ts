@@ -1,11 +1,11 @@
 import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
-import { SourceAuthorizationRequired } from '../../packages/core/member-source.js';
 import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.js';
-import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly } from '../../packages/core/task-recovery.js';
+import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource } from '../../packages/core/task-recovery.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
-import { DomainError } from '../../packages/core/domain.js';
+import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
+import { partialGoalArtifact } from '../../packages/coordinator/goal-program.js';
 
 export interface WorkerOptions {
   coordinator: Pick<Coordinator, 'run'>;
@@ -65,15 +65,17 @@ export class Worker {
         finish: (id, evidence, outcome) => this.store.finishModelUsage(claim, id, evidence, outcome) }, () => this.options.coordinator.run(claim, controller.signal));
     }).catch(error => {
       this.store.finish(claim, current => {
+        if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
+          request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
         const readOnly = canRecoverReadOnly(current, this.store.intents(owner, current.id));
         if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation && readOnly) {
           scheduleTaskRecovery(current, 'reasoning_incomplete', '推理尚未形成有效决策，系统将保留当前信息继续处理，无需重复补充。');
           return;
         }
-        if (error instanceof SourceAuthorizationRequired && !controller.signal.aborted && current.delegation && readOnly) {
+        if (error instanceof ConnectionAuthorizationRequired && error.connection && !controller.signal.aborted && current.delegation && canResumeSource(current, this.store.intents(owner, current.id))) {
           const d = current.delegation;
           current.state = 'auth-required'; d.phase = 'awaiting_authorization';
-          d.sourceAuthorization = { provider: 'meituan-paotui', nextAction: 'begin_source_connection', resumeAction: 'resume_source_task' };
+          d.sourceAuthorization = structuredClone(error.connection);
           current.updatedAt = new Date().toISOString(); current.question = error.message; delete current.error;
           current.messages.push({ id: randomUUID(), role: 'agent', text: error.message, at: current.updatedAt });
           return;

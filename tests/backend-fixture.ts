@@ -5,13 +5,13 @@ import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalo
 import { JobStore } from '../packages/core/store.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { SCOPES, ownerKey } from '../packages/core/domain.js';
-import type { Grounding, PlanProposal } from '../packages/core/delegation.js';
+import type { Grounding, LegacyGrounding, PlanProposal } from '../packages/core/delegation.js';
 import type { ServiceRequest, CandidateFacts, ProviderBinding, ServiceCapability } from '../packages/ontology/execution.js';
 
 export const principal = { issuer: 'local-development', tenant: 'local', subject: 'developer', clientId: 'test', scopes: [...SCOPES] };
 export const owner = ownerKey(principal);
 export const evidence = () => ({ id: randomUUID(), runtime: 'ontology-v2-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'fixture' });
-export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): Grounding {
+export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): LegacyGrounding {
   return { kind: 'resolve', requestRevision: request.revision, capabilityRef: { id, version: '2' }, message: 'Fixture interpretation', inputJson: JSON.stringify(input), requirementsJson: '[]', conditionsJson: '[]' };
 }
 export function proposal(context: PlanningContext, index = 0): PlanProposal {

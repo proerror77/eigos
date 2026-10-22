@@ -33,6 +33,22 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
   return value;
 }
 
+test('bounded task reads await original progress, preserve timeout state and enforce ownership before waiting', async () => {
+  const f = backend(createExecutionCatalog()), wire = await connect(f.tasks);
+  try {
+    const job = f.submit();
+    const timed = await call(wire.client, 'get_task', { taskId: job.id, waitMs: 20 });
+    assert.equal(timed.state, 'submitted'); assert.equal(f.store.get(owner, job.id).state, 'submitted');
+    const waiting = call(wire.client, 'get_task', { taskId: job.id, waitMs: 1000 });
+    const timer = setTimeout(() => { const current = f.store.get(owner, job.id); current.state = 'input-required'; current.question = 'One missing business fact'; f.store.save(owner, current); }, 20);
+    try { const updated = await waiting; assert.equal(updated.id, job.id); assert.equal(updated.state, 'input-required'); assert.equal(updated.question, 'One missing business fact'); }
+    finally { clearTimeout(timer); }
+    await assert.rejects(f.tasks.getAfterWait({ ...principal, subject: 'another-owner' }, job.id, 1000), /not found/i);
+    await assert.rejects(f.tasks.getAfterWait(principal, job.id, 30001), /30000/);
+    assert.equal((await wire.client.callTool({ name: 'get_task', arguments: { taskId: job.id, waitMs: 30001 } })).isError, true);
+  } finally { await wire.close(); f.store.close(); }
+});
+
 test('public task summary preserves decisions and intact artifacts while growing internal receipts stay internal', () => {
   const f = backend(createExecutionCatalog()); try {
     const job = f.submit(), d = job.delegation!;

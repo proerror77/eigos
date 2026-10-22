@@ -45,7 +45,7 @@ export function publicDomainEntities(entities: DomainSnapshot['entities']): Doma
 }
 
 /** Called only after the active task checkpoint and adapter validation, never by a public import tool. */
-export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string, capabilityId: string, request: { id: string; revision: number }, input: Record<string, unknown>, raw: unknown): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string, capabilityId: string, request: { id: string; revision: number }, input: Record<string, unknown>, raw: unknown, componentScope?: ObjectRef): { state: 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
   const parsed = domainSnapshotSchema.safeParse(raw);
   if (!parsed.success) return { state: 'invalid_source' };
   const snapshot = parsed.data, definition = serviceDomain(snapshot.domain);
@@ -68,19 +68,25 @@ export function projectDomainSnapshot(graph: OntologyObjectStore, owner: string,
       }
       let old;
       try { old = graph.readPrivate(owner, ref); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+      if (old?.properties.preparedReceipt !== undefined && type === definition.candidateType) Object.assign(body, { preparedReceipt: old.properties.preparedReceipt });
       if (old && immutable && digest(old.properties) !== digest(body)) throw new DomainError('INVALID_INPUT', 'An immutable source observation changed');
       properties.set(JSON.stringify(ref), body);
       if (!old || digest(old.properties) !== digest(body)) objects.push({ ref, properties: body, ...(old ? { expectedRevision: old.revision } : {}) });
       return ref;
     };
     const connect = (type: string, from: ObjectRef, to: ObjectRef) => links.push({ type, from, to });
-    const requirement = add(definition.requestType, `${request.id}:r${request.revision}:${snapshot.domain}`, `${definition.name}固定要求`, { ...parameters, requestRevision: request.revision, capturedAt: root.createdAt });
+    if (componentScope) {
+      const owned = graph.read(owner, componentScope);
+      const original = Object.fromEntries(Object.keys(definition.parameters.shape).filter(key => owned.properties[key] !== undefined).map(key => [key, owned.properties[key]]));
+      if (componentScope.type !== definition.requestType || owned.properties.requestRevision !== request.revision || digest(parseDomainParameters(snapshot.domain, original)) !== digest(parameters)) return { state: 'invalid_source' };
+    }
+    const requirement = componentScope ?? add(definition.requestType, `${request.id}:r${request.revision}:${snapshot.domain}`, `${definition.name}固定要求`, { ...parameters, requestRevision: request.revision, capturedAt: root.createdAt });
     connect(`${definition.requestType}Request`, requirement, root.ref);
     const provider = add('Provider', `domain:${digest({ source: snapshot.sourceId, provider: snapshot.option.providerId })}`, '合成领域来源', { name: '合成领域来源' });
-    const engagement = add('ServiceEngagement', digest({ request: request.id, domain: snapshot.domain, source: snapshot.sourceId, provider: snapshot.option.providerId }), `${definition.name}来源沟通`, { progress: snapshot.observation ? 'returned' : 'waiting', startedAt: snapshot.option.observedAt, ...(snapshot.observation?.providerReference ? { remoteReference: snapshot.observation.providerReference } : {}) });
+    const engagement = add('ServiceEngagement', digest({ request: request.id, domain: snapshot.domain, source: snapshot.sourceId, provider: snapshot.option.providerId, ...(componentScope ? { componentScope } : {}) }), `${definition.name}来源沟通`, { progress: snapshot.observation ? 'returned' : 'waiting', startedAt: snapshot.option.observedAt, ...(snapshot.observation?.providerReference ? { remoteReference: snapshot.observation.providerReference } : {}) });
     connect('EngagementRequest', engagement, root.ref); connect('EngagementProvider', engagement, provider);
     const { id: _optionId, providerId: _providerId, ...optionValues } = snapshot.option;
-    const optionIdentity = { request: request.id, requestRevision: request.revision, source: snapshot.sourceId, provider: snapshot.option.providerId,
+    const optionIdentity = { request: request.id, requestRevision: request.revision, source: snapshot.sourceId, provider: snapshot.option.providerId, ...(componentScope ? { componentScope } : {}),
       nativeId: snapshot.option.id, sourceEventId: snapshot.preparedSource?.eventId ?? snapshot.sourceEventId, sourceVersion: snapshot.preparedSource?.version ?? snapshot.sourceVersion, option: snapshot.option, entities: publicDomainEntities(snapshot.entities), relationships: snapshot.relationships };
     const option = add(definition.candidateType, digest(optionIdentity), `${definition.name}合成候选`, { ...optionValues, requestRevision: request.revision }, true);
     for (const target of [option]) { connect(`${target.type}Request`, target, root.ref); connect(`${target.type}Requirements`, target, requirement); connect(`${target.type}Provider`, target, provider); }

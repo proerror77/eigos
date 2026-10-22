@@ -4,7 +4,7 @@ import type { ExecutionAdapter, Preparation, AdapterContext, Delivery } from '..
 import type { ServiceCapability, ProviderBinding, ExecutionPlan } from '../ontology/execution.js';
 import type { Job } from '../core/domain.js';
 
-const inputSchema = z.object({ goal: z.string().trim().min(1).max(10000), deliverable: z.string().trim().min(1).max(4000) }).strict();
+import { briefInputSchema as inputSchema } from '../ontology/local-artifacts.js';
 export function verifyBrief(artifact: NonNullable<Job['artifact']>, input: { goal: string; deliverable: string }): boolean {
   return artifact.name === 'task-brief.json' && artifact.data.goal === input.goal &&
     artifact.data.deliverable === input.deliverable && artifact.data.execution === 'not_started';
@@ -33,12 +33,12 @@ export class BriefAdapter implements ExecutionAdapter {
     if (!result.success) return { kind: 'needs_input', question: '请说明任务目标，以及任务说明需要记录的交付物和验收条件。这里只生成任务说明，不执行其中的业务。' };
     return { kind: 'ready', input: result.data, details: { underlyingExecution: 'not_started' }, facts: { conditions: ['brief.json', 'execution.none'] }, evidenceRefs: ['local:brief-schema'], observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString() };
   }
-  async execute(_ctx: AdapterContext, plan: ExecutionPlan): Promise<Delivery> {
+  async execute(_ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan): Promise<Delivery> {
     const input = inputSchema.parse(plan.steps[0]!.input);
     const artifact: NonNullable<Job['artifact']> = { id: randomUUID(), name: 'task-brief.json', data: { ...input, execution: 'not_started' } };
     return { artifact, facts: { conditions: ['brief.json', 'execution.none'] }, evidenceRefs: [artifact.id] };
   }
-  verify(_ctx: AdapterContext, plan: ExecutionPlan, _private: unknown, delivery: Delivery) {
+  verify(_ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, _private: unknown, delivery: Delivery) {
     return { accepted: verifyBrief(delivery.artifact, inputSchema.parse(plan.steps[0]!.input)), reason: 'Exact goal and deliverable checked; underlying business execution is not started.' };
   }
 }

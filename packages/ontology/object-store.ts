@@ -368,7 +368,12 @@ export class OntologyObjectStore {
         }
         if (ref.type === 'Proposal') {
           const proposal = this.raw(owner, ref, { remaining: 1 });
-          if (!["execution", "read_scope"].includes(String(proposal.properties.kind))) {
+          if (proposal.properties.kind === 'goal') {
+            const contexts = this.db.prepare(`SELECT to_id FROM ${this.linkTable} WHERE ${this.owned()} AND type='ProposalExecutionContext' AND from_id=?`).all(...this.ownerParameters(owner), ref.id);
+            if (contexts.length !== 1) failure('A whole-goal proposal requires its original execution context');
+            const context = this.raw(owner, { type: 'ExecutionContext', id: String(contexts[0]!.to_id) }, { remaining: 1 });
+            if (!context.properties.goal || context.properties.requestRevision !== proposal.properties.requestRevision) failure('Whole-goal proposal context does not carry the fixed goal revision');
+          } else if (!["execution", "read_scope"].includes(String(proposal.properties.kind))) {
             const count = this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type='ProposalOffer' AND from_id=?`).get(...this.ownerParameters(owner), ref.id)!.n;
             if (count !== 1) failure('An offer selection requires exactly one selected offer');
           }

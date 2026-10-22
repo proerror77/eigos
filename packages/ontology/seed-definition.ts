@@ -3,12 +3,14 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { BUSINESS_MODEL_DEFINITION } from './business-model.js';
 import frozen from './history/business-v15.json' with { type: 'json' };
+import frozenV16 from './history/business-v16.json' with { type: 'json' };
+import { extendCompositionKernel } from './composition-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from './model-compiler.js';
 import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type OntologyDocument, type SerializableProperty } from './definition-contracts.js';
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '16';
+export const CURRENT_KERNEL_VERSION = '17';
 const SEMANTICS_VERSION = 'eigos-v15.1';
 type FrozenProperty = Omit<PropertyDefinition, 'schema'> & { schema: JsonSchema };
 type FrozenDefinition = Omit<ModelDefinition, 'objects' | 'interfaces'> & {
@@ -31,6 +33,7 @@ const hasTrustedActionContract = (value: ActionDefinition) => !!(value.read || v
 function isSupportedKernelWidening(old: unknown, current: unknown, key = '', managedEnvironment = false): boolean {
   if (digest(old) === digest(current)) return true;
   if (Array.isArray(old) && Array.isArray(current)) {
+    if (key === 'enum' && old.includes('item_quantity') && current.length === old.length + 1 && current.includes('result_count')) return old.every(value => current.includes(value));
     if (key === 'enum' && old.includes('local') && old.includes('read') && current.length === old.length + 1 && current.includes('object_write')) return old.every(value => current.includes(value));
     if (key === 'enum' && managedEnvironment && old.includes('sandbox') && current.length === old.length + 1 && current.includes('managed')) return old.every(value => current.includes(value));
     return old.length === current.length && old.every((value, index) => isSupportedKernelWidening(value, current[index], key, managedEnvironment));
@@ -101,5 +104,30 @@ export function createSeedDefinition(registry = new TrustedDefinitionRegistry())
 
 /** A separate immutable kernel release can add supported engine contracts without relabelling old facts. */
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
-  return complete(documentFromDefinition({ ...BUSINESS_MODEL_DEFINITION, version: CURRENT_KERNEL_VERSION }, registry, false), registry, false);
+  const historical = createHistoricalKernelDefinition(registry);
+  return complete(extendCompositionKernel(historical.document, registry, BUSINESS_MODEL_DEFINITION), registry, false);
+}
+export function createHistoricalKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const document = parseOntologyDocument(structuredClone(frozenV16.document));
+  for (const [kind, types] of [['object', document.objects], ['interface', document.interfaces]] as const) for (const type of types) {
+    const current = (kind === 'object' ? BUSINESS_MODEL_DEFINITION.objects : BUSINESS_MODEL_DEFINITION.interfaces).find(value => value.id === type.id);
+    if (!current) throw new DomainError('CONFLICT', 'Historical v16 type implementation is unavailable');
+    for (const [name, property] of Object.entries(type.properties)) {
+      if (!property.validatorRef || !current.properties[name]) throw new DomainError('CONFLICT', 'Historical v16 validator is unavailable');
+      const schema = property.schema, live = current.properties[name]!, metadata = live.schemaMetadata ?? z.toJSONSchema(live.schema);
+      if (!isSupportedKernelWidening(schema, metadata)) throw new DomainError('CONFLICT', `Current validator cannot preserve v16: ${type.id}.${name}`);
+      const guard = z.fromJSONSchema(schema as Parameters<typeof z.fromJSONSchema>[0]);
+      const validator = digest(schema) === digest(metadata) ? live.schema : live.schema.superRefine((value, context) => { if (!guard.safeParse(value).success) context.addIssue({ code: 'custom', message: 'Value is outside the pinned v16 schema' }); });
+      const registered = registry.registerValidator(property.validatorRef.id, property.validatorRef.version, validator, schema);
+      if (digest(registered) !== digest(property.validatorRef)) throw new DomainError('CONFLICT', 'Historical v16 validator identity changed');
+    }
+  }
+  for (const { resourceId: _resource, implementation, ...action } of document.actions) {
+    if (digest(BUSINESS_MODEL_DEFINITION.actions.find(value => value.id === action.id)) !== digest(action)) throw new DomainError('CONFLICT', 'Historical v16 action implementation changed');
+    if (implementation?.kind === 'trusted' && digest(registry.registerAction(action)) !== digest(implementation.handlerRef)) throw new DomainError('CONFLICT', 'Historical v16 action identity changed');
+  }
+  for (const { handlerRef, ...fn } of document.functions) if (!handlerRef || digest(registry.registerFunction(fn)) !== digest(handlerRef)) throw new DomainError('CONFLICT', 'Historical v16 function identity changed');
+  const historical = complete(document, registry, false);
+  if (digest(historical.audit.model) !== digest(frozenV16.model)) throw new DomainError('CONFLICT', 'The original v16 model fingerprint changed');
+  return historical;
 }

@@ -3,21 +3,23 @@ import { digest } from '../core/delegation.js';
 import { DomainError, type Job } from '../core/domain.js';
 import type { ActionIntent, AfterSalesCase } from './actions.js';
 import type { ExecutionObservation } from './execution-projection.js';
-import type { ExecutionPlan } from './execution.js';
+import type { ExecutionPlan, ProviderBinding } from './execution.js';
 import type { ObjectRef } from './model.js';
 import { businessRef as node, businessEdge as edge, optionalObject, businessRelated as related } from './business-chain-write.js';
 import { linkSnapshotDigest, type LinkWrite, type ObjectWrite, type OntologyObjectStore } from './object-store.js';
 
 const quantity = (amount: number, unit: string) => ({ amount: String(amount), unit: unit === '杯' ? 'cup' : 'piece' });
-const realm = (plan: ExecutionPlan, binding: ActionIntent['bindingRef']) => {
+type SandboxSource = ExecutionPlan | ProviderBinding;
+const realm = (plan: SandboxSource, binding: ActionIntent['bindingRef']) => {
+  if (!('bindingDigests' in plan)) return { binding: plan.ref, definition: digest(plan) };
   const pinned = plan.bindingDigests.find(value => digest(value.ref) === digest(binding));
   if (!pinned) throw new DomainError('CONFLICT', 'Sandbox mapping requires its fixed source binding');
   return { binding, definition: pinned.digest };
 };
-export function sandboxOrderRef(plan: ExecutionPlan, binding: ActionIntent['bindingRef'], id: string) {
+export function sandboxOrderRef(plan: SandboxSource, binding: ActionIntent['bindingRef'], id: string) {
   return node('Order', { source: realm(plan, binding), orderId: id });
 }
-export function sandboxPartyRefs(plan: ExecutionPlan, binding: ActionIntent['bindingRef'], providerId: string, channelId: string) {
+export function sandboxPartyRefs(plan: SandboxSource, binding: ActionIntent['bindingRef'], providerId: string, channelId: string) {
   return { provider: node('Provider', { source: realm(plan, binding), provider: providerId }),
     channel: node('Channel', { source: realm(plan, binding), channel: channelId }) };
 }
@@ -27,8 +29,10 @@ interface Normalized { subjects: ObjectRef[]; receipts: ObjectRef[]; deliveredQu
  * to the pinned source; cumulative delivery is one allocation, never summed twice. */
 export function projectSandboxBusiness(graph: OntologyObjectStore, owner: string, job: Job, intent: ActionIntent, observation: ExecutionObservation, cases: AfterSalesCase[]): Normalized | undefined {
   const plans = [...(job.delegation?.planHistory ?? []), ...(job.delegation?.plan ? [job.delegation.plan] : [])];
-  const plan = plans.find(value => value.digest === intent.planDigest);
-  if (!plan || plan.capabilityRef.id !== 'service.fulfillment.sandbox' || job.delegation?.request.executionEnvironment !== 'sandbox') return;
+  const fixed = plans.find(value => value.digest === intent.planDigest);
+  const atomic = [job.delegation?.agent, ...(job.delegation?.agentHistory ?? [])].flatMap(state => state?.plans ?? []).find(plan => plan.digest === intent.planDigest)?.steps.find(step => step.intentId === intent.id)?.binding?.providerSnapshot;
+  const plan = fixed?.capabilityRef.id === 'service.fulfillment.sandbox' ? fixed : atomic?.capabilityRef.id === 'service.fulfillment.sandbox.atomic' ? atomic : undefined;
+  if (!plan || job.delegation?.request.executionEnvironment !== 'sandbox') return;
   const parsed = sandboxOrderSchema.safeParse(observation.result.output?.record);
   if (!parsed.success) return;
   const record = parsed.data;

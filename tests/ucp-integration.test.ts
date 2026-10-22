@@ -234,3 +234,18 @@ test('a late UCP completion after task cancellation is retained as evidence with
     assert.equal(t.store.ontology.query(owner, { type: 'Order' }).items.length, 0, 'The canceled claim must not project a new business result');
   } finally { release(); await t.close(); }
 });
+
+
+for (const change of ['revoke', 'cancel'] as const) test(`explicit UCP compatibility path ${change} during preflight also prevents the provider mutation`, async () => {
+  const t = await setup(); try {
+    await t.prepare(); const waiting = await t.confirmation(); t.approve(waiting);
+    t.merchant.flags.beforeCheckoutReadResponse = async () => {
+      t.merchant.flags.beforeCheckoutReadResponse = undefined;
+      if (change === 'cancel') t.b.tasks.cancel(principal, waiting.id); else t.b.tasks.revokeAuthorization(principal, waiting.id, randomUUID());
+    };
+    await t.b.run();
+    assert.equal(t.merchant.counts().completes, 0);
+    assert.equal(t.merchant.requests.filter(value => value.path.endsWith('/complete')).length, 0);
+    assert.notEqual(t.store.get(owner, waiting.id).state, 'completed');
+  } finally { await t.close(); }
+});

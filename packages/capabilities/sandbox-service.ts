@@ -58,15 +58,15 @@ export class SandboxServiceAdapter implements ActionAdapter {
   validateInput(step: PlanStep, input: Record<string, unknown>): void {
     if (step.actionTypeRef.id === place.id) z.object({ quoteId: z.uuid(), quantity: z.number().int().positive(), unit: z.string(), totalMinor: money, currency: z.literal('CNY'), payeeId: z.string() }).strict().parse(input);
     else if (step.actionTypeRef.id === pay.id) z.object({ orderId: z.uuid(), amountMinor: money, currency: z.literal('CNY'), payeeId: z.string() }).strict().parse(input);
-    else if (step.actionTypeRef.id === observe.id) z.object({ orderId: z.uuid() }).strict().parse(input);
+    else if ([observe.id, 'sandbox.read_order'].includes(step.actionTypeRef.id)) z.object({ orderId: z.uuid() }).strict().parse(input);
     else if ([cancel.id, refund.id].includes(step.actionTypeRef.id)) z.object({ orderId: z.uuid(), amountMinor: money, currency: z.literal('CNY'), payeeId: z.string(), reason: z.string().min(1).max(1000) }).strict().parse(input);
     else throw new DomainError('FORBIDDEN', 'Unsupported sandbox action');
     if (['payment', 'refund'].includes(step.effect) && (!step.cost || step.cost.minor !== input.amountMinor || step.cost.currency !== input.currency || step.cost.payeeId !== input.payeeId)) throw new DomainError('FORBIDDEN', 'Payment/refund input exceeds its declared plan amount or counterparty');
   }
   async dispatch(ctx: ActionContext, data: unknown, signal: AbortSignal): Promise<ActionResult> {
     const action = ctx.step.actionTypeRef.id;
-    const path = action === place.id ? '/orders' : action === observe.id ? `/orders/${ctx.input.orderId}` : `/orders/${ctx.input.orderId}/${action === pay.id ? 'pay' : action === cancel.id ? 'cancel' : 'refund'}`;
-    const raw = await this.request(path, action === observe.id ? 'GET' : 'POST', action === observe.id ? undefined : { key: ctx.intent.businessOperationKey, input: ctx.input }, signal);
+    const path = action === place.id ? '/orders' : [observe.id, 'sandbox.read_order'].includes(action) ? `/orders/${ctx.input.orderId}` : `/orders/${ctx.input.orderId}/${action === pay.id ? 'pay' : action === cancel.id ? 'cancel' : 'refund'}`;
+    const raw = await this.request(path, [observe.id, 'sandbox.read_order'].includes(action) ? 'GET' : 'POST', [observe.id, 'sandbox.read_order'].includes(action) ? undefined : { key: ctx.intent.businessOperationKey, input: ctx.input }, signal);
     return this.toResult(ctx, data as Payload, raw);
   }
   async observe(ctx: ActionContext, data: unknown, signal: AbortSignal): Promise<ActionResult> { return this.lookup(ctx, data as Payload, signal); }
@@ -79,7 +79,7 @@ export class SandboxServiceAdapter implements ActionAdapter {
     if (raw.notFound === true) return { kind: 'not_found', eventId: `${ctx.intent.businessOperationKey}:not-found`, sourceVersion: 0, evidenceRefs: [`sandbox:${digest(raw)}`], output: { operationKey: raw.key } };
     if (raw.rejected === true) return { kind: 'rejected', eventId: `${ctx.intent.businessOperationKey}:rejected`, sourceVersion: 0, evidenceRefs: [`sandbox:${digest(raw)}`], output: { operation: raw.operation } };
     const order = sandboxOrderSchema.parse(raw.order); const action = ctx.step.actionTypeRef.id;
-    const done = action === place.id ? ['confirmed', 'canceled'].includes(order.orderState) : action === pay.id ? order.paymentState === 'paid' : action === cancel.id ? order.orderState === 'canceled' : action === refund.id ? order.refundState === 'refunded' : ['delivered', 'partial', 'failed'].includes(order.fulfillmentState);
+    const done = action === 'sandbox.read_order' ? true : action === place.id ? ['confirmed', 'canceled'].includes(order.orderState) : action === pay.id ? order.paymentState === 'paid' : action === cancel.id ? order.orderState === 'canceled' : action === refund.id ? order.refundState === 'refunded' : ['delivered', 'partial', 'failed'].includes(order.fulfillmentState);
     const evidenceRefs = [`sandbox:receipt:${digest(raw)}`];
     const result: ActionResult = { kind: done ? 'confirmed' : 'pending', eventId: `${ctx.intent.businessOperationKey}:${order.version}:${done ? 'confirmed' : 'pending'}`, sourceVersion: order.version, remoteRef: order.id,
       output: { remoteRef: order.id, record: order, ...(raw.operation ? { operation: raw.operation } : {}) }, business: { order: order.orderState, payment: order.paymentState, fulfillment: order.fulfillmentState, refund: order.refundState }, evidenceRefs, retryAfterMs: 100 };
@@ -96,7 +96,7 @@ export class SandboxServiceAdapter implements ActionAdapter {
     try {
       if (result.kind === 'not_found') return { accepted: result.output?.operationKey === ctx.intent.businessOperationKey, reason: 'Original-key lookup did not establish an effect; never replay' };
       const operation = result.output?.operation as { key?: string; inputDigest?: string } | undefined;
-      if (ctx.step.effect !== 'read' && (operation?.key !== ctx.intent.businessOperationKey || operation.inputDigest !== ctx.attempt.inputDigest)) throw new Error('Operation/input reference mismatch');
+      if (ctx.step.effect !== 'read' && (operation?.key !== ctx.intent.businessOperationKey || operation.inputDigest !== (ctx.invocationInputDigest ?? ctx.attempt.inputDigest))) throw new Error('Operation/input reference mismatch');
       if (result.kind === 'rejected') return { accepted: !!operation, reason: 'Provider explicitly rejected the exact operation' };
       const order = sandboxOrderSchema.parse(result.output?.record);
       if (result.remoteRef !== order.id || (ctx.input.orderId !== undefined && ctx.input.orderId !== order.id) || (ctx.input.payeeId !== undefined && ctx.input.payeeId !== order.payeeId)) throw new Error('Wrong business object or payee');
@@ -104,7 +104,7 @@ export class SandboxServiceAdapter implements ActionAdapter {
       return { accepted: true, reason: 'Provider operation key, input digest, object, payee and payment amount verified' };
     } catch { return { accepted: false, reason: 'Sandbox action receipt does not match the fixed operation' }; }
   }
-  verify(ctx: AdapterContext, plan: ExecutionPlan, data: unknown, delivery: Delivery) {
+  verify(ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, data: unknown, delivery: Delivery) {
     try {
       const payload = data as Payload; const report = delivery.artifact.data.result as { environment: string; receipt: unknown; action: string }; const record = sandboxOrderSchema.parse(report.receipt);
       if (report.environment !== 'sandbox' || record.quoteId !== payload.quote.id || record.quantity !== payload.query.quantity || record.unit !== payload.query.unit || record.payeeId !== payload.quote.payeeId) throw new Error('Input/object mismatch');

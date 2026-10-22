@@ -116,6 +116,14 @@ export class ActionRuntime {
       if (error instanceof DomainError && error.code === 'FORBIDDEN') { this.pause(claim, 'auth-required', error.message); return false; } throw error;
     }
     const action: ActionContext = { owner: claim.owner, requestId: plan.requestId, requestRevision: plan.requestRevision, goal: ctx.request.originalGoal, messages: current.messages, modelReceipts: current.runs, plan, step, intent, attempt: attempt!, input, ...(reply ? { reply: { messageId: reply.messageId, answer: reply.answer } } : {}) };
+    action.assertDispatchAllowed = () => {
+      signal.throwIfAborted();
+      if (!this.store.claimActive(claim)) throw new DomainError('CONFLICT', 'Original task lease ended before the provider mutation');
+      if (!freshPermit || !['dispatch', 'resume'].includes(kind)) throw new DomainError('FORBIDDEN', 'Original-operation reads cannot dispatch a new business effect');
+      validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, plan.ontologyPlanning, true);
+      validatePlan(this.catalog, claim.owner, ctx.request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref, Date.now(), 'dispatch');
+      checkDispatchPermit(this.store, claim.owner, plan, step, intent, adapter, this.options.allowSandbox === true);
+    };
     // Synchronous graph writes can outlive a permit or source fact while the
     // lease itself remains valid. Recheck without reserving the budget twice.
     try {

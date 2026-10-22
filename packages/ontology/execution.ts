@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v16' as const;
+export const BACKEND_VERSION = 'ontology-execution-v17' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
 export const moneySchema = z.object({ minor: integer, currency: z.string().regex(/^[A-Z]{3}$/) }).strict();
 const base = { id: z.string().min(1).max(100), strength: z.enum(['hard', 'preference']) };
-export const quantityRoles = ['item_quantity', 'passenger_count', 'room_count', 'guest_count', 'traveler_count', 'patient_count', 'participant_count'] as const;
+export const quantityRoles = ['item_quantity', 'passenger_count', 'room_count', 'guest_count', 'traveler_count', 'patient_count', 'participant_count', 'result_count'] as const;
 export const amountRoles = ['service_total', 'deposit'] as const;
 export const deadlineRoles = ['completion', 'pickup', 'arrival', 'registration'] as const;
 export const locationRoles = ['origin', 'destination', 'pickup', 'return', 'venue'] as const;
@@ -56,6 +56,9 @@ export interface ServiceCapability {
   verifierRef: Ref;
   completion?: 'artifact' | 'delivery' | 'order' | 'refund' | 'domain';
   outcomePredicates?: string[];
+  /** Independently verifiable outcome and business phase, never an execution recipe. */
+  goalOutcomes?: { predicate: string; phase: import('../core/goal-contract.js').GoalCriterion['phase']; description: string }[];
+  effectConstraints?: { predicate: string; allowedEffects: import('./actions.js').EffectClass[] }[];
   requirementRoles?: RequirementRoleDefinition[];
   environment?: 'local' | 'live' | 'sandbox';
   locationSemantics?: 'search_area' | 'destination';

@@ -5,6 +5,14 @@ import { objectRefSchema, type ObjectRef } from './model.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 
 export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | 'change' | 'cancel' | 'refund' | 'object_write';
+const budgetObligationSchema = z.strictObject({
+  key: z.string().min(1).max(200), kind: z.enum(['commitment', 'spend']), role: z.enum(['service_total', 'deposit']),
+  amount: z.strictObject({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.string().regex(/^[A-Z]{3}$/) }),
+});
+/** Separate economic obligations of one operation, such as service fees and a
+ * refundable deposit. They share authority/lifecycle, never a monetary role. */
+export const actionBudgetImpactSchema = budgetObligationSchema.extend({ additional: z.array(budgetObligationSchema).min(1).max(7).optional() });
+export type ActionBudgetImpact = z.infer<typeof actionBudgetImpactSchema>;
 export interface ObjectWriteScope {
   ontologyRelease: OntologyReleaseRef; actionId: string; actionDigest: string; inputDigest: string; previewDigest: string;
   targets: { ref: ObjectRef; revision: number | null; fields: string[]; operation: 'create' | 'update' | 'tombstone' | 'link' }[];
@@ -25,6 +33,8 @@ export interface ObjectWriteAuthorizationRequest {
 export interface FinancialAuthorizationRequest {
   planDigest: string; effects: EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[];
   environment: 'sandbox'; realOperationsAllowed: false;
+  actionBinding?: { actionId: string; ref: Ref; programRef: Ref; configurationDigest: string };
+  budgetImpact?: ActionBudgetImpact;
 }
 export type PlanAuthorizationRequest = FinancialAuthorizationRequest | ObjectWriteAuthorizationRequest;
 export interface InputReference { stepId: string; path: string; targetKey: string }
@@ -41,6 +51,8 @@ export interface ActionIntent {
   additionalEffects?: EffectClass[];
   state: IntentState; remoteRef?: string; latestVersion?: number; latestObservationId?: string;
   acceptedOutput?: Record<string, unknown>; delivery?: Delivery; nextAt: number; createdAt: string;
+  /** Exact materialized arguments of the first dispatch, retained for recovery. */
+  dispatchInput?: Record<string, unknown>;
   /** Normalized business output, bound to the exact verified source observation. */
   ontologyOutput?: { object: import('./model.js').ObjectRef; observationId: string };
   lastResult?: ActionResult; failedQueries?: number;
@@ -72,7 +84,13 @@ export interface ActionResult {
   business?: BusinessSnapshot; delivery?: Delivery; evidenceRefs: string[]; retryAfterMs?: number; message?: string;
 }
 export interface ActionContext {
-  owner: string; requestId: string; requestRevision: number; plan: ExecutionPlan; step: PlanStep;
+  owner: string; requestId: string; requestRevision: number; plan: import('../core/catalog.js').AdapterPlan; step: PlanStep;
+  /** Hash of the trusted provider-argument projection; attempt still contains
+   * the actual dispatch input digest and original task plan identity. */
+  invocationInputDigest?: string;
+  /** Revalidate the active lease and exact grant after any asynchronous
+   * preflight, immediately before a provider mutation. Never used for recovery. */
+  assertDispatchAllowed?: () => void;
   goal: string;
   messages?: import('../core/domain.js').JobMessage[];
   modelReceipts?: import('../capabilities/executor.js').RunEvidence[];
@@ -85,6 +103,7 @@ interface GrantBase {
 }
 export interface FinancialPlanGrant extends GrantBase {
   kind?: 'financial'; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox';
+  budgetImpact?: ActionBudgetImpact;
 }
 export interface ObjectWritePlanGrant extends GrantBase {
   kind: 'object_write'; objectWrite: ObjectWriteScope; environment: 'managed'; maxAmount?: never; payeeIds?: never;
@@ -98,4 +117,5 @@ export interface OutcomeAssessment {
 export interface AfterSalesCase {
   id: string; owner: string; originalJobId: string; remedyJobId: string; action: 'cancel' | 'refund';
   state: 'requested' | 'processing' | 'resolved' | 'rejected' | 'unknown'; remoteRef: string; createdAt: string; updatedAt: string;
+  originalIntentId?: string; programRef?: Ref; configurationDigest?: string; reason?: string;
 }

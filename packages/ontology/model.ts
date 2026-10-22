@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ActionImplementation } from './action-dsl.js';
+import { assertPortCompatible, type CompositionPort } from './composition-contract.js';
 
 export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(v => !['constructor', 'prototype', '__proto__'].includes(v));
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
@@ -24,8 +25,9 @@ export interface PropertyDefinition {
 }
 export interface InterfaceActionConstraint {
   id: string; inputs: Record<string, string>; effects: import('./actions.js').EffectClass[]; resultTypes?: string[]; optional?: boolean;
+  ports?: { inputs: Record<string, CompositionPort>; outputs: Record<string, CompositionPort> };
 }
-export interface InterfaceActionMapping { actionId: string; inputMap: Record<string, string> }
+export interface InterfaceActionMapping { actionId: string; inputMap: Record<string, string>; outputMap?: Record<string, string> }
 export interface InterfaceDefinition {
   id: string;
   description: string;
@@ -72,9 +74,11 @@ export interface ActionDefinition {
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
   read?: { version: string; effect: 'read'; inputSchema: object; resultType: string };
-  operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox'; inputSchema: object; resultType: string };
+  operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'local'; inputSchema: object; resultType: string };
   inputSchema?: Record<string, unknown>;
   implementation?: ActionImplementation;
+  /** Versioned ports and evidence rules. A contract alone never grants dispatch. */
+  composition?: import('./composition-contract.js').ActionCompositionContract;
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
 export interface ModelDefinition { id: string; version: string; objects: ObjectTypeDefinition[]; interfaces: InterfaceDefinition[]; links: LinkDefinition[]; actions: ActionDefinition[]; functions: FunctionDefinition[] }
@@ -191,7 +195,7 @@ export class OntologyModel {
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
-      if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');
+      if (a.operation && (a.read || a.operation.environment !== 'sandbox' && !(a.operation.environment === 'local' && a.operation.effect === 'local') || !['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid local or sandbox operation definition');
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');
@@ -221,6 +225,25 @@ export class OntologyModel {
           })
           || !action.effects || digest([...new Set(action.effects)].sort()) !== digest([...new Set(constraint.effects)].sort())
           || constraint.resultTypes?.some(expected => !action.resultTypes?.some(actual => this.assignableType(actual, expected)))) invalid('Incompatible interface action mapping');
+        if (constraint.ports) {
+          if (!action.composition) invalid('Interface ports require an explicit action composition contract');
+          const actual = action.composition;
+          for (const [input, expected] of Object.entries(constraint.ports.inputs)) {
+            const concrete = Object.entries(mapping.inputMap).find(([, alias]) => alias === input)?.[0];
+            if (!concrete || !actual.inputs[concrete]) invalid('Missing interface input port mapping');
+            const port = expected.kind === 'object' && expected.type === implementation.id ? { ...expected, type: item.id } : expected;
+            assertPortCompatible(this, port, actual.inputs[concrete]);
+            if (expected.evidence.origins.some(origin => !actual.inputs[concrete]!.evidence.origins.includes(origin))) invalid('Interface input provenance cannot be narrowed by an implementation');
+          }
+          const outputMap = mapping.outputMap ?? Object.fromEntries(Object.keys(constraint.ports.outputs).map(name => [name, name]));
+          if (new Set(Object.values(outputMap)).size !== Object.keys(outputMap).length || Object.keys(outputMap).some(name => !actual.outputs[name]) || Object.values(outputMap).some(name => !constraint.ports!.outputs[name])) invalid('Invalid interface output port mapping');
+          for (const [output, expected] of Object.entries(constraint.ports.outputs)) {
+            const concrete = Object.entries(outputMap).find(([, alias]) => alias === output)?.[0];
+            if (!concrete || !actual.outputs[concrete]) invalid('Missing interface output port mapping');
+            assertPortCompatible(this, actual.outputs[concrete], expected);
+            if (actual.outputs[concrete]!.evidence.origins.some(origin => !expected.evidence.origins.includes(origin))) invalid('Interface output provenance cannot be weakened by an implementation');
+          }
+        } else if (mapping.outputMap) invalid('Output port mappings require an interface port contract');
       }
     }
     this.ref = Object.freeze({ id: definition.id, version: definition.version, digest: digest({ objects: [...this.objects.keys()].map(id => this.describeType(id)), interfaces: [...this.interfaces.keys()].map(id => this.describeType(id)), links: this.links, actions: this.actions, functions: this.functions }) });
@@ -268,7 +291,7 @@ export class OntologyModel {
     }
     return [...actions.values()];
   }
-  private assignableType(actual: string, expected: string): boolean { if (actual === expected) return true; return this.isInterface(actual) ? this.interfaceAncestors(actual).includes(expected) : this.implements(actual, expected); }
+  assignableType(actual: string, expected: string): boolean { if (!this.hasType(actual) || !this.hasType(expected)) return false; if (actual === expected) return true; return this.isInterface(actual) ? this.interfaceAncestors(actual).includes(expected) : this.implements(actual, expected); }
   hasType(id: string) { return this.objects.has(id) || this.interfaces.has(id); }
   isInterface(id: string) { return this.interfaces.has(id); }
   object(id: string) { return this.objects.get(id) ?? invalid('Unknown concrete object type'); }

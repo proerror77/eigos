@@ -135,8 +135,8 @@ async function verify() {
       modelRuns: job?.runs?.map(({ id, runtime, model, threadId, startedAt, completedAt, outputSha256, decisionDigest, purpose }) => ({ id, runtime, model: model ?? null, threadId, startedAt, completedAt, outputSha256, decisionDigest, purpose })),
       groundingChoices: job?.delegation?.groundingDecisions?.map(({ modelRunId, decision }) => {
         let parsed: Record<string, unknown> = {};
-        try { const value: unknown = JSON.parse(decision.inputJson); if (value && typeof value === 'object' && !Array.isArray(value)) parsed = value as Record<string, unknown>; } catch { /* Invalid JSON remains a failed input, never reconstructed. */ }
-        return { modelRunId, kind: decision.kind, capabilityRef: decision.capabilityRef,
+        try { const value: unknown = JSON.parse('inputJson' in decision ? decision.inputJson : '{}'); if (value && typeof value === 'object' && !Array.isArray(value)) parsed = value as Record<string, unknown>; } catch { /* Invalid JSON remains a failed input, never reconstructed. */ }
+        return { modelRunId, kind: decision.kind, ...('capabilityRef' in decision ? { capabilityRef: decision.capabilityRef } : { criteriaDigest: digest(decision.criteriaJson) }),
           input: { actionIds: Array.isArray(parsed.actionIds) ? parsed.actionIds.filter((value): value is string => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(value)) : undefined,
             objects: Array.isArray(parsed.objects) ? parsed.objects.flatMap(value => {
               if (!value || typeof value !== 'object' || Array.isArray(value)) return [];

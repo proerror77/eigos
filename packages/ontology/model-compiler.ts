@@ -6,6 +6,8 @@ import { parseOntologyDocument, type DefinitionKind, type HandlerRef, type JsonS
 import { OntologyModel, type ActionDefinition, type FunctionDefinition, type ModelDefinition, type PropertyDefinition } from './model.js';
 import { executionReferenceLinks } from './execution-model.js';
 import { isVirtualRef } from './network-model.js';
+import { bindCompositionCompiler, validateCompositionContract } from './composition-contract.js';
+import { managedComposition } from './managed-composition.js';
 
 function fail(message: string): never { throw new DomainError('INVALID_INPUT', message); }
 const refKey = (ref: HandlerRef) => JSON.stringify([ref.id, ref.version, ref.digest]);
@@ -216,6 +218,9 @@ export const GENERATED_EXECUTION_RESOURCE_PREFIX = 'generated:execution-link:';
 /** Materialized system relationships are reviewable release data, never hidden runtime mutations. */
 export function normalizeOntologyDocument(input: OntologyDocument | unknown): OntologyDocument {
   const document = parseOntologyDocument(input);
+  // Only namespaces that carry the new protected kernel opt into these derived
+  // contracts. Historical v15/v16 releases compile to their original digests.
+  if (document.objects.some(type => type.id === 'RegisteredActionType' && type.properties.composition)) document.actions = document.actions.map(managedComposition);
   const completed = new Set<string>();
   const visitInterface = (id: string, active = new Set<string>()): void => {
     if (completed.has(id)) return;
@@ -287,9 +292,11 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
     functions: document.functions.map(({ handlerRef, ...rest }) => { if (!handlerRef) fail('Functions require an exact trusted handler reference'); registry.resolveFunction(handlerRef, rest); return rest; }),
   };
   const model = new OntologyModel(definition, { trustedActionImplementations });
+  bindCompositionCompiler(model, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });
   for (const action of model.actionDefinitions()) {
     const implementation = model.actionImplementation(action.id);
     if (implementation) validateActionImplementation(implementation, model, action);
+    validateCompositionContract(model, action, { schema: compileJsonSchema, validator: (ref, schema) => registry.resolveValidator(ref, schema) });
   }
   for (const link of document.links.filter(link => link.writePolicy === 'managed')) {
     const endpoints = [...model.concreteTypes(link.from.type), ...model.concreteTypes(link.to.type)];

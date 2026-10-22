@@ -27,7 +27,9 @@ export class ReplanRequired extends DomainError {
 }
 
 // Domain programs signal a human-owned connection handoff without a model retry.
-export class ConnectionAuthorizationRequired extends ReplanRequired {}
+export class ConnectionAuthorizationRequired extends ReplanRequired {
+  constructor(message: string, readonly connection?: { provider: string; nextAction: string; resumeAction: string }) { super(message); }
+}
 
 export function requireScope(principal: Principal, scope: Scope): void {
   if (!principal.scopes.includes(scope)) throw new DomainError('FORBIDDEN', `Required scope: ${scope}`);
@@ -83,7 +85,7 @@ export interface Job {
   deliverable?: string;
   state: JobState;
   question?: string;
-  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'completed'; markdown?: string; result?: object } };
+  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'partial' | 'completed'; markdown?: string; result?: object } };
   runs?: RunEvidence[];
   memberUsage?: import('./member-usage.js').MemberUsage;
   revision?: number;

@@ -36,7 +36,7 @@ export class DocumentAdapter implements ActionAdapter {
   async observe(ctx: ActionContext): Promise<ActionResult> { return this.reconcile(ctx); }
   async reconcile(ctx: ActionContext): Promise<ActionResult> { return { kind: 'requires_input', eventId: `${ctx.attempt.id}:document-review`, sourceVersion: ctx.attempt.ordinal, message: '上次文档模型调用的结果无法回查。若仍需草稿，请在本任务明确确认重新生成。', evidenceRefs: [] }; }
   verifyAction(_ctx: ActionContext, result: ActionResult) { return { accepted: result.kind === 'requires_input' || result.kind === 'confirmed' && !!result.runEvidence && !!result.delivery, reason: 'Bounded model receipt; no external business authority' }; }
-  verify(ctx: AdapterContext, _plan: ExecutionPlan, _data: unknown, delivery: Delivery) {
+  verify(ctx: AdapterContext, _plan: import('../core/catalog.js').AdapterPlan, _data: unknown, delivery: Delivery) {
     const data = delivery.artifact.data; const result = data.result as { contentSha256?: string; noExternalActions?: boolean } | undefined;
     const accepted = delivery.artifact.name === 'deliverable.md' && data.goal === ctx.request.originalGoal && typeof data.markdown === 'string' && !!data.markdown.trim() && data.markdown.length <= 40000 && result?.contentSha256 === digest(data.markdown) && result.noExternalActions === true;
     return { accepted, reason: 'Document format, original goal, content hash and document-only boundary verified; semantic quality is not independently certified' };
