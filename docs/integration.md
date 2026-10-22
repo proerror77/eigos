@@ -69,3 +69,7 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 `booking.pa-payment.sandbox@2` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
 
 Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求、路线选择与通知 Schema。Python 客户端支持 `payment-route`、`payment-result`，并通过 `reconcile` 复用已有原操作回读接口。此路径没有 EIGOS 付款动作，不需要 EIGOS Stripe 账户；旧商家付款环境开关已禁用。所有测试均在隔离服务商和 PA 钱包夹具中完成，真实钱包及服务商未接入。详见 [PA 预约付款流程](pa-booking-payment-flow.md)。
+
+## Stripe Treasury 预留
+
+已预留官方 MCP 地址及 `EIGOS_STRIPE_TREASURY_ENABLED=false`。当前版本拒绝启用，没有账户授权、网络连接或可执行 Treasury 能力；MCP/A2A 均不发布资金查询或操作入口。后续按成员账户授权和 Worker 执行边界单独接入，见 [Treasury 接入预留](stripe-treasury-integration.md)。

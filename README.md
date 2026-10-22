@@ -27,6 +27,8 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。后端�
 
 模型上下文精简、按依赖并发读取及国内／跨关境运输关卡见 [实现与性能对比](docs/context-and-shipping-2026-10-20.md)。
 
+[Stripe Treasury 官方 MCP 接入预留](docs/stripe-treasury-integration.md)已增加默认关闭的配置。当前未授权、未连接、未调用，不作为可执行能力发布；启用需要后续独立实现和验证。
+
 交易沙箱从未知商家、国家和地址开始，Agent 查询授权 PA 上下文、商家、库存、运输、清关及完整费用，再按准确计划取得沙箱许可。购物车、订单、支付和实际交付各有独立证据；所有新业务来源均为合成数据，真实订单和付款仍禁止。实现、启用方式与验证范围见 [Agent 交易履约沙箱](docs/commerce-agent-sandbox-2026-10-19.md)。
 
 `commerce.journey.sandbox@2` 将[海关资料与硬关卡](docs/customs-policy-2026-10-20.md)接入同一循环。Agent 实际读取当前任务的规则与官方参考资料，并在报价、结账、下单前计算 `customsGateStatus`；运行时再次核对，PA 授权不能覆盖未知、过期、冲突或缺失证据。当前通过状态仅为 `pass_sandbox`，不构成真实进口许可。

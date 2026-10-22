@@ -46,6 +46,9 @@ const schema = z.object({
   EIGOS_STRIPE_TEST_SECRET_KEY_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]{1,100}$/).optional(),
   EIGOS_STRIPE_TEST_MERCHANT_ID: z.string().trim().min(1).max(200).optional(),
+  // Connection reservation only: no credentials, MCP client or executable capability.
+  EIGOS_STRIPE_TREASURY_ENABLED: z.literal('false', { error: 'Stripe Treasury is reserved and disabled; account authorization and execution are not implemented' }).default('false'),
+  EIGOS_STRIPE_TREASURY_MCP_URL: z.literal('https://mcp.stripe.com', { error: 'Stripe Treasury reservation requires the official MCP endpoint' }).default('https://mcp.stripe.com'),
   EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
