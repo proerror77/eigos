@@ -39,3 +39,30 @@ __pycache__/
 # Raw screenshots containing a credential or personal contact information stay local.
 /docs/eigos-alipay-sms-verification-2026-10-15.jpg
 /docs/alipay-free-resource-request-2026-10-15.jpg
+
+# Historical raw check output / command captures reviewed on 2026-10-22.
+# Keep local copies; the audit manifest and substantive evidence stay tracked.
+/docs/evidence/grok-oag-2026-10-15/run1/01-send.cmd
+/docs/evidence/grok-oag-2026-10-15/run1/02-poll.cmd
+/docs/evidence/grok-oag-2026-10-15/run1/03-reply.cmd
+/docs/evidence/grok-oag-2026-10-15/run1/05-authorize.cmd
+/docs/evidence/ontology-runtime-2026-10-19/build.txt
+/docs/evidence/ontology-runtime-2026-10-19/check.txt
+/docs/evidence/ontology-runtime-2026-10-19/e2e.txt
+/docs/evidence/ontology-runtime-2026-10-19/tests.txt
+/docs/evidence/service-domain-validation-2026-10-18/build.log
+/docs/evidence/service-domain-validation-2026-10-18/process-e2e.tap
+/docs/evidence/service-domain-validation-2026-10-18/tests.tap
+/docs/evidence/service-domain-validation-2026-10-18/typecheck.log
+/docs/evidence/service-domains-2026-10-18/process-e2e.tap
+/docs/evidence/service-domains-2026-10-18/tests.tap
+/docs/evidence/shopify-pa-2026-10-19/build.txt
+/docs/evidence/shopify-pa-2026-10-19/check.txt
+/docs/evidence/shopify-pa-2026-10-19/tests.txt
+/docs/evidence/shopify-readonly-2026-10-18/build.log
+/docs/evidence/shopify-readonly-2026-10-18/check.log
+/docs/evidence/shopify-readonly-2026-10-18/tests.log
+/docs/evidence/ucp-local-2026-10-18/build.log
+/docs/evidence/ucp-local-2026-10-18/process-e2e.tap
+/docs/evidence/ucp-local-2026-10-18/tests.tap
+/docs/evidence/ucp-local-2026-10-18/typecheck.log
