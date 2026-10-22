@@ -1,14 +1,41 @@
+# Dependencies and generated builds
 node_modules/
 dist/
+coverage/
+*.tsbuildinfo
+
+# Local configuration and runtime data
 .env
 .env.*
 !.env.example
 data/
 *.sqlite*
-.DS_Store
-.tgrep/
 /output/
+/logs/
+/tmp/
+/temp/
+/artifacts/
+/test-results/
+/playwright-report/
+*.log
+# Reviewed evidence logs remain eligible for explicit archival.
+!/docs/evidence/**/*.log
+
+# Local tool caches and Python environments
+.tgrep/
+.cache/
+.eslintcache
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# OS and editor temporary files
+.DS_Store
+*.swp
+*.swo
+*~
+
 # Raw screenshots containing a credential or personal contact information stay local.
 /docs/eigos-alipay-sms-verification-2026-10-15.jpg
 /docs/alipay-free-resource-request-2026-10-15.jpg
-coverage/
