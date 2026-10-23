@@ -1,6 +1,7 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { z } from 'zod';
-import type { ProviderBinding, ServiceCapability } from '../ontology/execution.js';
-import { paotuiPreviewSchema, publicGeoQuerySchema } from './paotui-contracts.js';
+import type { ProviderBinding, ServiceCapability } from '../../../packages/ontology/execution.js';
+import { paotuiPreviewSchema, publicGeoQuerySchema } from '../../../packages/capabilities/paotui-contracts.js';
 const deliveryInput = paotuiPreviewSchema.omit({ action: true }); const addressInput = z.object({}).strict();
 export const paotuiReadDefinitions = [
   { id: 'geo.search', name: 'Search public locations', description: 'Read-only POI address search through the configured personal Meituan channel. Requires city and keyword, which define the search scope, not a delivery destination or a guarantee that every returned POI lies inside an administrative boundary. Returns locations, not menu/product search, stock, merchant reliability, delivery or purchase fulfillment.', schema: publicGeoQuerySchema, kind: 'geo' },

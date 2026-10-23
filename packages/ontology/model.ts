@@ -129,7 +129,7 @@ export class OntologyModel {
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
       if (a.read?.mcp) {
         mcpReadBindingSchema.parse(a.read.mcp);
-        for (const dep of a.read.mcp.requires) if (this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        for (const dep of a.read.mcp.requires) if ((dep.action ? this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
         if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
       }
       if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['local', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');

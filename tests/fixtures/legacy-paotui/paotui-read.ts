@@ -1,11 +1,12 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { randomUUID } from 'node:crypto';
-import type { AdapterContext, ExecutionAdapter, Preparation, Delivery } from '../core/catalog.js';
-import { digest } from '../core/delegation.js';
-import { DomainError, ReplanRequired } from '../core/domain.js';
-import type { ExecutionPlan } from '../ontology/execution.js';
+import type { AdapterContext, ExecutionAdapter, Preparation, Delivery } from '../../../packages/core/catalog.js';
+import { digest } from '../../../packages/core/delegation.js';
+import { DomainError, ReplanRequired } from '../../../packages/core/domain.js';
+import type { ExecutionPlan } from '../../../packages/ontology/execution.js';
 import { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions } from './paotui-ontology.js';
 export { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from './paotui-ontology.js';
-import { paotuiQuerySchema, type PaotuiReader, type PaotuiQuery } from './paotui-contracts.js';
+import { paotuiQuerySchema, type PaotuiReader, type PaotuiQuery } from '../../../packages/capabilities/paotui-contracts.js';
 function total(result: Record<string, unknown>) {
   const quote = result.quote as Record<string, unknown> | undefined; const text = String(quote?._previewTotal ?? '');
   if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return undefined; const [whole, fraction = ''] = text.split('.');

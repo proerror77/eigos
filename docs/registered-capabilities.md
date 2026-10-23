@@ -1,12 +1,14 @@
 # Ontology + LLM 后端
 
-更新于 2026-10-19。当前通用委托代码使用 `ontology-execution-v9`，业务模型为 `eigos.business@8`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
+更新于 2026-10-23。当前代码使用 `ontology-execution-v15`，业务模型为 `eigos.business@15`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
 新增 `commerce.journey.sandbox@1`：默认关闭，只对显式本机沙箱任务开放。16 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；5 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
 ## 主路径
+
+实际供应商 MCP 已统一为独立本体数据及 Agent 动作循环，见 [完整范围与维护边界](mcp-ontology-unification.md)。其初始化只创建范围，模型读取定义及观察后选动作，连接器不做预先候选准备。下图的 Resolver 分支仍用于其他已登记的非 MCP／模拟能力，不能据此把它当成 MCP 固定流程。
 
 ```mermaid
 flowchart LR
@@ -55,7 +57,7 @@ LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函�
 | `brief.prepare@2` | 本地说明生成与精确验收 | 说明完成，底层 execution=not_started |
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
-| `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | 模型读取独立本体并选择 stdio MCP 原子读取，逐次调用美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
 | `ride.estimate.query@1` | Worker 经官方 MCP 执行两个受控只读工具；默认关闭，仅本机本人 | 地点或估价观察；无完整车费、订单、付款或行程完成，见[说明](didi-readonly-integration.md) |
 | `commerce.catalog.query@2` | Agent 读取本体，选择搜索／详情／商家发现／店铺读取及其参数和组合；逐次观察后由模型提出完成，程序验收 | 有来源的公开商品查询或比较文件；显示单价与可售标记不证明库存、配送或购买权限 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |

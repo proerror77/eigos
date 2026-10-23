@@ -1,3 +1,4 @@
+import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
 import { evaluateStripePaymentFunction } from './stripe-payment-functions.js';
@@ -24,7 +25,7 @@ export const functionCallSchema = z.union([
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('catalogObservationStatus'), simple('rideEstimateStatus'),
+  simple('meituanReadStatus'), simple('catalogObservationStatus'), simple('rideEstimateStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -60,6 +61,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const meituanResult = evaluateMeituanRead(store, owner, input, budget);
+  if (meituanResult) return meituanResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
   if (rideResult) return rideResult;
   const bookingResult = evaluateBookingFunction(store, owner, input, budget);

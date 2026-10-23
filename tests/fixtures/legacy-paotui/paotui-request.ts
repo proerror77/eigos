@@ -1,10 +1,11 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { z } from 'zod';
-import { digest } from '../core/delegation.js';
-import { DomainError } from '../core/domain.js';
-import type { AdapterContext, ExecutionAdapter, Preparation, Delivery } from '../core/catalog.js';
-import type { JobStore } from '../core/store.js';
-import type { ExecutionPlan, ServiceCapability, ProviderBinding } from '../ontology/execution.js';
-import type { PaotuiReader } from './paotui-contracts.js';
+import { digest } from '../../../packages/core/delegation.js';
+import { DomainError } from '../../../packages/core/domain.js';
+import type { AdapterContext, ExecutionAdapter, Preparation, Delivery } from '../../../packages/core/catalog.js';
+import type { JobStore } from '../../../packages/core/store.js';
+import type { ExecutionPlan, ServiceCapability, ProviderBinding } from '../../../packages/ontology/execution.js';
+import type { PaotuiReader } from '../../../packages/capabilities/paotui-contracts.js';
 import { PaotuiReadAdapter } from './paotui-read.js';
 
 const inputSchema = z.object({

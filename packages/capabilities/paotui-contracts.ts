@@ -10,3 +10,5 @@ export const paotuiQuerySchema = z.discriminatedUnion('action', [
 ]);
 export type PaotuiQuery = z.infer<typeof paotuiQuerySchema>;
 export interface PaotuiReader { query(input: PaotuiQuery, signal: AbortSignal): Promise<object> }
+
+export type PublicGeoQuery = z.infer<typeof publicGeoQuerySchema>;

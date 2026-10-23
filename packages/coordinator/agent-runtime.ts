@@ -95,9 +95,10 @@ export class AgentRuntime {
     const reads = access.session.finish();
     if (decision.kind === 'clarify' || decision.kind === 'no_feasible_plan') {
       if (decision.steps.length || decision.completionJson) failure('A paused decision cannot include executable actions');
-      try { program.validatePause?.(ctx, decision, reads); }
+      let message = decision.message;
+      try { program.validatePause?.(ctx, decision, reads); if (decision.kind === 'clarify') message = program.clarification?.(ctx, decision, reads) ?? message; }
       catch (error) { this.store.finish(claim, current => { this.feedback(current, 'validation', errorMessage(error), digest(decision)); current.delegation!.nextAt = 0; }); return; }
-      this.pause(claim, decision.kind === 'clarify', decision.message, { modelRunId: response.evidence.id, decision, ontologyPlanning: reads }); return;
+      this.pause(claim, decision.kind === 'clarify', message, { modelRunId: response.evidence.id, decision, ontologyPlanning: reads }); return;
     }
     if (decision.kind === 'complete') {
       try {
@@ -266,6 +267,7 @@ export class AgentRuntime {
       this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); return true;
     }
     const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt };
+    context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     context.assertDispatchAllowed = () => {
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) failure('Execution lease or task authority ended before the provider write');

@@ -1,10 +1,11 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { z } from 'zod';
-import { digest } from '../core/delegation.js';
-import { paotuiQuerySchema, type PaotuiQuery, type PaotuiReader } from './paotui-contracts.js';
+import { digest } from '../../../packages/core/delegation.js';
+import { paotuiQuerySchema, type PaotuiQuery, type PaotuiReader } from '../../../packages/capabilities/paotui-contracts.js';
 import { PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions, ontologyToolName } from './paotui-ontology.js';
 import { ontologyReceiptSchema } from './paotui-mcp-server.js';
 

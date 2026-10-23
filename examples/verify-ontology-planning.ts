@@ -1,3 +1,4 @@
+// Historical synthetic adapter exercise only; not the current MCP execution path.
 // Opt-in real model, synthetic address/quote source, ephemeral HTTP Gateway and Worker.
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -13,8 +14,8 @@ import { readConfig } from '../packages/core/config.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { Coordinator, CodexReasoner } from '../packages/coordinator/coordinator.js';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
-import { PaotuiRequestAdapter, DELIVERY_REQUEST_CAPABILITY, DELIVERY_REQUEST_BINDING } from '../packages/capabilities/paotui-request.js';
-import { ontologyReceiptSchema } from '../packages/capabilities/paotui-mcp-server.js';
+import { PaotuiRequestAdapter, DELIVERY_REQUEST_CAPABILITY, DELIVERY_REQUEST_BINDING } from '../tests/fixtures/legacy-paotui/paotui-request.js';
+import { ontologyReceiptSchema } from '../tests/fixtures/legacy-paotui/paotui-mcp-server.js';
 import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import type { Job } from '../packages/core/domain.js';

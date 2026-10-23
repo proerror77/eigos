@@ -16,6 +16,8 @@ export interface AgentActionContext extends AgentProgramContext {
   /** Recheck the current lease, cancellation and exact grant immediately before
    * each provider write in a multi-request atomic business operation. */
   assertDispatchAllowed?: () => void;
+  /** Private source/cache writes share the current claim/revision transaction. */
+  persistPrivate?: (write: () => void) => boolean;
 }
 export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];
@@ -45,6 +47,8 @@ export interface AgentProgram {
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;
   validatePlanning?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot): void;
   validatePause?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): void;
+  /** Render an owner-private question only after the model chooses clarification. */
+  clarification?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): string | undefined;
   authority?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): AgentActionAuthority;
   invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult>;
   /** Read the original operation only. It must never replay a business write. */

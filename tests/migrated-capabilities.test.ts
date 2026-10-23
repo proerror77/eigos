@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { DOCUMENT_CAPABILITY } from '../packages/capabilities/document.js';
-import { PaotuiReadAdapter, PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from '../packages/capabilities/paotui-read.js';
+import { PaotuiReadAdapter, PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from './fixtures/legacy-paotui/paotui-read.js';
 import { CSV_CAPABILITY, CSV_BINDING, CsvAuditAdapter } from '../packages/capabilities/csv-audit.js';
 import { CSV_CHECKS } from '../packages/ontology/csv-audit.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';

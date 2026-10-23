@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
 import { digest } from '../packages/core/delegation.js';
-import { createPaotuiOntologyServer, ontologyReceiptSchema } from '../packages/capabilities/paotui-mcp-server.js';
-import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS, PaotuiReadAdapter } from '../packages/capabilities/paotui-read.js';
+import { createPaotuiOntologyServer, ontologyReceiptSchema } from './fixtures/legacy-paotui/paotui-mcp-server.js';
+import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS, PaotuiReadAdapter } from './fixtures/legacy-paotui/paotui-read.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { backend, interpretation, reasoner } from './backend-fixture.js';
 

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { catalogReadDefinition, catalogReadDefinitionRef } from './catalog-read-definition.js';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { catalogReceiptSchema, shopifyMerchantSchema } from '../capabilities/shopify/contracts.js';
 
@@ -16,7 +17,7 @@ export const catalogActionSchemas = {
   ReadMerchantVariants: z.strictObject({ scope, merchantId, endpoint, variantIds: z.array(variantIdSchema).min(1).max(10), observation: observation.optional() }),
 };
 export type CatalogAction = keyof typeof catalogActionSchemas;
-export const catalogActionIds = Object.keys(catalogActionSchemas) as CatalogAction[];
+export const catalogActionIds = catalogReadDefinition.actions.map(a => a.id) as CatalogAction[];
 export const catalogObservedItemSchema = z.strictObject({
   productId: text, variantId: variantIdSchema, title: text, sku: z.string().max(500).optional(),
   displayPrice: z.strictObject({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.string().regex(/^[A-Z]{3}$/) }).optional(),
@@ -24,7 +25,7 @@ export const catalogObservedItemSchema = z.strictObject({
 });
 export const catalogObservationSchema = z.strictObject({
   id: text, requestId: text, requestRevision: z.number().int().positive(), configurationDigest: sha,
-  action: z.enum(catalogActionIds as [CatalogAction, ...CatalogAction[]]), actionInput: z.record(z.string(), z.unknown()),
+  action: z.enum(Object.keys(catalogActionSchemas) as [CatalogAction, ...CatalogAction[]]), actionInput: z.record(z.string(), z.unknown()),
   planId: text, intentId: text, attemptId: text, modelRunId: text,
   scope, merchant: shopifyMerchantSchema, country: z.literal('US'),
   evidenceKind: z.enum(['live_readonly', 'fixture']), receipt: catalogReceiptSchema,
@@ -56,17 +57,13 @@ export const catalogAgentLinks: LinkDefinition[] = [
   ]),
   { id: 'CatalogObservationOffers', description: 'Display-price offers from this exact read', from: { type: 'CatalogObservation', name: 'offers', many: true }, to: { type: 'ProductOffer', name: 'catalogObservation', many: false } },
 ];
-const descriptions: Record<CatalogAction, string> = {
-  SearchPublicCatalog: 'Search public product observations for one allowed merchant using your chosen query and result limit. Returns every matching merchant variant in the bounded response. No detail or merchant call is implied.',
-  InspectCatalogVariant: 'Read current global detail for one variant already evidenced in an owned observation. Choose the variant explicitly; this action makes one detail call.',
-  DiscoverMerchantCatalog: 'Read and validate an allowed merchant\'s UCP catalog endpoint and supported read capabilities. Returns a CatalogEndpoint for later merchant reads, with no catalog lookup.',
-  ReadMerchantVariants: 'Read the explicitly selected variant IDs at a previously discovered merchant endpoint. IDs must be present in your referenced observation or explicitly supplied by the requester. Returns exact variant facts even if they differ from an earlier observation; you decide what to do next.',
-};
-export const catalogAgentActions: ActionDefinition[] = catalogActionIds.map(id => ({
-  id, description: descriptions[id], inputs: { scope: 'CatalogTask' }, changes: [id === 'DiscoverMerchantCatalog' ? 'CatalogEndpoint' : 'CatalogObservation'],
-  submissionCriteria: ['same_owner', 'current_request_revision', 'configured_merchant', 'source_bound_inputs', 'read_only'],
-  read: { version: '1', effect: 'read', inputSchema: z.toJSONSchema(catalogActionSchemas[id]), resultType: id === 'DiscoverMerchantCatalog' ? 'CatalogEndpoint' : 'CatalogObservation' },
-}));
+export const catalogAgentActions: ActionDefinition[] = catalogReadDefinition.actions.map(action => {
+  if (!Object.hasOwn(catalogActionSchemas, action.id)) throw new Error('Unknown catalog data contract');
+  return { id: action.id, description: action.description, inputs: { scope: 'CatalogTask' }, changes: [action.resultType],
+    submissionCriteria: ['same_owner', 'current_request_revision', 'configured_merchant', 'source_bound_inputs', 'read_only'],
+    read: { version: catalogReadDefinition.version, effect: 'read', inputSchema: z.toJSONSchema(catalogActionSchemas[action.id as CatalogAction]), resultType: action.resultType,
+      mcp: action.mcp, module: { ...catalogReadDefinitionRef, completion: catalogReadDefinition.completion } } };
+});
 export const catalogAgentFunctions: FunctionDefinition[] = [
   { id: 'catalogObservationStatus', version: '1', inputTypes: ['CatalogObservation', 'CatalogEndpoint'], description: 'Validate a single observation\'s identity, source, relationships and freshness; return its facts and explicit unknowns. A known empty observation is partial evidence, never proof of complete absence.' },
 ];

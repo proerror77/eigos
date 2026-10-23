@@ -3,7 +3,7 @@ import type { Job } from '../core/domain.js';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { BACKEND_VERSION } from './execution.js';
-import { ontologyReceiptSchema } from '../capabilities/paotui-mcp-server.js';
+import { ontologyReceiptSchema } from '../capabilities/paotui-legacy-receipt.js';
 import { paotuiPublicPlaceSchema } from '../capabilities/paotui-public-locations.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectBatch, type ObjectWrite, type ObjectSource } from './object-store.js';
 import type { ObjectRef } from './model.js';

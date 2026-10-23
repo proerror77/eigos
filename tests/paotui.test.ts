@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { paotuiQuerySchema } from '../packages/capabilities/paotui.js';
+import { paotuiQuerySchema } from '../packages/capabilities/paotui-contracts.js';
 import { readConfig } from '../packages/core/config.js';
 
 

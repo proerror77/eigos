@@ -6,7 +6,9 @@ import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentAction
 import { AgentReadError } from '../core/agent-program.js';
 import type { Delivery } from '../core/catalog.js';
 import type { ServiceCapability, ServiceRequest } from '../ontology/execution.js';
-import type { ObjectRef } from '../ontology/model.js';
+import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { catalogReadDefinition, catalogReadDefinitionRef } from '../ontology/catalog-read-definition.js';
+import { resolveOntologyMcpRead, ONTOLOGY_READ_GUIDANCE } from '../ontology/mcp-read.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { catalogActionSchemas, catalogActionIds, catalogTaskInputSchema, catalogObservationSchema, catalogCompletionSchema, type CatalogAction, type CatalogObservation } from '../ontology/catalog-agent.js';
@@ -26,23 +28,23 @@ export class CatalogAgentProgram implements AgentProgram {
   readonly ref = CATALOG_AGENT_REF;
   readonly actionIds = catalogActionIds;
   readonly completionSchema = z.toJSONSchema(catalogCompletionSchema);
-  readonly guidance = 'Read CatalogTask to learn your exact scope. Use the registered read action schemas, choose only the actions needed by this goal, and choose their arguments yourself. There is no required search/detail/discovery/lookup sequence. If the requester supplies exact variant IDs, a merchant read can use them directly after endpoint discovery. Otherwise obtain IDs from an owned observation. Read and evaluate observations before choosing a next step or completion. Search results are bounded and can contain many variants; select the variants relevant to the goal, not automatically the first ones. A changed price is a new observation, not a reason to replay an old recipe. Choose another read if evidence expired or is insufficient. To complete, supply explicit observation refs and variant IDs matching the completion schema. Evaluate catalogObservationStatus for each selected observation in this decision. A known, fresh observation can support a public result; a merchant verification claim specifically requires ReadMerchantVariants evidence. Unknown stock quantities, delivery commitments, complete catalog coverage and merchant partnership remain unknown. The host generates the factual answer from the selected observations; rationale is your decision explanation, not an evidence source.';
+  readonly guidance = ONTOLOGY_READ_GUIDANCE;
   readonly configurationDigest: string;
   readonly merchants: ShopifyMerchant[];
   private connector: CatalogConnector;
   constructor(merchants: ShopifyMerchant[], options: { connector?: CatalogConnector; auditDirectory?: string } = {}) {
     this.merchants = shopifyMerchantsSchema.parse(merchants);
     this.connector = options.connector ?? new AnonymousShopifyConnector(options.auditDirectory);
-    this.configurationDigest = digest({ merchants: this.merchants, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: this.connector.evidenceKind, program: 'catalog-agent-actions-v2' });
+    this.configurationDigest = digest({ merchants: this.merchants, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: this.connector.evidenceKind, program: 'catalog-ontology-bindings-v3', ontology: catalogReadDefinitionRef });
   }
   permitted(owner: string) { return this.merchants.length > 0 && owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
-    return { ref: this.ref, ontologyRef: { id: 'catalog.agent.actions', version: '1' }, name: 'Agent 公开商品查询与比较',
+    return { ref: this.ref, ontologyRef: { id: 'catalog.agent.actions', version: catalogReadDefinition.version }, name: 'Agent 公开商品查询与比较',
       description: `根据用户目标选择和组合商品搜索、变体详情、商家目录发现、指定变体读取，返回有来源的公开商品信息或比较。支持商家：${this.merchants.map(m => `${m.name}（merchantId=${m.id}）`).join('、')}。解释请求时只确定 merchantIds 和 country=US；查询词、结果数量、商品变体及后续动作由 Agent 在读取 Ontology 后决定。US 是目录市场。比较两款、取两条等是检索目标，不是采购数量；单价筛选不是完整服务预算。只查询，不创建购物车、不下单付款；库存数量、配送及合作状态未知。`,
       tags: ['catalog', 'shopify', 'read-only', 'agent'], environment: 'live', completion: 'artifact',
       inputSchema: z.toJSONSchema(catalogTaskInputSchema.extend({ merchantIds: z.array(z.enum(this.merchants.map(m => m.id) as [string, ...string[]])).min(1).max(8) })),
       ontology: { objects: ['CatalogTask', 'CatalogObservation', 'CatalogEndpoint', 'ProductOffer', 'SourceReceipt'], planning: 'Model-selected read actions and observation-based follow-up decisions; no prepared recipe.' },
-      actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: 'read' as const })), verifierRef: { id: 'catalog.agent.source-readback', version: '1' },
+      actions: this.actionIds.map(id => ({ ref: { id, version: catalogReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'catalog.agent.source-readback', version: '1' },
       predicates: [{ id: 'execution.no_order', description: '不创建购物车、结账、订单或付款' }, { id: 'catalog.public_only', description: '仅匿名公开商品数据' }],
       outcomePredicates: ['catalog.merchant_verified'],
     };
@@ -62,7 +64,7 @@ export class CatalogAgentProgram implements AgentProgram {
   }
   definition(graph: OntologyObjectStore, action: string) {
     const definition = graph.model.action(action);
-    if (!this.actionIds.includes(action as CatalogAction) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action)))) invalid('Catalog action definition and execution binding differ');
+    if (!this.actionIds.includes(action as CatalogAction) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action))) || !equal(definition.read.mcp, catalogReadDefinition.actions.find(a => a.id === action)?.mcp) || definition.read.module?.digest !== catalogReadDefinitionRef.digest) invalid('Catalog action definition and execution binding differ');
     return definition;
   }
   private scope(ctx: AgentProgramContext) {
@@ -76,7 +78,7 @@ export class CatalogAgentProgram implements AgentProgram {
   }
   private observation(ctx: AgentProgramContext, ref: ObjectRef, merchantId?: string) {
     if (!ctx.state.observations.some(r => equal(r, ref))) invalid('Observation was not produced by this agent task');
-    const result = ctx.graph.evaluate(ctx.owner, { function: 'catalogObservationStatus', object: ref });
+    const result = ctx.graph.evaluate(ctx.owner, { function: catalogReadDefinition.completion.evaluate, object: ref });
     if (result.status !== 'known') invalid(result.reason ?? 'Catalog evidence is unknown');
     const s = checkedAgentCatalogObservation(ctx.graph.read(ctx.owner, ref).properties.snapshot);
     if (s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== this.configurationDigest || !equal(s.scope, ctx.state.scope) || s.evidenceKind !== this.connector.evidenceKind || !this.merchants.some(m => equal(m, s.merchant)) || merchantId && s.merchant.id !== merchantId) invalid('Catalog observation provenance differs from the current task');
@@ -93,34 +95,49 @@ export class CatalogAgentProgram implements AgentProgram {
     }
     if (action === 'ReadMerchantVariants') {
       const x = catalogActionSchemas.ReadMerchantVariants.parse(input), endpoint = this.observation(ctx, x.endpoint, x.merchantId).snapshot;
-      if (endpoint.action !== 'DiscoverMerchantCatalog' || !endpoint.profile) invalid('Merchant reads require a source-verified endpoint');
+      if (!endpoint.profile) invalid('Merchant reads require a source-verified endpoint');
       if (new Set(x.variantIds).size !== x.variantIds.length) invalid('Duplicate variant IDs');
       const observed = x.observation ? this.observation(ctx, x.observation, x.merchantId).snapshot : undefined;
       for (const id of x.variantIds) if (observed ? !observed.items.some(i => i.variantId === id) : !ctx.request.messages.some(m => m.text.includes(id))) invalid('Variant IDs must be observed or explicitly supplied by the requester');
     }
   }
+  validatePlanning(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, reads: PlanningSnapshot) {
+    for (const dependency of this.definition(ctx.graph, action).read!.mcp!.requires) {
+      if (dependency.optional && input[dependency.observationInput] === undefined) continue;
+      const ref = objectRefSchema.parse(input[dependency.observationInput]); this.observation(ctx, ref, String(input.merchantId));
+      const status = ctx.graph.evaluate(ctx.owner, { function: dependency.evaluate, object: ref });
+      if (status.status !== 'known') invalid('Declared catalog dependency is unknown');
+      if (dependency.evidence !== 'accepted' && (!reads.objects.some(o => equal(o.ref, ref)) || !reads.reads.some(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: dependency.evaluate, object: ref }) && r.outputDigest === digest(status)))) invalid('Catalog dependency requires actual model evaluation');
+    }
+  }
   async invoke(ctx: AgentActionContext, action: string, value: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, value);
     const input = this.schema(action).parse(value), merchant = this.merchants.find(m => m.id === input.merchantId)!;
-    const context = { address_country: 'US' };
-    let call: CatalogCall;
-    if (action === 'SearchPublicCatalog') call = { operation: 'search_catalog', input: { query: input.query, context, pagination: { limit: input.limit }, filters: { shops: [merchant.shopId] } } };
-    else if (action === 'InspectCatalogVariant') call = { operation: 'get_product', input: { id: input.variantId, context, filters: { shops: [merchant.shopId] } } };
-    else if (action === 'DiscoverMerchantCatalog') call = { operation: 'discovery', merchantDomain: merchant.domain };
-    else if (action === 'ReadMerchantVariants') call = { operation: 'lookup_catalog', merchantDomain: merchant.domain, discoveredProfile: this.observation(ctx, input.endpoint as ObjectRef, merchant.id).snapshot.profile, input: { ids: input.variantIds, context } };
-    else throw new DomainError('FORBIDDEN', 'No connector binding for this action');
+    const binding = this.definition(ctx.graph, action).read!.mcp!;
+    const resolved = resolveOntologyMcpRead(binding, input, this.scope(ctx), dependency => {
+      const ref = objectRefSchema.parse(input[dependency.observationInput]);
+      const source = this.observation(ctx, ref, merchant.id).snapshot;
+      if (ref.type !== dependency.objectType || dependency.action && source.action !== dependency.action) invalid('Catalog source differs from its ontology dependency');
+      return dependency.selectionInput ? source.items.find(item => item.variantId === input[dependency.selectionInput!]) ?? invalid('Selected catalog source item is missing') : source;
+    }, { merchant });
+    if (resolved.server !== 'shopify-public') invalid('MCP server is outside the configured merchant binding');
+    const operation = z.enum(['discovery', 'search_catalog', 'get_product', 'lookup_catalog']).parse(resolved.tool);
+    if ((operation === 'discovery') !== (resolved.transport === 'discovery')) invalid('Catalog transport differs from its authorized operation');
+    const connection = z.strictObject({ merchantDomain: z.string().optional(), discoveredProfile: z.unknown().optional() }).parse(resolved.connection);
+    if (connection.merchantDomain && connection.merchantDomain !== merchant.domain) invalid('Ontology mapping changed the authorized merchant');
+    const call: CatalogCall = { operation, ...(operation === 'discovery' ? {} : { input: resolved.args }), ...connection };
     const response = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, configurationDigest: this.configurationDigest, action, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId }, call, signal).catch(error => { if (error instanceof ShopifyReadError) throw new AgentReadError(error.message); throw error; });
     const receipt = catalogReceiptSchema.parse(response.receipt);
     let items: CatalogObservation['items'] = [], profile: Record<string, unknown> | undefined;
-    if (action === 'DiscoverMerchantCatalog') profile = new ShopifyReadOnlyClient({ merchantDomain: merchant.domain }).restoreDiscovery(response.value);
+    if (resolved.transport === 'discovery') profile = new ShopifyReadOnlyClient({ merchantDomain: merchant.domain }).restoreDiscovery(response.value);
     else {
       const output = shopifyCatalogOutputSchema.parse(response.value), products = [...output.products, ...(output.product ? [output.product] : [])];
       const identity = (variantId: string) => ({ variantId, sellerId: merchant.shopId, merchantDomain: merchant.domain });
       // Merchant variant titles may be only option labels (for example "12 oz /
       // Whole Bean"). Preserve the product name as well as that source label.
       const item = (variant: ShopifyVariant, productId: string, title: string) => ({ productId, variantId: variant.id, title: variant.title && variant.title !== title ? `${title} — ${variant.title}` : title, ...(variant.sku === undefined ? {} : { sku: variant.sku }), ...(variant.price ? { displayPrice: { minor: String(variant.price.amount), currency: variant.price.currency } } : {}), ...(variant.availability?.available === undefined ? {} : { availableReported: variant.availability.available }), ...(variant.eligible?.native_checkout === undefined ? {} : { nativeCheckoutEligibleReported: variant.eligible.native_checkout }) });
-      if (action === 'SearchPublicCatalog') items = products.flatMap(p => p.variants.filter(v => v.seller?.id === merchant.shopId && v.seller.domain === merchant.domain).map(v => item(v, p.id, p.title)));
-      else if (action === 'InspectCatalogVariant') { const v = bindShopifyOffer(output, identity(String(input.variantId))), p = products.find(p => p.variants.includes(v))!; items = [item(v, p.id, p.title)]; }
+      if (operation === 'search_catalog') items = products.flatMap(p => p.variants.filter(v => v.seller?.id === merchant.shopId && v.seller.domain === merchant.domain).map(v => item(v, p.id, p.title)));
+      else if (operation === 'get_product') { const v = bindShopifyOffer(output, identity(String(call.input!.id))), p = products.find(p => p.variants.includes(v))!; items = [item(v, p.id, p.title)]; }
       else items = (input.variantIds as string[]).map(id => { const v = bindShopifyMerchantVariant(output, identity(id)), p = products.find(p => p.variants.includes(v))!; return item(v, p.id, p.title); });
       if (items.length > 40) invalid('The response contains more than 40 matching variants; choose a narrower query or smaller limit');
     }
@@ -140,7 +157,7 @@ export class CatalogAgentProgram implements AgentProgram {
     const completion = catalogCompletionSchema.parse(proposal), selectedIds = new Set<string>();
     const selections = completion.selections.map(selection => {
       const { snapshot: s, status } = this.observation(ctx, selection.observation);
-      if (!reads.objects.some(o => equal(o.ref, selection.observation)) || !reads.reads.some(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: 'catalogObservationStatus', object: selection.observation }) && r.outputDigest === digest(status))) invalid('Completion needs a model read and current source-status evaluation for every selected observation');
+      if (!reads.objects.some(o => equal(o.ref, selection.observation)) || !reads.reads.some(r => r.tool === 'evaluate_ontology' && r.status === 'ok' && r.inputDigest === digest({ function: catalogReadDefinition.completion.evaluate, object: selection.observation }) && r.outputDigest === digest(status))) invalid('Completion needs a model read and current source-status evaluation for every selected observation');
       const items = selection.variantIds.map(id => {
         const item = s.items.find(i => i.variantId === id); if (!item) return invalid('Completion selected a variant absent from its cited observation');
         const position = ctx.state.observations.findIndex(ref => equal(ref, selection.observation));
@@ -160,6 +177,6 @@ export class CatalogAgentProgram implements AgentProgram {
     const prices = rows.map(i => i.displayPrice).filter((p): p is NonNullable<typeof p> => !!p);
     const priceComparison = rows.length === 2 && prices.length === 2 && prices[0]!.currency === prices[1]!.currency ? { currency: prices[0]!.currency, firstMinusSecondMinor: String(BigInt(prices[0]!.minor) - BigInt(prices[1]!.minor)), basis: 'display_price_only' } : undefined;
     const deliverable = '已按 Agent 选择的商品和来源完成匿名只读查询。显示价格不代表完整税费或配送报价；库存数量、配送承诺、目录完整性及合作状态未知。未创建购物车、结账、订单或付款。';
-    return { artifact: { id: randomUUID(), name: 'agent-catalog-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { catalogAnswer: { scope: ctx.state.scope, country: 'US', selections, ...(priceComparison ? { priceComparison } : {}), selectionRationale: completion.rationale, completeness: 'partial_or_unknown', stockQuantity: 'unknown', deliveryCommitment: 'unknown', partnerTrust: 'unverified', noBusinessWrites: true } } } }, facts, evidenceRefs: selections.map(s => s.receiptId) };
+    return { artifact: { id: randomUUID(), name: 'agent-catalog-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { catalogAnswer: { ontologyModule: catalogReadDefinitionRef, scope: ctx.state.scope, country: 'US', selections, ...(priceComparison ? { priceComparison } : {}), selectionRationale: completion.rationale, completeness: 'partial_or_unknown', stockQuantity: 'unknown', deliveryCommitment: 'unknown', partnerTrust: 'unverified', noBusinessWrites: true } } } }, facts, evidenceRefs: selections.map(s => s.receiptId) };
   }
 }

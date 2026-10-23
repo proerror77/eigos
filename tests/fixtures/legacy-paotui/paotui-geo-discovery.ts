@@ -1,15 +1,16 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { z } from 'zod';
-import type { AdapterContext, DiscoverySource, ExecutionAdapter, Preparation } from '../core/catalog.js';
-import { sameRef } from '../core/catalog.js';
-import { digest } from '../core/delegation.js';
-import { DomainError } from '../core/domain.js';
-import type { ExecutionPlan } from '../ontology/execution.js';
-import type { DiscoveryCoverage } from '../ontology/supply.js';
-import type { PaotuiReader } from './paotui-contracts.js';
+import type { AdapterContext, DiscoverySource, ExecutionAdapter, Preparation } from '../../../packages/core/catalog.js';
+import { sameRef } from '../../../packages/core/catalog.js';
+import { digest } from '../../../packages/core/delegation.js';
+import { DomainError } from '../../../packages/core/domain.js';
+import type { ExecutionPlan } from '../../../packages/ontology/execution.js';
+import type { DiscoveryCoverage } from '../../../packages/ontology/supply.js';
+import type { PaotuiReader } from '../../../packages/capabilities/paotui-contracts.js';
 import { ontologyReceiptSchema } from './paotui-mcp-server.js';
 import { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions } from './paotui-ontology.js';
 import { PaotuiReadAdapter } from './paotui-read.js';
-import { paotuiPublicPlaceSchema } from './paotui-public-locations.js';
+import { paotuiPublicPlaceSchema } from '../../../packages/capabilities/paotui-public-locations.js';
 
 const capability = PAOTUI_READ_CAPABILITIES[0]!;
 const binding = PAOTUI_READ_BINDINGS[0]!;

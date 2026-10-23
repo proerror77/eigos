@@ -1,8 +1,9 @@
+// Historical fixture only: never registered or packaged by the production Worker.
 import { randomUUID } from 'node:crypto';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { digest } from '../core/delegation.js';
-import { paotuiQuerySchema, type PaotuiReader } from './paotui-contracts.js';
+import { digest } from '../../../packages/core/delegation.js';
+import { paotuiQuerySchema, type PaotuiReader } from '../../../packages/capabilities/paotui-contracts.js';
 import { PAOTUI_READ_CAPABILITIES, paotuiReadDefinitions, ontologyToolName } from './paotui-ontology.js';
 
 export const ontologyReceiptSchema = z.object({

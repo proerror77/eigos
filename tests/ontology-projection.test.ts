@@ -9,8 +9,8 @@ import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { JobStore } from '../packages/core/store.js';
 import { digest } from '../packages/core/delegation.js';
 import { DomainError } from '../packages/core/domain.js';
-import { PaotuiReadAdapter, PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from '../packages/capabilities/paotui-read.js';
-import { ontologyReceiptSchema } from '../packages/capabilities/paotui-mcp-server.js';
+import { PaotuiReadAdapter, PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from './fixtures/legacy-paotui/paotui-read.js';
+import { ontologyReceiptSchema } from './fixtures/legacy-paotui/paotui-mcp-server.js';
 import { backend, interpretation, reasoner, owner } from './backend-fixture.js';
 
 const quoteInput = { senderAddressId: 'synthetic-a', recipientAddressId: 'synthetic-b', goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };

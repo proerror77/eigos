@@ -1,3 +1,4 @@
+import { catalogReadDefinition } from './catalog-read-definition.js';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { catalogActionSchemas, catalogObservationSchema, type CatalogObservation } from './catalog-agent.js';
@@ -8,14 +9,14 @@ import type { ObjectRef } from './model.js';
 export function checkedAgentCatalogObservation(value: unknown): CatalogObservation {
   const s = catalogObservationSchema.parse(value), { contentDigest, ...body } = s;
   const input = catalogActionSchemas[s.action].parse(s.actionInput);
-  const operations = { SearchPublicCatalog: 'search_catalog', InspectCatalogVariant: 'get_product', DiscoverMerchantCatalog: 'discovery', ReadMerchantVariants: 'lookup_catalog' };
+  const binding = catalogReadDefinition.actions.find(a => a.id === s.action)!.mcp;
   const merchantOrigin = shopifyMerchantOrigin(s.merchant.domain);
-  const expectedEndpoint = s.action === 'DiscoverMerchantCatalog' ? `${merchantOrigin}/.well-known/ucp` : `${s.action === 'ReadMerchantVariants' ? merchantOrigin : SHOPIFY_CATALOG_ORIGIN}/api/ucp/mcp`;
-  if (digest(body) !== contentDigest || s.id !== s.receipt.id || s.receipt.endpoint !== expectedEndpoint || s.receipt.operation !== operations[s.action]
+  const expectedEndpoint = binding.transport === 'discovery' ? `${merchantOrigin}/.well-known/ucp` : `${binding.connection?.merchantDomain ? merchantOrigin : SHOPIFY_CATALOG_ORIGIN}/api/ucp/mcp`;
+  if (digest(body) !== contentDigest || s.id !== s.receipt.id || s.receipt.endpoint !== expectedEndpoint || s.receipt.operation !== binding.tool
     || input.merchantId !== s.merchant.id || digest(input.scope) !== digest(s.scope) || s.observedAt !== s.receipt.receivedAt
     || Date.parse(s.receipt.startedAt) > Date.parse(s.observedAt) || Date.parse(s.expiresAt) !== Date.parse(s.receipt.startedAt) + 300000
     || new Set(s.items.map(i => i.variantId)).size !== s.items.length) throw new DomainError('CONFLICT', 'Catalog observation identity, input, source or validity window is invalid');
-  if (s.action === 'DiscoverMerchantCatalog') {
+  if (binding.transport === 'discovery') {
     if (s.items.length || !s.profile) throw new DomainError('CONFLICT', 'Discovery cannot contain product facts');
     new ShopifyReadOnlyClient({ merchantDomain: s.merchant.domain }).restoreDiscovery(s.profile);
   } else if (s.profile) throw new DomainError('CONFLICT', 'Only discovery can establish a merchant endpoint');
@@ -31,7 +32,7 @@ export function checkedAgentCatalogObservation(value: unknown): CatalogObservati
 export function projectAgentCatalogObservation(graph: OntologyObjectStore, owner: string, value: unknown): ObjectRef {
   const s = checkedAgentCatalogObservation(value), root = { type: 'ServiceRequest', id: s.requestId };
   if (graph.read(owner, root).properties.revision !== s.requestRevision) throw new DomainError('CONFLICT', 'Catalog result belongs to an old request revision');
-  const subject = { type: s.action === 'DiscoverMerchantCatalog' ? 'CatalogEndpoint' : 'CatalogObservation', id: s.id };
+  const subject = { type: catalogReadDefinition.actions.find(a => a.id === s.action)!.resultType, id: s.id };
   const objects: ObjectWrite[] = [], sealed: ObjectWrite[] = [], links: LinkWrite[] = [];
   const add = (ref: ObjectRef, title: string, fields: Record<string, unknown>, seal = false) => {
     const def = graph.model.object(ref.type), record = { ref, properties: { [def.primaryKey]: ref.id, displayTitle: title.slice(0, 500), ...fields } };

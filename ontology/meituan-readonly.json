@@ -1,0 +1,240 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "meituan.reads",
+  "version": "1",
+  "completion": {
+    "evaluate": "meituanReadStatus"
+  },
+  "actions": [
+    {
+      "id": "SearchMeituanLocations",
+      "description": "Read public locations for the exact task city and keyword. This is not product search or delivery fulfillment.",
+      "resultType": "MeituanReadObservation",
+      "mcp": {
+        "server": "meituan-personal",
+        "tool": "search_poi",
+        "encoding": "json",
+        "arguments": {
+          "city": {
+            "from": "scope",
+            "path": [
+              "city"
+            ]
+          },
+          "keyword": {
+            "from": "scope",
+            "path": [
+              "keyword"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "ReadMeituanAddresses",
+      "description": "Read the owned address book once. The ontology observation exposes only count and selection readiness; contacts/options stay private. If selectionReady=false, choose clarify on this task so the host can render the exact private question. No quote is implicit.",
+      "resultType": "MeituanReadObservation",
+      "mcp": {
+        "server": "meituan-personal",
+        "tool": "get_address_list",
+        "encoding": "json",
+        "arguments": {},
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "ReadMeituanSenderDetails",
+      "description": "Read contact details for the user-confirmed sender from the declared current book observation. Never supply address IDs or phone numbers. Source data stays private.",
+      "resultType": "MeituanReadObservation",
+      "mcp": {
+        "server": "meituan-personal",
+        "tool": "get_address_info",
+        "encoding": "json",
+        "arguments": {
+          "address_id": {
+            "from": "selection",
+            "name": "book",
+            "path": [
+              "addressId"
+            ]
+          }
+        },
+        "requires": [
+          {
+            "name": "book",
+            "action": "ReadMeituanAddresses",
+            "objectType": "MeituanReadObservation",
+            "observationInput": "addresses",
+            "evaluate": "meituanReadStatus",
+            "role": "sender"
+          }
+        ],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "ReadMeituanRecipientDetails",
+      "description": "Read contact details for the user-confirmed recipient from the declared current book observation. Never select an address for the user.",
+      "resultType": "MeituanReadObservation",
+      "mcp": {
+        "server": "meituan-personal",
+        "tool": "get_address_info",
+        "encoding": "json",
+        "arguments": {
+          "address_id": {
+            "from": "selection",
+            "name": "book",
+            "path": [
+              "addressId"
+            ]
+          }
+        },
+        "requires": [
+          {
+            "name": "book",
+            "action": "ReadMeituanAddresses",
+            "objectType": "MeituanReadObservation",
+            "observationInput": "addresses",
+            "evaluate": "meituanReadStatus",
+            "role": "recipient"
+          }
+        ],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "EstimateMeituanDelivery",
+      "description": "Read a parcel fee preview using the declared current source book and both contact observations. Read and evaluate each dependency before selecting this action. Missing selections or goods stay unknown. A quote is not an order/payment or delivery.",
+      "resultType": "MeituanReadObservation",
+      "mcp": {
+        "server": "meituan-personal",
+        "tool": "delivery_preview",
+        "encoding": "json",
+        "arguments": {
+          "sender": {
+            "from": "selection",
+            "name": "sender",
+            "path": [
+              "address"
+            ]
+          },
+          "recipient": {
+            "from": "selection",
+            "name": "recipient",
+            "path": [
+              "address"
+            ]
+          },
+          "goods": {
+            "from": "object",
+            "fields": {
+              "goodsName": {
+                "from": "scope",
+                "path": [
+                  "goodsName"
+                ]
+              },
+              "goodsWeight": {
+                "from": "scope",
+                "path": [
+                  "weightKg"
+                ]
+              },
+              "goodTypes": {
+                "from": "array",
+                "items": [
+                  {
+                    "from": "lookup",
+                    "key": {
+                      "from": "scope",
+                      "path": [
+                        "category"
+                      ]
+                    },
+                    "values": {
+                      "文件": {
+                        "from": "literal",
+                        "value": 4
+                      },
+                      "快递": {
+                        "from": "literal",
+                        "value": 8
+                      },
+                      "餐饮": {
+                        "from": "literal",
+                        "value": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "goodTypeNames": {
+                "from": "array",
+                "items": [
+                  {
+                    "from": "scope",
+                    "path": [
+                      "category"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "business_type": {
+            "from": "literal",
+            "value": 1
+          },
+          "service_type": {
+            "from": "lookup",
+            "key": {
+              "from": "scope",
+              "path": [
+                "service"
+              ]
+            },
+            "values": {
+              "ordinary": {
+                "from": "literal",
+                "value": "1003"
+              },
+              "express": {
+                "from": "literal",
+                "value": "4033"
+              }
+            }
+          }
+        },
+        "requires": [
+          {
+            "name": "book",
+            "action": "ReadMeituanAddresses",
+            "objectType": "MeituanReadObservation",
+            "observationInput": "addresses",
+            "evaluate": "meituanReadStatus"
+          },
+          {
+            "name": "sender",
+            "action": "ReadMeituanSenderDetails",
+            "objectType": "MeituanReadObservation",
+            "observationInput": "sender",
+            "evaluate": "meituanReadStatus",
+            "role": "sender"
+          },
+          {
+            "name": "recipient",
+            "action": "ReadMeituanRecipientDetails",
+            "objectType": "MeituanReadObservation",
+            "observationInput": "recipient",
+            "evaluate": "meituanReadStatus",
+            "role": "recipient"
+          }
+        ],
+        "inputMatchesScope": []
+      }
+    }
+  ]
+}

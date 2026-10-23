@@ -1,3 +1,4 @@
+import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
 import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
@@ -163,7 +164,7 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '14', objects: [...objects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects], links: [...links, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '15', objects: [...objects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects], links: [...links, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
@@ -172,7 +173,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
   actions: [
     ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions,
     ...catalogAgentActions,
-    ...rideEstimateActions,
+    ...rideEstimateActions, ...meituanReadActions,
     ...commerceActions,
     ...domainActions,
     { id: 'RequestDeliveryQuote', description: 'Record the decision to request a quote; does not create a price or order', inputs: { request: 'ServiceRequest', parcel: 'Parcel', route: 'DeliveryRoute' }, changes: ['ServiceRequest.progress', 'ServiceRequest.selectedRoute'], submissionCriteria: ['same_owner', 'current_request_revision', 'explicit_read_scope', 'complete_route_and_parcel'], providerOperation: 'delivery_preview' },
@@ -182,7 +183,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     ...customsPolicyFunctions,
     ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions,
     ...catalogAgentFunctions,
-    ...rideEstimateFunctions,
+    ...rideEstimateFunctions, ...meituanReadFunctions,
     ...commerceFunctions,
     ...catalogReadFunctions,
     ...domainFunctions,

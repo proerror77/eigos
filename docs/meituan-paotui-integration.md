@@ -1,47 +1,44 @@
-# 本人美团跑腿：地址选择与真实查价
+# 本人美团：独立本体、地址选择与只读估价
 
-当前公共入口为 `eigos.delegate`，业务本体为 `delivery.quote@2`。PA 可以提交“帮我查1公斤文件普通送运费，先让我选择寄件和收件地址”。不要求预先提供地址 ID 或 JSON 查询。
+当前代码契约为 `ontology-execution-v15`。公共入口仍为 `eigos.delegate`，提供 `geo.search@1`、`address.book.read@1` 和 `delivery.quote@2`。PA 可提交“帮我查1公斤文件普通送运费，先让我选择寄件和收件地址”，无需技术地址 ID。
 
-## 同一任务中的流程
+工具映射、参数来源、业务代码查表和依赖维护在 [`meituan-readonly.json`](../ontology/meituan-readonly.json)。维护方法见 [Ontology 数据包](../ontology/README.md)，总体边界见 [统一 MCP 说明](mcp-ontology-unification.md)。
 
-1. 实际协调模型选择报价本体，缺少的业务输入留为空。
-2. Worker 经独立 stdio Ontology MCP 读取本人美团地址簿。EIGOS 向任务所有者展示有编号的地址，补问寄件／收件及缺少的物品、分类、重量、服务。
-3. PA 转述真实选项，得到用户明确选择后在原 taskId 回复自然语言。
-4. 系统只匹配当前任务中真实且无歧义的选项，核对不同地址、同城及计价参数，再取得真实报价；模型根据事实提出受约束的计划，执行时复查报价并独立验收。
-5. PA 读回同一任务的完成状态、accepted 验收和报价交付物。查价完成不表示下单、支付或配送。
+## 模型规划与原子读取
 
-地址选项按 owner、taskId、配置摘要保存于私有 preparation_contexts；不进入规划模型提示词。重启和地址簿排序变化不重排已显示的编号。地址或门牌变化会产生新选项并拒绝旧编号。不得把“1公斤”等数字误当地址选择，未知或含糊地址不能用第一个候选代替。
+初始化只创建 `MeituanReadTask`。模型读取本体和观察后，决定读取、补问、并行／分轮方式或完成。不存在候选准备时自动读地址、连接器自动补齐详情、报价后固定复查的流程。
 
-## 内部 MCP 与配置
+| 本体动作 | 单次 MCP／CLI 业务操作 | 来源前提 |
+| --- | --- | --- |
+| `SearchMeituanLocations` | `search_poi` | 精确任务城市与关键词；配置白名单仍限制查询 |
+| `ReadMeituanAddresses` | `get_address_list` | 本人地址查询或配送估价目的 |
+| `ReadMeituanSenderDetails`、`ReadMeituanRecipientDetails` | 各一次 `get_address_info` | 当前地址观察、用户已确认的对应角色，模型已读取并评估来源 |
+| `EstimateMeituanDelivery` | 一次 `delivery_preview` | 本体声明的当前地址簿、两端详情及明确物品／重量／服务 |
 
-Gateway／Worker 使用相同的 `EIGOS_PAOTUI_SKILL_DIR`。Gateway 只登记能力；Worker 在调用时启动 `apps/ontology-mcp/main`，先核验 `ontology_definition`，再调用 `ontology_address_book_read` 或 `ontology_delivery_quote`。内部原语 `delivery.quote@1` 使用明确的源地址引用；只有后端在选择后解析它，PA 不接触这些技术 ID。
+`requires` 是证据要求，不自动运行前置动作。两端详情可以并行或分轮读取。每次 MCP 业务调用只执行一个官方 CLI 业务读取；令牌读取、握手与模块校验属于鉴权和协议处理。模型、任务文本和本体文件不能打开订单、付款、取消或授权变更工具。
 
-MCP 服务没有 HTTP 监听，不开放订单、支付或取消工具。美团凭据由原有 pt-passport／官方查询程序内部读取，真实手机号只用于进程内费用预览，不返回给 PA。地址与门牌是完成选择所需的本人数据，只向任务所有者展示。
+## 同一任务与私密选择
 
-每次成功读取产生能力／本体版本、输入／结果摘要、时间及调用名称的回执。可用绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH` 保存不含地址、电话和令牌的元数据。`geo.search@1` 和 `address.book.read@1` 可单独用于对应读取目标，不作为报价目标的替代完成。
+地址观察只让模型看到数量和选择是否就绪。原生 ID、地址选项、坐标、联系人和电话保留在 owner／taskId 私密上下文中。模型决定补问后，主机向原任务所有者展示真实问题和选项；PA 转述后，以原 taskId 回复用户选择。未真正展示的编号、虚构或歧义选择不能用于查询联系人和价格。
 
-公开地点结果中的 `lat`／`lng` 由官方 CLI 的整数微度转换为度，并显式标注 `coordinateUnit: "degree"`；转换发生在 Ontology 回执计算摘要之前。单位按 CLI 契约解释，不按数值大小猜测；不据此推定坐标参考系。地址簿及报价链的坐标保持原有契约。公开地点响应最多 100 项，缺少名称、非法坐标或嵌套未知业务字段会拒绝，额外调试／联系信息不会进入结果。
+重启及来源排序变化不改变已经展示的编号。地址或门牌变化产生新一组选项并拒绝旧编号；不得把“1公斤”等数字当地址选择。同城、不同地址、原请求计价参数及来源角色在派发前核对。用户未提供的业务信息保持为空，不要求猜测手机号或地址 ID。
 
-真实下单程序和支付链接执行器已从项目删除；`EIGOS_PAOTUI_ORDERS_ENABLED=true` 会在启动时报错。只读绑定仍限固定本人 loopback 开发身份，多用户凭据代理尚未实现。
+同一组地址与详情使用一致的私密凭据上下文；上下文变化会阻止混合使用旧来源，需要重新取得当前来源。值和指纹不进入模型。私密缓存与观察投影都受任务状态、revision、租约和领取令牌保护，取消后的迟到结果不能修改已显示选择或产生成功观察。
 
-## 可选公开地点发现
+公开 POI 会映射为 `Place`；估价映射为 `DeliveryQuote`／`Parcel`／带来源版本的匿名路线标签，不把电话或地址选项投影给模型。估价不是完整最终费用或配送完成。PA 的报价交付只包含经检查的费用和业务参数。
 
-`EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES` 接入 Gateway 和 Worker 的相同运行配置；省略或设置为空数组时，新的 `DiscoverySource` 保持关闭，既有静态只读能力不变。默认示例为：
+## 运行与配置
 
-```dotenv
-EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=[]
-```
+Gateway／Worker 使用相同的 `EIGOS_PAOTUI_SKILL_DIR`；只有 Worker 在选定动作后启动内部 stdio MCP。`apps/ontology-mcp/main` 只暴露四个原子读取及纯元数据 `ontology_module`，没有 HTTP 监听。连接器校验本体模块版本和内容摘要，再验证所选操作的输入／结果回执。
 
-只有受信操作人员可将已经授权的公开城市与关键词写入该 JSON 数组。每项只接受 `city` 和 `keyword`：去除首尾空白后，城市为 1–50 字符，关键词为 1–100 字符；最多 16 项，整个环境变量最多 16,384 字符。无效 JSON、错误类型、空白字段、额外字段或超限配置均在启动时拒绝。任务文本、PA 回复和模型输出不能修改清单，也不能据此扩展授权；不要将家庭地址、联系人或其他私人信息放入清单。
+`pt-passport` 和原有官方查询程序内部读取凭据。成功读取的安全元数据可写入绝对路径 `EIGOS_ONTOLOGY_AUDIT_PATH`，不含地址、电话或令牌。原始私密来源保留在受保护的任务存储中。只允许固定本人 loopback 开发身份，不共享个人凭据给 JWT 多用户。`EIGOS_PAOTUI_ORDERS_ENABLED=true` 启动即拒绝。
 
-非空清单要求已配置 `EIGOS_PAOTUI_SKILL_DIR`，且仅允许非生产环境、`development` 身份以及 loopback 的 `HOST`／`PUBLIC_URL`。Gateway 和 Worker 必须使用相同清单；来源配置摘要固定在计划中，重启后改变清单或读取器配置会拒绝恢复旧来源计划。该配置不创建凭据、不发起登录或扩大渠道权限。它是允许重复匹配查询的运行清单，不是一次调用额度；此前单次验收授权不会自动成为常驻查询授权。
+公开地点 `lat`／`lng` 仍按 CLI 契约将整数微度转换为度，显式标注 `coordinateUnit: "degree"`，不按数值大小猜测参考系。结果最多100项，未知调试／联系人字段不会进入公开结果。
 
-启用后，`geo.search@1` 使用清单内精确匹配的城市与关键词经独立 Ontology MCP 查询；Gateway 只登记来源，Worker 执行读取。同一次搜索只产生一个搜索服务候选，公开 POI 不会被注册为商家履约提供者。回执保留输入／结果摘要、调用名称和时间，地点结果没有商品报价、库存或送达证明，`realSupply` 保持 false。关闭清单或配置验证不执行任何真实查询；既有一次公开地点验收证据不因本次配置接线而重跑。
+`EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES` 保留为受信运行配置：最多16项精确的 `city`／`keyword`，格式与非生产 loopback 限制保持。非空清单约束新的公开读取程序，不再触发模型前的 DiscoverySource 读取。Gateway 不查询供应商，任务和模型不能扩展清单。查询区域表示 `search_area`，不证明每个 POI 都在行政区内，也不代表商家供给或配送目的地。构建、同步和常驻更新见 [运行说明](gateway-worker.md)。
 
-`geo.search` 将地点约束解释为 `search_area`。准备和交付阶段均保留经回执绑定的城市／关键词事实，城市级搜索要求可据此校验；这不证明所有结果均在行政区边界内，也不能用于满足配送目的地要求。2026-10-18 常驻服务获准仅启用“北京市／天安门”，实际 PA 的 A2A 全链路及首次失败修复记录见 [公开地点发现验收](evidence/public-geo-pa-2026-10-18/README.md)。更新方式和白名单保留规则见 [常驻部署配置](gateway-worker.md#部署边界)。
+## 验证与历史
 
-## 验收
+当前测试覆盖模型前无外部读取、原子命令计数、原任务补问、实际已展示选项、排序／地址变化、跨城与跨任务防护、模型评估回执、私密缓存取消保护及凭据上下文变化。合成 CLI 和模型替身只能证明本地接线及边界，不能当真实供应商或 PA 证据。
 
-自动测试覆盖选项归属、持久恢复、排序变化、失效选项、歧义／跨城／虚构选择、重量约束、原任务续接与无订单边界。工程模型／提供方 fixtures 不替代真实读取。
-
-2026-10-17 的 [两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 使用预先给定的地址 ID 和临时实例，报价52.5元、23.5公里。它是历史结果，当前完整自然语言流程按本轮常驻 PA 的新证据验收，价格以各次真实回执为准。
+v14 及更早任务保持只读，不迁移或自动重放。旧准备式实现已移入历史测试夹具，不进入生产执行目录。历史 [2026-10-17 两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 和 [2026-10-18 公开地点 PA 验收](evidence/public-geo-pa-2026-10-18/README.md) 保留各自当时的范围及来源。当前 `examples/observe-mcp-readonly.ts` 仅回读已有当前版本任务，不提交目标或调用供应商；旧格式观察器保存在 `examples/legacy`。

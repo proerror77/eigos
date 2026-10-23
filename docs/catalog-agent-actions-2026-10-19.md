@@ -1,5 +1,7 @@
 # 商品查询改为 EIGOS Agent 选择和组合动作
 
+2026-10-23 更新：当前代码契约为 v15，工具映射、参数和依赖改由 [`shopify-catalog.json`](../ontology/shopify-catalog.json) 独立维护，模型使用通用规划提示。当前维护与执行边界见 [MCP 统一说明](mcp-ontology-unification.md)。下文 v8 与 2026-10-19 的次数／部署／PA 记录保留为历史证据，不代表本轮部署或重新查询。
+
 当前契约为 `ontology-execution-v8`、`eigos.business@7`、`commerce.catalog.query@2`。Shopify 商品查询已使用通用 Agent 执行循环：模型读取本体后选择动作和参数，受控连接器执行一次接口调用，结果写回本体，再由模型决定后续动作或完成。原来自动搜索三款、选择首个变体、逐个详情及固定复查的 `ShopifyCatalogAdapter`／`AnonymousShopifyCatalogReader` 已从实现中删除。
 
 这次迁移覆盖 Shopify 商品查询路径。其他已有能力仍使用各自的候选准备及已绑定动作契约，不能据此声称所有服务已完成同样的迁移。此前 [v7／商品查询 @1 的验收](shopify-pa-worker-2026-10-19.md) 保留为历史记录；它证明旧查询链路可往返，不证明当时已由 Agent 自主组合动作。
