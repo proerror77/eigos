@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { objectRefSchema, type ObjectTypeDefinition, type PropertyDefinition, type LinkDefinition, type ActionDefinition, type FunctionDefinition } from './model.js';
 import { didiDataSchema, didiPlaceSchema, didiReceiptSchema } from '../capabilities/didi/contracts.js';
+import { didiReadDefinition, didiReadDefinitionRef } from './didi-read-definition.js';
 
 const text = z.string().min(1).max(500), sha = z.string().regex(/^[a-f0-9]{64}$/);
 const scope = objectRefSchema.extend({ type: z.literal('RideEstimateTask') });
@@ -14,7 +15,7 @@ export const rideEstimateActionSchemas = {
   EstimateDidiRide: z.strictObject({ scope, originObservation: places, originPlaceId: sha, destinationObservation: places, destinationPlaceId: sha }),
 };
 export type RideEstimateAction = keyof typeof rideEstimateActionSchemas;
-export const rideEstimateActionIds = Object.keys(rideEstimateActionSchemas) as RideEstimateAction[];
+export const rideEstimateActionIds = didiReadDefinition.actions.map(action => action.id) as RideEstimateAction[];
 export const rideEstimateObservationSchema = z.strictObject({
   id: z.uuid(), requestId: text, requestRevision: z.number().int().positive(), configurationDigest: sha,
   scope, action: z.enum(['SearchDidiPlaces', 'EstimateDidiRide']), actionInput: z.record(z.string(), z.unknown()),
@@ -43,9 +44,11 @@ export const rideEstimateLinks: LinkDefinition[] = [
   { id: 'RideEstimateRoute', description: 'Names and coordinates remain in the source snapshot; no inferred coordinate reference system', from: { type: 'RideEstimateObservation', name: 'route', many: false, required: true }, to: { type: 'RideRoute', name: 'estimates', many: true } },
   ...(['Origin', 'Destination'] as const).map(role => ({ id: `RideEstimate${role}Search`, description: 'Coordinates come from this task\'s accepted place search', from: { type: 'RideEstimateObservation', name: `${role.toLowerCase()}Search`, many: false, required: true }, to: { type: 'DidiPlaceObservation', name: `${role.toLowerCase()}Estimates`, many: true } })),
 ];
-export const rideEstimateActions: ActionDefinition[] = rideEstimateActionIds.map(id => ({
-  id, description: id === 'SearchDidiPlaces' ? 'Search the exact requested place and city. Choose the endpoint role; retain all returned candidates. An ambiguous place requires clarification.' : 'Estimate a route using explicitly selected local place IDs from two owned search observations. No caller coordinates, orders, links, cancellation or payment are accepted.',
-  inputs: { scope: 'RideEstimateTask' }, changes: [id === 'SearchDidiPlaces' ? 'DidiPlaceObservation' : 'RideEstimateObservation'], submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_coordinates', 'read_only'],
-  read: { version: '1', effect: 'read', inputSchema: z.toJSONSchema(rideEstimateActionSchemas[id]), resultType: id === 'SearchDidiPlaces' ? 'DidiPlaceObservation' : 'RideEstimateObservation' },
-}));
+export const rideEstimateActions: ActionDefinition[] = didiReadDefinition.actions.map(action => {
+  if (!Object.hasOwn(rideEstimateActionSchemas, action.id)) throw new Error('Ontology action has no supported DiDi data contract');
+  return { id: action.id, description: action.description, inputs: { scope: 'RideEstimateTask' }, changes: [action.resultType],
+    submissionCriteria: ['same_owner', 'current_request_revision', 'source_bound_coordinates', 'read_only'],
+    read: { version: didiReadDefinition.version, effect: 'read', inputSchema: z.toJSONSchema(rideEstimateActionSchemas[action.id as RideEstimateAction]), resultType: action.resultType,
+      mcp: action.mcp, module: { ...didiReadDefinitionRef, completion: didiReadDefinition.completion } } };
+});
 export const rideEstimateFunctions: FunctionDefinition[] = [{ id: 'rideEstimateStatus', version: '1', inputTypes: ['DidiPlaceObservation', 'RideEstimateObservation'], description: 'Check source, route, request revision and local freshness. A known estimate is only a read result; fees, availability, pickup and arrival commitments remain unknown.' }];

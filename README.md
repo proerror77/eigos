@@ -29,5 +29,6 @@ flowchart LR
 - [文档导航](docs/README.md)
 - [Agent 接入指南](docs/integration.md)
 - [能力实现与验证范围](docs/registered-capabilities.md)
+- [独立本体工具定义与维护](ontology/README.md)
 
 EIGOS（艾戈斯）为当前候选品牌，详见[品牌说明](docs/brand-brief.md)。

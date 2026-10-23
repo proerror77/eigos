@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
+import { mcpReadBindingSchema, type McpReadBinding } from './mcp-read.js';
 
 export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(v => !['constructor', 'prototype', '__proto__'].includes(v));
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
@@ -48,7 +49,8 @@ export interface ActionDefinition {
   providerOperation?: string;
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
-  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string };
+  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string;
+    mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string } } };
   operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox'; inputSchema: object; resultType: string };
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
@@ -125,6 +127,11 @@ export class OntologyModel {
       nameSchema.parse(a.id);
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
+      if (a.read?.mcp) {
+        mcpReadBindingSchema.parse(a.read.mcp);
+        for (const dep of a.read.mcp.requires) if (this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
+      }
       if (a.operation && (a.read || a.operation.environment !== 'sandbox' || !['local', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid sandbox operation definition');
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');

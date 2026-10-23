@@ -69,7 +69,12 @@ if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable 
 const runtimePath = [...new Set([dirname(process.execPath), dirname(codex), dirname(passport), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])].join(':');
 const scan = path => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? scan(join(path, e.name)) : e.name.endsWith('.ts') ? [join(path, e.name)] : []);
 const sourceFiles = [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort();
-const files = [...sourceFiles.map(path => 'dist/' + path.slice(root.length + 1).replace(/\.ts$/, '.js')), 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
+const ontologyFiles = readdirSync(join(root, 'ontology')).filter(name => name.endsWith('.json')).sort().map(name => {
+  const path = 'dist/ontology/' + name;
+  if (!existsSync(join(root, path)) || !readFileSync(join(root, path)).equals(readFileSync(join(root, 'ontology', name)))) throw new Error('Run npm run ontology:sync before updating the runtime');
+  return path;
+});
+const files = [...sourceFiles.map(path => 'dist/' + path.slice(root.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
 const fingerprint = createHash('sha256');
 for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(root, path))); }
 const buildDigest = fingerprint.digest('hex');
