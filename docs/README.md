@@ -9,6 +9,14 @@
 - [能力实现与验证范围](registered-capabilities.md)：能力登记、执行与验收边界；具体运行版本以接入指南和实际运行回读为准。
 - [会员与认证](membership.md)：成员身份与访问资格。
 
+## 实现与验证
+
+项目采用 TypeScript／Node.js，通过 MCP 和 A2A 接收 Agent 委托，使用 Ontology + LLM 组织任务理解、规划与执行。Gateway／Worker 和共享任务核心负责接入、持久任务、授权校验、恢复与结果核验。技术细节见[开发与运行](gateway-worker.md)及[本体规格](ontology-spec-v0.2-2026-10-18.md)。
+
+当前实现包含文档草稿生成、本地 CSV 模拟审计，以及受限的美团地点／地址／运费和 Shopify 公开商品查询。跨服务业务流程、交易与履约相关机制在本地测试服务和合成数据环境中验证；真实交易与履约仍待接入。可用能力与配置条件见[接入指南](integration.md)，逐项验证边界见[能力说明](registered-capabilities.md)。
+
+自动测试、真实模型、真实来源和本地模拟的证据分别记录。历史测试通过不代表当前部署或真实业务完成；具体记录与限制见对应能力文档及 `docs/evidence/` 中的验证归档。
+
 ## 设计与项目方向
 
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
