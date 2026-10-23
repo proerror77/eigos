@@ -42,8 +42,10 @@ test('Existing PA client submits a sandbox task, approves its exact Agent plan a
   } finally { await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); await t.close(); }
 });
 
-test('Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent', async () => {
-  const t = await setupCommerce({ target: 'quote' }), server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+test('Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent', { timeout: 180000 }, async () => {
+  // This fixture shares an event loop with the Worker. Slow synchronous turns
+  // can outlast HTTP's idle timer; teardown still closes every connection.
+  const t = await setupCommerce({ target: 'quote' }), server = createServer({ keepAliveTimeout: 0 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`, token = 'customs-readonly-gateway-test'.repeat(2);
   const gateway = createApp(readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, PUBLIC_URL: base, DATABASE_PATH: ':memory:', EIGOS_ACTION_SANDBOX: 'true' }), undefined, store => createExecutionCatalog({ store, commerceSandbox: t.settings }));
   server.on('request', gateway.app);
@@ -53,7 +55,7 @@ test('Authenticated MCP exposes request-bound customs references and the exact s
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     let job = await call('submit_task', { service: 'eigos.delegate', goal: 'Read a synthetic customs-checked quote only, without creating any cart or order.', executionEnvironment: 'sandbox', requestId: randomUUID() }) as Job;
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + 120000;
     while (['working', 'submitted'].includes(job.state) && Date.now() < deadline) { await pause(100); job = await call('get_task', { taskId: job.id }) as Job; }
     assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback));
     const from = { type: 'ServiceRequest', id: job.id }, books = await call('query_ontology', { from, link: 'customsRuleSets' }), references = await call('query_ontology', { from, link: 'regulatoryReferences' });
