@@ -47,6 +47,12 @@ const schema = z.object({
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: shopifyMerchants.optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
+  EIGOS_DIDI_KEY_FILE: z.string().optional(),
+  EIGOS_DIDI_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  EIGOS_DIDI_BINDING_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
+  EIGOS_DIDI_ENVIRONMENT: z.enum(['production', 'mock']).default('production'),
+  EIGOS_DIDI_AUDIT_DIR: z.string().optional(),
+  EIGOS_DIDI_ORDERS_ENABLED: z.enum(['false', 'mock']).default('false'),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
@@ -81,6 +87,9 @@ const schema = z.object({
   ALLOWED_ORIGINS: z.string().default(''),
   EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
   EIGOS_CODEX_BIN: z.string().default('codex'),
+  EIGOS_CODEX_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).default('gpt-6-luna'),
+  EIGOS_CODEX_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
+  EIGOS_CODEX_SERVICE_TIER: z.enum(['priority', 'default']).default('priority'),
   EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
   EIGOS_AUDIT_PATH: z.string().optional(),
 });
@@ -92,6 +101,11 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   if (c.EIGOS_NETWORK_OPERATOR_MEMBER_IDS.some(id => !c.EIGOS_NETWORK_MEMBER_IDS.includes(id))) throw new Error('Network operators must be explicitly enrolled members');
   const publicUrl = new URL(c.PUBLIC_URL);
+  if (c.EIGOS_DIDI_ORDERS_ENABLED === 'mock' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'mock' || !c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_ACTION_SANDBOX !== 'true')) throw new Error('DiDi orders require explicit official mock configuration, durable audit and sandbox action authorization');
+  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
+  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');
+  if (c.EIGOS_DIDI_KEY_FILE && (!isAbsolute(c.EIGOS_DIDI_KEY_FILE) || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Personal DiDi is restricted to explicitly configured non-production loopback development');
+  if (c.EIGOS_DIDI_AUDIT_DIR && (!c.EIGOS_DIDI_KEY_FILE || !isAbsolute(c.EIGOS_DIDI_AUDIT_DIR))) throw new Error('DiDi audit requires an enabled binding and an absolute private directory');
   if (c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Shopify anonymous catalog requires explicitly configured local development');
   if (c.EIGOS_SHOPIFY_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_AUDIT_DIR))) throw new Error('Shopify audit requires enabled catalog and an absolute private directory');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username || publicUrl.password) {

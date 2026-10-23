@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { releaseFiles } from '../dist/packages/deployment/files.js';
 import { readWorkerConfig } from '../dist/packages/core/config.js';
+import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.js';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
@@ -24,7 +26,10 @@ const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt
 for (const path of [directory, runtime, dirname(plistPath)]) { mkdirSync(path, { recursive: true, mode: 0o700 }); }
 chmodSync(directory, 0o700); chmodSync(runtime, 0o700);
 const ownership = join(runtime, 'owner.json');
-if (existsSync(ownership) && JSON.parse(read(ownership)).sourceRoot !== root) throw new Error('Runtime belongs to another checkout');
+const previousOwner = existsSync(ownership) ? JSON.parse(read(ownership)).sourceRoot : undefined;
+const takeOverFrom = process.argv.find(arg => arg.startsWith('--take-over-from='))?.slice('--take-over-from='.length);
+if (previousOwner && previousOwner !== root && takeOverFrom !== previousOwner) throw new Error('Runtime belongs to another checkout; an authorized transfer must name its exact source root');
+if (takeOverFrom && (!isAbsolute(takeOverFrom) || takeOverFrom !== previousOwner)) throw new Error('Runtime ownership changed before transfer');
 const previousPlist = read(plistPath);
 if (previousPlist && !previousPlist.includes(xml(envPath)) && !previousPlist.includes(xml(runtimeEnv))) throw new Error('LaunchAgent belongs to another runtime');
 const oldSettings = read(runtimeEnv) || read(envPath);
@@ -48,17 +53,29 @@ const shopifyMerchants = readWorkerConfig({
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: process.env.EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? field(oldSettings, 'EIGOS_SHOPIFY_CATALOG_MERCHANTS'),
 }).EIGOS_SHOPIFY_CATALOG_MERCHANTS ?? [];
 const shopifySetting = "'" + JSON.stringify(shopifyMerchants).replaceAll("'", '\\u0027') + "'";
+const didiDisabled = process.env.EIGOS_DIDI_KEY_FILE === '';
+const didi = readWorkerConfig({
+  NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development',
+  EIGOS_DIDI_KEY_FILE: didiDisabled ? undefined : process.env.EIGOS_DIDI_KEY_FILE ?? field(oldSettings, 'EIGOS_DIDI_KEY_FILE'),
+  EIGOS_DIDI_BINDING_ID: didiDisabled ? undefined : process.env.EIGOS_DIDI_BINDING_ID ?? field(oldSettings, 'EIGOS_DIDI_BINDING_ID'),
+  EIGOS_DIDI_KEY_SHA256: didiDisabled ? undefined : process.env.EIGOS_DIDI_KEY_SHA256 ?? field(oldSettings, 'EIGOS_DIDI_KEY_SHA256'),
+  EIGOS_DIDI_ENVIRONMENT: process.env.EIGOS_DIDI_ENVIRONMENT ?? field(oldSettings, 'EIGOS_DIDI_ENVIRONMENT'),
+  EIGOS_DIDI_AUDIT_DIR: (didiDisabled ? undefined : process.env.EIGOS_DIDI_KEY_FILE ?? field(oldSettings, 'EIGOS_DIDI_KEY_FILE')) ? join(runtime, 'didi-reads') : undefined,
+  EIGOS_ACTION_SANDBOX: (process.env.EIGOS_DIDI_ORDERS_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDERS_ENABLED')) === 'mock' ? 'true' : 'false',
+  EIGOS_DIDI_ORDERS_ENABLED: process.env.EIGOS_DIDI_ORDERS_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDERS_ENABLED'),
+});
+if (didi.EIGOS_DIDI_KEY_FILE && /[\r\n'"#]/.test(didi.EIGOS_DIDI_KEY_FILE)) throw new Error('DiDi credential path cannot be represented in managed settings');
+if (didi.EIGOS_DIDI_KEY_FILE) await new DidiMcpConnector({ keyFile: didi.EIGOS_DIDI_KEY_FILE, keySha256: didi.EIGOS_DIDI_KEY_SHA256, bindingId: didi.EIGOS_DIDI_BINDING_ID, environment: didi.EIGOS_DIDI_ENVIRONMENT }).verifyCredential();
 const commerceDisabled = process.env.EIGOS_COMMERCE_SANDBOX_URL === '';
 const commerceUrl = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_URL ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_URL');
 const commerceTokenFile = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_TOKEN_FILE');
 const commerce = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development', EIGOS_ACTION_SANDBOX: commerceUrl ? 'true' : 'false', EIGOS_COMMERCE_SANDBOX_URL: commerceUrl, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: commerceTokenFile });
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
+const workerModel = readWorkerConfig({ EIGOS_CODEX_MODEL: process.env.EIGOS_CODEX_MODEL ?? field(oldSettings, 'EIGOS_CODEX_MODEL'), EIGOS_CODEX_REASONING_EFFORT: process.env.EIGOS_CODEX_REASONING_EFFORT ?? field(oldSettings, 'EIGOS_CODEX_REASONING_EFFORT'), EIGOS_CODEX_SERVICE_TIER: process.env.EIGOS_CODEX_SERVICE_TIER ?? field(oldSettings, 'EIGOS_CODEX_SERVICE_TIER') });
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
 const runtimePath = [...new Set([dirname(process.execPath), dirname(codex), dirname(passport), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])].join(':');
-const scan = path => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? scan(join(path, e.name)) : e.name.endsWith('.ts') ? [join(path, e.name)] : []);
-const sourceFiles = [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort();
-const files = [...sourceFiles.map(path => 'dist/' + path.slice(root.length + 1).replace(/\.ts$/, '.js')), 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
+const files = releaseFiles(root);
 const fingerprint = createHash('sha256');
 for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(root, path))); }
 const buildDigest = fingerprint.digest('hex');
@@ -74,12 +91,14 @@ if (!existsSync(dependencyRoot)) { mkdirSync(dirname(dependencyRoot), { recursiv
 if (!existsSync(join(release, 'node_modules'))) symlinkSync(dependencyRoot, join(release, 'node_modules'));
 const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430', 'PUBLIC_URL=http://127.0.0.1:3430',
   `DATABASE_PATH=${join(runtime, 'tasks.sqlite')}`, 'EIGOS_AUTH_MODE=development', `EIGOS_DEV_TOKEN=${token}`,
-  'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
+  'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, `EIGOS_CODEX_MODEL=${workerModel.EIGOS_CODEX_MODEL}`, `EIGOS_CODEX_REASONING_EFFORT=${workerModel.EIGOS_CODEX_REASONING_EFFORT}`, `EIGOS_CODEX_SERVICE_TIER=${workerModel.EIGOS_CODEX_SERVICE_TIER}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
   'EIGOS_PAOTUI_ORDERS_ENABLED=false', `EIGOS_PAOTUI_SKILL_DIR=${skill}`, `EIGOS_AUDIT_PATH=${join(runtime, 'http.jsonl')}`,
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
-  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
+  ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, `EIGOS_DIDI_ORDERS_ENABLED=${didi.EIGOS_DIDI_ORDERS_ENABLED}`, `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
+  ...((commerce.EIGOS_COMMERCE_SANDBOX_URL || didi.EIGOS_DIDI_ORDERS_ENABLED === 'mock') ? ['EIGOS_ACTION_SANDBOX=true'] : []),
+  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? [ `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');
 const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>

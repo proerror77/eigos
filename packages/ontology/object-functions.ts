@@ -1,3 +1,5 @@
+import { evaluateRideEstimate } from './ride-estimate-functions.js';
+import { evaluateRideOrder } from './ride-booking-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
 import { productAttributeFunctionSchemas } from './product-attributes.js';
 import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
@@ -31,7 +33,7 @@ export const functionCallSchema = z.union([
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
+  simple('didiOrderStatus'), simple('rideEstimateStatus'), simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -67,6 +69,10 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const rideResult = evaluateRideEstimate(store, owner, input, budget);
+  if (rideResult) return rideResult;
+  const orderResult = evaluateRideOrder(store, owner, input, budget);
+  if (orderResult) return orderResult;
   const productResult = evaluateProductAttributeFunction(store, owner, input, budget);
   if (productResult) return productResult;
   const identityResult = evaluateIdentityFunction(store, owner, input, budget);

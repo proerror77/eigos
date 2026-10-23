@@ -8,6 +8,7 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { planningToolSchemas, type OntologyPlanningSession } from './planning-session.js';
 import type { NativeMcpConnection } from '../capabilities/executor.js';
+import { objectRefSchema } from '../ontology/model.js';
 
 const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20), decisionJson: z.string().min(2).max(100000) }).strict();
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
@@ -21,9 +22,45 @@ const descriptions: Record<keyof typeof planningToolSchemas, string> = {
   propose_action: 'Propose a registered Ontology decision action using observed object revisions. This does not execute a business effect.',
 };
 
+/** Expose argument names at the root for native model tool discovery. A root
+ * union has no properties, which caused the real client to invent functionId /
+ * inputs instead of function / object. The session still validates the exact
+ * original union, including branch-specific requirements and forbidden mixes. */
+function nativeInputSchema(schema: z.ZodType): z.ZodType {
+  if (!(schema instanceof z.ZodUnion)) return schema;
+  const branches = schema.options;
+  if (!branches.every(branch => branch instanceof z.ZodObject)) throw new Error('Native tool union requires object branches');
+  const shapes = branches.map(branch => (branch as z.ZodObject).shape as Record<string, z.ZodType>);
+  const properties: Record<string, z.ZodType> = {};
+  for (const key of new Set(shapes.flatMap(shape => Object.keys(shape)))) {
+    const variants = shapes.flatMap(shape => shape[key] ? [shape[key]!] : []);
+    const distinct = [...new Set(variants)];
+    const property = distinct.length === 1 ? distinct[0]! : z.union(distinct as [z.ZodType, z.ZodType, ...z.ZodType[]]);
+    properties[key] = variants.length === shapes.length && variants.every(value => !value.isOptional()) ? property : property.optional();
+  }
+  return z.object(properties).strict().describe(schema.description ?? 'Use the displayed argument names; the selected operation validates its exact argument combination.');
+}
+const nativeSchemas = Object.fromEntries(Object.entries(planningToolSchemas).map(([name, schema]) => [name, nativeInputSchema(schema)]));
+const functionNames = planningToolSchemas.evaluate_ontology.options.map(branch => String(branch.shape.function.value));
+nativeSchemas.evaluate_ontology = z.object({
+  function: z.enum(functionNames as [string, ...string[]]).describe('Exact function NAME STRING from this enum, without a version or reference object.'),
+  object: objectRefSchema,
+  argumentsJson: z.string().max(16000).nullish().describe('JSON object of additional function parameters, or "{}" for status/freshness functions. Never include function or object here. For withinBudget, supply budget and priceBasis here.'),
+}).passthrough(); // Existing native clients may still send the original flat arguments.
+
+function nativeArguments(name: string, raw: unknown): unknown {
+  if (name !== 'evaluate_ontology') return raw;
+  const { argumentsJson, ...args } = raw as Record<string, unknown>;
+  if (argumentsJson === undefined || argumentsJson === null) return args;
+  const extra: unknown = JSON.parse(String(argumentsJson));
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra) || Object.keys(extra).some(key => Object.hasOwn(args, key))) throw new Error('Additional function arguments must be an object without duplicate fields');
+  return { ...args, ...extra };
+}
+
 /** A native MCP endpoint owned by one Worker model session, never a public gateway. */
-export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void) {
+export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object) {
   signal.throwIfAborted();
+  const finalDecision = finalSchema ? z.fromJSONSchema(finalSchema as Parameters<typeof z.fromJSONSchema>[0]) : undefined;
   const sessionId = randomUUID(), token = randomBytes(32).toString('base64url');
   const offered = session.catalog().tools.map(tool => tool.name as keyof typeof planningToolSchemas);
   let decision: { output: unknown; digest: string; receiptIds: string[] } | undefined;
@@ -41,11 +78,11 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   const makeServer = () => {
     const server = new McpServer({ name: 'eigos-ontology', version: '1.0.0' });
     for (const name of offered) server.registerTool(name, {
-      description: descriptions[name], inputSchema: planningToolSchemas[name],
+      description: descriptions[name], inputSchema: nativeSchemas[name]!,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }, (args: unknown) => respond(() => {
       if (decision) throw new Error('This decision has already been submitted');
-      const result = session.call(name, args), receipt = session.lastReceipt();
+      const result = session.call(name, nativeArguments(name, args)), receipt = session.lastReceipt();
       if (!receipt) throw new Error('Ontology call produced no receipt');
       return { result, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, inputDigest: receipt.inputDigest, outputDigest: receipt.outputDigest }, budget: { readsRemaining: 20 - session.receipts().length, finalResponseRequired: session.requiresFinalResponse() } };
     }));
@@ -55,6 +92,8 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     }, args => respond(() => {
       const output: unknown = JSON.parse(args.decisionJson);
       if (!output || typeof output !== 'object' || Array.isArray(output)) throw new Error('Decision must be a JSON object');
+      const validation = finalDecision?.safeParse(output);
+      if (validation && !validation.success) throw new Error('Invalid final decision: ' + validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 1600));
       const candidate = { output, digest: digest(output), receiptIds: args.receiptIds };
       if (!session.usesTaskContext() && (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new Error('The model skipped required ontology reads');
       session.acceptReceipts(args.receiptIds);

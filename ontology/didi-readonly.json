@@ -1,0 +1,48 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "didi.ride-estimate",
+  "version": "1",
+  "completion": { "evaluate": "rideEstimateStatus" },
+  "actions": [
+    {
+      "id": "SearchDidiPlaces",
+      "description": "Search the exact requested place and city. Choose the endpoint role; retain all returned candidates. A unique exact name can disambiguate; duplicate exact names require the user to choose a full address on the same task. Never default to the first candidate.",
+      "resultType": "DidiPlaceObservation",
+      "mcp": {
+        "server": "didi",
+        "tool": "maps_textsearch",
+        "arguments": {
+          "keywords": { "from": "input", "path": ["keywords"] },
+          "city": { "from": "scope", "path": ["city"] }
+        },
+        "requires": [],
+        "inputMatchesScope": [
+          { "input": "keywords", "byInput": "role", "scopeFields": { "search": "keywords", "origin": "origin", "destination": "destination" } }
+        ]
+      }
+    },
+    {
+      "id": "EstimateDidiRide",
+      "description": "Estimate a route from selected place IDs in the two owned source observations declared in mcp.requires. Read each observation and evaluate its declared function before selecting this action. All coordinates come from those selections. Prices are estimates; fees, provider expiry, availability and pickup/arrival commitments remain unknown. No order or payment.",
+      "resultType": "RideEstimateObservation",
+      "mcp": {
+        "server": "didi",
+        "tool": "taxi_estimate",
+        "arguments": {
+          "from_lng": { "from": "selection", "name": "origin", "path": ["lng"] },
+          "from_lat": { "from": "selection", "name": "origin", "path": ["lat"] },
+          "from_name": { "from": "selection", "name": "origin", "path": ["name"] },
+          "to_lng": { "from": "selection", "name": "destination", "path": ["lng"] },
+          "to_lat": { "from": "selection", "name": "destination", "path": ["lat"] },
+          "to_name": { "from": "selection", "name": "destination", "path": ["name"] }
+        },
+        "requires": [
+          { "name": "origin", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "originObservation", "selectionInput": "originPlaceId", "role": "origin", "evaluate": "rideEstimateStatus" },
+          { "name": "destination", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "destinationObservation", "selectionInput": "destinationPlaceId", "role": "destination", "evaluate": "rideEstimateStatus" }
+        ],
+        "inputMatchesScope": [],
+        "route": { "origin": "origin", "destination": "destination" }
+      }
+    }
+  ]
+}

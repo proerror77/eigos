@@ -58,6 +58,7 @@ LLM 通过 Worker 提供的原生 Ontology MCP 工具查询定义、对象、关
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
 | `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `ride.estimate.query@1` | Worker 经官方 MCP 执行两个受控只读工具；默认关闭，仅本机本人 | 地点或估价观察；无完整车费、订单、付款或行程完成，见[说明](didi-readonly-integration.md) |
 | `commerce.catalog.query@2` | Agent 读取本体，选择搜索／详情／商家发现／店铺读取及其参数和组合；逐次观察后由模型提出完成，程序验收 | 有来源的公开商品查询或比较文件；显示单价与可售标记不证明库存、配送或购买权限 |
 | `service.fulfillment.sandbox@1` | 显式启用、带认证的本机 HTTP 测试提供方 | 仅工程验证：接单、模拟付款、交付、取消、退款；没有现实商家或资金 |
 
@@ -102,3 +103,5 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 显式 `createExecutionCatalog({ store, ucpSandbox })` 可登记 `commerce.ucp.prepare.sandbox@1` 和 `commerce.ucp.confirm.sandbox@1`。连接限定 127.0.0.1 和官方模拟支付处理器；前者完成会话准备，后者需 order/payment 两种准确许可并独立读取原订单。复用现有执行账本和授权预算，默认关闭。协议版本、对象映射、恢复规则、实际模型及官方商家证据见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。
 
 [六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。该轮未切换常驻服务；2026-10-19 为 [Shopify 只读 PA 验证](shopify-pa-worker-2026-10-19.md) 更新了本机服务。真实交易与预约仍关闭。
+
+显式官方 Mock 配置可启用 `ride.booking.sandbox@1`，通过准确计划确认和原订单回读验证模拟叫车；默认关闭，不开放真实下单或付款。见[模拟链路](didi-booking-sandbox.md)。

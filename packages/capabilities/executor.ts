@@ -24,15 +24,24 @@ export interface RunEvidence {
   outputSha256: string;
   decisionDigest?: string;
   model?: string;
+  /** Requested CLI configuration; the provider may serve a different tier. */
+  modelConfiguration?: CodexModelConfiguration;
+  durationMs?: number;
   threadId?: string;
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';
-  nativeMcpCalls?: { server: string; tool: string; status: string }[];
+  nativeMcpCalls?: { server: string; tool: string; status: string; failure?: { message: string; argumentKeys: string[]; function?: string; objectType?: string } }[];
   ontologyMcp?: { server: 'eigos_ontology'; transport: 'streamable-http'; sessionId: string; taskId: string; toolAttempts: number;
     calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
 }
 export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[] }
 export interface ModelRunOptions { mcp?: NativeMcpConnection }
+export interface CodexModelConfiguration {
+  model: string;
+  reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  serviceTier: 'priority' | 'default';
+}
+export const DEFAULT_WORKER_MODEL: Readonly<CodexModelConfiguration> = Object.freeze({ model: 'gpt-6-luna', reasoningEffort: 'medium', serviceTier: 'priority' });
 export interface ExecutionResult {
   output: z.infer<typeof decisionSchema>;
   evidence: RunEvidence;
@@ -52,7 +61,7 @@ const outputSchema = {
 // Documents have no tools; Agent decisions receive only their Worker-owned,
 // task-bound native Ontology MCP connection.
 export class CodexExecutor implements Executor {
-  constructor(private binary = 'codex', private timeoutMs = 120000) {}
+  constructor(private binary = 'codex', private timeoutMs = 120000, private configuration: CodexModelConfiguration = DEFAULT_WORKER_MODEL) {}
 
   async run(job: Job, signal: AbortSignal): Promise<ExecutionResult> {
     const prompt = [
@@ -81,6 +90,8 @@ export class CodexExecutor implements Executor {
       const outputPath = join(directory, 'result.json');
       await writeFile(schemaPath, JSON.stringify(schema), { mode: 0o600 });
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
+        '--model', this.configuration.model, '-c', `model_reasoning_effort=${JSON.stringify(this.configuration.reasoningEffort)}`,
+        '-c', `service_tier=${JSON.stringify(this.configuration.serviceTier)}`,
         '-c', 'project_doc_max_bytes=0', '-c', 'web_search="disabled"',
         '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'plugins', '--disable', 'hooks',
         '--disable', 'memories', '--disable', 'multi_agent', '--disable', 'multi_agent_v2',
@@ -130,7 +141,13 @@ export class CodexExecutor implements Executor {
               if (['thread.started', 'turn.completed', 'turn.failed', 'error'].includes(String(event.type))) events.push(event);
               if (event.type === 'item.completed' && event.item && typeof event.item === 'object') {
                 const item = event.item as Record<string, unknown>;
-                if (item.type === 'mcp_tool_call' && typeof item.server === 'string' && typeof item.tool === 'string') nativeMcpCalls.push({ server: item.server, tool: item.tool, status: String(item.status ?? 'completed') });
+                if (item.type === 'mcp_tool_call' && typeof item.server === 'string' && typeof item.tool === 'string') {
+                  const args = item.arguments && typeof item.arguments === 'object' ? item.arguments as Record<string, unknown> : {};
+                  const error = item.error && typeof item.error === 'object' ? (item.error as Record<string, unknown>).message : undefined;
+                  const name = (value: unknown) => typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(value) ? value : undefined;
+                  nativeMcpCalls.push({ server: item.server, tool: item.tool, status: String(item.status ?? 'completed'),
+                    ...(item.status === 'failed' && item.server === 'eigos_ontology' ? { failure: { message: typeof error === 'string' ? error.slice(0, 500) : 'Native tool call failed', argumentKeys: Object.keys(args).slice(0, 20), function: name(args.function), objectType: name((args.object as { type?: unknown } | undefined)?.type) } } : {}) });
+                }
               }
             } catch { /* CLI diagnostics are not protocol events. */ }
           }
@@ -154,6 +171,7 @@ export class CodexExecutor implements Executor {
       recorded = {
         id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(),
         outputSha256: createHash('sha256').update(text).digest('hex'), model,
+        modelConfiguration: { ...this.configuration }, durationMs: Date.now() - Date.parse(startedAt),
         threadId: typeof threadId === 'string' ? threadId : undefined,
         usage: usage && typeof usage === 'object' ? Object.fromEntries(Object.entries(usage).filter((entry): entry is [string, number] => typeof entry[1] === 'number')) : undefined,
         ...(options.mcp ? { nativeMcpCalls } : {}),

@@ -18,6 +18,7 @@ import { domainAtomicActions, domainPreparedReceiptSchema } from './domain-compo
 const sha = z.string().regex(/^[a-f0-9]{64}$/), text = z.string().min(1).max(200);
 const ref = z.strictObject({ id: text, version: text });
 const phases: Record<string, CompositionPort['semantics']['phase']> = {
+  RideEstimateTask: 'request', RideEstimateObservation: 'quote', DidiOrderObservation: 'commitment',
   GeoQueryTask: 'request', CatalogTask: 'request', PaotuiTask: 'request', CommerceTask: 'request', BookingTask: 'request', ServiceRequest: 'request', Parcel: 'request', DeliveryRoute: 'request',
   ProductOffer: 'quote', DeliveryQuote: 'quote', ReservationOffer: 'quote', LandedCostQuote: 'quote', CommerceCheckout: 'quote',
   CommerceOrderObservation: 'commitment', BookingObservation: 'commitment', CommercePaymentObservation: 'payment', BookingPaymentObservation: 'payment', StripePaymentObservation: 'payment', PAPaymentRequest: 'request', CommerceDeliveryObservation: 'delivery',
@@ -32,7 +33,7 @@ const objectPort = (type: string, role = type, phase = phases[type] ?? 'fact'): 
 /** The typed schema identifies all reference arguments, including references
  * that old display-only inputs metadata omitted. It never guesses an entity
  * from a name or joins unrelated source identities. */
-function composable(action: ActionDefinition, evidenceTypes: Set<string>): ActionDefinition {
+export function composable(action: ActionDefinition, evidenceTypes: Set<string>): ActionDefinition {
   const operation = action.read ?? action.operation;
   if (!operation || action.composition) return action;
   const properties = (operation.inputSchema as { properties: Record<string, JsonSchema>; required?: string[] }).properties;
@@ -55,9 +56,9 @@ function composable(action: ActionDefinition, evidenceTypes: Set<string>): Actio
     ports.recipient = objectPort('PaotuiObservation', 'recipient_address_detail'); ports.recipient.semantics.locationRole = 'recipient';
   }
   const outputs: Record<string, CompositionPort> = { result: output };
-  const identityType = ['Cart', 'CommerceOrderObservation', 'StripePaymentObservation', 'BookingObservation'].includes(operation.resultType) ? operation.resultType : undefined;
+  const identityType = ['DidiOrderObservation', 'Cart', 'CommerceOrderObservation', 'StripePaymentObservation', 'BookingObservation'].includes(operation.resultType) ? operation.resultType : undefined;
   if (identityType) outputs.identity = { kind: 'object', type: identityType, cardinality: 'one', semantics: { role: `original_${identityType}`, phase: 'fact' }, evidence: { origins: ['provider', 'synthetic'] } };
-  if (['ReadCommerceCart', 'ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery', 'ReadStripePayment', 'ReadProviderBooking', 'ReadProviderPayment'].includes(action.id)) {
+  if (['ReadDidiRide', 'ReadCommerceCart', 'ReadCommerceOrder', 'ReadCommercePayment', 'ReadCommerceDelivery', 'ReadStripePayment', 'ReadProviderBooking', 'ReadProviderPayment'].includes(action.id)) {
     for (const [name, port] of Object.entries(ports)) if (name !== 'scope' && port.kind === 'object') ports[name] = { ...port, semantics: { role: `original_${port.type}`, phase: 'fact' }, evidence: { origins: ['provider', 'synthetic'] } };
   }
   if (['SearchPublicCatalog', 'InspectCatalogVariant', 'ReadMerchantVariants'].includes(action.id)) outputs.citations = citationPort(operation.resultType);

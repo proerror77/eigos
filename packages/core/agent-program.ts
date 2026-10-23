@@ -37,7 +37,7 @@ export interface AgentTerminalHandoff {
   record(job: import('./domain.js').Job, result: unknown | undefined): void;
 }
 export type AgentActionAuthority =
-  | { cost: { minor: string; currency: string; payeeId: string }; budgetImpact?: import('../ontology/actions.js').ActionBudgetImpact; objectWrite?: undefined; operationScope?: string }
+  | { confirmation?: import('../ontology/actions.js').AuthorizationPresentation; cost: { minor: string; currency: string; payeeId: string }; budgetImpact?: import('../ontology/actions.js').ActionBudgetImpact; objectWrite?: undefined; operationScope?: string }
   | { objectWrite: import('../ontology/actions.js').ObjectWriteScope; cost?: undefined; budgetImpact?: undefined; operationScope?: string };
 /** A connector failure with a deliberately safe, credential-free diagnostic. */
 export class AgentReadError extends Error {}

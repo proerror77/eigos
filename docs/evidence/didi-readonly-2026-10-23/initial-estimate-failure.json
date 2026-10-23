@@ -1,0 +1,15 @@
+{
+  "taskId": "c0443eaa-8b0b-42d1-9b24-ac20a2273c44",
+  "state": "failed",
+  "error": "Action did not return an accepted result. Inspect recorded observations; no automatic replay.",
+  "artifactProduced": false,
+  "modelRuns": 8,
+  "acceptedSourceObservations": 3,
+  "sourceTools": [
+    "maps_textsearch",
+    "maps_textsearch",
+    "taxi_estimate"
+  ],
+  "sourceIntents": "all_read_and_confirmed",
+  "note": "Source estimate observation was accepted. A later model phase did not complete; this task remains failed. Historical-evidence/model replay passed; it is not a live-task completion or a definitive root-cause diagnosis."
+}

@@ -10,7 +10,7 @@ export async function reasonWithOntology(model: Pick<CodexExecutor, 'runStructur
   record: (evidence: RunEvidence) => void, maxTurns = 8) {
   if (maxTurns < 1) throw new ReasoningBudgetExhausted();
   const budgetAbort = new AbortController(), nativeSignal = AbortSignal.any([signal, budgetAbort.signal]);
-  const mcp = await openOntologyMcp(session, nativeSignal, () => budgetAbort.abort(new ReasoningBudgetExhausted()));
+  const mcp = await openOntologyMcp(session, nativeSignal, () => budgetAbort.abort(new ReasoningBudgetExhausted()), finalSchema);
   try {
     const response = await model.runStructured([
       prompt,

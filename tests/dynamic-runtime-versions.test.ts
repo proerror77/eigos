@@ -61,7 +61,7 @@ test('metadata activation during planning leaves the in-flight fixed plan pinned
   } finally { store.close(); }
 });
 
-test('explicit unpinned compatibility records stay on the imported baseline while new tasks use v17', async () => {
+test('explicit unpinned compatibility records stay on the imported baseline while new tasks use v18', async () => {
   const store = new JobStore(':memory:'), catalog = new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), b = backend(catalog, reasoner(), store);
   try {
     const current = b.submit(), legacy = structuredClone(current), id = randomUUID();
@@ -70,7 +70,7 @@ test('explicit unpinned compatibility records stay on the imported baseline whil
     store.save(owner, legacy);
     const requestDigest = digest(legacy.delegation!.request);
     assert.equal(store.ontologyForJob(owner, legacy).model.ref.version, '15');
-    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '17');
+    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '18');
     const oldAuthorization = store.ontologyForJob(owner, legacy).model.action('AuthorizeProposal');
     const currentAuthorization = store.ontologyForJob(owner, current).model.action('AuthorizeProposal');
     assert.equal(oldAuthorization.version, '1'); assert(oldAuthorization.submissionCriteria.includes('sandbox_only'));

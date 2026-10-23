@@ -5,12 +5,13 @@ import { BUSINESS_MODEL_DEFINITION } from './business-model.js';
 import frozen from './history/business-v15.json' with { type: 'json' };
 import frozenV16 from './history/business-v16.json' with { type: 'json' };
 import { extendCompositionKernel } from './composition-kernel.js';
+import { extendDidiKernel } from './didi-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from './model-compiler.js';
 import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type OntologyDocument, type SerializableProperty } from './definition-contracts.js';
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '17';
+export const CURRENT_KERNEL_VERSION = '18';
 const SEMANTICS_VERSION = 'eigos-v15.1';
 type FrozenProperty = Omit<PropertyDefinition, 'schema'> & { schema: JsonSchema };
 type FrozenDefinition = Omit<ModelDefinition, 'objects' | 'interfaces'> & {
@@ -104,6 +105,10 @@ export function createSeedDefinition(registry = new TrustedDefinitionRegistry())
 
 /** A separate immutable kernel release can add supported engine contracts without relabelling old facts. */
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const composition = createCompositionKernelDefinition(registry);
+  return complete(extendDidiKernel(composition.document, registry), registry, false);
+}
+export function createCompositionKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const historical = createHistoricalKernelDefinition(registry);
   return complete(extendCompositionKernel(historical.document, registry, BUSINESS_MODEL_DEFINITION), registry, false);
 }

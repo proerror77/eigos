@@ -69,6 +69,8 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 
 显式选择的隔离本机开发实例先构建，再用 `npm run setup:local-pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
 
+滴滴 MCP 的工具绑定与证据依赖使用独立的 [`ontology/` 数据包](../ontology/README.md)。两端加载同一不可变定义快照；模型通过本体发现接口读取绑定，Worker 按所选动作解释参数和依赖。纯定义更新可运行 `ontology:check`、`ontology:sync` 后更新实例，沿用既有 Worker 构建。定义进入运行快照摘要和计划校验，凭据及只读授权仍由执行端管理。
+
 Shopify 匿名查询使用 `EIGOS_SHOPIFY_CATALOG_MERCHANTS` 显式列出商家身份（内部 id、名称、Shop GID、canonical myshopify 域名）。默认关闭，最多 8 家，身份不得重复；仅允许本机开发身份、loopback 和非生产环境。Gateway 只构造能力元数据，实际 HTTP 读取及模型由 Worker 执行。`setup:pa` 同样保留既有清单，显式 `[]` 关闭；启用时将原始响应和回执保存到私有 `shopify-reads/`，不读取 Shopify 账号凭据。Agent 自行选择查询、变体、动作组合及完成时机；价格等事实变化作为新的观察交给 Agent，没有固定复查或自动重试流程。当前实现、边界与 PA 验收状态见 [Agent 动作说明](catalog-agent-actions-2026-10-19.md)。
 
 交易模拟器由独立 `apps/commerce-sandbox` 进程运行；Gateway 和 Worker 都不会在构造能力目录时启动它。构建后可用 `npm run setup:commerce-sandbox` 管理本机 `127.0.0.1:3432` 实例，再向 `setup:pa` 提供其 URL 和私有凭据文件路径。后续更新保留既有绑定。模拟器拥有独立 SQLite、合成资料和签名凭据，没有真实厂商或支付凭据及对外调用实现。准确配置和验证边界见 [交易沙箱](commerce-agent-sandbox-2026-10-19.md)。
@@ -91,3 +93,5 @@ Gateway 和 Worker 在同一业务库中使用不可变本体发布。Gateway �
 显式受管数据 Action 的 Gateway 入口只创建预览、待授权任务及原 Intent；对象变更仍由 Worker 在持久事务内提交。该路径记录 caller decision，不生成虚假的模型回执。基础审查页面及范围见[动态定义实现](dynamic-ontology-implementation-2026-10-21.md)。
 
 自然语言受管任务的供给发现也在 Worker 内完成。宿主根据已接受的读取权限、锁定发布和声明式输入类型提供有界发现范围；模型的实际读取回执把供给引用带入后续任务上下文，每次决策重读当前值。这个范围不开放其他任务、私有字段、来源投影或反向共享节点导航。Action 的 `resultFacts` 声明把结果记录的金额和数量接入原有硬约束验收；执行前预览与提交后回读分别检查，准确授权、取消、租约及迟到结果保护仍沿用原账本。
+
+Worker 模型默认固定为 GPT-6-Luna，reasoning 为 medium，服务层级请求为 priority（Fast）；覆盖配置和运行证据字段见[滴滴模拟链路与模型配置](didi-booking-sandbox.md#worker-模型与验证)。模型请求配置与供应商实际服务层级分开记录。

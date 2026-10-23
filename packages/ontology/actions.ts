@@ -30,7 +30,10 @@ export interface ObjectWriteAuthorizationRequest {
   maxAmount?: never; payeeIds?: never;
   environment: 'managed'; realOperationsAllowed: false;
 }
+export const authorizationPresentationSchema = z.strictObject({ title: z.string().min(1).max(200), details: z.array(z.string().min(1).max(1000)).min(1).max(8) });
+export type AuthorizationPresentation = z.infer<typeof authorizationPresentationSchema>;
 export interface FinancialAuthorizationRequest {
+  confirmation?: AuthorizationPresentation;
   planDigest: string; effects: EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[];
   environment: 'sandbox'; realOperationsAllowed: false;
   actionBinding?: { actionId: string; ref: Ref; programRef: Ref; configurationDigest: string };

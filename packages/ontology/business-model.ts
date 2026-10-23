@@ -1,3 +1,5 @@
+import { rideEstimateActions, rideEstimateFunctions, rideEstimateLinks, rideEstimateObjects } from './ride-estimate.js';
+import { rideBookingActions, rideBookingFunctions, rideBookingLinks, rideBookingObjects } from './ride-booking.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
 import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
@@ -216,4 +218,12 @@ BUSINESS_MODEL_DEFINITION.objects.push(...networkObjects);
 BUSINESS_MODEL_DEFINITION.links.push(...networkLinks);
 const knownLinks = new Set(BUSINESS_MODEL_DEFINITION.links.map(link => link.id));
 BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(BUSINESS_MODEL_DEFINITION.objects.filter(type => type.visibility !== 'technical' && !isVirtualRef({ type: type.id })), BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces).filter(link => !knownLinks.has(link.id)));
+BUSINESS_MODEL_DEFINITION.objects.push(...rideEstimateObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...rideEstimateLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...rideEstimateActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...rideEstimateFunctions);
+BUSINESS_MODEL_DEFINITION.objects.push(...rideBookingObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...rideBookingLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...rideBookingActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...rideBookingFunctions);
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);

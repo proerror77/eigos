@@ -15,6 +15,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm test
       - run: npm run build
       - run: npm run test:e2e:run
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test -- --test-shard=${{ matrix.shard }}/8

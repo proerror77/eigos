@@ -1,0 +1,64 @@
+{
+  "taskId": "49bbdcae-2122-48b3-b699-63540bb22f14",
+  "completed": true,
+  "accepted": true,
+  "environment": "provider_mock",
+  "explicitCallerRouteRequirements": true,
+  "realOperationsAllowed": false,
+  "protocolReadbacksEqual": true,
+  "elapsedSeconds": 235.833,
+  "observerSeconds": 238.004,
+  "modelRuns": 8,
+  "modelSeconds": 231.253,
+  "modelConfiguration": {
+    "model": "gpt-6-luna",
+    "reasoningEffort": "medium",
+    "serviceTier": "priority"
+  },
+  "nativeOntologySessions": 8,
+  "acceptedDecisionSessions": 6,
+  "unsuccessfulNativeSessions": 0,
+  "nativeOntologyToolCalls": 74,
+  "sourceTreeSha256": "41d5b8ae53f038c88fdf8d3aef7d6c8f32980b75415a07f7c90b7575dfa82e19",
+  "validationScope": "isolated loopback Gateway and Worker with actual Codex CLI, native Ontology MCP and official DiDi mock; caller supplies exact route requirements",
+  "productionOrderEnabled": false,
+  "providerToolCalls": {
+    "maps_textsearch": 2,
+    "taxi_estimate": 1,
+    "taxi_create_order": 1,
+    "taxi_query_order": 1
+  },
+  "singleCreateIntent": true,
+  "readbackUsesOriginalOrderId": true,
+  "originalOrderIdSha256": "9d37a4be9f290790f0144293e0f10a0809e82b99cec703b60f6708cac79a5507",
+  "privateSourceResponseHashesVerified": true,
+  "nativeReceiptsMatchTaskLedger": true,
+  "artifactSha256": "5f061ce35345a492c237b85e296788f963f13723a9ac15ca863d2bdd936d8d9c",
+  "modelValidationRetries": 1,
+  "driverReadback": {
+    "state": "reported",
+    "sourceFormat": "text",
+    "identityBasis": "requested_order",
+    "numericStatusCode": null,
+    "finalFare": "unknown"
+  },
+  "serviceTierEvidence": "priority requested; actual served tier not reported",
+  "authorization": {
+    "planDigest": "a7fd6d5edebbf09d3d778c7a2df911f33f9e3d8b3f23f9800062829456cc81f0",
+    "effects": [
+      "order"
+    ],
+    "environment": "sandbox",
+    "realOperationsAllowed": false,
+    "confirmation": {
+      "title": "滴滴模拟叫车确认",
+      "details": [
+        "路线：西二旗-地铁站 → 龙泽-地铁站",
+        "车型：快车",
+        "预估价：15；最终完整车费未知",
+        "本地刷新截止：2026-10-23T11:21:50.501Z；过期须重新估价并确认",
+        "仅在官方 Mock 创建模拟订单，不真实叫车、不付款。"
+      ]
+    }
+  }
+}

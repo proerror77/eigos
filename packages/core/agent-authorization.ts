@@ -6,7 +6,7 @@ import type { AgentActionPlan } from '../ontology/agent-actions.js';
 import type { ActionDefinition } from '../ontology/model.js';
 import type { AgentProgram, AgentProgramContext } from './agent-program.js';
 import { stepBindingRef, stepInputDigest } from './composed-actions.js';
-import { actionBudgetImpactSchema, objectWriteScopeSchema, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
+import { authorizationPresentationSchema, actionBudgetImpactSchema, objectWriteScopeSchema, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
 import { assertGoalEffects } from './goal-contract.js';
 
 export function agentOperation(definition: ActionDefinition) {
@@ -40,6 +40,7 @@ export function agentPlanAuthorization(plan: AgentActionPlan): PlanAuthorization
   if (!step.cost || step.objectWrite) throw new DomainError('FORBIDDEN', 'A sandbox frontier must contain exactly one fully priced business operation');
   return { planDigest: plan.digest, effects: [...new Set([step.effect, ...(step.additionalEffects ?? [])])], maxAmount: { minor: step.cost!.minor, currency: step.cost!.currency }, payeeIds: [step.cost!.payeeId], environment: 'sandbox' as const, realOperationsAllowed: false as const,
     ...(step.binding ? { actionBinding: { actionId: step.action, ref: step.binding.ref, programRef: step.binding.programRef, configurationDigest: step.binding.configurationDigest } } : {}),
+    ...(step.confirmation ? { confirmation: authorizationPresentationSchema.parse(step.confirmation) } : {}),
     ...(step.budgetImpact ? { budgetImpact: actionBudgetImpactSchema.parse(step.budgetImpact) } : {}) };
 }
 export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramContext, plan: AgentActionPlan, step: AgentActionPlan['steps'][number]) {
@@ -78,7 +79,7 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
   if (!program.authority || ctx.request.executionEnvironment !== 'sandbox' || program.capability().environment !== 'sandbox' || !('environment' in op) || op.environment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Real business operations are unavailable');
   program.validate(ctx, step.action, step.input);
   const current = program.authority(ctx, step.action, step.input);
-  if (!current.cost || current.objectWrite || step.objectWrite || digest(current.cost) !== digest(step.cost) || current.operationScope !== step.operationScope
+  if (digest(('confirmation' in current ? current.confirmation : undefined) ?? null) !== digest(step.confirmation ?? null) || !current.cost || current.objectWrite || step.objectWrite || digest(current.cost) !== digest(step.cost) || current.operationScope !== step.operationScope
     || digest(current.budgetImpact ?? null) !== digest(step.budgetImpact ?? null)) throw new DomainError('CONFLICT', 'Payee, amount, budget commitment or business operation scope changed');
 }
 export function hasSimulationApproval(job: Job, plan: AgentActionPlan) {

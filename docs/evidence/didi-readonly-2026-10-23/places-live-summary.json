@@ -1,0 +1,139 @@
+{
+  "mode": "places",
+  "taskId": "4a6c7f6a-90a4-4e2a-8ba8-338553cb84a6",
+  "requestId": "29826eab-f78a-4f0a-85bf-a15323e55f38",
+  "state": "completed",
+  "accepted": true,
+  "modelRuns": 7,
+  "sourceObservations": 1,
+  "evidenceKind": "live_readonly",
+  "sourceTool": "maps_textsearch",
+  "result": {
+    "kind": "places",
+    "places": [
+      {
+        "id": "c2e7e1155888778f3f740ae94345a63e1911b4be32b20908b88f72ea36f38636",
+        "name": "北京西站",
+        "address": "丰台区莲花池东路118号",
+        "addressAll": "丰台区莲花池东路118号北京西站",
+        "city": "北京市",
+        "lng": 116.3213,
+        "lat": 39.89591,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "bcf0192c6c4d215f75a9f84ae486ad5a6e6cbf4fbb5517fa6f751203cb53b904",
+        "name": "北京西站-地铁站",
+        "address": "丰台区地铁7号线;地铁9号线",
+        "addressAll": "丰台区地铁7号线;地铁9号线北京西站-地铁站",
+        "city": "北京市",
+        "lng": 116.321181,
+        "lat": 39.8947,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "8515f4098e49b3c74abf1788b68144713e8b476f544da60b57db43269a4e6f7e",
+        "name": "北京西站(北1进站口)",
+        "address": "丰台区莲花池东路118号北京西站1层",
+        "addressAll": "丰台区莲花池东路118号北京西站1层北京西站(北1进站口)",
+        "city": "北京市",
+        "lng": 116.321181,
+        "lat": 39.896088,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "8b24ce985f2ec8825bfdd0bc06e60751ae42bf736c68c23ba604fff98908ef96",
+        "name": "北京西站-二层1验证验票进站口",
+        "address": "丰台区太平桥街道莲花池东路118号北京西站F2层北侧",
+        "addressAll": "丰台区太平桥街道莲花池东路118号北京西站F2层北侧北京西站-二层1验证验票进站口",
+        "city": "北京市",
+        "lng": 116.321073,
+        "lat": 39.896173,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "268229a68614d1c0ce514eb36339d428510a61e9419edcbccd9742c36ef9609b",
+        "name": "北京西站南广场-第1落客区",
+        "address": "丰台区广莲路11号2层113号",
+        "addressAll": "丰台区广莲路11号2层113号北京西站南广场-第1落客区",
+        "city": "北京市",
+        "lng": 116.323019,
+        "lat": 39.893469,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "af4360fac639db8c12af90f6bf7d3d42b25cb2b4ad5dae024b865ef3eb174368",
+        "name": "北京西站北广场",
+        "address": "北京市丰台区",
+        "addressAll": "北京市丰台区北京西站北广场",
+        "city": "北京市",
+        "lng": 116.321251,
+        "lat": 39.896484,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "ae1888cb0c2519dcd6482a8f5801befbd56db96c910aa4e04f15321808cd74de",
+        "name": "北京西站南广场亚朵酒店",
+        "address": "丰台区广安路9号院7号楼",
+        "addressAll": "丰台区广安路9号院7号楼北京西站南广场亚朵酒店",
+        "city": "北京市",
+        "lng": 116.323823,
+        "lat": 39.892127,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "55726028a675783d9dda023dfbf17115ab0dfb7a7ec407385d318cbb79f1752b",
+        "name": "北京西站希尔顿花园酒店",
+        "address": "西城区西站南路80号",
+        "addressAll": "西城区西站南路80号北京西站希尔顿花园酒店",
+        "city": "北京市",
+        "lng": 116.321599,
+        "lat": 39.876365,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "184540514287ca95ee8867b7a63720b95c11e22956b9c0216f2d57f81fc83324",
+        "name": "北京西站南广场广莲路网约车2号上车点",
+        "address": "丰台区北京西站南路与莲花池南路交叉口东北260米",
+        "addressAll": "丰台区北京西站南路与莲花池南路交叉口东北260米北京西站南广场广莲路网约车2号上车点",
+        "city": "北京市",
+        "lng": 116.322525,
+        "lat": 39.893025,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "dd57a303c5770e3af1a94b09be0ea17cabdc7c1e2d43a1c84fff05bc09ded0c3",
+        "name": "北京西站-南出口",
+        "address": "丰台区莲花池东路118号北京西站F1",
+        "addressAll": "丰台区莲花池东路118号北京西站F1北京西站-南出口",
+        "city": "北京市",
+        "lng": 116.320965,
+        "lat": 39.893498,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      },
+      {
+        "id": "1b4b2c21e8d651bbf80c8476c6a77078d8eb5693b6cb7c90ab83254202752e1e",
+        "name": "北京西站P2地面停车场",
+        "address": "丰台区莲花池东路120-1号",
+        "addressAll": "丰台区莲花池东路120-1号北京西站P2地面停车场",
+        "city": "北京市",
+        "lng": 116.318311,
+        "lat": 39.896352,
+        "coordinateSystem": "provider_unspecified",
+        "identityKind": "local_snapshot_digest"
+      }
+    ]
+  },
+  "noBusinessWrites": true,
+  "a2aMcpReadbackEqual": true
+}

@@ -1,0 +1,23 @@
+{
+  "apps/gateway/app.ts": "f0aea69b306985deeaa8ead86cfefb4706964ada983f8fcdf2ad8740598e40b8",
+  "apps/worker/runtime.ts": "05643d49d81819dfad2047d829a1768f8fd5c0934b4630b41a57b404b2424993",
+  "examples/verify-didi-readonly.ts": "7620670ccf15a7a8a76825b68348c0ee3ee3748e2ba0f27bc7e1c4d1aaf79483",
+  "packages/capabilities/catalog.ts": "f0604236a55e35d1c5b9169dfc5b90c40cc288f0edd9a570f018c2b92af6958a",
+  "packages/capabilities/didi/connector.ts": "5c9d1e62cd6d3ec2ac0f4ecdeee81674e725c6dbd628e41e40cde426fb134614",
+  "packages/capabilities/didi/contracts.ts": "b0b9a9abff5e0a35f84559d11a92d8ee6512fe44e1fcdaf987912bcf5edbc6ac",
+  "packages/capabilities/didi/mapping.ts": "21bd0ef08b8f31f179e8f3a38402f148374ef0badca27906a873f846153cb80a",
+  "packages/capabilities/didi/program.ts": "596606944a7ce77811023db57cae36f827304f056a6317462c6867ccb4478070",
+  "packages/core/config.ts": "ac6a736843d6f1afadbf802911fd6b6835263a2068b9e89e4d33e75e481070ed",
+  "packages/ontology/business-model.ts": "cdfcd62a693a02c1b1167585ed8bd871c6b13d15a7888142639bc0f4b653a97f",
+  "packages/ontology/object-evidence.ts": "57111940e3384f48040287d6a78770ee37c7e2dc039a2abf97dd49cf26518fbc",
+  "packages/ontology/object-functions.ts": "2d10bc4d5cc1cb0350f11f2482c35422563a442d5a6f7c1caec14e18a38239a6",
+  "packages/ontology/ride-estimate-functions.ts": "2841d59d8afb6107e0c8ad077bd2acc7e5a2e72cc6a00a587238812e17897ee0",
+  "packages/ontology/ride-estimate-projection.ts": "10ef4de69c41d23163e582063f4a82851a71ec9180fe256a8a9d0cc555f16bd3",
+  "packages/ontology/ride-estimate.ts": "1ce4ccdd3da4af53ce9921857fc8eaf9aade170bafcae9b7ec1945c8b2808a4d",
+  "scripts/setup-pa.mjs": "5266b6b08ade89f4829898091aaea33f19545facf8a394c89e51a6f784fc454f",
+  "tests/didi-gateway.test.ts": "bf88e1f12cdac032e4ccf8f64cb3154900f3829a45b9d6191ca6e4345b7da465",
+  "tests/didi.test.ts": "5bf75212229b5530ee261c9c70f9da318b3636c35ee3367c83509ac76a00b764",
+  "tests/fixtures/didi.ts": "4928eb362c84a0c248fcd7c7cd9e85afcc5693a17b68547d186527d51e6b3818",
+  "tests/gateway.test.ts": "50ed1b3456896d5b80a3d32c583d498d6500ccf78f854d3ca08bb799ab042918",
+  "tests/ontology-objects.test.ts": "a4f9c06798cbc229634c0e6ab27fabaa01ab7a644c77bd224744a43ce1cb8e17"
+}

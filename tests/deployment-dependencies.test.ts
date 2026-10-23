@@ -13,6 +13,8 @@ test('immutable release retains JSON assets required by relocated runtime import
   try {
     put(join(source, 'apps/gateway/main.ts'), "import value from '../../packages/ontology/history/seed.json' with { type: 'json' }; console.log(value.version);");
     put(join(source, 'packages/ontology/history/seed.json'), '{"version":15}');
+    put(join(source, 'ontology/didi-readonly.json'), '{"version":"1"}');
+    put(join(source, 'dist/ontology/didi-readonly.json'), '{"version":"1"}');
     put(join(source, 'dist/apps/gateway/main.js'), "import value from '../../packages/ontology/history/seed.json' with { type: 'json' }; console.log(value.version);");
     put(join(source, 'dist/packages/ontology/history/seed.json'), '{"version":15}');
     put(join(source, 'package.json'), '{"type":"module"}');
@@ -21,6 +23,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'integrations/grok/eigos-native/client.mjs'), 'console.log("A2A transport fixture");');
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
     const files = releaseFiles(source);
+    assert(files.includes('dist/ontology/didi-readonly.json'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }
     rmSync(source, { recursive: true });
