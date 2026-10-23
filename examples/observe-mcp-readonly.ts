@@ -35,7 +35,7 @@ assert.equal(job.id, id); assert.equal(job.state, 'completed');
 const delegation = job.delegation!;
 assert.equal(delegation.backendVersion, BACKEND_VERSION, 'Use a matching archived observer for historical backend evidence; never reinterpret it');
 assert(delegation.acceptance?.accepted && delegation.agent);
-assert(job.runs?.length && job.runs.every(run => run.runtime === 'codex-exec' && run.threadId), 'This observer requires actual Worker model runs, not a synthetic reasoner');
+assert(job.runs?.length && job.runs.every(run => run.threadId && (run.runtime === 'codex-exec' || run.runtime === 'codex-app-server' && run.turnId)), 'This observer requires actual Worker model turns, not a synthetic reasoner');
 assert(caller.artifacts.flatMap((a: { parts: { data?: unknown }[] }) => a.parts).some((part: { data?: unknown }) => part.data && digest(part.data) === digest(job.artifact!.data)), 'Caller and MCP readback differ');
 const db = new DatabaseSync(join(runtime, 'tasks.sqlite'), { readOnly: true });
 const owner = JSON.stringify(['local-development', 'local', 'developer']);

@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
+import { modelEnvironment, modelFeatureArgs } from './model-process.js';
+import { openCodexModelSession } from './model-session.js';
 
 export const decisionSchema = z.object({
   decision: z.enum(['ask_user', 'complete']),
@@ -24,6 +26,8 @@ export interface RunEvidence {
   decisionDigest?: string;
   model?: string;
   threadId?: string;
+  turnId?: string;
+  promptBytes?: number;
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';
 }
@@ -47,6 +51,7 @@ const outputSchema = {
 // plugins or peer agents. All conversational state is supplied from the Job.
 export class CodexExecutor implements Executor {
   constructor(private binary = 'codex', private timeoutMs = 120000) {}
+  openStructuredSession(schema: object, signal: AbortSignal) { return openCodexModelSession(this.binary, this.timeoutMs, schema, signal); }
 
   async run(job: Job, signal: AbortSignal): Promise<ExecutionResult> {
     const prompt = [
@@ -73,20 +78,14 @@ export class CodexExecutor implements Executor {
       await writeFile(schemaPath, JSON.stringify(schema), { mode: 0o600 });
       const args = ['exec', '--ignore-user-config', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
         '-c', 'project_doc_max_bytes=0', '-c', 'web_search="disabled"',
-        '--disable', 'shell_tool', '--disable', 'apps', '--disable', 'plugins', '--disable', 'hooks',
-        '--disable', 'memories', '--disable', 'multi_agent', '--disable', 'multi_agent_v2',
-        '--disable', 'computer_use', '--disable', 'browser_use', '--disable', 'browser_use_external',
-        '--disable', 'in_app_browser', '--disable', 'image_generation', '--disable', 'code_mode',
+        ...modelFeatureArgs,
         '--output-schema', schemaPath, '--output-last-message', outputPath, '--json', '-'];
       const events: Record<string, unknown>[] = [];
       let stderr = '';
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('Executor canceled')); return; }
         // A small allowlist prevents gateway credentials from entering the child.
-        const env: NodeJS.ProcessEnv = {};
-        for (const key of ['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'SSL_CERT_FILE']) {
-          if (process.env[key]) env[key] = process.env[key];
-        }
+        const env = modelEnvironment();
         const child = spawn(this.binary, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
         let buffer = '';
         let bytes = 0;

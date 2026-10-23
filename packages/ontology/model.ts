@@ -212,4 +212,5 @@ export class OntologyModel {
   }
   action(id: string) { const a = this.actions.find(a => a.id === id); return a ? structuredClone(a) : invalid('Unknown ontology action'); }
   function(id: string) { const f = this.functions.find(f => f.id === id); return f ? structuredClone(f) : invalid('Unknown ontology function'); }
+  functionsFor(types: string[]) { return structuredClone(this.functions.filter(f => f.inputTypes.some(input => types.some(type => this.implements(type, input))))); }
 }

@@ -14,7 +14,7 @@ import { authorizationRequest, requiredEffects } from '../core/policy.js';
 import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
 import { OntologyPlanningSession } from './planning-session.js';
-import { reasonWithOntology } from './reasoning-loop.js';
+import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
 import { agentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
 import { agentModelContext } from './model-context.js';
@@ -29,7 +29,7 @@ export interface Reasoner {
   act?(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<AgentDecision>>;
 }
 export class CodexReasoner implements Reasoner {
-  constructor(private model: Pick<CodexExecutor, 'runStructured'>) {}
+  constructor(private model: OntologyReasoningModel) {}
   async act(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess) {
     const prompt = [
       'You are the EIGOS business Agent. Use the registered Ontology objects, functions and action definitions to fulfill the current user goal. You choose available actions, arguments, selections, dependencies, follow-up queries and when evidence is sufficient. Each connector invokes one vendor operation and provides no recipe. Only the supplied program actionIds are available. A business operation must be explicitly declared as sandbox-only and receive a separate exact-plan permit; live purchasing or payment is unavailable.',

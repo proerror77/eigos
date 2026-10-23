@@ -55,7 +55,7 @@ export class OntologyPlanningSession {
   private failures = new Map<string, number>();
   constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
     private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = []) {}
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), functions: this.graph.model.functionsFor(['ServiceRequest', ...this.boundRefs.map(ref => ref.type)]), functionNavigationOnly: true, readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
   receipts() { return structuredClone(this.reads); }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
   private remember(ref: ObjectRef, expectedRevision?: number) {
