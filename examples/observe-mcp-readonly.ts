@@ -9,6 +9,7 @@ import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import type { Job } from '../packages/core/domain.js';
+import type { ActionIntent } from '../packages/ontology/actions.js';
 
 const argument = (name: string) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 assert(process.argv.includes('--live'), 'Use --live only to inspect an authorized existing test');
@@ -40,10 +41,18 @@ const db = new DatabaseSync(join(runtime, 'tasks.sqlite'), { readOnly: true });
 const owner = JSON.stringify(['local-development', 'local', 'developer']);
 try {
   const saved = db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(owner, id); assert(saved);
-  assert.equal(digest(JSON.parse(String(saved.body))), digest(job));
+  const stored = JSON.parse(String(saved.body)) as Job;
+  // GetTask adds current ledger views without changing the stored task body.
+  const { actions, businessFacts, authorizationBudget, ...baseDelegation } = delegation;
+  const { actions: _actions, businessFacts: _facts, authorizationBudget: _budget, ...storedDelegation } = stored.delegation!;
+  assert.equal(digest({ ...stored, delegation: storedDelegation }), digest({ ...job, delegation: baseDelegation }));
   // Quote freshness may have elapsed while CI was running: this is explicitly a replay at acceptance.
-  const intents = db.prepare('SELECT body FROM action_intents WHERE owner=? AND job_id=?').all(owner, id).map(r => JSON.parse(String(r.body)));
+  const intents = db.prepare('SELECT body FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, id).map(r => JSON.parse(String(r.body)) as ActionIntent);
   assert(intents.length && intents.every(i => i.effect === 'read'), 'A prior task revision contains a business effect');
+  assert.equal(digest(actions), digest(intents.map(i => ({ id: i.id, stepId: i.stepId, state: i.state, remoteRef: i.remoteRef, latestObservationId: i.latestObservationId }))));
+  assert.equal(digest(businessFacts), digest(intents.flatMap(i => i.businessSnapshot ? [{ intentId: i.id, snapshot: i.businessSnapshot.value, sourceVersion: i.businessSnapshot.sourceVersion, evidenceRefs: i.businessSnapshot.evidenceRefs }] : [])));
+  assert.deepEqual(authorizationBudget, []);
+  assert.equal(Number(db.prepare('SELECT COUNT(*) AS count FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').get(owner, id)!.count), 0);
   const at = Date.parse(delegation.acceptance.at), graph = new OntologyObjectStore(db, undefined, () => at);
   const bindings = delegation.agent.plans.flatMap(plan => {
     assert.equal(digest(plan.ontologyPlanning.model), digest(graph.model.ref), 'Independent ontology definition changed');
