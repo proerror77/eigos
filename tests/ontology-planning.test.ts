@@ -51,11 +51,28 @@ test('Bound reference function navigation comes from ontology metadata and perfo
   try {
     const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [{ type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }]);
     const catalog = session.catalog();
+    assert.deepEqual(catalog.boundObjects, [{ ref: { type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }, navigationOnly: true, readThisDecision: false }]);
+    assert.equal(catalog.actionInputReadPolicy.contextAndHistoricalReadsSatisfy, false);
+    assert.equal(catalog.actionInputReadPolicy.hostQueriesAutomatically, false);
     assert(catalog.functionNavigationOnly); assert.deepEqual(catalog.functions.find(f => f.id === 'rideEstimateStatus'), f.graph.model.function('rideEstimateStatus'));
     assert.equal(session.receipts().length, 0); assert.deepEqual(session.retrievedRefs(), []);
     assert.throws(() => session.finish(), /actual definition and object reads/);
   } finally { f.db.close(); }
 });
+test('Bound reference navigation changes its read status only after this decision actually queries it', () => {
+  const f = fixture();
+  try {
+    const ref = f.batch.objects.find(object => object.ref.type === 'DeliveryQuote')!.ref;
+    const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [ref]);
+    assert.equal(session.catalog().boundObjects[0]!.readThisDecision, false); assert.equal(session.receipts().length, 0);
+    session.call('query_ontology', { object: ref });
+    assert.equal(session.catalog().boundObjects[0]!.readThisDecision, true);
+    assert.deepEqual(session.receipts().map(read => [read.tool, read.status]), [['query_ontology', 'ok']]);
+    const next = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [ref]);
+    assert.equal(next.catalog().boundObjects[0]!.readThisDecision, false); assert.equal(next.receipts().length, 0);
+  } finally { f.db.close(); }
+});
+
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
 
 test('N2 grounds typed conditions without weakening source quantities, services, budgets or prior conditions', () => {
