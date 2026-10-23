@@ -10,6 +10,7 @@ export function sourceProof(store: OntologyObjectStore, owner: string, ref: Obje
   const linksDigest = store.relationshipDigest(owner, ref, budget);
   scopes.BookingOffers = 'reservation'; scopes.BookingObservation = 'reservation'; scopes.BookingPaymentObservation = 'payment';
   scopes.StripePaymentObservation = 'payment';
+  scopes.DidiPlaceObservation = 'domain_ride'; scopes.RideEstimateObservation = 'domain_ride';
   scopes.CatalogRead = 'goods_offer';
   scopes.CatalogObservation = 'goods_offer'; scopes.CatalogEndpoint = 'goods_offer';
   Object.assign(scopes, commerceEvidenceScopes);

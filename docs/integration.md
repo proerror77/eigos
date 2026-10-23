@@ -34,7 +34,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v14`，业务模型为 `eigos.business@13`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v14`，业务模型为 `eigos.business@14`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -75,3 +75,7 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 ## Stripe Treasury 预留
 
 已预留官方 MCP 地址及 `EIGOS_STRIPE_TREASURY_ENABLED=false`。当前版本拒绝启用，没有账户授权、网络连接或可执行 Treasury 能力；MCP/A2A 均不发布资金查询或操作入口。后续按成员账户授权和 Worker 执行边界单独接入，见 [Treasury 接入预留](stripe-treasury-integration.md)。
+
+## 滴滴只读接入
+
+本人本机可显式配置 `ride.estimate.query@1`，支持地点搜索和指定路线车型估价，仍通过 `eigos.delegate` 使用。Key 仅由 Worker 从私密文件读取；Gateway 构造目录不读 Key、不发来源请求。只有 `maps_textsearch`、`taxi_estimate` 可执行，估价不代表完整车费、叫车或行程完成。配置、歧义和证据范围见[滴滴只读说明](didi-readonly-integration.md)。

@@ -48,6 +48,7 @@ before(async () => {
   base = `http://127.0.0.1:${address.port}`;
   // The test listener is loopback; the injected verifier still enforces HTTPS issuer/audience.
   const config: Config = {
+    EIGOS_DIDI_ENVIRONMENT: 'production', EIGOS_DIDI_ORDERS_ENABLED: 'false',
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
