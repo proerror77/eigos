@@ -2,7 +2,8 @@ import { scriptedMcpModel } from './fixtures/native-ontology-model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setup, paotuiModel } from './fixtures/paotui-agent.js';
-import { backend, evidence, interpretation, owner, principal, observeTaskContext } from './backend-fixture.js';
+import { backend, evidence, interpretation, owner, principal, observeTaskContext, reasoner } from './backend-fixture.js';
+import { assertGoalEffects } from '../packages/core/goal-contract.js';
 import { CodexReasoner, type Reasoner } from '../packages/coordinator/coordinator.js';
 import { DomainError } from '../packages/core/domain.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
@@ -183,5 +184,56 @@ test('artifact interpretation preserves numeric content while explicit structure
     assert.equal(rejected.delegation!.agent, undefined);
     assert.match(rejected.delegation!.groundingFeedback!.at(-1)!.message, /Every fixed hard requirement/);
     assert.equal(b.store.intents(owner, fixed.id).length, 0);
+  } finally { b.store.close(); }
+});
+
+test('unregistered quoted conditions are corrected in the same task before freezing a locally verifiable goal', async () => {
+  const goal = '用给出的资料生成 Markdown 议程，不查询外部信息。';
+  let interpretations = 0;
+  const model = scriptedMcpModel({ runStructured: async (prompt: string) => {
+    const packet = JSON.parse(prompt.split('\n\n').at(-1)!);
+    if (!packet.conversation.length) return { output: { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' }, evidence: evidence() };
+    const context = packet.conversation[0].result.data;
+    const predicate = 'execution.supplied_information_only';
+    assert(context.capabilities.some((capability: any) => capability.predicates.some((item: any) => item.id === predicate)));
+    const decision = { kind: 'compose', requestRevision: context.request.revision, message: 'Preserve the supplied-information boundary',
+      requirementsJson: JSON.stringify([{ requirement: { id: 'source-boundary', kind: 'condition', strength: 'hard', expected: { predicate: interpretations++ === 0 ? '不查询外部信息。' : predicate } }, messageId: context.request.messages[0].id, quote: '不查询外部信息。' }]), conditionsJson: '[]',
+      criteriaJson: JSON.stringify([{ id: 'document', predicate: 'document.markdown', phase: 'artifact', description: goal, messageId: context.request.messages[0].id, quote: goal, requirementIds: ['source-boundary'] }]) };
+    return { output: { kind: 'final', calls: [], receiptIds: [packet.conversation[0].receipt.id], finalJson: JSON.stringify(decision) }, evidence: evidence() };
+  } });
+  const b = backend(createExecutionCatalog({ documentEnabled: true }), new CodexReasoner(model));
+  try {
+    const job = b.submit({ goal }); await b.run();
+    const first = b.store.get(owner, job.id);
+    assert.equal(first.state, 'working'); assert.equal(first.delegation!.agent, undefined);
+    assert.match(first.delegation!.groundingFeedback!.at(-1)!.message, /registered capability predicate/);
+    assert.equal(first.delegation!.request.requirements.length, 0); assert.equal(b.store.intents(owner, job.id).length, 0);
+    await b.run(); const fixed = b.store.get(owner, job.id);
+    assert.equal(fixed.id, job.id); assert.equal(fixed.delegation!.request.originalGoal, goal);
+    const boundary = fixed.delegation!.request.requirements[0]!;
+    assert(boundary.kind === 'condition'); assert.equal(boundary.expected.predicate, 'execution.supplied_information_only');
+    assert.deepEqual(fixed.delegation!.agent!.composition!.goal.effectConstraints, [{ requirementId: 'source-boundary', allowedEffects: ['local'] }]);
+    assert.throws(() => assertGoalEffects(fixed.delegation!.agent!.composition!.goal, ['read']), /constraint/);
+    assertGoalEffects(fixed.delegation!.agent!.composition!.goal, ['local']);
+    assert.equal(b.store.intents(owner, job.id).length, 0);
+  } finally { b.store.close(); }
+});
+
+test('clarification cannot freeze an unregistered condition before the owner supplies missing information', async () => {
+  const goal = '编写议程，不查询外部信息。'; let attempts = 0;
+  const b = backend(createExecutionCatalog({ documentEnabled: true }), reasoner(request => ({
+    ...interpretation(request, 'document.compose', { format: 'markdown' }), kind: 'clarify', message: '会议时长是多少？',
+    requirementsJson: JSON.stringify([{ requirement: { id: 'source-boundary', kind: 'condition', strength: 'hard', expected: { predicate: attempts++ ? 'execution.supplied_information_only' : '不查询外部信息。' } }, messageId: request.messages[0]!.id, quote: '不查询外部信息。' }]),
+  })));
+  try {
+    const job = b.submit({ goal }); await b.run();
+    const first = b.store.get(owner, job.id);
+    assert.equal(first.state, 'working'); assert.equal(first.delegation!.request.requirements.length, 0);
+    assert.match(first.delegation!.groundingFeedback!.at(-1)!.message, /registered capability predicate/);
+    await b.run(); const clarified = b.store.get(owner, job.id);
+    assert.equal(clarified.state, 'input-required'); assert.equal(clarified.id, job.id);
+    const boundary = clarified.delegation!.request.requirements[0]!;
+    assert(boundary.kind === 'condition'); assert.equal(boundary.expected.predicate, 'execution.supplied_information_only');
+    assert.equal(b.store.intents(owner, job.id).length, 0);
   } finally { b.store.close(); }
 });

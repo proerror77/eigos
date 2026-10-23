@@ -82,6 +82,7 @@ export class CodexReasoner implements Reasoner {
       JSON.stringify(z.toJSONSchema(requirementSchema)),
       'Distinguish artifact content specifications from required source or business outcomes. A proposed meeting duration, participant description or number of questions to write in a document is content to preserve in that artifact criterion description and the original source instructions; it is not a task-wide quantity of an executed service. Do not extract new typed execution requirements from those content specifications unless an available capability explicitly declares the corresponding content requirement role and verifier. Actual requested source-result counts, purchased quantities, service costs and deadlines remain typed constraints with their declared roles, even when a report is also requested. Never omit, weaken or reinterpret an existing structured hard constraint under this distinction; if no registered verifier can satisfy it, report unsupported.',
       'Requirement quotes must be exact original text. CNY amounts use integer minor units; non-CNY budgets require explicit structured minor units. Relative deadlines use the source message receivedAt and an explicit timezone, never the current time. An explicit later owner correction may replace only its corresponding earlier value; preserve all other constraints. A missing role retains the original task-wide meaning. Use declared requirementRoles and registered predicate IDs; do not ask the user for internal IDs.',
+      'For a condition, expected.predicate must be an exact ID from the discovered capability predicates, with equivalent declared semantics. Put the original natural-language clause in quote, never in predicate. Distinguish a ban on external effects from a ban on provider reads. If no registered predicate can verify an essential condition, report unsupported before selecting actions; do not freeze an unverifiable invented predicate.',
       'conditionsJson is a JSON array of applicable typed business conditions. Read the condition schema only when needed. Preserve all existing conditions and original source quotations. Future result conditions are checked after observations; do not turn them into prerequisites for acquiring those observations. A subject object may remain unspecified until a source supplies it. Do not invent object references. Use [] when no additional typed condition applies.',
       'The capabilities in read_task_context are a bounded bootstrap. Inspect capabilityDirectory.bootstrapComplete. Use discover_actions search/type/effect filters and its pagination to find omitted services. A discovery binding includes the registered capability, goalOutcomes, context input schema and verifier proposal schema. Ground criteria only in definitions actually read; omitted service metadata is not proof of unavailability.',
       'Context inputs and domain-specific distinctions are described in registered capabilities; the later Agent will prepare the chosen contexts and discover actions. All independent required outcomes remain part of this one fixed goal. Source receipts, provenance and domain validators determine whether the future result actually satisfies each criterion.',
@@ -158,14 +159,14 @@ export class Coordinator {
       if (!this.store.checkpoint(claim, job => { job.delegation!.groundingDecisions = [...(job.delegation!.groundingDecisions ?? []), { modelRunId: grounded.evidence.id, decision: structuredClone(decision) }]; })) return;
       if (decision.requestRevision !== d.request.revision) throw new DomainError('CONFLICT', 'Stale request interpretation');
       if (decision.kind === 'unsupported') { this.pause(claim, d.request, false, decision.message); return; }
+      const discovered = groundingReads.reads.filter(read => read.status === 'ok').flatMap(read => read.actionBindings?.pins ?? []).flatMap(pin => {
+        const entry = this.catalog.discoverActions(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, d.request, { actionId: pin.actionId, programRef: pin.programRef }).items.flatMap(item => item.bindings).find(binding => binding.pin.digest === pin.digest);
+        const program = entry && this.catalog.agentProgram(pin.programRef, claim.owner);
+        return program ? [program.capability()] : [];
+      });
+      const capabilities = [...new Map([...summaries.map(summary => this.catalog.capability(summary.ref)), ...discovered].map(capability => [digest(capability.ref), capability])).values()];
       if (decision.kind === 'compose') {
-        const discovered = groundingReads.reads.filter(read => read.status === 'ok').flatMap(read => read.actionBindings?.pins ?? []).flatMap(pin => {
-          const entry = this.catalog.discoverActions(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, d.request, { actionId: pin.actionId, programRef: pin.programRef }).items.flatMap(item => item.bindings).find(binding => binding.pin.digest === pin.digest);
-          const program = entry && this.catalog.agentProgram(pin.programRef, claim.owner);
-          return program ? [program.capability()] : [];
-        });
-        const capabilities = [...new Map([...summaries.map(summary => this.catalog.capability(summary.ref)), ...discovered].map(capability => [digest(capability.ref), capability])).values()];
-        request = groundConditions(groundRequirements(d.request, decision.requirementsJson, [...new Set(capabilities.flatMap(capability => capability.outcomePredicates ?? []))], capabilities.flatMap(capability => capability.requirementRoles ?? [])), decision.conditionsJson, groundingAccess.session.retrievedRefs());
+        request = groundConditions(groundRequirements(d.request, decision.requirementsJson, [...new Set(capabilities.flatMap(capability => capability.outcomePredicates ?? []))], capabilities.flatMap(capability => capability.requirementRoles ?? []), capabilities.flatMap(capability => capability.predicates.map(predicate => predicate.id))), decision.conditionsJson, groundingAccess.session.retrievedRefs());
         const goal = createGoalContract(request, this.store.ontologyForJob(claim.owner, claim.job).releaseRef!, JSON.parse(decision.criteriaJson), capabilities);
         this.store.finish(claim, job => {
           job.delegation!.request = request; job.delegation!.agent = goalState(request, goal); job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0;
@@ -179,7 +180,7 @@ export class Coordinator {
       if (decision.kind === 'resolve' && !selected) throw new DomainError('CONFLICT', capabilitySelectionFeedback);
       const preparer = selected ? this.catalog.agentProgram(selected.ref, claim.owner) : undefined;
       const currentRequest = preparer?.prepareRequest?.(d.request) ?? d.request;
-      request = groundConditions(groundRequirements(currentRequest, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles), decision.conditionsJson, groundingAccess.session.retrievedRefs());
+      request = groundConditions(groundRequirements(currentRequest, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles, (selected ? [selected] : capabilities).flatMap(capability => [...capability.predicates.map(predicate => predicate.id), ...(capability.outcomePredicates ?? [])])), decision.conditionsJson, groundingAccess.session.retrievedRefs());
       preparer?.validateRequest?.(request);
     } catch (error) {
       signal.throwIfAborted();

@@ -16,9 +16,10 @@ import { DOCUMENT_BINDING } from './document.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
+const suppliedInformationOnly = 'execution.supplied_information_only';
 export class DocumentAgentProgram implements AgentProgram {
   readonly ref = { id: 'document.compose', version: '2' };
-  readonly configurationDigest = digest({ program: 'document-agent-v2', executor: 'bounded-document-only', maxCalls: 6, maxSourceBytes: 64000 });
+  readonly configurationDigest = digest({ program: 'document-agent-v2', executor: 'bounded-document-only', maxCalls: 6, maxSourceBytes: 64000, executionConstraints: 'supplied-information-v1' });
   readonly actionIds = ['ComposeDocument'];
   readonly completionSchema = z.toJSONSchema(documentCompletionSchema);
   readonly guidance = 'Choose accepted source citations when drafting from retrieved facts. The document is one component result; it cannot prove source research, booking, payment or fulfillment.';
@@ -30,9 +31,9 @@ export class DocumentAgentProgram implements AgentProgram {
     return { ref: this.ref, ontologyRef: { id: 'eigos.document', version: '2' }, name: '生成有来源的 Markdown 文档', description: '从原始用户请求、已确认输入和明确选定的已接受来源证据生成文档。输入仅 format=markdown；可在 ComposeDocument 动作中引用来源输出。文档不能代替引用服务的事实核验或业务完成。',
       tags: ['document', 'markdown'], environment: 'local', inputSchema: z.toJSONSchema(documentTaskSchema), ontology: { objects: ['DocumentTask', 'DocumentDraft'], evidenceBoundary: 'artifact_only' },
       actions: [{ ref: { id: 'ComposeDocument', version: '1' }, effect: 'local' }], completion: 'artifact', verifierRef: { id: 'document.accepted-citations', version: '1' },
-      predicates: [{ id: 'document.markdown', description: 'Actual nonempty Markdown draft with original model receipt and current accepted citations' }, { id: 'execution.no_external_effects', description: 'Document model tools and external actions are disabled' }],
+      predicates: [{ id: 'document.markdown', description: 'Actual nonempty Markdown draft with original model receipt and current accepted citations' }, { id: 'execution.no_external_effects', description: 'Document model tools and external actions are disabled' }, { id: suppliedInformationOnly, description: 'The task uses only supplied information and local artifacts. No provider reads, external research, sends, bookings or managed business-object writes; all task action intents must be local.' }],
       outcomePredicates: ['document.markdown'], goalOutcomes: [{ predicate: 'document.markdown', phase: 'artifact', description: 'A document artifact exists; content does not establish its underlying business claims' }],
-      effectConstraints: [{ predicate: 'execution.no_external_effects', allowedEffects: ['read', 'local', 'object_write'] }] };
+      effectConstraints: [{ predicate: 'execution.no_external_effects', allowedEffects: ['read', 'local', 'object_write'] }, { predicate: suppliedInformationOnly, allowedEffects: ['local'] }] };
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     const input = documentTaskSchema.parse(value), scope = { type: 'DocumentTask', id: digest({ request: request.id, revision: request.revision, binding: this.configurationDigest, ...(component ? { component: component.id } : {}) }) };
@@ -128,6 +129,6 @@ export class DocumentAgentProgram implements AgentProgram {
       if (object.revision !== citation.revision || digest(object.properties) !== citation.propertiesDigest || !same(citation.evidenceRefs, receipt.port.evidence.refs)) fail('Document cites changed source facts; revise it from current evidence');
     }
     return { artifact: { id: document.id, name: 'deliverable.md', data: { goal: ctx.request.originalGoal, deliverable: '文档草稿已生成，原始模型回执、内容摘要和引用版本已核对；内容质量仍需按用途审阅。', execution: 'completed', markdown: snapshot.markdown, result: { modelGenerated: true, contentSha256: snapshot.contentDigest, noExternalActions: true, citations: snapshot.citations } } },
-      facts: { conditions: ['document.markdown', 'execution.no_external_effects'], deliveryBy: snapshot.createdAt, deadlines: { completion: snapshot.createdAt } }, evidenceRefs: [snapshot.modelRunId], consumedPorts: [...new Set(snapshot.citations.map(citation => citation.receiptDigest))] };
+      facts: { conditions: ['document.markdown', 'execution.no_external_effects', ...((ctx.taskIntents ?? ctx.intents ?? []).every(intent => intent.effect === 'local') ? [suppliedInformationOnly] : [])], deliveryBy: snapshot.createdAt, deadlines: { completion: snapshot.createdAt } }, evidenceRefs: [snapshot.modelRunId], consumedPorts: [...new Set(snapshot.citations.map(citation => citation.receiptDigest))] };
   }
 }

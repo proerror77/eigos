@@ -18,7 +18,7 @@ function quantityMatches(quote: string, amount: string, unit: string): boolean {
   }
   return false;
 }
-export function groundRequirements(request: ServiceRequest, json: string, outcomePredicates: string[] = [], roles: RequirementRoleDefinition[] = []): ServiceRequest {
+export function groundRequirements(request: ServiceRequest, json: string, outcomePredicates: string[] = [], roles: RequirementRoleDefinition[] = [], conditionPredicates?: readonly string[]): ServiceRequest {
   const result = structuredClone(request);
   for (const requirement of [...result.requirements]) if (requirement.kind === 'condition' && outcomePredicates.includes(requirement.expected.predicate)) {
     result.successCriteria = [...(result.successCriteria ?? []), requirement]; result.requirements = result.requirements.filter(r => r.id !== requirement.id);
@@ -38,6 +38,7 @@ export function groundRequirements(request: ServiceRequest, json: string, outcom
       if (!newer || digest(existing.expected) === digest(r.expected)) continue;
     }
     const activeQuote = operativeText(item.quote);
+    if (r.kind === 'condition' && conditionPredicates && !conditionPredicates.includes(r.expected.predicate) && !outcomePredicates.includes(r.expected.predicate)) throw new DomainError('CONFLICT', 'A new condition must use an exact registered capability predicate ID from read_task_context or discover_actions; keep the original human clause in provenance.quote');
     if (r.kind === 'quantity' && !quantityMatches(activeQuote, r.expected.amount, r.expected.unit)) throw new DomainError('CONFLICT', 'Quantity interpretation differs from its source quote');
     if (r.kind === 'budget') {
       if (r.expected.currency !== 'CNY') throw new DomainError('INVALID_INPUT', 'Non-CNY budgets require explicit structured minor units');

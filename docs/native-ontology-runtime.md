@@ -36,6 +36,8 @@ EIGOS Agent 的持久状态和执行循环在 Worker 中。模型会话由本机
 
 一个原生模型会话可包含多次 MCP 工具调用，用量按该真实模型运行记录；工具尝试数和本体读取预算单独核对。
 
+新提取的条件必须引用已发现能力中的登记 predicate，原始自然语言保存在来源引文。解释或补问阶段发现未登记标识时，先向模型返回校验反馈，不能将其冻结为永远无法核验的目标。文档能力提供 `execution.supplied_information_only`：它将整项任务限制为本地制品动作，并在完成时检查原任务动作账本；有来源读取的任务不能凭文档组件宣称只用了给定信息。未知条件继续阻止完成。
+
 ## 唯一接入目标
 
 当前主部署使用 `invite-beta` profile。`get_runtime_info` 和 `/health` 返回相同的 instance、backend、releaseDigest 和 ontologyTransport；这些字段描述安装版本，不替代实际任务验收。

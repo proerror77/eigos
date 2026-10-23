@@ -111,6 +111,8 @@ test('one whole goal executes two independently pinned programs and passes origi
     assert(ports.some(port => port.port === 'citations' && port.evidence.origin === 'synthetic' && port.observationId === producer.latestObservationId));
     const sourceMessage = t.documents[0]!.messages.at(-1)!.text; assert(sourceMessage.includes(merchant.domain)); assert(sourceMessage.includes(ids[0]!));
     assert.equal(done.runs!.filter(run => run.purpose === 'document').length, 1);
+    const documentProof = state.composition!.assessment!.components.find(component => component.contextId === 'document')!;
+    assert(!documentProof.delivery!.facts.conditions!.includes('execution.supplied_information_only'), 'A document cannot erase the task\'s preceding provider read');
     assert.equal(done.delegation!.acceptance!.checks.find(check => check.requirementId === 'count')!.result, 'pass');
   } finally { t.store.close(); }
 });
