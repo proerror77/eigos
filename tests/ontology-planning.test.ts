@@ -52,8 +52,8 @@ test('Bound reference function navigation comes from ontology metadata and perfo
     const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [{ type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }]);
     const catalog = session.catalog();
     assert.deepEqual(catalog.boundObjects, [{ ref: { type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }, navigationOnly: true, readThisDecision: false }]);
-    assert.equal(catalog.actionInputReadPolicy.contextAndHistoricalReadsSatisfy, false);
-    assert.equal(catalog.actionInputReadPolicy.hostQueriesAutomatically, false);
+    assert.equal(catalog.actionInputReadPolicy.navigationAndHistoricalReadsSatisfy, false);
+    assert.equal(catalog.actionInputReadPolicy.missingReferencesQueriedAutomatically, false);
     assert(catalog.functionNavigationOnly); assert.deepEqual(catalog.functions.find(f => f.id === 'rideEstimateStatus'), f.graph.model.function('rideEstimateStatus'));
     assert.equal(session.receipts().length, 0); assert.deepEqual(session.retrievedRefs(), []);
     assert.throws(() => session.finish(), /actual definition and object reads/);

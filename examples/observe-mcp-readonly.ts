@@ -54,9 +54,26 @@ try {
   assert.deepEqual(authorizationBudget, []);
   assert.equal(Number(db.prepare('SELECT COUNT(*) AS count FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').get(owner, id)!.count), 0);
   const at = Date.parse(delegation.acceptance.at), graph = new OntologyObjectStore(db, undefined, () => at);
+  const readById = new Map((delegation.ontologyReads ?? []).map(read => [read.id, read]));
+  const contextEvidence = job.runs!.flatMap(run => {
+    const context = run.ontologyContext;
+    if (!context) return [];
+    assert.equal(digest(context.model), digest(graph.model.ref));
+    const reads = context.receiptIds.map(id => { const read = readById.get(id); assert(read && read.origin === 'worker_context'); return read; });
+    assert.equal(new Set(context.receiptIds).size, reads.length);
+    assert(reads.length && reads.length <= 10);
+    assert(reads.every(read => read.at >= context.startedAt && read.at <= context.preparedAt));
+    assert(context.preparedAt <= (run.requestSentAt ?? run.startedAt));
+    assert.equal(context.digest, digest({ model: context.model, requestRevision: context.requestRevision, reads }));
+    return [{ modelRunId: run.id, digest: context.digest, reads: reads.length, preparedBeforeModel: true }];
+  });
   const bindings = delegation.agent.plans.flatMap(plan => {
     assert.equal(digest(plan.ontologyPlanning.model), digest(graph.model.ref), 'Independent ontology definition changed');
     const run = job.runs!.find(r => r.id === plan.modelRunId); assert.equal(run?.decisionDigest, digest(plan.modelDecision));
+    if (run?.ontologyContext) {
+      assert.equal(run.ontologyContext.requestRevision, plan.requestRevision);
+      assert(run.ontologyContext.receiptIds.every(id => plan.ontologyPlanning.reads.some(read => read.id === id)));
+    }
     return plan.steps.map(step => {
       assert.equal(step.effect, 'read');
       const definition = graph.model.action(step.action); assert(definition.read?.mcp && definition.read.module);
@@ -70,7 +87,14 @@ try {
       return { action: step.action, tool: definition.read.mcp.tool, transport: definition.read.mcp.transport ?? 'mcp', module: definition.read.module, observation: ref, observedAt: snapshot.observedAt };
     });
   });
-  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, noOrderOrPayment: true };
+  const completion = delegation.agent.completion; assert(completion);
+  const completionRun = job.runs!.find(run => run.id === completion.modelRunId); assert(completionRun);
+  assert.equal(completion.modelDecision.kind, 'complete');
+  assert.equal(completionRun.decisionDigest, digest(completion.modelDecision));
+  assert.equal(digest(JSON.parse(completion.modelDecision.completionJson)), digest(completion.proposal));
+  assert(bindings.every(binding => binding.observedAt <= (completionRun.requestSentAt ?? completionRun.startedAt)), 'The completion model response must follow actual source results');
+  if (completionRun.ontologyContext) assert(completionRun.ontologyContext.receiptIds.every(id => completion.ontologyPlanning.reads.some(read => read.id === id)));
+  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, noOrderOrPayment: true };
   writeFileSync(join(directory, 'ontology-mcp-observer.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ taskId: id, accepted: true, callerArtifactMatches: true, readActions: bindings.length, evaluationTime: report.evaluationTime }));
 } finally { db.close(); }

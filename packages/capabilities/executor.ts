@@ -33,6 +33,7 @@ export interface RunEvidence {
   threadId?: string;
   turnId?: string;
   promptBytes?: number;
+  ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';
 }
@@ -55,6 +56,7 @@ const outputSchema = {
 // This bounded executor produces documents/plans, with no shell, MCP, browser,
 // plugins or peer agents. All conversational state is supplied from the Job.
 export class CodexExecutor implements Executor {
+  readonly ontologyContextPreparation = 'worker_snapshot' as const;
   constructor(private binary = 'codex', private timeoutMs = 120000) {}
   openStructuredSession(schema: object, signal: AbortSignal) { return openCodexModelSession(this.binary, this.timeoutMs, schema, signal); }
 

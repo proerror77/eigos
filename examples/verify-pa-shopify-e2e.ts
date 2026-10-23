@@ -69,7 +69,7 @@ try {
   assert.equal(plan.steps.length, 1); assert.equal(plan.steps[0]!.effect, 'read');
   assert(!plan.steps[0]!.additionalEffects?.length); assert.deepEqual(plan.steps[0]!.input, session.expectedInput);
   assert.deepEqual(d.businessFacts, []); assert.equal(d.actions!.length, 1); assert.equal(d.actions![0]!.state, 'effect_confirmed');
-  assert.equal(plan.ontologyPlanning.mode, 'model_queries'); assert.deepEqual(plan.ontologyPlanning.model, businessModel.ref);
+  assert(['model_queries', 'worker_context', 'worker_context_with_queries'].includes(plan.ontologyPlanning.mode)); assert.deepEqual(plan.ontologyPlanning.model, businessModel.ref);
   assert(job.runs!.length >= 2); assert(job.runs!.some(r => r.purpose === 'grounding')); assert(job.runs!.some(r => r.purpose === 'planning'));
   assert(job.runs!.every(r => r.runtime === 'codex-exec' && r.threadId && /^[a-f0-9]{64}$/.test(r.outputSha256)));
   const snapshot = checkedCatalogSnapshot((job.artifact!.data.result as { catalogSnapshot: unknown }).catalogSnapshot);
