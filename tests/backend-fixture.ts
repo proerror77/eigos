@@ -40,8 +40,8 @@ export function observePlanning(context: PlanningContext, access: PlanningAccess
   access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 });
   access.session.call('query_ontology', { type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: context.request.id }] });
 }
-export function backend(catalog: ExecutionCatalog, model = reasoner(), store = new JobStore(':memory:'), options: { allowSandbox?: boolean } = {}) {
-  const tasks = new TaskService(store, { catalog, allowSandboxActions: options.allowSandbox }); const coordinator = new Coordinator(store, model, catalog, options);
+export function backend(catalog: ExecutionCatalog, model = reasoner(), store = new JobStore(':memory:'), options: { allowSandbox?: boolean; allowExternalDrafts?: boolean } = {}) {
+  const tasks = new TaskService(store, { catalog, allowSandboxActions: options.allowSandbox, allowExternalDrafts: options.allowExternalDrafts }); const coordinator = new Coordinator(store, model, catalog, options);
   const submit = (extra: object = {}) => tasks.submit(principal, { service: 'eigos.delegate', goal: 'Prepare a brief', requestId: randomUUID(), ...extra });
   const run = async () => { const claim = store.claim(['eigos.delegate'], 15000); if (!claim) throw new Error('Expected durable claim'); await coordinator.run(claim, new AbortController().signal); return store.get(owner, claim.job.id); };
   return { store, tasks, coordinator, submit, run };

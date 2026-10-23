@@ -246,8 +246,17 @@ class Client:
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured allowlist')
         if not isinstance(data, dict) or not isinstance(data.get('requestId'), str) or not 1 <= len(data['requestId']) <= 128:
-            raise ClientError('Supply an exact sandbox confirmation with a stable requestId')
-        if data.get('action') == 'approve_plan':
+            raise ClientError('Supply an exact supported authorization with a stable requestId')
+        if data.get('action') == 'approve_external_draft':
+            required = {'requestId', 'action', 'planDigest', 'draft', 'expiresAt', 'environment'}
+            draft = data.get('draft')
+            if set(data) != required or data['environment'] != 'live' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
+                raise ClientError('Draft approval requires the exact live checkout preview and plan digest')
+            if not isinstance(draft, dict) or draft.get('resource') != 'unpaid_checkout' or draft.get('maximumCreates') != 1 or any(draft.get(k) is not False for k in ('orderAllowed', 'paymentAllowed', 'buyerDataAllowed')):
+                raise ClientError('Draft authority cannot authorize an order, payment or customer data')
+            if not isinstance(data['expiresAt'], str) or not data['expiresAt']:
+                raise ClientError('Draft approval requires a finite expiry')
+        elif data.get('action') == 'approve_plan':
             required = {'requestId', 'action', 'planDigest', 'allowedEffects', 'maxAmount', 'payeeIds', 'expiresAt', 'environment'}
             amount, effects, payees = data.get('maxAmount'), data.get('allowedEffects'), data.get('payeeIds')
             if set(data) != required or data['environment'] != 'sandbox' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
@@ -259,7 +268,7 @@ class Client:
             if not isinstance(payees, list) or len(payees) > 8 or any(not isinstance(p, str) or not 1 <= len(p) <= 200 for p in payees) or not isinstance(data['expiresAt'], str) or not data['expiresAt']:
                 raise ClientError('Plan approval requires exact payees and a finite expiry')
         elif data.get('action') != 'confirm_simulated_payment' or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'}:
-            raise ClientError('Supply the exact supported sandbox confirmation fields')
+            raise ClientError('Supply the exact supported authorization fields')
         if not task_id or any(c not in '0123456789abcdef-' for c in task_id.lower()):
             raise ClientError('Invalid task ID')
         base = urllib.parse.urlsplit(self.config['cardUrl'])

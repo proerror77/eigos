@@ -9,7 +9,7 @@ const name = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(value => !['
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const handler = z.strictObject({ id: z.string().min(1).max(240), version: z.string().min(1).max(100), digest: sha });
 const jsonSchema = z.record(z.string(), z.unknown());
-const effects = z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(9);
+const effects = z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'])).min(1).max(10);
 export const evidenceOriginSchema = z.enum(['provider', 'synthetic', 'managed', 'model', 'user']);
 export type EvidenceOrigin = z.infer<typeof evidenceOriginSchema>;
 const semanticsSchema = z.strictObject({

@@ -402,7 +402,7 @@ export class JobStore {
   }
   reserveBudget(owner: string, intentId: string, grant: PlanGrant, amountInput: { minor: string; currency: string }): void {
     this.executionMutation(() => {
-      if (grant.kind === 'object_write') throw new DomainError('FORBIDDEN', 'Managed object-write authority has no financial budget');
+      if (grant.kind === 'object_write' || grant.kind === 'external_draft') throw new DomainError('FORBIDDEN', 'Nonfinancial authority has no financial budget');
       const amount = moneySchema.parse({ minor: amountInput.minor, currency: amountInput.currency }); moneySchema.parse(grant.maxAmount);
       const intent = this.intent(owner, intentId), job = this.get(owner, intent.jobId), composed = !!job.delegation?.agent?.composition;
       if (grant.owner !== owner || grant.jobId !== intent.jobId || grant.planDigest !== intent.planDigest || grant.revoked || !Number.isFinite(Date.parse(grant.expiresAt)) || Date.parse(grant.expiresAt) <= Date.now()

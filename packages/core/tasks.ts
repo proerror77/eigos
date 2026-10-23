@@ -16,7 +16,8 @@ import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus,
 import { canRecoverReadOnly, canResumeSource } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
 import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
-import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, validateAgentAuthority } from './agent-authorization.js';
+import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, createAgentExternalDraftGrant, validateAgentAuthority } from './agent-authorization.js';
+import { externalDraftPermitSchema } from '../ontology/external-draft.js';
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
 import { assertPaymentRouteReadback } from '../capabilities/booking/payment-route.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
@@ -27,7 +28,7 @@ import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.j
 import { GoalProgram } from '../coordinator/goal-program.js';
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 
-export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
+export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
 export interface OntologyReadContext { ontologyId?: string; release?: OntologyReleaseRef; taskId?: string }
 const readContextSchema = z.object({ ontologyId: ontologyIdSchema.optional(), release: ontologyReleaseRefSchema.optional(), taskId: taskIdSchema.optional() }).strict();
 
@@ -416,12 +417,15 @@ export class TaskService {
     return canceled;
   }
 
-  authorize(p: Principal, id: string, input: unknown): Job {
+  authorize(p: Principal, id: string, input: unknown, expectedContextId?: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id);
     const args = z.object({ requestId: z.string().trim().min(1).max(128) }).passthrough().parse(input);
     const owner = ownerKey(p);
-    return this.store.once(owner, `authorize:${id}`, args.requestId, JSON.stringify(args), () => {
+    const fingerprint = args.action === 'approve_external_draft' ? digest(externalDraftPermitSchema.parse(input)) : JSON.stringify(args);
+    if (expectedContextId && this.store.get(owner, id).contextId !== expectedContextId) throw new DomainError('NOT_FOUND', 'Task not found in this context');
+    return this.store.once(owner, `authorize:${id}`, args.requestId, fingerprint, () => {
       const job = this.store.get(owner, id);
+      if (expectedContextId && job.contextId !== expectedContextId) throw new DomainError('NOT_FOUND', 'Task not found in this context');
       if (job.service !== DELEGATE || job.state !== 'auth-required') throw new DomainError('CONFLICT', 'No pending delegation authorization');
       if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only');
       const d = job.delegation;
@@ -447,7 +451,11 @@ export class TaskService {
         }
         const writes = plan.steps.filter(step => !['read', 'local'].includes(step.effect)).map(step => ({ step, ...(d.agent!.composition ? resolveComposedStep(catalog, ctx, step) : { program, context: ctx }) }));
         for (const { step, program, context } of writes) { validateAgentAuthority(program, context, plan, step); program.validatePlanning?.(context, step.action, step.input, plan.ontologyPlanning); }
-        if (args.action === 'approve_object_write') {
+        if (args.action === 'approve_external_draft') {
+          const permit = externalDraftPermitSchema.parse(input);
+          if (!this.options.allowExternalDrafts || d.request.executionEnvironment === 'sandbox' || writes.length !== 1 || writes[0]!.step.effect !== 'external_draft') throw new DomainError('FORBIDDEN', 'No current enabled unpaid checkout draft');
+          this.store.grant(owner, createAgentExternalDraftGrant(owner, id, plan, permit));
+        } else if (args.action === 'approve_object_write') {
           requireScope(p, 'ontology:object_write');
           const permit = z.object({ action: z.literal('approve_object_write'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), objectWrite: objectWriteScopeSchema, expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('managed') }).strict().parse(input);
           this.store.definitions.assertAccess(owner, this.store.ontologyReleaseForJob(owner, job).ontologyId, p.scopes.includes('ontology:admin'));

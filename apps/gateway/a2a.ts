@@ -7,6 +7,7 @@ import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSc
 import { TaskService } from '../../packages/core/tasks.js';
 import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -119,7 +120,10 @@ export class A2AGateway implements A2ARequestHandler {
       let job: Job;
       if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
+        if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
+          const permit = externalDraftPermitSchema.parse({ ...input, requestId: message.messageId });
+          job = this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
           const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {

@@ -54,7 +54,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 原始交付要求、更正、执行关系以及默认业务摘要的真实 PA 验证见[2026-10-20 验收记录](evidence/ontology-graph-live-2026-10-20/README.md)。业务验收时的有效报价与之后的历史回读分别记载，不以过期结果承诺当前价格或来源授权。
 
-六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v17`，新建注册库默认内核为 `eigos.business@17`；历史 v15/v16 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v18`，新建注册库默认内核为 `eigos.business@18`；历史 v15/v16/v17 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -126,3 +126,7 @@ PA 提交自然语言需求后，Worker 可在已授权的 `owner` 读取范围�
 真实 PA 的租相机内部申请验证见[验收证据](evidence/camera-rental-pa-2026-10-21/README.md)：后端自主发现、准确授权、持久变更及独立回读共 28 项通过；使用合成供给，申请仍待用户确认。
 
 普通 Agent 自动接入仍仅默认请求原有任务权限；建模权限须另行授予。默认 Auth0 资源配置不登记 `ontology:admin`，管理员授权由可信发行者的独立操作人策略负责。此仓库更新不会自动改变线上认证配置。
+
+## 本人私有 Shopify 未付款结账
+
+`shopify.checkout.unpaid@1` 默认关闭，显式本机配置后由 Worker 选择三个原子动作：查询选定商品、一次创建未付款结账、回读原会话。MCP 的 `authorize_checkout_draft` 和 A2A 的 `approve_external_draft` 共用准确的非付款许可，不授权正式订单、付款或个人资料提交。`status` 模式只查询本人此前任务的原结账。来源 `requires_escalation` 可与未付款准备任务完成并存，后续资料和费用仍由商家页面处理。配置、输入、回执及恢复限制见[详细说明](shopify-unpaid-checkout-2026-10-23.md)。

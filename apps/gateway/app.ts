@@ -60,10 +60,11 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS } : undefined,
+      shopifyCheckout: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR } : undefined,
       bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
-    tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
+    tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length });
     if (config.EIGOS_NETWORK_ENABLED === 'true') network = new NetworkService(store.createNetworkStore(), members, { memberIds: config.EIGOS_NETWORK_MEMBER_IDS, operatorIds: config.EIGOS_NETWORK_OPERATOR_MEMBER_IDS, collaborationLimits: { maxResponders: config.EIGOS_NETWORK_MAX_RESPONDERS, maxClarificationRounds: config.EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS }, catalog, jobs: store, tasks });
     if (config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
       const access = new PersonalSourceAccess(config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, (c, hash) => store.personalSourceAdmitted(c, hash), config.EIGOS_PAOTUI_SKILL_DIR!);
@@ -188,7 +189,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true' }), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);

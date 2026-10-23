@@ -5,7 +5,7 @@ import { digest } from '../packages/core/delegation.js';
 import { assertPortCompatible, evaluateCompositionChecks, readAcceptedPort, sealPortValue, type ActionCompositionContract, type AcceptedPortValue, type CompositionPort, type PortReadContext } from '../packages/ontology/composition-contract.js';
 import { compileJsonSchema, compileOntologyDocument, TrustedDefinitionRegistry } from '../packages/ontology/model-compiler.js';
 import type { OntologyDocument, SerializableObjectType } from '../packages/ontology/definition-contracts.js';
-import { createCurrentKernelDefinition, createHistoricalKernelDefinition, createSeedDefinition, LEGACY_SEED_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { createCurrentKernelDefinition, createCompositionKernelDefinition, COMPOSITION_KERNEL_MODEL_REF, createHistoricalKernelDefinition, createSeedDefinition, LEGACY_SEED_MODEL_REF } from '../packages/ontology/seed-definition.js';
 
 const objectRef = (type: string) => ({ type: 'object', properties: { type: { type: 'string', const: type }, id: { type: 'string', minLength: 1, maxLength: 200 } }, required: ['type', 'id'], additionalProperties: false });
 const port = (type = 'Quote'): CompositionPort => ({ kind: 'object', type, cardinality: 'one', semantics: { role: 'delivery_total', phase: 'quote', currency: 'CNY' }, evidence: { origins: ['provider'], maxAgeMs: 60000 } });
@@ -42,7 +42,13 @@ function context(value = receipt()): PortReadContext {
 test('composition contracts preserve historical seed fingerprints in a distinct new kernel', () => {
   const seed = createSeedDefinition(), previous = createHistoricalKernelDefinition(seed.registry), current = createCurrentKernelDefinition(seed.registry);
   assert.deepEqual(compileOntologyDocument(seed.document, seed.registry).ref, LEGACY_SEED_MODEL_REF);
-  assert.equal(current.document.version, '17');
+  assert.equal(current.document.version, '18');
+  const composition = createCompositionKernelDefinition(seed.registry), oldModel = compileOntologyDocument(composition.document, seed.registry), currentModel = compileOntologyDocument(current.document, seed.registry);
+  assert.deepEqual(oldModel.ref, COMPOSITION_KERNEL_MODEL_REF);
+  assert.equal(oldModel.properties('BusinessResult').effect!.schema.safeParse('external_draft').success, false);
+  assert.equal(currentModel.properties('BusinessResult').effect!.schema.safeParse('external_draft').success, true);
+  assert(!oldModel.hasType('ShopifyCheckoutObservation'));
+  assert.equal(currentModel.action('CreateShopifyCheckout').operation!.effect, 'external_draft');
   assert.equal(compileOntologyDocument(previous.document, current.registry).ref.digest, '9cc72c92efa54600967979971dc0e568d01d849b683bbe4e7d6d8931150eef57');
   assert.notEqual(compileOntologyDocument(current.document, current.registry).ref.digest, previous.audit.model.digest);
 });

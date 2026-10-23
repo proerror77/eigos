@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { publicGeoQuerySchema } from '../capabilities/paotui-contracts.js';
 import { shopifyMerchantsSchema } from '../capabilities/shopify/contracts.js';
 
-const shopifyMerchants = z.string().max(16384).transform((value, ctx) => {
+const merchantList = (name: string) => z.string().max(16384).transform((value, ctx) => {
   try { return shopifyMerchantsSchema.parse(JSON.parse(value)); }
-  catch { ctx.addIssue({ code: 'custom', message: 'EIGOS_SHOPIFY_CATALOG_MERCHANTS must be a JSON array of at most 8 strict, unique merchant identities' }); return z.NEVER; }
+  catch { ctx.addIssue({ code: 'custom', message: `${name} must be a JSON array of at most 8 strict, unique merchant identities` }); return z.NEVER; }
 });
 
 const publicGeoQueries = z.string().max(16384).transform((value, ctx) => {
@@ -45,8 +45,10 @@ const schema = z.object({
   EIGOS_MEMBER_SOURCE_KEY_FILE: z.string().optional(),
   EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN: z.url().optional(),
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
-  EIGOS_SHOPIFY_CATALOG_MERCHANTS: shopifyMerchants.optional(),
+  EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
+  EIGOS_SHOPIFY_CHECKOUT_MERCHANTS: merchantList('EIGOS_SHOPIFY_CHECKOUT_MERCHANTS').optional(),
+  EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR: z.string().optional(),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
@@ -93,6 +95,10 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   const publicUrl = new URL(c.PUBLIC_URL);
   if (c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Shopify anonymous catalog requires explicitly configured local development');
   if (c.EIGOS_SHOPIFY_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_AUDIT_DIR))) throw new Error('Shopify audit requires enabled catalog and an absolute private directory');
+  if (c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || c.EIGOS_INVITE_BETA === 'true'
+    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname)
+    || !isAbsolute(c.DATABASE_PATH) || !c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || !isAbsolute(c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR))) throw new Error('Unpaid Shopify checkout requires explicit private loopback development, a persistent absolute database and private source audit directory');
+  if (c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR))) throw new Error('Shopify checkout audit requires enabled private checkout preparation');
   if (publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username || publicUrl.password) {
     throw new Error('PUBLIC_URL must be an origin without a path, credentials, query or fragment');
   }
@@ -104,7 +110,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
       || c.EIGOS_EXECUTOR !== 'codex') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
     if (c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true' || c.EIGOS_PAOTUI_SKILL_DIR || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE
       || c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length
-      || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
+      || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
       || c.EIGOS_ACTION_SANDBOX === 'true' || c.EIGOS_SANDBOX_PROVIDER_URL || c.EIGOS_SANDBOX_TOKEN_FILE
       || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE
       || c.EIGOS_STRIPE_TEST_ENABLED === 'true' || c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) throw new Error('Invite beta exposes document tasks only; private sources, development credentials, network publication and transaction fixtures cannot be enabled');

@@ -23,6 +23,7 @@ import { acceptedInput, assertAcceptedOutputCurrent, componentContext, component
 import { assessGoal, GoalProgram, partialGoalArtifact } from './goal-program.js';
 import { assertGoalEffects } from '../core/goal-contract.js';
 import { actionBudgetImpactSchema } from '../ontology/actions.js';
+import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -48,7 +49,7 @@ function sourceObservation(response: AgentActionResult, attempt: ExecutionAttemp
  * vendor operation, product selection or step recipe is encoded here. */
 export class AgentRuntime {
   constructor(private store: JobStore, private catalog: ExecutionCatalog, private reasoner: Reasoner,
-    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number; allowSandbox?: boolean } = {}) {}
+    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number; allowSandbox?: boolean; allowExternalDrafts?: boolean } = {}) {}
   private withinTaskBudget(claim: WorkClaim) {
     const job = this.store.get(claim.owner, claim.job.id);
     const readOnly = canRecoverReadOnly(job, this.store.intents(claim.owner, job.id)) && !job.delegation?.agent?.paPayment;
@@ -238,6 +239,9 @@ export class AgentRuntime {
         if (ctx.state.composition) assertGoalEffects(ctx.state.composition.goal, [operation.effect, ...('additionalEffects' in operation ? operation.additionalEffects ?? [] : [])]);
         if (operation.effect === 'object_write') {
           if (!actionProgram.authority || step.inputRefs.length || step.acceptedInputs?.length) failure('Managed writes require a complete current preview before they can be authorized');
+        } else if (operation.effect === 'external_draft') {
+          if (!this.options.allowExternalDrafts || actionProgram.capability().environment !== 'live' || ctx.request.executionEnvironment === 'sandbox'
+            || !actionProgram.authority || step.inputRefs.length || step.acceptedInputs?.length) failure('External draft creation requires its explicit live configuration and exact observed inputs');
         } else if (!['read', 'local'].includes(operation.effect) && (!this.options.allowSandbox || actionProgram.capability().environment !== 'sandbox' || ctx.request.executionEnvironment !== 'sandbox' || !actionProgram.authority || step.inputRefs.length || step.acceptedInputs?.length)) failure('Business operations require an enabled sandbox, current source inputs and a priced authority binding');
         const parsed: unknown = JSON.parse(step.argumentsJson);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) failure('Action arguments must be an object');
@@ -276,11 +280,13 @@ export class AgentRuntime {
         const operationKey = actionOperationKey(claim.owner, authority?.operationScope ?? ctx.request.id, authority?.operationScope ? step.action : `${planId}:${step.id}`);
         if (this.store.intentByBusinessKey(claim.owner, operationKey)) failure('This business operation already has an intent; inspect its original result instead of submitting it again');
         if (operation.effect === 'object_write' && (!authority?.objectWrite || authority.cost) || operation.effect !== 'object_write' && authority?.objectWrite) failure('Action authority does not match its declared effect');
+        if (operation.effect === 'external_draft' && (!authority?.externalDraft || authority.cost || authority.budgetImpact || authority.objectWrite || !authority.operationScope)
+          || operation.effect !== 'external_draft' && authority?.externalDraft) failure('External draft scope cannot grant another business effect');
         const acceptedInputSources = step.acceptedInputs?.map(link => {
           const producer = ctx.state.plans.find(plan => plan.steps.some(value => value.intentId === link.intentId)) ?? failure('Accepted input producer is not in this request execution history');
           return { targetKey: link.targetKey, sourceStep: executionStepRef(producer, producer.steps.find(value => value.intentId === link.intentId)!.id) };
         });
-        const saved = { ...step, ...(selected ? { binding: selected.binding, contextDigest: selected.contextDigest, contextScope: selected.contextScope, scopeDigest: selected.scopeDigest } : {}), ...(acceptedInputSources ? { acceptedInputSources } : {}), input, definitionDigest: digest(definition), intentId: randomUUID(), effect: operation.effect, ...('additionalEffects' in operation && operation.additionalEffects ? { additionalEffects: operation.additionalEffects } : {}), ...(authority ? { ...(authority.cost ? { cost: authority.cost } : {}), ...(authority.budgetImpact ? { budgetImpact: actionBudgetImpactSchema.parse(authority.budgetImpact) } : {}), ...(authority.objectWrite ? { objectWrite: authority.objectWrite } : {}), ...(authority.operationScope ? { operationScope: authority.operationScope } : {}) } : {}), operationKey };
+        const saved = { ...step, ...(selected ? { binding: selected.binding, contextDigest: selected.contextDigest, contextScope: selected.contextScope, scopeDigest: selected.scopeDigest } : {}), ...(acceptedInputSources ? { acceptedInputSources } : {}), input, definitionDigest: digest(definition), intentId: randomUUID(), effect: operation.effect, ...('additionalEffects' in operation && operation.additionalEffects ? { additionalEffects: operation.additionalEffects } : {}), ...(authority ? { ...(authority.cost ? { cost: authority.cost } : {}), ...(authority.budgetImpact ? { budgetImpact: actionBudgetImpactSchema.parse(authority.budgetImpact) } : {}), ...(authority.objectWrite ? { objectWrite: authority.objectWrite } : {}), ...(authority.externalDraft ? { externalDraft: externalDraftScopeSchema.parse(authority.externalDraft) } : {}), ...(authority.operationScope ? { operationScope: authority.operationScope } : {}) } : {}), operationKey };
         if (actionProgram.privateInput) Object.assign(saved, { privateDigest: digest(privateData) });
         if (simulatedApproval) Object.assign(saved, { simulatedApproval });
         privateInputs.set(saved.intentId, privateData);
@@ -326,7 +332,7 @@ export class AgentRuntime {
     if (digest(body) !== expected || plan.version !== (initial.state.composition ? '3' : '2') || plan.programDigest !== program.configurationDigest || !equal(plan.programRef, program.ref) || plan.requestId !== initial.request.id || plan.requestRevision !== initial.request.revision || !equal(plan.scope, initial.state.scope) || plan.scopeDigest !== (initial.state.composition ? componentScopeDigest(initial, plan.scope) : digest(this.store.ontologyForJob(claim.owner, claim.job).read(claim.owner, plan.scope).properties))) failure('Pinned agent plan changed');
     const decision = assertAgentDecisionOrigin(program, this.store.get(claim.owner, claim.job.id), claim.owner, plan);
     if (decision.kind !== 'execute' || plan.steps.length !== decision.steps.length || plan.steps.some((step, i) => {
-      const { simulatedApproval: _simulated, privateDigest: _private, definitionDigest: _definition, input, intentId: _intent, effect: _effect, additionalEffects: _additional, cost: _cost, budgetImpact: _budget, objectWrite: _write, operationScope: _scope, operationKey: _key, binding: _binding, contextDigest: _context, contextScope: _contextScope, scopeDigest: _scopeDigest, acceptedInputSources: _sources, ...selected } = step;
+      const { simulatedApproval: _simulated, privateDigest: _private, definitionDigest: _definition, input, intentId: _intent, effect: _effect, additionalEffects: _additional, cost: _cost, budgetImpact: _budget, objectWrite: _write, externalDraft: _draft, operationScope: _scope, operationKey: _key, binding: _binding, contextDigest: _context, contextScope: _contextScope, scopeDigest: _scopeDigest, acceptedInputSources: _sources, ...selected } = step;
       return !equal(selected, decision.steps[i]) || !equal(input, JSON.parse(step.argumentsJson));
     })) failure('Executable steps differ from their authenticated decision evidence');
     if (plan.steps.every(step => step.effect === 'read')) {
@@ -451,16 +457,16 @@ export class AgentRuntime {
         return false;
       }
       if (!['read', 'local'].includes(step.effect)) {
-        if (step.effect !== 'object_write' && !this.options.allowSandbox) failure('Sandbox business operations are disabled');
+        if (step.effect === 'external_draft' ? !this.options.allowExternalDrafts : step.effect !== 'object_write' && !this.options.allowSandbox) failure('This business operation is disabled');
         if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
-          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = step.effect === 'object_write' ? '待提交的数据变更已经固定；请审查目标、字段与当前版本，并批准这一准确变更。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
+          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = step.effect === 'object_write' ? '待提交的数据变更已经固定；请审查目标、字段与当前版本，并批准这一准确变更。' : step.effect === 'external_draft' ? '已固定商家、商品与数量；需要批准这一次真实的未付款结账草稿创建。此授权不允许下单、付款或提交个人资料。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
           return false;
         }
       }
       if (!this.store.checkpoint(claim, () => {
         if (!['read', 'local'].includes(step.effect)) {
-          const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Sandbox authority expired before dispatch');
-          if (step.effect !== 'object_write' && step.effect !== 'refund') this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
+          const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Action authority expired before dispatch');
+          if (!['object_write', 'external_draft', 'refund'].includes(step.effect)) this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
         }
         if (intent.dispatchInput && !equal(intent.dispatchInput, input)) failure('Original dispatch input cannot change');
         intent.dispatchInput = structuredClone(input); this.store.saveIntent(claim.owner, intent);
@@ -535,7 +541,7 @@ export class AgentRuntime {
       return this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); job.delegation!.events.push({ at: new Date().toISOString(), event: 'managed_action_not_committed', evidence: intent.id }); });
     }
     if (!program.recover || (intent.failedQueries ?? 0) >= 3) {
-      this.store.finish(claim, job => { intent.state = 'needs_review'; this.store.saveIntent(claim.owner, intent); job.delegation!.recoveryPending = false; if (!claim.recovery) { job.state = 'input-required'; job.delegation!.phase = 'clarifying'; job.question = '原沙箱操作仍未确认，已停止新写入并保留费用占用。请查证原操作，不能重复提交。'; } }); return false;
+      this.store.finish(claim, job => { intent.state = 'needs_review'; this.store.saveIntent(claim.owner, intent); job.delegation!.recoveryPending = false; if (!claim.recovery) { job.state = 'input-required'; job.delegation!.phase = 'clarifying'; job.question = step.effect === 'external_draft' ? '原未付款结账的创建结果仍未确认，已保留原操作并停止新建。请查证原会话；不要重新创建或付款。' : '原沙箱操作仍未确认，已停止新写入并保留费用占用。请查证原操作，不能重复提交。'; } }); return false;
     }
     if (intent.nextAt > Date.now()) { this.store.finish(claim, job => { job.delegation!.nextAt = intent.nextAt; }); return false; }
     const input = structuredClone(intent.dispatchInput ?? step.input);
@@ -570,7 +576,7 @@ export class AgentRuntime {
       job.delegation!.nextAt = current.nextAt;
       if (current.state === 'needs_review') {
         job.delegation!.recoveryPending = false;
-        if (!claim.recovery) { job.state = 'input-required'; job.delegation!.phase = 'clarifying'; job.question = '原操作仍未确认，已保留原身份和费用占用。请核验原操作后继续，不能重复提交。'; }
+        if (!claim.recovery) { job.state = 'input-required'; job.delegation!.phase = 'clarifying'; job.question = step.effect === 'external_draft' ? '原未付款结账仍未确认，已保留原操作并停止新建。请查证原会话；不要重新创建或付款。' : '原操作仍未确认，已保留原身份和费用占用。请核验原操作后继续，不能重复提交。'; }
       }
     });
     return false;
