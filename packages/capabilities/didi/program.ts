@@ -4,19 +4,34 @@ import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../../core/agent-program.js';
 import type { Delivery } from '../../core/catalog.js';
-import type { ServiceCapability, ServiceRequest } from '../../ontology/execution.js';
+import type { CandidateFacts, ServiceCapability, ServiceRequest } from '../../ontology/execution.js';
 import type { ObjectRef } from '../../ontology/model.js';
 import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
 import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchemas, rideEstimateCompletionSchema, type RideEstimateAction, type RideEstimateObservation } from '../../ontology/ride-estimate.js';
 import { checkedRideEstimate, projectRideEstimate } from '../../ontology/ride-estimate-projection.js';
-import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, type DidiBinding } from './contracts.js';
+import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, type DidiBinding, type DidiPlace } from './contracts.js';
 import { DidiMcpConnector, type DidiConnector } from './connector.js';
 
 export const DIDI_PROGRAM_REF = { id: 'ride.estimate.query', version: '1' } as const;
 const equal = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : digest(a) === digest(b);
 const invalid = (message: string): never => { throw new DomainError('CONFLICT', message); };
 const normalized = (s: string) => s.replace(/\s+/g, '').toLowerCase();
+
+/** Query endpoint facts, never actual pickup/arrival facts. An expected spelling
+ * is reported only after matching a source name/address or its city prefix. */
+function routeLocationFacts(request: ServiceRequest, route: { origin: DidiPlace; destination: DidiPlace }, city: string): NonNullable<CandidateFacts['locations']> {
+  const locations = { origin: route.origin.name, destination: route.destination.name };
+  const cityPrefixes = [...new Set([city, route.origin.city, route.destination.city].flatMap(value => [normalized(value), normalized(value).replace(/市$/, '')]))];
+  for (const r of request.requirements) {
+    if (r.kind !== 'location' || r.role !== 'origin' && r.role !== 'destination') continue;
+    const place = route[r.role], aliases = [place.name, place.addressAll].filter(Boolean).flatMap(value => {
+      const name = normalized(value); return [name, ...cityPrefixes.map(prefix => prefix + name)];
+    });
+    if (aliases.includes(normalized(r.expected.ref))) locations[r.role] = r.expected.ref;
+  }
+  return locations;
+}
 
 export class DidiAgentProgram implements AgentProgram {
   readonly ref = DIDI_PROGRAM_REF;
@@ -29,11 +44,13 @@ export class DidiAgentProgram implements AgentProgram {
   constructor(binding: DidiBinding, options: { connector?: DidiConnector } = {}) {
     this.binding = didiBindingSchema.parse(binding);
     this.connector = options.connector ?? new DidiMcpConnector(this.binding);
-    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, policy: 'two-reads-source-bound-v1' });
+    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, policy: 'two-reads-source-bound-v2' });
   }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
-    return { ref: this.ref, ontologyRef: { id: 'ride.estimate.actions', version: '1' }, name: '滴滴地点搜索与打车估价', description: '仅查询滴滴地点或指定路线的车型预估价。输入 mode=places 时只需 city、keywords；mode=estimate 时只需 city、origin、destination，可保留 serviceClass 偏好。不强迫补人数、预算、上下车期限。先搜索来源地点，歧义需要确认；估价不证明完整费用、可叫到车、接驾或到达承诺。无法接受真实叫车、订单或付款目标。', tags: ['didi', 'ride', 'places', 'estimate', 'read-only'], environment: this.binding.environment === 'mock' ? 'sandbox' : 'live', completion: 'artifact', inputSchema: z.toJSONSchema(rideEstimateInputSchema), ontology: { objects: ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'RideRoute', 'Provider', 'SourceReceipt'], planning: 'Agent-selected read actions and source place selections; no automatic call sequence or business writes' }, actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: 'read' as const })), verifierRef: { id: 'ride.estimate.source-readback', version: '1' }, predicates: [{ id: 'execution.no_order', description: '不创建订单或付款' }, { id: 'ride.estimate_only', description: '仅地点或估价观察，完整车费与行程完成未知' }] };
+    return { ref: this.ref, ontologyRef: { id: 'ride.estimate.actions', version: '1' }, name: '滴滴地点搜索与打车估价', description: '仅查询滴滴地点或指定路线的车型预估价。输入 mode=places 时只需 city、keywords；mode=estimate 时只需 city、origin、destination，可保留 serviceClass 偏好。路线地点要求分别使用 location 的 origin 和 destination 角色，不能合成两个无角色的 location 要求；它们约束所查询路线，不代表实际接送。不强迫补人数、预算、上下车期限。先搜索来源地点，歧义需要确认；估价不证明完整费用、可叫到车、接驾或到达承诺。无法接受真实叫车、订单或付款目标。', tags: ['didi', 'ride', 'places', 'estimate', 'read-only'], environment: this.binding.environment === 'mock' ? 'sandbox' : 'live', completion: 'artifact', inputSchema: z.toJSONSchema(rideEstimateInputSchema), ontology: { objects: ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'RideRoute', 'Provider', 'SourceReceipt'], planning: 'Agent-selected read actions and source place selections; no automatic call sequence or business writes' }, actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: 'read' as const })), verifierRef: { id: 'ride.estimate.source-readback', version: '1' },
+      requirementRoles: [{ kind: 'location', role: 'origin', description: 'Source-matched origin of the queried route; no actual pickup is claimed' }, { kind: 'location', role: 'destination', description: 'Source-matched destination of the queried route; no actual arrival is claimed' }],
+      predicates: [{ id: 'execution.no_order', description: '不创建订单或付款' }, { id: 'ride.estimate_only', description: '仅地点或估价观察，完整车费与行程完成未知' }] };
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Personal DiDi binding is unavailable to this identity');
@@ -124,6 +141,6 @@ export class DidiAgentProgram implements AgentProgram {
     const prefix = s.evidenceKind === 'provider_mock' ? '【滴滴 Mock 数据】' : s.evidenceKind === 'fixture' ? '【合成测试数据】' : '';
     const answer = s.data.kind === 'places' ? s.data.places.map(p => `${p.name}：${p.addressAll || p.address}`).join('\n') || '本次地点搜索未返回结果。'
       : `${s.route!.origin.name} → ${s.route!.destination.name}\n${requestedItems.map(item => `${item.productName}：${item.priceText}（预估）`).join('\n') || '本次未返回符合指定车型的估价。'}\n估价不代表最终完整车费或接驾承诺。`;
-    return { artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only'] }, evidenceRefs: [s.receipt.id] };
+    return { artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only'], ...(s.route ? { locations: routeLocationFacts(ctx.request, s.route, scope.city) } : {}) }, evidenceRefs: [s.receipt.id] };
   }
 }

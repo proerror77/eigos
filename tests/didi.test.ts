@@ -10,6 +10,7 @@ import { estimatedMoney, mapDidiResult } from '../packages/capabilities/didi/map
 import { checkedRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/delegation.js';
+import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { owner, principal } from './backend-fixture.js';
 import { didiFixture, setupDidi, chooseDidi, observeDidi, input, syntheticKey } from './fixtures/didi.js';
 
@@ -120,6 +121,41 @@ test('Agent searches independently, chooses non-first exact endpoints, and proje
     assert.throws(() => t.store.ontology.read('other-owner', ref));
     const originalNow = t.store.ontology.now; Object.defineProperty(t.store.ontology, 'now', { value: () => originalNow() + 300001 });
     assert.equal(t.store.ontology.evaluate(owner, { function: 'rideEstimateStatus', object: ref }).status, 'unknown');
+  } finally { t.close(); }
+});
+
+test('DiDi advertises separate query endpoint roles and preserves exact message provenance', () => {
+  const t = setupDidi(); try {
+    const job = t.b.submit({ goal: '只查北京西站到西二旗地铁站的估价' }), request = job.delegation!.request;
+    const roles = t.catalog.capability(DIDI_PROGRAM_REF).requirementRoles;
+    assert.deepEqual(roles!.map(r => r.role), ['origin', 'destination']);
+    const extracted = (['origin', 'destination'] as const).map(role => ({ requirement: { id: role, kind: 'location', role, strength: 'hard', expected: { ref: input[role] } }, messageId: request.messages[0]!.id, quote: input[role] }));
+    const grounded = groundRequirements(request, JSON.stringify(extracted), [], roles);
+    assert.equal(grounded.requirements.length, 2);
+    assert.throws(() => groundRequirements(request, JSON.stringify(extracted.map(r => ({ ...r, messageId: r.messageId + '-wrong' }))), [], roles), /provenance/);
+    assert.equal(t.calls.length, 0);
+  } finally { t.close(); }
+});
+
+test('Both hard query endpoints pass only from matched source names, addresses or explicit city prefixes', async () => {
+  const t = setupDidi(chooseDidi, { ...input, city: '北京' }); try {
+    const job = t.b.submit({ goal: '只查北京市北京西站到西二旗地铁站的估价', requirements: [
+      { id: 'from', kind: 'location', role: 'origin', strength: 'hard', expected: { ref: '北京市北京西站' } },
+      { id: 'to', kind: 'location', role: 'destination', strength: 'hard', expected: { ref: '西二旗地铁站地点2号' } },
+    ] });
+    const done = await t.finish(job.id); assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+    assert(done.delegation!.acceptance!.checks.filter(c => ['from', 'to'].includes(c.requirementId)).every(c => c.result === 'pass'));
+    assert.equal(done.delegation!.acceptance!.checks.filter(c => ['from', 'to'].includes(c.requirementId)).length, 2);
+    for (const type of ['RideTrip', 'Order', 'Payment']) assert.equal(t.store.ontology.query(owner, { type }).items.length, 0);
+  } finally { t.close(); }
+});
+
+test('An endpoint requested by the user cannot be fabricated from task input when the source differs', async () => {
+  const t = setupDidi(); try {
+    const job = t.b.submit({ goal: '起点必须是北京东站，只查价', requirements: [{ id: 'from', kind: 'location', role: 'origin', strength: 'hard', expected: { ref: '北京东站' } }] });
+    const done = await t.finish(job.id);
+    assert.notEqual(done.state, 'completed'); assert(!done.delegation!.acceptance?.accepted); assert(!done.artifact);
+    assert(t.calls.filter(c => c.method === 'tools/call').every(c => ['maps_textsearch', 'taxi_estimate'].includes(c.name!)));
   } finally { t.close(); }
 });
 
