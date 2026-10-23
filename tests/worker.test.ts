@@ -1,3 +1,5 @@
+import { Worker } from '../apps/worker/worker.js';
+import { ModelSessionError } from '../packages/capabilities/model-session.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -148,5 +150,24 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
     await client.close(); await Promise.all(children.map(stop));
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await gateway.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Worker retains a bounded model failure stage without leaking upstream errors or replaying', async () => {
+  for (const bounded of [true, false]) {
+    const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
+    const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'bounded-failure' });
+    let calls = 0;
+    const worker = new Worker(store, { pollMs: 10, coordinator: { run: async () => {
+      calls++; throw bounded ? new ModelSessionError('rpc_timeout', 'thread_start') : new Error('SYNTHETIC_UPSTREAM_SECRET');
+    } } });
+    try {
+      worker.start(); const failed = await until(() => tasks.get(principal, job.id), value => value.state === 'failed');
+      assert(!JSON.stringify(failed).includes('SYNTHETIC_UPSTREAM_SECRET'));
+      const events = failed.delegation!.events.filter(event => event.event === 'worker_model_failed');
+      assert.deepEqual(events.map(event => event.evidence), bounded ? ['thread_start/rpc_timeout'] : []);
+      if (bounded) assert.match(failed.error!, /model planning failed/);
+      await pause(50); assert.equal(calls, 1); assert.equal(store.intents(ownerKey(principal), job.id).length, 0);
+    } finally { await worker.close(); store.close(); }
   }
 });

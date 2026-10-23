@@ -10,6 +10,11 @@ export interface StructuredModelSession {
   run(prompt: string): Promise<{ output: unknown; evidence: RunEvidence }>;
   close(): Promise<void>;
 }
+type SessionStage = 'initialize' | 'thread_start' | 'turn_start' | 'turn_output';
+type SessionFailureCode = 'process_exited' | 'output_limit' | 'invalid_protocol' | 'input_closed' | 'process_start_failed' | 'canceled' | 'rpc_timeout' | 'request_failed' | 'rpc_rejected' | 'unexpected_server_request' | 'wrong_thread' | 'native_tool' | 'turn_failed' | 'policy_mismatch' | 'turn_timeout' | 'invalid_acknowledgement' | 'output_missing' | 'invalid_json' | 'session_setup_failed';
+export class ModelSessionError extends Error {
+  constructor(readonly code: SessionFailureCode, readonly stage: SessionStage) { super(`Bounded model failed (${stage}/${code}); existing observations retained, no automatic replay`); }
+}
 type ObjectValue = Record<string, unknown>;
 const object = (value: unknown): ObjectValue => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid bounded model protocol');
@@ -33,30 +38,36 @@ class CodexModelSession implements StructuredModelSession {
   private failure?: Error;
   private threadId = '';
   private model = '';
+  private stage: SessionStage = 'initialize';
+  private reasoningEffort?: string;
+  private serviceTier?: string;
+  private readyAt = '';
   private buffer = '';
   private bytes = 0;
   private first = true;
   private closed = false;
   private exited: Promise<void>;
+  private initialDeadline: number;
   constructor(private child: ChildProcessWithoutNullStreams, private directory: string, private schema: object,
     private signal: AbortSignal, private timeoutMs: number, private openedAt: string) {
-    this.exited = new Promise(resolve => child.once('close', () => { if (!this.closed) this.fail(new Error('Bounded model session exited')); resolve(); }));
+    this.initialDeadline = performance.now() + timeoutMs;
+    this.exited = new Promise(resolve => child.once('close', () => { if (!this.closed) this.fail(new ModelSessionError('process_exited', this.stage)); resolve(); }));
     child.stdout.on('data', (chunk: Buffer) => {
       this.bytes += chunk.length;
-      if (this.bytes > 2_000_000) { this.fail(new Error('Bounded model output limit reached')); return; }
+      if (this.bytes > 2_000_000) { this.fail(new ModelSessionError('output_limit', this.stage)); return; }
       this.buffer += chunk.toString();
       const lines = this.buffer.split('\n'); this.buffer = lines.pop()!;
       for (const line of lines) if (line.trim()) {
         try { this.message(object(JSON.parse(line))); }
-        catch { this.fail(new Error('Invalid bounded model protocol')); }
+        catch { this.fail(new ModelSessionError('invalid_protocol', this.stage)); }
       }
     });
     child.stderr.on('data', () => { /* Diagnostics may contain sensitive upstream text. Never retain them. */ });
-    child.stdin.on('error', () => this.fail(new Error('Bounded model input closed')));
-    child.on('error', () => this.fail(new Error('Bounded model could not start')));
+    child.stdin.on('error', () => this.fail(new ModelSessionError('input_closed', this.stage)));
+    child.on('error', () => this.fail(new ModelSessionError('process_start_failed', this.stage)));
     signal.addEventListener('abort', this.abort, { once: true });
   }
-  private abort = () => this.fail(new Error('Executor canceled'));
+  private abort = () => this.fail(new ModelSessionError('canceled', this.stage));
   private kill() {
     try { if (this.child.pid && process.platform !== 'win32') process.kill(-this.child.pid, 'SIGKILL'); else this.child.kill('SIGKILL'); } catch { /* Already exited. */ }
   }
@@ -74,10 +85,10 @@ class CodexModelSession implements StructuredModelSession {
   private request(method: string, params: object): Promise<unknown> {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.fail(new Error('Bounded model protocol timed out')), Math.min(15000, this.timeoutMs));
+      const timer = setTimeout(() => this.fail(new ModelSessionError('rpc_timeout', this.stage)), Math.max(1, this.first ? this.initialDeadline - performance.now() : this.timeoutMs));
       this.pending.set(id, { resolve, reject, timer });
       try { this.send({ id, method, params }); }
-      catch (error) { this.fail(error instanceof Error ? error : new Error('Bounded model request failed')); }
+      catch (error) { this.fail(error instanceof Error ? error : new ModelSessionError('request_failed', this.stage)); }
     });
   }
   private message(packet: ObjectValue) {
@@ -85,32 +96,32 @@ class CodexModelSession implements StructuredModelSession {
       const pending = this.pending.get(packet.id);
       if (!pending) return;
       this.pending.delete(packet.id); clearTimeout(pending.timer);
-      if (packet.error) { const error = new Error('Bounded model RPC rejected; check local Codex support and authentication'); pending.reject(error); this.fail(error); }
+      if (packet.error) { const error = new ModelSessionError('rpc_rejected', this.stage); pending.reject(error); this.fail(error); }
       else pending.resolve(packet.result);
       return;
     }
     if (packet.id !== undefined && packet.method) {
       // No approval, native tool, credential or other server request can be accepted.
       this.send({ id: packet.id, error: { code: -32601, message: 'Only structured model responses are permitted' } });
-      this.fail(new Error('Unexpected model tool or approval request')); return;
+      this.fail(new ModelSessionError('unexpected_server_request', this.stage)); return;
     }
     if (typeof packet.method !== 'string' || !this.active) return;
-    const params = object(packet.params);
-    if (params.threadId && params.threadId !== this.threadId) { this.fail(new Error('Model notification belongs to another thread')); return; }
     if (!['item/completed', 'item/started', 'thread/tokenUsage/updated', 'turn/completed'].includes(packet.method)) return;
+    const params = object(packet.params);
+    if (params.threadId && params.threadId !== this.threadId) { this.fail(new ModelSessionError('wrong_thread', this.stage)); return; }
     if (!this.active.turnId) { this.active.queue.push(packet); return; }
     const id = packet.method === 'turn/completed' ? object(params.turn).id : params.turnId;
     if (id !== this.active.turnId) return;
     if (packet.method === 'item/started' || packet.method === 'item/completed') {
       const item = object(params.item);
-      if (!['userMessage', 'agentMessage', 'reasoning', 'contextCompaction'].includes(String(item.type))) { this.fail(new Error('Native model tools are unavailable')); return; }
+      if (!['userMessage', 'agentMessage', 'reasoning', 'contextCompaction'].includes(String(item.type))) { this.fail(new ModelSessionError('native_tool', this.stage)); return; }
       if (packet.method === 'item/completed' && item.type === 'agentMessage' && typeof item.id === 'string' && typeof item.text === 'string' && (!item.phase || item.phase === 'final_answer')) this.active.text.set(item.id, item.text);
     } else if (packet.method === 'thread/tokenUsage/updated') {
       const last = object(object(params.tokenUsage).last), names: Record<string, string> = { inputTokens: 'input_tokens', cachedInputTokens: 'cached_input_tokens', cacheWriteInputTokens: 'cache_write_input_tokens', outputTokens: 'output_tokens', reasoningOutputTokens: 'reasoning_output_tokens' };
       this.active.usage = Object.fromEntries(Object.entries(names).flatMap(([source, target]) => typeof last[source] === 'number' ? [[target, last[source]]] : []));
     } else {
       const turn = object(params.turn);
-      if (turn.status !== 'completed' || turn.error || this.active.text.size !== 1) { this.fail(new Error('No successful structured model turn')); return; }
+      if (turn.status !== 'completed' || turn.error || this.active.text.size !== 1) { this.fail(new ModelSessionError('turn_failed', this.stage)); return; }
       const current = this.active; this.active = undefined;
       current.resolve({ text: [...current.text.values()][0]!, turnId: String(turn.id), usage: current.usage });
     }
@@ -118,31 +129,40 @@ class CodexModelSession implements StructuredModelSession {
   async initialize() {
     await this.request('initialize', { clientInfo: { name: 'eigos-business-worker', title: 'EIGOS bounded business reasoner', version: '1' }, capabilities: null });
     this.send({ method: 'initialized', params: {} });
+    this.stage = 'thread_start';
     const result = object(await this.request('thread/start', { cwd: this.directory, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: instructions })), thread = object(result.thread);
-    if (typeof thread.id !== 'string' || !thread.id || typeof result.model !== 'string' || thread.ephemeral !== true || result.approvalPolicy !== 'never' || object(result.sandbox).type !== 'readOnly' || !Array.isArray(result.instructionSources) || result.instructionSources.length) throw new Error('Model session policy differs from its owned read-only scope');
+    if (typeof thread.id !== 'string' || !thread.id || typeof result.model !== 'string' || thread.ephemeral !== true || result.approvalPolicy !== 'never' || object(result.sandbox).type !== 'readOnly' || !Array.isArray(result.instructionSources) || result.instructionSources.length) throw new ModelSessionError('policy_mismatch', this.stage);
     this.threadId = thread.id; this.model = String(result.model);
+    this.reasoningEffort = typeof result.reasoningEffort === 'string' ? result.reasoningEffort : undefined;
+    this.serviceTier = typeof result.serviceTier === 'string' ? result.serviceTier : undefined;
+    this.readyAt = new Date().toISOString();
   }
   async run(prompt: string) {
     if (this.closed || this.failure) throw this.failure ?? new Error('Model session closed');
     if (this.active) throw new Error('Model session already has a turn');
     this.signal.throwIfAborted(); this.bytes = 0;
+    const remainingMs = this.first ? Math.max(1, this.initialDeadline - performance.now()) : this.timeoutMs;
     const id = randomUUID(), startedAt = this.first ? this.openedAt : new Date().toISOString(); this.first = false;
     let resolve!: Active['resolve'], reject!: Active['reject'];
     const completed = new Promise<TurnOutput>((yes, no) => { resolve = yes; reject = no; });
     this.active = { queue: [], text: new Map(), resolve, reject };
     // The request can fail before the notification promise is awaited.
     void completed.catch(() => {});
-    const timer = setTimeout(() => this.fail(new Error('Executor timed out')), this.timeoutMs);
+    const timer = setTimeout(() => this.fail(new ModelSessionError('turn_timeout', this.stage)), remainingMs);
     try {
+      const requestSentAt = new Date().toISOString();
+      this.stage = 'turn_start';
       const result = object(await this.request('turn/start', { threadId: this.threadId, input: [{ type: 'text', text: prompt, text_elements: [] }], outputSchema: this.schema })), turn = object(result.turn);
-      if (typeof turn.id !== 'string' || !this.active) throw new Error('Invalid structured turn acknowledgement');
-      this.active.turnId = turn.id;
+      if (typeof turn.id !== 'string' || !this.active) throw new ModelSessionError('invalid_acknowledgement', this.stage);
+      const requestAcknowledgedAt = new Date().toISOString();
+      this.stage = 'turn_output'; this.active.turnId = turn.id;
       for (const packet of this.active.queue.splice(0)) this.message(packet);
       const done = await completed;
-      if (!done) throw new Error('Structured model output missing');
-      const output: unknown = JSON.parse(done.text);
-      return { output, evidence: { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, usage: done.usage, promptBytes: Buffer.byteLength(prompt) } satisfies RunEvidence };
-    } finally { clearTimeout(timer); }
+      if (!done) throw new ModelSessionError('output_missing', this.stage);
+      let output: unknown;
+      try { output = JSON.parse(done.text); } catch { throw new ModelSessionError('invalid_json', this.stage); }
+      return { output, evidence: { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, reasoningEffort: this.reasoningEffort, serviceTier: this.serviceTier, sessionReadyAt: this.readyAt, requestSentAt, requestAcknowledgedAt, usage: done.usage, promptBytes: Buffer.byteLength(prompt) } satisfies RunEvidence };
+    } catch (error) { throw error instanceof ModelSessionError ? error : new ModelSessionError('invalid_protocol', this.stage); } finally { clearTimeout(timer); }
   }
   async close() {
     if (this.closed) return; this.closed = true;
@@ -172,5 +192,5 @@ export async function openCodexModelSession(binary: string, timeoutMs: number, s
     });
     session = new CodexModelSession(child, directory, schema, signal, timeoutMs, openedAt);
     await session.initialize(); signal.throwIfAborted(); return session;
-  } catch (error) { if (session) await session.close(); else await rm(directory, { recursive: true, force: true }); throw error; }
+  } catch (error) { if (session) await session.close(); else await rm(directory, { recursive: true, force: true }); throw error instanceof ModelSessionError ? error : new ModelSessionError('session_setup_failed', 'initialize'); }
 }

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ModelSessionError } from '../packages/capabilities/model-session.js';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
 
 function fakeServer(mode = 'ok') {
@@ -22,8 +23,10 @@ readline.createInterface({ input:process.stdin }).on('line', line => {
   const r=JSON.parse(line);log({type:'request',method:r.method,params:r.params});
   if(r.method==='initialize')send({id:r.id,result:{}});
   if(r.method==='thread/start'){
+    if(mode==='no-thread-ack')return;
     if(mode==='refresh')fs.writeFileSync(process.env.CODEX_HOME+'/auth.json','SYNTHETIC_REFRESHED_AUTH');
-    send({id:r.id,result:{thread:{id:thread,ephemeral:true},model:'synthetic-model',approvalPolicy:'never',sandbox:{type:mode==='policy'?'workspaceWrite':'readOnly'},instructionSources:[]}});
+    const acknowledge=()=>send({id:r.id,result:{thread:{id:thread,ephemeral:true},model:'synthetic-model',reasoningEffort:'low',serviceTier:'priority',approvalPolicy:'never',sandbox:{type:mode==='policy'?'workspaceWrite':'readOnly'},instructionSources:[]}});
+    if(mode==='slow-thread')setTimeout(acknowledge,16000);else acknowledge();
   }
   if(r.method==='turn/start'){
     const turn='synthetic-turn-'+(++count), target=mode==='wrong-thread'?'other-thread':thread;
@@ -32,6 +35,7 @@ readline.createInterface({ input:process.stdin }).on('line', line => {
     if(mode==='early')emit('item/completed',{item:{type:'agentMessage',id:'early',text:JSON.stringify({answer:count}),phase:'final_answer'}});
     send({id:r.id,result:{turn:{id:turn,status:'inProgress'}}});
     if(mode==='hang')return;
+    if(mode==='notification')send({method:'skills/changed',params:null});
     if(mode==='oversize'){process.stdout.write('x'.repeat(2000001));return;}
     if(mode==='approval'){send({id:'approval',method:'item/commandExecution/requestApproval',params:{threadId:thread,turnId:turn}});return;}
     if(mode==='native-tool'){emit('item/started',{item:{type:'commandExecution',id:'forbidden'}});return;}
@@ -50,14 +54,17 @@ readline.createInterface({ input:process.stdin }).on('line', line => {
 }
 const schema = { type: 'object', properties: { answer: { type: 'number' } }, required: ['answer'], additionalProperties: false };
 
-for (const mode of ['ok', 'early']) test(`A bounded ${mode} conversation reuses its thread and preserves each actual model response`, async () => {
+for (const mode of ['ok', 'early', 'notification']) test(`A bounded ${mode} conversation reuses its thread and preserves each actual model response`, async () => {
   const f = fakeServer(mode); const session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal);
   try {
     const first = await session.run('Synthetic initial context'), second = await session.run('Only newly returned synthetic results');
     assert.deepEqual(first.output, { answer: 1 }); assert.deepEqual(second.output, { answer: 2 });
     assert.equal(first.evidence.threadId, second.evidence.threadId); assert.notEqual(first.evidence.turnId, second.evidence.turnId); assert.notEqual(first.evidence.id, second.evidence.id);
     assert.equal(second.evidence.usage!.input_tokens, 12); assert.equal(second.evidence.usage!.cached_input_tokens, 10);
-    assert.equal(second.evidence.runtime, 'codex-app-server'); assert.equal(second.evidence.promptBytes, Buffer.byteLength('Only newly returned synthetic results'));
+    assert.equal(second.evidence.runtime, 'codex-app-server');
+    assert(second.evidence.sessionReadyAt! <= second.evidence.requestSentAt! && second.evidence.requestSentAt! <= second.evidence.requestAcknowledgedAt! && second.evidence.requestAcknowledgedAt! <= second.evidence.completedAt);
+    assert.equal(second.evidence.reasoningEffort, 'low'); assert.equal(second.evidence.serviceTier, 'priority');
+    assert.equal(second.evidence.promptBytes, Buffer.byteLength('Only newly returned synthetic results'));
     assert(!JSON.stringify([first, second]).includes('SYNTHETIC_HIDDEN_REASONING'));
     const events = f.events(), boot = events[0], start = events.find(e => e.method === 'thread/start');
     assert.equal(boot.gatewaySecretPresent, false); assert(boot.authIsLink && boot.emptyConfig); assert.equal(boot.authTarget, join(f.nativeConfig, 'auth.json'));
@@ -107,13 +114,30 @@ test('Native file-store refresh writes through the auth reference and cleanup pr
 
 test('Timeout and cancellation terminate the owned conversation without a fallback or next turn', async () => {
   for (const cancel of [false, true]) {
-    const f = fakeServer('hang'), controller = new AbortController(), session = await new CodexExecutor(f.binary, 1000).openStructuredSession(schema, controller.signal);
+    const f = fakeServer('hang'), controller = new AbortController(), session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, controller.signal);
     try {
       const result = session.run('Synthetic pending turn');
       if (cancel) controller.abort();
-      await assert.rejects(result, cancel ? /canceled/ : /timed out/);
+      await assert.rejects(result, cancel ? /canceled/ : /timeout/);
       await session.close(); const dispatched = f.events().filter(e => e.method === 'turn/start').length;
       assert(cancel ? dispatched <= 1 : dispatched === 1); assert(!existsSync(f.events()[0].config));
     } finally { await session.close(); f.close(); }
   }
+});
+
+test('A startup timeout identifies its bounded stage without retaining upstream text', async () => {
+  const f = fakeServer('no-thread-ack');
+  try {
+    await assert.rejects(new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal), error => error instanceof ModelSessionError && error.code === 'rpc_timeout' && error.stage === 'thread_start');
+    assert(!f.events().some(e => e.method === 'turn/start')); assert(!existsSync(f.events()[0].config));
+  } finally { f.close(); }
+});
+
+test('Thread startup can use the existing executor budget instead of an extra 15 second cap', { timeout: 30000 }, async () => {
+  const f = fakeServer('slow-thread');
+  let session;
+  try {
+    session = await new CodexExecutor(f.binary, 25000).openStructuredSession(schema, new AbortController().signal);
+    assert.deepEqual((await session.run('Synthetic delayed startup only')).output, { answer: 1 });
+  } finally { await session?.close(); f.close(); }
 });

@@ -25,6 +25,11 @@ export interface RunEvidence {
   outputSha256: string;
   decisionDigest?: string;
   model?: string;
+  reasoningEffort?: string;
+  serviceTier?: string;
+  sessionReadyAt?: string;
+  requestSentAt?: string;
+  requestAcknowledgedAt?: string;
   threadId?: string;
   turnId?: string;
   promptBytes?: number;

@@ -1,3 +1,4 @@
+import { ModelSessionError } from '../../packages/capabilities/model-session.js';
 import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
@@ -58,7 +59,9 @@ export class Worker {
         const intentId = current.delegation?.intentId;
         const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
+        if (error instanceof ModelSessionError) current.delegation?.events.push({ at: current.updatedAt, event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
         current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'
+          : error instanceof ModelSessionError ? 'Worker model planning failed; existing observations retained, no automatic replay. Inspect the bounded failure event.'
           : dispatched ? 'Action did not return an accepted result. Inspect recorded observations; no automatic replay.'
           : 'Ontology backend could not validate a supported plan. No business action was dispatched.';
         current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
