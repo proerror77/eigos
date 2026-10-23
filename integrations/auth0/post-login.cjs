@@ -2,7 +2,9 @@
 exports.onExecutePostLogin = async (event, api) => {
   const resource = event.secrets.EIGOS_RESOURCE;
   const portal = event.secrets.EIGOS_MEMBER_CLIENT_ID;
-  const forApi = !!resource && event.resource_server?.identifier === resource;
+  const legacy = event.secrets.EIGOS_LEGACY_RESOURCE;
+  const forApi = !!resource && (event.resource_server?.identifier === resource
+    || (!!legacy && resource === legacy + '/' && event.resource_server?.identifier === legacy));
   const forPortal = !!portal && event.client.client_id === portal;
   if (!forApi && !forPortal) return;
   const claim = event.secrets.EIGOS_TENANT_CLAIM;
@@ -15,7 +17,7 @@ exports.onExecutePostLogin = async (event, api) => {
     if (event.client.client_id === event.secrets.EIGOS_AGENT_CONNECTOR_CLIENT_ID) {
       // A refresh grant can continue its installation, but cannot enroll a new
       // installation to bypass that Agent's revocation. Unknown flows fail closed.
-      api.accessToken.setCustomClaim(`${resource}/claims/agent_enrollment`, event.transaction?.protocol === 'oauth2-device-code');
+      api.accessToken.setCustomClaim(`${resource.replace(/\/$/, '')}/claims/agent_enrollment`, event.transaction?.protocol === 'oauth2-device-code');
     }
   }
 };

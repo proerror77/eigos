@@ -9,7 +9,7 @@ import { AgentAccessError, MEMBERSHIP_SCOPE, type AgentRegistration } from '../.
 import type { VerifyToken } from '../auth.js';
 
 export const REGISTRATION_HEADER = 'X-EIGOS-Registration-Token';
-export const enrollmentClaim = (resource: string) => `${resource}/claims/agent_enrollment`;
+export const enrollmentClaim = (resource: string) => `${resource.replace(/\/$/, '')}/claims/agent_enrollment`;
 export function agentOnboardingMetadata(c: Config) {
   return { version: 1, registration_endpoint: `${c.PUBLIC_URL}/agents/registrations`,
     issuer: c.OAUTH_ISSUER, client_id: c.OIDC_AGENT_CLIENT_ID, audience: c.OAUTH_AUDIENCE,

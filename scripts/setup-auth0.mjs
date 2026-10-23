@@ -57,6 +57,12 @@ if (!values.apply) {
     if (found.length > 1) throw new Error('Multiple owned clients require review');
     const result = found[0] ? api('get', `clients/${encodeURIComponent(found[0].client_id)}`) : api('post', 'clients', body);
     if (found[0]) {
+      if (component === 'native-mcp' && result.token_endpoint_auth_method === body.token_endpoint_auth_method
+        && result.is_first_party === body.is_first_party && result.callbacks?.length
+        && result.callbacks.every(callback => body.callbacks.includes(callback)) && JSON.stringify(result.callbacks) !== JSON.stringify(body.callbacks)) {
+        api('patch', `clients/${encodeURIComponent(result.client_id)}`, { callbacks: body.callbacks });
+        result.callbacks = api('get', `clients/${encodeURIComponent(result.client_id)}`).callbacks;
+      }
       if (JSON.stringify(result.callbacks) !== JSON.stringify(body.callbacks) || result.token_endpoint_auth_method !== body.token_endpoint_auth_method) throw new Error('An existing client has a different redirect/authentication contract');
       if (result.is_first_party !== body.is_first_party) throw new Error('Existing client ownership differs; inspect the saved client before replacing an unused setup draft');
     }
@@ -64,7 +70,7 @@ if (!values.apply) {
   }
   try {
     api('get', 'tenants/settings');
-    const resources = list('resource-servers', 'resource_servers').filter(item => item.identifier === plan.resource);
+    const resources = list('resource-servers', 'resource_servers').filter(item => item.identifier === plan.api.identifier);
     if (resources.length > 1) throw new Error('Multiple API resources require review');
     let resource = resources[0];
     if (resource && resource.name !== plan.api.name) throw new Error('An existing API at this identifier is not owned by this setup');
@@ -84,7 +90,7 @@ if (!values.apply) {
     const mcp = plan.mcp ? ownedClient('native-mcp', plan.mcp) : undefined;
     if (mcp) {
       state.mcpId = mcp.client_id; save('state.json', state);
-      api('patch', `clients/${encodeURIComponent(mcp.client_id)}`, { grant_types: plan.mcp.grant_types, refresh_token: plan.mcp.refresh_token });
+      api('patch', `clients/${encodeURIComponent(mcp.client_id)}`, { name: plan.mcp.name, grant_types: plan.mcp.grant_types, refresh_token: plan.mcp.refresh_token });
     }
     api('patch', `clients/${encodeURIComponent(connector.client_id)}`, { grant_types: plan.connector.grant_types, refresh_token: plan.connector.refresh_token });
     const databases = list('connections', 'connections').filter(connection => connection.strategy === 'auth0');
@@ -97,7 +103,8 @@ if (!values.apply) {
     if (!portal.client_secret || /redact|\*{3,}/i.test(portal.client_secret)) throw new Error('The CLI did not return a private portal client secret');
     const code = readFileSync(new URL('../integrations/auth0/post-login.cjs', import.meta.url), 'utf8');
     const secrets = [
-      { name: 'EIGOS_RESOURCE', value: plan.resource }, { name: 'EIGOS_MEMBER_CLIENT_ID', value: portal.client_id },
+      { name: 'EIGOS_RESOURCE', value: plan.api.identifier }, { name: 'EIGOS_MEMBER_CLIENT_ID', value: portal.client_id },
+      ...(plan.mcp ? [{ name: 'EIGOS_LEGACY_RESOURCE', value: plan.resource }] : []),
       { name: 'EIGOS_TENANT_CLAIM', value: plan.tenantClaim }, { name: 'EIGOS_TENANT_ID', value: 'personal' },
       { name: 'EIGOS_AGENT_CONNECTOR_CLIENT_ID', value: connector.client_id },
     ];
@@ -126,7 +133,7 @@ if (!values.apply) {
       api('patch', 'actions/triggers/post-login/bindings', { bindings: next });
     }
     const apiReadback = api('get', `resource-servers/${encodeURIComponent(resource.id)}`);
-    if (apiReadback.identifier !== plan.resource || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.allow_offline_access !== true || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
+    if (apiReadback.identifier !== plan.api.identifier || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.allow_offline_access !== true || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
     if (mcp && JSON.stringify((apiReadback.scopes ?? []).map(scope => scope.value).sort()) !== JSON.stringify(plan.api.scopes.map(scope => scope.value).sort())) throw new Error('Invite beta API scope readback differs from its reviewed task-only plan');
     for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent], [connector, plan.connector], ...(mcp ? [[mcp, plan.mcp]] : [])]) {
       const actual = api('get', `clients/${encodeURIComponent(client.client_id)}`);
@@ -144,7 +151,8 @@ if (!values.apply) {
     const issuer = `https://${tenant}/`;
     const common = [
       `PUBLIC_URL=${plan.resource}`, `OAUTH_ISSUER=${issuer}`, `OAUTH_JWKS_URL=${issuer}.well-known/jwks.json`,
-      `OAUTH_AUDIENCE=${plan.resource}`, `OAUTH_TENANT_CLAIM=${plan.tenantClaim}`, `OIDC_AGENT_CLIENT_ID=${connector.client_id}`,
+      `OAUTH_AUDIENCE=${plan.api.identifier}`, `OAUTH_TENANT_CLAIM=${plan.tenantClaim}`, `OIDC_AGENT_CLIENT_ID=${connector.client_id}`,
+      ...(mcp ? [`OAUTH_LEGACY_AUDIENCE=${plan.resource}`] : []),
       ...(mcp ? [`OIDC_MCP_CLIENT_ID=${mcp.client_id}`, 'EIGOS_INVITE_BETA=true'] : []),
     ];
     const runtime = mcp ? join(homedir(), '.local/share/eigos/invite-beta') : directory;

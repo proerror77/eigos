@@ -10,5 +10,5 @@ export function releaseFiles(root: string): string[] {
     return ['dist/' + relative(root, path).replace(/\.ts$/, '.js')];
   });
   return [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort()
-    .concat(['scripts/run-local.mjs', 'package.json', 'package-lock.json']);
+    .concat(['scripts/run-local.mjs', 'integrations/grok/eigos-native/client.mjs', 'package.json', 'package-lock.json']);
 }

@@ -123,7 +123,11 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 20);
+    assert.equal(catalog.tools.length, 21);
+    const identity = await client.callTool({ name: 'get_runtime_info', arguments: {} });
+    const runtime = (identity.structuredContent as { result: { instance: string; a2a: string; ontologyTransport: string } }).result;
+    assert.equal(runtime.instance, base); assert.equal(runtime.a2a, `${base}/a2a`); assert.equal(runtime.ontologyTransport, 'native-mcp');
+    assert.equal((await (await fetch(`${base}/health`)).json()).instance, runtime.instance);
     for (const name of ['describe_ontology', 'query_ontology', 'evaluate_ontology', 'query_ontology_definitions']) assert.equal(catalog.tools.find(tool => tool.name === name)?.annotations?.readOnlyHint, true);
     for (const name of ['manage_ontology_definitions', 'prepare_ontology_action', 'approve_ontology_action']) assert(catalog.tools.some(tool => tool.name === name));
     const job = await tool(client, 'submit_task', { goal: 'Compare suppliers', requestId: randomUUID() });

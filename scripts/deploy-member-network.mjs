@@ -15,7 +15,7 @@ import { assertCloudflareFrontend, readCloudflareFrontend } from '../dist/packag
 
 // Separate from com.eigos.grok-life. Frontend readback uses the operator's
 // existing login; IdP provisioning and business execution are separate steps.
-const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, 'cloudflare-frontend': { type: 'string' }, apply: { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, 'cloudflare-frontend': { type: 'string' }, 'take-over-from': { type: 'string' }, apply: { type: 'boolean', default: false } } });
 if (!['member-network', 'invite-beta'].includes(values.profile)) throw new Error('Choose member-network or invite-beta');
 const inviteBeta = values.profile === 'invite-beta';
 if (values['cloudflare-frontend'] && !inviteBeta) throw new Error('Cloudflare publication is only supported for the invite-beta profile');
@@ -36,13 +36,15 @@ if (inviteBeta) {
   const keyStat = lstatSync(config.EIGOS_MEMBER_SOURCE_KEY_FILE);
   if (!keyStat.isFile() || keyStat.nlink !== 1 || keyStat.uid !== process.getuid() || keyStat.size !== 32 || (keyStat.mode & 0o077)) throw new Error('Deployment requires an owned private 32-byte source key');
 }
-if (config.OAUTH_AUDIENCE !== config.PUBLIC_URL) throw new Error('The member deployment must use its exact existing OAuth audience');
+if (config.OAUTH_AUDIENCE !== (inviteBeta ? new URL(config.PUBLIC_URL).href : config.PUBLIC_URL)) throw new Error('The member deployment must use its exact canonical OAuth audience');
 const assertProxy = () => inviteBeta ? (cloudflareFrontend ? assertCloudflareFrontend(config, cloudflareFrontend) : assertInviteBetaProxy(config)) : assertSourceProxy(config);
 if (!inviteBeta || values.apply) assertProxy();
 const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
 if (execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim()) throw new Error('Deploy a reviewed committed checkout');
 const ownership = join(runtime, 'owner.json');
-if (existsSync(ownership) && JSON.parse(readFileSync(ownership, 'utf8')).sourceRoot !== root) throw new Error('Member network runtime belongs to another checkout');
+const previousOwner = existsSync(ownership) ? JSON.parse(readFileSync(ownership, 'utf8')).sourceRoot : undefined;
+if (previousOwner && previousOwner !== root && values['take-over-from'] !== previousOwner) throw new Error('Runtime belongs to another checkout; an authorized transfer must name its exact source root');
+if (values['take-over-from'] && (!isAbsolute(values['take-over-from']) || values['take-over-from'] !== previousOwner)) throw new Error('Runtime ownership changed before the requested transfer');
 const files = releaseFiles(root);
 const hash = createHash('sha256'); for (const p of files) { hash.update(p + '\0'); hash.update(readFileSync(join(root, p))); }
 const buildDigest = hash.digest('hex'), release = join(runtime, 'releases', buildDigest);
@@ -55,7 +57,7 @@ if (!values.apply) { console.log(JSON.stringify({ status: 'prepared', sourceComm
 const write = (p, value) => { writeFileSync(p, value, { mode: 0o600 }); chmodSync(p, 0o600); };
 for (const p of [runtime, release, dirname(plistPath)]) mkdirSync(p, { recursive: true, mode: 0o700 });
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
-for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json')].entries()) if (existsSync(p)) cpSync(p, join(backup, String(i)));
+for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json'), ownership].entries()) if (existsSync(p)) cpSync(p, join(backup, String(i)));
 for (const p of files) { const to = join(release, p); if (!existsSync(to)) { mkdirSync(dirname(to), { recursive: true }); cpSync(join(root, p), to); } if (!readFileSync(to).equals(readFileSync(join(root, p)))) throw new Error('Immutable release differs from the build'); }
 installReleaseDependencies(root, runtime, release);
 // Import the actual relocated modules before stopping an existing service.
@@ -85,7 +87,7 @@ try {
   if (inviteBeta) {
     if (JSON.stringify(metadata.scopes_supported) !== JSON.stringify(['openid', 'offline_access', 'services:read', 'tasks:read', 'tasks:write'])) throw new Error('Deployed beta scope discovery mismatch');
     const registration = await fetch(config.PUBLIC_URL + '/.well-known/eigos-agent-registration', { redirect: 'error', signal: AbortSignal.timeout(5000) }).then(r => r.json());
-    if (registration.admission_policy !== 'invite-only' || registration.audience !== config.PUBLIC_URL) throw new Error('Deployed beta admission mismatch');
+    if (registration.admission_policy !== 'invite-only' || registration.audience !== config.OAUTH_AUDIENCE || metadata.resource !== config.OAUTH_AUDIENCE) throw new Error('Deployed beta admission mismatch');
   } else if (!['sources:read', 'sources:write'].every(s => metadata.scopes_supported?.includes(s))) throw new Error('Deployed source discovery mismatch');
   const denied = await fetch(config.PUBLIC_URL + (inviteBeta ? '/mcp' : '/sources/meituan-paotui'), { redirect: 'error', signal: AbortSignal.timeout(5000) });
   if (denied.status !== 401) throw new Error('Unauthenticated source access was not rejected');
@@ -94,7 +96,7 @@ try {
   console.log(JSON.stringify({ status: 'ready', sourceCommit, buildDigest, endpoint: config.PUBLIC_URL, profile: values.profile, proxyVerified: true, ...(!inviteBeta ? { privateProxyVerified: true } : {}), unauthenticatedStatus: denied.status, backup }));
 } catch {
   await stop().catch(() => {});
-  for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json')].entries()) { const saved = join(backup, String(i)); if (existsSync(saved)) cpSync(saved, p); else if (existsSync(p)) unlinkSync(p); }
+  for (const [i, p] of [envPath, plistPath, join(runtime, 'release.json'), ownership].entries()) { const saved = join(backup, String(i)); if (existsSync(saved)) cpSync(saved, p); else if (existsSync(p)) unlinkSync(p); }
   if (oldPlist) try { execFileSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { stdio: 'ignore' }); } catch {}
   throw new Error('Member network deployment failed; previous owned service configuration was restored. Inspect the private runtime log.');
 }

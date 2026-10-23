@@ -26,11 +26,15 @@ async function result(action: () => unknown): Promise<CallToolResult> {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean } = {}): McpServer {
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
   if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+  if (options.runtime) server.registerTool('get_runtime_info', {
+    description: 'Identify this EIGOS deployment and its MCP/A2A endpoints. This describes the installed runtime, not Worker availability or business completion.',
+    inputSchema: z.object({}).strict(), annotations: read,
+  }, () => result(() => { requireScope(principal, 'services:read'); return { ...options.runtime, mcp: `${options.runtime!.instance}/mcp`, a2a: `${options.runtime!.instance}/a2a` }; }));
   const ontologyContext = { ontologyId: ontologyIdSchema.optional(), taskId: taskIdSchema.optional(), release: ontologyReleaseRefSchema.optional() };
   if (sources) {
     server.registerTool('list_source_connections', { description: 'Discover available account-backed services and the current user\'s own connection status. Visibility does not lend another member\'s credential.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.list(principal, sources.token)));

@@ -19,6 +19,8 @@ Gateway 不启动模型、跑腿凭据适配器或后台执行定时器。新 `e
 
 会员自有来源的密文保存在业务库的专用私有表；Gateway 接受已授权 PA 的独立上传，Worker／内部 MCP 使用库外私有密钥读取本 owner 的凭据。两侧均不把 Token 交给模型或任务对象，复用原领取／取消／租约。配置和接入见[会员自有账号授权](member-source-authorization.md)。
 
+通用 Ontology 现通过 Worker 内的原生 Streamable HTTP MCP 提供给 EIGOS Agent；实际工具调用、决策提交、会话隔离和统一实例验收见[原生本体运行说明](native-ontology-runtime.md)。
+
 ## 启动
 
 ```sh
@@ -40,7 +42,7 @@ npm run dev:worker
 
 两个进程必须使用同一个本机 SQLite 文件（建议设置相同的绝对 `DATABASE_PATH`），并由相同系统用户或明确配置的文件权限访问。独立进程不能使用 `:memory:`。Gateway 和 Worker 的能力开关应保持一致；能力目录表示配置的服务，并不保证当前有健康 Worker 在线。Worker 不在线时，任务会持久等待，协议状态仍为 `working`。
 
-Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或 OAuth/JWKS 配置，不监听 HTTP。只有 Worker 主机需要安装和登录 Codex，或持有业务适配器凭据。`EIGOS_EXECUTOR=codex` 在 Gateway 用于声明能力，在 Worker 用于启用执行器；`EIGOS_CODEX_BIN` 和模型超时只由 Worker 执行时使用。生产应分别注入各角色所需环境变量，不必把完整 `.env` 同时发给两端。
+Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或 OAuth/JWKS 配置，不提供公网 HTTP 接口；模型会话会使用任务专属的临时 loopback MCP 端点。只有 Worker 主机需要安装和登录 Codex，或持有业务适配器凭据。`EIGOS_EXECUTOR=codex` 在 Gateway 用于声明能力，在 Worker 用于启用执行器；`EIGOS_CODEX_BIN` 和模型超时只由 Worker 执行时使用。生产应分别注入各角色所需环境变量，不必把完整 `.env` 同时发给两端。
 
 会员资料库默认位于 `DATABASE_PATH + .members`，也可由 `MEMBERSHIP_DATABASE_PATH` 指定；只有 Gateway 需要该文件及 `OIDC_CLIENT_ID`／`OIDC_CLIENT_SECRET`。备份会员库与任务库时保留各自权限。会员开通与令牌 scope 都通过后才接收任务；已接受的任务不会因会员停用被当作供应商业务已取消。详见 [会员资料库与 OAuth](membership.md)。
 
@@ -59,13 +61,13 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 - 当前纯只读动作计划按模型声明的依赖并行，最多四个在途动作；每个动作继续单独记录 Intent／Attempt，并在派发前验证当前证据。消费者仅等待自己的依赖；所有已派发读取结束后才释放领取。包含业务效果的计划仍串行。
 - Agent 沙箱业务动作每轮至多一个，必须以已读取的固定输入取得准确计划许可；每次派发重查作用、币种、金额、收款方、有效期与撤销状态。未知写入只查原幂等键，不能重新提交。取消后的原操作回读可以完善动作账本，不能重开任务或投影新的业务完成。
 - 预约付款优先使用 PA 的 Link Agent Wallet，不可用时交给用户在普通 Link 结账页确认。Gateway 持久保存同一请求的路线和操作键，拒绝在途改路；接收的付款通知不含凭据。Worker 只读服务商的原付款和预约来核验。交接与动作账本原子持久化，重启继续同一身份；取消后的迟到通知只能触发只读查证。旧商家 Stripe 付款开关禁用，见 [PA 预约付款流程](pa-booking-payment-flow.md)。
-- 旧委托不匹配当前 `ontology-execution-v17` 标识时保留只读，不领取/续接/取消，不自动迁移。更新既有实例前停止旧 Worker 并备份，禁止新旧 Worker 在同一数据库混跑。本人常驻部署由 setup:pa 管理；旧代码保留在私有备份。
+- 旧委托不匹配当前 `ontology-execution-v18` 标识时保留只读，不领取/续接/取消，不自动迁移。更新既有实例前停止旧 Worker 并备份，禁止新旧 Worker 在同一数据库混跑。主实例由 `deploy-member-network.mjs --profile invite-beta` 管理，`setup:pa` 安装该实例的 PA 客户端；旧代码保留在私有备份。
 
 ## 部署边界
 
 启用新后端和个人美团读取时，Worker 通过内部 stdio Ontology MCP 调用官方查询程序；Gateway 不启动该进程、模型或业务读取。两端使用相同 `EIGOS_PAOTUI_SKILL_DIR` 以固定能力／绑定配置，只有 Worker 需要实际个人授权。MCP 只提供版本化定义与只读动作，没有公网监听、下单或付款工具；独立进程不构成新的公共服务。详见 [只读接入](meituan-paotui-integration.md)。
 
-本人常驻服务先构建，再用 `npm run setup:pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
+显式选择的隔离本机开发实例先构建，再用 `npm run setup:local-pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
 
 Shopify 匿名查询使用 `EIGOS_SHOPIFY_CATALOG_MERCHANTS` 显式列出商家身份（内部 id、名称、Shop GID、canonical myshopify 域名）。默认关闭，最多 8 家，身份不得重复；仅允许本机开发身份、loopback 和非生产环境。Gateway 只构造能力元数据，实际 HTTP 读取及模型由 Worker 执行。`setup:pa` 同样保留既有清单，显式 `[]` 关闭；启用时将原始响应和回执保存到私有 `shopify-reads/`，不读取 Shopify 账号凭据。Agent 自行选择查询、变体、动作组合及完成时机；价格等事实变化作为新的观察交给 Agent，没有固定复查或自动重试流程。当前实现、边界与 PA 验收状态见 [Agent 动作说明](catalog-agent-actions-2026-10-19.md)。
 

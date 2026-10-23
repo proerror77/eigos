@@ -9,7 +9,9 @@ import { groundConditions, assessConditions } from '../packages/coordinator/cond
 import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { checkRequirements } from '../packages/coordinator/resolver.js';
 import { CodexReasoner, type PlanningContext } from '../packages/coordinator/coordinator.js';
-import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
+import { reasonWithOntology as nativeReasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
+import { scriptedMcpModel } from './fixtures/native-ontology-model.js';
+const reasonWithOntology: typeof nativeReasonWithOntology = (model, ...args) => nativeReasonWithOntology(scriptedMcpModel(model), ...args);
 import { ExecutionCatalog } from '../packages/core/catalog.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import type { TaskContextPayload } from '../packages/coordinator/task-context.js';
@@ -183,13 +185,14 @@ test('N2 Codex reasoning transport drives host queries for whole-goal interpreta
     }
     return { output, evidence: evidence() };
   } };
-  const b = backend(createExecutionCatalog(), new CodexReasoner(model));
+  const b = backend(createExecutionCatalog(), new CodexReasoner(scriptedMcpModel(model)));
   try {
     const submitted = b.submit({ deliverable: 'Record acceptance requirements' });
     for (let i = 0; i < 6 && ['working', 'submitted'].includes(b.store.get(owner, submitted.id).state); i++) await b.run();
     const done = b.store.get(owner, submitted.id);
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
-    assert.equal(done.runs!.length, prompts.length); assert(prompts.length >= 8);
+    assert(done.runs!.length < prompts.length); assert(prompts.length >= 8);
+    assert(done.runs!.every(run => run.ontologyMcp?.decisionSubmitted && run.nativeMcpCalls?.some(call => call.tool === 'submit_decision')));
     assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
     assert.equal(done.delegation!.groundingDecisions!.length, 1); assert.equal(done.delegation!.plan, undefined);
     const plan = done.delegation!.agent!.plans[0]!; assert.equal(plan.version, '3');
@@ -198,13 +201,16 @@ test('N2 Codex reasoning transport drives host queries for whole-goal interpreta
   } finally { b.store.close(); }
 });
 
-test('N2 read loop rejects a final answer without reads and honors its model-turn budget', async () => {
+test('native reasoning rejects an unsupported final decision and enforces the Ontology read budget', async () => {
   const f = fixture();
   try {
     await assert.rejects(reasonWithOntology({ runStructured: async () => ({ output: { kind: 'final', calls: [], finalJson: '{}' }, evidence: evidence() }) }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}), /skipped required/);
     let calls = 0;
-    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), /turn limit/);
-    assert.equal(calls, 1);
+    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), /limit/);
+    assert.equal(calls, 21); assert.equal(f.session.receipts().length, 20);
+    calls = 0;
+    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; throw new Error('must not start'); } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 0));
+    assert.equal(calls, 0);
   } finally { f.db.close(); }
 });
 
@@ -212,9 +218,9 @@ test('N2 cancellation fences model responses and prevents the next read or dispa
   let started!: () => void, release!: () => void;
   const entered = new Promise<void>(r => { started = r; }), waiting = new Promise<void>(r => { release = r; });
   const model = { runStructured: async () => { started(); await waiting; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(scriptedMcpModel(model)));
   try {
-    const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss/);
+    const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss|claim is no longer active/);
     await entered; b.tasks.cancel(principal, job.id); release(); await rejected;
     const canceled = b.store.get(owner, job.id); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.artifact, undefined); assert.equal(canceled.delegation!.ontologyReads, undefined);
   } finally { release(); b.store.close(); }

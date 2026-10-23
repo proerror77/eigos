@@ -26,7 +26,7 @@ export function mountInviteBeta(app: Express, config: Config): void {
 <h2>接入步骤</h2><ol><li><a href="/members">登录会员中心</a>，填写自己的资料并同意开通。取得绑定本人身份的邀请后，在会员中心兑换。</li>
 <li>将以下公开连接配置加入 Codex 的 <code>~/.codex/config.toml</code>；若已有同名连接，请更新该连接：<pre>${html(clientConfig)}</pre>然后运行 <code>codex mcp login eigos</code>，按显示的页面完成本人授权。需要重新授权时运行同一命令。</li>
 <li>向自己的 Agent 提出文档任务，例如：<pre>请通过 EIGOS，按下面的材料生成一份中文会议议程……</pre>Agent 会提交需求、在同一个任务中补充必要信息，并读取最终交付物。</li></ol>
-<p><a class="button" href="/members">进入会员中心</a></p><h2>连接信息</h2><pre>MCP：${html(config.PUBLIC_URL)}/mcp\nOAuth 客户端 ID：${html(config.OIDC_MCP_CLIENT_ID!)}</pre>
-<p>OAuth 客户端 ID 可以公开；登录令牌和邀请凭据属于你本人。你可以在会员中心停用本人的客户端连接。首次只验收 Codex，其他客户端的兼容情况将单独公布。</p></main></html>`);
+<p><a class="button" href="/members">进入会员中心</a></p><h2>连接信息</h2><pre>MCP：${html(config.PUBLIC_URL)}/mcp\nA2A：${html(config.PUBLIC_URL)}/a2a\nOAuth 客户端 ID：${html(config.OIDC_MCP_CLIENT_ID!)}</pre>
+<p>OAuth 客户端 ID 可以公开；登录令牌和邀请凭据属于你本人。你可以在会员中心停用本人的客户端连接。Grok Bot 可使用相同 MCP 地址，在原生连接中填写上述公开 client ID，并请求 openid、offline_access、services:read、tasks:read、tasks:write 后完成本人登录。A2A 使用同一实例的独立 Agent 登记和本人授权。是否接通以当前任务的实际调用和回读为准。</p></main></html>`);
   });
 }

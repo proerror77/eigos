@@ -70,6 +70,7 @@ const schema = z.object({
   OAUTH_ISSUER: z.url().optional(),
   OAUTH_JWKS_URL: z.url().optional(),
   OAUTH_AUDIENCE: z.url().optional(),
+  OAUTH_LEGACY_AUDIENCE: z.url().optional(),
   OAUTH_TENANT_CLAIM: z.string().trim().min(1).max(400).optional(),
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
@@ -98,7 +99,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   }
   c.PUBLIC_URL = publicUrl.origin;
   if (c.EIGOS_INVITE_BETA === 'true') {
-    if (c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.OAUTH_AUDIENCE !== c.PUBLIC_URL
+    if (c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.OAUTH_AUDIENCE !== publicUrl.href
       || c.EIGOS_MEMBERSHIP_APPROVAL !== 'invite-only' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.OIDC_MCP_CLIENT_ID
       || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
       || c.EIGOS_EXECUTOR !== 'codex') throw new Error('Invite beta requires HTTPS/JWT, its exact audience, invite-only membership, registered clients, persistent absolute database paths and the document executor');
@@ -109,6 +110,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
       || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE
       || c.EIGOS_STRIPE_TEST_ENABLED === 'true' || c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) throw new Error('Invite beta exposes document tasks only; private sources, development credentials, network publication and transaction fixtures cannot be enabled');
   }
+  if (c.OAUTH_LEGACY_AUDIENCE && (c.EIGOS_INVITE_BETA !== 'true' || c.OAUTH_LEGACY_AUDIENCE !== c.PUBLIC_URL || c.OAUTH_AUDIENCE !== publicUrl.href)) throw new Error('Legacy OAuth audience must be the exact prior origin of this canonical invite-beta resource');
   if (c.EIGOS_NETWORK_ENABLED === 'true' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:')) throw new Error('Network pilot requires persistent JWT membership, browser/agent clients and explicit enrolled member IDs');
   if (c.OIDC_CLIENT_ID && c.EIGOS_AUTH_MODE !== 'jwt') throw new Error('Member login requires JWT/OIDC configuration');
   if (c.OIDC_CLIENT_SECRET && !c.OIDC_CLIENT_ID) throw new Error('OIDC_CLIENT_SECRET requires OIDC_CLIENT_ID');

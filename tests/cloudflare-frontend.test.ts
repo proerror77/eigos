@@ -11,7 +11,7 @@ const frontend: CloudflareFrontend = {
   tunnelId: '87945afb-dca8-48eb-8a5c-38092da36a9b', tunnelName: 'eigos-invite-beta', hostname: 'beta.example.com',
 };
 const config = readConfig({
-  EIGOS_INVITE_BETA: 'true', EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: 'https://beta.example.com', OAUTH_AUDIENCE: 'https://beta.example.com',
+  EIGOS_INVITE_BETA: 'true', EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: 'https://beta.example.com', OAUTH_AUDIENCE: 'https://beta.example.com/',
   OAUTH_ISSUER: 'https://identity.example/', OAUTH_JWKS_URL: 'https://identity.example/jwks',
   OIDC_CLIENT_ID: 'portal', OIDC_AGENT_CLIENT_ID: 'connector', OIDC_MCP_CLIENT_ID: 'mcp',
   DATABASE_PATH: '/private/beta/tasks.sqlite', MEMBERSHIP_DATABASE_PATH: '/private/beta/members.sqlite',

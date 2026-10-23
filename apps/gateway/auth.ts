@@ -9,7 +9,7 @@ import { readTenantClaim } from '../../packages/core/identity-claims.js';
 
 export type VerifyToken = (token: string) => Promise<Principal>;
 
-export function jwtVerifier(issuer: string, audience: string, keys: JWTVerifyGetKey, tenantClaim = 'tenant_id'): VerifyToken {
+export function jwtVerifier(issuer: string, audience: string | string[], keys: JWTVerifyGetKey, tenantClaim = 'tenant_id'): VerifyToken {
   return async token => {
     const { payload } = await jwtVerify(token, keys, {
       issuer, audience, algorithms: ['RS256', 'ES256', 'EdDSA'],
@@ -35,7 +35,7 @@ export function createVerifier(c: Config): VerifyToken {
       return { issuer: 'local-development', subject: 'developer', tenant: 'local', clientId: 'eigos-local-dev', scopes: [...SCOPES] };
     };
   }
-  return jwtVerifier(c.OAUTH_ISSUER!, c.OAUTH_AUDIENCE!, createRemoteJWKSet(new URL(c.OAUTH_JWKS_URL!)), c.OAUTH_TENANT_CLAIM);
+  return jwtVerifier(c.OAUTH_ISSUER!, c.OAUTH_LEGACY_AUDIENCE ? [c.OAUTH_AUDIENCE!, c.OAUTH_LEGACY_AUDIENCE] : c.OAUTH_AUDIENCE!, createRemoteJWKSet(new URL(c.OAUTH_JWKS_URL!)), c.OAUTH_TENANT_CLAIM);
 }
 
 export function protectedResourceMetadata(c: Config): object {

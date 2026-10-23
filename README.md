@@ -25,7 +25,7 @@ EIGOS 使用一个仓库、独立 Gateway／Worker 和共享任务库。业务�
 
 后续实现按 [Ontology v0.2 规格](docs/ontology-spec-v0.2-2026-10-18.md) 及依据 Palantir 官方指南修订的[对象／接口／关系目录](docs/ontology-model-catalog-v0.2-2026-10-18.md) 推进。[独立业务问题](docs/ontology-drill-questions-v0.2-2026-10-18.md) 已由两个新上下文 Agent 演练，复测九题通过数据与查询记录复核；[人工非建模者演练](docs/ontology-n2-human-drill.md) 尚未运行。四模块及后续契约见 [完整设计核对](docs/ontology-design-completion-v0.2-2026-10-18.md)，N0～N5 门槛见 [阶段目标](docs/backend-implementation-goals.md)。
 
-仓库当前运行契约为 `ontology-execution-v17`；本体由持久发布注册库解析，新建注册库的初始 active 内核为 `eigos.business@17`，v15/v16 保留为不可变历史基线。Agent 通过本体读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。新原生任务按整个目标发现并固定逐动作绑定，所有现有程序家族已接入；来源结果与文档等后续动作通过已接受的具名输出连接，完成检查覆盖全部必需目标。实现、迁移范围和证据见[跨服务组合说明](docs/ontology-composition-implementation-2026-10-22.md)。固定操作只保留明确兼容实现，不作为原生模型的隐藏回退。网络协作保留原始权威存储，通过按当前身份和可见范围校验的只读本体视图追溯；领域属性、来源身份和执行输入的补足范围见 [架构验证记录](docs/ontology-architecture-completion-2026-10-21.md)。业务链已把委托主体、执行方案、真实许可账本、已验证结果、逐项验收和售后关联，见 [业务链实现与验证](docs/business-chain-implementation-2026-10-20.md)。增量兼容只接受已核验的定义摘要，保留事实和历史；旧模型计划不自动重新执行，私有运行版本以对应部署回读为准。
+仓库当前运行契约为 `ontology-execution-v18`；本体由持久发布注册库解析，新建注册库的初始 active 内核为 `eigos.business@17`，v15/v16 保留为不可变历史基线。Agent 通过原生 Ontology MCP 读取当前需求、业务对象、动作定义、执行步骤及结果；模型读取回执与宿主执行校验分别核对。新原生任务按整个目标发现并固定逐动作绑定，所有现有程序家族已接入；来源结果与文档等后续动作通过已接受的具名输出连接，完成检查覆盖全部必需目标。实现、迁移范围和证据见[跨服务组合说明](docs/ontology-composition-implementation-2026-10-22.md)。固定操作只保留明确兼容实现，不作为原生模型的隐藏回退。网络协作保留原始权威存储，通过按当前身份和可见范围校验的只读本体视图追溯；领域属性、来源身份和执行输入的补足范围见 [架构验证记录](docs/ontology-architecture-completion-2026-10-21.md)。业务链已把委托主体、执行方案、真实许可账本、已验证结果、逐项验收和售后关联，见 [业务链实现与验证](docs/business-chain-implementation-2026-10-20.md)。增量兼容只接受已核验的定义摘要，保留事实和历史；旧模型计划不自动重新执行，私有运行版本以对应部署回读为准。
 
 主干与会员实现的整合、增量兼容边界及认证接口回读见 [2026-10-21 整合记录](docs/ontology-integration-readback-2026-10-21.md)。Agent 沙箱业务步骤也关联准确的方案、许可和验收；类型登记不表示真实供应商已经接通。 通用概念分层另参考 [BFO／CCO／IAO／PROV-O 对照](docs/research/bfo-foundation-alignment-2026-10-21.md)，当前仅完成术语澄清与参考映射，未声明形式本体对齐。
 
@@ -64,7 +64,7 @@ npm run dev
 
 ```sh
 npm run build
-npm run setup:pa
+npm run setup:local-pa
 ```
 
 macOS 的既有 `com.eigos.grok-life` launchd 服务使用新架构，保留 `127.0.0.1:3430`、原凭据和任务库。部署生成不可变代码快照、私有数据库备份，并核对健康端点的构建摘要。`-- --restart` 可验证重启；旧运行快照只在私有备份保留。
@@ -73,7 +73,9 @@ PA 读取 `~/.local/share/eigos/grok-life/skill-install.md` 更新现有接入�
 
 ## 认证与生产边界
 
-新增受限的 [MCP 邀请内测配置](docs/invite-beta-operations.md)：独立 HTTPS/JWT 入口、邀请制与原生 Codex OAuth，首批范围为文档交付和任务说明整理。用户步骤见[接入指南](docs/invite-beta.md)。代码与工程测试不代表公网或真实用户验收已完成；实际开放以对应运行回读为准。
+当前统一 PA 接入使用同一 HTTPS 主实例，内部 Agent 使用原生 Ontology MCP；架构和同任务跨协议验收见[运行说明](docs/native-ontology-runtime.md)。部署后使用 `npm run setup:pa` 安装主实例客户端。
+
+提供受限的 [MCP 邀请内测配置](docs/invite-beta-operations.md)：独立 HTTPS/JWT 入口、邀请制与原生 Codex OAuth，首批范围为文档交付和任务说明整理。用户步骤见[接入指南](docs/invite-beta.md)。代码与工程测试不代表公网或真实用户验收已完成；实际开放以对应运行回读为准。
 
 MCP、A2A 共用 OAuth/JWT、会员资格、任务归属和 scope 校验。生产认证默认拒绝缺失配置；本地随机开发令牌只允许 loopback。会员与客户端自助登记、续期见 [会员资料库](docs/membership.md)、[Agent 接入](docs/agent-onboarding.md) 和 [Auth0 配置](docs/auth0-integration.md)。[会员自有账号授权](docs/member-source-authorization.md)允许各会员的 PA 通过独立通道提交本人的只读来源凭据；按 owner 加密隔离，支持连接、轮换、撤销和原任务恢复。默认关闭，只限非生产 loopback HTTPS/JWT；没有部署或真实交易。原[单会员操作人连接](docs/member-source-connection.md)作为互斥兼容模式保留。
 

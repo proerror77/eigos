@@ -1,3 +1,4 @@
+import { scriptedMcpModel } from './fixtures/native-ontology-model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setup, paotuiModel } from './fixtures/paotui-agent.js';
@@ -130,7 +131,7 @@ test('native grounding fixes whole-goal criteria after its actual Ontology read 
     return { output, evidence: evidence() };
   } };
   try {
-    const b = backend(f.catalog, new CodexReasoner(model), f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' }), selected = await b.run();
+    const b = backend(f.catalog, new CodexReasoner(scriptedMcpModel(model)), f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' }), selected = await b.run();
     assert.equal(selected.id, job.id); assert.equal(selected.delegation!.agent!.programRef.id, 'eigos.goal');
     assert.equal(selected.delegation!.agent!.composition!.contexts.length, 0);
     assert.equal(selected.delegation!.agent!.composition!.goal.criteria[0]!.predicate, 'paotui.quote_observed');
@@ -159,7 +160,7 @@ test('artifact interpretation preserves numeric content while explicit structure
     }) } : { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' };
     return { output, evidence: evidence() };
   } };
-  const b = backend(createExecutionCatalog({ documentEnabled: true }), new CodexReasoner(model));
+  const b = backend(createExecutionCatalog({ documentEnabled: true }), new CodexReasoner(scriptedMcpModel(model)));
   try {
     const draft = b.submit({ goal: contentGoal, executionEnvironment: 'live' });
     await b.run();

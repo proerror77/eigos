@@ -33,7 +33,9 @@
 
 Agent 应发现当前服务、提交一次需求，并保存 taskId。必要补充在同一个任务中回复；最终读取服务端完成状态与文档。网络超时后先读取原任务，避免重复提交。
 
-当前接入说明以 Codex 的原生 Streamable HTTP／OAuth 为目标。其他 MCP 客户端的登录、回调和续期兼容性需分别验证，不能由 Codex 的结果推定。
+Grok Bot 使用同一 `/mcp` 地址和公开 client ID，通过宿主原生连接管理填写 `auth.CLIENT_ID` 与 `scopes=["openid","offline_access","services:read","tasks:read","tasks:write"]`，不填 client secret。其 OAuth 回调必须精确登记为 `https://www.cursor.com/agents/mcp/oauth/callback`。公开资源标识采用 origin 的规范 URL（包含根路径 `/`），必须与 Auth0 API Identifier 一致。
+
+A2A 使用同一 origin 的 AgentConnector 设备授权，独立保管本人的轮换凭据。两条协议的同任务验收见[原生本体运行说明](native-ontology-runtime.md)；某一客户端的历史成功不能代替当前 Grok 链路的实测。
 
 ## 账号与停用
 

@@ -3,8 +3,31 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/auth0.js';
 import { inviteBetaCodexConfig } from '../packages/members/native-mcp.js';
+import { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } from 'jose';
+import { jwtVerifier } from '../apps/gateway/auth.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
+
+test('canonical public resource and explicit prior origin retain exact JWT audience and tenant binding', async () => {
+  const keys = await generateKeyPair('RS256'), jwk = await exportJWK(keys.publicKey);
+  const verify = jwtVerifier('https://identity.example/', ['https://eigos.example/', 'https://eigos.example'], createLocalJWKSet({ keys: [{ ...jwk, alg: 'RS256', use: 'sig' }] }), 'https://eigos.example/claims/tenant_id');
+  for (const audience of ['https://eigos.example/', 'https://eigos.example', 'https://eigos.example/other', 'https://eigos.example.attacker/']) {
+    const token = await new SignJWT({ client_id: 'native-mcp', scope: 'services:read', 'https://eigos.example/claims/tenant_id': 'personal' }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt' }).setIssuer('https://identity.example/').setAudience(audience).setSubject('alice').setIssuedAt().setExpirationTime('10m').sign(keys.privateKey);
+    if (audience === 'https://eigos.example/' || audience === 'https://eigos.example') assert.equal((await verify(token)).subject, 'alice');
+    else await assert.rejects(verify(token));
+  }
+});
+
+test('canonical and legacy API grants use the same controlled enrollment claim without accepting other resources', async () => {
+  for (const resource of ['https://eigos.example/', 'https://eigos.example', 'https://eigos.example/other']) {
+    const claims = new Map();
+    await onExecutePostLogin({ client: { client_id: 'connector' }, resource_server: { identifier: resource }, transaction: { protocol: 'oauth2-device-code' }, secrets: {
+      EIGOS_RESOURCE: 'https://eigos.example/', EIGOS_LEGACY_RESOURCE: 'https://eigos.example', EIGOS_TENANT_CLAIM: 'https://eigos.example/claims/tenant_id', EIGOS_TENANT_ID: 'personal', EIGOS_AGENT_CONNECTOR_CLIENT_ID: 'connector',
+    } }, { idToken: { setCustomClaim: () => {} }, accessToken: { setCustomClaim: (key: string, value: unknown) => claims.set(key, value) }, access: { deny: () => assert.fail('Unexpected denial') } });
+    assert.equal(claims.get('https://eigos.example/claims/agent_enrollment'), resource.endsWith('/other') ? undefined : true);
+    assert(!claims.has('https://eigos.example//claims/agent_enrollment'));
+  }
+});
 
 test('Auth0 blueprint binds two distinct clients and a short-lived, consented RFC 9068 resource', () => {
   const plan = auth0Plan('https://eigos.example');
@@ -44,7 +67,8 @@ test('the invite beta provisions only task scopes and a public native MCP author
   const plan = auth0Plan('https://beta.example', undefined, { inviteBeta: true });
   assert.deepEqual(plan.api.scopes.map(scope => scope.value), ['services:read', 'tasks:read', 'tasks:write', 'members:write']);
   assert(plan.mcp); assert.equal(plan.mcp.token_endpoint_auth_method, 'none');
-  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1:64517/callback']);
+  assert.equal(plan.api.identifier, 'https://beta.example/');
+  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1:64517/callback', 'https://www.cursor.com/agents/mcp/oauth/callback']);
   const nativeConfig = inviteBetaCodexConfig('https://beta.example', 'public-client');
   assert.match(nativeConfig, /callback_url = "http:\/\/127\.0\.0\.1:64517\/callback"\ncallback_port = 64517/);
   assert.match(nativeConfig, /url = "https:\/\/beta\.example\/mcp"/);

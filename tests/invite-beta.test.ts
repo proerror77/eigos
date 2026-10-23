@@ -13,11 +13,19 @@ import { SCOPES, TASK_SCOPES, type Job, type Principal } from '../packages/core/
 import { validateInviteBetaProxy } from '../packages/deployment/invite-beta-proxy.js';
 
 const env = (directory: string, origin = 'https://beta.example'): NodeJS.ProcessEnv => ({
-  EIGOS_INVITE_BETA: 'true', EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: origin, OAUTH_AUDIENCE: origin,
+  EIGOS_INVITE_BETA: 'true', EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: origin, OAUTH_AUDIENCE: new URL(origin).href,
   OAUTH_ISSUER: 'https://identity.example/', OAUTH_JWKS_URL: 'https://identity.example/jwks',
   OIDC_CLIENT_ID: 'portal', OIDC_AGENT_CLIENT_ID: 'device-connector', OIDC_MCP_CLIENT_ID: 'native-mcp',
   DATABASE_PATH: join(directory, 'tasks.sqlite'), MEMBERSHIP_DATABASE_PATH: join(directory, 'members.sqlite'),
   EIGOS_MEMBERSHIP_APPROVAL: 'invite-only', EIGOS_EXECUTOR: 'codex', HOST: '127.0.0.1',
+});
+
+test('public OAuth discovery uses the canonical URL and permits only its explicit prior audience', () => {
+  const valid = env(join(tmpdir(), 'canonical-beta'));
+  assert.equal(readConfig({ ...valid, OAUTH_LEGACY_AUDIENCE: valid.PUBLIC_URL }).OAUTH_AUDIENCE, 'https://beta.example/');
+  assert.throws(() => readConfig({ ...valid, OAUTH_AUDIENCE: valid.PUBLIC_URL }));
+  assert.throws(() => readConfig({ ...valid, OAUTH_LEGACY_AUDIENCE: 'https://another.example' }), /Legacy OAuth audience/);
+  assert.throws(() => readConfig({ ...valid, OAUTH_LEGACY_AUDIENCE: 'https://beta.example/other' }), /Legacy OAuth audience/);
 });
 
 test('invite beta rejects self-service, borrowed credentials, supplier sources and transaction configuration for both processes', () => {

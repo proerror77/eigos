@@ -8,6 +8,7 @@ import { readWorkerConfig } from '../dist/packages/core/config.js';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
+if (!process.argv.includes('--isolated')) throw new Error('Use setup:pa for the primary instance, or explicitly select setup:local-pa for isolated loopback development');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const directory = join(root, 'data/grok-life');
 const runtime = join(homedir(), '.local/share/eigos/grok-life');
@@ -120,7 +121,7 @@ try {
     execFileSync('python3', [executable, '--config', profile, 'configure', '--card-url','http://127.0.0.1:3430/.well-known/agent-card.json','--token-file',credential,'--allow-loopback-http','--allow-service','eigos.delegate','--default-service','eigos.delegate'], { stdio:'pipe' });
   }
   const peerDirectory = join(runtime, 'peer'); mkdirSync(peerDirectory, { recursive: true, mode: 0o700 });
-  const installedSkill = readFileSync(join(root,'integrations/grok/eigos-delegate/SKILL.md'),'utf8') + `\n## Saved connection for this user\n\n- Run on the user's connected Mac, not the cloud computer.\n- Client: ${peerClient}\n- Profile: ${join(runtime,'profile.json')}\n- Command: python3 ${peerClient} --config ${join(runtime,'profile.json')} <command>\n- Save task inputs and receipts in ${peerDirectory}.\n- Default and allowed service: eigos.delegate. Credential values are private; never read or print client-token or server.env.\n- Parcel quotation is read-only: let EIGOS read saved addresses, present choices and continue the same task. Do not find or inject address IDs yourself.\n- launchd ${label} keeps Gateway/Worker available while the Mac is available.\n`;
+  const installedSkill = `# Isolated EIGOS development connection\n\nThis is an explicitly selected loopback developer profile, not the primary Grok connection. Its development identity and historical tasks are separate from the HTTPS member instance. Do not install it as the default EIGOS delegation skill or use it as proof of the primary deployment.\n\nClient: python3 ${peerClient} --config ${join(runtime,'profile.json')} <command>.\nUse discover to inspect this isolated service. Preserve task IDs and request IDs. Credential values must remain private. Source queries require their existing authorization; real orders and payments remain disabled.\n` ;
   privateWrite(join(runtime,'skill-install.md'), installedSkill); privateWrite(join(directory,'skill-install.md'), installedSkill);
   privateWrite(ownership, JSON.stringify({sourceRoot:root})+'\n');
   const sourceCommit = execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();

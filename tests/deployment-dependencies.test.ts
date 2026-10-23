@@ -18,12 +18,14 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'package.json'), '{"type":"module"}');
     put(join(source, 'package-lock.json'), '{}');
     put(join(source, 'scripts/run-local.mjs'), '');
+    put(join(source, 'integrations/grok/eigos-native/client.mjs'), 'console.log("A2A transport fixture");');
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
     const files = releaseFiles(source);
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }
     rmSync(source, { recursive: true });
     assert.equal(execFileSync(process.execPath, ['dist/apps/gateway/main.js'], { cwd: release, encoding: 'utf8' }).trim(), '15');
+    assert.equal(execFileSync(process.execPath, ['integrations/grok/eigos-native/client.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'A2A transport fixture');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

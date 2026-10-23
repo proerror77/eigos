@@ -27,7 +27,12 @@ export interface RunEvidence {
   threadId?: string;
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';
+  nativeMcpCalls?: { server: string; tool: string; status: string }[];
+  ontologyMcp?: { server: 'eigos_ontology'; transport: 'streamable-http'; sessionId: string; taskId: string; toolAttempts: number;
+    calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
 }
+export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[] }
+export interface ModelRunOptions { mcp?: NativeMcpConnection }
 export interface ExecutionResult {
   output: z.infer<typeof decisionSchema>;
   evidence: RunEvidence;
@@ -44,8 +49,8 @@ const outputSchema = {
   }, required: ['decision', 'message', 'artifact'],
 };
 
-// This bounded executor produces documents/plans, with no shell, MCP, browser,
-// plugins or peer agents. All conversational state is supplied from the Job.
+// Documents have no tools; Agent decisions receive only their Worker-owned,
+// task-bound native Ontology MCP connection.
 export class CodexExecutor implements Executor {
   constructor(private binary = 'codex', private timeoutMs = 120000) {}
 
@@ -64,7 +69,7 @@ export class CodexExecutor implements Executor {
   }
 
   // Shared bounded model transport. Callers validate their own structured decisions.
-  async runStructured(prompt: string, schema: object, signal: AbortSignal): Promise<{ output: unknown; evidence: RunEvidence }> {
+  async runStructured(prompt: string, schema: object, signal: AbortSignal, options: ModelRunOptions = {}): Promise<{ output: unknown; evidence: RunEvidence }> {
     const id = randomUUID();
     const startedAt = new Date().toISOString();
     const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-exec', startedAt);
@@ -82,7 +87,18 @@ export class CodexExecutor implements Executor {
         '--disable', 'computer_use', '--disable', 'browser_use', '--disable', 'browser_use_external',
         '--disable', 'in_app_browser', '--disable', 'image_generation', '--disable', 'code_mode',
         '--output-schema', schemaPath, '--output-last-message', outputPath, '--json', '-'];
+      if (options.mcp) {
+        const url = new URL(options.mcp.url);
+        if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/mcp' || url.username || url.password || url.search || url.hash) throw new Error('Native Ontology MCP must use the Worker loopback endpoint');
+        args.splice(args.length - 1, 0,
+          '-c', `mcp_servers.eigos_ontology.url=${JSON.stringify(options.mcp.url)}`,
+          '-c', 'mcp_servers.eigos_ontology.bearer_token_env_var="EIGOS_ONTOLOGY_MCP_TOKEN"',
+          '-c', `mcp_servers.eigos_ontology.enabled_tools=${JSON.stringify(options.mcp.tools)}`,
+          '-c', 'mcp_servers.eigos_ontology.startup_timeout_sec=15',
+          '-c', 'mcp_servers.eigos_ontology.tool_timeout_sec=30');
+      }
       const events: Record<string, unknown>[] = [];
+      const nativeMcpCalls: NonNullable<RunEvidence['nativeMcpCalls']> = [];
       let stderr = '';
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('Executor canceled')); return; }
@@ -91,6 +107,7 @@ export class CodexExecutor implements Executor {
         for (const key of ['PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'CODEX_HOME', 'HTTPS_PROXY', 'HTTP_PROXY', 'ALL_PROXY', 'NO_PROXY', 'SSL_CERT_FILE']) {
           if (process.env[key]) env[key] = process.env[key];
         }
+        if (options.mcp) env.EIGOS_ONTOLOGY_MCP_TOKEN = options.mcp.token;
         const child = spawn(this.binary, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
         let buffer = '';
         let bytes = 0;
@@ -111,6 +128,10 @@ export class CodexExecutor implements Executor {
               const event = JSON.parse(line) as Record<string, unknown>;
               // Persist only receipt metadata, never hidden reasoning or tool contents.
               if (['thread.started', 'turn.completed', 'turn.failed', 'error'].includes(String(event.type))) events.push(event);
+              if (event.type === 'item.completed' && event.item && typeof event.item === 'object') {
+                const item = event.item as Record<string, unknown>;
+                if (item.type === 'mcp_tool_call' && typeof item.server === 'string' && typeof item.tool === 'string') nativeMcpCalls.push({ server: item.server, tool: item.tool, status: String(item.status ?? 'completed') });
+              }
             } catch { /* CLI diagnostics are not protocol events. */ }
           }
         });
@@ -135,6 +156,7 @@ export class CodexExecutor implements Executor {
         outputSha256: createHash('sha256').update(text).digest('hex'), model,
         threadId: typeof threadId === 'string' ? threadId : undefined,
         usage: usage && typeof usage === 'object' ? Object.fromEntries(Object.entries(usage).filter((entry): entry is [string, number] => typeof entry[1] === 'number')) : undefined,
+        ...(options.mcp ? { nativeMcpCalls } : {}),
       };
       const output: unknown = JSON.parse(text); succeeded = true;
       return { output, evidence: recorded };

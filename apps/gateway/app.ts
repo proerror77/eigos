@@ -35,6 +35,8 @@ import { mountDefinitionRoutes } from './ontology/routes.js';
 import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
+const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
+  : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
 
 export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
   assertPersonalSourceConfig(config);
@@ -78,8 +80,10 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
       const entry = {
         at: new Date().toISOString(), path: req.path, method: req.body?.method ?? req.body?.action ?? req.method,
-        requestId: req.body?.id, messageId: req.body?.params?.message?.messageId,
-        taskId: req.body?.params?.id ?? req.body?.params?.message?.taskId,
+        requestId: auditId(req.body?.id), messageId: auditId(req.body?.params?.message?.messageId),
+        taskId: auditId(req.body?.params?.id ?? req.body?.params?.message?.taskId ?? req.body?.params?.arguments?.taskId),
+        operationId: auditId(req.body?.params?.arguments?.requestId),
+        ...(req.path === '/mcp' && /^[a-z_]{1,80}$/.test(req.body?.params?.name ?? '') ? { tool: req.body.params.name } : {}),
         ...(req.path.startsWith('/agents/registrations') ? { registrationId: req.body?.registrationId ?? req.path.split('/')[3] } : {}),
       };
       res.on('finish', () => {
@@ -102,7 +106,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
+  const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const };
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', ...runtimeIdentity }));
   mountInviteBeta(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
@@ -188,7 +193,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true' }), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);
