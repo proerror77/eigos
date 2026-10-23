@@ -75,7 +75,7 @@ test('Worker configuration needs no Gateway token or OAuth secrets', () => {
   assert.throws(() => readWorkerConfig({ EIGOS_PAOTUI_SKILL_DIR: '/tmp/skill' }), /restricted/);
 });
 
-test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, isolation and late cancellation', { timeout: 45000 }, async () => {
+test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, isolation and late cancellation', { timeout: 120000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-processes-')); const path = join(dir, 'tasks.sqlite');
   const token = 'process-test-token-'.repeat(3);
   const config = readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, DATABASE_PATH: path, EIGOS_EXECUTOR: 'codex', EIGOS_CODEX_BIN: '/must-not-run-in-gateway' });
@@ -101,11 +101,13 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   const rpc = async (method: string, params: object) => (await fetch(base + '/a2a', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) })).json();
   const children: ChildProcess[] = []; const events: { event: string; taskId?: string; pid?: number }[] = [];
   function launch() {
+    const startedAt = Date.now();
     const child = spawn(process.execPath, ['--import', 'tsx', 'tests/fixtures/worker.ts'], { cwd: process.cwd(), env: { PATH: process.env.PATH, HOME: process.env.HOME, DATABASE_PATH: path }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
     children.push(child); child.stdout!.resume();
     let stderr = ''; child.stderr!.on('data', data => { stderr = (stderr + data.toString()).slice(-4000); });
     return new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Worker startup deadline exceeded: ${stderr}`)), 15000);
+      // Cold TypeScript imports share CI CPU with other tests; readiness is still the child's IPC event.
+      const timer = setTimeout(() => reject(new Error(`Worker ${child.pid} startup deadline exceeded after ${Date.now() - startedAt}ms: ${stderr}`)), 60000);
       const failed = (code: number | null) => { clearTimeout(timer); reject(new Error(`Worker exited before readiness (${code}): ${stderr}`)); };
       child.once('exit', failed);
       child.on('message', message => {
