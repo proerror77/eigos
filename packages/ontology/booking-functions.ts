@@ -73,7 +73,7 @@ export function projectBookingObservation(ctx: AgentActionContext, action: strin
     const offers = readBookingObservation(ctx.graph, ctx.owner, objectRefSchema.parse(input.offers), { historical: true });
     const selected = bookingEntitySchemas.BookingOffers.parse(offers.payload.data).offers.find(o => o.id === input.offerId);
     const booked = bookingDataSchema.parse(result.payload.data);
-    if (!selected || !same(selected, booked.offer) || booked.providerId !== selected.providerId || booked.state !== 'awaiting_payment') fail('The provider did not create the exact selected unpaid booking');
+    if (!selected || !same(selected, booked.offer) || booked.providerId !== selected.providerId || (selected.paymentRequirement === 'not_required' ? !['confirmed', 'awaiting_payment'].includes(booked.state) || selected.total.minor !== '0' || !selected.feesComplete : booked.state !== 'awaiting_payment')) fail('The provider did not create the exact selected unpaid booking');
   }
   const dependencies = Object.entries(input).flatMap(([key, value]) => {
     const ref = objectRefSchema.safeParse(value); if (key === 'scope' || !ref.success) return [];

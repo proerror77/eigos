@@ -7,6 +7,7 @@
 - [Agent 接入指南](integration.md)：现行 MCP／A2A 接口、任务交接与权限。
 - [开发与运行](gateway-worker.md)：环境准备、进程职责和运行配置。
 - [能力实现与验证范围](registered-capabilities.md)：能力登记、执行与验收边界；具体运行版本以接入指南和实际运行回读为准。
+- [免费活动报名与通用预约](free-booking-participant-2026-10-23.md)：可选支付、参与者状态、Luma 浏览器接入和验收边界。
 - [会员与认证](membership.md)：成员身份与访问资格。
 
 ## 实现与验证

@@ -34,7 +34,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v15`，业务模型为 `eigos.business@15`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v16`，业务模型为 `eigos.business@16`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -70,7 +70,7 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 
 ## PA 自有支付与预约回读
 
-`booking.pa-payment.sandbox@2` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
+`booking.pa-payment.sandbox@3` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
 
 Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求、路线选择与通知 Schema。Python 客户端支持 `payment-route`、`payment-result`，并通过 `reconcile` 复用已有原操作回读接口。此路径没有 EIGOS 付款动作，不需要 EIGOS Stripe 账户；旧商家付款环境开关已禁用。所有测试均在隔离服务商和 PA 钱包夹具中完成，真实钱包及服务商未接入。详见 [PA 预约付款流程](pa-booking-payment-flow.md)。
 
@@ -81,3 +81,13 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 ## 滴滴只读接入
 
 本人本机可显式配置 `ride.estimate.query@1`，支持地点搜索和指定路线车型估价，仍通过 `eigos.delegate` 使用。Key 仅由 Worker 从私密文件读取；Gateway 构造目录不读 Key、不发来源请求。只有 `maps_textsearch`、`taxi_estimate` 可执行，估价不代表完整车费、叫车或行程完成。配置、歧义和证据范围见[滴滴只读说明](didi-readonly-integration.md)。
+
+## 免费活动报名与通用预约
+
+`booking.participant.free@1` 复用 `eigos.delegate`、同一 Task、MCP／A2A 和 Worker。模型从本体选择检查、提交、回读及等待动作；目标为 `submitted` 时核验提交回执，目标为 `confirmed` 时必须取得有效参加资格。待审核和候补保持进行中，不生成付款请求。
+
+本次真实来源仅为本机本人已登录的 Luma 参与者网页，通过需要在线操作代理的浏览器桥接调用；它不是 Luma 官方参与者报名 API，也不使用主办方 Add Guests 代替报名。通用预约模型与合成流程已实现，其他真实预约平台尚未接入。默认关闭，生产和远程多用户身份不可用。
+
+真实免费提交仍需原 `/tasks/{id}/authorize` 的 `approve_plan`，`environment: "live_free"`，绑定原计划摘要、`allowedEffects: ["reserve"]`、`maxAmount.minor: "0"`、准确服务主体与有效期。这项许可不授予下单、付款、变更或取消权限。金额为零但费用或付款要求未知时不能提交。
+
+已确认后的结果可通过 `query_ontology` 精确读取 `RegistrationRecord`，并用 `evaluate_ontology` 的 `registrationStatus` 独立核验。浏览器回读为 `live_readonly`，实际提交观察为 `live_operation`；它们不证明实际到场，也不等同于 Luma 签名的 API 回执。配置、操作代理、状态和验证记录见[免费报名说明](free-booking-participant-2026-10-23.md)。

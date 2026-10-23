@@ -22,6 +22,7 @@ export interface AgentActionPlan {
   id: string; version: '2'; sequence: number; requestId: string; requestRevision: number;
   programRef: Ref; programDigest: string; scope: ObjectRef; scopeDigest: string;
   modelRunId: string; modelDecision: AgentDecision; reasoning: string; createdAt: string;
+  environment?: 'sandbox' | 'live_free';
   steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; operationScope?: string })[];
   ontologyPlanning: PlanningSnapshot; digest: string;
 }

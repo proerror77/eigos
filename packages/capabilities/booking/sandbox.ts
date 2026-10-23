@@ -24,6 +24,7 @@ async function body(req: IncomingMessage) {
 }
 const html = (value: unknown) => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 export interface BookingSandboxFlags {
+  freeBooking?: boolean;
   dropCreateResponse?: boolean; dropBeforeCreate?: boolean; dropPAResponse?: boolean; dropCheckoutResponse?: boolean;
   paymentMode?: 'paid' | 'processing' | 'failed'; confirmBooking?: boolean;
   changedOffer?: boolean; emptyOffers?: boolean; walletUnavailable?: boolean; checkoutUnavailable?: boolean;
@@ -137,7 +138,7 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
         const input = bookingInputSchema.parse(JSON.parse(url.searchParams.get('input') ?? '{}'));
         const startsAt = input.startsAt ?? new Date(anchor + 86400000).toISOString();
         const sourceId = `offers-${digest({ input, revision: ctx.requestRevision })}`;
-        const offer = bookingOfferSchema.parse({ id: 'consultation-standard', providerId, serviceId: 'consultation', title: '沙箱咨询预约', venue: 'sandbox-online', startsAt, endsAt: new Date(Date.parse(startsAt) + 3600000).toISOString(), timeZone: 'Asia/Shanghai', participants: input.participants, total: { minor: '12500', currency: 'CNY' }, feesComplete: true, cancellationPolicy: 'Synthetic appointment cancellation terms v1', termsVersion: '1', availability: 'available', expiresAt: new Date(anchor + 3600000).toISOString() });
+        const offer = bookingOfferSchema.parse({ id: 'consultation-standard', providerId, serviceId: 'consultation', title: '沙箱咨询预约', venue: 'sandbox-online', startsAt, endsAt: new Date(Date.parse(startsAt) + 3600000).toISOString(), timeZone: 'Asia/Shanghai', participants: input.participants, total: { minor: flags.freeBooking ? '0' : '12500', currency: 'CNY' }, ...(flags.freeBooking ? { paymentRequirement: 'not_required' } : {}), feesComplete: true, cancellationPolicy: 'Synthetic appointment cancellation terms v1', termsVersion: '1', availability: 'available', expiresAt: new Date(anchor + 3600000).toISOString() });
         result = payload('BookingOffers', sourceId, { query: input.query, offers: flags.emptyOffers || !/consult|咨询|预约|booking/i.test(input.query) ? [] : [offer] });
         db.prepare('INSERT OR REPLACE INTO offers VALUES(?,?,?,?)').run(ctx.ownerDigest, ctx.requestId, sourceId, JSON.stringify(result));
       } else if (url.pathname === '/bookings' && req.method === 'POST' && ctx.action === 'CreatePendingBooking') {
@@ -154,8 +155,8 @@ export async function createBookingSandboxProvider(options: { databasePath?: str
           if (!offer || offer.availability !== 'available' || Date.parse(offer.expiresAt) <= Date.now() || digest(offer) !== input.offerDigest || flags.changedOffer) reject('OFFER_CHANGED');
           const bookingId = `booking-${randomUUID()}`, paymentHandler = { id: 'pa-wallet-sandbox', type: 'sandbox.pa-wallet' as const, payeeId: providerId, endpoint: endpoint + '/pa/payments', supported: !flags.walletUnavailable };
           const checkoutId = `checkout-${randomUUID()}`, checkout = { id: checkoutId, type: 'link_checkout' as const, bookingId, payeeId: providerId, url: `${endpoint}/checkout/${checkoutId}`, supported: !flags.checkoutUnavailable, userConfirmationRequired: true as const };
-          const b: BookingData = { bookingId, providerId, offer, termsDigest: digest({ offer, paymentHandler, checkout }), state: 'awaiting_payment', holdExpiresAt: new Date(Date.now() + (options.holdMs ?? 600000)).toISOString(), independentRead: false, paymentHandler, checkout };
-          const payment = { bookingId, providerId, payeeId: providerId, bookingTermsDigest: b.termsDigest, amount: offer.total, paidAmount: { ...offer.total, minor: '0' }, state: 'unpaid', independentRead: true };
+          const b: BookingData = { bookingId, providerId, offer, termsDigest: digest({ offer, paymentHandler, checkout }), state: flags.freeBooking ? 'confirmed' : 'awaiting_payment', ...(flags.freeBooking ? { confirmedAt: now() } : {}), holdExpiresAt: new Date(Date.now() + (options.holdMs ?? 600000)).toISOString(), independentRead: false, paymentHandler, checkout };
+          const payment = { bookingId, providerId, payeeId: providerId, bookingTermsDigest: b.termsDigest, amount: offer.total, paidAmount: { ...offer.total, minor: '0' }, state: flags.freeBooking ? 'not_required' : 'unpaid', independentRead: true };
           result = payload('BookingObservation', bookingId, b);
           db.exec('BEGIN IMMEDIATE');
           try { db.prepare('INSERT INTO bookings VALUES(?,?,?,?,?,?,?)').run(bookingId, ctx.ownerDigest, ctx.requestId, ctx.requestRevision, 1, JSON.stringify(b), JSON.stringify(payment)); db.prepare('INSERT INTO checkout_sessions VALUES(?,?,?)').run(checkoutId, bookingId, randomBytes(32).toString('hex')); db.prepare('INSERT INTO operations VALUES(?,?,?,?,?)').run(ctx.operationKey, ctx.ownerDigest, ctx.requestId, digest(input), JSON.stringify(result)); db.exec('COMMIT'); effectApplied = true; } catch (e) { db.exec('ROLLBACK'); throw e; }

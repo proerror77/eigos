@@ -22,6 +22,10 @@ export interface AgentActionContext extends AgentProgramContext {
 export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];
   paPayment?: { mode: 'request' | 'wait'; terms: import('./pa-payment.js').PAPaymentTerms };
+  /** An accepted asynchronous source operation. Query its original key, never replay it. */
+  pending?: { retryAfterMs: number };
+  /** A model-selected, durable pause; this does not assert a provider result. */
+  waitUntil?: string;
 }
 export interface AgentActionAuthority { cost: { minor: string; currency: string; payeeId: string }; operationScope?: string }
 /** A connector failure with a deliberately safe, credential-free diagnostic. */
@@ -33,6 +37,8 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  /** Explicitly bound participant reservations with no charge or payment effect. */
+  readonly liveFreeReservation?: true;
   readonly ref: Ref;
   readonly configurationDigest: string;
   readonly actionIds: readonly string[];

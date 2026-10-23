@@ -18,7 +18,7 @@ import type { ObjectRef } from '../../packages/ontology/model.js';
 import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
 import { commerceDecision as decision, commerceStep as step } from './commerce-agent.js';
 
-export const bookingProgramRef = { id: 'booking.pa-payment.sandbox', version: '2' };
+export const bookingProgramRef = { id: 'booking.pa-payment.sandbox', version: '3' };
 export function bookingReads(ctx: AgentPlanningContext, access: PlanningAccess) {
   access.session.call('describe_ontology', { search: 'BookingTask', limit: 1 });
   access.session.call('query_ontology', { object: ctx.state.scope });
@@ -41,6 +41,7 @@ export function bookingChoice(ctx: AgentPlanningContext, access: PlanningAccess)
     return decision(ctx, [step('reserve', 'CreatePendingBooking', { scope, offers: offers.ref, offerId: offered[0]!.id })]);
   }
   if (!booking.snapshot.payload.data.independentRead) return decision(ctx, [step('read_booking', 'ReadProviderBooking', { scope, booking: booking.ref })]);
+  if ((booking.snapshot.payload.data.offer as { paymentRequirement?: string }).paymentRequirement === 'not_required') return decision(ctx, [], { booking: booking.ref, rationale: 'Independent confirmation of a proven zero-price booking, without payment' });
   if (!ctx.state.paPayment) {
     if (booking.snapshot.payload.data.state !== 'awaiting_payment') return { ...decision(ctx), kind: 'no_feasible_plan', message: 'The original booking is not awaiting payment.' };
     const unpaid = last('BookingPaymentObservation');

@@ -8,6 +8,7 @@ export function sourceProof(store: OntologyObjectStore, owner: string, ref: Obje
   const receipts = store.related(owner, ref, 'sourceReceipts', budget), subject = store.read(owner, ref, budget);
   const scopes: Record<string, string> = { CheckoutSession: 'checkout_session', DeliveryQuote: 'delivery_quote', ProductOffer: 'goods_offer', ReservationOffer: 'reservation', ReservationSlot: 'reservation', Order: 'order', Shipment: 'delivery', DeliveryEvent: 'delivery', DeliveryAllocation: 'delivery', Reservation: 'reservation', Payment: 'payment', Refund: 'refund', ...domainEvidenceScopes };
   const linksDigest = store.relationshipDigest(owner, ref, budget);
+  scopes.RegistrationOffer = 'reservation'; scopes.RegistrationRecord = 'reservation';
   scopes.BookingOffers = 'reservation'; scopes.BookingObservation = 'reservation'; scopes.BookingPaymentObservation = 'payment';
   scopes.StripePaymentObservation = 'payment';
   scopes.DidiPlaceObservation = 'domain_ride'; scopes.RideEstimateObservation = 'domain_ride';

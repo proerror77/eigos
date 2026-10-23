@@ -1,3 +1,4 @@
+import { evaluateRegistrationFunction } from './free-booking-functions.js';
 import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
@@ -20,7 +21,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
-  simple('bookingObservationStatus'), simple('stripePaymentStatus'),
+  simple('registrationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
@@ -65,6 +66,8 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   if (meituanResult) return meituanResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
   if (rideResult) return rideResult;
+  const registrationResult = evaluateRegistrationFunction(store, owner, input, budget);
+  if (registrationResult) return registrationResult;
   const bookingResult = evaluateBookingFunction(store, owner, input, budget);
   if (bookingResult) return bookingResult;
   const stripeResult = evaluateStripePaymentFunction(store, owner, input, budget);

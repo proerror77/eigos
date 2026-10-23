@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+
 import { randomUUID } from 'node:crypto';
 import { setupPABooking, bookingProgramRef } from './fixtures/pa-booking.js';
 import { owner, principal } from './backend-fixture.js';
@@ -13,6 +14,23 @@ import { backend } from './backend-fixture.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+test('an explicitly free booking completes from independent confirmation without a PA payment handoff', async () => {
+  const t = await setupPABooking(); t.provider.flags.freeBooking = true;
+  try {
+    const sent = t.submit({ goal: '仅验证免费沙箱预约，不付款。', requirements: [
+      { id: 'free', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.payment_not_required' } },
+      { id: 'confirmed', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.confirmed' } },
+      { id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '0', currency: 'CNY' } },
+    ] });
+    const done = await t.finish(sent.id);
+    assert.equal(done.state, 'completed', done.question ?? done.error);
+    assert.equal(done.delegation!.agent!.paPayment, undefined);
+    assert.equal((done.artifact!.data.result as any).paymentRequired, false);
+    assert.equal(t.provider.countBookings(), 1);
+    assert(!t.provider.audit().some(entry => ['RequestPAPayment', 'ReadProviderPayment'].includes(String(entry.action)) || entry.caller === 'pa_wallet' || entry.caller === 'checkout_user'));
+  } finally { await t.close(); }
+});
 
 test('PA booking capability requires explicit isolated provider configuration and has no payment action', async () => {
   const t = await setupPABooking(); try {

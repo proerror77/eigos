@@ -1,5 +1,7 @@
 # Ontology + LLM 后端
 
+2026-10-23 增加 `booking.participant.free@1`：免费活动报名／通用预约模型、可选付款、审核与候补跟踪、独立确认回读。当前真实来源为本机 Luma 参与者浏览器桥接，需要在线操作代理；其配置和证据以[免费报名说明](free-booking-participant-2026-10-23.md)为准。旧预约沙箱升级为 `booking.pa-payment.sandbox@3`，明确免费的预约不再要求付款。下列较早日期的沙箱记录保留其当时边界。
+
 更新于 2026-10-23。当前代码使用 `ontology-execution-v15`，业务模型为 `eigos.business@15`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
 新增 `commerce.journey.sandbox@1`：默认关闭，只对显式本机沙箱任务开放。16 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；5 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。

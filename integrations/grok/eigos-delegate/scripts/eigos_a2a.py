@@ -241,16 +241,18 @@ class Client:
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured allowlist')
         if not isinstance(data, dict) or not isinstance(data.get('requestId'), str) or not 1 <= len(data['requestId']) <= 128:
-            raise ClientError('Supply an exact sandbox confirmation with a stable requestId')
+            raise ClientError('Supply an exact plan confirmation with a stable requestId')
         if data.get('action') == 'approve_plan':
             required = {'requestId', 'action', 'planDigest', 'allowedEffects', 'maxAmount', 'payeeIds', 'expiresAt', 'environment'}
             amount, effects, payees = data.get('maxAmount'), data.get('allowedEffects'), data.get('payeeIds')
-            if set(data) != required or data['environment'] != 'sandbox' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
-                raise ClientError('Plan approval requires exact fields, a plan digest and environment sandbox')
+            if set(data) != required or data['environment'] not in ('sandbox', 'live_free') or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
+                raise ClientError('Plan approval requires exact fields, a plan digest and sandbox or live_free environment')
             if not isinstance(effects, list) or not 1 <= len(effects) <= 8 or any(e not in ('local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund') for e in effects):
                 raise ClientError('Plan approval has invalid declared effects')
             if not isinstance(amount, dict) or set(amount) != {'minor', 'currency'} or not isinstance(amount['minor'], str) or not re.fullmatch(r'(0|[1-9][0-9]{0,17})', amount['minor']) or not isinstance(amount['currency'], str) or not re.fullmatch(r'[A-Z]{3}', amount['currency']):
                 raise ClientError('Plan approval requires an explicit minor-unit amount and currency')
+            if data['environment'] == 'live_free' and (effects != ['reserve'] or amount['minor'] != '0' or not isinstance(payees, list) or len(payees) != 1):
+                raise ClientError('Live free approval permits exactly one zero-charge reservation, without payment or order effects')
             if not isinstance(payees, list) or len(payees) > 8 or any(not isinstance(p, str) or not 1 <= len(p) <= 200 for p in payees) or not isinstance(data['expiresAt'], str) or not data['expiresAt']:
                 raise ClientError('Plan approval requires exact payees and a finite expiry')
         elif data.get('action') != 'confirm_simulated_payment' or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'}:

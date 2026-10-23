@@ -10,6 +10,7 @@ export const bookingOfferSchema = z.strictObject({
   id, providerId: id, serviceId: id, title: z.string().min(1).max(300), venue: id,
   startsAt: instant, endsAt: instant, timeZone: z.string().min(1).max(100), participants: count,
   total: moneySchema, feesComplete: z.boolean(), cancellationPolicy: z.string().min(1).max(500), termsVersion: id,
+  paymentRequirement: z.enum(['not_required', 'required', 'unknown']).optional(),
   availability: z.enum(['available', 'unavailable', 'unknown']), expiresAt: instant,
 });
 export const bookingDataSchema = z.strictObject({
@@ -21,7 +22,7 @@ export const bookingDataSchema = z.strictObject({
 });
 export const bookingPaymentDataSchema = z.strictObject({
   bookingId: id, providerId: id, payeeId: id, bookingTermsDigest: sha,
-  amount: moneySchema, paidAmount: moneySchema, state: z.enum(['unpaid', 'processing', 'paid', 'failed', 'refunded', 'unknown']),
+  amount: moneySchema, paidAmount: moneySchema, state: z.enum(['not_required', 'unpaid', 'processing', 'paid', 'failed', 'refunded', 'unknown']),
   paymentId: id.optional(), capturedAt: instant.optional(), independentRead: z.literal(true),
 });
 export const bookingEntitySchemas = {

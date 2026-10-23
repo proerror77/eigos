@@ -53,7 +53,7 @@ export interface ActionContext {
 export interface PlanGrant {
   id: string; owner: string; jobId: string; planDigest: string; bindingRefs: Ref[]; allowedEffects: EffectClass[];
   maxAmount: { minor: string; currency: string }; payeeIds: string[]; expiresAt: string; revoked: boolean;
-  environment: 'sandbox'; approvedAt: string;
+  environment: 'sandbox' | 'live_free'; approvedAt: string;
 }
 export interface OutcomeAssessment {
   requestId: string; requestRevision: number; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human';

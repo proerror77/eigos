@@ -46,6 +46,10 @@ const schema = z.object({
   EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
   EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
+  EIGOS_FREE_BOOKING_BRIDGE_URL: z.url().optional(),
+  EIGOS_FREE_BOOKING_TOKEN_FILE: z.string().optional(),
+  EIGOS_FREE_BOOKING_BINDING_ID: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/).optional(),
+  EIGOS_FREE_BOOKING_ATTENDEE_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_BOOKING_SANDBOX_URL: z.url().optional(),
   EIGOS_BOOKING_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ENABLED: z.enum(['false', 'true']).default('false'),
@@ -137,6 +141,12 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_BOOKING_SANDBOX_URL) {
     const u = new URL(c.EIGOS_BOOKING_SANDBOX_URL);
     if (c.EIGOS_AUTH_MODE !== 'development' || c.EIGOS_ACTION_SANDBOX !== 'true' || env.NODE_ENV === 'production' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE!)) throw new Error('Booking source requires explicit local sandbox configuration');
+  }
+  const participantFields = [c.EIGOS_FREE_BOOKING_BRIDGE_URL, c.EIGOS_FREE_BOOKING_TOKEN_FILE, c.EIGOS_FREE_BOOKING_BINDING_ID, c.EIGOS_FREE_BOOKING_ATTENDEE_SHA256];
+  if (participantFields.some(Boolean) && !participantFields.every(Boolean)) throw new Error('Free participant booking requires the bridge, private token path and pinned account binding');
+  if (c.EIGOS_FREE_BOOKING_BRIDGE_URL) {
+    const u = new URL(c.EIGOS_FREE_BOOKING_BRIDGE_URL);
+    if (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_FREE_BOOKING_TOKEN_FILE!)) throw new Error('Participant browser is restricted to explicit non-production loopback and a private account binding');
   }
   return c;
 }

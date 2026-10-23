@@ -55,7 +55,7 @@ export interface Delegation {
   pendingActionInput?: { intentId: string; question: string };
   actionReply?: { intentId: string; messageId: string; answer: string };
   actions?: { id: string; stepId: string; state: import('../ontology/actions.js').IntentState; remoteRef?: string; latestObservationId?: string }[];
-  authorizationRequest?: { planDigest: string; effects: import('../ontology/actions.js').EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox'; realOperationsAllowed: false };
+  authorizationRequest?: { planDigest: string; effects: import('../ontology/actions.js').EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox' | 'live_free'; realOperationsAllowed: boolean };
   businessFacts?: { intentId: string; snapshot: import('../ontology/actions.js').BusinessSnapshot; sourceVersion: number; evidenceRefs: string[] }[];
   authorizationBudget?: { minor: string; currency: string; state: string; intentId: string }[];
   approval?: { planDigest: string; quoteDigest: string; at: string; simulationOnly: true };

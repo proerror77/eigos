@@ -35,9 +35,12 @@ test('Planning descriptions expose full action schemas on demand without repeati
     assert(action); assert.equal((action.read ?? action.operation).inputSchema, undefined);
     const exact = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [action.id] }) as any;
     assert.equal(exact.actions.length, 1); assert((exact.actions[0].read ?? exact.actions[0].operation).inputSchema);
-    const full = f.session.call('describe_ontology', { search: 'ServiceRequest', includeSchemas: true }) as any;
+    // Compare alternate discovery strategies in separate decision contexts;
+    // requesting every schema after both summary and exact reads consumes the
+    // same cumulative budget twice as the registry grows.
+    const full = new OntologyPlanningSession(f.graph, owner, f.request).call('describe_ontology', { search: 'ServiceRequest', includeSchemas: true }) as any;
     assert(JSON.stringify(summary).length < JSON.stringify(full).length * 0.6);
-    assert.equal(f.session.receipts().length, 3);
+    assert.equal(f.session.receipts().length, 2);
     assert.equal(summary.conditionSchema, undefined);
     // Condition-only discovery is an alternative to requesting every full schema;
     // keep the per-decision context bound intact as the registry grows.
