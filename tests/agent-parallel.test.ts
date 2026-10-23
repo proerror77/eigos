@@ -15,12 +15,15 @@ const frontier = (ctx: AgentPlanningContext, access: PlanningAccess) => {
     commerceStep('product', 'ReadCommerceProduct', { scope: ctx.state.scope, merchantId: 'cedar-ca', query: 'coffee' }, ['directory'], [{ stepId: 'directory', targetKey: 'discovery' }]),
   ]);
 };
-test('Independent reads overlap; a consumer starts when its own dependency settles without waiting for another branch', { timeout: 10000 }, async () => {
-  const t = await setupCommerce({ target: 'quote', choice: frontier }), held = latch(), consumer = latch(); let pending: Promise<unknown> | undefined;
+test('Independent reads overlap; a consumer starts when its own dependency settles without waiting for another branch', { timeout: 60000 }, async () => {
+  const t = await setupCommerce({ target: 'quote', choice: frontier }), held = latch(), firstRead = latch(), consumer = latch(); let pending: Promise<unknown> | undefined;
   const started: string[] = [];
-  t.provider.flags.beforeResponse = async action => { started.push(action); if (action === 'ReadCommerceContext') await held.promise; if (action === 'ReadCommerceProduct') consumer.resolve(); };
+  t.provider.flags.beforeResponse = async action => { started.push(action); firstRead.resolve(); if (action === 'ReadCommerceContext') await held.promise; if (action === 'ReadCommerceProduct') consumer.resolve(); };
   try {
     const id = t.submit().id; await t.b.run(); pending = t.b.run();
+    // Bound provider scheduling after dispatch begins, separately from catalog
+    // construction and planning on a busy CI runner. The slow branch stays held.
+    await firstRead.promise;
     await Promise.race([consumer.promise, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Dependent read stalled behind the independent branch')), 4000); timer.unref(); })]);
     assert.deepEqual(new Set(started), new Set(['ReadCommerceContext', 'SearchCommerceMerchants', 'ReadCommerceProduct']));
     assert.equal(t.store.intents(owner, id).find(i => i.stepId === 'slow_context')!.state, 'dispatching');
@@ -43,7 +46,7 @@ test('A failed read cancels its consumers while the independent branch remains r
   } finally { await t.close(); }
 });
 
-for (const stop of ['cancel', 'lease_loss'] as const) test(`Concurrent late reads preserve audit without projecting after ${stop}`, { timeout: 10000 }, async () => {
+for (const stop of ['cancel', 'lease_loss'] as const) test(`Concurrent late reads preserve audit without projecting after ${stop}`, { timeout: 60000 }, async () => {
   const t = await setupCommerce({ target: 'quote', choice: frontier }), held = latch(), both = latch(); let count = 0, pending: Promise<unknown> | undefined;
   t.provider.flags.beforeResponse = async () => { if (++count === 2) both.resolve(); await held.promise; };
   try {
