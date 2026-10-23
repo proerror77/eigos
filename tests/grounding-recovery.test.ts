@@ -7,6 +7,7 @@ import { DomainError } from '../packages/core/domain.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import { digest } from '../packages/core/delegation.js';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 
 const goal = '从家里寄到公司，送一个文件，500克，普通送，只查询';
 const value = (r: ServiceRequest, kind: 'bad-count' | 'mass' | 'wrong-mass') => ({
@@ -142,4 +143,44 @@ test('native grounding fixes whole-goal criteria after its actual Ontology read 
       assert(schema.required.includes('requestRevision'));
     }
   } finally { f.store.close(); }
+});
+
+test('artifact interpretation preserves numeric content while explicit structured quantities remain mandatory', async () => {
+  const contentGoal = '生成任务说明和引用该说明的会议文稿；文稿包含45分钟议程和三个讨论问题，实际会议尚未开始。';
+  const model = { runStructured: async (prompt: string) => {
+    const packet = JSON.parse(prompt.split('\n\n').at(-1)!);
+    const current = packet.conversation[0]?.result?.data?.request as ServiceRequest | undefined;
+    const output = current ? { kind: 'final', calls: [], receiptIds: [packet.conversation[0].receipt.id], finalJson: JSON.stringify({
+      kind: 'compose', requestRevision: current.revision, message: 'Generate the requested materials; do not execute the proposed meeting', requirementsJson: '[]', conditionsJson: '[]',
+      criteriaJson: JSON.stringify([
+        { id: 'brief', description: contentGoal, predicate: 'brief.json', phase: 'artifact', messageId: current.messages[0]!.id, quote: contentGoal, requirementIds: [] },
+        { id: 'document', description: contentGoal, predicate: 'document.markdown', phase: 'artifact', messageId: current.messages[0]!.id, quote: contentGoal, requirementIds: [] },
+      ]),
+    }) } : { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' };
+    return { output, evidence: evidence() };
+  } };
+  const b = backend(createExecutionCatalog({ documentEnabled: true }), new CodexReasoner(model));
+  try {
+    const draft = b.submit({ goal: contentGoal, executionEnvironment: 'live' });
+    await b.run();
+    const interpreted = b.store.get(owner, draft.id), request = interpreted.delegation!.request;
+    assert.equal(request.originalGoal, contentGoal);
+    assert.equal(request.messages[0]!.text, contentGoal);
+    assert.deepEqual(request.requirements, []);
+    const criteria = interpreted.delegation!.agent!.composition!.goal.criteria;
+    assert.deepEqual(criteria.map(value => value.predicate), ['brief.json', 'document.markdown']);
+    assert(criteria.every(value => value.description === contentGoal && value.quote === contentGoal));
+    assert.equal(b.store.intents(owner, draft.id).length, 0);
+    b.tasks.cancel(principal, draft.id);
+
+    const fixed = b.submit({ goal: contentGoal, executionEnvironment: 'live', requirements: [
+      { id: 'fixed_quantity', kind: 'quantity', strength: 'hard', expected: { amount: '3', unit: '个' } },
+    ] });
+    await b.run();
+    const rejected = b.store.get(owner, fixed.id);
+    assert.equal(rejected.delegation!.request.requirements[0]!.id, 'fixed_quantity');
+    assert.equal(rejected.delegation!.agent, undefined);
+    assert.match(rejected.delegation!.groundingFeedback!.at(-1)!.message, /Every fixed hard requirement/);
+    assert.equal(b.store.intents(owner, fixed.id).length, 0);
+  } finally { b.store.close(); }
 });
