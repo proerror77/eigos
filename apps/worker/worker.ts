@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
 
 export interface WorkerOptions {
-  coordinator: Pick<Coordinator, 'run'>;
+  coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts'>>;
   pollMs?: number;
   leaseMs?: number;
   timeoutMs?: number;
@@ -66,11 +66,11 @@ export class Worker {
           : 'Ontology backend could not validate a supported plan. No business action was dispatched.';
         current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
       });
-    }).finally(() => {
+    }).finally(async () => {
       clearInterval(heartbeat); clearTimeout(timeout);
       // Keep an unresolved working claim until expiry if writeback failed.
       try { if (this.store.get(owner, job.id).state !== 'working') this.store.release(claim); }
-      finally { this.running.delete(job.id); }
+      finally { this.running.delete(job.id); await this.options.coordinator.releaseModelContext?.(claim); }
     });
     // A storage failure must not cause an unhandled rejection or silently replay this attempt.
     void run.done.catch(() => console.error('Worker writeback failed; lease recovery required'));
@@ -80,5 +80,6 @@ export class Worker {
     this.stopping = true; clearInterval(this.timer);
     for (const run of this.running.values()) run.controller.abort();
     await Promise.allSettled([...this.running.values()].map(run => run.done));
+    await this.options.coordinator.closeModelContexts?.();
   }
 }

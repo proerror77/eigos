@@ -20,6 +20,7 @@ export const planningToolSchemas = { describe_ontology: describeSchema, query_on
 export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(schema)), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
+export const modelSessionKey = (owner: string, request: ServiceRequest, model: OntologyObjectStore['model']['ref']) => digest({ owner, requestId: request.id, revision: request.revision, model });
 export function contextDefinitionInput(graph: OntologyObjectStore, actions: string[]) {
   const functions = [...new Set(actions.flatMap(id => {
     const action = graph.model.action(id);
@@ -83,6 +84,7 @@ export class OntologyPlanningSession {
     };
   }
   receipts() { return structuredClone(this.reads); }
+  modelSessionKey() { return modelSessionKey(this.owner, this.request, this.graph.model.ref); }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
   /** Fresh task-local context only. Definitions determine pure source checks;
    * no adapter, source transport, business action or decision is invoked here. */

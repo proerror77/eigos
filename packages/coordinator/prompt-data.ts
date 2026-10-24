@@ -23,7 +23,7 @@ export function compactSchema(input: unknown): unknown {
 }
 
 const reference = '$contextValue';
-export interface PromptDataMetrics { encoding: 'inline-json' | 'shared-json-v1'; sourceBytes: number; encodedBytes: number; sharedValues: number }
+export interface PromptDataMetrics { encoding: 'inline-json' | 'shared-json-v1' | 'session-json-v1'; sourceBytes: number; encodedBytes: number; sharedValues: number; reusedValues?: number }
 /** Store exact repeated JSON values once. No truncation, selection or summarizing. */
 export function packPromptData(input: unknown): { value: unknown; metrics: PromptDataMetrics } {
   const source = JSON.stringify(input), sourceBytes = Buffer.byteLength(source);
@@ -67,4 +67,53 @@ export function expandPromptData(value: any): any {
     return item && typeof item === 'object' ? Object.fromEntries(Object.entries(item).map(([key, child]) => [key, expand(child)])) : item;
   };
   return expand(value.data);
+}
+
+/** Exact values persist only inside one temporary task conversation. New frames
+ * publish additions with explicit offsets; changed values never reuse old IDs. */
+export class SessionPromptData {
+  private values = new Map<string, number>();
+  private bytes = 0;
+  pack(input: unknown): { value: unknown; metrics: PromptDataMetrics } {
+    const source = JSON.stringify(input), sourceBytes = Buffer.byteLength(source);
+    const logical: unknown = JSON.parse(source); // Match JSON wire semantics for optional undefined properties.
+    // An untrusted source marker is literal data, never a dictionary reference.
+    const collision = (value: unknown): boolean => !!value && typeof value === 'object' && (Object.hasOwn(value, '$sessionValue') || (Array.isArray(value) ? value.some(collision) : Object.values(value).some(collision)));
+    if (collision(logical)) return { value: logical, metrics: { encoding: 'inline-json', sourceBytes, encodedBytes: sourceBytes, sharedValues: 0 } };
+    const offset = this.values.size, additions: unknown[] = [];
+    let reusedValues = 0;
+    const encode = (value: unknown): unknown => {
+      const text = JSON.stringify(value), length = Buffer.byteLength(text);
+      const existing = this.values.get(text);
+      if (existing !== undefined) { reusedValues++; return { $sessionValue: existing }; }
+      const children = () => Array.isArray(value) ? value.map(encode) : value && typeof value === 'object'
+        ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, encode(child)])) : value;
+      if (length < 240 || this.values.size >= 512 || this.bytes + length > 256000) return children();
+      const id = this.values.size;
+      this.values.set(text, id); this.bytes += length;
+      additions[id - offset] = null;
+      additions[id - offset] = children();
+      return { $sessionValue: id };
+    };
+    const data = encode(logical), value = { encoding: 'session-json-v1', offset, sharedValues: additions, data };
+    return { value, metrics: { encoding: 'session-json-v1', sourceBytes, encodedBytes: Buffer.byteLength(JSON.stringify(value)), sharedValues: additions.length, reusedValues } };
+  }
+}
+
+/** Evidence/test reader for the exact logical data across ordered frames. */
+export function expandSessionPromptData(frame: any, dictionary: unknown[]): any {
+  if (frame?.encoding !== 'session-json-v1') return expandPromptData(frame);
+  if (frame.offset !== dictionary.length || !Array.isArray(frame.sharedValues) || dictionary.length + frame.sharedValues.length > 512) throw new Error('Invalid session data dictionary');
+  dictionary.push(...frame.sharedValues);
+  const active = new Set<number>();
+  const expand = (value: any): any => {
+    if (value && typeof value === 'object' && Object.hasOwn(value, '$sessionValue')) {
+      const id = value.$sessionValue;
+      if (!Number.isInteger(id) || id < 0 || id >= dictionary.length || active.has(id) || Object.keys(value).length !== 1) throw new Error('Invalid session value reference');
+      active.add(id); const expanded = expand(dictionary[id]); active.delete(id); return expanded;
+    }
+    if (Array.isArray(value)) return value.map(expand);
+    return value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, child]) => [key, expand(child)])) : value;
+  };
+  return expand(frame.data);
 }

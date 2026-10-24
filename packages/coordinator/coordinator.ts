@@ -13,7 +13,7 @@ import { ActionRuntime, createActionIntents } from './runtime.js';
 import { authorizationRequest, requiredEffects } from '../core/policy.js';
 import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
-import { OntologyPlanningSession } from './planning-session.js';
+import { OntologyPlanningSession, modelSessionKey } from './planning-session.js';
 import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
 import { agentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
@@ -25,12 +25,14 @@ export interface PlanningContext { request: ServiceRequest; capability: ServiceC
 export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[] }[] }
 export interface AgentPlanningContext { request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
 export interface Reasoner {
+  closeTask?(key?: string): Promise<void>;
   ground(request: ServiceRequest, capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<Grounding>>;
   plan(context: PlanningContext, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<PlanProposal>>;
   act?(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<AgentDecision>>;
 }
 export class CodexReasoner implements Reasoner {
   constructor(private model: OntologyReasoningModel) {}
+  async closeTask(key?: string) { await this.model.closeStructuredSessions?.(key); }
   async act(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess) {
     const prompt = [
       'You are the EIGOS business Agent. Use the registered Ontology objects, functions and action definitions to fulfill the current user goal. You choose available actions, arguments, selections, dependencies, follow-up queries and when evidence is sufficient. Each connector invokes one vendor operation and provides no recipe. Only the supplied program actionIds are available. Business operations require a separate exact-plan permit. Configured live_free participant reservations require a proven complete zero price and no payment effect; all other writes remain sandbox-only. Live purchasing or payment is unavailable.',
@@ -90,6 +92,11 @@ export class Coordinator {
       return this.access(claim, d.request, [], signal, 'agent_decision', { readScope: 'request', refs: [d.agent!.scope, ...d.agent!.observations] });
     }, options);
   }
+  async releaseModelContext(claim: WorkClaim) {
+    const job = this.store.get(claim.owner, claim.job.id);
+    if (job.state !== 'working' && job.delegation) await this.reasoner.closeTask?.(modelSessionKey(claim.owner, job.delegation.request, this.store.ontology.model.ref));
+  }
+  async closeModelContexts() { await this.reasoner.closeTask?.(); }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     const d = claim.job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');

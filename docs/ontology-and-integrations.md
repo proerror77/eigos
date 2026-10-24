@@ -1,6 +1,6 @@
 # Ontology 模型与接入能力总览
 
-核对日期：2026-10-24，Asia/Shanghai。本文汇总对象模型、执行契约、来源接入与验证记录。整合后的实际运行回读见[常驻免费报名快照](evidence/free-booking-resident-2026-10-24/readback.json)；更新前的分叉状态保留在[早期快照](evidence/ontology-capability-inventory-2026-10-24/readback.json)。
+核对日期：2026-10-24，Asia/Shanghai。本文汇总对象模型、执行契约、来源接入与验证记录。最新实际运行回读见[会话复用更新对齐](evidence/free-booking-resident-2026-10-24/session-reuse-readback.json)，初次整合见[免费报名快照](evidence/free-booking-resident-2026-10-24/readback.json)；更新前的分叉状态保留在[早期快照](evidence/ontology-capability-inventory-2026-10-24/readback.json)。
 
 **当前开发实现与本人常驻实例已统一为 `ontology-execution-v19`／`eigos.business@16`，均有 103 个对象类型。真实来源覆盖美团只读、滴滴只读、Shopify 目录，以及需要在线浏览器操作代理的 Luma 免费报名。免费报名与可选支付语义已合入常驻，来源队列在线；其他生活服务已有模型与沙箱，仍缺真实连接器。**
 
@@ -8,10 +8,10 @@
 
 | 核对范围 | 实现基线提交 | 执行契约 | 业务模型 | 对象／接口／关系／动作／函数 |
 | --- | --- | --- | --- | --- |
-| 本文工作分支 `codex/free-booking-luma` | `17f7a9f51e463dddf750d37bae7ca10f31e55a52` | `ontology-execution-v19` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
+| 本文工作分支 `codex/free-booking-luma` | `179662b8cdf156cf0ae073ad909ec97cbae211cc` | `ontology-execution-v19` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
 | 本人常驻实例，本次实际回读 | 同一实现基线 | `ontology-execution-v19` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
 
-常驻地址为 `http://127.0.0.1:3430`。本次保留原常驻 `cdc1cd26d91908615c15bf23a2875deb921392e0` 的更新并合入免费报名，回读健康信息、Agent Card、认证本体和不可变发布；原有 29 项配置及 35 个任务保持一致。`RegistrationTask`、`RegistrationOffer`、`RegistrationRecord` 及相关 5 个动作、7 个关系、1 个函数已装入常驻。另有一个没有报名许可的只读队列探针，在浏览器操作前取消并验证拒绝派发；没有新报名或付款。后续文档提交不改变上述实现基线或发布文件内容。
+常驻地址为 `http://127.0.0.1:3430`。本次保留原常驻 `cdc1cd26d91908615c15bf23a2875deb921392e0` 的更新并合入免费报名，原有 29 项配置及 35 个任务保持一致。随后另一项已通过 CI 的会话复用更新 `179662b8cdf156cf0ae073ad909ec97cbae211cc` 进入常驻；当前分支也纳入该更新，代码与此验证基线一致。`RegistrationTask`、`RegistrationOffer`、`RegistrationRecord` 及相关 5 个动作、7 个关系、1 个函数均保留。初次整合的只读队列探针在浏览器操作前取消并验证拒绝派发；后续更新只重新回读版本、模型及来源健康，没有新报名或付款。后续文档提交不改变上述实现基线或发布文件内容。
 
 103 个是具体对象类型，另有 3 个接口；256 个是双向关系定义，每条只计一次。52 个动作定义不等于 52 个当前可执行工具。
 
