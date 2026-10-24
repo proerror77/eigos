@@ -33,7 +33,7 @@ function openSnapshot(path: string): DatabaseSync {
   catch { db.close(); throw new Error('Cannot open a stable read-only snapshot'); }
 }
 function requireBodyBudget(db: DatabaseSync, table: string) {
-  if (Number(db.prepare(`SELECT coalesce(sum(length(body)),0) AS n FROM ${table}`).get()!.n) > 64 * 1024 * 1024)
+  if (Number(db.prepare(`SELECT coalesce(sum(length(CAST(body AS BLOB))),0) AS n FROM ${table}`).get()!.n) > 64 * 1024 * 1024)
     throw new Error(`Snapshot audit byte limit exceeded: ${table}`);
 }
 
@@ -78,7 +78,7 @@ export function auditMigrationSnapshots(databaseSnapshot: string, membershipSnap
         else if (byId.get(r.member_id)?.status === 'active' && !blocked.has(JSON.stringify([r.member_id, r.client_id]))) membership.activeInstallations++;
       }
     }
-    const jobRows = db.prepare('SELECT id,owner,state,CASE WHEN length(body)<=1000000 THEN body ELSE NULL END AS body FROM jobs ORDER BY owner,id').all();
+    const jobRows = db.prepare('SELECT id,owner,state,CASE WHEN length(CAST(body AS BLOB))<=1000000 THEN body ELSE NULL END AS body FROM jobs ORDER BY owner,id').all();
     const jobs = new Map<string, { revision: number; current: boolean }>();
     const taskItems = jobRows.map(row => {
       const value = body(row), delegation = value?.delegation, request = record(delegation) ? delegation.request : undefined;
@@ -94,7 +94,7 @@ export function auditMigrationSnapshots(databaseSnapshot: string, membershipSnap
         hasArtifact: !!value?.artifact, hasModelHistory: !!(Array.isArray(value?.runs) && value.runs.length),
         inferredInstallation: false, proposedGrant: false };
     });
-    const rows = db.prepare('SELECT owner,type,id,revision,definition_digest,CASE WHEN length(body)<=1000000 THEN body ELSE NULL END AS body FROM ontology_objects ORDER BY owner,type,id').all();
+    const rows = db.prepare('SELECT owner,type,id,revision,definition_digest,CASE WHEN length(CAST(body AS BLOB))<=1000000 THEN body ELSE NULL END AS body FROM ontology_objects ORDER BY owner,type,id').all();
     const objects = new Map<string, { row: Row; value: Row; properties: Row }>();
     const invalid = new Map<string, string>();
     for (const row of rows) {

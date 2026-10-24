@@ -142,11 +142,16 @@ test('S0 dry-run quarantines mismatched definitions, stale task revisions and br
     db.prepare('UPDATE ontology_objects SET definition_digest=? WHERE type=?').run('changed', 'SavedAddress');
     const row = db.prepare('SELECT body FROM jobs WHERE id=?').get('D')!, job = JSON.parse(String(row.body));
     job.delegation.request.revision = 2; db.prepare('UPDATE jobs SET body=? WHERE id=?').run(JSON.stringify(job), 'D');
+    const oversized = JSON.parse(String(db.prepare('SELECT body FROM jobs WHERE id=?').get('R')!.body));
+    oversized.goal = '界'.repeat(400_000);
+    assert(JSON.stringify(oversized).length < 1_000_000 && Buffer.byteLength(JSON.stringify(oversized)) > 1_000_000);
+    db.prepare('UPDATE jobs SET body=? WHERE id=?').run(JSON.stringify(oversized), 'R');
     db.prepare('UPDATE ontology_links SET definition_digest=? WHERE type=?').run('changed', 'OrderRequest'); db.close();
     const report = auditMigrationSnapshots(f.dbPath);
     assert.equal(report.membership.supplied, false); assert.equal(report.objects.dispositions.definition_mismatch, 2);
     assert(report.objects.dispositions.stale_or_missing_task_evidence! > 0); assert(report.links.requiresReview > 0);
     assert.equal(report.permissionsGranted, 0);
+    assert.equal(report.tasks.dispositions.unrecognized_task_contract, 1, 'The per-record limit measures UTF-8 bytes, not characters');
   } finally { f.cleanup(); }
 });
 
