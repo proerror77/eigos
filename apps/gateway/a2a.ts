@@ -45,7 +45,7 @@ function toTask(job: Job, historyLength?: number): Task {
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: c.EIGOS_SECURITY_MODE === 'foundation' ? 'Authorization management only. Business task access is unavailable until the data-policy and output-protection stages are enabled.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,

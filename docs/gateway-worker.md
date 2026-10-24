@@ -1,5 +1,7 @@
 # Gateway、Worker 与共用任务核心
 
+可选的 `EIGOS_SECURITY_MODE=foundation` 已提供 [S1 身份与撤销控制面](security-s1.md)。默认 legacy 保留现有行为；foundation 使用新的持久任务库，Gateway／Worker 的 mode 必须一致。Worker 的身份校验依赖业务库中的资格投影，不读取会员库。foundation 业务协议仍关闭，旧实例迁移及真实部署不属于 S1。
+
 ## 目录与职责
 
 本仓库采用一个 TypeScript 工程，保留一份依赖锁文件与统一验证流程；目前无需分别发布 npm 包。

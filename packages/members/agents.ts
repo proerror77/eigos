@@ -59,6 +59,12 @@ export class AgentRegistrations {
   list(memberId: string): AgentRegistration[] {
     return this.db.prepare('SELECT * FROM agent_registrations WHERE member_id=? ORDER BY created_at,id').all(memberId).map(registration);
   }
+  // Internal authorization projection only. HTTP callers still need the
+  // registration credential or their authenticated member session.
+  lookup(id: string): AgentRegistration | undefined {
+    const row = this.db.prepare('SELECT * FROM agent_registrations WHERE id=?').get(id);
+    return row ? registration(row) : undefined;
+  }
   status(value: AgentRegistration, policy: AdmissionPolicy): string {
     if (value.revoked) return 'agent_registration_revoked';
     if (!value.memberId) return value.createdAt + 1800000 <= Date.now() ? 'registration_expired' : 'authorization_required';

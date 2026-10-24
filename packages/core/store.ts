@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
@@ -8,6 +8,7 @@ import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSale
 import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
+import { SecurityStore, type SecurityMode } from '../security/store.js';
 
 export interface ListFilter {
   limit: number;
@@ -17,7 +18,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number }
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -29,10 +30,15 @@ function equivalentFingerprint(a: string, b: string): boolean {
 
 export class JobStore {
   private db: DatabaseSync;
+  private securitySequence = 0;
   readonly ontology: OntologyObjectStore;
+  readonly security: SecurityStore;
 
-  constructor(path: string) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  constructor(path: string, options: { securityMode?: SecurityMode; securityNow?: () => number } = {}) {
+    if (path !== ':memory:') {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      closeSync(openSync(path, 'a', 0o600));
+    }
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
     this.transaction(() => {
@@ -77,7 +83,10 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
     });
-    this.ontology = new OntologyObjectStore(this.db);
+    try {
+      this.security = new SecurityStore(this.db, options.securityMode, options.securityNow);
+      this.ontology = new OntologyObjectStore(this.db);
+    } catch (error) { this.db.close(); throw error; }
   }
 
   close(): void { this.db.close(); }
@@ -131,18 +140,31 @@ export class JobStore {
     const { privateData, ...body } = intent;
     this.db.prepare('UPDATE action_intents SET state=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(body), owner, intent.id);
   }
-  dispatchIntent(owner: string, id: string): void {
-    const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
-    if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
+  private authorizedDispatch<T>(action: () => T): T {
+    if (!this.security.enabled) return action();
+    const name = `authorized_dispatch_${++this.securitySequence}`;
+    this.db.exec(`SAVEPOINT ${name}`);
+    try { const result = action(); this.db.exec(`RELEASE ${name}`); return result; }
+    catch (error) { this.db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`); throw error; }
+  }
+  dispatchIntent(owner: string, id: string, claim?: WorkClaim): void {
+    this.authorizedDispatch(() => {
+      if (this.security.enabled && (!claim || claim.owner !== owner || !this.active(claim, Date.now()) || this.intent(owner, id).jobId !== claim.job.id)) throw new DomainError('FORBIDDEN', 'Current task authority and claim are required for dispatch');
+      const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
+      if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
+    });
   }
   startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string): ExecutionAttempt {
-    const intent = this.intent(claim.owner, intentId);
-    if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
-    if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
-    else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
-    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
-    this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
-    return attempt;
+    return this.authorizedDispatch(() => {
+      const intent = this.intent(claim.owner, intentId);
+      if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
+      if (this.security.enabled && !this.active(claim, Date.now())) throw new DomainError('FORBIDDEN', 'Task authority or claim is no longer active');
+      if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId, claim);
+      else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
+      const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
+      this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
+      return attempt;
+    });
   }
   attempts(owner: string, intentId: string): ExecutionAttempt[] {
     this.intent(owner, intentId);
@@ -328,18 +350,21 @@ export class JobStore {
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
-        AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
+      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+        AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
-        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
+        AND id NOT IN (SELECT job_id FROM work_claims)
+        ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
+      const row = this.security.enabled ? query.get({ securityNow: at }, 'worker-security-foundation', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
-      return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
+      const authority = this.security.workAuthority(String(row.owner), job.id, at);
+      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
 
@@ -355,6 +380,10 @@ export class JobStore {
   private active(claim: WorkClaim, now: number): boolean {
     const lease = this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(claim.job.id);
     const current = this.get(claim.owner, claim.job.id);
+    if (this.security.enabled) {
+      const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
+      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch) return false;
+    }
     return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
@@ -398,6 +427,9 @@ export class JobStore {
   }
 
   save(owner: string, job: Job): void {
+    // The old Worker queue selector must not claim a foundation task even if an
+    // operator accidentally starts an old binary against this new database.
+    if (this.security.enabled) job.executionMode = 'worker-security-foundation';
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)

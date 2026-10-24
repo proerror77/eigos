@@ -1,5 +1,7 @@
 # PA 接入 EIGOS
 
+以下业务接口对应默认 `EIGOS_SECURITY_MODE=legacy`。可选的 `foundation` 模式目前只提供 [S1 身份／授权控制面](security-s1.md)：注册 Agent 可通过 `POST /security/context` 检查自身安装与授权引用，业务 HTTP／MCP／A2A 返回 `503 security_stage_incomplete`，Agent Card 不声明可执行 skills。对象、字段与安全输出策略接入前，不能把此模式当作现行服务的替代部署。
+
 完整对象目录、来源接入及工作分支／常驻运行版本见[模型与接入能力总览](ontology-and-integrations.md)。
 
 后端统一使用 Ontology + LLM，公共业务入口只有 `eigos.delegate`，以及显式沙箱配置下的 `eigos.aftersales`。旧直接服务名被输入 Schema 拒绝；历史任务只读，不作为执行兼容层。

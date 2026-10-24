@@ -1,0 +1,202 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { Worker } from '../apps/worker/worker.js';
+import { JobStore } from '../packages/core/store.js';
+import { AuthorizationCoordinator } from '../packages/security/coordinator.js';
+import { openMembershipAdministration } from '../packages/security/admin.js';
+import { SecurityError } from '../packages/security/store.js';
+import { readConfig, readWorkerConfig } from '../packages/core/config.js';
+import { securityFixture } from './fixtures/security.js';
+
+test('S1 preserves verified installation identity and never enrolls a token into a data grant implicitly', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'), b = f.installation('B');
+    assert.throws(() => f.coordinator.authenticate(f.principal, a.token), /AUTHORIZATION_REQUIRED/);
+    const grant = f.approve(a.id), actor = f.coordinator.authenticate(f.principal, a.token);
+    assert.equal(actor.actorKind, 'agent'); if (actor.actorKind !== 'agent') assert.fail();
+    assert.equal(actor.installationId, a.id); assert.equal(actor.agentGrant.id, grant.id);
+    assert(actor.tokenScopes.includes('members:write'));
+    assert.throws(() => f.coordinator.authenticate(f.principal, b.token), /AUTHORIZATION_REQUIRED/);
+    assert.throws(() => f.coordinator.authenticate({ ...f.principal, subject: 'bob' }, a.token), /another identity/);
+    assert.throws(() => f.coordinator.approveAgentGrant(f.member.id, { ...grant, installationId: b.id }), /Unrecognized/);
+    const db = new DatabaseSync(f.database, { readOnly: true });
+    assert(!JSON.stringify(db.prepare('SELECT * FROM security_subjects').all()).includes(a.token)); db.close();
+    assert(!readFileSync(f.database).includes(Buffer.from(a.token)));
+  } finally { f.close(); }
+});
+
+test('S1 installation and task revocations fence only their own task authorities and preserve the other installation', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'), b = f.installation('B'); f.approve(a.id); f.approve(b.id);
+    const first = f.task(a.id), other = f.task(b.id);
+    const legacyReader = new DatabaseSync(f.database, { readOnly: true });
+    assert.equal(legacyReader.prepare("SELECT count(*) AS n FROM jobs WHERE COALESCE(json_extract(body,'$.executionMode'),'worker')='worker'").get()!.n, 0);
+    legacyReader.close();
+    const claims = [f.jobs.claim(['eigos.delegate'], 10000)!, f.jobs.claim(['eigos.delegate'], 10000)!];
+    const claim = claims.find(c => c.job.id === first.job.id)!, next = claims.find(c => c.job.id === other.job.id)!;
+    assert(claim && next);
+    f.coordinator.revokeInstallation(f.member.id, a.id);
+    assert.equal(f.jobs.renew(claim, 10000), false);
+    assert.equal(f.jobs.finish(claim, j => { j.state = 'completed'; }), false);
+    assert.equal(f.jobs.security.workAuthority(f.owner, first.job.id), undefined);
+    assert(f.jobs.security.workAuthority(f.owner, other.job.id));
+    f.jobs.release(claim);
+    assert(f.jobs.claimActive(next));
+    f.coordinator.revokeGrant(f.member.id, other.grant.id, 1);
+    assert.equal(f.jobs.claimActive(next), false);
+    assert(f.jobs.security.agentGrant(b.id));
+    assert.throws(() => f.coordinator.revokeGrant(f.member.id, other.grant.id, 1), /revision changed/);
+  } finally { f.close(); }
+});
+
+test('S1 deny-first coordination survives a failed membership write, refresh and restart without restoring old grants', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); const g = f.approve(a.id), t = f.task(a.id);
+    const fault = new DatabaseSync(f.membership);
+    fault.exec("CREATE TRIGGER fail_suspend BEFORE UPDATE OF status ON members WHEN NEW.status='suspended' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END;");
+    assert.throws(() => f.coordinator.setMemberStatus(f.member.id, 'suspended'), (e: unknown) => e instanceof SecurityError && e.reason === 'REVOCATION_PENDING');
+    assert.equal(f.members.get(f.member.id).status, 'active'); assert.equal(f.jobs.security.pendingFences().length, 1);
+    f.coordinator.refresh(); assert.equal(f.jobs.security.workAuthority(f.owner, t.job.id), undefined);
+    assert.throws(() => f.coordinator.authenticate(f.principal, a.token), /ACCESS_REVOKED/);
+    const reopened = new JobStore(f.database, { securityMode: 'foundation' });
+    assert.equal(reopened.security.pendingFences().length, 1); assert.equal(reopened.claim(['eigos.delegate'], 1000), undefined); reopened.close();
+    fault.exec('DROP TRIGGER fail_suspend'); fault.close();
+    f.coordinator.setMemberStatus(f.member.id, 'suspended'); assert.equal(f.jobs.security.pendingFences().length, 0);
+    f.coordinator.setMemberStatus(f.member.id, 'active');
+    assert.throws(() => f.coordinator.authenticate(f.principal, a.token), /AUTHORIZATION_REQUIRED/);
+    const fresh = f.approve(a.id); assert.notEqual(fresh.id, g.id);
+    assert.equal(f.jobs.security.workAuthority(f.owner, t.job.id), undefined);
+    f.coordinator.setMemberStatus(f.member.id, 'active');
+    assert.equal(f.jobs.security.agentGrant(a.id).id, fresh.id, 'An idempotent approve must not revoke a new grant');
+  } finally { f.close(); }
+});
+
+test('S1 member CLI coordinator detects persisted mode and revokes Worker authority even without the mode environment variable', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); f.approve(a.id); const task = f.task(a.id);
+    assert.throws(() => openMembershipAdministration(f.database, f.membership, 'legacy'), /no bypass/);
+    const admin = openMembershipAdministration(f.database, f.membership);
+    try { assert.equal(admin.mode, 'foundation'); admin.setStatus(f.member.id, 'suspended'); }
+    finally { admin.close(); }
+    assert.equal(f.jobs.security.workAuthority(f.owner, task.job.id), undefined);
+    assert.equal(f.jobs.claim(['eigos.delegate'], 10000), undefined);
+    assert.equal(f.members.get(f.member.id).status, 'suspended');
+  } finally { f.close(); }
+});
+
+test('S1 gateway lease and qualification expiry fail closed and two eligibility publishers cannot run concurrently', () => {
+  let now = Date.now(); const f = securityFixture(() => now);
+  try {
+    const a = f.installation('A'); f.approve(a.id); f.task(a.id);
+    const duplicate = new AuthorizationCoordinator(f.jobs.security, f.members);
+    assert.throws(() => duplicate.start(), /Another authorization Gateway/);
+    now += 61000;
+    assert.equal(f.jobs.claim(['eigos.delegate'], 1000, now), undefined);
+    assert.throws(() => f.coordinator.refresh(), /AUTHORITY_UNAVAILABLE/);
+    assert.throws(() => new JobStore(f.database), /mode\/version mismatch/);
+  } finally { f.close(); }
+});
+
+test('S1 task grant and authority cannot exceed parent fields, cross installations or reuse a changed request revision', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'), b = f.installation('B'); f.approve(a.id); f.approve(b.id); const t = f.task(a.id);
+    assert.throws(() => f.jobs.security.issueTaskGrant({ ...t.grant, id: randomUUID(), inputs: [{ object: { type: 'ServiceRequest', id: t.job.id }, objectRevision: 1, fields: ['conditions'] }] }), /ACCESS_REVOKED/);
+    assert.throws(() => f.jobs.security.issueTaskGrant({ ...t.grant, id: randomUUID(), installationId: b.id }), /ACCESS_REVOKED/);
+    assert.throws(() => f.jobs.security.issueTaskGrant({ ...t.grant, id: randomUUID(), inputs: [{ object: { type: 'ServiceRequest', id: 'someone-elses-request' }, objectRevision: 1, fields: ['originalGoal'] }] }), /current owned object/);
+    assert.throws(() => f.jobs.security.attachTaskAuthority({ ...t.authority, id: randomUUID(), installationId: b.id }), /ACCESS_REVOKED/);
+    const changed = f.jobs.get(f.owner, t.job.id); changed.delegation!.request.revision = 2; f.jobs.save(f.owner, changed);
+    assert.equal(f.jobs.security.workAuthority(f.owner, t.job.id), undefined);
+    assert.throws(() => f.jobs.security.issueTaskGrant({ ...t.grant, id: randomUUID() }), /request revision/);
+  } finally { f.close(); }
+});
+
+test('S1 missing persistent security configuration cannot fall back to legacy or keep a Worker eligible', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); f.approve(a.id); const t = f.task(a.id);
+    const fault = new DatabaseSync(f.database); fault.exec('DELETE FROM security_settings'); fault.close();
+    assert.throws(() => new JobStore(f.database), /configuration is missing/);
+    assert.equal(f.jobs.security.workAuthority(f.owner, t.job.id), undefined);
+    assert.throws(() => f.coordinator.authenticate(f.principal, a.token), /AUTHORITY_UNAVAILABLE/);
+    const missingTable = new DatabaseSync(f.database); missingTable.exec('DROP TABLE security_settings'); missingTable.close();
+    assert.throws(() => new JobStore(f.database), /configuration is missing/);
+  } finally { f.close(); }
+});
+
+test('S1 an older restore cannot clear a newer cross-process revocation fence', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); f.approve(a.id); f.task(a.id);
+    const target = { ownerKey: f.owner, kind: 'member' as const, targetId: f.member.id };
+    const old = f.jobs.security.deny(target), current = f.jobs.security.deny(target);
+    assert(current.revision > old.revision);
+    assert.throws(() => f.jobs.security.settleFence(old, 'cleared'), /POLICY_CHANGED/);
+    let wrote = false;
+    assert.throws(() => f.jobs.security.completeFence(old, 'cleared', () => { wrote = true; }), /POLICY_CHANGED/);
+    assert.equal(wrote, false, 'Stale coordinators cannot update the membership database');
+    f.jobs.security.settleFence(current, 'applied'); f.coordinator.refresh();
+    assert.equal(f.jobs.claim(['eigos.delegate'], 10000), undefined);
+  } finally { f.close(); }
+});
+
+test('S1 an unavailable membership source stops the publisher without inventing a permanent revocation', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); f.approve(a.id); f.task(a.id);
+    const read = f.members.authorizationFacts;
+    f.members.authorizationFacts = () => { throw new Error('Synthetic read failure'); };
+    assert.throws(() => f.coordinator.refresh(), /AUTHORITY_UNAVAILABLE/);
+    f.members.authorizationFacts = read;
+    assert.equal(f.jobs.claim(['eigos.delegate'], 10000), undefined);
+    assert.equal(f.jobs.security.pendingFences().length, 0);
+    f.coordinator.start(); assert(f.jobs.security.agentGrant(a.id));
+  } finally { f.close(); }
+});
+
+test('S1 revocation stops an in-flight Worker and rejects a late completion', async () => {
+  const f = securityFixture(); let releaseStarted!: () => void;
+  const started = new Promise<void>(r => { releaseStarted = r; }); let aborted = false, lateAccepted = true;
+  const worker = new Worker(f.jobs, { pollMs: 10, leaseMs: 500, coordinator: { run: async (claim, signal) => {
+    releaseStarted(); await new Promise<void>(resolve => signal.addEventListener('abort', () => { aborted = true; resolve(); }, { once: true }));
+    lateAccepted = f.jobs.finish(claim, j => { j.state = 'completed'; });
+  } } });
+  try {
+    const a = f.installation('A'); f.approve(a.id); const t = f.task(a.id); worker.start(); await started;
+    const connection = f.members.connections(f.member.id)[0]!;
+    f.coordinator.setConnectionBlocked(f.member.id, connection.id, true);
+    for (let i = 0; i < 100 && !aborted; i++) await new Promise(r => setTimeout(r, 10));
+    assert(aborted); assert.equal(lateAccepted, false); assert.notEqual(f.jobs.get(f.owner, t.job.id).state, 'completed');
+  } finally { await worker.close(); f.close(); }
+});
+
+test('S1 records already dispatched late facts as audit-only without accepting their projection', () => {
+  const f = securityFixture();
+  try {
+    const a = f.installation('A'); f.approve(a.id); const t = f.task(a.id), claim = f.jobs.claim(['eigos.delegate'], 10000)!;
+    const id = randomUUID();
+    f.jobs.createIntent(f.owner, { id, owner: f.owner, jobId: t.job.id, stepId: 'read', businessOperationKey: randomUUID(), planDigest: 'synthetic-plan',
+      bindingRef: { id: 'synthetic', version: '1' }, inputDigest: 'input', privateDigest: 'private', privateData: {}, effect: 'read', state: 'ready', nextAt: 0, createdAt: new Date().toISOString() });
+    const attempt = f.jobs.startAttempt(claim, id, 'dispatch', 'input');
+    f.coordinator.revokeInstallation(f.member.id, a.id);
+    assert.throws(() => f.jobs.startAttempt(claim, id, 'observe', 'input'), /no longer active/);
+    assert.equal(f.jobs.attempts(f.owner, id).length, 1);
+    const observation = f.jobs.recordObservation(f.owner, id, attempt.id, { kind: 'confirmed', eventId: 'synthetic-late', sourceVersion: 1, evidenceRefs: [] }, true,
+      { claim, apply: () => assert.fail('Revoked authority must not apply a projection') });
+    assert.equal(observation.applied, false);
+  } finally { f.close(); }
+});
+
+test('S1 foundation activation is explicit and rejects a development bearer or a missing installation client', () => {
+  const common = { EIGOS_SECURITY_MODE: 'foundation', DATABASE_PATH: ':memory:' };
+  assert.throws(() => readConfig({ ...common, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'synthetic-development-token' }), /foundation requires JWT/);
+  assert.throws(() => readConfig({ ...common, EIGOS_AUTH_MODE: 'jwt' }), /explicit registered Agent client/);
+  assert.equal(readWorkerConfig({ ...common }).EIGOS_SECURITY_MODE, 'foundation', 'Worker needs no OAuth secrets');
+});

@@ -10,7 +10,8 @@ export function createWorker(config: Config, overrides: {
   timing?: { leaseMs?: number; pollMs?: number; timeoutMs?: number };
 } = {}) {
   if (!overrides.store && config.DATABASE_PATH === ':memory:') throw new Error('Separate Gateway and Worker require a shared database file');
-  const store = overrides.store ?? new JobStore(config.DATABASE_PATH);
+  const store = overrides.store ?? new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
+  if (store.security.enabled !== (config.EIGOS_SECURITY_MODE === 'foundation')) throw new Error('Gateway and Worker security modes must match');
   try {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS);
     const catalog = createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,

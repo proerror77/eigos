@@ -2,6 +2,7 @@ import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema } from '../ontology/execution.js';
+import type { AccessContext } from '../security/contracts.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -11,6 +12,8 @@ export interface Principal {
   tenant: string;
   clientId: string;
   scopes: string[];
+  /** Server-derived only; never accepted in task/tool arguments. */
+  access?: AccessContext;
 }
 
 export class DomainError extends Error {
@@ -65,7 +68,7 @@ export interface Job {
   service: string;
   delegation?: Delegation;
   afterSales?: Omit<import('../ontology/actions.js').AfterSalesCase, 'owner'>[];
-  executionMode?: 'worker';
+  executionMode?: 'worker' | 'worker-security-foundation';
   goal: string;
   deliverable?: string;
   state: JobState;

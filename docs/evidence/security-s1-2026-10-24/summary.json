@@ -1,0 +1,46 @@
+{
+  "stage": "S1",
+  "sourceBaseline": "d83feb54232c8cad6f9ceee509f03afb3fac878d",
+  "branch": "codex/ontology-security-s1",
+  "defaultMode": "legacy",
+  "foundationBusinessAccess": false,
+  "productionDeployment": false,
+  "productionMigration": false,
+  "identityFixtures": "synthetic",
+  "memberMechanism": "existing MemberStore / AgentRegistrations / browser sessions",
+  "businessAuthorization": "existing PlanGrant retained",
+  "verification": {
+    "typecheck": "passed",
+    "fullSuite": {
+      "tests": 635,
+      "passed": 635,
+      "failed": 0
+    },
+    "focusedSecurity": {
+      "tests": 15,
+      "passed": 15,
+      "failed": 0
+    },
+    "processE2E": {
+      "tests": 9,
+      "passed": 9,
+      "failed": 0
+    },
+    "build": "passed",
+    "inventory": "passed",
+    "diffCheck": "passed",
+    "finalGuardRegression": {
+      "tests": 56,
+      "passed": 56,
+      "failed": 0
+    }
+  },
+  "boundaries": [
+    "no new login system",
+    "no raw bearer in task/security records",
+    "no public task-data-grant endpoint in S1",
+    "no automatic historical task or installation grants",
+    "resource/object/property policies and safe output projection remain S2-S4"
+  ],
+  "auditPaths": 42
+}

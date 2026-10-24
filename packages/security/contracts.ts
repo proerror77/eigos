@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { SCOPES } from '../core/domain.js';
 import { objectRefSchema, nameSchema } from '../ontology/model.js';
 
-// S0 data contracts only. Parsing is not authorization. No runtime caller uses
-// these contracts until the subsequent policy/enforcement stages are installed.
+// Versioned data contracts. Parsing is not authorization; S1 resolves signed
+// identity and current grants before producing a server-side AccessContext.
 export const SECURITY_CONTRACT = 'eigos.security.v1' as const;
 export const POLICY_VERSION = 'eigos.security-baseline.v1' as const;
 const id = z.string().min(1).max(200).refine(v => !v.includes('*'), 'Wildcard grants are not supported');
@@ -30,7 +30,7 @@ export const channelSchema = z.enum(['member_ui', 'agent_response', 'registered_
 // verified token facts; only explicit operation checks may use them as authority.
 const scopeList = z.array(z.string().min(1).max(200).regex(/^\S+$/)).max(100).refine(v => new Set(v).size === v.length, 'Duplicate scope');
 const baseActor = { version: z.literal(SECURITY_CONTRACT), ownerKey: ownerIdentitySchema, authEpoch: revision, policyVersion: z.literal(POLICY_VERSION), checkedAt: instant };
-const agentActor = { memberId: z.uuid(), installationId: z.uuid(), clientId: id, tokenScopes: scopeList };
+const agentActor = { memberId: z.uuid(), installationId: z.uuid(), clientId: z.string().min(1).max(2000), tokenScopes: scopeList };
 export const accessContextSchema = z.discriminatedUnion('actorKind', [
   z.strictObject({ ...baseActor, actorKind: z.literal('member_session'), memberId: z.uuid(), sessionAuditRef: sha }),
   z.strictObject({ ...baseActor, ...agentActor, actorKind: z.literal('agent'), agentGrant: grantRefSchema,

@@ -6,6 +6,8 @@ import { DomainError } from '../../../packages/core/domain.js';
 import { MemberStore } from '../../../packages/members/store.js';
 import { createLoginProvider, type LoginAttempt } from './oidc.js';
 import { memberPage } from './page.js';
+import type { AuthorizationCoordinator } from '../../../packages/security/coordinator.js';
+import { SecurityError } from '../../../packages/security/store.js';
 
 function cookies(req: Request): Record<string, string> {
   return Object.fromEntries((req.headers.cookie ?? '').split(';').map(part => part.trim().split('=')).filter(part => part.length === 2));
@@ -16,7 +18,7 @@ const notices: Record<string, string> = {
   saved: '会员资料已保存。', applied: '会员申请已保存。', revoked: '已停用这个助手的连接。', restored: '已恢复这个助手的连接。',
 };
 
-export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, provider = createLoginProvider(c)): void {
+export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, provider = createLoginProvider(c), security?: AuthorizationCoordinator): void {
   const secure = new URL(c.PUBLIC_URL).protocol === 'https:';
   const sessionCookie = secure ? '__Host-eigos-member' : 'eigos-member';
   const loginCookie = secure ? '__Host-eigos-login' : 'eigos-login';
@@ -33,7 +35,8 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
   });
   app.get('/members', (req, res) => {
     const current = session(req);
-    const notice = typeof req.query.notice === 'string' ? notices[req.query.notice] : undefined;
+    const notice = (typeof req.query.notice === 'string' ? notices[req.query.notice] : undefined)
+      ?? (security ? '当前环境仅开放助手登记与权限管理；业务任务暂未开放。' : undefined);
     // Native form navigations under no-referrer send Origin: null. Preserve
     // the same-origin POST header; login/callback redirects keep no-referrer.
     res.set('Referrer-Policy', 'same-origin').type('html').send(memberPage({
@@ -41,6 +44,12 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       agentRegistrations: current ? store.agents.list(current.member.id) : [], invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only',
       loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
     }));
+  });
+  app.get('/members/security/grants', (req, res) => {
+    if (!security) { res.status(404).json({ error: 'security_foundation_not_enabled' }); return; }
+    const current = session(req);
+    if (!current) { res.status(401).json({ error: 'member_login_required' }); return; }
+    res.json({ stage: 'S1', grants: security.grants(current.member.id), businessAccess: false });
   });
   app.get('/members/login', async (req, res) => {
     if (!provider) { res.status(503).json({ error: 'member_login_not_configured' }); return; }
@@ -74,7 +83,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
   });
 
   // A member browser session manages only its own profile/connections; it cannot authenticate MCP or A2A.
-  app.post(['/members/apply', '/members/profile', '/members/logout', '/members/invitation', '/members/agents/:id/revoke', '/members/connections/:id/:action'], (req, res, next) => {
+  app.post(['/members/apply', '/members/profile', '/members/logout', '/members/invitation', '/members/agents/:id/revoke', '/members/connections/:id/:action', '/members/security/grants', '/members/security/grants/:id/revoke'], (req, res, next) => {
     const current = session(req);
     if (!current) { res.status(401).json({ error: 'member_login_required' }); return; }
     const supplied = Buffer.from(typeof req.body?._csrf === 'string' ? req.body._csrf : '');
@@ -84,6 +93,14 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
     }
     try {
       const { _csrf, ...body } = req.body;
+      if (req.path.startsWith('/members/security/')) {
+        if (!security) { res.status(404).json({ error: 'security_foundation_not_enabled' }); return; }
+        if (req.params.id) {
+          const input = z.strictObject({ expectedRevision: z.number().int().positive() }).parse(body);
+          security.revokeGrant(current.member.id, z.uuid().parse(req.params.id), input.expectedRevision);
+        } else security.approveAgentGrant(current.member.id, body);
+        res.json({ stage: 'S1', grants: security.grants(current.member.id), businessAccess: false }); return;
+      }
       if (req.path === '/members/logout') {
         store.logout(cookies(req)[sessionCookie]!); res.clearCookie(sessionCookie, cookieOptions); redirect(res); return;
       }
@@ -93,18 +110,25 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       }
       if (req.path === '/members/profile') { store.update(current.member.id, body); redirect(res, 'saved'); return; }
       if (req.path === '/members/invitation') { store.agents.redeemForMember(current.member.id, z.string().min(32).max(200).parse(body.invitationToken)); redirect(res, 'applied'); return; }
-      if (req.path.startsWith('/members/agents/')) { store.agents.revoke(current.member.id, z.uuid().parse(req.params.id)); redirect(res, 'revoked'); return; }
+      if (req.path.startsWith('/members/agents/')) {
+        const id = z.uuid().parse(req.params.id);
+        if (security) security.revokeInstallation(current.member.id, id); else store.agents.revoke(current.member.id, id);
+        redirect(res, 'revoked'); return;
+      }
       const action = z.enum(['revoke', 'restore']).parse(req.params.action);
-      store.block(current.member.id, z.uuid().parse(req.params.id), action === 'revoke');
+      if (security) security.setConnectionBlocked(current.member.id, z.uuid().parse(req.params.id), action === 'revoke');
+      else store.block(current.member.id, z.uuid().parse(req.params.id), action === 'revoke');
       redirect(res, action === 'revoke' ? 'revoked' : 'restored');
     } catch (error) {
+      if (error instanceof SecurityError) { res.status(error.reason === 'REVOCATION_PENDING' || error.reason === 'AUTHORITY_UNAVAILABLE' ? 503 : 403).json({ error: error.reason }); return; }
       if (error instanceof z.ZodError) {
+        if (req.path.startsWith('/members/security/')) { res.status(400).json({ error: 'invalid_security_input' }); return; }
         const message = '请检查名称、语言和时区；开通会员时需勾选同意。';
         if (req.is('application/json')) res.status(400).json({ error: 'invalid_member_input', message });
         else res.status(400).set('Referrer-Policy', 'same-origin').type('html').send(memberPage({ member: current.member, csrf: current.csrf, connections: store.connections(current.member.id), agentRegistrations: store.agents.list(current.member.id), invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only', loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', notice: message }));
         return;
       }
-      if (error instanceof DomainError) { res.status(error.code === 'NOT_FOUND' ? 404 : 403).json({ error: error.code }); return; }
+      if (error instanceof DomainError) { res.status(error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : error.code === 'INVALID_INPUT' ? 400 : 403).json({ error: error.code }); return; }
       next(error);
     }
   });

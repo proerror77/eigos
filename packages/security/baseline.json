@@ -1350,12 +1350,12 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "ba6042ea0988093338bab0b50a896cf71a355db2003ec1cb0194a0b7efa6d4db",
+      "sourceDigest": "f4ba8c2466d72c7333c6daa00e7cd382bf68db2c16c8d46984d935c8380eb040",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Authentication, membership, scopes and owner; raw task responses",
+      "currentControl": "Legacy authentication/membership/scopes; foundation verifies bound installation and current grant, blocks business APIs until S2-S4",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
@@ -1374,12 +1374,12 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "5e15cd1af5a7805a88fda94ff3321377de44b738fa99364ba8a8a4ee97dfe56b",
+      "sourceDigest": "c46a2fc400841659c3a401a407468188dec0833221648a9088dd636acedc289c",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "TaskService owner plus protocol adaptation",
+      "currentControl": "Legacy TaskService scopes/owner; foundation business endpoint closed and no skills advertised",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
@@ -1400,13 +1400,13 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "6a3579fb783b43226048c59ebf38f7fac0e29d4d7d1d112c25f643fe6fe8c9ab",
+      "sourceDigest": "bdcd903e9e500dfc2b213fa32b6a09582a8365fb63e2f67324414c943633726b",
       "channels": [
         "sqlite",
         "idempotency"
       ],
       "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
-      "currentControl": "Owner predicates and work-claim fences",
+      "currentControl": "Owner, lease and foundation task authority predicates; secure queue marker; atomic dispatch and fenced late results",
       "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
       "stage": "S3"
     },
@@ -1426,12 +1426,12 @@
     {
       "id": "member-ui",
       "file": "apps/gateway/members/routes.ts",
-      "sourceDigest": "8542308ac5c5e3067cb1e5ae54e9d4174366a991b80607fe330db2fab84457e5",
+      "sourceDigest": "b34bb18060c2af511cbc206198d7890fbf16a77631a66a4e8c27903998a981aa",
       "channels": [
         "member_ui"
       ],
       "content": "Member profile, connections, installation revoke and invitation flows",
-      "currentControl": "Session, origin, CSRF and member ownership",
+      "currentControl": "Existing browser session, Origin/CSRF; foundation grant controls and deny-first connection/installation revocation",
       "targetControl": "Reuse identity and coordinate all revocation with business fence",
       "stage": "S1"
     },
@@ -1450,7 +1450,7 @@
     {
       "id": "member-store",
       "file": "packages/members/store.ts",
-      "sourceDigest": "4578c46e761242d35a8a831d4322430c07106c6381a598d929b64c4389b36924",
+      "sourceDigest": "2cb4fdd3d2530fccb9659b534a5c15de1b0d112c1d8d9e1f8d9304807d832388",
       "channels": [
         "membership_db"
       ],
@@ -1462,7 +1462,7 @@
     {
       "id": "agent-registration",
       "file": "packages/members/agents.ts",
-      "sourceDigest": "064cfdeac7103ad048e0ff29b3f4638016c83dd9dd4582d425cd61970fe7fb2f",
+      "sourceDigest": "5e0118270d74511c5f6fab3f45af6c9054c3e92650f84b6d0ea289f585ec0b53",
       "channels": [
         "membership_db"
       ],
@@ -1474,24 +1474,24 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "5217f6ee2f9c884aa8fda1a92304a925e4dfc56d73671a7babfccd46dd14f626",
+      "sourceDigest": "2a31bd8556d9f5b0e8e225073f89fa75bfb4bce30b7d2ddc96d6d923141dda49",
       "channels": [
         "http"
       ],
       "content": "Registration status, binding and revoke",
-      "currentControl": "Registration secret and token validation",
+      "currentControl": "Existing credential/token binding; foundation self-revoke uses coordinated fence; no business-ready claim",
       "targetControl": "No self-issued data grant; coordinate revoke",
       "stage": "S1"
     },
     {
       "id": "member-cli",
       "file": "scripts/members.mjs",
-      "sourceDigest": "a0a5470fd7c1c03f95f911ce0e19a89ebb93deae300b4c6782487efb1a58879c",
+      "sourceDigest": "5d1f48822c370f729caeabc11631c277eb5393bced70cd1fe5dc57cd92b729ae",
       "channels": [
         "cli"
       ],
       "content": "Approve/suspend/invitation management directly in member DB",
-      "currentControl": "Local administrator process",
+      "currentControl": "Persisted mode detection and same deny-first coordinator; omitted CLI mode cannot bypass foundation",
       "targetControl": "Use coordinated management or explicit offline maintenance",
       "stage": "S1"
     },
@@ -1777,6 +1777,102 @@
       "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
       "targetControl": "Caller-scoped inputs and derived-output protection",
       "stage": "S3"
+    },
+    {
+      "id": "security-contracts",
+      "file": "packages/security/contracts.ts",
+      "sourceDigest": "9bf71078c113b74e54f4792d1afb68ec2b428610a3cea813e9754fb189b2d64c",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Validated context and grant structures",
+      "currentControl": "Strict shape; parsing is not authorization",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-coordinator",
+      "file": "packages/security/coordinator.ts",
+      "sourceDigest": "27c97150a3287ce82c11d5a2ffca4f8dc3212fba2d52dba7ba5c33eb0021c906",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Signed installation resolution and cross-database eligibility coordination",
+      "currentControl": "Deny-first fenced writes, single publisher, explicit controller grants",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-store",
+      "file": "packages/security/store.ts",
+      "sourceDigest": "3d790fe3bad63551601f2a44265e8704c48b64d4427d0b4a488bc0091515b29a",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
+      "currentControl": "Owner/install/revision/lease constraints; no automatic legacy grants",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-admin",
+      "file": "packages/security/admin.ts",
+      "sourceDigest": "cd3841a9aa0be01c1e2bef883d5bb69fc5a5ec517d7281baa0d5d2b53fb6a148",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Existing membership CLI coordination",
+      "currentControl": "Persisted mode detection; same deny-first coordinator; no privilege publisher",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-config",
+      "file": "packages/core/config.ts",
+      "sourceDigest": "3ab3b55c8bae52209c78042373059119f4790b93e8b73881bd0dc7a7efb80b8e",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Explicit security foundation activation",
+      "currentControl": "JWT, registered client and persistent new task database; legacy default",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-worker-runtime",
+      "file": "apps/worker/runtime.ts",
+      "sourceDigest": "5ce8bd09082532a463707cefe5774b88a07837e06759fba21e710193fabeb893",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Worker security mode binding",
+      "currentControl": "Persisted mode must match Gateway; no membership credentials",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-worker-loop",
+      "file": "apps/worker/worker.ts",
+      "sourceDigest": "a7fd39070391a908501a6866abeee953e51549900240b015eb618938bc44eee1",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Lease renewal, cancellation and completion lifecycle",
+      "currentControl": "Authority-aware renew/finish stop revoked work; late result protections retained",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-principal",
+      "file": "packages/core/domain.ts",
+      "sourceDigest": "2a7c661cd1339a364ba2f9e9c1d271e551ad40b8cf7f6b8dd71c37cae80fd75b",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Identity facts and distinct secure execution mode",
+      "currentControl": "Server-derived AccessContext; ownerKey remains issuer/tenant/subject",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
     }
   ]
 }

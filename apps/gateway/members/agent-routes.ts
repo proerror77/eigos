@@ -6,6 +6,8 @@ import { DomainError, SCOPES } from '../../../packages/core/domain.js';
 import { MemberStore, applicationSchema } from '../../../packages/members/store.js';
 import { AgentAccessError, MEMBERSHIP_SCOPE, type AgentRegistration } from '../../../packages/members/agents.js';
 import type { VerifyToken } from '../auth.js';
+import type { AuthorizationCoordinator } from '../../../packages/security/coordinator.js';
+import { SecurityError } from '../../../packages/security/store.js';
 
 export const REGISTRATION_HEADER = 'X-EIGOS-Registration-Token';
 export const enrollmentClaim = (resource: string) => `${resource}/claims/agent_enrollment`;
@@ -27,16 +29,20 @@ export function agentOnboardingMetadata(c: Config) {
   };
 }
 
-export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, verify: VerifyToken): void {
+export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, verify: VerifyToken, security?: AuthorizationCoordinator): void {
   app.get('/.well-known/eigos-agent-registration', (_req, res) => {
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'agent_onboarding_not_configured' }); return; }
-    res.json(agentOnboardingMetadata(c));
+    res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S1', businessAccess: false, authorizationContext: `${c.PUBLIC_URL}/security/context` } : {}) });
   });
   const view = (value: AgentRegistration) => {
-    const status = members.agents.status(value, c.EIGOS_MEMBERSHIP_APPROVAL);
+    let status = members.agents.status(value, c.EIGOS_MEMBERSHIP_APPROVAL);
+    if (security && status === 'active') {
+      try { security.store.agentGrant(value.id); status = 'foundation_ready'; }
+      catch { status = 'data_authorization_required'; }
+    }
     const base = `${c.PUBLIC_URL}/agents/registrations/${value.id}`;
     return { registrationId: value.id, displayName: value.displayName, status,
-      nextAction: ({ authorization_required: 'authorize_user', registration_required: 'submit_membership', waiting_invitation: 'wait_for_invitation', pending_approval: 'wait_for_approval', active: 'call_services', registration_expired: 'start_new_registration' } as Record<string, string>)[status] ?? 'contact_member',
+      nextAction: ({ authorization_required: 'authorize_user', registration_required: 'submit_membership', waiting_invitation: 'wait_for_invitation', pending_approval: 'wait_for_approval', active: 'call_services', foundation_ready: 'inspect_authorization', data_authorization_required: 'request_member_grant', registration_expired: 'start_new_registration' } as Record<string, string>)[status] ?? 'contact_member',
       pollAfterSeconds: 5, links: { status: base, bind: `${base}/token`, application: `${base}/application`, invitation: `${base}/invitation`, revoke: `${base}/revoke`, membership: `${c.PUBLIC_URL}/members`, mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
   };
   app.all(['/agents/registrations', '/agents/registrations/:id', '/agents/registrations/:id/:action'], async (req, res, next) => {
@@ -76,10 +82,11 @@ export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, 
       } else if (req.params.action === 'invitation') {
         const body = z.object({ invitationToken: z.string().min(32).max(200) }).strict().parse(req.body);
         members.agents.redeem(value, principal, body.invitationToken);
-      } else if (req.params.action === 'revoke') members.agents.revoke(memberId, id);
+      } else if (req.params.action === 'revoke') { if (security) security.revokeInstallation(memberId, id); else members.agents.revoke(memberId, id); }
       else { res.status(404).json({ error: 'unknown_registration_action' }); return; }
       res.json(view(members.agents.get(id, credential)));
     } catch (error) {
+      if (error instanceof SecurityError) { res.status(error.reason === 'REVOCATION_PENDING' ? 503 : 403).json({ error: error.reason }); return; }
       if (error instanceof AgentAccessError) { res.status(error.code === 'registration_limit' ? 429 : 403).json({ error: error.code }); return; }
       if (error instanceof DomainError) { res.status(error.code === 'CONFLICT' ? 409 : error.code === 'NOT_FOUND' ? 404 : 403).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_registration_input' }); return; }

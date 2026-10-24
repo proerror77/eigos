@@ -65,6 +65,7 @@ const schema = z.object({
   PUBLIC_URL: z.url().default('http://127.0.0.1:3000'),
   DATABASE_PATH: z.string().default('./data/eigos.sqlite'),
   EIGOS_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'),
+  EIGOS_SECURITY_MODE: z.enum(['legacy', 'foundation']).default('legacy'),
   EIGOS_DEV_TOKEN: z.string().optional(),
   OAUTH_ISSUER: z.url().optional(),
   OAUTH_JWKS_URL: z.url().optional(),
@@ -85,6 +86,8 @@ export type Config = z.infer<typeof schema>;
 
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
   const c = schema.parse(env);
+  if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_AGENT_CLIENT_ID)) throw new Error('Security foundation requires JWT and an explicit registered Agent client');
+  if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && c.DATABASE_PATH === ':memory:') throw new Error('Security foundation requires a persistent task database');
   if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   const publicUrl = new URL(c.PUBLIC_URL);

@@ -23,8 +23,11 @@ import type { LoginProvider } from './members/oidc.js';
 import { mountAgentRoutes } from './members/agent-routes.js';
 import { AgentAccessError } from '../../packages/members/agents.js';
 import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
+import { AuthorizationCoordinator } from '../../packages/security/coordinator.js';
+import { SecurityError } from '../../packages/security/store.js';
+import { accessContextSchema } from '../../packages/security/contracts.js';
 
-const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
+const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 
 export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
   if (config.EIGOS_PAOTUI_SKILL_DIR && (config.EIGOS_AUTH_MODE !== 'development' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires loopback development mode');
@@ -39,7 +42,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   });
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
-  const store = new JobStore(config.DATABASE_PATH);
+  const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
@@ -51,6 +54,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
   const tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
+  const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members) : undefined;
+  try { security?.start(); } catch (error) { store.close(); members.close(); throw error; }
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
@@ -80,10 +85,10 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S1_foundation' : 'legacy' }));
   app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
-  mountMemberRoutes(app, config, members, loginProvider);
-  mountAgentRoutes(app, config, members, verify);
+  mountMemberRoutes(app, config, members, loginProvider, security);
+  mountAgentRoutes(app, config, members, verify, security);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
   app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (_req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
@@ -94,8 +99,20 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '');
     try {
       if (!match?.[1]) throw new Error('Missing token');
-      const principal = await verify(match[1]);
-      if (config.EIGOS_AUTH_MODE === 'jwt') {
+      const { issuer, subject, tenant, clientId, scopes } = await verify(match[1]);
+      const principal: Principal = { issuer, subject, tenant, clientId, scopes };
+      if (security) {
+        try {
+          if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
+          principal.access = security.authenticate(principal, match[1]);
+        } catch (error) {
+          if (error instanceof SecurityError) res.status(error.reason === 'AUTHORITY_UNAVAILABLE' || error.reason === 'REVOCATION_PENDING' ? 503 : 403).json({ error: error.reason });
+          else if (error instanceof AgentAccessError || error instanceof MemberAccessError) res.status(403).json({ error: error.code });
+          else if (error instanceof DomainError) res.status(403).json({ error: error.code });
+          else next(error);
+          return;
+        }
+      } else if (config.EIGOS_AUTH_MODE === 'jwt') {
         if (principal.clientId === config.OIDC_AGENT_CLIENT_ID) {
           try { members.agents.authorize(principal, match[1]); }
           catch (error) {
@@ -113,6 +130,9 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       }
       principals.set(req, principal);
       Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes, extra: { principal } } });
+      // S1 exposes the authorization control plane only. Until object policies
+      // and safe outputs land, do not route a new grant into old owner-wide APIs.
+      if (security && req.path !== '/security/context') { res.status(503).json({ error: 'security_stage_incomplete', stage: 'S1' }); return; }
       next();
     } catch {
       const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${metadataUrl}"` : '';
@@ -120,6 +140,15 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       res.status(401).json({ error: 'invalid_token', ...(config.OIDC_AGENT_CLIENT_ID ? { onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}) });
     }
   };
+
+  app.post('/security/context', authenticate, (req, res) => {
+    if (!security) { res.status(404).json({ error: 'security_foundation_not_enabled' }); return; }
+    if (!z.strictObject({}).safeParse(req.body).success) { res.status(400).json({ error: 'invalid_security_context_input' }); return; }
+    const p = principals.get(req)!, context = p.access;
+    if (!p.scopes.includes('services:read')) { res.status(403).json({ error: 'insufficient_scope' }); return; }
+    if (context?.actorKind !== 'agent') { res.status(403).json({ error: 'AUTHORIZATION_REQUIRED' }); return; }
+    res.json({ stage: 'S1', actorKind: context.actorKind, installationId: context.installationId, grant: context.agentGrant, authEpoch: context.authEpoch, businessAccess: false });
+  });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
   for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
@@ -161,7 +190,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const handleMcp = toNodeHandler(mcp);
   app.all('/mcp', authenticate, async (req, res) => { await handleMcp(req, res, req.body); });
 
-  const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()));
+  const a2a = new A2AGateway(tasks, agentCard(config, security ? [] : tasks.services()));
   app.get('/.well-known/agent-card.json', async (_req, res) => { res.json(AgentCard.toJSON(await a2a.getAgentCard())); });
   const a2aScopes: Record<string, Scope> = {
     SendMessage: 'tasks:write', SendStreamingMessage: 'tasks:write',
@@ -190,5 +219,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, catalog, security, scopes: SCOPES, close: async () => { security?.close(); await tasks.close(); await mcp.close(); store.close(); members.close(); } };
 }

@@ -1,4 +1,4 @@
-import { MemberStore } from '../dist/packages/members/store.js';
+import { openMembershipAdministration } from '../dist/packages/security/admin.js';
 import { parseArgs } from 'node:util';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
@@ -9,9 +9,12 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
   console.error('Usage: npm run members -- list | approve <member-id> | suspend <member-id> | invite <member-id> --output data/private/invitation.json [--expires-hours 24] | revoke-invite <invitation-id>');
   process.exitCode = 1;
 } else {
-  const path = process.env.MEMBERSHIP_DATABASE_PATH ?? `${process.env.DATABASE_PATH ?? './data/eigos.sqlite'}.members`;
-  const store = new MemberStore(path);
+  const database = process.env.DATABASE_PATH ?? './data/eigos.sqlite';
+  const path = process.env.MEMBERSHIP_DATABASE_PATH ?? `${database}.members`;
+  let admin;
   try {
+    admin = openMembershipAdministration(database, path, process.env.EIGOS_SECURITY_MODE);
+    const store = admin.members;
     if (action === 'list') console.table(store.list().map(({ id, displayName, status, createdAt }) => ({ id, displayName, status, createdAt })));
     else if (action === 'invite') {
       if (!values.output) throw new Error('Invitation credentials require a private --output file under ignored data/');
@@ -23,9 +26,9 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
       console.log(JSON.stringify({ invitationId: invitation.id, expiresAt: invitation.expiresAt, privateFile: output }));
     } else if (action === 'revoke-invite') { store.agents.revokeInvitation(id); console.log('Invitation revoked'); }
     else {
-      const member = store.setStatus(id, action === 'approve' ? 'active' : 'suspended');
+      const member = admin.setStatus(id, action === 'approve' ? 'active' : 'suspended');
       console.log(JSON.stringify({ id: member.id, status: member.status }));
     }
   } catch (error) { console.error(error instanceof Error ? error.message : 'Member operation failed'); process.exitCode = 1; }
-  finally { store.close(); }
+  finally { admin?.close(); }
 }

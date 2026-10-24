@@ -28,14 +28,15 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 103); assert.equal(report.counts.properties, 823);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 34);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 42);
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));
   assert.deepEqual(businessModel.ref, before);
   const fields = report.types.flatMap(t => t.properties);
   assert(fields.every(p => p.appliesTo === 'entire_subtree'));
   assert(fields.filter(p => p.openContent || p.restricted).every(p => p.policy === 'internal_only'));
-  for (const file of ['apps/gateway/app.ts', 'apps/worker/runtime.ts', 'packages/core/tasks.ts']) assert(!readFileSync(file, 'utf8').includes('/security/'));
+  assert.equal(report.defaults.agentScope, 'task_only');
+  assert.equal(report.defaults.automaticMemberResourceRole, 'none');
 });
 
 test('S0 rejects unreviewed fields, weakened restrictions, changed nested schemas and stale output paths', () => {

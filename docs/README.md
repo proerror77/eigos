@@ -22,7 +22,8 @@
 
 ## 设计与项目方向
 
-- [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；S0 已有离线检查工具，运行时策略尚未启用。
+- [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；已有离线检查工具，对象／字段策略仍待接入。
+- [S1 身份与撤销控制面](security-s1.md)：可选 foundation 模式、安装授权存储、跨库拒绝协调及 Worker 复核；业务数据策略仍待后续阶段。
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
 - [模型选择的只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)：滴滴首轮依赖图、纯函数绑定、证据归属与动态决策边界。
 - [Ontology 规格](ontology-spec-v0.2-2026-10-18.md)。
