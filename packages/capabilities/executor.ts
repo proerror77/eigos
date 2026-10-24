@@ -33,6 +33,7 @@ export interface RunEvidence {
   threadId?: string;
   turnId?: string;
   promptBytes?: number;
+  promptData?: { encoding: 'inline-json' | 'shared-json-v1'; sourceBytes: number; encodedBytes: number; sharedValues: number };
   ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';

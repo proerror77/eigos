@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """EIGOS client using A2A 1.0 plus the documented application authorization channel. Python 3.10+, standard library only."""
 import argparse
+from datetime import datetime, timezone
+import hashlib
 import ipaddress
 import json
 import os
@@ -220,8 +222,8 @@ class Client:
             'parts': [{'data': {'action': action, **data}}],
         }}, endpoint)
 
-    def send_text(self, text, request_id, task_id=None):
-        card, endpoint = self.discover()
+    def send_text(self, text, request_id, task_id=None, discovered=None):
+        card, endpoint = discovered if discovered is not None else self.discover()
         if task_id:
             current = self.rpc('GetTask', {'id': task_id}, endpoint)
             service = current.get('metadata', {}).get('service')
@@ -274,9 +276,10 @@ class Client:
         url = urllib.parse.urlunsplit((base.scheme, base.netloc, '/tasks/' + task_id + '/reconcile', '', ''))
         return self.request(url, {'requestId': request_id})
 
-    def poll(self, task_id, seconds, interval):
+    def poll(self, task_id, seconds, interval, endpoint=None):
         deadline = time.monotonic() + seconds
-        _, endpoint = self.discover()
+        if endpoint is None:
+            _, endpoint = self.discover()
         while True:
             task = self.rpc('GetTask', {'id': task_id}, endpoint)
             state = task['status']['state']
@@ -287,6 +290,85 @@ class Client:
             if time.monotonic() >= deadline:
                 return {'task': task, 'resumeRequired': True}
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
+
+    def run_task(self, text, request_id, directory, seconds, interval):
+        """Transport only: discover, submit once, wait on that identity, save receipts.
+        No capability/tool selection, approvals, replies or business retry policy.
+        Repeating this command resumes a saved task; an uncertain send stops.
+        """
+        directory = Path(directory).expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != 'nt' and directory.stat().st_mode & 0o077:
+            raise ClientError('Run directory must be private (chmod 700)')
+        manifest_path = directory / 'run.json'
+        identity = {'cardUrl': self.config['cardUrl'], 'requestId': request_id,
+                    'goalSha256': hashlib.sha256(text.encode('utf-8')).hexdigest()}
+        if manifest_path.exists():
+            manifest = read_json(manifest_path)
+            if any(manifest.get(k) != v for k, v in identity.items()):
+                raise ClientError('Run directory belongs to another request; preserve its original inputs')
+            if not manifest.get('taskId'):
+                raise ClientError('Previous send outcome is unknown; inspect the original request ID, no automatic resubmission')
+        else:
+            if any(directory.glob('send*.json')):
+                raise ClientError('Existing send receipt without a run identity; inspect it instead of submitting again')
+            manifest = {**identity, 'createdAtUtc': datetime.now(timezone.utc).isoformat()}
+        timing = {'startedAtUtc': datetime.now(timezone.utc).isoformat(), 'phases': []}
+        started = time.monotonic_ns()
+
+        def phase(name, operation):
+            at, begin = datetime.now(timezone.utc).isoformat(), time.monotonic_ns()
+            result = operation()
+            timing['phases'].append({'phase': name, 'startedAtUtc': at,
+                                     'finishedAtUtc': datetime.now(timezone.utc).isoformat(),
+                                     'durationMs': (time.monotonic_ns() - begin) / 1e6})
+            return result
+
+        discovered = phase('discovery', self.discover)
+        card, endpoint = discovered
+        write_private(directory / 'discover.json', {'card': card, 'endpoint': endpoint})
+        if not manifest.get('taskId'):
+            # Durable before SendMessage; a crashed/uncertain send never triggers a new send.
+            write_private(manifest_path, manifest)
+            sent = phase('submission', lambda: self.send_text(text, request_id, discovered=discovered))
+            write_private(directory / 'send.json', sent)
+            manifest.update({'taskId': sent['id'], 'contextId': sent.get('contextId')})
+            write_private(manifest_path, manifest)
+        polled = phase('poll', lambda: self.poll(manifest['taskId'], seconds, interval, endpoint))
+        task = polled['task']
+        received = datetime.now(timezone.utc).isoformat(timespec='microseconds')
+        if task['id'] != manifest['taskId'] or task.get('contextId') != manifest.get('contextId'):
+            raise ClientError('Result task identity changed; original request preserved')
+        manifest['pollCount'] = manifest.get('pollCount', 0) + 1
+        write_private(directory / f"poll-{manifest['pollCount']}.json", polled)
+        if not polled['resumeRequired']:
+            received_path = directory / 'pa-received-at.json'
+            if received_path.exists():
+                if read_json(directory / 'pa-received.json')['status']['state'] != task['status']['state']:
+                    raise ClientError('Saved run already stopped for input or authority; use explicit continuation and separate receipts')
+                received = read_json(received_path)['receivedAtUtc']
+            else:
+                write_private(received_path, {'receivedAtUtc': received})
+                write_private(directory / 'pa-received.json', task)
+            final = phase('final_readback', lambda: self.rpc('GetTask', {'id': task['id']}, endpoint))
+            if final['id'] != task['id'] or final.get('contextId') != task.get('contextId') or final['status']['state'] != task['status']['state']:
+                raise ClientError('Final readback differs; saved received task retained')
+            write_private(directory / 'get-final.json', final)
+            for index, artifact in enumerate(final.get('artifacts', [])):
+                write_private(directory / f'artifact-{index}.json', artifact)
+        write_private(manifest_path, manifest)
+        content = [part['data'] for artifact in task.get('artifacts', []) for part in artifact.get('parts', [])
+                   if isinstance(part.get('data'), dict)]
+        output = {'taskId': task['id'], 'contextId': task.get('contextId'), 'state': task['status']['state'],
+                  'resumeRequired': polled['resumeRequired'], 'receivedAtUtc': received,
+                  'accepted': task.get('metadata', {}).get('delegation', {}).get('acceptance', {}).get('accepted'),
+                  'artifacts': [{'deliverable': value.get('deliverable'), 'result': value.get('result')} for value in content],
+                  'receiptDirectory': str(directory)}
+        timing.update({'finishedAtUtc': datetime.now(timezone.utc).isoformat(),
+                       'durationMs': (time.monotonic_ns() - started) / 1e6,
+                       'receivedAtUtc': received, 'taskId': task['id'], 'resumeRequired': polled['resumeRequired']})
+        write_private(directory / f"client-run-timing-{manifest['pollCount']}.json", timing)
+        return output
 
 
 def read_json(path):
@@ -313,6 +395,12 @@ def main():
     send.add_argument('--text-file', required=True)
     send.add_argument('--request-id', required=True)
     send.add_argument('--task-id')
+    run = commands.add_parser('run', help='Submit once, save receipts and poll; repeat the same command to resume the saved task')
+    run.add_argument('--text-file', required=True)
+    run.add_argument('--request-id', required=True)
+    run.add_argument('--save-dir', required=True)
+    run.add_argument('--seconds', type=float, default=45)
+    run.add_argument('--interval', type=float, default=0.25)
     authorize = commands.add_parser('authorize')
     authorize.add_argument('--task-id', required=True)
     authorize.add_argument('--input-file', required=True)
@@ -372,14 +460,19 @@ def main():
         if args.command == 'discover':
             card, endpoint = client.discover()
             output = {'card': card, 'endpoint': endpoint, 'allowedServices': client.config['allowedServices']}
-        elif args.command == 'send':
+        elif args.command in ('send', 'run'):
             try:
                 text = Path(args.text_file).read_text(encoding='utf-8')
             except OSError:
                 raise ClientError('Text input file unavailable') from None
             if not text.strip() or len(text) > 10000:
                 raise ClientError('Text must contain 1–10000 characters')
-            output = client.send_text(text, args.request_id, args.task_id)
+            if args.command == 'run':
+                if not 0 <= args.seconds <= 45 or not 0.1 <= args.interval <= 30:
+                    raise ClientError('Run polls for at most 45 seconds; repeat with the same save directory to resume')
+                output = client.run_task(text, args.request_id, args.save_dir, args.seconds, args.interval)
+            else:
+                output = client.send_text(text, args.request_id, args.task_id)
         elif args.command == 'authorize':
             output = client.authorize(args.task_id, read_json(args.input_file))
         elif args.command == 'payment-result':

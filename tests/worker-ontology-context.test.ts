@@ -18,13 +18,14 @@ import type { AgentPlanningContext } from '../packages/coordinator/coordinator.j
 import type { RideEstimateObservation } from '../packages/ontology/ride-estimate.js';
 import type { ObjectRef } from '../packages/ontology/model.js';
 import { planningSnapshot } from '../packages/ontology/planning-contract.js';
+import { expandPromptData } from '../packages/coordinator/prompt-data.js';
 
 function sessionFixture() {
   const data = drillCase('QD-1'), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now);
   graph.ingest(owner, data.batch, data.source);
   return { ...data, db, graph, session: new OntologyPlanningSession(graph, owner, data.request) };
 }
-const frame = (prompt: string) => JSON.parse(prompt.split('\n\n').at(-1)!);
+const frame = (prompt: string) => expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!));
 
 test('Fresh Worker context performs actual reads before one model response and binds the receipts to its evidence', async () => {
   const f = sessionFixture(); let responses = 0;
@@ -56,6 +57,19 @@ test('Model-requested follow-up reads remain available and are attributed separa
     await reasonWithOntology(model, 'Synthetic follow-up', {}, f.session, new AbortController().signal, () => {}, 8, {});
     assert.equal(responses, 2); assert.deepEqual(f.session.receipts().map(read => read.origin), ['worker_context', 'worker_context', 'model']);
     assert.equal(f.session.finish().mode, 'worker_context_with_queries');
+  } finally { f.db.close(); }
+});
+
+test('Initial definitions omit broad relationship navigation; model can retrieve it while action dependencies remain intact', () => {
+  const f = sessionFixture();
+  try {
+    const context = f.session.prepareContext({ actions: ['EstimateDidiRide'] });
+    const initial = context.entries[0]!.result as any;
+    assert.equal(initial.types[0].links, undefined); assert.equal(initial.types[0].linksAvailable, true);
+    assert.equal(initial.actions[0].read.mcp.requires.length, 2);
+    const expanded = f.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1, actions: [], functions: [] }) as any;
+    assert(expanded.types[0].links.length > 0);
+    assert.equal(f.session.receipts().at(-1)!.origin, 'model');
   } finally { f.db.close(); }
 });
 
@@ -117,10 +131,10 @@ function syntheticContextDidi() {
   const model = { ontologyContextPreparation: 'worker_snapshot' as const, runStructured: async (prompt: string) => {
     const packet = frame(prompt); requests.push({ calls: source.calls.filter(call => call.method === 'tools/call').length, packet });
     assert(!prompt.includes(syntheticKey)); assert(!prompt.includes('PRIVATE_TRACE'));
-    const blocks = prompt.split('\n\n').flatMap(part => { try { return [JSON.parse(part)]; } catch { return []; } });
+    const blocks = [packet.task];
     const ctx = blocks.find(value => value.state?.scope) as AgentPlanningContext | undefined;
     if (!ctx) {
-      const request = blocks.find(value => value.originalGoal && value.messages);
+      const request = packet.task.request;
       return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF }) }, evidence: evidence() };
     }
     const objects = packet.conversation.flatMap((entry: any) => entry.result.items ?? []);

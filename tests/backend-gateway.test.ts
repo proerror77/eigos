@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, chmodSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
@@ -111,4 +111,54 @@ test('existing Personal Agent Python client still discovers, resumes, approves a
     assert.equal((await run('get', '--task-id', ready.id)).status.state, 'TASK_STATE_COMPLETED');
     writeFileSync(input, 'changed goal'); await assert.rejects(run('send', '--text-file', input, '--request-id', 'one'));
   } finally { await f.close(); }
+});
+
+test('PA run saves raw receipts, resumes the original task and stops at human input without approval or a replacement send', async () => {
+  const f = await fixture(), script = resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
+  const profile = join(f.dir, 'run-profile.json'), token = join(f.dir, 'run-token'), input = join(f.dir, 'run-goal.txt'), saved = join(f.dir, 'run-receipts');
+  writeFileSync(token, f.token, { mode: 0o600 }); chmodSync(token, 0o600); writeFileSync(input, '审计 CSV');
+  const run = async (...args: string[]) => {
+    const response = await exec('python3', [script, '--config', profile, ...args], { env: { PATH: process.env.PATH, HOME: process.env.HOME }, maxBuffer: 1024 * 1024 });
+    assert(!response.stdout.includes(f.token)); assert(!response.stderr.includes(f.token)); return JSON.parse(response.stdout);
+  };
+  try {
+    await run('configure', '--card-url', f.base + '/.well-known/agent-card.json', '--token-file', token, '--allow-loopback-http');
+    const args = ['run', '--text-file', input, '--request-id', 'one-run', '--save-dir', saved, '--seconds', '0'];
+    const first = await run(...args), second = await run(...args.slice(0, -1), '5');
+    assert.equal(first.taskId, second.taskId); assert.equal(second.state, 'TASK_STATE_INPUT_REQUIRED'); assert.equal(second.resumeRequired, false);
+    const manifest = JSON.parse(readFileSync(join(saved, 'run.json'), 'utf8'));
+    assert.equal(manifest.taskId, first.taskId); assert.equal(manifest.pollCount, 2);
+    const raw = JSON.parse(readFileSync(join(saved, 'get-final.json'), 'utf8'));
+    assert.equal(raw.id, first.taskId); assert.equal(raw.artifacts?.length ?? 0, 0);
+    assert.equal(JSON.parse(readFileSync(join(saved, 'pa-received.json'), 'utf8')).id, raw.id);
+    assert(JSON.parse(readFileSync(join(saved, 'pa-received-at.json'), 'utf8')).receivedAtUtc);
+    assert.equal(statSync(join(saved, 'send.json')).mode & 0o077, 0);
+    assert.equal(f.gateway.store.intents(owner, first.taskId).length, 0);
+    const receivedAt = readFileSync(join(saved, 'pa-received-at.json'), 'utf8');
+    const again = await run(...args); assert.equal(again.taskId, first.taskId);
+    assert.equal(readFileSync(join(saved, 'pa-received-at.json'), 'utf8'), receivedAt);
+    writeFileSync(input, 'different task'); await assert.rejects(run(...args), /another request/);
+  } finally { await f.close(); }
+});
+
+test('PA run preserves an uncertain submission and never sends a replacement on resume', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'eigos-pa-uncertain-'));
+  try {
+    const result = await exec('python3', ['-c', `
+import importlib.util,json,sys
+from pathlib import Path
+s=importlib.util.spec_from_file_location('client',sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
+class Stub(m.Client):
+ def __init__(self):self.config={'cardUrl':'https://example.invalid/.well-known/agent-card.json'};self.calls=0
+ def discover(self):return {'skills':[]},'https://example.invalid/a2a'
+ def send_text(self,*args,**kwargs):self.calls+=1;raise m.ClientError('Synthetic connection outcome unknown')
+c=Stub();errors=[]
+for _ in range(2):
+ try:c.run_task('Original user goal','same-id',sys.argv[2],0,0.1)
+ except m.ClientError as e:errors.append(str(e))
+print(json.dumps({'sends':c.calls,'errors':errors,'saved':json.loads((Path(sys.argv[2])/'run.json').read_text())}))
+`, resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), join(directory, 'receipts')]);
+    const data = JSON.parse(result.stdout); assert.equal(data.sends, 1);
+    assert(data.errors[1].includes('no automatic resubmission')); assert.equal(data.saved.requestId, 'same-id'); assert.equal(data.saved.taskId, undefined);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

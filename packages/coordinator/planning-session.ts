@@ -11,12 +11,13 @@ import { assessConditions, hardConditionsPass } from './conditions.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import { businessConditionSchema } from '../ontology/business-model.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
+import { compactSchema } from './prompt-data.js';
 
-const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), functions: z.array(z.string().min(1).max(80)).max(20).optional().describe('Exact registered function IDs; omit to discover all function definitions'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), functions: z.array(z.string().min(1).max(80)).max(20).optional().describe('Exact registered function IDs; omit to discover all function definitions'), includeLinks: z.boolean().optional().describe('Default true; false omits relationship navigation, which can be retrieved separately when needed'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningToolSchemas = { describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
+export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(schema)), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
 
@@ -96,7 +97,7 @@ export class OntologyPlanningSession {
       entries.push({ call: { tool, argumentsJson: JSON.stringify(input) }, result, receiptId: receipt.id });
       return receipt.status === 'ok';
     };
-    read('describe_ontology', { search: 'ServiceRequest', limit: 1, actions: (options.actions ?? []).slice(0, 8), functions: functionIds.slice(0, 20) });
+    read('describe_ontology', { search: 'ServiceRequest', limit: 1, actions: (options.actions ?? []).slice(0, 8), functions: functionIds.slice(0, 20), includeLinks: false });
     const refs = [{ type: 'ServiceRequest', id: this.request.id }, ...(options.refs ?? [])]
       .filter((ref, index, all) => all.findIndex(value => key(value) === key(ref)) === index).slice(0, contextLimits.refs);
     const queried: ObjectRef[] = [];
@@ -129,7 +130,7 @@ export class OntologyPlanningSession {
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     try {
       if (tool === 'describe_ontology') {
-        const { includeSchemas = false, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+        const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
         const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
         const describedActions = selected.map(action => {
           if (includeSchemas || actions) return action;
@@ -140,9 +141,10 @@ export class OntologyPlanningSession {
           };
           return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}) };
         });
-        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
-          const value = type as { properties: Record<string, Record<string, unknown>> };
-          return { ...value, properties: Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
+        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: result.types.map(type => {
+          const value = type as { properties: Record<string, Record<string, unknown>>; links?: unknown };
+          const { links, ...definition } = value;
+          return { ...definition, ...(includeLinks ? { links } : { linksAvailable: true }), properties: includeSchemas ? value.properties : Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
         }), actions: describedActions, functions: functions ? functions.map(id => this.graph.model.function(id)) : result.functions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
       }
       else if (tool === 'query_ontology') {
