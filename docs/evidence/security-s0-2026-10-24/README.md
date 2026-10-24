@@ -8,6 +8,6 @@
 
 历史合同／摘要不匹配项须按历史版本处理；直接关联候选仍需来源证据复核。本记录只证明 S0 完成，`migrationReady=false` 与 `enforcement=not_installed` 均是预期状态。
 
-本地 `npm run check`、`npm run build`、`git diff --check` 通过；`npm test` 为 601 项通过，`npm run test:e2e:run` 为 8 项通过。S0 新增 8 项已包含在全量测试中；清单移至独立目录并补上清单摘要后，这 8 项另行复跑通过。`npm run security:s0 -- --check` 通过。
+本地 `npm run check`、`npm run build`、`git diff --check` 通过；`npm test` 为 601 项通过，`npm run test:e2e:run` 为 8 项通过。S0 新增 8 项已包含在全量测试中；清单目录／摘要及会员 OAuth scope 兼容性补正后，这 8 项另行复跑通过，沿用未受影响的其他测试证据。`npm run security:s0 -- --check` 通过。
 
 远端 CI 以本次同步提交对应的 GitHub Actions 终态为准，不用本地测试替代远端结论。此阶段没有部署。

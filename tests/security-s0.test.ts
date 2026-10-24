@@ -66,6 +66,9 @@ test('S0 contracts distinguish member, installation and worker identities and re
   const actor = { ...base, actorKind: 'agent', memberId: randomUUID(), installationId: randomUUID(), clientId: principal.clientId,
     tokenScopes: principal.scopes, agentGrant: { id: randomUUID(), revision: 1 } };
   assert(accessContextSchema.safeParse(actor).success);
+  assert(accessContextSchema.safeParse({ ...actor, tokenScopes: [...principal.scopes, 'members:write', 'openid'] }).success);
+  assert(accessContextSchema.safeParse({ ...actor, ownerKey: ownerKey({ ...principal, subject: 'opaque*subject' }) }).success);
+  assert(!accessContextSchema.safeParse({ ...actor, tokenScopes: ['tasks:read tasks:write'] }).success);
   const { installationId: _installation, ...missing } = actor;
   assert(!accessContextSchema.safeParse(missing).success);
   assert(!accessContextSchema.safeParse({ ...actor, token: 'PRIVATE_TOKEN' }).success);

@@ -12,7 +12,10 @@ const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const instant = z.iso.datetime({ offset: true });
 export const ownerIdentitySchema = z.string().max(2000).refine(value => {
   try {
-    const parts = z.tuple([id, id, id]).parse(JSON.parse(value));
+    // Identity values are opaque. A literal '*' in an issuer/subject is not a
+    // wildcard selector and must not change the existing ownerKey semantics.
+    const part = z.string().min(1);
+    const parts = z.tuple([part, part, part]).parse(JSON.parse(value));
     return JSON.stringify(parts) === value;
   } catch { return false; }
 }, 'Use the existing canonical issuer/tenant/subject ownerKey');
@@ -23,7 +26,9 @@ export const resourcePermissionSchema = z.enum(['resource.view', 'resource.edit'
 export const grantRefSchema = z.strictObject({ id: z.uuid(), revision });
 export const dataOperationSchema = z.enum(['task.process', 'task.query', 'member_asset.read', 'task.result.read', 'artifact.export']);
 export const channelSchema = z.enum(['member_ui', 'agent_response', 'registered_model', 'controlled_download']);
-const scopeList = z.array(z.enum(SCOPES)).max(SCOPES.length).refine(v => new Set(v).size === v.length, 'Duplicate scope');
+// Principal.scopes also contains enrollment/OIDC/provider scopes. Preserve the
+// verified token facts; only explicit operation checks may use them as authority.
+const scopeList = z.array(z.string().min(1).max(200).regex(/^\S+$/)).max(100).refine(v => new Set(v).size === v.length, 'Duplicate scope');
 const baseActor = { version: z.literal(SECURITY_CONTRACT), ownerKey: ownerIdentitySchema, authEpoch: revision, policyVersion: z.literal(POLICY_VERSION), checkedAt: instant };
 const agentActor = { memberId: z.uuid(), installationId: z.uuid(), clientId: id, tokenScopes: scopeList };
 export const accessContextSchema = z.discriminatedUnion('actorKind', [
@@ -48,6 +53,7 @@ export const securityDefaults = {
   contract: SECURITY_CONTRACT, policyVersion: POLICY_VERSION, enforcement: 'not_installed',
   agentScope: 'task_only', unknownPolicy: 'deny', crossMemberGraph: 'deny', declassification: 'deny',
   automaticLegacyGrant: false, automaticMemberResourceRole: 'none', unregisteredModelChannel: 'deny',
+  gatewayOperationScopes: SCOPES,
   agentGrantMaxSeconds: 30 * 86400, taskGrantMaxSeconds: 86400,
   authorityProjectionLeaseSeconds: 60, authorityProjectionRefreshSeconds: 30,
 } as const;

@@ -38,6 +38,7 @@ S0 的出口清单覆盖 HTTP／MCP／A2A、任务变更响应、等待／列表
 - 安装仅限 task-only，授予期限最长 30 天；任务数据与持久执行授权最长 24 小时，且不得超过父授权有效期。结构校验检查自身上限，父子权限／期限交集由后续策略层检查。
 - Viewer 只含 resource.view；Editor 增加 resource.edit；Owner 再增加 resource.manage。action.execute／function.invoke 单独授权，角色不自动授予数据、降密或跨会员读取。
 - 成为会员不会自动获得资源角色；旧 token scope 不转换成安装／任务 grant。原任务所有者键继续由 issuer／tenant／subject 构成，不混入安装 ID。
+- AccessContext 保留签名已验证的完整 scope 列表，包括现有 members:write 和 OIDC scopes；接口检查仍只认可其明确要求的 scope。未知 scope 不意味着新增操作权限，身份字符串也不被当成授权通配符。
 - 资格投影 lease 初始 60 秒、30 秒刷新；协调入口撤销不等待 lease 到期。这里只固定参数，不声称撤销协调已实现。
 - `task.process`、`task.query`、`member_asset.read`、`task.result.read`、`artifact.export` 是不同 operation。write-only 提交未来只返回最小回执；其内部任务处理须有明确执行授权，不能扩大到已有会员资产。
 - 模型渠道未登记或数据类别不匹配默认拒绝；安全标签初始类别是 member_private、personal_data、precise_location、health、financial、account_private；分类仅 private／sensitive／internal，没有 Foundry 全套 CBAC 的 OR／跨域语义。
