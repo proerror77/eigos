@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,6 +8,7 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
 import type { ObjectView, ObjectQuery } from '../../packages/ontology/object-store.js';
+import { FixtureProcesses } from '../fixtures/process-scope.js';
 
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean, label: string): Promise<T> {
@@ -21,29 +21,19 @@ async function waitFor<T>(read: () => Promise<T>, accept: (value: T) => boolean,
     authorizationBudget: job.delegation?.authorizationBudget, events: job.delegation?.events?.slice(-12) } : last;
   assert.fail(label + ': ' + JSON.stringify(diagnostic));
 }
-async function child(file: string, env: NodeJS.ProcessEnv) {
-  const process = spawn(globalThis.process.execPath, [resolve('dist/tests/fixtures', file + '.js')], { env: { PATH: globalThis.process.env.PATH, HOME: globalThis.process.env.HOME, NODE_NO_WARNINGS: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let error = ''; process.stderr!.on('data', data => { error = (error + data.toString()).slice(-12000); });
-  const ready = await new Promise<{ port?: number }>((resolveReady, reject) => {
-    let output = ''; const timer = setTimeout(() => reject(new Error('Child did not become ready: ' + error)), 10000);
-    process.stdout!.on('data', data => { output += data; const lines = output.split('\n'); output = lines.pop()!; for (const line of lines) { try { const value = JSON.parse(line); clearTimeout(timer); resolveReady(value); } catch { /* Non-protocol diagnostics. */ } } });
-    process.once('exit', code => { clearTimeout(timer); reject(new Error('Child exited before ready ' + code + ': ' + error)); });
-  });
-  return { process, ready, error: () => error };
-}
-async function stop(process: ChildProcess, signal: NodeJS.Signals = 'SIGTERM') {
-  if (process.exitCode !== null || process.signalCode !== null) return;
-  const exited = new Promise<void>(r => process.once('exit', () => r())); process.kill(signal); await exited;
-}
 async function fixture(t: TestContext, fault: object = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-full-e2e-')); const paths: Record<string, string> = {};
+  const mcp = new Client({ name: 'full-backend-e2e', version: '3' });
+  const processes = new FixtureProcesses(t, async () => {
+    try { await mcp.close(); } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  const child = (file: string, env: NodeJS.ProcessEnv) => processes.start(resolve('dist/tests/fixtures', file + '.js'), env);
   for (const name of ['gateway', 'alternate', 'provider', 'control']) { const path = join(dir, name + '.token'); writeFileSync(path, randomUUID() + randomUUID(), { mode: 0o600 }); paths[name] = path; }
   const provider = await child('business-provider', { PROVIDER_DATABASE: join(dir, 'provider.sqlite'), PROVIDER_TOKEN_FILE: paths.provider, PROVIDER_CONTROL_TOKEN_FILE: paths.control });
   const providerUrl = `http://127.0.0.1:${provider.ready.port}`; const workers: Awaited<ReturnType<typeof child>>[] = [];
   const common = { EIGOS_AUTH_MODE: 'development', HOST: '127.0.0.1', EIGOS_COORDINATOR: 'codex', EIGOS_EXECUTOR: 'disabled', EIGOS_ACTION_SANDBOX: 'true', EIGOS_SANDBOX_PROVIDER_URL: providerUrl, EIGOS_SANDBOX_TOKEN_FILE: paths.provider, DATABASE_PATH: join(dir, 'tasks.sqlite') };
   const gateway = await child('ontology-gateway', { ...common, GATEWAY_TOKEN_FILE: paths.gateway, ALTERNATE_TOKEN_FILE: paths.alternate });
   const base = `http://127.0.0.1:${gateway.ready.port}`; const bearer = readFileSync(paths.gateway!, 'utf8'); const alternate = readFileSync(paths.alternate!, 'utf8');
-  const mcp = new Client({ name: 'full-backend-e2e', version: '3' });
   await mcp.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${bearer}` } } }));
   const api = async (path: string, value?: object) => { const r = await fetch(providerUrl + '/_control/' + path, { method: value ? 'POST' : 'GET', headers: { Authorization: `Bearer ${readFileSync(paths.control!, 'utf8')}`, 'Content-Type': 'application/json' }, ...(value ? { body: JSON.stringify(value) } : {}) }); assert(r.ok); return r.json(); };
   await api('faults', fault);
@@ -106,8 +96,7 @@ async function fixture(t: TestContext, fault: object = {}) {
     for (const action of ['SubmitServiceRequest', 'ProposeServiceExecution', 'AuthorizeProposal', 'AssessServiceOutcome']) assert(decisions.some(value => value.properties.actionId === action));
     return { request, proposal, engagement: engagements[0]!, grants, results, assessment: assessments[0]! };
   };
-  t.after(async () => { await mcp.close(); for (const w of workers) await stop(w.process); await stop(gateway.process); await stop(provider.process); rmSync(dir, { recursive: true, force: true }); });
-  return { dir, base, workers, task, get, approve, api, rpc, alternate, appPost, startWorker, mcp, query, related, chain };
+  return { dir, base, workers, task, get, approve, api, rpc, alternate, appPost, startWorker, mcp, query, related, chain, processes };
 }
 
 for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${crashAfter} success + Worker crash recovers by original key; two Workers never replay effects`, { timeout: 45000 }, async t => {
@@ -115,7 +104,7 @@ for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${cras
   const offered = await f.task(); await f.approve(offered);
   const paid = await waitFor(() => f.api('ledger'), x => crashAfter === 'order' ? x.counters.ordersCreated === 1 : x.counters.charges === 1, 'remote business effect accepted');
   assert.equal((await f.get(offered.id)).state, 'working');
-  await stop(f.workers[0]!.process, 'SIGKILL');
+  await f.processes.stop(f.workers[0]!.process, 'SIGKILL');
   await f.startWorker(); await f.startWorker();
   await waitFor(() => f.get(offered.id), x => x.delegation!.actions?.find(a => a.stepId === 'payment')?.state === 'effect_confirmed', 'original payment reconciliation');
   const before = await f.get(offered.id); assert.equal(before.state, 'working'); assert.equal(before.artifact, undefined);

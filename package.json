@@ -23,7 +23,7 @@
     "check": "tsc --noEmit",
     "test": "node scripts/test.mjs",
     "test:e2e": "npm run build && npm run test:e2e:run",
-    "test:e2e:run": "node --test dist/tests/e2e/*.test.js",
+    "test:e2e:run": "node --test --test-concurrency=1 dist/tests/e2e/*.test.js",
     "dev:gateway": "node --env-file=.env --import tsx apps/gateway/main.ts",
     "dev:worker": "node --env-file=.env --import tsx apps/worker/main.ts",
     "start:gateway": "node --env-file-if-exists=.env dist/apps/gateway/main.js",
