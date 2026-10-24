@@ -25,7 +25,6 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
   assert(businessModel.implements('RegistrationRecord', 'EvidenceBacked'));
   assert(businessModel.hasType('MeituanReadTask'));
   assert(businessModel.implements('MeituanReadObservation', 'EvidenceBacked'));
-  assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
   for (const id of ['ServiceRequest', 'ProductVariant', 'ExecutionPlan', 'ExecutionStep', 'RegisteredActionType', 'RequestSpecification', 'RoomInventoryObservation', 'BookingTask', 'PAPaymentRequest', 'CommerceTask', 'CustomsRuleSet', 'StripePaymentObservation']) assert(businessModel.hasType(id));
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'FulfillmentOffer', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
