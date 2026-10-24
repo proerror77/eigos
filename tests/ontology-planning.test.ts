@@ -1,3 +1,5 @@
+import { createCurrentKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -25,8 +27,8 @@ import { equivalentQuantities } from '../packages/ontology/quantity.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, interpretation, proposal, evidence, owner, principal, reasoner, fixtureCapability, fixtureBinding, fixtureAdapter } from './backend-fixture.js';
 
-function fixture(id = 'QD-1') {
-  const data = drillCase(id), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now);
+function fixture(id = 'QD-1', model: ConstructorParameters<typeof OntologyObjectStore>[1] = undefined) {
+  const data = drillCase(id), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, model, () => data.now);
   graph.ingest(owner, data.batch, data.source);
   return { ...data, db, graph, session: new OntologyPlanningSession(graph, owner, data.request) };
 }
@@ -57,7 +59,8 @@ test('Planning descriptions expose full action schemas on demand without repeati
 });
 
 test('Bound reference function navigation comes from ontology metadata and performs no reads or evaluations', () => {
-  const f = fixture();
+  const kernel = createCurrentKernelDefinition();
+  const f = fixture('QD-1', compileOntologyDocument(kernel.document, kernel.registry));
   try {
     const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [{ type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }]);
     const catalog = session.catalog();

@@ -143,8 +143,12 @@ export class DidiAgentProgram implements AgentProgram {
     return projectRideEstimate(ctx.graph, ctx.owner, s);
   }
   projectOutputs(ctx: AgentActionContext, _action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
-    const view = ctx.graph.read(ctx.owner, object), snapshot = view.properties.snapshot as { observedAt: string; expiresAt?: string };
-    return objectResultProjection(object, { origin: view.source.kind === 'task' ? 'managed' : view.source.kind, refs: result.evidenceRefs, observedAt: snapshot.observedAt, expiresAt: snapshot.expiresAt ?? new Date(Date.parse(snapshot.observedAt) + 300000).toISOString() }, object.type === 'DidiOrderObservation', true);
+    const view = ctx.graph.read(ctx.owner, object), snapshot = view.properties.snapshot as { observedAt: string; expiresAt: string; evidenceKind: string };
+    return objectResultProjection(object, { origin: snapshot.evidenceKind === 'fixture' ? 'synthetic' : 'provider', refs: result.evidenceRefs, observedAt: snapshot.observedAt, expiresAt: snapshot.expiresAt }, false, true);
+  }
+  validateOutput(ctx: AgentProgramContext, output: import('../../ontology/composition-contract.js').AcceptedPortValue) {
+    const refs = output.definition.cardinality === 'many' ? output.value as ObjectRef[] : [output.value as ObjectRef];
+    for (const ref of refs) this.observation(ctx, ref);
   }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     const scope = this.scope(ctx), completion = rideEstimateCompletionSchema.parse(proposal), { snapshot: s } = this.observation(ctx, completion.observation);

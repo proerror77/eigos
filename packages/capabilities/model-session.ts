@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { modelEnvironment, modelFeatureArgs } from './model-process.js';
 import type { RunEvidence } from './executor.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
+import { modelUsageRecorder } from '../core/model-usage-context.js';
 
 export interface StructuredModelSession {
   run(prompt: string): Promise<{ output: unknown; evidence: RunEvidence }>;
@@ -148,6 +149,8 @@ class CodexModelSession implements StructuredModelSession {
     this.signal.throwIfAborted(); this.bytes = 0;
     const remainingMs = this.first ? Math.max(1, this.initialDeadline - performance.now()) : this.timeoutMs;
     const reused = !this.first, id = randomUUID(), startedAt = this.first ? this.openedAt : new Date().toISOString(); this.first = false;
+    const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-app-server', startedAt);
+    let recorded: RunEvidence | undefined, succeeded = false;
     let resolve!: Active['resolve'], reject!: Active['reject'];
     const completed = new Promise<TurnOutput>((yes, no) => { resolve = yes; reject = no; });
     this.active = { queue: [], text: new Map(), resolve, reject };
@@ -166,8 +169,11 @@ class CodexModelSession implements StructuredModelSession {
       if (!done) throw new ModelSessionError('output_missing', this.stage);
       let output: unknown;
       try { output = JSON.parse(done.text); } catch { throw new ModelSessionError('invalid_json', this.stage); }
-      return { output, evidence: { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, reasoningEffort: this.reasoningEffort, serviceTier: this.serviceTier, sessionReadyAt: reused ? startedAt : this.readyAt, sessionOpenedAt: this.openedAt, processInitializedAt: this.initializedAt, threadReadyAt: this.readyAt, sessionReused: reused, requestSentAt, requestAcknowledgedAt, usage: done.usage, promptBytes: Buffer.byteLength(prompt) } satisfies RunEvidence };
-    } catch (error) { throw error instanceof ModelSessionError ? error : new ModelSessionError('invalid_protocol', this.stage); } finally { clearTimeout(timer); }
+      recorded = { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, reasoningEffort: this.reasoningEffort, serviceTier: this.serviceTier, sessionReadyAt: reused ? startedAt : this.readyAt, sessionOpenedAt: this.openedAt, processInitializedAt: this.initializedAt, threadReadyAt: this.readyAt, sessionReused: reused, requestSentAt, requestAcknowledgedAt, usage: done.usage, promptBytes: Buffer.byteLength(prompt) };
+      succeeded = true;
+      return { output, evidence: recorded };
+    } catch (error) { throw error instanceof ModelSessionError ? error : new ModelSessionError('invalid_protocol', this.stage); }
+    finally { clearTimeout(timer); recorder?.finish(id, recorded, succeeded ? 'completed' : this.signal.aborted ? 'interrupted' : 'failed'); }
   }
   async close() {
     if (this.closed) return; this.closed = true;

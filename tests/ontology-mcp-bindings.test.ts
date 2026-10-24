@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { didiReadDefinition } from '../packages/ontology/didi-read-definition.js';
 import { loadMcpReadModule, mcpReadModuleRef, parseMcpReadModule, resolveOntologyMcpRead } from '../packages/ontology/mcp-read.js';
-import { businessModel } from '../packages/ontology/business-model.js';
+import { createCurrentKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { chooseDidi, setupDidi, input, observeDidi } from './fixtures/didi.js';
 import { owner } from './backend-fixture.js';
 
@@ -62,7 +63,8 @@ test('Malformed, cyclic, executable, credential or endpoint-bearing ontology dat
 });
 
 test('Ontology discovery exposes the actual tool binding and dependencies to the model', () => {
-  const action = businessModel.action('EstimateDidiRide');
+  const kernel = createCurrentKernelDefinition();
+  const action = compileOntologyDocument(kernel.document, kernel.registry).action('EstimateDidiRide');
   assert.deepEqual(action.read!.mcp, didiReadDefinition.actions.find(a => a.id === action.id)!.mcp);
   assert.equal(action.read!.module!.digest, mcpReadModuleRef(didiReadDefinition).digest);
   const t = setupDidi((ctx, access) => {

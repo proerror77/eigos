@@ -12,7 +12,7 @@ import { catalogAgentActions } from './catalog-agent.js';
  * keep their original schemas, handlers and fingerprints. */
 export function extendConsolidatedKernel(original: OntologyDocument, registry: TrustedDefinitionRegistry, current: ModelDefinition): OntologyDocument {
   const document = structuredClone(original);
-  document.version = '20';
+  document.version = '21';
   const objects = [...registrationObjects, ...meituanReadObjects];
   const property = (type: string, name: string, value: ModelDefinition['objects'][number]['properties'][string]) => {
     const { schema: validator, ...metadata } = value;
