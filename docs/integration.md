@@ -36,7 +36,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-六类服务扩展复用这些接口和权限。当前代码运行契约为 `ontology-execution-v16`，业务模型为 `eigos.business@16`。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+当前代码运行契约为 `ontology-execution-v19`，业务模型为 `eigos.business@16`，整合了免费报名、可选支付与原常驻版本的规划及 PA 客户端更新。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -61,6 +61,10 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 后续 SendMessage 带原 taskId，以新的 messageId 回复自然语言。也可使用单个 data part 携带与 MCP 相同的业务参数。`service`、requirements、executionEnvironment 是 EIGOS 字段，非 A2A 标准必填项。标准协议状态与 MCP 共用底层任务。
 
 异步 submitted／working 继续查询同一个 taskId；有界 poll 超时不代表执行失败。input-required 转述问题并等待用户；auth-required 只能经独立授权 API 处理精确的本地模拟方案，普通“同意”回复不授予业务许可。相同请求 ID 重试必须保持原内容，不能用新任务替换结果不明的原操作。
+
+本机 PA 的 Python 客户端支持 `run --text-file <目标文件> --request-id <稳定ID> --save-dir <私密目录>`，在一次调用中发现、提交、轮询并保存原始任务、artifact和分段耗时。超时返回 `resumeRequired=true`，重复相同命令只续读已保存任务；不确定提交停止检查，不自动重发。需要输入或授权时交回 PA，不代答或授权。此便利入口沿用上述 A2A 接口和权限，不预设业务工具或执行顺序。
+
+`run --spec-file <私密JSON>`可引用已保存的profile路径、textFile、requestId和saveDir，另可指定seconds和interval；不能替换显式选定的profile或传入凭据值。run默认等待55秒，单独poll的45秒上限保留。stdout提供简明交付文本；完整任务及artifact仍保存到私密目录。
 
 不提供流式响应或推送通知；客户端轮询。取消 Task 阻止后续工作，不表示供应商订单取消。当前现实订单、支付、取消和退款全部禁止。
 

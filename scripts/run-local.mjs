@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 
-// Convenience launcher: two separate processes on one host, sharing DATABASE_PATH.
+// Gateway and Worker share DATABASE_PATH; an optional browser bridge owns only
+// its separate source queue and reads the original task database for authority.
 const built = process.argv.includes('--built');
 const children = new Set();
 let stopping = false;
@@ -12,7 +13,7 @@ function stop(code = 0) {
   forced = setTimeout(() => { for (const child of children) child.kill('SIGKILL'); }, 10000);
   forced.unref();
 }
-for (const role of ['gateway', 'worker']) {
+for (const role of ['gateway', 'worker', ...(process.env.EIGOS_FREE_BOOKING_BROWSER_CONFIG ? ['participant-browser'] : [])]) {
   const args = built ? [`dist/apps/${role}/main.js`] : ['--import', 'tsx', `apps/${role}/main.ts`];
   const child = spawn(process.execPath, args, { stdio: 'inherit', env: process.env });
   children.add(child);

@@ -4,14 +4,21 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { parseEnv } from 'node:util';
 import { readWorkerConfig } from '../dist/packages/core/config.js';
 import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.js';
+import { BACKEND_VERSION } from '../dist/packages/ontology/execution.js';
+import { participantDeploymentSettings } from '../dist/packages/capabilities/free-booking/runtime-config.js';
+import { resolvePaOwner } from './pa-source.mjs';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const directory = join(root, 'data/grok-life');
+const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = join(homedir(), '.local/share/eigos/grok-life');
+const ownerIndex = process.argv.indexOf('--owner-root');
+if (ownerIndex >= 0 && (!process.argv[ownerIndex + 1] || process.argv[ownerIndex + 1].startsWith('--'))) throw new Error('Supply the existing runtime owner path');
+const root = resolvePaOwner(sourceRoot, ownerIndex < 0 ? undefined : process.argv[ownerIndex + 1], join(runtime, 'owner.json'));
+const directory = join(root, 'data/grok-life');
 const envPath = join(directory, 'server.env'), runtimeEnv = join(runtime, 'server.env');
 const label = 'com.eigos.grok-life', service = `gui/${process.getuid()}/${label}`;
 const plistPath = join(homedir(), 'Library/LaunchAgents', `${label}.plist`);
@@ -63,30 +70,31 @@ const commerceDisabled = process.env.EIGOS_COMMERCE_SANDBOX_URL === '';
 const commerceUrl = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_URL ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_URL');
 const commerceTokenFile = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_TOKEN_FILE');
 const commerce = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development', EIGOS_ACTION_SANDBOX: commerceUrl ? 'true' : 'false', EIGOS_COMMERCE_SANDBOX_URL: commerceUrl, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: commerceTokenFile });
+const participant = participantDeploymentSettings(process.env, parseEnv(oldSettings), join(runtime, 'tasks.sqlite'));
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
 const runtimePath = [...new Set([dirname(process.execPath), dirname(codex), dirname(passport), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])].join(':');
 const scan = path => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? scan(join(path, e.name)) : e.name.endsWith('.ts') ? [join(path, e.name)] : []);
-const sourceFiles = [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort();
-const ontologyFiles = readdirSync(join(root, 'ontology')).filter(name => name.endsWith('.json')).sort().map(name => {
+const sourceFiles = [...scan(join(sourceRoot, 'apps')), ...scan(join(sourceRoot, 'packages'))].sort();
+const ontologyFiles = readdirSync(join(sourceRoot, 'ontology')).filter(name => name.endsWith('.json')).sort().map(name => {
   const path = 'dist/ontology/' + name;
-  if (!existsSync(join(root, path)) || !readFileSync(join(root, path)).equals(readFileSync(join(root, 'ontology', name)))) throw new Error('Run npm run ontology:sync before updating the runtime');
+  if (!existsSync(join(sourceRoot, path)) || !readFileSync(join(sourceRoot, path)).equals(readFileSync(join(sourceRoot, 'ontology', name)))) throw new Error('Run npm run ontology:sync before updating the runtime');
   return path;
 });
-const files = [...sourceFiles.map(path => 'dist/' + path.slice(root.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
+const files = [...sourceFiles.map(path => 'dist/' + path.slice(sourceRoot.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
 const fingerprint = createHash('sha256');
-for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(root, path))); }
+for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(sourceRoot, path))); }
 const buildDigest = fingerprint.digest('hex');
 const release = join(runtime, 'releases', buildDigest);
 if (!existsSync(release)) {
   mkdirSync(release, { recursive: true, mode: 0o700 });
-  for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(root, path), join(release, path)); }
+  for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(sourceRoot, path), join(release, path)); }
 }
-for (const path of files) if (!existsSync(join(release,path)) || !readFileSync(join(release,path)).equals(readFileSync(join(root,path)))) throw new Error('Immutable release does not match the current build');
-const dependencyHash = createHash('sha256').update(readFileSync(join(root, 'package-lock.json'))).digest('hex');
+for (const path of files) if (!existsSync(join(release,path)) || !readFileSync(join(release,path)).equals(readFileSync(join(sourceRoot,path)))) throw new Error('Immutable release does not match the current build');
+const dependencyHash = createHash('sha256').update(readFileSync(join(sourceRoot, 'package-lock.json'))).digest('hex');
 const dependencyRoot = join(runtime, 'dependencies', dependencyHash);
-if (!existsSync(dependencyRoot)) { mkdirSync(dirname(dependencyRoot), { recursive: true }); cpSync(join(root, 'node_modules'), dependencyRoot, { recursive: true }); }
+if (!existsSync(dependencyRoot)) { mkdirSync(dirname(dependencyRoot), { recursive: true }); cpSync(join(sourceRoot, 'node_modules'), dependencyRoot, { recursive: true }); }
 if (!existsSync(join(release, 'node_modules'))) symlinkSync(dependencyRoot, join(release, 'node_modules'));
 const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430', 'PUBLIC_URL=http://127.0.0.1:3430',
   `DATABASE_PATH=${join(runtime, 'tasks.sqlite')}`, 'EIGOS_AUTH_MODE=development', `EIGOS_DEV_TOKEN=${token}`,
@@ -97,6 +105,7 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
   ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, 'EIGOS_DIDI_ORDERS_ENABLED=false', `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
   ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
+  ...Object.entries(participant).map(([key, value]) => `${key}=${value}`),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');
 const plist = `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>
@@ -115,7 +124,10 @@ const ready = async () => {
     try {
       const health = await fetch('http://127.0.0.1:3430/health', { signal: AbortSignal.timeout(500) }).then(r=>r.json());
       const card = await fetch('http://127.0.0.1:3430/.well-known/agent-card.json', { signal: AbortSignal.timeout(500) }).then(r=>r.json());
-      if (health.releaseDigest === buildDigest && card.skills.length === 1 && card.skills[0].id === 'eigos.delegate') return;
+      const browser = participant.EIGOS_FREE_BOOKING_BROWSER_CONFIG
+        ? await fetch(participant.EIGOS_FREE_BOOKING_BRIDGE_URL + '/health', { signal: AbortSignal.timeout(500) }).then(r => r.json()) : undefined;
+      if (health.releaseDigest === buildDigest && health.backend === BACKEND_VERSION && card.skills.length === 1 && card.skills[0].id === 'eigos.delegate'
+        && (!participant.EIGOS_FREE_BOOKING_BROWSER_CONFIG || browser?.releaseDigest === buildDigest && browser.backend === BACKEND_VERSION && browser.operatorRequired === true)) return;
     } catch {} await new Promise(r=>setTimeout(r,200));
   } throw new Error('New ontology runtime did not become ready; inspect the private log');
 };
@@ -131,19 +143,19 @@ try {
     execFileSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { stdio: 'pipe' });
   }
   await ready();
-  const client = join(root, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
+  const client = join(sourceRoot, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
   const peerClient = join(runtime, 'eigos_a2a.py'); cpSync(client, peerClient);
   for (const [profile, credential, executable] of [[join(directory,'profile.json'),join(directory,'token'),client], [join(runtime,'profile.json'),join(runtime,'client-token'),peerClient]]) {
     privateWrite(credential, token + '\n');
     execFileSync('python3', [executable, '--config', profile, 'configure', '--card-url','http://127.0.0.1:3430/.well-known/agent-card.json','--token-file',credential,'--allow-loopback-http','--allow-service','eigos.delegate','--default-service','eigos.delegate'], { stdio:'pipe' });
   }
   const peerDirectory = join(runtime, 'peer'); mkdirSync(peerDirectory, { recursive: true, mode: 0o700 });
-  const installedSkill = readFileSync(join(root,'integrations/grok/eigos-delegate/SKILL.md'),'utf8') + `\n## Saved connection for this user\n\n- Run on the user's connected Mac, not the cloud computer.\n- Client: ${peerClient}\n- Profile: ${join(runtime,'profile.json')}\n- Command: python3 ${peerClient} --config ${join(runtime,'profile.json')} <command>\n- Save task inputs and receipts in ${peerDirectory}.\n- Default and allowed service: eigos.delegate. Credential values are private; never read or print client-token or server.env.\n- Parcel quotation is read-only: let EIGOS read saved addresses, present choices and continue the same task. Do not find or inject address IDs yourself.\n- launchd ${label} keeps Gateway/Worker available while the Mac is available.\n`;
+  const installedSkill = readFileSync(join(sourceRoot,'integrations/grok/eigos-delegate/SKILL.md'),'utf8') + `\n## Saved connection for this user\n\n- Run on the user's connected Mac, not the cloud computer.\n- Client: ${peerClient}\n- Profile: ${join(runtime,'profile.json')}\n- Command: python3 ${peerClient} --config ${join(runtime,'profile.json')} <command>\n- Save task inputs and receipts in ${peerDirectory}.\n- Default and allowed service: eigos.delegate. Credential values are private; never read or print client-token or server.env.\n- Parcel quotation is read-only: let EIGOS read saved addresses, present choices and continue the same task. Do not find or inject address IDs yourself.\n- launchd ${label} keeps Gateway/Worker available while the Mac is available.\n`;
   privateWrite(join(runtime,'skill-install.md'), installedSkill); privateWrite(join(directory,'skill-install.md'), installedSkill);
   privateWrite(ownership, JSON.stringify({sourceRoot:root})+'\n');
-  const sourceCommit = execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-  const dirty = !!execFileSync('git',['status','--porcelain'],{cwd:root,encoding:'utf8'}).trim();
-  privateWrite(join(runtime,'release.json'),JSON.stringify({buildDigest,release,sourceCommit,sourceTreeDirty:dirty,files,updatedAt:new Date().toISOString()})+'\n');
+  const sourceCommit = execFileSync('git',['rev-parse','HEAD'],{cwd:sourceRoot,encoding:'utf8'}).trim();
+  const dirty = !!execFileSync('git',['status','--porcelain'],{cwd:sourceRoot,encoding:'utf8'}).trim();
+  privateWrite(join(runtime,'release.json'),JSON.stringify({buildDigest,release,sourceRoot,sourceCommit,sourceTreeDirty:dirty,files,updatedAt:new Date().toISOString()})+'\n');
   privateWrite(join(directory,'runtime-location.json'),JSON.stringify({runtime,release,buildDigest,database:join(runtime,'tasks.sqlite'),audit:join(runtime,'http.jsonl')})+'\n');
   // Retired executable snapshots are recovery material, never a second active mode.
   for (const name of ['dist','scripts']) if (existsSync(join(runtime,name))) renameSync(join(runtime,name), join(backup,'retired-'+name));

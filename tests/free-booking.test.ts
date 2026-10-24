@@ -7,6 +7,19 @@ import { readConfig } from '../packages/core/config.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { registrationInputSchema } from '../packages/ontology/free-booking.js';
 import type { Job } from '../packages/core/domain.js';
+import { initialActionIds, bindInitialSelection } from '../packages/coordinator/initial-selection.js';
+import { interpretation } from './backend-fixture.js';
+
+test('the retained initial MCP read optimization cannot draft participant operations before their source and exact grant', async () => {
+  const f = participantFixture(); try {
+    f.submit(); const job = await f.run(), program = f.catalog.agentProgram({ id: 'booking.participant.free', version: '1' }, owner)!;
+    assert.deepEqual(initialActionIds(f.store.ontology, program), []);
+    for (const action of ['InspectRegistrationPage', 'SubmitFreeRegistrationSandbox']) {
+      assert.throws(() => bindInitialSelection(f.store.ontology, program, job.delegation!.agent!.scope, { ...interpretation(job.delegation!.request, program.ref.id, f.input), capabilityRef: program.ref, initialSteps: [{ id: 'unapproved', action, argumentsJson: '{}', scopeInputs: ['scope'] }] }), /read-only MCP actions/);
+    }
+    assert.equal(f.counters().submits, 0);
+  } finally { f.store.close(); }
+});
 
 for (const kind of ['event_registration', 'appointment'] as const) test(`${kind}: proven free participant reservation completes after an independent read without payment`, async () => {
   const f = participantFixture({ kind });

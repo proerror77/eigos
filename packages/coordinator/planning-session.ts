@@ -11,13 +11,22 @@ import { assessConditions, hardConditionsPass } from './conditions.js';
 import { serviceDomains } from '../ontology/service-domains.js';
 import { businessConditionSchema } from '../ontology/business-model.js';
 import type { DomainAssessment } from '../ontology/domain-rules.js';
+import { compactSchema } from './prompt-data.js';
 
-const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
+const describeSchema = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), functions: z.array(z.string().min(1).max(80)).max(20).optional().describe('Exact registered function IDs; omit to discover all function definitions'), includeLinks: z.boolean().optional().describe('Default true; false omits relationship navigation, which can be retrieved separately when needed'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
 export const planningToolSchemas = { describe_ontology: describeSchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
-export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: z.toJSONSchema(schema), readOnly: true, executionAllowed: false }));
+export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(schema)), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
+const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
+export function contextDefinitionInput(graph: OntologyObjectStore, actions: string[]) {
+  const functions = [...new Set(actions.flatMap(id => {
+    const action = graph.model.action(id);
+    return action.read?.mcp ? [...action.read.mcp.requires.map(dependency => dependency.evaluate), ...(action.read.module ? [action.read.module.completion.evaluate] : [])] : [];
+  }))];
+  return { search: 'ServiceRequest', limit: 1, actions: actions.slice(0, 8), functions: functions.slice(0, 20), includeLinks: false };
+}
 
 function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
   if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
@@ -30,8 +39,11 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
 }
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
   const { digest: expected, ...body } = snapshot;
-  if (!['model_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
-  if (snapshot.mode === 'model_queries' && (!snapshot.reads.some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !snapshot.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new DomainError('CONFLICT', 'A model plan requires actual definition and object reads');
+  if (!['model_queries', 'worker_context', 'worker_context_with_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
+  if (snapshot.mode !== 'trusted_template' && (!snapshot.reads.some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !snapshot.reads.some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new DomainError('CONFLICT', 'A model plan requires actual definition and object reads');
+  const contextReads = snapshot.reads.filter(r => r.origin === 'worker_context').length;
+  if (snapshot.reads.some(read => read.origin !== undefined && !['worker_context', 'model'].includes(read.origin))) throw new DomainError('CONFLICT', 'Unrecognized planning read origin');
+  if (snapshot.mode === 'worker_context' && contextReads !== snapshot.reads.length || snapshot.mode === 'worker_context_with_queries' && (!contextReads || contextReads === snapshot.reads.length) || snapshot.mode === 'model_queries' && contextReads) throw new DomainError('CONFLICT', 'Planning read attribution differs from its declared mode');
   if (!hardConditionsPass(snapshot.conditionChecks, 'precondition') || (request.conditions ?? []).some(c => c.phase === 'precondition' && c.strength === 'hard' && !snapshot.conditionChecks.some(r => r.conditionId === c.id && r.result === 'pass'))) throw new DomainError('CONFLICT', 'Hard business preconditions are unresolved');
   if (!fresh) return;
   for (const old of snapshot.objects) {
@@ -55,9 +67,51 @@ export class OntologyPlanningSession {
   private failures = new Map<string, number>();
   constructor(readonly graph: OntologyObjectStore, private owner: string, readonly request: ServiceRequest,
     private candidates: ResolvedCandidate[] = [], private active: () => void = () => {}, private onRead: (receipt: PlanningReadReceipt) => void = () => {}, private readScope: 'owner' | 'request' = 'owner', private boundRefs: ObjectRef[] = []) {}
-  catalog() { return { model: this.graph.model.ref, tools: planningToolCatalog(), functions: this.graph.model.functionsFor(['ServiceRequest', ...this.boundRefs.map(ref => ref.type)]), functionNavigationOnly: true, readScope: this.readScope, scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.', maxToolCalls: 20, maxResultBytes: 200000 }; }
+  catalog() {
+    return {
+      model: this.graph.model.ref, tools: planningToolCatalog(),
+      functions: this.graph.model.functionsFor(['ServiceRequest', ...this.boundRefs.map(ref => ref.type)]), functionNavigationOnly: true,
+      boundObjects: this.boundRefs.map(ref => ({ ref, navigationOnly: true, readThisDecision: this.seen.has(key(ref)) })),
+      actionInputReadPolicy: {
+        appliesTo: 'Every direct ObjectRef value in the selected execute action arguments, including scope references',
+        requiredEvidence: 'Object snapshot from actual ontology reads in THIS decision; use query_ontology for references supplied only in context/history',
+        navigationAndHistoricalReadsSatisfy: false, missingReferencesQueriedAutomatically: false,
+      },
+      readScope: this.readScope,
+      scopeNote: this.readScope === 'request' ? 'Only the current ServiceRequest, its direct relationships, explicitly bound program objects and exact objects already retrieved through this request. Unrelated owner data is unavailable in this session.' : 'Owned business objects only; restricted properties remain unavailable.',
+      maxToolCalls: 20, maxResultBytes: 200000,
+    };
+  }
   receipts() { return structuredClone(this.reads); }
   retrievedRefs() { return [...this.seen.values()].map(o => o.ref); }
+  /** Fresh task-local context only. Definitions determine pure source checks;
+   * no adapter, source transport, business action or decision is invoked here. */
+  prepareContext(options: { actions?: string[]; refs?: ObjectRef[] } = {}) {
+    this.active();
+    const startedAt = new Date().toISOString();
+    if (this.reads.length) throw new DomainError('CONFLICT', 'Worker context must precede model queries in this decision');
+    const definitionInput = contextDefinitionInput(this.graph, options.actions ?? []), functionIds = definitionInput.functions;
+    const entries: { call: { tool: string; argumentsJson: string }; result: unknown; receiptId: string }[] = [];
+    const read = (tool: string, input: unknown) => {
+      const remaining = contextLimits.bytes - this.bytes;
+      if (entries.length >= contextLimits.reads || remaining < 1000) return false;
+      const result = this.call(tool, input, { origin: 'worker_context', maxOutputBytes: Math.min(contextLimits.resultBytes, remaining) });
+      const receipt = this.reads.at(-1)!;
+      entries.push({ call: { tool, argumentsJson: JSON.stringify(input) }, result, receiptId: receipt.id });
+      return receipt.status === 'ok';
+    };
+    read('describe_ontology', definitionInput);
+    const refs = [{ type: 'ServiceRequest', id: this.request.id }, ...(options.refs ?? [])]
+      .filter((ref, index, all) => all.findIndex(value => key(value) === key(ref)) === index).slice(0, contextLimits.refs);
+    const queried: ObjectRef[] = [];
+    for (const ref of refs) if (read('query_ontology', { object: ref })) queried.push(ref);
+    for (const ref of queried) for (const id of functionIds) {
+      if (this.graph.model.function(id).inputTypes.some(type => this.graph.model.implements(ref.type, type))) read('evaluate_ontology', { function: id, object: ref });
+    }
+    this.active();
+    const metadata = { model: this.graph.model.ref, requestRevision: this.request.revision };
+    return { entries, ...metadata, receiptIds: entries.map(entry => entry.receiptId), startedAt, preparedAt: new Date().toISOString(), digest: digest({ ...metadata, reads: this.receipts() }) };
+  }
   private remember(ref: ObjectRef, expectedRevision?: number) {
     const next = snapshotObject(this.graph, this.owner, ref, this.request), old = this.seen.get(key(ref));
     if (expectedRevision !== undefined && next.revision !== expectedRevision) throw new DomainError('CONFLICT', 'Object changed after its query result');
@@ -70,15 +124,16 @@ export class OntologyPlanningSession {
     if (allowBoundQuery && this.boundRefs.some(bound => key(bound) === key(ref))) return;
     if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
   }
-  call(tool: string, input: unknown): unknown {
+  call(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }): unknown {
     this.active();
     if (this.reads.length >= 20) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
     const before = new Set(this.seen.keys());
+    const priorObjects = options ? new Map(this.seen) : undefined;
     const datasetRevision = this.graph.revision(this.owner);
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
     try {
       if (tool === 'describe_ontology') {
-        const { includeSchemas = false, includeConditionSchema = false, actions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
+        const { includeSchemas = false, includeLinks = true, includeConditionSchema = false, actions, functions, ...args } = describeSchema.parse(input), result = this.graph.model.describe(args);
         const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;
         const describedActions = selected.map(action => {
           if (includeSchemas || actions) return action;
@@ -89,10 +144,11 @@ export class OntologyPlanningSession {
           };
           return { ...summary, ...(read ? { read: compact(read) } : {}), ...(operation ? { operation: compact(operation) } : {}) };
         });
-        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: includeSchemas ? result.types : result.types.map(type => {
-          const value = type as { properties: Record<string, Record<string, unknown>> };
-          return { ...value, properties: Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
-        }), actions: describedActions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
+        output = { ...result, schemaDetail: includeSchemas ? 'full' : 'summary', types: result.types.map(type => {
+          const value = type as { properties: Record<string, Record<string, unknown>>; links?: unknown };
+          const { links, ...definition } = value;
+          return { ...definition, ...(includeLinks ? { links } : { linksAvailable: true }), properties: includeSchemas ? value.properties : Object.fromEntries(Object.entries(value.properties).map(([name, p]) => { const { schema: _schema, ...metadata } = p; return [name, metadata]; })) };
+        }), actions: describedActions, functions: functions ? functions.map(id => this.graph.model.function(id)) : result.functions, ...(includeConditionSchema ? { conditionSchema: z.toJSONSchema(businessConditionSchema) } : {}) };
       }
       else if (tool === 'query_ontology') {
         let query = objectQuerySchema.parse(input);
@@ -180,10 +236,15 @@ export class OntologyPlanningSession {
       const failure = digest({ tool, input, output }), count = (this.failures.get(failure) ?? 0) + 1; this.failures.set(failure, count);
       if (count >= 3) throw new DomainError('CONFLICT', 'Three identical planning read failures; stop and report the unresolved input');
     }
+    if (options && Buffer.byteLength(JSON.stringify(output)) > options.maxOutputBytes) {
+      this.seen = priorObjects!;
+      status = 'rejected'; output = { error: 'CONTEXT_NOT_INCLUDED', message: 'This result exceeds the bounded initial Worker context. Request a narrower definition or object selection through the primitive ontology tools.' };
+    }
+    if (options && status === 'rejected') this.seen = priorObjects!;
     this.bytes += Buffer.byteLength(JSON.stringify(output));
     if (this.bytes > 200000) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
     this.active();
-    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v) });
+    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), outputBytes: Buffer.byteLength(JSON.stringify(output)), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v), origin: options?.origin ?? 'model' });
     this.onRead(this.reads.at(-1)!);
     return output;
   }
@@ -191,7 +252,9 @@ export class OntologyPlanningSession {
     this.active();
     const conditionChecks = assessConditions(this.graph, this.owner, this.request, candidate?.ontologySubject);
     for (const check of conditionChecks) for (const ref of [...(check.subject ? [check.subject] : []), ...check.evidenceRefs]) this.remember(ref);
-    const result = planningSnapshot({ mode: 'model_queries', model: this.graph.model.ref, requestRevision: this.request.revision, conditionsDigest: digest(this.request.conditions ?? []),
+    const contextReads = this.reads.filter(read => read.origin === 'worker_context').length;
+    const mode = contextReads ? contextReads === this.reads.length ? 'worker_context' : 'worker_context_with_queries' : 'model_queries';
+    const result = planningSnapshot({ mode, model: this.graph.model.ref, requestRevision: this.request.revision, conditionsDigest: digest(this.request.conditions ?? []),
       reads: this.receipts(), objects: [...this.seen.values()], conditionChecks, actionProposals: structuredClone(this.proposals) });
     validatePlanningSnapshot(this.graph, this.owner, this.request, result, true);
     return result;

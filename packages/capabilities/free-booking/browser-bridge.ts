@@ -64,6 +64,9 @@ export async function createParticipantBrowserBridge(options: {
     const send = (value: unknown, status = 200) => { const raw = JSON.stringify(value); res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-eigos-participant-signature': createHmac('sha256', options.workerToken).update(raw).digest('hex') }); res.end(raw); };
     try {
       if (req.headers.origin) reject('Browser-origin requests are not accepted', 403);
+      if (url.pathname === '/health' && req.method === 'GET') {
+        send({ status: 'ok', backend: BACKEND_VERSION, releaseDigest: process.env.EIGOS_RELEASE_DIGEST, operatorRequired: true, unattended: false }); return;
+      }
       if (url.pathname.startsWith('/operator/')) {
         if (req.headers.authorization !== `Bearer ${options.operatorToken}`) reject('Operator authentication required', 403);
         if (url.pathname === '/operator/next' && req.method === 'GET') {

@@ -18,6 +18,8 @@ export interface ObjectSnapshot { ref: ObjectRef; revision: number; propertiesDi
 export interface PlanningReadReceipt {
   id: string; at: string; tool: string; inputDigest: string; outputDigest: string;
   datasetRevision: number; status: 'ok' | 'rejected'; objects: ObjectSnapshot[];
+  origin?: 'model' | 'worker_context';
+  outputBytes?: number;
 }
 export interface DecisionActionProposal {
   action: string; definitionDigest: string; inputs: Record<string, { object: ObjectRef; revision: number }>;
@@ -25,7 +27,7 @@ export interface DecisionActionProposal {
   execution: 'proposal_only'; executionAllowed: false;
 }
 export interface PlanningSnapshot {
-  mode: 'model_queries' | 'trusted_template';
+  mode: 'model_queries' | 'worker_context' | 'worker_context_with_queries' | 'trusted_template';
   model: { id: string; version: string; digest: string };
   requestRevision: number; conditionsDigest: string;
   reads: PlanningReadReceipt[]; objects: ObjectSnapshot[];

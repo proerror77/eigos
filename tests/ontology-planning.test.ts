@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { z } from 'zod';
+import { expandPromptData } from '../packages/coordinator/prompt-data.js';
 import { DatabaseSync } from 'node:sqlite';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { OntologyPlanningSession, validatePlanningSnapshot } from '../packages/coordinator/planning-session.js';
@@ -54,11 +55,28 @@ test('Bound reference function navigation comes from ontology metadata and perfo
   try {
     const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [{ type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }]);
     const catalog = session.catalog();
+    assert.deepEqual(catalog.boundObjects, [{ ref: { type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }, navigationOnly: true, readThisDecision: false }]);
+    assert.equal(catalog.actionInputReadPolicy.navigationAndHistoricalReadsSatisfy, false);
+    assert.equal(catalog.actionInputReadPolicy.missingReferencesQueriedAutomatically, false);
     assert(catalog.functionNavigationOnly); assert.deepEqual(catalog.functions.find(f => f.id === 'rideEstimateStatus'), f.graph.model.function('rideEstimateStatus'));
     assert.equal(session.receipts().length, 0); assert.deepEqual(session.retrievedRefs(), []);
     assert.throws(() => session.finish(), /actual definition and object reads/);
   } finally { f.db.close(); }
 });
+test('Bound reference navigation changes its read status only after this decision actually queries it', () => {
+  const f = fixture();
+  try {
+    const ref = f.batch.objects.find(object => object.ref.type === 'DeliveryQuote')!.ref;
+    const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [ref]);
+    assert.equal(session.catalog().boundObjects[0]!.readThisDecision, false); assert.equal(session.receipts().length, 0);
+    session.call('query_ontology', { object: ref });
+    assert.equal(session.catalog().boundObjects[0]!.readThisDecision, true);
+    assert.deepEqual(session.receipts().map(read => [read.tool, read.status]), [['query_ontology', 'ok']]);
+    const next = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [ref]);
+    assert.equal(next.catalog().boundObjects[0]!.readThisDecision, false); assert.equal(next.receipts().length, 0);
+  } finally { f.db.close(); }
+});
+
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
 
 test('N2 grounds typed conditions without weakening source quantities, services, budgets or prior conditions', () => {
@@ -160,15 +178,15 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
   const prompts: string[] = [];
   const model = { runStructured: async (prompt: string) => {
     prompts.push(prompt);
-    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request: ServiceRequest; conversation: unknown[]; finalSchema: { properties: Record<string, unknown> } };
-    const parts = prompt.split('\n\n').flatMap(part => { try { return [JSON.parse(part)]; } catch { return []; } });
+    const packet = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!));
+    const parts = [packet.task, ...prompt.split('\n\n').flatMap(part => { try { return [JSON.parse(part)]; } catch { return []; } })].filter(Boolean);
     const request = parts.find(p => p?.originalGoal) ?? parts.find(p => p?.request)?.request;
     const output = !packet.conversation.length ? { kind: 'read', calls: [
       { tool: 'describe_ontology', argumentsJson: JSON.stringify({ search: 'ServiceRequest', limit: 1 }) },
       { tool: 'query_ontology', argumentsJson: JSON.stringify({ type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: request.id }] }) },
     ], finalJson: '' } : { kind: 'final', calls: [], finalJson: packet.finalSchema.properties.requirementsJson
       ? JSON.stringify(interpretation(request))
-      : JSON.stringify(proposal(prompt.split('\n\n').map(part => { try { return JSON.parse(part); } catch { return undefined; } }).find(p => p?.resolution && p?.capability) as PlanningContext)) };
+      : JSON.stringify(proposal(parts.find(p => p?.resolution && p?.capability) as PlanningContext)) };
     return { output, evidence: evidence() };
   } };
   const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
@@ -212,7 +230,7 @@ test('Conversation reuse sends only new host results and still records every res
     const done = await reasonWithOntology(model, 'Synthetic stable application context', {}, f.session, new AbortController().signal, () => { records++; });
     assert.deepEqual(done.output, { answer: 'Source read' }); assert.equal(opened, 1); assert.equal(closed, 1); assert.equal(records, 2);
     assert(prompts[0]!.includes('Synthetic stable application context')); assert(!prompts[1]!.includes('Synthetic stable application context'));
-    const first = JSON.parse(prompts[0]!.split('\n\n').at(-1)!), next = JSON.parse(prompts[1]!.split('\n\n').at(-1)!);
+    const first = expandPromptData(JSON.parse(prompts[0]!.split('\n\n').at(-1)!)), next = expandPromptData(JSON.parse(prompts[1]!.split('\n\n').at(-1)!));
     assert(first.interface && first.finalSchema); assert.equal(next.interface, undefined); assert.equal(next.finalSchema, undefined); assert.equal(next.conversation.length, 2);
     assert.equal(next.budget.modelResponse, 2); assert.equal(f.session.finish().mode, 'model_queries'); assert.equal(f.session.receipts().length, 2);
   } finally { f.db.close(); }

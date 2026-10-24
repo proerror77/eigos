@@ -10,6 +10,7 @@ import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { createParticipantBrowserBridge } from '../packages/capabilities/free-booking/browser-bridge.js';
 import { participantFixture } from './fixtures/free-booking.js';
 import { backend, owner, principal } from './backend-fixture.js';
+import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 
 test('browser operator credentials are separate and task cancellation blocks a queued browser dispatch', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-participant-bridge-')), taskPath = join(directory, 'tasks.sqlite'), store = new JobStore(taskPath), modelFixture = participantFixture();
@@ -17,6 +18,8 @@ test('browser operator credentials are separate and task cancellation blocks a q
   writeFileSync(tokenFile, workerToken, { mode: 0o600 });
   const bridge = await createParticipantBrowserBridge({ databasePath: join(directory, 'bridge.sqlite'), taskDatabasePath: taskPath, evidenceDirectory: join(directory, 'evidence'), bindingId: 'synthetic-local-protocol', attendeeRef: modelFixture.source.attendeeRef, workerToken, operatorToken });
   try {
+    const health = await fetch(bridge.endpoint + '/health').then(r => r.json());
+    assert.equal(health.backend, BACKEND_VERSION); assert.equal(health.operatorRequired, true); assert.equal(health.unattended, false);
     const catalog = createExecutionCatalog({ participantBooking: { endpoint: bridge.endpoint, tokenFile, bindingId: 'synthetic-local-protocol', attendeeRef: modelFixture.source.attendeeRef } }), b = backend(catalog, modelFixture.model, store);
     const sent = b.submit({ goal: 'Local bridge protocol fixture only', executionEnvironment: 'live' });
     await b.run(); await b.run();

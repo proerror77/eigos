@@ -1,6 +1,6 @@
 # 免费活动报名、通用预约与可选支付
 
-2026-10-23。运行契约 `ontology-execution-v16`，业务模型 `eigos.business@16`。
+2026-10-23 初始实现使用 `ontology-execution-v16`、`eigos.business@16`。2026-10-24 与原常驻 v18 的规划及 PA 客户端更新整合，当前执行契约为 `ontology-execution-v19`，业务模型仍为 `eigos.business@16`；历史验证保留其原运行身份。
 
 ## 交付与接入范围
 
@@ -48,6 +48,8 @@ Gateway 和 Worker 使用相同的四项显式配置：
 - `EIGOS_FREE_BOOKING_ATTENDEE_SHA256`：已登录邮箱规范化后的 SHA-256；原邮箱不进入本体或协议结果。
 
 未配置时不发布该能力。需要 development 身份、非生产和 loopback；来源桥接另有独立操作代理令牌，模型不能提交浏览器观察结果。核心通用预约 URL 合同为不含凭据的 HTTPS 链接；Luma 连接器另外检查 Luma 域名及公开活动路径，不跟随任意来源 URL。
+
+常驻管理可使用 `EIGOS_FREE_BOOKING_BROWSER_CONFIG` 固定私有 `browser.json`，由 `setup:pa` 校验并保留来源绑定，并由同一启动器管理独立浏览器队列进程。任务库必须准确指向该常驻实例，来源队列必须独立；部署不导入旧临时任务或重报活动。配置、启停和回读规则见 [常驻部署说明](gateway-worker.md#免费报名与预约来源)。
 
 构建后用 `scripts/free-booking-browser.mjs setup /absolute/private/session` 初始化专用私有会话。账号邮箱由 `EIGOS_PARTICIPANT_EMAIL` 环境变量提供，只保存其摘要。生成的会话含专用任务库、来源队列、两个私有令牌、`gateway.env` 与浏览器证据目录，须放在忽略目录或仓库外。
 
