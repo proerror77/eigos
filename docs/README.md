@@ -22,6 +22,7 @@
 
 ## 设计与项目方向
 
+- [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；S0 已有离线检查工具，运行时策略尚未启用。
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
 - [Ontology 规格](ontology-spec-v0.2-2026-10-18.md)。
 - [实施阶段与记录](backend-implementation-goals.md)。

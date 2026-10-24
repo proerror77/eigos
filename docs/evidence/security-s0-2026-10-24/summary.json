@@ -1,0 +1,132 @@
+{
+  "stage": "S0",
+  "sourceBaseline": "6abdb13",
+  "enforcement": "not_installed",
+  "model": {
+    "id": "eigos.business",
+    "version": "16",
+    "digest": "7b258742833342b3f0653c8ca762ebeb36501da8ce861a79d2721fdb9f1efd2e"
+  },
+  "contract": "eigos.security.v1",
+  "policyVersion": "eigos.security-baseline.v1",
+  "inventory": {
+    "passed": true,
+    "counts": {
+      "objectTypes": 103,
+      "interfaces": 3,
+      "links": 256,
+      "actions": 52,
+      "functions": 34,
+      "properties": 823,
+      "nestedPaths": 3625,
+      "surfaces": 30
+    },
+    "propertyPolicies": {
+      "task_private": 557,
+      "task_sensitive": 178,
+      "internal_only": 82,
+      "derived_from_inputs": 6
+    },
+    "issues": []
+  },
+  "capture": {
+    "method": "sqlite_online_backup_read_only_source",
+    "crossDatabaseAtomicSnapshot": false,
+    "snapshots": [
+      {
+        "snapshot": "tasks-snapshot.sqlite",
+        "startedAt": "2026-10-24T06:17:14.597872+00:00",
+        "completedAt": "2026-10-24T06:17:14.632177+00:00",
+        "sha256": "b01b24d4302c5845eab07db8f28cd04f82e94e1c1d20a6868ab20bd9789bff4d"
+      },
+      {
+        "snapshot": "members-snapshot.sqlite",
+        "startedAt": "2026-10-24T06:17:14.635468+00:00",
+        "completedAt": "2026-10-24T06:17:14.637425+00:00",
+        "sha256": "c5319ddb85e1e2f8985d5efb65041af32dcf52fb3ae3fe902684d3e2c4ade440"
+      }
+    ]
+  },
+  "snapshotHashesUnchanged": true,
+  "migration": {
+    "stage": "S0",
+    "version": "eigos.security-baseline.v1",
+    "mode": "read_only_snapshot_audit",
+    "writes": 0,
+    "permissionsGranted": 0,
+    "migrationReady": false,
+    "sourceProvenanceVerified": false,
+    "crossDatabaseAtomicSnapshot": false,
+    "membership": {
+      "supplied": true,
+      "members": 0,
+      "activeMembers": 0,
+      "installations": 0,
+      "activeInstallations": 0,
+      "revokedInstallations": 0,
+      "unboundInstallations": 0,
+      "blockedConnections": 0,
+      "invalidRecords": 0
+    },
+    "links": {
+      "total": 895,
+      "requiresReview": 367,
+      "reasons": {
+        "endpoint_not_currently_validated": 367
+      }
+    },
+    "existingPlanGrants": 3,
+    "outputReview": {
+      "cachedResponses": 46,
+      "artifacts": 28,
+      "modelHistories": 31,
+      "actionIntents": 89,
+      "policy": "private_until_reprojected",
+      "filesystemArtifactsScanned": false
+    },
+    "requiredNextSteps": [
+      "review_candidate_source_evidence",
+      "bind_installation_explicitly",
+      "issue_scoped_grants_after_approval",
+      "reproject_outputs",
+      "enforce_before_cutover"
+    ],
+    "tasks": {
+      "total": 39,
+      "dispositions": {
+        "legacy_read_only": 29,
+        "unrecognized_task_contract": 6,
+        "requires_new_installation_grant": 4
+      }
+    },
+    "objects": {
+      "total": 467,
+      "dispositions": {
+        "stale_or_missing_task_evidence": 209,
+        "unmapped_requires_explicit_binding": 123,
+        "definition_mismatch": 123,
+        "candidate_requires_evidence_review": 12
+      }
+    }
+  },
+  "baselineDigest": "7be390bccdf9ee311cec9b9ac930efe2c649011f3c7e4a4e438a65a5e3993365",
+  "localValidation": {
+    "typecheck": "passed",
+    "tests": {
+      "passed": 601,
+      "failed": 0
+    },
+    "finalS0FocusedTests": {
+      "passed": 8,
+      "failed": 0
+    },
+    "build": "passed",
+    "processE2E": {
+      "passed": 8,
+      "failed": 0
+    },
+    "inventoryCheck": "passed",
+    "diffCheck": "passed",
+    "deployment": "not_performed"
+  }
+}

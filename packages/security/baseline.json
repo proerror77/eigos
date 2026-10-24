@@ -1,0 +1,1726 @@
+{
+  "version": "eigos.security-baseline.v1",
+  "enforcement": "not_installed",
+  "model": {
+    "id": "eigos.business",
+    "version": "16",
+    "digest": "7b258742833342b3f0653c8ca762ebeb36501da8ce861a79d2721fdb9f1efd2e"
+  },
+  "types": {
+    "ServiceRequest": {
+      "fingerprint": "f316a7705aedeae1916494f5fce192ccee10a4b1591e0f431a96f82483cbe33a",
+      "fields": {
+        "requestId": "task_private",
+        "displayTitle": "task_private",
+        "originalGoal": "task_sensitive",
+        "revision": "task_private",
+        "requestedOutcome": "task_sensitive",
+        "conditions": "task_sensitive",
+        "progress": "task_private",
+        "projectionState": "task_private",
+        "createdAt": "task_private"
+      }
+    },
+    "Proposal": {
+      "fingerprint": "88b23fb46ed2999fccd124f4d19f49cf149177445815dc31557958af393daca4",
+      "fields": {
+        "proposalId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "selectedAt": "task_private",
+        "termsVersion": "task_private",
+        "decisionReason": "task_sensitive"
+      }
+    },
+    "Authorization": {
+      "fingerprint": "c02183c1f1bdada06d536915736d2ee28d45e8dbd870e503bd91f2bb83a4954f",
+      "fields": {
+        "authorizationId": "task_private",
+        "displayTitle": "task_private",
+        "actor": "internal_only",
+        "allowedActions": "internal_only",
+        "dataScope": "internal_only",
+        "limits": "internal_only",
+        "expiresAt": "task_private",
+        "revoked": "task_private"
+      }
+    },
+    "OutcomeAssessment": {
+      "fingerprint": "afeae8e1b0c5c80c34056a1d7f97a092023828be0f263a394f29fff1b7d9331b",
+      "fields": {
+        "assessmentId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "judgment": "task_private",
+        "assessedAt": "task_private",
+        "criterionResults": "task_sensitive"
+      }
+    },
+    "Provider": {
+      "fingerprint": "168a7de6a5f1129e6f7e5b27e62b6fe6b7267529cc523744bb10cecf8283fea4",
+      "fields": {
+        "providerId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "verifiedIdentityRefs": "internal_only"
+      }
+    },
+    "Channel": {
+      "fingerprint": "d3eb84d4c858f11c66e3bb6b23d62a6bc484637e771064de819c2eef7edb0ac2",
+      "fields": {
+        "channelId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "accessScope": "task_sensitive",
+        "supportedOperationRefs": "task_sensitive"
+      }
+    },
+    "ChannelParticipation": {
+      "fingerprint": "564cf3600e425a7181c15debb6ea0e49023d2c690c0e4bb7afe67f7c1d6e0b6a",
+      "fields": {
+        "participationId": "task_private",
+        "displayTitle": "task_private",
+        "role": "task_private",
+        "validFrom": "task_private",
+        "validUntil": "task_private",
+        "verificationRef": "task_private"
+      }
+    },
+    "ServiceEngagement": {
+      "fingerprint": "029ca1d2e606db492d01141f89a20ad7fc625406d306d49878d8205987362e80",
+      "fields": {
+        "engagementId": "task_private",
+        "displayTitle": "task_private",
+        "progress": "task_private",
+        "startedAt": "task_private",
+        "waitingQuestion": "task_sensitive",
+        "remoteReference": "task_sensitive"
+      }
+    },
+    "Place": {
+      "fingerprint": "4cf8a3c8dcdda363c20d184b5e4a9de8a4aaf5b27c98c2860ecfc5a2f56539ac",
+      "fields": {
+        "placeId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "address": "task_sensitive",
+        "coordinates": "task_sensitive",
+        "coordinateUnit": "task_private",
+        "coordinateSystem": "task_sensitive"
+      }
+    },
+    "SavedAddress": {
+      "fingerprint": "6dfdd14fdb6bf4c0b24d1b941ae6c07f68cb893d52ca0b1c5e54522bb39d3ffc",
+      "fields": {
+        "savedAddressId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "label": "task_sensitive",
+        "address": "task_sensitive",
+        "contactInstructions": "internal_only",
+        "sourceReference": "internal_only"
+      }
+    },
+    "Parcel": {
+      "fingerprint": "578c3342efc026aa4719f54dd95d3042d193702f5156f995e23bd13be8a12ec1",
+      "fields": {
+        "parcelId": "task_private",
+        "displayTitle": "task_private",
+        "contentsCategory": "task_private",
+        "declaredWeight": "task_sensitive",
+        "declaredContents": "task_private"
+      }
+    },
+    "DeliveryRoute": {
+      "fingerprint": "905ec1717d7c3bf5dae535d2782ffd78a9cd778420580e3ab57c53248f48ade3",
+      "fields": {
+        "routeId": "task_private",
+        "displayTitle": "task_private",
+        "originSnapshot": "task_sensitive",
+        "destinationSnapshot": "task_sensitive",
+        "selectedAt": "task_private"
+      }
+    },
+    "DeliveryQuote": {
+      "fingerprint": "ba516a08ad6f8b0971255db9d59c9c66c3bae02a1636f137df367c3dc07cc47e",
+      "fields": {
+        "quoteId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "serviceLevel": "task_private",
+        "quotedWeight": "task_sensitive",
+        "requestRevision": "task_private",
+        "parcelRevision": "task_private",
+        "routeRevision": "task_private",
+        "estimatedArrival": "task_private",
+        "pricingTerms": "task_sensitive"
+      }
+    },
+    "ProductVariant": {
+      "fingerprint": "e377a9ab7ff22bb5583cd49c2bc3b3c067accc72441ad73ffbf11aafe5eb092e",
+      "fields": {
+        "variantId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "sourceProductRef": "task_sensitive",
+        "specification": "task_sensitive",
+        "specificationRevision": "task_private"
+      }
+    },
+    "ProductOffer": {
+      "fingerprint": "64587e8190e25b0fcea18fa515959cf3df56ed35c41907bad7de2f607e58a0fb",
+      "fields": {
+        "offerId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "offeredQuantity": "task_sensitive",
+        "pricingTerms": "task_sensitive",
+        "capacityObservationRef": "task_private",
+        "capacity": "task_private",
+        "deliveryDestination": "task_sensitive",
+        "estimatedArrival": "task_private",
+        "deliveryCommitment": "task_private",
+        "variantRevision": "task_private"
+      }
+    },
+    "Order": {
+      "fingerprint": "7ac9021971ba0537b683992229b7f6f3d28281181017b38467f8b132cb676c56",
+      "fields": {
+        "orderId": "task_private",
+        "displayTitle": "task_private",
+        "providerOrderReference": "task_sensitive",
+        "orderState": "task_private",
+        "createdAt": "task_private",
+        "total": "task_sensitive",
+        "fulfillmentState": "task_private",
+        "sourceStartedAt": "task_private"
+      }
+    },
+    "OrderLine": {
+      "fingerprint": "88aad58ce07d65d82cf35ab4d1003fb609bf8fad1ca84cd27ea5d1e54decb057",
+      "fields": {
+        "orderLineId": "task_private",
+        "displayTitle": "task_private",
+        "quantityOrdered": "task_sensitive",
+        "agreedSpecificationRef": "task_private",
+        "agreedPriceRef": "task_private",
+        "remainingQuantity": "derived_from_inputs"
+      }
+    },
+    "Shipment": {
+      "fingerprint": "55fee736c788d14657db857e34dad523538b19d0b5bafe8264bee128b4dd8a4e",
+      "fields": {
+        "shipmentId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "shipmentState": "task_private",
+        "actualArrivalAt": "derived_from_inputs"
+      }
+    },
+    "DeliveryEvent": {
+      "fingerprint": "7272b52d501d6dc42b71cb1feaa39cc1d0f18dace796fad8b8d1db2f5bcdfdde",
+      "fields": {
+        "eventId": "task_private",
+        "displayTitle": "task_private",
+        "occurredAt": "task_private",
+        "observedAt": "task_private",
+        "sourceVersion": "task_private",
+        "eventKind": "task_private",
+        "sourceEventKey": "task_private"
+      }
+    },
+    "DeliveryAllocation": {
+      "fingerprint": "c25ce6c2b72e292969f6981fec878f0a2e63724d7fa0b64a3f6bf04bbfc92640",
+      "fields": {
+        "allocationId": "task_private",
+        "displayTitle": "task_private",
+        "deliveredQuantity": "task_sensitive",
+        "acceptedSpecificationRef": "task_private",
+        "verificationState": "task_private",
+        "evidenceRef": "task_private"
+      }
+    },
+    "Venue": {
+      "fingerprint": "54aa57ae144c073d16f33651ee2d99890ff1ae90bcef5e1051e299985de58985",
+      "fields": {
+        "venueId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private"
+      }
+    },
+    "ReservationSlot": {
+      "fingerprint": "3c6267f44c469225867a7db1d08a48783b614c36293401be6dedf899a8f53478",
+      "fields": {
+        "slotId": "task_private",
+        "displayTitle": "task_private",
+        "startsAt": "task_private",
+        "timeZone": "task_private",
+        "partySizeEligibility": "task_private",
+        "availabilityObservedAt": "task_private",
+        "expiresAt": "task_private"
+      }
+    },
+    "ReservationOffer": {
+      "fingerprint": "aa275be3ead6ee461ca7861c29e8e6ac921ad4e3068337bc92582f03cbfd8186",
+      "fields": {
+        "offerId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "depositTerms": "task_sensitive",
+        "cancellationTerms": "task_private",
+        "holdTerms": "task_private"
+      }
+    },
+    "Reservation": {
+      "fingerprint": "21c2399c673ba9356fbaeb5e6f6ed9994cbc67706a49ecc9d91308c678804137",
+      "fields": {
+        "reservationId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "reservationState": "task_private",
+        "partySize": "task_private",
+        "confirmedSlotRevision": "task_private",
+        "confirmedAt": "task_private",
+        "holdExpiresAt": "task_private",
+        "depositRequired": "task_private",
+        "requiredDeposit": "task_sensitive",
+        "effectiveStatus": "derived_from_inputs"
+      }
+    },
+    "Payment": {
+      "fingerprint": "40e4a1058c7da0b4c483999abe6026ff1e5fbdefbd4d327895e4fe61d85bc935",
+      "fields": {
+        "paymentId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "purpose": "task_sensitive",
+        "amount": "task_sensitive",
+        "paymentState": "task_sensitive",
+        "observedAt": "task_sensitive"
+      }
+    },
+    "Refund": {
+      "fingerprint": "b8077b492a3fc8a8dca954368b10d1cbd1893bf97a3d3ea307f1d1f572e698b4",
+      "fields": {
+        "refundId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "amount": "task_sensitive",
+        "refundState": "task_sensitive",
+        "observedAt": "task_sensitive"
+      }
+    },
+    "AfterSalesCase": {
+      "fingerprint": "df0ae188fb548fd390a22bdbd1ff0d460dccd11c7119a10ac08badfda659ab11",
+      "fields": {
+        "caseId": "task_private",
+        "displayTitle": "task_private",
+        "requestedRemedy": "task_private",
+        "progress": "task_private",
+        "originalBusinessReference": "task_sensitive"
+      }
+    },
+    "SourceReceipt": {
+      "fingerprint": "b4575b30d19323c6ad4cc8209bc0b913f268f0d6860b1764c32869d320435ca3",
+      "fields": {
+        "receiptId": "task_private",
+        "displayTitle": "task_private",
+        "sourceIdentity": "internal_only",
+        "sourceEventId": "internal_only",
+        "scope": "task_private",
+        "observedAt": "task_private",
+        "evidenceLevel": "task_private",
+        "contentDigest": "internal_only",
+        "subjects": "internal_only",
+        "safeSummary": "task_private",
+        "privatePayload": "internal_only",
+        "queryScope": "task_sensitive"
+      }
+    },
+    "MeituanReadTask": {
+      "fingerprint": "637a8621b24ea4d377c495f9f83a064b8ddb2eeaa196ea12e042a7fd2493950f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "internal_only",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "MeituanReadObservation": {
+      "fingerprint": "73462fac1b37c72dbe6cc5d565202df99d53f28f505079058b45284fa52c31ff",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideEstimateTask": {
+      "fingerprint": "a45ec2df45acf389be977218ed0b3943bf3d7fbc212b5250d58f056e38b86df9",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "DidiPlaceObservation": {
+      "fingerprint": "6af9dbde04074d1b49302385c2df20664f89c073c60ce61af1de9866dd51ad89",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideEstimateObservation": {
+      "fingerprint": "c425b75fc0c96b411dda0e4a52b6c121b33d99846debd25c8527f4d32b163a30",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideRequest": {
+      "fingerprint": "631d4bf86c67f5c60bc962e775efd59be96a528bf61257b3b494a805eae98ccc",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "passengers": "task_private",
+        "serviceClass": "task_private",
+        "pickupBy": "task_sensitive",
+        "arriveBy": "task_private",
+        "budget": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "RideOption": {
+      "fingerprint": "6f20c5ab74c5d49ec6768c0596e3d2da86d06cbbee68454419b296f4f5695a1b",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "RideTrip": {
+      "fingerprint": "47f90c8a3f1396721f81cbb38515d0644144bf0368d76bbacd7ca958e8dc395e",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "passengers": "task_private",
+        "serviceClass": "task_private",
+        "pickedUpAt": "task_private",
+        "arrivedAt": "task_private",
+        "finalFare": "task_sensitive",
+        "fareComplete": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "RideRoute": {
+      "fingerprint": "305857c427870faf8902ccb91eeddc42a2d7daabb1c8dbfdc87a8f84ccd2cbba",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive"
+      }
+    },
+    "TransportVehicle": {
+      "fingerprint": "12e1dd71af4085760445f66b9957b94164e458ed75c47559f7c6c2b46799e1c2",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "vehicleClass": "task_private",
+        "passengerCapacity": "task_private",
+        "vehicleReference": "task_private"
+      }
+    },
+    "AppointmentRequest": {
+      "fingerprint": "dc6f209836ce4163fef57f7792806be008a36592b28e026aa2a2805402ce40b8",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "hospitalId": "task_sensitive",
+        "departmentId": "task_sensitive",
+        "practitionerId": "task_sensitive",
+        "patientKey": "task_sensitive",
+        "startsAt": "task_sensitive",
+        "timeZone": "task_sensitive",
+        "registerBy": "task_sensitive",
+        "budget": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "capturedAt": "task_sensitive"
+      }
+    },
+    "AppointmentOption": {
+      "fingerprint": "de967dfbb71254323fcfdfc59b3a1cb88e5581a7c044d1c1fe4116a22111c175",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "MedicalAppointment": {
+      "fingerprint": "19baab67934c8f435689613d7a46ac6e92ab1119316b1f3d3d968a5d24a9c525",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_sensitive",
+        "requestDigest": "task_sensitive",
+        "state": "task_sensitive",
+        "hospitalId": "task_sensitive",
+        "departmentId": "task_sensitive",
+        "practitionerId": "task_sensitive",
+        "patientKey": "task_sensitive",
+        "startsAt": "task_sensitive",
+        "timeZone": "task_sensitive",
+        "confirmedAt": "task_sensitive",
+        "holdExpiresAt": "task_sensitive",
+        "fee": "task_sensitive",
+        "paymentState": "task_sensitive",
+        "eligibilityVerified": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive"
+      }
+    },
+    "Hospital": {
+      "fingerprint": "0ceee2a067e311d963a89b9fed29243922ade35f5dacf2c5fcd71b5bf77368ba",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "campusName": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private"
+      }
+    },
+    "MedicalDepartment": {
+      "fingerprint": "8a3d82935b114e707baaf4e0dcfb124962f940fe3928a34820944b061b160f0f",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentName": "task_private"
+      }
+    },
+    "Practitioner": {
+      "fingerprint": "1c2ab4fdb6a02f3affa60e97feedfb63f07203c1d906921a18c515a48d3a9f0b",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentId": "task_private",
+        "practitionerName": "task_private"
+      }
+    },
+    "PatientProfile": {
+      "fingerprint": "6c2bcdd02aff2237265c90f9b21dfba418eb2d42242abcccc8653ba3bf69b1bf",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "patientAlias": "task_sensitive",
+        "eligibility": "task_sensitive",
+        "identityDocument": "internal_only",
+        "contact": "internal_only"
+      }
+    },
+    "AppointmentSlot": {
+      "fingerprint": "1e833199232a743759ae17df0040d83c141d125a61095e5040567f5c9a8f1c93",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentId": "task_private",
+        "practitionerId": "task_private",
+        "startsAt": "task_private",
+        "timeZone": "task_private",
+        "availableCount": "task_private",
+        "expiresAt": "task_private"
+      }
+    },
+    "FoodRequest": {
+      "fingerprint": "dd9df39b3be50349cc3e3dbcc0d392ec09d01dfca0dae8683f943b878bebe697",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "merchantId": "task_private",
+        "items": "task_sensitive",
+        "destination": "task_sensitive",
+        "deliverBy": "task_private",
+        "excludedIngredients": "task_sensitive",
+        "budget": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "FoodOption": {
+      "fingerprint": "86fe23a2539ab1f576a89bb743966f652a4d13ca443a35b0620c1bf072964193",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "FoodDelivery": {
+      "fingerprint": "c2893d8eb986a434b809628a49290227429beec06f98b8f8cee84d5f53c0d208",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "merchantId": "task_private",
+        "deliveredItems": "task_sensitive",
+        "destination": "task_sensitive",
+        "deliveredAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "ingredientCheck": "task_private",
+        "finalDelivery": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "FoodMerchant": {
+      "fingerprint": "400c6abcfde5cd8a0d65138c93c23ffd56f18082c91bddd30a5d5716a78657be",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "merchantName": "task_private",
+        "address": "task_sensitive"
+      }
+    },
+    "MenuItem": {
+      "fingerprint": "ce7ab6354e2c19b443420135a7c69c86f7d12f33989f17384371a171ff170c3d",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "sku": "task_private",
+        "specification": "task_private",
+        "ingredients": "task_sensitive",
+        "ingredientsKnown": "task_private"
+      }
+    },
+    "HotelRequest": {
+      "fingerprint": "5ec959abc30a26d1eddfd1e67f4c8e0edcdf7ea6f6f27aebd7688bd72d7222d4",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "hotelId": "task_private",
+        "roomTypeId": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "timeZone": "task_private",
+        "rooms": "task_private",
+        "guests": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "HotelOption": {
+      "fingerprint": "ec5f95da61ef687a2d4e80ef52d5368321b5298c470b9fe0f053780eac3f9001",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "HotelReservation": {
+      "fingerprint": "e71d164087e7d9493a5a20b8e9f9a4ad72e745db3c14e6a5fa37d5279b2219e6",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "hotelId": "task_private",
+        "roomTypeId": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "timeZone": "task_private",
+        "rooms": "task_private",
+        "guests": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "confirmationCode": "task_sensitive",
+        "confirmedAt": "task_private",
+        "paymentState": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "checkedInAt": "task_private",
+        "checkedOutAt": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "HotelProperty": {
+      "fingerprint": "a5603262cbd7ed10e99f58e9077e2e94daacc7418c8d30db5352baeb0384790a",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hotelName": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private"
+      }
+    },
+    "RoomType": {
+      "fingerprint": "7d6c3144aa82e5e3f01a9dea1d0aa036477273d24a896353a2ecf3197ccf03e5",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "roomTypeName": "task_private",
+        "guestCapacity": "task_private",
+        "bedDescription": "task_private"
+      }
+    },
+    "RoomInventory": {
+      "fingerprint": "80da3facb58fb397a242d3b801e8ddb9b44dd1356677c4ec5c5f3ea1647397d6",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "roomsAvailable": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private"
+      }
+    },
+    "ItineraryRequest": {
+      "fingerprint": "3fb21b29588d9df36237f67d65cfd5c43343544e8f48ac077d67b9d1af51478a",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "travelers": "task_private",
+        "legs": "task_sensitive",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "ItineraryOption": {
+      "fingerprint": "cc2f7e98666ea7931c1a9f34e119645468b1e74b0b18e0646a9afc431988d0b4",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "Itinerary": {
+      "fingerprint": "6fec225a2657849868adc0a71d55ee65748a3bae8ff8e12bd3fc6ec2bd98a2f4",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "validatedAt": "task_private",
+        "legs": "task_sensitive",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "unbookedDisclosed": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "ItineraryItem": {
+      "fingerprint": "1eec52c80852eb89615e99cf5849706de718de38297c3dfada92a984981da011",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "location": "task_private",
+        "bookingRequired": "task_private",
+        "bookingReference": "task_private"
+      }
+    },
+    "TravelLeg": {
+      "fingerprint": "61f068f8ee48a651bc96bca7dd5f83fa43420baa36d4c2b595057a3bd0e43011",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "id": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "mode": "task_private",
+        "transferMinutes": "task_private",
+        "bookingRequired": "task_private",
+        "feasibility": "task_private"
+      }
+    },
+    "VehicleRequest": {
+      "fingerprint": "2de35d3b5d3d293ccb4e684f1736a9d9ce36955a082d7aea0d4702a2e2bc2e57",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "mode": "task_private",
+        "pickup": "task_sensitive",
+        "returnLocation": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "vehicleClass": "task_private",
+        "passengers": "task_private",
+        "driverKey": "task_sensitive",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "depositLimit": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "VehicleOption": {
+      "fingerprint": "e6b96041b83c4ae8c957204331dfaaae66073a7b5ae7ea66fd1551b96cfce458",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "deposit": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private"
+      }
+    },
+    "VehicleBooking": {
+      "fingerprint": "8ed4b91b441d7e44c6de22619e32feb5f8b4e3249f38e2aa00dc345952b57290",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "mode": "task_private",
+        "pickup": "task_sensitive",
+        "returnLocation": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "vehicleClass": "task_private",
+        "passengers": "task_private",
+        "driverKey": "task_sensitive",
+        "eligibilityVerified": "task_private",
+        "confirmationCode": "task_sensitive",
+        "confirmedAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "deposit": "task_sensitive",
+        "pickedUpAt": "task_private",
+        "returnedAt": "task_private",
+        "returnAccepted": "task_private",
+        "depositState": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "VehicleClass": {
+      "fingerprint": "2595ecd48d6ecb8a0dc351f5347f5bd4f087aaec0eb8edc9e052522ab0695c31",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "className": "task_private",
+        "passengerCapacity": "task_private",
+        "transmission": "task_private"
+      }
+    },
+    "RentalPolicy": {
+      "fingerprint": "5aef6138e044867e69508170a0fe5731f2b5445ea5ee098430b4e51610864963",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "driverEligibilityRule": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "insuranceTerms": "task_private",
+        "depositLimit": "task_sensitive"
+      }
+    },
+    "VehicleInspection": {
+      "fingerprint": "17f542e5d5a68c9c9ee5d7daf805cf4f1ff3f77a242432bcfd96a0a3e7cd3f20",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "stage": "task_private",
+        "occurredAt": "task_private",
+        "accepted": "task_private",
+        "damageReportRef": "task_private"
+      }
+    },
+    "CheckoutRequest": {
+      "fingerprint": "065cd6a5490ad3cefc5154f026f632a1ac35302eb8b807d7fdf48cdf6f3f0106",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "operation": "task_private",
+        "expectedItems": "task_sensitive",
+        "preparationTaskId": "task_private",
+        "budget": "task_sensitive"
+      }
+    },
+    "CheckoutSession": {
+      "fingerprint": "e6f1b1f24ac9704b5e149675d9883dad3dd1003967e24bc60a11000eda9c59ad",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "merchantId": "task_private",
+        "merchantOrigin": "task_sensitive",
+        "providerCheckoutId": "task_private",
+        "protocolVersion": "task_private",
+        "state": "task_private",
+        "items": "task_sensitive",
+        "total": "task_sensitive",
+        "quoteDigest": "task_private",
+        "sourceStartedAt": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogRead": {
+      "fingerprint": "e81ca9e529e3261ac3350370a6d1a457615970dda51b8f59182739c68c4f568c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "query": "task_sensitive",
+        "phase": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogTask": {
+      "fingerprint": "7d8ef0e5f94b36ba43e611c3a29ea4b2acab525b35f1be0a0fe373272fa7f435",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "merchants": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "CatalogObservation": {
+      "fingerprint": "695053b5acd5e121a9658d9758976060792ccd7dcbf988521570b5c33455af0f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogEndpoint": {
+      "fingerprint": "ffd576ffa6afc0086b7a25856592241b69a1af00294c06b8bfaf58bbcf52aca0",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceTask": {
+      "fingerprint": "63b6e73078a7c1ef6e6cd109feef46416c2339f13b52aaabaf1e2f5ac846d894",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "requirements": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only",
+        "environment": "task_private"
+      }
+    },
+    "FulfillmentContext": {
+      "fingerprint": "386e28b9f7907d55323cb1942d8d2962c037f2d52cb2fba2637c6a93e8bd04dc",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceMerchantSearch": {
+      "fingerprint": "f5cf226d3accd193f8c2ac3c1e99bbca28aeb912fcbc25bd502468f01d3b4b5b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceProduct": {
+      "fingerprint": "5af45e3e8c54b30d24d0132b15890a4d4ca1a98cbb4d1a97195a6dca7f0665ea",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "InventoryObservation": {
+      "fingerprint": "e837c10c1da30670a19dfaf32a56f4083ba6d71a7fffa0cfbca0cb8b50ec3b0a",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "InventoryReservation": {
+      "fingerprint": "516497ef4d364ec953df0be64855354b3332b0c83bdc68492f69487e3bc54501",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FulfillmentPlan": {
+      "fingerprint": "b66e1c7abf887f85d5894a46186efd2345d4a8f7e787e928c05d5bc1bea4a643",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CustomsAssessment": {
+      "fingerprint": "73ace1af84534ca2aba385e1d978ac86ae0f6a44f9a23645dd2be2850ef0c425",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "LandedCostQuote": {
+      "fingerprint": "110a092353d806cae1941efd52e8f6e28747b3382adaac4451e375c81223d834",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "Cart": {
+      "fingerprint": "f13fa67a6517738e22e6ab03af5bebcb7363ddf99b8d68c89d873fd0496b45cb",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CartLine": {
+      "fingerprint": "931c96a74c1a476bff86dfaa807271b5f71e50530068c1040a924f93f19e8c85",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceCheckout": {
+      "fingerprint": "4bd630170d40356fa5efc1c512ee87e62ef57753fd3afce24bac20f4f3dfc67f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceOrderObservation": {
+      "fingerprint": "73744eba518b7c73829ebfe53505fab5a99c96d0ec02d1a4b1f02fb34dd703df",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommercePaymentObservation": {
+      "fingerprint": "4f958f93c96786ad0fa3c13f5be7338855a6ef8c7a2fd3cdc228e6b8045d58bc",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceDeliveryObservation": {
+      "fingerprint": "e4a02cee09386ca6d19f3f6d44ce5ce3cb3f403917cecce6c67e45ac4ca67eba",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "DeliveryPromise": {
+      "fingerprint": "7b86cd064961986eb9fa9e0cf2036e673a1988e4ddac697c82870b884c4df735",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FulfillmentGroup": {
+      "fingerprint": "c67da40e8363510e069068abc5aed94ba0a9763e883d42e15d331459392fbbc0",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FactRequirement": {
+      "fingerprint": "dd623d3376740e21d609c52ad177f516f7932bc71a336c41dba5e9f1588f4d47",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "RegulatoryReference": {
+      "fingerprint": "993aa08dae0fd03013f03f7a984ac3135716ce894fc6dd873b53297626616b58",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CustomsRuleSet": {
+      "fingerprint": "4a6aaa44e9e266b1cfe6068b6321f1f5ab74bc13f569483c7f13fafb69f837e3",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "policyDigest": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "StripePaymentObservation": {
+      "fingerprint": "fa627056412775782083c835d2cea85882857818486f762cfed511b036c1f8bb",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingTask": {
+      "fingerprint": "e6c9f7a73cbd7e0f3669043660a43366b6c553f794075bd86d9178cc67ed3e3e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "BookingOffers": {
+      "fingerprint": "99182504b00a61c7ca5413c982d2afc55484e859779cd64ee4ae4073b8267e51",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingObservation": {
+      "fingerprint": "d3c8d1c304b20450b3a013b55621df0a1af0fbb3b0b3d5a11dee60f3ee3763a3",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingPaymentObservation": {
+      "fingerprint": "f0a5113df90f9683ccc183335d6648b10cfda1606266c5ea4ec1f052fa3269ea",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "PAPaymentRequest": {
+      "fingerprint": "95cbd6e497c920dcff4d22d4bf743b4a8cd39826213303c2daafc7825b5945f7",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "terms": "task_sensitive",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RegistrationTask": {
+      "fingerprint": "fab078d41f92459d2803efa18bff7301e7924409a47757be50d8ccd72786ad8e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "bindingDigest": "internal_only"
+      }
+    },
+    "RegistrationOffer": {
+      "fingerprint": "13c62a10ae5d6837794763bdcdff054616d4873eaaf1a0628251352a05aa45e1",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "RegistrationRecord": {
+      "fingerprint": "6c78633ef00b7cc600d271d91bb4ff38cf58ce5d0b8b7f2caff7248c8bbef50d",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    }
+  },
+  "surfaces": [
+    {
+      "id": "ontology-http",
+      "file": "apps/gateway/app.ts",
+      "sourceDigest": "ba6042ea0988093338bab0b50a896cf71a355db2003ec1cb0194a0b7efa6d4db",
+      "channels": [
+        "http"
+      ],
+      "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
+      "currentControl": "Authentication, membership, scopes and owner; raw task responses",
+      "targetControl": "AccessContext plus resource/data policies and TaskView",
+      "stage": "S2"
+    },
+    {
+      "id": "mcp",
+      "file": "apps/gateway/mcp.ts",
+      "sourceDigest": "22c873fa47b4449334c3c048b2e29fbd16a17b27e901daa879f4586aff525088",
+      "channels": [
+        "mcp"
+      ],
+      "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
+      "currentControl": "TaskService scopes and owner",
+      "targetControl": "Shared policy and response projection on every tool",
+      "stage": "S4"
+    },
+    {
+      "id": "a2a",
+      "file": "apps/gateway/a2a.ts",
+      "sourceDigest": "5e15cd1af5a7805a88fda94ff3321377de44b738fa99364ba8a8a4ee97dfe56b",
+      "channels": [
+        "a2a"
+      ],
+      "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
+      "currentControl": "TaskService owner plus protocol adaptation",
+      "targetControl": "Actor-aware TaskView before protocol serialization",
+      "stage": "S4"
+    },
+    {
+      "id": "task-service",
+      "file": "packages/core/tasks.ts",
+      "sourceDigest": "8a45d8b22e1248d209285dbed1bbb1a5e478b9d4ebc91f037838dcacbdcf34dc",
+      "channels": [
+        "http",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Queries, mutations, blocking wait and internal Job response",
+      "currentControl": "Owner and scopes; write-only submission response",
+      "targetControl": "TaskDataGrant, current projection and operation-specific scope",
+      "stage": "S2"
+    },
+    {
+      "id": "job-store",
+      "file": "packages/core/store.ts",
+      "sourceDigest": "6a3579fb783b43226048c59ebf38f7fac0e29d4d7d1d112c25f643fe6fe8c9ab",
+      "channels": [
+        "sqlite",
+        "idempotency"
+      ],
+      "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
+      "currentControl": "Owner predicates and work-claim fences",
+      "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
+      "stage": "S3"
+    },
+    {
+      "id": "ontology-store",
+      "file": "packages/ontology/object-store.ts",
+      "sourceDigest": "f5a83fb39b8911eb7d2b0d42cf4b24ae79188e5d470c5b953e91baf8b37effbd",
+      "channels": [
+        "query",
+        "function"
+      ],
+      "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
+      "currentControl": "Owner and restricted fields",
+      "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
+      "stage": "S2"
+    },
+    {
+      "id": "member-ui",
+      "file": "apps/gateway/members/routes.ts",
+      "sourceDigest": "8542308ac5c5e3067cb1e5ae54e9d4174366a991b80607fe330db2fab84457e5",
+      "channels": [
+        "member_ui"
+      ],
+      "content": "Member profile, connections, installation revoke and invitation flows",
+      "currentControl": "Session, origin, CSRF and member ownership",
+      "targetControl": "Reuse identity and coordinate all revocation with business fence",
+      "stage": "S1"
+    },
+    {
+      "id": "member-page",
+      "file": "apps/gateway/members/page.ts",
+      "sourceDigest": "9d4e185b8900a1b39670ff28efef829b21257644b245e04dcd919e79016b2dba",
+      "channels": [
+        "member_ui"
+      ],
+      "content": "Rendered member and connection/installation information",
+      "currentControl": "Caller member session",
+      "targetControl": "Installation and task authorization review UI",
+      "stage": "S1"
+    },
+    {
+      "id": "member-store",
+      "file": "packages/members/store.ts",
+      "sourceDigest": "4578c46e761242d35a8a831d4322430c07106c6381a598d929b64c4389b36924",
+      "channels": [
+        "membership_db"
+      ],
+      "content": "Member identity, session and connection status",
+      "currentControl": "Gateway-only separate member DB",
+      "targetControl": "Minimal subject projection; no Worker access to profile or session credentials",
+      "stage": "S1"
+    },
+    {
+      "id": "agent-registration",
+      "file": "packages/members/agents.ts",
+      "sourceDigest": "064cfdeac7103ad048e0ff29b3f4638016c83dd9dd4582d425cd61970fe7fb2f",
+      "channels": [
+        "membership_db"
+      ],
+      "content": "Installation/token binding and revocation",
+      "currentControl": "Token hash plus member/client match",
+      "targetControl": "Retain validated registration ID in AccessContext; coordinated revoke",
+      "stage": "S1"
+    },
+    {
+      "id": "agent-routes",
+      "file": "apps/gateway/members/agent-routes.ts",
+      "sourceDigest": "5217f6ee2f9c884aa8fda1a92304a925e4dfc56d73671a7babfccd46dd14f626",
+      "channels": [
+        "http"
+      ],
+      "content": "Registration status, binding and revoke",
+      "currentControl": "Registration secret and token validation",
+      "targetControl": "No self-issued data grant; coordinate revoke",
+      "stage": "S1"
+    },
+    {
+      "id": "member-cli",
+      "file": "scripts/members.mjs",
+      "sourceDigest": "a0a5470fd7c1c03f95f911ce0e19a89ebb93deae300b4c6782487efb1a58879c",
+      "channels": [
+        "cli"
+      ],
+      "content": "Approve/suspend/invitation management directly in member DB",
+      "currentControl": "Local administrator process",
+      "targetControl": "Use coordinated management or explicit offline maintenance",
+      "stage": "S1"
+    },
+    {
+      "id": "model-planning",
+      "file": "packages/coordinator/planning-session.ts",
+      "sourceDigest": "0ef41a74288dc596ff61634064969a94071b078a65bbafdfae024300fee034bd",
+      "channels": [
+        "model",
+        "query"
+      ],
+      "content": "Planning tools, reads, seen references, functions, receipts and session key",
+      "currentControl": "Owner/request readScope and snapshot validation",
+      "targetControl": "Uniform task view; grants and policy epoch in snapshots/session key",
+      "stage": "S3"
+    },
+    {
+      "id": "model-context",
+      "file": "packages/coordinator/model-context.ts",
+      "sourceDigest": "fa68121b483647f9f84948d5492394f4cf32998beeb8e0b1e02bfddae5f9d0de",
+      "channels": [
+        "model"
+      ],
+      "content": "State inputs, plans, observations, feedback and payment/information-request history",
+      "currentControl": "Handwritten compact context",
+      "targetControl": "Field/label projection across non-tool context paths",
+      "stage": "S3"
+    },
+    {
+      "id": "coordinator",
+      "file": "packages/coordinator/coordinator.ts",
+      "sourceDigest": "dc69f2675732ddb8d8fe2f2d93d3e3d8ea9696b6ad6dcdd534771b61aa9e0c55",
+      "channels": [
+        "model",
+        "dispatch"
+      ],
+      "content": "Task interpretation, initial context, selection and execution orchestration",
+      "currentControl": "Request/owner bounds and current claim",
+      "targetControl": "Persisted task authority with source/input/output checks",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-runtime",
+      "file": "packages/coordinator/agent-runtime.ts",
+      "sourceDigest": "9bc42fcd6631ec3aa81089e3835b7884b96204ed11468520daea51904e90c0aa",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Action plans, dispatch, observations, result acceptance and recovery",
+      "currentControl": "PlanGrant and claim/current evidence checks",
+      "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-session",
+      "file": "packages/capabilities/model-session.ts",
+      "sourceDigest": "bbbf80f822f0ecf80418650d37ecd1e44a31fd3b620c357e7c4489eb4237e092",
+      "channels": [
+        "registered_model"
+      ],
+      "content": "Model subprocess messages, data and returned structured output",
+      "currentControl": "Process transport and schema validation",
+      "targetControl": "Registered channel data eligibility and labeled context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-cache",
+      "file": "packages/capabilities/model-session-pool.ts",
+      "sourceDigest": "6f9edbb561c77f6945529259da4389a745c363313cf011cb7b221ea0621d248b",
+      "channels": [
+        "model_cache"
+      ],
+      "content": "Retained conversation and prompt-data cache",
+      "currentControl": "Owner/request/revision/model keyed sessions",
+      "targetControl": "Invalidate on installation/grant/policy change",
+      "stage": "S3"
+    },
+    {
+      "id": "prompt-data",
+      "file": "packages/coordinator/prompt-data.ts",
+      "sourceDigest": "02436ed7f4d4c738da7519beafbac727a53675a958756e96c3a60eb34872c1a4",
+      "channels": [
+        "model_cache"
+      ],
+      "content": "Incremental task data and prior prompt block references",
+      "currentControl": "Session-local context packing",
+      "targetControl": "No stale restricted payload reuse after auth epoch changes",
+      "stage": "S3"
+    },
+    {
+      "id": "document",
+      "file": "packages/capabilities/document.ts",
+      "sourceDigest": "d850d5aa7dd1cba1206f536030c45dd230b397e68afe86860f9a1fb69d0831aa",
+      "channels": [
+        "artifact"
+      ],
+      "content": "Markdown document result and content digest",
+      "currentControl": "Format/hash verification and task ownership",
+      "targetControl": "Artifact envelope and output-channel/recipient policy",
+      "stage": "S4"
+    },
+    {
+      "id": "executor",
+      "file": "packages/capabilities/executor.ts",
+      "sourceDigest": "f86c48be15a7b9c686562022b297d572390d3b24cb92bb015dcabdeffaa2641c",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Goal/messages to model process; temporary schema/output files",
+      "currentControl": "Bounded private subprocess work directory",
+      "targetControl": "Model channel approval and label propagation; files stay private",
+      "stage": "S3"
+    },
+    {
+      "id": "source-catalog",
+      "file": "packages/capabilities/catalog.ts",
+      "sourceDigest": "99b4f8b2f25d59a8db81c54bd9f09f72c2b1c4c1f8c687f92b85db00f52bb7ab",
+      "channels": [
+        "source",
+        "dispatch"
+      ],
+      "content": "Configured provider/program identities and adapters",
+      "currentControl": "permitted(owner), environment and explicit configuration",
+      "targetControl": "Per-member/installation/task source authorization",
+      "stage": "S3"
+    },
+    {
+      "id": "csv-report",
+      "file": "packages/capabilities/csv/file-report.ts",
+      "sourceDigest": "894519131c63e49a22670a29d0aa4e4fc404a5f67115798750194da241add534",
+      "channels": [
+        "artifact"
+      ],
+      "content": "CSV findings and local report output",
+      "currentControl": "Private input snapshot and independent report checks",
+      "targetControl": "Input sensitivity propagates into report/attachment",
+      "stage": "S4"
+    },
+    {
+      "id": "shopify-source",
+      "file": "packages/capabilities/shopify/connector.ts",
+      "sourceDigest": "03a4d13ffe73699e99439e192b7e3f00a0a75f1048950999c0378e390124ec4d",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Catalog data, request/response receipts and private audits",
+      "currentControl": "Registered merchants and existing read-only bounds",
+      "targetControl": "Task-scoped source access and safe receipt projection",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-source",
+      "file": "packages/capabilities/didi/connector.ts",
+      "sourceDigest": "9d1543516aa5319c5dfa796abdf52414ed1e5f0b2b0ec7c1098c0997f06d5bf1",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Place/route/price source responses and audit files",
+      "currentControl": "Explicit private credential binding and read-only tool list",
+      "targetControl": "Location-sensitive output and task/source grant",
+      "stage": "S3"
+    },
+    {
+      "id": "meituan-source",
+      "file": "packages/capabilities/meituan-primitives.ts",
+      "sourceDigest": "0dbdd1fb18781b5a9154ad462925aefbbd5ef568bb8c400b173aaf00d6ae6e8b",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Address book/details, locations and delivery quotes",
+      "currentControl": "Private local source and bounded primitives",
+      "targetControl": "Explicit per-task selected address/field permissions",
+      "stage": "S3"
+    },
+    {
+      "id": "booking-bridge",
+      "file": "packages/capabilities/free-booking/browser-bridge.ts",
+      "sourceDigest": "54dba39dcd654931d85884edca031c2bb87eabec0ad3a560d2c510f32b850837",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Participant browser queue commands, responses and receipt storage",
+      "currentControl": "Private bridge context and operation/readback checks",
+      "targetControl": "Source/recipient policy and restricted raw browser evidence",
+      "stage": "S3"
+    },
+    {
+      "id": "participant-app",
+      "file": "apps/participant-browser/main.ts",
+      "sourceDigest": "20f10668e95ffbddb7f17648d51518d8a4636ea6693d785e89fae45b4bf09ac5",
+      "channels": [
+        "http",
+        "private_file"
+      ],
+      "content": "Local participant queue API and worker response payloads",
+      "currentControl": "Bridge bearer and operation binding",
+      "targetControl": "Independent source-resource controls; no public attachment URLs",
+      "stage": "S3"
+    },
+    {
+      "id": "task-projection",
+      "file": "packages/ontology/task-projection.ts",
+      "sourceDigest": "7101bef9789c5ef7b4593c1c81503e0c1580d9baacf98f3ec9e00dab04bb790c",
+      "channels": [
+        "ontology_write"
+      ],
+      "content": "Task goal, conditions, artifacts and read results into objects",
+      "currentControl": "Owner, schemas and source evidence",
+      "targetControl": "Create security metadata/task bindings atomically",
+      "stage": "S2"
+    },
+    {
+      "id": "ontology-definitions",
+      "file": "packages/ontology/model.ts",
+      "sourceDigest": "a81a66b9b76870e0b5635e7fd8ff739c12ae171b17a6a9a59567965e8e2024b1",
+      "channels": [
+        "definition"
+      ],
+      "content": "Types, interfaces, links, action/function schemas and binding metadata",
+      "currentControl": "Authenticated describe call; no per-type policy",
+      "targetControl": "Resource policy filtering including all action/function dependencies",
+      "stage": "S2"
+    }
+  ]
+}
