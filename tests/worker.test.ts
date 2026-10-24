@@ -211,7 +211,7 @@ test('separate Gateway and two Worker processes: MCP/A2A continuation, restart, 
   }
 });
 
-test('Worker retains a bounded model failure stage without leaking upstream errors or replaying', async () => {
+test('Worker retains bounded model failure stages across technical recovery without leaking errors or dispatching business actions', async () => {
   for (const bounded of [true, false]) {
     const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
     const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'bounded-failure' });
@@ -220,12 +220,13 @@ test('Worker retains a bounded model failure stage without leaking upstream erro
       calls++; throw bounded ? new ModelSessionError('rpc_timeout', 'thread_start') : new Error('SYNTHETIC_UPSTREAM_SECRET');
     } } });
     try {
-      worker.start(); const failed = await until(() => tasks.get(principal, job.id), value => value.state === 'failed');
+      worker.start(); const failed = await until(() => tasks.get(principal, job.id), value => value.state === 'paused');
       assert(!JSON.stringify(failed).includes('SYNTHETIC_UPSTREAM_SECRET'));
       const events = failed.delegation!.events.filter(event => event.event === 'worker_model_failed');
-      assert.deepEqual(events.map(event => event.evidence), bounded ? ['thread_start/rpc_timeout'] : []);
-      if (bounded) assert.match(failed.error!, /model planning failed/);
-      await pause(50); assert.equal(calls, 1); assert.equal(store.intents(ownerKey(principal), job.id).length, 0);
+      assert.deepEqual(events.map(event => event.evidence), bounded ? Array(3).fill('thread_start/rpc_timeout') : []);
+      assert.equal(failed.delegation!.recovery?.code, 'model_unavailable');
+      assert.equal(failed.delegation!.recovery?.state, 'blocked');
+      await pause(50); assert.equal(calls, 3); assert.equal(store.intents(ownerKey(principal), job.id).length, 0);
     } finally { await worker.close(); store.close(); }
   }
 });

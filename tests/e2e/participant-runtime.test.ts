@@ -1,3 +1,4 @@
+import { CURRENT_KERNEL_VERSION } from '../../packages/ontology/seed-definition.js';
 // Process/configuration verification only. No model or public Luma page is used.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -41,7 +42,7 @@ test('E2E: one managed launcher starts and stops Gateway, Worker and the residen
     assert(ready, diagnostics);
     const headers = { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' };
     const model = await fetch(gateway + '/ontology/describe', { method: 'POST', headers, body: JSON.stringify({ search: 'Registration', limit: 5 }) }).then(r => r.json());
-    assert.equal(model.model.version, '16'); assert.equal(model.types.length, 3);
+    assert.equal(model.model.version, CURRENT_KERNEL_VERSION); assert(['RegistrationTask', 'RegistrationOffer', 'RegistrationRecord'].every(id => model.types.some((type: { id: string }) => type.id === id)));
     const card = await fetch(gateway + '/.well-known/agent-card.json').then(r => r.json());
     assert.match(card.skills[0].description, /booking\.participant\.free/);
     assert.equal((await fetch(bridge + '/operator/next')).status, 403);

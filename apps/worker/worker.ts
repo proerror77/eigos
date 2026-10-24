@@ -68,6 +68,7 @@ export class Worker {
       this.store.finish(claim, current => {
         if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
           request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
+        if (error instanceof ModelSessionError) current.delegation?.events.push({ at: new Date().toISOString(), event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
         const readOnly = canRecoverReadOnly(current, this.store.intents(owner, current.id));
         if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation && readOnly) {
           scheduleTaskRecovery(current, 'reasoning_incomplete', '推理尚未形成有效决策，系统将保留当前信息继续处理，无需重复补充。');
@@ -93,7 +94,6 @@ export class Worker {
           return;
         }
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
-        if (error instanceof ModelSessionError) current.delegation?.events.push({ at: current.updatedAt, event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
         current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'
           : error instanceof ModelSessionError ? 'Worker model planning failed; existing observations retained, no automatic replay. Inspect the bounded failure event.'
           : dispatched ? 'Action did not return an accepted result. Inspect recorded observations; no automatic replay.'

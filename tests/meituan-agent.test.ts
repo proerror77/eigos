@@ -117,8 +117,8 @@ test('Unpublished options cannot be authorized by guessing numeric labels after 
     return chooseMeituan(ctx,access);
   });
   try{
-    const job=t.b.submit({goal:'只查价，先选地址'});const paused=await t.finish(job.id);assert.equal(paused.state,'input-required');assert(!paused.question!.includes('本人保存地址：'));
-    t.b.tasks.reply(principal,{taskId:job.id,answer:'寄件地址1到收件地址2',requestId:'guessed-unpublished-options'});
+    const job=t.b.submit({goal:'只查价，先选地址'});const paused=await t.finish(job.id);assert.equal(paused.state,'paused');assert.equal(paused.delegation!.recovery?.code,'validation_stalled');assert.equal(paused.question,undefined);
+    t.b.tasks.amend(principal,{taskId:job.id,expectedRevision:paused.revision,answer:'寄件地址1到收件地址2',requestId:'guessed-unpublished-options'});
     const asked=await t.finish(job.id);assert.equal(asked.state,'input-required');assert.match(asked.question!,/本人保存地址：/);assert(t.calls.every(c=>c.tool==='get_address_list'));
   }finally{t.close();}
 });

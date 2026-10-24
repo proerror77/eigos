@@ -22,7 +22,7 @@ import type { ObjectRef } from '../packages/ontology/model.js';
 import type { AcceptedPortValue } from '../packages/ontology/composition-contract.js';
 import { aggregateGoalFacts } from '../packages/coordinator/goal-program.js';
 import type { Delivery } from '../packages/core/catalog.js';
-import { createCurrentKernelDefinition, createHistoricalKernelDefinition, createSeedDefinition } from '../packages/ontology/seed-definition.js';
+import { createCurrentKernelDefinition, createHistoricalKernelDefinition, createSeedDefinition, CURRENT_KERNEL_VERSION } from '../packages/ontology/seed-definition.js';
 
 const goal = 'Use the synthetic fixture to compare 2 coffee results and produce a Markdown document from their accepted source facts.';
 const getPin = (access: PlanningAccess, actionId: string): ActionBindingPin => {
@@ -98,7 +98,7 @@ function setup(options: { path?: string; failDocument?: boolean; choice?: typeof
 test('one whole goal executes two independently pinned programs and passes original citation evidence', async () => {
   const t = setup(); try {
     const submitted = t.submit(), done = await t.finish(submitted.id), state = done.delegation!.agent!;
-    assert.equal(done.state, 'completed', JSON.stringify(state.feedback)); assert.equal(state.version, '2');
+    assert.equal(done.state, 'completed', JSON.stringify(state?.feedback ?? done.delegation?.groundingFeedback)); assert.equal(state.version, '2');
     assert.equal(state.programRef.id, 'eigos.goal'); assert.equal(state.composition!.assessment!.accepted, true);
     assert.equal(state.composition!.contexts.length, 2); assert.equal(t.calls.length, 1); assert.equal(t.documents.length, 1);
     const steps = state.plans.flatMap(plan => plan.steps); assert.equal(steps.length, 2);
@@ -216,7 +216,7 @@ test('v15 and v16 remain exact historical models while the current kernel carrie
   const old = createSeedDefinition(), previous = createHistoricalKernelDefinition(old.registry), current = createCurrentKernelDefinition(old.registry);
   assert.equal(old.audit.model.digest, 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776');
   assert.equal(previous.audit.model.digest, '9cc72c92efa54600967979971dc0e568d01d849b683bbe4e7d6d8931150eef57');
-  assert.equal(current.audit.model.version, '18'); assert(current.document.actions.find(action => action.id === 'ComposeDocument')?.composition);
+  assert.equal(current.audit.model.version, CURRENT_KERNEL_VERSION); assert(current.document.actions.find(action => action.id === 'ComposeDocument')?.composition);
   assert(previous.document.actions.every(action => !action.composition));
 });
 

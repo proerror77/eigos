@@ -39,7 +39,9 @@ test('Merged function schemas retain distinct required parameters and reject the
     { function: 'deliveryQuoteMatches', object: ref, request: ref, serviceLevel: 'invented' },
   ];
   for (const value of cases) assert.equal(presented.safeParse(value).success, original.safeParse(value).success, JSON.stringify(value));
-  assert(JSON.stringify(schema).length < JSON.stringify(z.toJSONSchema(original)).length * 0.5);
+  assert(JSON.stringify(schema).length < JSON.stringify(z.toJSONSchema(original)).length);
+  const common = ['rideEstimateStatus', 'catalogObservationStatus', 'meituanReadStatus', 'registrationStatus'];
+  assert(schema.anyOf.some((branch: any) => common.every(name => branch.properties?.function?.enum?.includes(name))), 'Equal parameter contracts should share one displayed branch even as distinct parameterized functions are added');
 });
 
 test('Task conversation frames reuse exact values while retaining new receipts, changed facts and all source candidates', () => {

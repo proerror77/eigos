@@ -6,7 +6,7 @@ import { meituanPrimitiveSchemas, type MeituanPrimitiveReader } from '../../pack
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import type { AgentDecision, AgentStep } from '../../packages/ontology/agent-actions.js';
 import type { MeituanReadSnapshot } from '../../packages/ontology/meituan-read.js';
-import { backend, evidence, interpretation, owner } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 
 export const missingMeituan = { sender: null, recipient: null, goodsName: '文件', category: '文件', weightKg: 1, service: 'ordinary' };
 export function meituanPrimitiveFixture() {
@@ -52,10 +52,11 @@ export const chooseMeituan: MeituanChoice = (ctx, access) => {
   return decision([step('quote', 'EstimateMeituanDelivery', { scope, addresses: book.ref, sender: sender.ref, recipient: recipient.ref })]);
 };
 export function meituanReasoner(mode: 'geo' | 'addresses' | 'delivery', choice: MeituanChoice = chooseMeituan, selectors = { sender: '地址1', recipient: '地址2' }): Reasoner {
-  return { ground: async request => {
+  return { ground: async (request, _caps, _signal, access) => {
+    request = observeTaskContext(access) ?? request;
     const input = mode === 'geo' ? { city: '北京市', keyword: '天安门' } : mode === 'addresses' ? {} : { ...missingMeituan, ...(request.revision > 1 ? selectors : {}) };
     return { decision: { ...interpretation(request, mode === 'geo' ? 'geo.search' : mode === 'addresses' ? 'address.book.read' : 'delivery.quote', input), capabilityRef: { id: mode === 'geo' ? 'geo.search' : mode === 'addresses' ? 'address.book.read' : 'delivery.quote', version: mode === 'delivery' ? '2' : '1' } }, evidence: evidence() };
-  }, plan: async () => { throw new Error('Legacy eager planner is forbidden'); }, act: async (ctx, _signal, access) => { const selected = choice(ctx, access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
+  }, plan: async () => { throw new Error('Legacy eager planner is forbidden'); }, act: async (ctx, _signal, access) => { observeTaskContext(access); const selected = choice(ctx, access); acknowledgeReads(access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
 }
 export function setupMeituan(mode: 'geo' | 'addresses' | 'delivery' = 'delivery', choice = chooseMeituan, selectors?: { sender: string; recipient: string }) {
   const fixture = meituanPrimitiveFixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, meituan: fixture.reader }), b = backend(catalog, meituanReasoner(mode, choice, selectors), store);
