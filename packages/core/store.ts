@@ -42,6 +42,11 @@ export class JobStore {
           state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, body TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created_at, id);
+        CREATE INDEX IF NOT EXISTS jobs_worker_ready ON jobs(
+          json_extract(body,'$.service'), json_extract(body,'$.delegation.backendVersion'),
+          COALESCE(json_extract(body,'$.executionMode'),'worker'),
+          COALESCE(json_extract(body,'$.delegation.nextAt'),0), created_at,id
+        ) WHERE state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1);
         CREATE TABLE IF NOT EXISTS work_claims (
           job_id TEXT PRIMARY KEY, token TEXT NOT NULL, revision INTEGER NOT NULL, expires_at INTEGER NOT NULL
         );
@@ -336,9 +341,12 @@ export class JobStore {
         AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
-      if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
+      // Queue lookup/body decoding must not consume the new execution lease.
+      // Explicit test/recovery clocks retain their original semantics.
+      if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(now ?? Date.now()).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
-      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
+      const claimedAt = now ?? Date.now();
+      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
       return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
@@ -347,8 +355,8 @@ export class JobStore {
     return this.transaction(() => {
       const at = now ?? Date.now();
       if (!this.active(claim, at)) return false;
-      this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=?').run(at + leaseMs, claim.job.id, claim.token);
-      return true;
+      const renewedAt = now ?? Date.now();
+      return this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=? AND expires_at>?').run(renewedAt + leaseMs, claim.job.id, claim.token, renewedAt).changes === 1;
     });
   }
 

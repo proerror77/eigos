@@ -120,7 +120,8 @@ const stop = async () => {
   throw new Error('Owned runtime has not fully stopped');
 };
 const ready = async () => {
-  for (let i=0;i<100;i++) {
+  const deadline = performance.now() + 120000;
+  do {
     try {
       const health = await fetch('http://127.0.0.1:3430/health', { signal: AbortSignal.timeout(500) }).then(r=>r.json());
       const card = await fetch('http://127.0.0.1:3430/.well-known/agent-card.json', { signal: AbortSignal.timeout(500) }).then(r=>r.json());
@@ -129,7 +130,8 @@ const ready = async () => {
       if (health.releaseDigest === buildDigest && health.backend === BACKEND_VERSION && card.skills.length === 1 && card.skills[0].id === 'eigos.delegate'
         && (!participant.EIGOS_FREE_BOOKING_BROWSER_CONFIG || browser?.releaseDigest === buildDigest && browser.backend === BACKEND_VERSION && browser.operatorRequired === true)) return;
     } catch {} await new Promise(r=>setTimeout(r,200));
-  } throw new Error('New ontology runtime did not become ready; inspect the private log');
+  } while (performance.now() < deadline);
+  throw new Error('New ontology runtime did not become ready; inspect the private log');
 };
 const needsRestart = !loaded() || previousPlist !== plist || oldSettings !== settings || process.argv.includes('--restart');
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
