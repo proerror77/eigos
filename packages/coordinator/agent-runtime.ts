@@ -7,7 +7,7 @@ import type { JobStore, WorkClaim } from '../core/store.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../core/agent-program.js';
 import { AgentReadError, AgentOperationRejected } from '../core/agent-program.js';
-import { agentDecisionSchema, type AgentActionPlan, type AgentExecutionState } from '../ontology/agent-actions.js';
+import { agentDecisionSchema, type AgentDecision, type AgentActionPlan, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { objectRefSchema } from '../ontology/model.js';
 import type { ActionResult, ExecutionAttempt } from '../ontology/actions.js';
 import type { PlanningAccess, Reasoner } from './coordinator.js';
@@ -15,6 +15,7 @@ import { validatePlanningSnapshot } from './planning-session.js';
 import { checkRequirements } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { agentOperation, agentPlanAuthorization, agentDispatchGrant, validateAgentAuthority } from '../core/agent-authorization.js';
+import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } from './initial-selection.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -82,15 +83,35 @@ export class AgentRuntime {
     const job = this.store.get(claim.owner, claim.job.id), histories = job.delegation!.agentHistory ?? [];
     const plans = [ctx.state, ...histories].flatMap(s => s.plans);
     const limits = agentLimits(program);
-    if ((job.runs?.length ?? 0) >= limits.modelTurns) {
+    if (!ctx.state.initialSelectionPending && (job.runs?.length ?? 0) >= limits.modelTurns) {
       this.pause(claim, true, '本次查询已达到有限执行预算，请缩小查询范围后继续。已有观察记录已保留。'); return;
     }
     const access = this.access(claim, signal);
-    const response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
-    signal.throwIfAborted(); access.record(response.evidence);
+    const initialSelection = ctx.state.initialSelectionPending;
+    let response: { decision: AgentDecision; evidence: NonNullable<Job['runs']>[number] };
+    if (initialSelection) {
+      try {
+        if (ctx.state.plans.length || ctx.state.observations.length) failure('Initial actions only apply before the first source frontier');
+        const source = recordedInitialSelection(job, initialSelection.modelRunId);
+        validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, initialSelection.groundingPlanning, true);
+        const decision = bindInitialSelection(this.store.ontology, program, ctx.state.scope, source);
+        access.session.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
+        response = { decision, evidence: job.runs!.find(run => run.id === initialSelection.modelRunId)! };
+      } catch (error) {
+        signal.throwIfAborted();
+        if (this.store.claimActive(claim)) this.store.finish(claim, current => {
+          delete current.delegation!.agent!.initialSelectionPending;
+          this.feedback(current, 'validation', errorMessage(error), digest(initialSelection)); current.delegation!.nextAt = 0;
+        });
+        return;
+      }
+    } else {
+      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      signal.throwIfAborted(); access.record(response.evidence);
+    }
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
-    if (response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
+    if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
     const reads = access.session.finish();
     if (decision.kind === 'clarify' || decision.kind === 'no_feasible_plan') {
@@ -165,13 +186,16 @@ export class AgentRuntime {
       if (ctx.state.paPayment && steps.some(s => !['read', 'local'].includes(s.effect))) failure('A PA payment handoff freezes the original booking; only provider readback may continue');
       if (steps.some(s => s.effect === 'local') && steps.length !== 1) failure('Local handoff actions require their own frontier');
       if (steps.filter(s => s.effect !== 'read').length > 1) failure('Use a separate frontier for each sandbox business operation so its exact terms can be authorized');
-      const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads };
+      const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads, ...(initialSelection ? { initialSelection } : {}) };
       const plan = { ...body, digest: digest(body) };
+      if (initialSelection) verifyInitialPlan(this.store.get(claim.owner, claim.job.id), this.store.ontology, program, plan);
       const saved = this.store.checkpoint(claim, current => {
         const state = current.delegation!.agent!;
+        delete state.initialSelectionPending;
         state.plans.push(plan); state.pendingPlanId = plan.id; current.delegation!.phase = 'executing';
         for (const step of steps) this.store.createIntent(claim.owner, { id: step.intentId, owner: claim.owner, jobId: current.id, stepId: step.id, businessOperationKey: step.operationKey, planDigest: plan.digest, bindingRef: program.ref, inputDigest: digest({ input: step.input, inputRefs: step.inputRefs }), privateDigest: digest({}), privateData: {}, effect: step.effect, ...(step.additionalEffects ? { additionalEffects: step.additionalEffects } : {}), state: 'ready', nextAt: 0, createdAt: plan.createdAt });
         current.updatedAt = plan.createdAt; current.delegation!.events.push({ at: plan.createdAt, event: 'agent_action_plan_validated', evidence: plan.digest });
+        if (initialSelection) current.delegation!.events.push({ at: plan.createdAt, event: 'model_initial_selection_scope_bound', evidence: initialSelection.modelRunId });
       });
       if (saved) await this.execute(claim, program, signal);
     } catch (error) {
@@ -179,7 +203,7 @@ export class AgentRuntime {
       if (!this.store.claimActive(claim)) return;
       // A stored plan is resumed from its ledger, never replaced by validation feedback.
       if (this.context(claim).state.pendingPlanId) throw error;
-      this.store.finish(claim, current => { this.feedback(current, 'validation', errorMessage(error), digest(decision.steps)); current.delegation!.nextAt = 0; });
+      this.store.finish(claim, current => { delete current.delegation!.agent!.initialSelectionPending; this.feedback(current, 'validation', errorMessage(error), digest(decision.steps)); current.delegation!.nextAt = 0; });
     }
   }
   private async execute(claim: WorkClaim, program: AgentProgram, signal: AbortSignal) {
@@ -187,7 +211,8 @@ export class AgentRuntime {
     const { digest: expected, ...body } = plan;
     if (digest(body) !== expected || plan.version !== '2' || plan.programDigest !== program.configurationDigest || !equal(plan.programRef, program.ref) || plan.requestId !== initial.request.id || plan.requestRevision !== initial.request.revision || !equal(plan.scope, initial.state.scope) || plan.scopeDigest !== digest(this.store.ontology.read(claim.owner, plan.scope).properties)) failure('Pinned agent plan changed');
     const receipt = this.store.get(claim.owner, claim.job.id).runs?.find(r => r.id === plan.modelRunId);
-    if (receipt?.decisionDigest !== digest(plan.modelDecision) || plan.modelDecision.kind !== 'execute' || plan.steps.length !== plan.modelDecision.steps.length || plan.steps.some((step, i) => {
+    if (plan.initialSelection) verifyInitialPlan(this.store.get(claim.owner, claim.job.id), this.store.ontology, program, plan);
+    if ((!plan.initialSelection && receipt?.decisionDigest !== digest(plan.modelDecision)) || plan.modelDecision.kind !== 'execute' || plan.steps.length !== plan.modelDecision.steps.length || plan.steps.some((step, i) => {
       const { definitionDigest: _definition, input, intentId: _intent, effect: _effect, additionalEffects: _additional, cost: _cost, operationScope: _scope, operationKey: _key, ...selected } = step;
       return !equal(selected, plan.modelDecision.steps[i]) || !equal(input, JSON.parse(step.argumentsJson));
     })) failure('Executable steps differ from the recorded model decision');

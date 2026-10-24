@@ -10,7 +10,7 @@ import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { JobStore } from '../packages/core/store.js';
 import { digest } from '../packages/core/delegation.js';
 import { drillCase } from './fixtures/ontology-drill.js';
-import { backend, evidence, interpretation, owner } from './backend-fixture.js';
+import { backend, evidence, interpretation, owner, principal } from './backend-fixture.js';
 import { didiFixture, input, syntheticKey } from './fixtures/didi.js';
 import { DIDI_PROGRAM_REF } from '../packages/capabilities/didi/program.js';
 import type { AgentDecision, AgentStep } from '../packages/ontology/agent-actions.js';
@@ -19,6 +19,7 @@ import type { RideEstimateObservation } from '../packages/ontology/ride-estimate
 import type { ObjectRef } from '../packages/ontology/model.js';
 import { planningSnapshot } from '../packages/ontology/planning-contract.js';
 import { expandPromptData } from '../packages/coordinator/prompt-data.js';
+import { verifyInitialPlan } from '../packages/coordinator/initial-selection.js';
 
 function sessionFixture() {
   const data = drillCase('QD-1'), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now);
@@ -123,7 +124,7 @@ test('Cancellation during context preparation stops before opening or invoking a
   } finally { f.db.close(); }
 });
 
-function syntheticContextDidi() {
+function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' = false) {
   const source = didiFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, didi: { ...source.binding, connector: source.connector } });
   const requests: { calls: number; packet: any }[] = [];
@@ -135,7 +136,11 @@ function syntheticContextDidi() {
     const ctx = blocks.find(value => value.state?.scope) as AgentPlanningContext | undefined;
     if (!ctx) {
       const request = packet.task.request;
-      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF }) }, evidence: evidence() };
+      const initialSteps = initial ? [
+        { id: 'chosen_destination', action: initial === 'dependent' ? 'EstimateDidiRide' : 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'destination', keywords: input.destination }), scopeInputs: [initial === 'bad_binding' ? 'notTheScope' : 'scope'] },
+        { id: 'chosen_origin', action: 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'origin', keywords: input.origin }), scopeInputs: ['scope'] },
+      ] : undefined;
+      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF, ...(initialSteps ? { initialSteps } : {}) }) }, evidence: evidence() };
     }
     const objects = packet.conversation.flatMap((entry: any) => entry.result.items ?? []);
     const observations: { ref: ObjectRef; snapshot: RideEstimateObservation }[] = objects.filter((object: any) => object.properties.snapshot).map((object: any) => ({ ref: object.ref, snapshot: object.properties.snapshot as RideEstimateObservation }));
@@ -151,8 +156,73 @@ function syntheticContextDidi() {
     return { output: { kind: 'final', calls: [], finalJson: JSON.stringify(chosen) }, evidence: evidence() };
   } };
   const b = backend(catalog, new CodexReasoner(model), store);
-  return { ...source, store, b, requests, close: () => { store.close(); source.close(); } };
+  return { ...source, store, catalog, b, requests, close: () => { store.close(); source.close(); } };
 }
+
+test('A real initial model choice merges interpretation and independent tool selection; scope reads are honestly after the model and before dispatch', async () => {
+  const f = syntheticContextDidi('valid');
+  try {
+    const task = f.b.submit({ goal: 'Synthetic exact route only; no order or payment' });
+    const first = await f.b.run();
+    assert.equal(f.requests.length, 1); assert.equal(first.runs!.length, 1);
+    assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 2);
+    const plan = first.delegation!.agent!.plans[0]!;
+    assert(plan.initialSelection); assert.equal(plan.modelRunId, first.runs![0]!.id);
+    assert.deepEqual(plan.steps.map(step => step.id), ['chosen_destination', 'chosen_origin']);
+    assert(plan.ontologyPlanning.reads.every(read => read.at >= first.runs![0]!.completedAt));
+    assert(plan.initialSelection.groundingPlanning.reads.every(read => read.at <= first.runs![0]!.startedAt));
+    assert(first.runs![0]!.ontologyContext!.receiptIds.every(id => plan.initialSelection!.groundingPlanning.reads.some(read => read.id === id)));
+    assert(!first.runs![0]!.ontologyContext!.receiptIds.some(id => plan.ontologyPlanning.reads.some(read => read.id === id)));
+    let done = await f.b.run(); done = await f.b.run();
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation!.agent!.feedback));
+    assert.equal(done.runs!.length, 3); assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
+    assert(done.delegation!.acceptance!.accepted); assert.equal(done.delegation!.agent!.completion!.modelDecision.kind, 'complete');
+    assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read' && intent.state === 'effect_confirmed'));
+    const program = f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!;
+    verifyInitialPlan(done, f.store.ontology, program, plan);
+    const altered = structuredClone(plan); altered.modelDecision.steps[0]!.argumentsJson = '{}';
+    assert.throws(() => verifyInitialPlan(done, f.store.ontology, program, altered), /differs/);
+    const invented = structuredClone(plan); invented.initialSelection!.definitionActions = [];
+    assert.throws(() => verifyInitialPlan(done, f.store.ontology, program, invented), /definitions/);
+  } finally { f.close(); }
+});
+
+for (const invalid of ['bad_binding', 'dependent'] as const) test(`Invalid initial ${invalid} never dispatches and returns selection to a fresh model decision`, async () => {
+  const f = syntheticContextDidi(invalid);
+  try {
+    f.b.submit(); const rejected = await f.b.run();
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 0);
+    assert.equal(f.store.intents(owner, rejected.id).length, 0);
+    assert.equal(rejected.delegation!.agent!.initialSelectionPending, undefined);
+    assert.equal(rejected.delegation!.agent!.feedback[0]!.kind, 'validation');
+    assert.equal((await f.b.run()).delegation!.agent!.plans.length, 1);
+    assert.equal(f.requests.length, 2);
+  } finally { f.close(); }
+});
+
+for (const stop of ['handoff', 'cancel'] as const) test(`Initial selection survives a clean ${stop} boundary without another model call or a late source dispatch`, async () => {
+  const f = syntheticContextDidi('valid'), checkpoint = f.store.checkpoint.bind(f.store); let stopped = false;
+  f.store.checkpoint = (claim, write) => {
+    const saved = checkpoint(claim, write);
+    if (saved && !stopped && f.store.get(owner, claim.job.id).delegation?.agent?.initialSelectionPending) {
+      stopped = true;
+      if (stop === 'cancel') f.b.tasks.cancel(principal, claim.job.id);
+      else f.store.finish(claim, () => {});
+    }
+    return saved;
+  };
+  try {
+    const task = f.b.submit(); const paused = await f.b.run();
+    assert(stopped); assert.equal(f.requests.length, 1); assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 0);
+    if (stop === 'cancel') assert.equal(paused.state, 'canceled');
+    else {
+      const resumed = await f.b.run(); assert.equal(f.requests.length, 1);
+      assert.equal(resumed.delegation!.agent!.plans[0]!.modelRunId, paused.runs![0]!.id);
+      assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 2);
+      assert.equal(f.store.get(owner, task.id).delegation!.agent!.initialSelectionPending, undefined);
+    }
+  } finally { f.close(); }
+});
 
 test('Four synthetic decisions independently choose tools and only complete after source data and separate host validation', async () => {
   const f = syntheticContextDidi();

@@ -362,7 +362,7 @@ class Client:
         output = {'taskId': task['id'], 'contextId': task.get('contextId'), 'state': task['status']['state'],
                   'resumeRequired': polled['resumeRequired'], 'receivedAtUtc': received,
                   'accepted': task.get('metadata', {}).get('delegation', {}).get('acceptance', {}).get('accepted'),
-                  'artifacts': [{'deliverable': value.get('deliverable'), 'result': value.get('result')} for value in content],
+                  'artifacts': [{'deliverable': value.get('deliverable')} for value in content],
                   'receiptDirectory': str(directory)}
         timing.update({'finishedAtUtc': datetime.now(timezone.utc).isoformat(),
                        'durationMs': (time.monotonic_ns() - started) / 1e6,
@@ -378,9 +378,37 @@ def read_json(path):
         raise ClientError('Input file unavailable or not valid JSON') from None
 
 
+def apply_run_spec(args, explicit_config):
+    if not args.spec_file:
+        return
+    path = Path(args.spec_file).expanduser()
+    try:
+        info = path.lstat()
+    except OSError:
+        raise ClientError('Run specification file unavailable') from None
+    if path.is_symlink() or not path.is_file() or os.name != 'nt' and (info.st_mode & 0o077 or info.st_uid != os.getuid()):
+        raise ClientError('Run specification must be an owned private file, not a link')
+    spec = read_json(path)
+    required = {'profile', 'textFile', 'requestId', 'saveDir'}
+    if not isinstance(spec, dict) or not required <= set(spec) or set(spec) - required - {'seconds', 'interval'}:
+        raise ClientError('Run specification permits only profile, textFile, requestId, saveDir, seconds and interval')
+    for key in ('profile', 'textFile', 'saveDir'):
+        if not isinstance(spec[key], str) or not Path(spec[key]).is_absolute():
+            raise ClientError('Run specification paths must be absolute')
+    if explicit_config and args.config != spec['profile']:
+        raise ClientError('Run specification cannot replace an explicitly selected profile')
+    args.config = spec['profile']
+    for field, key in [('text_file', 'textFile'), ('request_id', 'requestId'), ('save_dir', 'saveDir'), ('seconds', 'seconds'), ('interval', 'interval')]:
+        if key in spec:
+            if getattr(args, field) is not None and getattr(args, field) != spec[key]:
+                raise ClientError('Conflicting run option and saved specification')
+            setattr(args, field, spec[key])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--config', default=str(Path.home() / '.config/eigos/grok.json'))
+    default_config = str(Path.home() / '.config/eigos/grok.json')
+    parser.add_argument('--config')
     commands = parser.add_subparsers(dest='command', required=True)
     configure = commands.add_parser('configure')
     configure.add_argument('--card-url', required=True)
@@ -396,11 +424,12 @@ def main():
     send.add_argument('--request-id', required=True)
     send.add_argument('--task-id')
     run = commands.add_parser('run', help='Submit once, save receipts and poll; repeat the same command to resume the saved task')
-    run.add_argument('--text-file', required=True)
-    run.add_argument('--request-id', required=True)
-    run.add_argument('--save-dir', required=True)
-    run.add_argument('--seconds', type=float, default=45)
-    run.add_argument('--interval', type=float, default=0.25)
+    run.add_argument('--spec-file', help='Owned private JSON with saved transport arguments; contains no credential values or business plan')
+    run.add_argument('--text-file')
+    run.add_argument('--request-id')
+    run.add_argument('--save-dir')
+    run.add_argument('--seconds', type=float)
+    run.add_argument('--interval', type=float)
     authorize = commands.add_parser('authorize')
     authorize.add_argument('--task-id', required=True)
     authorize.add_argument('--input-file', required=True)
@@ -431,6 +460,16 @@ def main():
     cancel = commands.add_parser('cancel')
     cancel.add_argument('--task-id', required=True)
     args = parser.parse_args()
+    explicit_config = args.config is not None
+    args.config = default_config if args.config is None else args.config
+    if args.command == 'run':
+        apply_run_spec(args, explicit_config)
+        if not args.text_file or not args.request_id or not args.save_dir:
+            raise ClientError('Run needs text-file, request-id and save-dir, either explicitly or in a private spec-file')
+        args.seconds = 55 if args.seconds is None else args.seconds
+        args.interval = 0.25 if args.interval is None else args.interval
+        if isinstance(args.seconds, bool) or not isinstance(args.seconds, (int, float)) or isinstance(args.interval, bool) or not isinstance(args.interval, (int, float)):
+            raise ClientError('Run timing must use numeric seconds and interval')
     if args.command == 'configure':
         address(args.card_url, args.allow_loopback_http)
         config = {'cardUrl': args.card_url, 'allowedServices': args.allow_service or DEFAULT_SERVICES,
@@ -468,8 +507,8 @@ def main():
             if not text.strip() or len(text) > 10000:
                 raise ClientError('Text must contain 1–10000 characters')
             if args.command == 'run':
-                if not 0 <= args.seconds <= 45 or not 0.1 <= args.interval <= 30:
-                    raise ClientError('Run polls for at most 45 seconds; repeat with the same save directory to resume')
+                if not 0 <= args.seconds <= 55 or not 0.1 <= args.interval <= 30:
+                    raise ClientError('Run polls for at most 55 seconds; repeat with the same save directory to resume')
                 output = client.run_task(text, args.request_id, args.save_dir, args.seconds, args.interval)
             else:
                 output = client.send_text(text, args.request_id, args.task_id)

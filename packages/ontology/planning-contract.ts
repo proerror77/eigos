@@ -19,6 +19,7 @@ export interface PlanningReadReceipt {
   id: string; at: string; tool: string; inputDigest: string; outputDigest: string;
   datasetRevision: number; status: 'ok' | 'rejected'; objects: ObjectSnapshot[];
   origin?: 'model' | 'worker_context';
+  outputBytes?: number;
 }
 export interface DecisionActionProposal {
   action: string; definitionDigest: string; inputs: Record<string, { object: ObjectRef; revision: number }>;

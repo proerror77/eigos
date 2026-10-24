@@ -21,6 +21,10 @@ export const groundingSchema = z.object({
   capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
   requirementsJson: z.string().max(16000),
   conditionsJson: z.string().max(24000),
+  initialSteps: z.array(z.strictObject({
+    id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), action: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/),
+    argumentsJson: z.string().max(16000), scopeInputs: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)).min(1).max(4),
+  })).max(4).optional(),
 }).strict();
 export type Grounding = z.infer<typeof groundingSchema>;
 export const proposalSchema = z.object({

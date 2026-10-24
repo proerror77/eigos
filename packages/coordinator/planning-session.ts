@@ -20,6 +20,13 @@ export const planningToolSchemas = { describe_ontology: describeSchema, query_on
 export const planningToolCatalog = () => Object.entries(planningToolSchemas).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(schema)), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
+export function contextDefinitionInput(graph: OntologyObjectStore, actions: string[]) {
+  const functions = [...new Set(actions.flatMap(id => {
+    const action = graph.model.action(id);
+    return action.read?.mcp ? [...action.read.mcp.requires.map(dependency => dependency.evaluate), ...(action.read.module ? [action.read.module.completion.evaluate] : [])] : [];
+  }))];
+  return { search: 'ServiceRequest', limit: 1, actions: actions.slice(0, 8), functions: functions.slice(0, 20), includeLinks: false };
+}
 
 function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
   if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
@@ -83,11 +90,7 @@ export class OntologyPlanningSession {
     this.active();
     const startedAt = new Date().toISOString();
     if (this.reads.length) throw new DomainError('CONFLICT', 'Worker context must precede model queries in this decision');
-    const definitions = (options.actions ?? []).map(id => this.graph.model.action(id));
-    const functionIds = [...new Set(definitions.flatMap(action => action.read?.mcp ? [
-      ...action.read.mcp.requires.map(dependency => dependency.evaluate),
-      ...(action.read.module ? [action.read.module.completion.evaluate] : []),
-    ] : []))];
+    const definitionInput = contextDefinitionInput(this.graph, options.actions ?? []), functionIds = definitionInput.functions;
     const entries: { call: { tool: string; argumentsJson: string }; result: unknown; receiptId: string }[] = [];
     const read = (tool: string, input: unknown) => {
       const remaining = contextLimits.bytes - this.bytes;
@@ -97,7 +100,7 @@ export class OntologyPlanningSession {
       entries.push({ call: { tool, argumentsJson: JSON.stringify(input) }, result, receiptId: receipt.id });
       return receipt.status === 'ok';
     };
-    read('describe_ontology', { search: 'ServiceRequest', limit: 1, actions: (options.actions ?? []).slice(0, 8), functions: functionIds.slice(0, 20), includeLinks: false });
+    read('describe_ontology', definitionInput);
     const refs = [{ type: 'ServiceRequest', id: this.request.id }, ...(options.refs ?? [])]
       .filter((ref, index, all) => all.findIndex(value => key(value) === key(ref)) === index).slice(0, contextLimits.refs);
     const queried: ObjectRef[] = [];
@@ -241,7 +244,7 @@ export class OntologyPlanningSession {
     this.bytes += Buffer.byteLength(JSON.stringify(output));
     if (this.bytes > 200000) throw new DomainError('CONFLICT', 'Planner context byte budget exceeded');
     this.active();
-    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v), origin: options?.origin ?? 'model' });
+    this.reads.push({ id: randomUUID(), at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), outputBytes: Buffer.byteLength(JSON.stringify(output)), datasetRevision: this.graph.revision(this.owner), status, objects: [...this.seen].filter(([id]) => !before.has(id)).map(([, v]) => v), origin: options?.origin ?? 'model' });
     this.onRead(this.reads.at(-1)!);
     return output;
   }

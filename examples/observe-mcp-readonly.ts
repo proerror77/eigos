@@ -69,8 +69,41 @@ try {
   });
   const bindings = delegation.agent.plans.flatMap(plan => {
     assert.equal(digest(plan.ontologyPlanning.model), digest(graph.model.ref), 'Independent ontology definition changed');
-    const run = job.runs!.find(r => r.id === plan.modelRunId); assert.equal(run?.decisionDigest, digest(plan.modelDecision));
-    if (run?.ontologyContext) {
+    const run = job.runs!.find(r => r.id === plan.modelRunId); assert(run);
+    if (plan.initialSelection) {
+      const proof = plan.initialSelection, original = delegation.groundingDecisions?.find(selected => selected.modelRunId === plan.modelRunId)?.decision;
+      assert(original?.kind === 'resolve' && original.initialSteps?.length);
+      assert.equal(plan.sequence, 1); assert.equal(proof.modelRunId, plan.modelRunId);
+      assert.equal(run.decisionDigest, digest(original));
+      assert.equal(digest(original.capabilityRef), digest(plan.programRef));
+      assert.equal(plan.modelDecision.message, original.message);
+      assert.equal(plan.modelDecision.kind, 'execute'); assert.equal(plan.modelDecision.requestRevision, original.requestRevision);
+      assert.equal(plan.modelDecision.steps.length, original.initialSteps.length);
+      assert.equal(plan.modelDecision.completionJson, '');
+      for (const [index, draft] of original.initialSteps.entries()) {
+        const definition = graph.model.action(draft.action); assert(definition.read?.mcp && !definition.read.mcp.requires.length);
+        assert(proof.definitionActions.includes(draft.action));
+        const args = JSON.parse(draft.argumentsJson); assert(draft.scopeInputs.length && new Set(draft.scopeInputs).size === draft.scopeInputs.length);
+        for (const key of draft.scopeInputs) { assert(!Object.hasOwn(args, key)); assert(Object.hasOwn(definition.inputs, key)); assert(graph.model.implements(plan.scope.type, definition.inputs[key]!)); args[key] = plan.scope; }
+        assert.equal(digest(plan.modelDecision.steps[index]), digest({ id: draft.id, action: draft.action, argumentsJson: JSON.stringify(args), dependsOn: [], inputRefs: [] }));
+      }
+      const { digest: expected, ...source } = proof.groundingPlanning; assert.equal(digest(source), expected);
+      assert(proof.definitionActions.length <= 8);
+      const functions = [...new Set(proof.definitionActions.flatMap(id => {
+        const read = graph.model.action(id).read; assert(read?.mcp);
+        return [...read.mcp.requires.map(dependency => dependency.evaluate), ...(read.module ? [read.module.completion.evaluate] : [])];
+      }))];
+      const definitionInput = { search: 'ServiceRequest', limit: 1, actions: proof.definitionActions, functions: functions.slice(0, 20), includeLinks: false };
+      assert(source.reads.some(read => read.tool === 'describe_ontology' && read.status === 'ok' && read.inputDigest === digest(definitionInput)));
+      assert(source.reads.every(read => read.at <= (run.requestSentAt ?? run.startedAt)));
+      assert(plan.ontologyPlanning.reads.every(read => read.at >= run.completedAt && read.at <= plan.createdAt));
+      const combined = [...source.reads, ...plan.ontologyPlanning.reads];
+      assert(combined.length <= 20 && new Set(combined.map(read => read.id)).size === combined.length);
+      assert(combined.every(read => read.outputBytes !== undefined && digest(read) === digest(readById.get(read.id))));
+      assert(combined.reduce((sum, read) => sum + read.outputBytes!, 0) <= 200000);
+      if (run.ontologyContext) assert(run.ontologyContext.receiptIds.every(id => source.reads.some(read => read.id === id)));
+    } else assert.equal(run.decisionDigest, digest(plan.modelDecision));
+    if (run.ontologyContext && !plan.initialSelection) {
       assert.equal(run.ontologyContext.requestRevision, plan.requestRevision);
       assert(run.ontologyContext.receiptIds.every(id => plan.ontologyPlanning.reads.some(read => read.id === id)));
     }
@@ -94,7 +127,8 @@ try {
   assert.equal(digest(JSON.parse(completion.modelDecision.completionJson)), digest(completion.proposal));
   assert(bindings.every(binding => binding.observedAt <= (completionRun.requestSentAt ?? completionRun.startedAt)), 'The completion model response must follow actual source results');
   if (completionRun.ontologyContext) assert(completionRun.ontologyContext.receiptIds.every(id => completion.ontologyPlanning.reads.some(read => read.id === id)));
-  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, noOrderOrPayment: true };
+  const initialSelections = delegation.agent.plans.filter(plan => plan.initialSelection).map(plan => ({ modelRunId: plan.modelRunId, actualGroundingAndInitialChoiceOneResponse: true, beforeModelReads: plan.initialSelection!.groundingPlanning.reads.length, postModelScopeBindingReads: plan.ontologyPlanning.reads.length, scopeActuallyReadBeforeDispatch: true }));
+  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, initialSelections, noOrderOrPayment: true };
   writeFileSync(join(directory, 'ontology-mcp-observer.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ taskId: id, accepted: true, callerArtifactMatches: true, readActions: bindings.length, evaluationTime: report.evaluationTime }));
 } finally { db.close(); }

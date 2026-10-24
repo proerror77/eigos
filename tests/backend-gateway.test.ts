@@ -7,7 +7,7 @@ import { once } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, writeFileSync, rmSync, readFileSync, chmodSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -161,4 +161,22 @@ print(json.dumps({'sends':c.calls,'errors':errors,'saved':json.loads((Path(sys.a
     const data = JSON.parse(result.stdout); assert.equal(data.sends, 1);
     assert(data.errors[1].includes('no automatic resubmission')); assert.equal(data.saved.requestId, 'same-id'); assert.equal(data.saved.taskId, undefined);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('PA private run specification uses the saved profile and stable identity; rejects conflicting or non-private specs before submission', async () => {
+  const f = await fixture(), script = resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
+  const profile = join(f.dir, 'spec-profile.json'), token = join(f.dir, 'spec-token'), goal = join(f.dir, 'spec-goal.txt'), spec = join(f.dir, 'run-spec.json'), saved = join(f.dir, 'spec-receipts');
+  writeFileSync(token, f.token, { mode: 0o600 }); chmodSync(token, 0o600); writeFileSync(goal, '审计 CSV');
+  const run = async (...args: string[]) => JSON.parse((await exec('python3', [script, ...args], { maxBuffer: 1024 * 1024 })).stdout);
+  try {
+    await run('--config', profile, 'configure', '--card-url', f.base + '/.well-known/agent-card.json', '--token-file', token, '--allow-loopback-http');
+    writeFileSync(spec, JSON.stringify({ profile, textFile: goal, requestId: 'spec-one', saveDir: saved, seconds: 0, interval: 0.25 }), { mode: 0o600 }); chmodSync(spec, 0o600);
+    const first = await run('run', '--spec-file', spec); assert(first.taskId);
+    const next = await run('run', '--spec-file', spec); assert.equal(next.taskId, first.taskId);
+    assert(!JSON.stringify(first).includes(f.token));
+    await assert.rejects(run('--config', join(f.dir, 'other-profile.json'), 'run', '--spec-file', spec), /explicitly selected profile/);
+    await assert.rejects(run('--config', join(homedir(), '.config/eigos/grok.json'), 'run', '--spec-file', spec), /explicitly selected profile/);
+    await assert.rejects(run('run', '--spec-file', spec, '--request-id', 'different'), /Conflicting/);
+    chmodSync(spec, 0o644); await assert.rejects(run('run', '--spec-file', spec), /owned private/);
+  } finally { await f.close(); }
 });

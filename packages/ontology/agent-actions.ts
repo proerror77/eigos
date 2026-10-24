@@ -24,12 +24,14 @@ export interface AgentActionPlan {
   modelRunId: string; modelDecision: AgentDecision; reasoning: string; createdAt: string;
   steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; operationScope?: string })[];
   ontologyPlanning: PlanningSnapshot; digest: string;
+  initialSelection?: { modelRunId: string; definitionActions: string[]; groundingPlanning: PlanningSnapshot };
 }
 export interface AgentExecutionState {
   version: '1'; programRef: Ref; programDigest: string; scope: ObjectRef;
   input: Record<string, unknown>; requestRevision: number;
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
+  initialSelectionPending?: { modelRunId: string; definitionActions: string[]; groundingPlanning: PlanningSnapshot };
   paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion'; message: string; inputDigest: string }[];
   informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
