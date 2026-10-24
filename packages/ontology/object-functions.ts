@@ -1,6 +1,14 @@
 import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
+import { evaluateShopCheckoutFunction } from './shopify-checkout-functions.js';
+import { evaluateShopifyPAFunction } from './shopify-pa-payment-functions.js';
+import { productAttributeFunctionSchemas } from './product-attributes.js';
+import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
+import { identityFunctionSchemas } from './identity-model.js';
+import { evaluateIdentityFunction } from './identity-mapping.js';
+import { errandFunctionSchemas } from './errand-model.js';
+import { evaluateErrandFunction } from './errand-domain.js';
 import { evaluateStripePaymentFunction } from './stripe-payment-functions.js';
 import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -10,6 +18,7 @@ import { sourceProof as proof } from './object-evidence.js';
 import { evaluateDomainFunction } from './domain-functions.js';
 import { evaluateCommerceFunction } from './commerce-functions.js';
 import { evaluateCatalogFunction } from './catalog-functions.js';
+import { evaluatePaotuiFunction } from './paotui-agent-functions.js';
 import { evaluateAgentCatalogFunction } from './catalog-agent-functions.js';
 import { evaluateCommerceJourneyFunction } from './commerce-journey-functions.js';
 import { evaluateCustomsPolicyFunction } from './customs-policy-functions.js';
@@ -20,12 +29,13 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
-  simple('bookingObservationStatus'), simple('stripePaymentStatus'),
+  ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
+  simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'), simple('shopifyCheckoutObservationStatus'), simple('shopifyPAPaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('meituanReadStatus'), simple('catalogObservationStatus'), simple('rideEstimateStatus'),
+  simple('catalogObservationStatus'), simple('paotuiObservationStatus'), simple('meituanReadStatus'), simple('rideEstimateStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -61,6 +71,18 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const paCheckoutResult = evaluateShopifyPAFunction(store, owner, input, budget);
+  if (paCheckoutResult) return paCheckoutResult;
+  const shopCheckoutResult = evaluateShopCheckoutFunction(store, owner, input, budget);
+  if (shopCheckoutResult) return shopCheckoutResult;
+  const productResult = evaluateProductAttributeFunction(store, owner, input, budget);
+  if (productResult) return productResult;
+  const identityResult = evaluateIdentityFunction(store, owner, input, budget);
+  if (identityResult) return identityResult;
+  const errandResult = evaluateErrandFunction(store, owner, input, budget);
+  if (errandResult) return errandResult;
+  const paotuiResult = evaluatePaotuiFunction(store, owner, input, budget);
+  if (paotuiResult) return paotuiResult;
   const meituanResult = evaluateMeituanRead(store, owner, input, budget);
   if (meituanResult) return meituanResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
@@ -82,6 +104,11 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   const domainResult = evaluateDomainFunction(store, owner, input, budget);
   if (domainResult) return domainResult;
   const object = store.read(owner, input.object, budget), p = object.properties;
+  if (input.function === 'authorizationStatus') {
+    requireType(object, 'Authorization');
+    if (!p.kind || !p.ledgerDigest || !p.approvedAt || !p.expiresAt || p.revoked === undefined) return known('unknown', [object.ref]);
+    return known(p.revoked ? 'revoked' : Date.parse(String(p.expiresAt)) <= store.now() ? 'expired' : 'active', [object.ref]);
+  }
   if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
   if (input.function === 'remainingQuantity') {
     requireType(object, 'OrderLine'); const ordered = quantity(p.quantityOrdered);
@@ -156,16 +183,19 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     const declared = quantity(parcel.properties.declaredWeight), priced = quantity(p.quotedWeight);
     if (!declared || !priced || p.requestRevision === undefined || p.parcelRevision === undefined || p.routeRevision === undefined) return unknown('Quote input version or weight evidence is incomplete', [object.ref]);
     const parcelRequest = one(store, owner, parcel.ref, 'request', budget), routeRequest = one(store, owner, route.ref, 'request', budget);
-    if (!parcelRequest || !routeRequest || !route.properties.originSnapshot || !route.properties.destinationSnapshot || !parcel.properties.declaredContents || !parcel.properties.contentsCategory) return unknown('The priced parcel or route is incomplete', [object.ref, parcel.ref, route.ref]);
+    const origin = one(store, owner, route.ref, 'originAddress', budget), destination = one(store, owner, route.ref, 'destinationAddress', budget);
+    if (origin && destination && same(origin.ref, destination.ref)) return known('fail', [object.ref, route.ref, origin.ref], fresh.evidenceLevels);
+    const linkedRoute = origin && destination && !same(origin.ref, destination.ref);
+    if (!parcelRequest || !routeRequest || !(linkedRoute || route.properties.originSnapshot && route.properties.destinationSnapshot) || !parcel.properties.declaredContents || !parcel.properties.contentsCategory) return unknown('The priced parcel or route is incomplete', [object.ref, parcel.ref, route.ref]);
     for (const [link, property] of [['originAddress', 'originSnapshot'], ['destinationAddress', 'destinationSnapshot']]) {
       const address = one(store, owner, route.ref, link!, budget);
-      if (address && digest(address.properties.address) !== digest(route.properties[property!])) return known('fail', [object.ref, route.ref, address.ref, ...fresh.evidenceRefs], fresh.evidenceLevels);
+      if (address && route.properties[property!] !== undefined && digest(address.properties.address) !== digest(route.properties[property!])) return known('fail', [object.ref, route.ref, address.ref, ...fresh.evidenceRefs], fresh.evidenceLevels);
     }
     const matches = same(quoteRequest.ref, request.ref) && same(parcelRequest.ref, request.ref) && same(routeRequest.ref, request.ref) && same(route.ref, selectedRoute.ref) && p.requestRevision === request.properties.revision && p.parcelRevision === parcel.revision && p.routeRevision === route.revision && declared.dimension === 'mass' && declared.dimension === priced.dimension && declared.scaled === priced.scaled && p.serviceLevel === input.serviceLevel;
     return known(matches ? 'pass' : 'fail', [object.ref, request.ref, parcel.ref, route.ref, ...fresh.evidenceRefs], fresh.evidenceLevels);
   }
   if (input.function === 'withinBudget' && 'budget' in input) {
-    if (!['DeliveryQuote', 'ProductOffer'].includes(object.ref.type)) return unknown('This function compares a scoped total, not a reservation deposit', [object.ref]);
+    if (!['DeliveryQuote', 'ProductOffer', 'FulfillmentOffer'].includes(object.ref.type)) return unknown('This function compares a scoped total, not a reservation deposit', [object.ref]);
     const fresh = freshness(store, owner, object, budget), terms = p.pricingTerms as { total?: unknown; scope?: string } | undefined;
     const total = moneyValueSchema.safeParse(terms?.total);
     if (fresh.status !== 'known' || !fresh.value || p.priceKind !== input.priceBasis || p.pricingCompleteness !== 'complete' || terms?.scope !== 'all_mandatory_fees' || !total.success || total.data.currency !== input.budget.currency) return unknown('Comparable, complete and current price evidence is missing', [object.ref]);

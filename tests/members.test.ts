@@ -173,9 +173,9 @@ test('signed OIDC + PKCE login, explicit membership application, MCP/A2A continu
     mcp = new Client({ name: 'member-personal-agent', version: '1' });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${accessToken}` } } }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my service brief', requestId: randomUUID() } });
-    const job = (submitted.structuredContent as { result: Job }).result;
-    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:Job}).result.state==='input-required') break;await new Promise(r=>setTimeout(r,10));}
-    const response = await f.protectedCall('/a2a', accessToken, { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } });
+    const job = (submitted.structuredContent as { result: Job }).result; let questionRevision: number | undefined;
+    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:Job}).result.state==='input-required'){questionRevision=(read.structuredContent as {result:Job}).result.revision;break;}await new Promise(r=>setTimeout(r,10));}
+    const response = await f.protectedCall('/a2a', accessToken, { jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, metadata: { expectedRevision: questionRevision }, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } });
     const task = (await response.json()).result.task; assert.equal(task.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } });
     assert.equal((readback.structuredContent as { result: Job }).result.artifact?.data.execution, 'not_started');

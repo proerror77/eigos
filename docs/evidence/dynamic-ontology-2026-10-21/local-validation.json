@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-21T09:54:41.236679+00:00",
+  "baselineCommit": "4530e009adf88c24a8ac5942f3b9cf01ab1d36da",
+  "branch": "codex/member-paotui-agent",
+  "deployment": false,
+  "realProviderOrderOrPayment": false,
+  "commands": [
+    {
+      "command": "npm run check",
+      "passed": true
+    },
+    {
+      "command": "npm test",
+      "passed": 897,
+      "tests": 897,
+      "failed": 0,
+      "durationMs": 1242594.745916
+    },
+    {
+      "command": "npm run build",
+      "passed": true
+    },
+    {
+      "command": "npm run test:e2e:run",
+      "passed": 9,
+      "tests": 9,
+      "failed": 0,
+      "durationMs": 35588.745958
+    },
+    {
+      "command": "node --import tsx --test --test-concurrency=2 tests/gateway.test.ts tests/auth0.test.ts tests/agent-onboarding.test.ts",
+      "passed": 24,
+      "tests": 24,
+      "failed": 0,
+      "durationMs": 8366.939042
+    },
+    {
+      "command": "node --import tsx --test --test-concurrency=2 tests/dynamic-agent-model.test.ts tests/ontology-planning.test.ts",
+      "passed": 17,
+      "tests": 17,
+      "failed": 0,
+      "durationMs": 6360.595917
+    },
+    {
+      "command": "node --import tsx --test --test-concurrency=2 tests/dynamic-definition-store.test.ts tests/dynamic-agent-model.test.ts tests/ontology-management-gateway.test.ts",
+      "passed": 22,
+      "tests": 22,
+      "failed": 0,
+      "durationMs": 32840.144375
+    },
+    {
+      "command": "git diff --cached --check",
+      "passed": true
+    }
+  ],
+  "sourceInputs": {
+    "algorithm": "SHA256 of compact UTF-8 JSON array of [repository path, Git blob ID], sorted by path, taken from stage-zero index entries under the listed paths; documents and evidence excluded.",
+    "paths": [
+      "apps",
+      "packages",
+      "tests",
+      "examples",
+      "scripts",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json"
+    ],
+    "fileCount": 369,
+    "sha256": "a35e6f95d27a4cdf454af9905fc8d7fd49fa20cac46dd6f411342282ef82a272"
+  },
+  "nativeModelProbe": {
+    "evidence": "real-model-runtime.json",
+    "passed": true,
+    "modelCalls": 8,
+    "ontologyReadReceipts": 5,
+    "modelDigest": "d68ad2f556784e8ced017031cb610c03b66d522159f9ed0d68ebbf50034f5546",
+    "postProbeSourceChanges": [
+      {
+        "path": "packages/ontology/definition-store.ts",
+        "atProbeSha256": "ceae32a46053714497251c67a73ec0088f5115fa14fd88a3837bf2ce62586b8a",
+        "finalSha256": "bdb202c5b00ea19f07ccd5f5011b1d88779819db7589779e1ee36ec2baa21d8e",
+        "reason": "After the successful native-model run, publication now rejects declarative actions on a historical kernel without managed authorization. Current-kernel semantics and compiled model digest are unchanged.",
+        "verifiedBy": "Final 22-test publication, runtime-input and authenticated management regression, including current-kernel execution and historical-kernel refusal."
+      }
+    ]
+  },
+  "notes": [
+    "Full-suite evidence was followed by the focused checks above after later boundary changes. CI independently verifies the final committed source tree.",
+    "Browser proof and synthetic object readback are separate artifacts. No production deployment or real service fulfillment is claimed."
+  ]
+}

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setupCommerce, commerceChoice, commerceDecision, commerceReads, commerceStep } from './fixtures/commerce-agent.js';
-import { evidence, interpretation, owner } from './backend-fixture.js';
+import { evidence, interpretation, owner, observeTaskContext } from './backend-fixture.js';
 import { CUSTOMS_POLICY_DIGEST, CUSTOMS_REFERENCE_REFS, CUSTOMS_REFERENCES, CUSTOMS_RULE_REF, seedCustomsPolicy } from '../packages/ontology/customs-policy.js';
 import { customsGateStatus, productRegulatoryBoundary } from '../packages/ontology/customs-policy-functions.js';
 import type { CommerceSandboxScenario } from '../packages/capabilities/commerce-sandbox/provider.js';
@@ -56,7 +56,7 @@ for (const mode of ['no_policy_read', 'no_gate_evaluation'] as const) test(`A mo
     return decision;
   } });
   try {
-    const done = await t.finish(t.submit().id, false); assert.equal(done.state, 'input-required'); assert.equal(done.artifact, undefined);
+    const done = await t.finish(t.submit().id, false); assert.equal(done.state, 'paused'); assert.equal(done.delegation!.recovery?.code, 'validation_stalled'); assert.equal(done.artifact, undefined);
     assert(done.delegation!.agent!.feedback.some(f => f.message.includes('must query the exact customs rule set')));
     assert.equal(t.provider.counts().QuoteCommerceLandedCost, undefined); assert.equal(t.provider.counts().CreateCommerceCart, undefined); assert.equal(t.provider.counts().SubmitCommerceOrder, undefined);
   } finally { await t.close(); }
@@ -93,7 +93,7 @@ test('An evaluated empty directory ends with a scoped unsupported result without
     return { ...commerceDecision(ctx), kind: 'no_feasible_plan', message: 'No registered source covers this query; no statement is made about worldwide supply or legal eligibility.' };
   } });
   try {
-    t.model.ground = async request => ({ decision: { ...interpretation(request, 'commerce.journey.sandbox', { query, quantity: null, contextKey: null, target: 'quote' }), capabilityRef: { id: 'commerce.journey.sandbox', version: '2' } }, evidence: evidence() });
+    t.model.ground = async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, 'commerce.journey.sandbox', { query, quantity: null, contextKey: null, target: 'quote' }), capabilityRef: { id: 'commerce.journey.sandbox', version: '2' } }, evidence: evidence() });
     const job = t.b.submit({ goal: 'Check only the registered source coverage and stop on an empty directory.', executionEnvironment: 'sandbox' });
     const done = await t.finish(job.id, false); assert.equal(done.state, 'rejected'); assert.equal(done.question, undefined); assert.equal(done.delegation!.agent!.feedback.length, 0);
     assert.deepEqual(t.provider.counts(), { SearchCommerceMerchants: 1 }); assert.equal(done.artifact, undefined);
@@ -106,7 +106,7 @@ test('An empty directory for a different query cannot establish the requested co
     return directory ? { ...commerceDecision(ctx), kind: 'no_feasible_plan', message: 'Try to reject using an unrelated empty search.' } : commerceDecision(ctx, [commerceStep('directory', 'SearchCommerceMerchants', { scope: ctx.state.scope, query: 'unrelated category' })]);
   } });
   try {
-    const done = await t.finish(t.submit().id, false); assert.equal(done.state, 'input-required');
+    const done = await t.finish(t.submit().id, false); assert.equal(done.state, 'paused'); assert.equal(done.delegation!.recovery?.code, 'validation_stalled');
     assert(done.delegation!.agent!.feedback.some(f => f.message.includes('requested query'))); assert.equal(done.artifact, undefined);
   } finally { await t.close(); }
 });

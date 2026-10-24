@@ -173,26 +173,36 @@ class Client:
             'messageId': request_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
         }}, endpoint)
 
-    def reply(self, task_id, data, request_id):
+    def reply(self, task_id, data, request_id, operation='reply'):
         if not isinstance(data, dict) or any(k in data for k in ('taskId', 'requestId', 'contextId', 'service')):
             raise ClientError('Reply must contain only answer or the service-specific confirmation fields')
+        if not isinstance(data.get('expectedRevision'), int) or isinstance(data.get('expectedRevision'), bool) or data['expectedRevision'] < 1:
+            raise ClientError('Reply must bind expectedRevision from the question that was shown; do not silently use a newer question')
         # Check task ownership/service before sending a continuation. Exact retries remain allowed.
         current = self.rpc('GetTask', {'id': task_id})
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured delegation allowlist')
         _, endpoint = self.discover()
-        return self.write('reply:' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
-            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
+        return self.write(operation + ':' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'metadata': {'taskOperation': operation}, 'parts': [{'data': data}],
         }}, endpoint)
 
     def payment_route(self, task_id, data, request_id):
-        allowed = {'handoffId', 'handoffDigest', 'wallet'}
-        if not isinstance(data, dict) or set(data) != allowed:
-            raise ClientError('Payment route accepts only handoffId, handoffDigest and wallet availability')
-        wallet = data.get('wallet')
-        reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
-        if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
-            raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        if not isinstance(data, dict):
+            raise ClientError('Payment route requires a structured capability observation')
+        if set(data) == {'handoffId', 'handoffDigest', 'capability'}:
+            capability = data['capability']
+            if (not isinstance(capability, dict) or set(capability) != {'route', 'status', 'environment', 'observedAt'}
+                    or capability.get('route') not in ('pa_vault', 'pa_payment_account') or capability.get('status') != 'available'
+                    or capability.get('environment') != 'sandbox' or not isinstance(capability.get('observedAt'), str)):
+                raise ClientError('Report a currently available isolated PA Vault or payment-account capability; never include credentials')
+        elif set(data) == {'handoffId', 'handoffDigest', 'wallet'}:
+            wallet = data['wallet']
+            reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
+            if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
+                raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        else:
+            raise ClientError('Provide only handoffId, handoffDigest and one current wallet or capability observation')
         return self.payment_continuation(task_id, data, request_id, 'select_payment_route', 'payment-route:')
 
     def payment_result(self, task_id, data, request_id):
@@ -220,9 +230,11 @@ class Client:
             'parts': [{'data': {'action': action, **data}}],
         }}, endpoint)
 
-    def send_text(self, text, request_id, task_id=None):
+    def send_text(self, text, request_id, task_id=None, expected_revision=None):
         card, endpoint = self.discover()
         if task_id:
+            if not isinstance(expected_revision, int) or expected_revision < 1:
+                raise ClientError('A continuation requires --expected-revision from the question being answered')
             current = self.rpc('GetTask', {'id': task_id}, endpoint)
             service = current.get('metadata', {}).get('service')
         else:
@@ -233,6 +245,7 @@ class Client:
         message = {'messageId': request_id, 'role': 'ROLE_USER', 'parts': parts}
         if task_id:
             message['taskId'] = task_id
+            message['metadata'] = {'expectedRevision': expected_revision}
         return self.write('reply:' + task_id if task_id else 'submit', request_id,
                           {'configuration': {'returnImmediately': True}, 'message': message}, endpoint)
 
@@ -241,8 +254,17 @@ class Client:
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured allowlist')
         if not isinstance(data, dict) or not isinstance(data.get('requestId'), str) or not 1 <= len(data['requestId']) <= 128:
-            raise ClientError('Supply an exact sandbox confirmation with a stable requestId')
-        if data.get('action') == 'approve_plan':
+            raise ClientError('Supply an exact supported authorization with a stable requestId')
+        if data.get('action') == 'approve_external_draft':
+            required = {'requestId', 'action', 'planDigest', 'draft', 'expiresAt', 'environment'}
+            draft = data.get('draft')
+            if set(data) != required or data['environment'] != 'live' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
+                raise ClientError('Draft approval requires the exact live checkout preview and plan digest')
+            if not isinstance(draft, dict) or draft.get('resource') != 'unpaid_checkout' or draft.get('maximumCreates') != 1 or any(draft.get(k) is not False for k in ('orderAllowed', 'paymentAllowed', 'buyerDataAllowed')):
+                raise ClientError('Draft authority cannot authorize an order, payment or customer data')
+            if not isinstance(data['expiresAt'], str) or not data['expiresAt']:
+                raise ClientError('Draft approval requires a finite expiry')
+        elif data.get('action') == 'approve_plan':
             required = {'requestId', 'action', 'planDigest', 'allowedEffects', 'maxAmount', 'payeeIds', 'expiresAt', 'environment'}
             amount, effects, payees = data.get('maxAmount'), data.get('allowedEffects'), data.get('payeeIds')
             if set(data) != required or data['environment'] != 'sandbox' or not isinstance(data['planDigest'], str) or not re.fullmatch(r'[a-f0-9]{64}', data['planDigest']):
@@ -254,7 +276,7 @@ class Client:
             if not isinstance(payees, list) or len(payees) > 8 or any(not isinstance(p, str) or not 1 <= len(p) <= 200 for p in payees) or not isinstance(data['expiresAt'], str) or not data['expiresAt']:
                 raise ClientError('Plan approval requires exact payees and a finite expiry')
         elif data.get('action') != 'confirm_simulated_payment' or set(data) != {'requestId', 'action', 'quoteId', 'quoteDigest'}:
-            raise ClientError('Supply the exact supported sandbox confirmation fields')
+            raise ClientError('Supply the exact supported authorization fields')
         if not task_id or any(c not in '0123456789abcdef-' for c in task_id.lower()):
             raise ClientError('Invalid task ID')
         base = urllib.parse.urlsplit(self.config['cardUrl'])
@@ -280,6 +302,8 @@ class Client:
         while True:
             task = self.rpc('GetTask', {'id': task_id}, endpoint)
             state = task['status']['state']
+            if task.get('metadata', {}).get('internalState') == 'paused':
+                return {'task': task, 'resumeRequired': True, 'ownerInputRequired': False}
             if state in TERMINAL or state in ('TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED'):
                 return {'task': task, 'resumeRequired': False}
             if state not in ('TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'):
@@ -313,6 +337,7 @@ def main():
     send.add_argument('--text-file', required=True)
     send.add_argument('--request-id', required=True)
     send.add_argument('--task-id')
+    send.add_argument('--expected-revision', type=int)
     authorize = commands.add_parser('authorize')
     authorize.add_argument('--task-id', required=True)
     authorize.add_argument('--input-file', required=True)
@@ -330,10 +355,11 @@ def main():
     submit = commands.add_parser('submit')
     submit.add_argument('--input-file', required=True)
     submit.add_argument('--request-id', required=True)
-    reply = commands.add_parser('reply')
-    reply.add_argument('--task-id', required=True)
-    reply.add_argument('--input-file', required=True)
-    reply.add_argument('--request-id', required=True)
+    for operation in ('reply', 'amend', 'resume'):
+        continuation = commands.add_parser(operation)
+        continuation.add_argument('--task-id', required=True)
+        continuation.add_argument('--input-file', required=True)
+        continuation.add_argument('--request-id', required=True)
     get = commands.add_parser('get')
     get.add_argument('--task-id', required=True)
     poll = commands.add_parser('poll')
@@ -379,7 +405,7 @@ def main():
                 raise ClientError('Text input file unavailable') from None
             if not text.strip() or len(text) > 10000:
                 raise ClientError('Text must contain 1–10000 characters')
-            output = client.send_text(text, args.request_id, args.task_id)
+            output = client.send_text(text, args.request_id, args.task_id, args.expected_revision)
         elif args.command == 'authorize':
             output = client.authorize(args.task_id, read_json(args.input_file))
         elif args.command == 'payment-result':
@@ -390,8 +416,8 @@ def main():
             output = client.reconcile(args.task_id, args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
-        elif args.command == 'reply':
-            output = client.reply(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command in ('reply', 'amend', 'resume'):
+            output = client.reply(args.task_id, read_json(args.input_file), args.request_id, args.command)
         elif args.command == 'poll':
             if not 0 <= args.seconds <= 45 or not 0.1 <= args.interval <= 30:
                 raise ClientError('Poll for at most 45 seconds with a 0.1–30 second interval; resume with the same task ID')

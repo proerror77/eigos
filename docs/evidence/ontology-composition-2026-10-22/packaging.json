@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "passed": true,
+  "verifiedAt": "2026-10-22T15:51:02.681Z",
+  "codeSource": "standalone compiled apps/packages copied outside the checkout",
+  "dependencies": "node_modules only; no source checkout imports",
+  "historicalModels": [
+    {
+      "id": "eigos.business",
+      "version": "15",
+      "digest": "efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776"
+    },
+    {
+      "id": "eigos.business",
+      "version": "16",
+      "digest": "9cc72c92efa54600967979971dc0e568d01d849b683bbe4e7d6d8931150eef57"
+    }
+  ],
+  "currentModel": {
+    "id": "eigos.business",
+    "version": "17",
+    "digest": "67436b02a6f26e5e9d494c14bfdf4953eaaaa5ada723e7369920341f12e8c835"
+  },
+  "frozenResources": [
+    "packages/ontology/history/business-v15.json",
+    "packages/ontology/history/business-v16.json"
+  ],
+  "gatewayHealth": {
+    "status": "ok",
+    "version": "0.1.0",
+    "backend": "ontology-execution-v17"
+  },
+  "independentStoreRestart": true,
+  "releasePinPreserved": true,
+  "noProvidersConfigured": true,
+  "noModelCalls": true,
+  "noDeployment": true,
+  "runtimeManifestDigest": "c04832a5bc19e21c3b28172e6211174c5e8c95a59eb010100f51d4de74cc3daf"
+}

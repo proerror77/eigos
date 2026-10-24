@@ -9,7 +9,8 @@
     "rootDir": ".",
     "types": ["node"],
     "skipLibCheck": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "resolveJsonModule": true
   },
   "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "examples/**/*.ts"]
 }

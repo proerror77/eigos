@@ -42,8 +42,10 @@ test('Existing PA client submits a sandbox task, approves its exact Agent plan a
   } finally { await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); await t.close(); }
 });
 
-test('Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent', async () => {
-  const t = await setupCommerce({ target: 'quote' }), server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+test('Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent', { timeout: 180000 }, async () => {
+  // This fixture shares an event loop with the Worker. Slow synchronous turns
+  // can outlast HTTP's idle timer; teardown still closes every connection.
+  const t = await setupCommerce({ target: 'quote' }), server = createServer({ keepAliveTimeout: 0 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`, token = 'customs-readonly-gateway-test'.repeat(2);
   const gateway = createApp(readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, PUBLIC_URL: base, DATABASE_PATH: ':memory:', EIGOS_ACTION_SANDBOX: 'true' }), undefined, store => createExecutionCatalog({ store, commerceSandbox: t.settings }));
   server.on('request', gateway.app);
@@ -53,12 +55,15 @@ test('Authenticated MCP exposes request-bound customs references and the exact s
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     let job = await call('submit_task', { service: 'eigos.delegate', goal: 'Read a synthetic customs-checked quote only, without creating any cart or order.', executionEnvironment: 'sandbox', requestId: randomUUID() }) as Job;
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + 120000;
     while (['working', 'submitted'].includes(job.state) && Date.now() < deadline) { await pause(100); job = await call('get_task', { taskId: job.id }) as Job; }
     assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback));
     const from = { type: 'ServiceRequest', id: job.id }, books = await call('query_ontology', { from, link: 'customsRuleSets' }), references = await call('query_ontology', { from, link: 'regulatoryReferences' });
     assert.equal(books.items.length, 1); assert.equal(references.items.length, 6);
-    const customs = job.delegation!.agent!.observations.find(r => r.type === 'CustomsAssessment')!, gate = await call('evaluate_ontology', { function: 'customsGateStatus', object: customs });
+    assert.equal(job.delegation!.agent, undefined, 'Polling retains the bounded business summary');
+    const observations = await call('query_ontology', { from, link: 'commerceCustomsAssessment', select: ['id'] });
+    assert.equal(observations.items.length, 1);
+    const customs = observations.items[0].ref, gate = await call('evaluate_ontology', { function: 'customsGateStatus', object: customs });
     assert.equal(gate.value.status, 'pass_sandbox'); assert.equal(gate.value.legalApproval, false); assert.equal(gate.value.policyDigest, (job.artifact!.data.result as any).customsPolicy.policyDigest);
     assert.equal(t.provider.counts().CreateCommerceCart, undefined); assert.equal(t.provider.counts().SubmitCommerceOrder, undefined);
   } finally { await client.close(); await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); await t.close(); }

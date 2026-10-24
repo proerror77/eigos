@@ -2,9 +2,13 @@ import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema } from '../ontology/execution.js';
+import { executionBudgetProfileSchema } from './execution-budget.js';
 
-export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
-export type Scope = (typeof SCOPES)[number];
+/** Existing PA onboarding requests task access only. Modeling and administration
+ * are separately requested grants, never implicit upgrades to an installation. */
+export const TASK_SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
+export const SCOPES = [...TASK_SCOPES, 'ontology:read', 'ontology:write', 'ontology:publish', 'ontology:admin', 'ontology:object_write'] as const;
+export type Scope = (typeof SCOPES)[number] | 'sources:read' | 'sources:write';
 export interface Principal {
   issuer: string;
   subject: string;
@@ -20,6 +24,11 @@ export class DomainError extends Error {
 }
 export class ReplanRequired extends DomainError {
   constructor(message: string) { super('CONFLICT', message); }
+}
+
+// Domain programs signal a human-owned connection handoff without a model retry.
+export class ConnectionAuthorizationRequired extends ReplanRequired {
+  constructor(message: string, readonly connection?: { provider: string; nextAction: string; resumeAction: string }) { super(message); }
 }
 
 export function requireScope(principal: Principal, scope: Scope): void {
@@ -39,19 +48,25 @@ export const submitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
+  executionBudget: executionBudgetProfileSchema.optional(),
+  ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,
   answer: z.string().trim().min(1).max(4_000),
   requestId: requestIdSchema,
+  expectedRevision: z.number().int().positive().optional(),
   requirements: requirementsSchema.optional(),
+  executionBudget: z.literal('extended').optional(),
 }).strict();
 export const replySchema = answerReplySchema;
+export const versionedReplySchema = answerReplySchema.extend({ expectedRevision: z.number().int().positive() });
+export const resumeTaskSchema = z.object({ taskId: taskIdSchema, requestId: requestIdSchema, expectedRevision: z.number().int().positive(), executionBudget: z.literal('extended').optional() }).strict();
 export const ontologySubmitSchema = submitSchema;
 export type SubmitInput = z.infer<typeof submitSchema>;
 export type ReplyInput = z.infer<typeof replySchema>;
 
-export type JobState = 'submitted' | 'auth-required' | 'rejected' | 'working' | 'input-required' | 'completed' | 'canceled' | 'failed';
+export type JobState = 'submitted' | 'auth-required' | 'rejected' | 'working' | 'paused' | 'input-required' | 'completed' | 'canceled' | 'failed';
 export interface JobMessage {
   id: string;
   role: 'user' | 'agent';
@@ -70,8 +85,9 @@ export interface Job {
   deliverable?: string;
   state: JobState;
   question?: string;
-  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'completed'; markdown?: string; result?: object } };
+  artifact?: { id: string; name: string; data: { goal: string; deliverable: string; execution: 'not_started' | 'partial' | 'completed'; markdown?: string; result?: object } };
   runs?: RunEvidence[];
+  memberUsage?: import('./member-usage.js').MemberUsage;
   revision?: number;
   error?: string;
   messages: JobMessage[];

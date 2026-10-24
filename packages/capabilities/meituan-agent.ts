@@ -1,3 +1,4 @@
+import { objectResultProjection } from '../core/composed-actions.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -45,19 +46,20 @@ export class MeituanReadProgram implements AgentProgram {
   }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
+    const outcome = this.mode === 'geo' ? 'geo.locations_observed' : this.mode === 'addresses' ? 'paotui.addresses_observed' : 'paotui.quote_observed';
     const schema = this.mode === 'geo' ? publicGeoQuerySchema : this.mode === 'addresses' ? z.strictObject({}) : meituanDeliveryInputSchema;
     return { ref: this.ref, ontologyRef: { id: meituanReadDefinitionRef.id, version: meituanReadDefinitionRef.version }, name: modes[this.mode].name, environment: 'live', completion: 'artifact',
       description: `仅查询美团${modes[this.mode].name}，不下单付款。初始化只确定用户目标；工具、参数和依赖从本体发现。寄收件使用用户的原始名称或已展示选项，缺项为null，不索取或猜测地址ID；地址选项与电话由主机私密处理。数量指报价的公斤重量。${this.mode === 'geo' && this.publicQueries.length ? '仅允许配置的公开查询：' + JSON.stringify(this.publicQueries) : ''}`,
       inputSchema: z.toJSONSchema(schema), tags: ['meituan', 'read-only', this.mode], ...(this.mode === 'geo' ? { locationSemantics: 'search_area' as const } : {}),
       ontology: { objects: ['MeituanReadTask', 'MeituanReadObservation'], module: meituanReadDefinitionRef, privateData: 'Address options and contact payloads never enter model context' },
       ...(this.mode === 'delivery' ? { requirementRoles: [{ kind: 'location' as const, role: 'origin', description: 'User-confirmed source address of this estimate; no physical pickup' }, { kind: 'location' as const, role: 'destination', description: 'User-confirmed destination of this estimate; no delivery outcome' }] } : {}),
-      actions: this.actionIds.map(id => ({ ref: { id, version: meituanReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'meituan.source-readback', version: '1' }, predicates: [{ id: 'execution.no_order', description: 'Only whitelisted source reads; no order/payment' }] };
+      actions: this.actionIds.map(id => ({ ref: { id, version: meituanReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'meituan.source-readback', version: '1' }, outcomePredicates: [outcome], goalOutcomes: [{ predicate: outcome, phase: this.mode === 'delivery' ? 'quote' : 'fact', description: 'Current owned source result; no order, payment or fulfillment claim' }], effectConstraints: [{ predicate: 'execution.no_order', allowedEffects: ['read', 'local'] }], predicates: [{ id: 'execution.no_order', description: 'Only whitelisted source reads; no order/payment' }, { id: outcome, description: 'Independent source result for this exact requested read' }] };
   }
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown) {
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Personal Meituan binding requires local identity');
     const parsed = this.mode === 'geo' ? publicGeoQuerySchema.parse(value) : this.mode === 'addresses' ? z.strictObject({}).parse(value) : meituanDeliveryInputSchema.parse(value);
     if (this.mode === 'geo' && this.publicQueries.length && !this.publicQueries.some(q => equal(q, parsed))) throw new DomainError('FORBIDDEN', 'Public query is outside the configured whitelist');
-    const input = { mode: this.mode, ...parsed }, scope = { type: 'MeituanReadTask', id: digest({ request: request.id, revision: request.revision, input, configuration: this.configurationDigest }) };
+    const input = { mode: this.mode, ...parsed }, scope = { type: 'MeituanReadTask', id: digest({ request: request.id, revision: request.revision, input, configuration: this.configurationDigest, ...(component ? { scopeKey: component.scopeKey } : {}) }) };
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: modes[this.mode].name, requestRevision: request.revision, input, configurationDigest: this.configurationDigest, allowedActions: this.actionIds } }], links: [{ type: 'MeituanTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
   }
@@ -194,6 +196,14 @@ export class MeituanReadProgram implements AgentProgram {
       if (source.selection?.kind === 'needs_input') { this.evaluated(ctx, ref, reads); return source.selection.question; }
     }
   }
+  projectOutputs(ctx: AgentActionContext, _action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const source = checkedMeituanRead(ctx.graph.read(ctx.owner, object).properties.snapshot);
+    return objectResultProjection(object, { origin: source.receipt.evidenceKind === 'fixture' ? 'synthetic' : 'provider', refs: result.evidenceRefs, observedAt: source.observedAt, expiresAt: source.expiresAt }, false, true);
+  }
+  validateOutput(ctx: AgentProgramContext, output: import('../ontology/composition-contract.js').AcceptedPortValue) {
+    const refs = output.definition.cardinality === 'many' ? output.value as ObjectRef[] : [output.value as ObjectRef];
+    for (const ref of refs) this.observation(ctx, ref);
+  }
   complete(ctx: AgentProgramContext, value: unknown, reads: PlanningSnapshot): Delivery {
     const scope = this.scope(ctx), proposal = completionSchema.parse(value), { snapshot: s } = this.observation(ctx, proposal.observation);
     this.evaluated(ctx, proposal.observation, reads);
@@ -213,7 +223,7 @@ export class MeituanReadProgram implements AgentProgram {
     const result = s.data.kind === 'locations' ? { source: 'meituan', readOnly: true, places: s.data.places }
       : s.data.kind === 'addresses' ? { source: 'meituan', readOnly: true, addresses: z.array(z.record(z.string(), z.unknown())).parse(privateSource.raw.value.addresses).map(a => Object.fromEntries(['addressId', 'address', 'houseNumber', 'name', 'tag', 'cityId'].filter(k => a[k] !== undefined).map(k => [k, a[k]]))) }
       : s.data.kind === 'quote' ? { source: 'meituan', previewOnly: true, orderCreated: false, quote: Object.fromEntries(['_previewTotal', '_deliveryFee'].map(k => [k, (privateSource.raw.value.quote as Record<string, unknown>)[k]])), goods: { name: s.data.goodsName, category: s.data.category, weightKg: s.data.weightKg }, service: s.data.service } : invalid('Unsupported completion');
-    const facts: CandidateFacts = { conditions: ['execution.no_order'], ...(s.data.kind === 'locations' ? { searchArea: { city: String(scope.city), keyword: String(scope.keyword) } } : {}), ...(s.data.kind === 'quote' ? { totalPrice: s.data.total, quantity: { amount: String(s.data.weightKg), unit: '公斤' } } : {}) };
+    const facts: CandidateFacts = { conditions: ['execution.no_order', this.mode === 'geo' ? 'geo.locations_observed' : this.mode === 'addresses' ? 'paotui.addresses_observed' : 'paotui.quote_observed'], ...(s.data.kind === 'locations' ? { quantities: { result_count: { amount: String(s.data.places.length), unit: 'result' } }, searchArea: { city: String(scope.city), keyword: String(scope.keyword) } } : {}), ...(s.data.kind === 'quote' ? { totalPrice: s.data.total, quantity: { amount: String(s.data.weightKg), unit: '公斤' } } : {}) };
     if (s.data.kind === 'quote') {
       const source = book!.selection?.kind === 'ready' ? book!.selection : invalid('Source route selection is no longer available');
       const locations: Record<string, string> = {};

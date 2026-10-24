@@ -72,7 +72,7 @@ test('A cart-only goal needs no destination, customs, order or payment calls', a
 
 test('An explicit user quantity remains known when grounding leaves the nullable field empty',async()=>{
   const t=await setupCommerce({target:'quote'});try{
-    const ground=t.model.ground.bind(t.model);t.model.ground=async(...args)=>{const response=await ground(...args);response.decision.inputJson=JSON.stringify({...JSON.parse(response.decision.inputJson),quantity:null});return response;};
+    const ground=t.model.ground.bind(t.model);t.model.ground=async(...args)=>{const response=await ground(...args);assert('inputJson' in response.decision);response.decision.inputJson=JSON.stringify({...JSON.parse(response.decision.inputJson),quantity:null});return response;};
     const done=await t.finish(t.submit().id);assert.equal(done.state,'completed');assert.equal(done.delegation!.agent!.input.quantity,2);assert.equal(done.delegation!.agent!.informationRequests?.length??0,0);
   }finally{await t.close();}
 });
@@ -103,6 +103,7 @@ async function pendingOrder(t: Awaited<ReturnType<typeof setupCommerce>>, id: st
 test('Order and simulated payment need both exact effects; changed payees or excess amounts cannot be approved', async () => {
   const t=await setupCommerce();try{
     const id=t.submit().id,waiting=await pendingOrder(t,id),a=waiting.delegation!.authorizationRequest!;
+    assert(a.environment === 'sandbox');
     assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);
     assert.throws(()=>t.b.tasks.authorize(principal,id,{requestId:randomUUID(),action:'approve_plan',planDigest:a.planDigest,allowedEffects:a.effects,maxAmount:{...a.maxAmount,minor:String(BigInt(a.maxAmount.minor)+1n)},payeeIds:a.payeeIds,expiresAt:new Date(Date.now()+60000).toISOString(),environment:'sandbox'}),/exceeds/);
     t.approve(waiting,['order']);const held=await t.b.run();assert.equal(held.state,'auth-required');assert.equal(t.provider.counts().SubmitCommerceOrder,undefined);
@@ -206,13 +207,13 @@ test('A replacement runtime resumes a durable exact plan without repeating sourc
 
 for(const [name,scenario] of [['pending payment',{paymentState:'pending'}],['partial delivery',{partialDelivery:true}],['future delivery',{futureDelivery:true}],['changed room identity',{wrongApartment:true}],['changed cost allocation',{changedOrderCosts:true}]] as const)test(`Completion cannot promote deficient source evidence: ${name}`,async()=>{
   const t=await setupCommerce({scenario});try{
-    const done=await t.finish(t.submit().id);assert.equal(done.state,'input-required');assert.equal(done.artifact,undefined);assert.equal(done.delegation!.acceptance,undefined);assert.equal(t.provider.counts().SubmitCommerceOrder,1);
+    const done=await t.finish(t.submit().id);assert.equal(done.state,'paused');assert.equal(done.delegation!.recovery?.code,'validation_stalled');assert.equal(done.artifact,undefined);assert.equal(done.delegation!.acceptance,undefined);assert.equal(t.provider.counts().SubmitCommerceOrder,1);
   }finally{await t.close();}
 });
 
 test('Skipping the actual Ontology quote evaluation prevents checkout creation',async()=>{
   const choose=commerceChoice(),t=await setupCommerce({choice:(ctx,access)=>choose(ctx,{...access,session:new Proxy(access.session,{get(target,property,receiver){if(property==='call')return(tool:string,input:any)=>tool==='evaluate_ontology'&&input.object.type==='LandedCostQuote'?target.graph.evaluate(owner,input):target.call(tool,input);return Reflect.get(target,property,receiver);}})})});
-  try{const done=await t.finish(t.submit().id);assert.equal(done.state,'input-required');assert.equal(t.provider.counts().PrepareCommerceCheckout,undefined);assert(done.delegation!.agent!.feedback.some(f=>f.message.includes('must read and evaluate')));}
+  try{const done=await t.finish(t.submit().id);assert.equal(done.state,'paused');assert.equal(done.delegation!.recovery?.code,'validation_stalled');assert.equal(t.provider.counts().PrepareCommerceCheckout,undefined);assert(done.delegation!.agent!.feedback.some(f=>f.message.includes('must read and evaluate')));}
   finally{await t.close();}
 });
 

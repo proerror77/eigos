@@ -8,8 +8,7 @@ import { FILE_RULES, loadCsvFile, bytesHash, type CsvSnapshot } from './csv/csv-
 import { produceFile, renderFile } from './csv/file-report.js';
 import { acceptFile } from './csv/file-acceptance.js';
 
-const checks = z.array(z.enum(CSV_CHECKS)).length(CSV_CHECKS.length).refine(v => new Set(v).size === CSV_CHECKS.length, 'This service supports full audits only; subset checks are not supported');
-const inputSchema = z.object({ fileName: z.string().min(1).max(200), checks }).strict();
+import { csvInputSchema as inputSchema } from '../ontology/local-artifacts.js';
 export const CSV_CAPABILITY: ServiceCapability = {
   ref: { id: 'data.quality.audit.simulated', version: '2' }, ontologyRef: { id: 'csv-full-audit', version: '2' },
   name: 'Local full CSV audit', tags: ['csv', 'audit'],
@@ -43,7 +42,7 @@ export class CsvAuditAdapter implements ExecutionAdapter {
       facts: { totalPrice: { minor: '100', currency: 'CNY' }, conditions }, evidenceRefs: [snapshot.sha256], observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 600000).toISOString(),
       authorization: { amount: { minor: '100', currency: 'CNY' }, environment: 'local_simulation' }, privateData: snapshot };
   }
-  async execute(ctx: AdapterContext, plan: ExecutionPlan, data: unknown, signal: AbortSignal): Promise<Delivery> {
+  async execute(ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, data: unknown, signal: AbortSignal): Promise<Delivery> {
     signal.throwIfAborted();
     const snapshot = data as CsvSnapshot;
     inputSchema.parse(plan.steps[0]!.input);
@@ -52,7 +51,7 @@ export class CsvAuditAdapter implements ExecutionAdapter {
     return { artifact: { id: randomUUID(), name: 'csv-quality-delivery.json', data: { goal: ctx.request.originalGoal, deliverable: 'Local CSV full audit; simulated approval only, no real payment.', execution: 'completed', result: { json, markdown, inputSha256: snapshot.sha256 } } },
       facts: { totalPrice: { minor: '100', currency: 'CNY' }, conditions }, evidenceRefs: [bytesHash(Buffer.from(json)), bytesHash(Buffer.from(markdown))] };
   }
-  verify(_ctx: AdapterContext, plan: ExecutionPlan, data: unknown, delivery: Delivery) {
+  verify(_ctx: AdapterContext, plan: import('../core/catalog.js').AdapterPlan, data: unknown, delivery: Delivery) {
     const files = delivery.artifact.data.result as { json?: unknown; markdown?: unknown } | undefined;
     if (typeof files?.json !== 'string' || typeof files.markdown !== 'string') return { accepted: false, reason: 'CSV delivery files missing' };
     return acceptFile(data as CsvSnapshot, plan.id, files.json, files.markdown);

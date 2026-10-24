@@ -160,6 +160,25 @@ export class AgentConnector {
     return this.registrationRequest('invitation', await this.rawToken(), { invitationToken });
   }
   async revoke(): Promise<AgentAdmission> { return this.registrationRequest('revoke', await this.rawToken(), {}); }
+  /** Call from PA host code, outside model/tool arguments. The credential is never persisted in connector state. */
+  async connectSource(options: { requestId: string; expectedRevision: number; loadCredential: () => Promise<{ token: string; expiresAt: string }> }): Promise<unknown> {
+    try {
+      const args = z.object({ requestId: z.uuid(), expectedRevision: z.number().int().nonnegative() }).parse(options);
+      const begin = await this.fetch('/sources/meituan-paotui/begin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(args) });
+      if (!begin.ok) throw new AgentConnectorError('source_connection_begin_rejected');
+      const ticket = z.object({ requestId: z.uuid(), uploadPath: z.literal('/sources/meituan-paotui/credential'), completed: z.boolean().optional(), status: z.record(z.string(), z.unknown()).optional() }).parse(await begin.json());
+      if (ticket.requestId !== args.requestId) throw new AgentConnectorError('source_connection_request_mismatch');
+      if (ticket.completed) { if (!ticket.status) throw new AgentConnectorError('source_connection_response_invalid'); return ticket.status; }
+      const credential = await options.loadCredential();
+      const upload = await this.fetch(ticket.uploadPath, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requestId: args.requestId, token: credential.token, expiresAt: credential.expiresAt }) });
+      if (!upload.ok) throw new AgentConnectorError('source_connection_upload_rejected');
+      return await upload.json();
+    } catch (error) {
+      // Host callbacks and fetch errors may contain secret material. Preserve only our fixed codes.
+      if (error instanceof AgentConnectorError && ['source_connection_begin_rejected', 'source_connection_request_mismatch', 'source_connection_upload_rejected', 'source_connection_response_invalid'].includes(error.code)) throw error;
+      throw new AgentConnectorError('source_connection_failed');
+    }
+  }
   async fetch(path: string | URL, init: RequestInit = {}): Promise<Response> {
     const url = new URL(path, this.baseUrl);
     if (url.origin !== this.baseUrl) throw new AgentConnectorError('credential_destination_mismatch');

@@ -41,4 +41,10 @@ Gateway／Worker 使用相同的 `EIGOS_PAOTUI_SKILL_DIR`；只有 Worker 在选
 
 当前测试覆盖模型前无外部读取、原子命令计数、原任务补问、实际已展示选项、排序／地址变化、跨城与跨任务防护、模型评估回执、私密缓存取消保护及凭据上下文变化。合成 CLI 和模型替身只能证明本地接线及边界，不能当真实供应商或 PA 证据。
 
-v14 及更早任务保持只读，不迁移或自动重放。旧准备式实现已移入历史测试夹具，不进入生产执行目录。历史 [2026-10-17 两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 和 [2026-10-18 公开地点 PA 验收](evidence/public-geo-pa-2026-10-18/README.md) 保留各自当时的范围及来源。当前 `examples/observe-mcp-readonly.ts` 仅回读已有当前版本任务，不提交目标或调用供应商；旧格式观察器保存在 `examples/legacy`。
+v14 及更早任务保持只读，不迁移或自动重放。原生委托不再登记旧准备式执行路线；历史测试夹具与会员来源的原子读取兼容层分别保留。历史 [2026-10-17 两段 E2E](evidence/service-network-e2e-2026-10-17/README.md) 和 [2026-10-18 公开地点 PA 验收](evidence/public-geo-pa-2026-10-18/README.md) 保留各自当时的范围及来源。当前 `examples/observe-mcp-readonly.ts` 仅回读已有当前版本任务，不提交目标或调用供应商；旧格式观察器保存在 `examples/legacy`。
+
+## 会员自有来源
+
+显式配置会员来源 Vault 或单会员连接时，继续使用 `delivery.quote@4` 和 `address.book.read@3` 的原子 Agent 动作，保留会员授权、当前事实、已确认选项与原任务恢复。详见[会员自有授权](member-source-authorization.md)、[Agent 动作说明](paotui-agent-actions-2026-10-19.md)及[恢复与预算](task-recovery-2026-10-20.md)。
+
+会员模式通过独立的 `apps/member-source-mcp/main.ts` 传递准确授权上下文；本人开发模式使用上述独立本体和 `apps/ontology-mcp/main.ts` 原子读取。目录按明确配置选择来源模式，不能把会员请求回退到本机共享凭据。Gateway 仅登记能力，会员来源读取仍由 Worker 执行。

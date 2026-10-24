@@ -5,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { modelEnvironment, modelFeatureArgs } from './model-process.js';
 import type { RunEvidence } from './executor.js';
+import { modelUsageRecorder } from '../core/model-usage-context.js';
 
 export interface StructuredModelSession {
   run(prompt: string): Promise<{ output: unknown; evidence: RunEvidence }>;
@@ -127,6 +128,8 @@ class CodexModelSession implements StructuredModelSession {
     if (this.active) throw new Error('Model session already has a turn');
     this.signal.throwIfAborted(); this.bytes = 0;
     const id = randomUUID(), startedAt = this.first ? this.openedAt : new Date().toISOString(); this.first = false;
+    const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-app-server', startedAt);
+    let recorded: RunEvidence | undefined, succeeded = false;
     let resolve!: Active['resolve'], reject!: Active['reject'];
     const completed = new Promise<TurnOutput>((yes, no) => { resolve = yes; reject = no; });
     this.active = { queue: [], text: new Map(), resolve, reject };
@@ -141,8 +144,10 @@ class CodexModelSession implements StructuredModelSession {
       const done = await completed;
       if (!done) throw new Error('Structured model output missing');
       const output: unknown = JSON.parse(done.text);
-      return { output, evidence: { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, usage: done.usage, promptBytes: Buffer.byteLength(prompt) } satisfies RunEvidence };
-    } finally { clearTimeout(timer); }
+      recorded = { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: new Date().toISOString(), outputSha256: createHash('sha256').update(done.text).digest('hex'), model: this.model, usage: done.usage, promptBytes: Buffer.byteLength(prompt) };
+      succeeded = true;
+      return { output, evidence: recorded };
+    } finally { clearTimeout(timer); recorder?.finish(id, recorded, succeeded ? 'completed' : this.signal.aborted ? 'interrupted' : 'failed'); }
   }
   async close() {
     if (this.closed) return; this.closed = true;

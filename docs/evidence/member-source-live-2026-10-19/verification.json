@@ -1,0 +1,66 @@
+{
+  "checkedAt": "2026-10-19T15:17:14.107Z",
+  "scope": "Real member PA to EIGOS v8 to authorized Meituan address book and back; read only",
+  "sourceCommit": "522cc0f1ffdc38802c8e85fd7d59f60eeca28fda",
+  "releaseDigest": "64c499b15b7ff4cbdb52b778b5a8091b8ec4bed1077478de701d8259036d7e43",
+  "releaseFilesMatched": 132,
+  "backend": "ontology-execution-v8",
+  "program": {
+    "id": "address.book.read",
+    "version": "2"
+  },
+  "taskHash": "ba0ac82c2bb607160a63b2ac6967f54c997f3bb7bb7cac8a675e6d9b65400524",
+  "taskState": "completed",
+  "accepted": true,
+  "requestRevision": 2,
+  "addressCount": 11,
+  "callerThreads": [
+    "01a154b6-7657-7c21-9e91-b566c07ace0b",
+    "01a154b8-ff9e-73a3-b36d-458366c5aeda"
+  ],
+  "workerModelRuns": 8,
+  "workerThreadIds": [
+    "01a154b6-b683-7e31-8ed7-d350773941dd",
+    "01a154b6-e3aa-7932-bdd6-911bc77ea132",
+    "01a154b9-354e-7482-9ce9-681454cdf404",
+    "01a154b9-5cba-7ac1-8f59-d51fd3b7086d",
+    "01a154b9-9af0-7cf2-8bfd-67b6533933af",
+    "01a154b9-c727-7c81-8c08-36a7207e0994",
+    "01a154ba-01d4-7c00-a41c-083ecae1069b",
+    "01a154ba-3692-7e23-880d-8a4e95c3dc64"
+  ],
+  "ontologyReads": {
+    "total": 8,
+    "ok": 8,
+    "rejected": 0,
+    "tools": [
+      "describe_ontology",
+      "query_ontology",
+      "evaluate_ontology"
+    ]
+  },
+  "sourceReads": 1,
+  "sourceOperations": [
+    "get_address_list"
+  ],
+  "evidenceKind": "live_readonly",
+  "sourceConnectedByPA": true,
+  "sameTaskResumed": true,
+  "resumedAfterRequestIdFormatCorrection": true,
+  "mcpReadback": true,
+  "a2aReadback": true,
+  "databaseReadback": true,
+  "completionVerifierReplay": true,
+  "artifactDigest": "a18751dc6bfe8d8a5f6788aa9b492cf1da43a32539fd33a3006684ee550c2708",
+  "sevenFieldQueryCardVerified": true,
+  "businessObjects": {
+    "DeliveryQuote": 0,
+    "Order": 0,
+    "Payment": 0
+  },
+  "noOrders": true,
+  "noPayments": true,
+  "notes": "First PA attempt used a task string as the UUID required by source resume. Server rejected it before provider dispatch. A second real PA runtime corrected only that request identifier and continued the SAME task. No duplicate task or root-driven substitute provider read.",
+  "acceptedSourceProofVerified": true,
+  "configuredReaderSha256": "0a6b0ef9371bcbf9a6a5cecc20f3efe1b6220174dcffed365d91fc9949d407ba"
+}

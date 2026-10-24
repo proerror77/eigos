@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { DOCUMENT_CAPABILITY } from '../packages/capabilities/document.js';
+import { legacyDocumentCatalog } from './local-tasks.js';
 import { PaotuiReadAdapter, PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES } from './fixtures/legacy-paotui/paotui-read.js';
 import { CSV_CAPABILITY, CSV_BINDING, CsvAuditAdapter } from '../packages/capabilities/csv-audit.js';
 import { CSV_CHECKS } from '../packages/ontology/csv-audit.js';
@@ -16,14 +17,14 @@ import { checkRequirements } from '../packages/coordinator/resolver.js';
 import type { Executor } from '../packages/capabilities/executor.js';
 import { backend, principal, owner, interpretation, reasoner } from './backend-fixture.js';
 
-test('document generation uses the common action runtime, resumes the same task and verifies draft scope', async () => {
+test('explicit historical document adapter resumes the same task and verifies its original draft scope', async () => {
   const seen: string[][] = [];
   const executor: Executor = { run: async job => {
     seen.push(job.messages.filter(m => m.role === 'user').map(m => m.text));
     return { output: job.messages.some(m => m.text === '100字以内') ? { decision: 'complete', message: 'Draft ready', artifact: '# 工作坊草稿\n\n这是基于用户资料的文档草稿。' } : { decision: 'ask_user', message: '希望草稿多长？', artifact: '' },
       evidence: { id: randomUUID(), runtime: 'document-test-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: digest('fixture') } };
   } };
-  const catalog = createExecutionCatalog({ documentEnabled: true, documentExecutor: executor });
+  const catalog = legacyDocumentCatalog(executor);
   const b = backend(catalog, reasoner(r => ({ ...interpretation(r, DOCUMENT_CAPABILITY.ref.id, { format: 'markdown' }), capabilityRef: DOCUMENT_CAPABILITY.ref })));
   try {
     const original = b.submit({ goal: '请写一份工作坊文档草稿' }); const asked = await b.run(); assert.equal(asked.state, 'input-required'); assert(asked.delegation!.pendingActionInput);
@@ -58,10 +59,10 @@ test('same-version provider/definition drift and recomputed plan tampering canno
   const catalog = createExecutionCatalog({ csvInputDirectory: dir }); const b = backend(catalog, reasoner(r => ({ ...interpretation(r, CSV_CAPABILITY.ref.id, { fileName: 'sample.csv', checks: [...CSV_CHECKS] }), capabilityRef: CSV_CAPABILITY.ref })));
   try {
     b.submit(); const offered = await b.run(); const plan = offered.delegation!.plan!;
-    const switched = new ExecutionCatalog([CSV_CAPABILITY], [{ ...CSV_BINDING, providerId: 'different-provider' }], [new CsvAuditAdapter(dir)]);
-    assert.throws(() => validatePlan(switched, owner, offered.delegation!.request, plan), /Pinned provider/);
-    const changed = new ExecutionCatalog([{ ...CSV_CAPABILITY, completion: 'delivery' }], [CSV_BINDING], [new CsvAuditAdapter(dir)]);
-    assert.throws(() => validatePlan(changed, owner, offered.delegation!.request, plan), /Pinned capability/);
+    const switched = new ExecutionCatalog([catalog.capability(CSV_CAPABILITY.ref)], [{ ...CSV_BINDING, providerId: 'different-provider' }], [new CsvAuditAdapter(dir)]);
+    assert.throws(() => validatePlan(switched, owner, offered.delegation!.request, plan, b.store.ontologyForJob(owner, offered).model.ref), /Pinned provider/);
+    const changed = new ExecutionCatalog([{ ...catalog.capability(CSV_CAPABILITY.ref), completion: 'delivery' }], [CSV_BINDING], [new CsvAuditAdapter(dir)]);
+    assert.throws(() => validatePlan(changed, owner, offered.delegation!.request, plan, b.store.ontologyForJob(owner, offered).model.ref), /Pinned capability/);
     plan.steps[0]!.input.fileName = 'different.csv'; const { digest: _old, ...body } = plan; plan.digest = digest(body); b.store.save(owner, offered);
     assert.throws(() => b.tasks.authorize(principal, offered.id, { requestId: 'old-quote', action: 'confirm_simulated_payment', quoteId: plan.quote!.id, quoteDigest: plan.quote!.digest }), /Quote is not bound/);
   } finally { b.store.close(); rmSync(dir, { recursive: true, force: true }); }

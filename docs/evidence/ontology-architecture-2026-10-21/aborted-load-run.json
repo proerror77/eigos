@@ -1,0 +1,34 @@
+{
+  "status": "aborted",
+  "reason": "High parallel CPU contention produced test-only lease and timing failures; production lease, authorization and read budgets were unchanged. Rerun uses two test-file workers.",
+  "logSha256": "d508e1e09574ce970ac57c0bc08b0976288fc0683825d936726a07791c1061b9",
+  "firstFailures": [
+    "not ok 3 - partial delivery fails; linked refund stays pending until provider confirms the amount; original failure remains",
+    "not ok 5 - total wait expiry stops automatic progress, preserves budget and permits only original-operation lookup",
+    "not ok 22 - Independent reads overlap; a consumer starts when its own dependency settles without waiting for another branch",
+    "not ok 24 - Concurrent late reads preserve audit without projecting after cancel",
+    "not ok 25 - Concurrent late reads preserve audit without projecting after lease_loss",
+    "not ok 26 - Model context omits internal evidence duplication while preserving task, choices, outcomes and full durable evidence",
+    "not ok 58 - Existing PA client submits a sandbox task, approves its exact Agent plan and reads the original artifact",
+    "not ok 59 - Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent"
+  ],
+  "secondAttempt": {
+    "concurrency": 2,
+    "status": "aborted",
+    "logSha256": "7492ebf4f86f6767e147805ebf2d00a8e3f83da9089a74aacac1015c7092d9ee",
+    "failures": [
+      "not ok 66 - An explicit user quantity remains known when grounding leaves the nullable field empty"
+    ],
+    "nextAttempt": "Serialize test files; production timeout, lease and budget unchanged"
+  },
+  "thirdAttempt": {
+    "concurrency": 1,
+    "status": "aborted_for_profiling",
+    "logSha256": "01fc1836d4d2b9be0fc0329265b3216700de94fa55f6e53037839e9606237309",
+    "failures": [
+      "not ok 81 - A replacement runtime resumes a durable exact plan without repeating source actions"
+    ],
+    "nextStep": "Profile synchronous model reading/projection; no further blind full-suite retries and no lease/budget relaxation"
+  },
+  "rootCauseReadback": "Profiling identified substantial repeated static-model traversal/metadata construction. Same restart flow passed before and after; after caching wall time 49.8s to 20.0s and max model-read 3.3s to 1.1s. See metadata-performance-check.json. Full suite must still pass; aborted attempts are not passes."
+}

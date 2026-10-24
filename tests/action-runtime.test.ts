@@ -12,6 +12,8 @@ import { backend, interpretation, owner, principal, reasoner } from './backend-f
 import type { Job } from '../packages/core/domain.js';
 import type { ActionResult } from '../packages/ontology/actions.js';
 import { ActionRuntime } from '../packages/coordinator/runtime.js';
+import { checkDispatchPermit } from '../packages/core/policy.js';
+import { sourceProof } from '../packages/ontology/object-evidence.js';
 
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function fixture() {
@@ -31,6 +33,33 @@ async function fixture() {
   const tick = async () => { await pause(120); return b.run(); };
   return { ...b, catalog, api, submit, approve, tick, close: () => { b.store.close(); provider.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
+
+test('an ontology permit cannot mint authority; expiration and revocation are enforced by the actual ledger', async () => {
+  const f = await fixture();
+  try {
+    f.submit(); const offered = await f.run(), plan = offered.delegation!.plan!, step = plan.steps[0]!;
+    const intent = f.store.intents(owner, offered.id).find(value => value.stepId === step.id)!;
+    const graph = f.store.ontology, proposal = graph.query(owner, { from: { type: 'ServiceRequest', id: offered.id }, link: 'proposals' }).items[0]!.ref;
+    graph.ingest(owner, { objects: [{ ref: { type: 'Authorization', id: 'forged-graph-permit' }, properties: {
+      authorizationId: 'forged-graph-permit', displayTitle: 'No policy ledger backing', kind: 'plan_grant', ledgerDigest: '0'.repeat(64),
+      planDigest: plan.digest, approvedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(), revoked: false,
+      allowedEffects: ['order', 'payment'], environment: 'sandbox', limits: { minor: '999999', currency: 'CNY' },
+    } }], links: [{ type: 'AuthorizationProposal', from: { type: 'Authorization', id: 'forged-graph-permit' }, to: proposal }] },
+    { kind: 'task', id: offered.id, observedAt: new Date().toISOString() });
+    const adapter = f.catalog.binding(step.bindingRef, owner, offered.id).adapter;
+    assert.throws(() => checkDispatchPermit(f.store, owner, plan, step, intent, adapter, true), /No current owner-bound permit/);
+    assert.equal((await f.api('ledger')).counters.ordersCreated ?? 0, 0);
+    assert.throws(() => f.tasks.authorize({ ...principal, subject: 'other' }, offered.id, { requestId: randomUUID(), action: 'approve_plan' }), /not found/);
+    f.approve(offered);
+    const grant = f.store.grants(owner, offered.id)[0]!;
+    assert.equal(checkDispatchPermit(f.store, owner, plan, step, intent, adapter, true)!.id, grant.id);
+    assert.throws(() => checkDispatchPermit(f.store, owner, plan, step, intent, adapter, true, Date.parse(grant.expiresAt) + 1), /No current owner-bound permit/);
+    f.tasks.revokeAuthorization(principal, offered.id, randomUUID());
+    assert.equal(graph.read(owner, { type: 'Authorization', id: grant.id }).properties.revoked, true);
+    assert.throws(() => checkDispatchPermit(f.store, owner, plan, step, intent, adapter, true), /No current owner-bound permit/);
+    assert.equal((await f.api('ledger')).counters.ordersCreated ?? 0, 0);
+  } finally { f.close(); }
+});
 
 test('dependent actions consume accepted references; order/payment alone cannot satisfy a delivery goal', async () => {
   const f = await fixture();
@@ -67,6 +96,12 @@ test('partial delivery fails; linked refund stays pending until provider confirm
     assert.equal(f.tasks.get(principal, failed.id).state, 'failed'); assert.equal(f.tasks.get(principal, failed.id).afterSales![0]!.state, 'resolved');
     const graph = f.store.capabilityFacts(owner, SANDBOX_BINDING.ref); assert.equal(graph.summary.goalKindCounts.delivery, 1); assert.equal(graph.summary.goalKindCounts.refund, 1); assert(graph.changeProposals.every(p => p.publishable === false)); assert(graph.verifications.some(v => v.level === 'sandbox' && v.result === 'passed')); assert.equal(graph.summary.automaticPromotion, false);
     const last = await f.api('ledger'); assert.equal(last.counters.refundRequests, 1); assert.equal(last.counters.refundPayments, 1); assert.equal(last.counters.charges, 1);
+    for (const type of ['Order', 'Payment', 'Shipment', 'DeliveryEvent', 'DeliveryAllocation', 'Refund']) {
+      const objects = f.store.ontology.query(owner, { type }).items; assert.equal(objects.length, 1);
+      assert.deepEqual(sourceProof(f.store.ontology, owner, objects[0]!.ref, { remaining: 1000 })?.levels, ['synthetic'], `${type} retains its own compatible evidence scope after refund`);
+    }
+    const line = f.store.ontology.query(owner, { type: 'OrderLine' }).items[0]!;
+    assert.deepEqual(f.store.ontology.evaluate(owner, { function: 'remainingQuantity', object: line.ref }).value, { amount: '5', unit: 'cup' });
   } finally { f.close(); }
 });
 

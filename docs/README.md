@@ -43,3 +43,7 @@
 `.gitignore` 只控制未跟踪文件。已经提交的文件即使匹配新规则，也不会自动从 GitHub 移除；整理时需先检查引用和用途，必要时保留本地副本后单独移出跟踪。修改忽略规则也不会清除历史提交中的内容。
 
 - [滴滴地点搜索与车型估价](didi-readonly-integration.md)：本机本人私密凭据、两个只读工具、来源观察及验证范围。
+
+- [Shopify 私有未付款结账](shopify-unpaid-checkout-2026-10-23.md)：一次准确授权的草稿创建与原会话回读。
+- [Shopify PA 付款隔离测试](shopify-pa-payment-sandbox.md)：PA 自有测试 Vault／账户付款，EIGOS 独立回读同一结账、付款和订单；真实付款为 0。
+- [动态本体与受管数据动作](dynamic-ontology-implementation-2026-10-21.md)、[跨服务组合](ontology-composition-implementation-2026-10-22.md)与[会员来源授权](member-source-authorization.md)。

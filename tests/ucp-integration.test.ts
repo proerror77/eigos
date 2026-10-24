@@ -38,7 +38,7 @@ test('UCP preparation and confirmation share the runtime but require distinct au
     assert.equal(prepared.delegation!.plan!.completionTarget, 'artifact');
     const waiting = await t.confirmation(); assert.equal(waiting.state, 'auth-required');
     assert.deepEqual(waiting.delegation!.authorizationRequest!.effects, ['order', 'payment']);
-    assert.equal(waiting.delegation!.authorizationRequest!.maxAmount.minor, '7500');
+    assert.equal(waiting.delegation!.authorizationRequest!.maxAmount?.minor, '7500');
     t.approve(waiting, ['order']); const stillWaiting = await t.b.run(); assert.equal(stillWaiting.state, 'auth-required'); assert.equal(t.merchant.counts().completes, 0);
     t.approve(stillWaiting); const done = await t.b.run(); assert.equal(done.state, 'completed'); assert.equal(done.delegation!.acceptance!.accepted, true);
     assert.deepEqual(t.merchant.counts(), { creates: 1, completes: 1 }); assert.equal(t.merchant.flags.signatureMissing, false);
@@ -233,4 +233,19 @@ test('a late UCP completion after task cancellation is retained as evidence with
     assert(t.store.intents(owner, waiting.id)[0]!.latestObservationId, 'The external effect must remain in the action ledger');
     assert.equal(t.store.ontology.query(owner, { type: 'Order' }).items.length, 0, 'The canceled claim must not project a new business result');
   } finally { release(); await t.close(); }
+});
+
+
+for (const change of ['revoke', 'cancel'] as const) test(`explicit UCP compatibility path ${change} during preflight also prevents the provider mutation`, async () => {
+  const t = await setup(); try {
+    await t.prepare(); const waiting = await t.confirmation(); t.approve(waiting);
+    t.merchant.flags.beforeCheckoutReadResponse = async () => {
+      t.merchant.flags.beforeCheckoutReadResponse = undefined;
+      if (change === 'cancel') t.b.tasks.cancel(principal, waiting.id); else t.b.tasks.revokeAuthorization(principal, waiting.id, randomUUID());
+    };
+    await t.b.run();
+    assert.equal(t.merchant.counts().completes, 0);
+    assert.equal(t.merchant.requests.filter(value => value.path.endsWith('/complete')).length, 0);
+    assert.notEqual(t.store.get(owner, waiting.id).state, 'completed');
+  } finally { await t.close(); }
 });

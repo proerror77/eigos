@@ -2,6 +2,8 @@
 
 Architecture Design v0.2 · 2026-10-17 · **设计方案，不是本轮实现或上线声明**。
 
+当前实现与模型缺口见 [2026-10-20 Palantir 原则复审](ontology-principles-review-2026-10-20.md)。下文的阶段版本及拟议对象保留为设计历史，不能视为当前已完成能力。
+
 实施更新：用户随后明确要求后端全部采用新架构，不做旧执行架构兼容；前端 Agent 接入可保留。当前实施与证据以 [后端阶段目标](backend-implementation-goals.md) 和 [后端说明](registered-capabilities.md) 为准。下文是原设计基线，其中旧计划迁移建议已被这项要求取代，不能据此自动恢复旧业务执行。
 
 2026-10-18 规格细化：[Ontology 规格](ontology-spec-v0.2-2026-10-18.md) 在本 v0.2 基线上明确共用核心、领域本体、提供者映射、事实与动作语义；[三个场景走查](ontology-scenarios-v0.2-2026-10-18.md) 验证配送查价、商品送达、餐厅预订。后续新增实现按该规格和阶段目标推进；以下设计历史保留。文档版本 v0.2 与运行内核分别编号；当前六类扩展代码为 ontology-execution-v7／eigos.business@5，详见[完整设计核对](ontology-design-completion-v0.2-2026-10-18.md)。

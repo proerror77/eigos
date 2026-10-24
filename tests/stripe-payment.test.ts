@@ -52,7 +52,7 @@ test('Agent obtains a separate exact payment permit and completes only after ori
     assert.deepEqual(a.effects, ['payment']); assert.deepEqual(a.maxAmount, { minor: '27000', currency: 'CNY' }); assert.deepEqual(a.payeeIds, ['stripe-test:acct_fixture:cedar-ca']);
     assert.equal(t.provider.counts().SubmitCommerceUnpaidOrder, 1); assert.equal(t.provider.counts().SubmitCommerceOrder, undefined); assert.equal(t.provider.counts().ReadCommercePayment, undefined);
     assert.equal(t.stripe.calls.filter(c => c.path.endsWith('/confirm')).length, 0);
-    const orderGrant = t.store.grants(owner, id).find(g => g.allowedEffects.includes('order'))!; assert.equal(orderGrant.maxAmount.minor, '0'); assert(!orderGrant.allowedEffects.includes('payment'));
+    const orderGrant = t.store.grants(owner, id).find(g => g.allowedEffects.includes('order'))!; assert(orderGrant.kind !== 'object_write' && orderGrant.kind !== 'external_draft'); assert.equal(orderGrant.maxAmount.minor, '0'); assert(!orderGrant.allowedEffects.includes('payment'));
     for (const change of [{ payeeIds: ['stripe-test:acct_other:cedar-ca'] }, { maxAmount: { minor: '27001', currency: 'CNY' } }, { maxAmount: { minor: '27000', currency: 'USD' } }, { planDigest: 'a'.repeat(64) }]) assert.throws(() => t.b.tasks.authorize(principal, id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox', ...change }));
     t.approve(waiting);
     const done = await t.finish(id);

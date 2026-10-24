@@ -1,13 +1,28 @@
+import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
+import { initializeMemberSources, MemberSourceVault } from './member-source.js';
+import { businessTransaction, assertBusinessTransaction } from './transaction.js';
+import { NetworkStore } from '../network/store.js';
+import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
+import type { ExecutionCatalog } from './catalog.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
-import { BACKEND_VERSION } from '../ontology/execution.js';
+import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import type { ActionIntent, ActionResult, ExecutionAttempt, PlanGrant, AfterSalesCase } from '../ontology/actions.js';
 import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
+import { scheduleTaskRecovery } from './task-recovery.js';
+import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
+import type { RunEvidence } from '../capabilities/executor.js';
+import { projectBusinessChain } from '../ontology/business-chain-projection.js';
+import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
+import { DefinitionStore } from '../ontology/definition-store.js';
+import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
+import { businessModelV9 } from '../ontology/business-model.js';
+import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
 
 export interface ListFilter {
   limit: number;
@@ -18,6 +33,15 @@ export interface ListFilter {
 }
 
 export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
+// Throwing through the shared transaction is essential: returning false from
+// inside it would commit a dispatch marker whose lease expired during the save.
+const lostClaimFence = Symbol('lost-claim-fence');
+
+/** An unavailable immutable definition is a runtime repair condition. Never
+ * replace it with the currently active model to make an old task executable. */
+export class OntologyReleaseUnavailable extends DomainError {
+  constructor() { super('CONFLICT', 'The task\'s pinned ontology release is unavailable; restore that exact release before resuming'); }
+}
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -29,9 +53,14 @@ function equivalentFingerprint(a: string, b: string): boolean {
 
 export class JobStore {
   private db: DatabaseSync;
-  readonly ontology: OntologyObjectStore;
+  private ontologyCatalog?: ExecutionCatalog;
+  readonly definitions: DefinitionStore;
+  private readonly baseOntology: OntologyObjectStore;
+  private readonly ontologyViews = new Map<string, OntologyObjectStore>();
+  readonly databasePath: string;
 
   constructor(path: string) {
+    this.databasePath = path === ':memory:' ? path : resolve(path);
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
@@ -74,18 +103,130 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS capability_claims (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_verifications (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_change_proposals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS personal_source_binding (slot TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, configuration_digest TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
+      const budgetColumns = new Set(this.db.prepare('PRAGMA table_info(budget_reservations)').all().map(row => String(row.name)));
+      if (!budgetColumns.has('economic_key')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN economic_key TEXT');
+      if (!budgetColumns.has('role')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN role TEXT');
+      if (!budgetColumns.has('additional_impacts')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN additional_impacts TEXT');
+      initializeMemberUsage(this.db);
     });
-    this.ontology = new OntologyObjectStore(this.db);
+    // Run the explicitly supported historical migrations once before the
+    // persistent definition registry becomes the authority for every view.
+    this.definitions = new DefinitionStore(this.db);
+    const legacyModel = this.definitions.legacyImplementation();
+    this.baseOntology = new OntologyObjectStore(this.db, legacyModel, Date.now, undefined, { skipLegacyMigration: true });
+    if (!this.definitions.hasBaseline()) migrateIntegratedOntology(this.db, businessModelV9, legacyModel);
+    this.definitions.bootstrap();
+    this.baseOntology.setReadOverlayFactory((owner, requestId) => {
+      const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
+      return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
+    });
+    initializeMemberSources(this.db);
   }
+  /** Unbound discovery follows the current default release. Task execution
+   * must use ontologyForJob, including projections and historical readback. */
+  get ontology(): OntologyObjectStore { return this.ontologyForRelease(this.definitions.active().ref); }
+  ontologyForRelease(ref: OntologyReleaseRef): OntologyObjectStore {
+    let release: ReturnType<DefinitionStore['resolve']>;
+    try { release = this.definitions.resolve(ref); }
+    catch { throw new OntologyReleaseUnavailable(); }
+    const key = digest(ref);
+    let graph = this.ontologyViews.get(key);
+    if (graph) {
+      this.ontologyViews.delete(key);
+      this.ontologyViews.set(key, graph);
+    } else {
+      graph = this.baseOntology.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref,
+        ...(release.compatibleDefinition ? { compatibleDefinition: release.compatibleDefinition } : {}) });
+      this.ontologyViews.set(key, graph);
+      if (this.ontologyViews.size > 16) this.ontologyViews.delete(this.ontologyViews.keys().next().value!);
+    }
+    return graph;
+  }
+  ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
+    const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
+    if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks have no current executable ontology context');
+    // Absence is an explicit compatibility rule for pre-registry v16 records.
+    // It must never mean "whatever release is active now" or rewrite receipts.
+    return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
+  }
+  ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
+    return this.ontologyForRelease(this.ontologyReleaseForJob(owner, jobOrId));
+  }
+  setOntologyCatalog(catalog: ExecutionCatalog): void { this.ontologyCatalog = catalog; }
 
+  memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
+
+  createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
+  createNetworkReadStore(): NetworkStore { return new NetworkStore(this.db, undefined, false); }
+
+  // Gateway calls this only after validating the enrolled member and acquiring its network lease.
+  admitPersonalSource(c?: PersonalSource, configurationDigest?: string): void {
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM personal_source_binding WHERE slot='meituan-paotui'").run();
+      if (c && configurationDigest) this.db.prepare('INSERT INTO personal_source_binding VALUES(?,?,?,?,?)').run('meituan-paotui', c.connectionId, sourceOwner(c), c.memberId, configurationDigest);
+    });
+  }
+  personalSourceAdmitted(c: PersonalSource, configurationDigest: string): boolean { return personalSourceAdmitted(this.db, c, configurationDigest); }
   close(): void { this.db.close(); }
+  memberUsage(owner: string) { return memberUsage(this.db, owner); }
+  beginModelUsage(claim: WorkClaim, id: string, runtime: string, startedAt: string) {
+    this.transaction(() => { if (!this.active(claim, Date.now())) throw new DomainError('CONFLICT', 'Model dispatch lease is no longer active'); beginModelUsage(this.db, claim.owner, claim.job.id, id, runtime, startedAt, digest(claim.token)); });
+  }
+  finishModelUsage(claim: WorkClaim, id: string, evidence: RunEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
+    this.transaction(() => finishModelUsage(this.db, claim.owner, claim.job.id, id, evidence, outcome));
+  }
+  recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.get(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }
+
+  /** The execution graph and durable ledger share this transaction; neither is
+   * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
+   * business effects can update ledger truth without advancing the task. */
+  private projectExecution(owner: string, job: Job): void {
+    if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) return;
+    const graph = this.ontologyForJob(owner, job);
+    if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
+      && graph.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState === 'invalid_source') {
+      // Keep the canonical completed record available for diagnosis. An invalid
+      // imported result cannot reconstruct missing candidate evidence, execution
+      // history or permissions, nor replace an earlier valid projected history.
+      // Fresh dispatch still requires its complete sealed execution graph.
+      return;
+    }
+    const current = this.intents(owner, job.id);
+    const archived = this.db.prepare(`SELECT v.body FROM action_intent_versions v
+      JOIN action_intents i ON i.id=v.intent_id AND i.owner=v.owner WHERE v.owner=? AND i.job_id=?`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ActionIntent);
+    const attempts = this.db.prepare(`SELECT a.body FROM action_attempts a JOIN action_intents i ON i.id=a.intent_id AND i.owner=a.owner
+      WHERE a.owner=? AND i.job_id=? ORDER BY a.rowid`).all(owner, job.id).map(row => JSON.parse(String(row.body)) as ExecutionAttempt);
+    const observations: ExecutionLedger['observations'] = this.db.prepare(`SELECT o.* FROM action_observations o
+      JOIN action_intents i ON i.id=o.intent_id AND i.owner=o.owner WHERE o.owner=? AND i.job_id=? ORDER BY o.rowid`).all(owner, job.id).map(row => {
+      const result = JSON.parse(String(row.body)) as ActionResult;
+      // recordObservation only applies non-unknown results after verification.
+      // A later accepted observation does not revoke this historical fact.
+      // Unapplied/unknown rows do not prove either verification or rejection.
+      return { id: String(row.id), intentId: String(row.intent_id), attemptId: String(row.attempt_id), receivedAt: String(row.received_at), digest: String(row.digest), applied: row.applied === 1,
+        verified: row.applied === 1 && result.kind !== 'unknown' ? true : undefined, result };
+    });
+    const ledger = { intents: [...archived, ...current], attempts, observations };
+    projectExecution(graph, owner, job, ledger);
+    const cases = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND (original_job_id=? OR remedy_job_id=?)').all(owner, job.id, job.id).map(row => JSON.parse(String(row.body)) as AfterSalesCase);
+    projectBusinessChain(graph, owner, job, { ...ledger, grants: this.grants(owner, job.id), cases });
+  }
+  private executionMutation<T>(action: () => T): T {
+    this.db.exec('SAVEPOINT execution_ontology');
+    try { const result = action(); this.db.exec('RELEASE execution_ontology'); return result; }
+    catch (error) { this.db.exec('ROLLBACK TO execution_ontology; RELEASE execution_ontology'); throw error; }
+  }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
     this.get(owner, jobId);
     const row = this.db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=? AND key=?').get(owner, jobId, key);
     return row ? JSON.parse(String(row.body)) as T : undefined;
+  }
+  hasPreparationContext(owner: string, jobId: string, prefix: string): boolean {
+    this.get(owner, jobId);
+    return !!this.db.prepare('SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND substr(key,1,length(?))=? LIMIT 1').get(owner, jobId, prefix, prefix);
   }
   savePreparationContext(owner: string, jobId: string, key: string, value: unknown): void {
     const job = this.get(owner, jobId);
@@ -97,6 +238,7 @@ export class JobStore {
 
   // Called inside the same fenced checkpoint that saves the fixed plan.
   createIntent(owner: string, intent: ActionIntent): string {
+    return this.executionMutation(() => {
     this.get(owner, intent.jobId);
     if (intent.owner !== owner) throw new DomainError('FORBIDDEN', 'Action owner mismatch');
     const previous = this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND business_key=?').get(owner, intent.businessOperationKey);
@@ -106,11 +248,14 @@ export class JobStore {
       this.db.prepare('INSERT OR IGNORE INTO action_intent_versions VALUES(?,?,?,?)').run(old.id, owner, old.planDigest, JSON.stringify(old));
       const { privateData, ...body } = { ...intent, id: old.id };
       this.db.prepare('UPDATE action_intents SET state=?,private_data=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body), owner, old.id);
+      this.projectExecution(owner, this.get(owner, intent.jobId));
       return old.id;
     }
     const { privateData, ...body } = intent;
     this.db.prepare('INSERT INTO action_intents VALUES(?,?,?,?,?,?,?)').run(intent.id, owner, intent.jobId, intent.businessOperationKey, intent.state, JSON.stringify(privateData ?? null), JSON.stringify(body));
+    this.projectExecution(owner, this.get(owner, intent.jobId));
     return intent.id;
+    });
   }
   intent(owner: string, id: string): ActionIntent {
     const row = this.db.prepare('SELECT * FROM action_intents WHERE owner=? AND id=?').get(owner, id);
@@ -126,23 +271,32 @@ export class JobStore {
     return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, jobId).map(r => this.intent(owner, String(r.id)));
   }
   saveIntent(owner: string, intent: ActionIntent): void {
+    this.executionMutation(() => {
     const current = this.intent(owner, intent.id);
     if (intent.owner !== owner || intent.businessOperationKey !== current.businessOperationKey || intent.planDigest !== current.planDigest) throw new DomainError('CONFLICT', 'Action identity changed');
     const { privateData, ...body } = intent;
     this.db.prepare('UPDATE action_intents SET state=?,body=? WHERE owner=? AND id=?').run(intent.state, JSON.stringify(body), owner, intent.id);
+    this.projectExecution(owner, this.get(owner, intent.jobId));
+    });
   }
   dispatchIntent(owner: string, id: string): void {
+    this.executionMutation(() => {
     const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
     if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
+    this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
+    });
   }
-  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string): ExecutionAttempt {
+  startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string, submission?: ExecutionAttempt['submission'], authorizationId?: string): ExecutionAttempt {
+    return this.executionMutation(() => {
     const intent = this.intent(claim.owner, intentId);
     if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
     if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
     else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
-    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
+    const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}), ...(authorizationId ? { authorizationId } : {}) };
     this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
+    this.projectExecution(claim.owner, this.get(claim.owner, intent.jobId));
     return attempt;
+    });
   }
   attempts(owner: string, intentId: string): ExecutionAttempt[] {
     this.intent(owner, intentId);
@@ -150,7 +304,7 @@ export class JobStore {
   }
   recordObservation(owner: string, intentId: string, attemptId: string, result: ActionResult, verified: boolean,
     fence?: { claim: WorkClaim; apply: (job: Job, intent: ActionIntent) => void }): { id: string; applied: boolean } {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       const intent = this.intent(owner, intentId);
       const attemptRow = this.db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId);
       if (!attemptRow) throw new DomainError('FORBIDDEN', 'Observation has no owned attempt');
@@ -164,6 +318,7 @@ export class JobStore {
         if (duplicate) return { id: String(duplicate.id), applied: false };
         const id = randomUUID();
         this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+        this.projectExecution(owner, this.get(owner, intent.jobId));
         return { id, applied: false };
       }
       if (duplicate) {
@@ -173,6 +328,7 @@ export class JobStore {
           const event = `${result.eventId}:conflict:${hash}`; const previous = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, event);
           const id = previous ? String(previous.id) : randomUUID();
           if (!previous) this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, event, attemptId, new Date().toISOString(), hash, 0, JSON.stringify(result));
+          this.projectExecution(owner, this.get(owner, intent.jobId));
           return { id, applied: false };
         }
         if (verified && result.kind !== 'unknown' && attempt.planDigest === intent.planDigest && intent.state !== 'needs_review' && (intent.latestVersion === undefined || result.sourceVersion >= intent.latestVersion) && attempt.ordinal >= (intent.lastAppliedAttemptOrdinal ?? 0)) {
@@ -208,8 +364,23 @@ export class JobStore {
         const job = this.get(owner, intent.jobId); fence.apply(job, intent);
         this.saveIntent(owner, intent); this.save(owner, job);
       } else this.saveIntent(owner, intent);
+      if (fence && !this.leaseOwned(fence.claim, Date.now())) throw lostClaimFence;
       return { id, applied: !!applied };
-    });
+    }); } catch (error) {
+      if (error !== lostClaimFence || !fence) throw error;
+      // The provider has already replied. Roll back its attempted task/graph
+      // application, then retain the exact receipt as audit-only evidence.
+      return this.transaction(() => {
+        const intent = this.intent(owner, intentId);
+        if (!this.db.prepare('SELECT 1 FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, attemptId, intentId)) throw new DomainError('FORBIDDEN', 'Observation has no owned attempt');
+        const existing = this.db.prepare('SELECT id FROM action_observations WHERE owner=? AND intent_id=? AND event_id=?').get(owner, intentId, result.eventId);
+        if (existing) return { id: String(existing.id), applied: false };
+        const id = randomUUID();
+        this.db.prepare('INSERT INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(id, owner, intentId, result.eventId, attemptId, new Date().toISOString(), digest(result), 0, JSON.stringify(result));
+        this.projectExecution(owner, this.get(owner, intent.jobId));
+        return { id, applied: false };
+      });
+    }
   }
   observations(owner: string, intentId: string): unknown[] {
     this.intent(owner, intentId);
@@ -217,22 +388,64 @@ export class JobStore {
   }
   grant(owner: string, grant: PlanGrant): void {
     if (grant.owner !== owner) throw new DomainError('FORBIDDEN', 'Grant owner mismatch'); this.get(owner, grant.jobId);
-    this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
+    this.executionMutation(() => {
+      this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
+      this.projectExecution(owner, this.get(owner, grant.jobId));
+    });
   }
   grants(owner: string, jobId: string): PlanGrant[] { this.get(owner, jobId); return this.db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner, jobId).map(r => JSON.parse(String(r.body))); }
   revokeGrants(owner: string, jobId: string): void {
-    for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true }), owner, grant.id);
+    this.executionMutation(() => {
+    for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true, revokedAt: grant.revokedAt ?? new Date().toISOString() }), owner, grant.id);
+    this.projectExecution(owner, this.get(owner, jobId));
+    });
   }
-  reserveBudget(owner: string, intentId: string, grant: PlanGrant, amount: { minor: string; currency: string }): void {
-    this.intent(owner, intentId);
-    if (this.db.prepare('SELECT 1 FROM budget_reservations WHERE intent_id=?').get(intentId)) return;
-    const rows = this.db.prepare("SELECT b.minor,b.currency FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, grant.jobId);
-    if (amount.currency !== grant.maxAmount.currency || rows.some(r => r.currency !== amount.currency) || rows.reduce((n, r) => n + BigInt(String(r.minor)), 0n) + BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Cumulative action budget exceeds the grant');
-    this.db.prepare('INSERT INTO budget_reservations VALUES(?,?,?,?,?,?)').run(intentId, owner, grant.id, amount.minor, amount.currency, 'held');
+  reserveBudget(owner: string, intentId: string, grant: PlanGrant, amountInput: { minor: string; currency: string }): void {
+    this.executionMutation(() => {
+      if (grant.kind === 'object_write' || grant.kind === 'external_draft') throw new DomainError('FORBIDDEN', 'Nonfinancial authority has no financial budget');
+      const amount = moneySchema.parse({ minor: amountInput.minor, currency: amountInput.currency }); moneySchema.parse(grant.maxAmount);
+      const intent = this.intent(owner, intentId), job = this.get(owner, intent.jobId), composed = !!job.delegation?.agent?.composition;
+      if (grant.owner !== owner || grant.jobId !== intent.jobId || grant.planDigest !== intent.planDigest || grant.revoked || !Number.isFinite(Date.parse(grant.expiresAt)) || Date.parse(grant.expiresAt) <= Date.now()
+        || !grant.bindingRefs.some(ref => digest(ref) === digest(intent.bindingRef)) || amount.currency !== grant.maxAmount.currency || BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Exact action budget exceeds its current grant');
+      if (composed && !this.grants(owner, intent.jobId).some(current => current.id === grant.id && digest(current) === digest(grant))) throw new DomainError('FORBIDDEN', 'The current durable action grant is missing or changed');
+      const plan = composed ? job.delegation!.agent!.plans.find(plan => plan.digest === intent.planDigest) : undefined;
+      const step = plan?.steps.find(step => step.intentId === intentId);
+      if (composed && (!step?.binding || digest(step.cost && { minor: step.cost.minor, currency: step.cost.currency }) !== digest(amount)
+        || digest(step.budgetImpact ?? null) !== digest(grant.budgetImpact ?? null))) throw new DomainError('CONFLICT', 'Budget reservation differs from the sealed action');
+      const exposure = step?.budgetImpact?.amount ?? amount, role = step?.budgetImpact?.role ?? 'service_total';
+      moneySchema.parse(exposure);
+      const keyFor = (role: string, key: string) => digest({ owner, requestId: intent.jobId, program: step!.binding!.programRef, configuration: step!.binding!.configurationDigest, role, key });
+      const economicKey = composed ? keyFor(role, step!.budgetImpact?.key ?? intent.businessOperationKey) : undefined;
+      const additional = composed ? (step!.budgetImpact?.additional ?? []).map(value => ({ key: keyFor(value.role, value.key), ...moneySchema.parse(value.amount), role: value.role })) : [];
+      if (new Set([economicKey, ...additional.map(value => value.key)]).size !== additional.length + 1) throw new DomainError('CONFLICT', 'One operation repeats an economic obligation');
+      const previous = this.db.prepare('SELECT * FROM budget_reservations WHERE intent_id=?').get(intentId);
+      if (previous) {
+        if (previous.owner !== owner || previous.minor !== exposure.minor || previous.currency !== exposure.currency || (previous.economic_key ?? undefined) !== economicKey || digest(JSON.parse(String(previous.additional_impacts ?? '[]'))) !== digest(additional) || previous.state === 'released') throw new DomainError('CONFLICT', 'Original budget reservation cannot be reinterpreted or reopened');
+        return;
+      }
+      const rows = this.db.prepare("SELECT b.intent_id,b.minor,b.currency,b.economic_key,b.role,b.additional_impacts FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=? AND b.state IN ('held','consumed')").all(owner, intent.jobId);
+      if (composed) {
+        const proposed = [...rows.map(row => ({ key: String(row.economic_key ?? row.intent_id), minor: String(row.minor), currency: String(row.currency), role: String(row.role ?? 'service_total') })),
+          { key: economicKey!, ...exposure, role }, ...additional,
+          ...rows.flatMap(row => JSON.parse(String(row.additional_impacts ?? '[]')) as { key: string; minor: string; currency: string; role: string }[])];
+        const groups = new Map<string, typeof proposed[number]>();
+        for (const row of proposed) {
+          const prior = groups.get(row.key);
+          if (prior && (prior.currency !== row.currency || prior.role !== row.role)) throw new DomainError('CONFLICT', 'Economic commitment currency or role changed');
+          if (!prior || BigInt(row.minor) > BigInt(prior.minor)) groups.set(row.key, row);
+        }
+        for (const requirement of [...job.delegation!.request.requirements, ...(job.delegation!.request.successCriteria ?? [])]) if (requirement.kind === 'budget' && requirement.strength === 'hard') {
+          const selected = [...groups.values()].filter(row => row.role === (requirement.role ?? 'service_total'));
+          if (selected.some(row => row.currency !== requirement.expected.currency && BigInt(row.minor) !== 0n)
+            || selected.reduce((total, row) => total + BigInt(row.minor), 0n) > BigInt(requirement.expected.minor)) throw new DomainError('FORBIDDEN', 'Cumulative task commitments exceed the fixed task budget');
+        }
+      } else if (rows.some(row => row.currency !== amount.currency) || rows.reduce((total, row) => total + BigInt(String(row.minor)), 0n) + BigInt(amount.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Cumulative action budget exceeds the grant');
+      this.db.prepare('INSERT INTO budget_reservations(intent_id,owner,grant_id,minor,currency,state,economic_key,role,additional_impacts) VALUES(?,?,?,?,?,?,?,?,?)').run(intentId, owner, grant.id, exposure.minor, exposure.currency, 'held', economicKey ?? null, composed ? role : null, additional.length ? JSON.stringify(additional) : null);
+    });
   }
   budget(owner: string, jobId: string) {
     this.get(owner, jobId);
-    return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId);
+    return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id,b.role,b.additional_impacts FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId).map(row => ({ minor: row.minor, currency: row.currency, state: row.state, intent_id: row.intent_id, ...(row.role ? { role: String(row.role) } : {}), ...(row.additional_impacts ? { additionalImpacts: JSON.parse(String(row.additional_impacts)) as { key: string; minor: string; currency: string; role: string }[] } : {}) }));
   }
   cancelActions(owner: string, jobId: string): boolean {
     let pending = false;
@@ -250,6 +463,11 @@ export class JobStore {
     this.db.prepare('INSERT INTO aftersales_cases VALUES(?,?,?,?,?)').run(value.id, owner, value.originalJobId, value.remedyJobId, JSON.stringify(value));
   }
   afterSales(owner: string, originalJobId: string): AfterSalesCase[] { this.get(owner, originalJobId); return this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND original_job_id=?').all(owner, originalJobId).map(r => JSON.parse(String(r.body))); }
+  afterSalesCase(owner: string, caseId: string): AfterSalesCase {
+    const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId);
+    if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
+    return JSON.parse(String(row.body)) as AfterSalesCase;
+  }
   updateAfterSales(owner: string, caseId: string, state: AfterSalesCase['state']): void {
     const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId); if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
     const value = JSON.parse(String(row.body)) as AfterSalesCase;
@@ -277,6 +495,11 @@ export class JobStore {
       this.db.prepare('INSERT OR IGNORE INTO capability_change_proposals VALUES(?,?,?,?)').run(proposal.id, owner, key, JSON.stringify(proposal));
     }
   }
+  resultFeedback(owner: string, jobId: string): unknown {
+    this.get(owner, jobId);
+    const row = this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND job_id=?').get(owner, jobId);
+    return row ? JSON.parse(String(row.body)) : undefined;
+  }
   providerFeedback(owner: string, bindingRef: { id: string; version: string }): unknown[] {
     return this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND binding_key=?').all(owner, digest(bindingRef)).map(r => JSON.parse(String(r.body)));
   }
@@ -294,19 +517,31 @@ export class JobStore {
   }
 
   transaction<T>(action: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try { const result = action(); this.db.exec('COMMIT'); return result; }
-    catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return businessTransaction(this.db, action);
   }
 
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
   // Expired calls are never automatically replayed: their external outcome is unknown.
+  private parkUnavailableOntology(owner: string, job: Job, now: number): boolean {
+    try { this.ontologyForJob(owner, job); return false; }
+    catch (error) {
+      if (!(error instanceof OntologyReleaseUnavailable)) throw error;
+      scheduleTaskRecovery(job, 'validation_stalled', error.message, { now, automatic: false, operation: 'ontology_release' });
+      // No graph can be safely projected under a missing contract. Persist only
+      // the canonical technical pause, retaining every original pin and fact.
+      this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
+        .run(job.state, job.updatedAt, JSON.stringify(job), owner, job.id);
+      return true;
+    }
+  }
   private expireClaims(now: number): void {
-    const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision FROM work_claims c
+    const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision,c.token AS claim_token FROM work_claims c
       JOIN jobs j ON j.id=c.job_id WHERE c.expires_at<=?`).all(now);
     for (const row of rows) {
       const job = JSON.parse(String(row.body)) as Job;
+      markModelUsageUnknown(this.db, String(row.owner), job.id, digest(String(row.claim_token)));
       if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
+      if (this.parkUnavailableOntology(String(row.owner), job, now)) continue;
       if ((job.delegation?.plan || job.delegation?.agent) && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
@@ -315,8 +550,8 @@ export class JobStore {
         job.updatedAt = new Date(now).toISOString(); this.save(owner, job); continue;
       }
       if (job.state !== 'working' || (job.revision ?? 0) !== Number(row.revision)) continue;
-      job.state = 'failed'; job.error = 'Worker lease expired; execution outcome is unknown. Inspect evidence before submitting a new task.';
-      job.updatedAt = new Date(now).toISOString(); this.save(String(row.owner), job);
+      scheduleTaskRecovery(job, 'worker_interrupted', '运行进程中断，已保留原任务，恢复后继续处理。', { now });
+      this.save(String(row.owner), job);
     }
     this.db.prepare('DELETE FROM work_claims WHERE expires_at<=?').run(now);
   }
@@ -336,9 +571,13 @@ export class JobStore {
         AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
+      if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
-      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
+      // Expiring previous claims and projecting the newly claimed task can be
+      // synchronous work. A new lease starts after that work, not before it.
+      const claimedAt = now ?? Date.now();
+      this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
       return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
@@ -352,31 +591,41 @@ export class JobStore {
     });
   }
 
+  private leaseOwned(claim: WorkClaim, now: number): boolean {
+    const lease = this.db.prepare('SELECT token,expires_at,revision FROM work_claims WHERE job_id=?').get(claim.job.id);
+    return lease?.token === claim.token && Number(lease.expires_at) > now && Number(lease.revision) === (claim.job.revision ?? 0);
+  }
   private active(claim: WorkClaim, now: number): boolean {
-    const lease = this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(claim.job.id);
+    if (!this.leaseOwned(claim, now)) return false;
     const current = this.get(claim.owner, claim.job.id);
-    return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
+    return (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       const at = now ?? Date.now();
       if (!this.active(claim, at)) return false;
       const job = this.get(claim.owner, claim.job.id);
       update(job); this.save(claim.owner, job);
+      // The callback may intentionally complete/pause/revise the task. The
+      // initial active check plus SQLite's write transaction fences that state;
+      // the token and wall-clock deadline must still hold at commit.
+      if (!this.leaseOwned(claim, now ?? Date.now())) throw lostClaimFence;
       this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
       return true;
-    });
+    }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
   checkpoint(claim: WorkClaim, update: (job: Job) => void): boolean {
-    return this.transaction(() => {
+    try { return this.transaction(() => {
       if (!this.active(claim, Date.now())) return false;
       const job = this.get(claim.owner, claim.job.id);
-      update(job); this.save(claim.owner, job); return true;
-    });
+      update(job); this.save(claim.owner, job);
+      if (!this.leaseOwned(claim, Date.now())) throw lostClaimFence;
+      return true;
+    }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
   release(claim: WorkClaim): void {
@@ -400,13 +649,21 @@ export class JobStore {
   save(owner: string, job: Job): void {
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
+      const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
+      if (previous) {
+        if (previous.owner !== owner) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
+        const original = JSON.parse(String(previous.body)) as Job;
+        if (digest(original.delegation?.ontologyRelease ?? null) !== digest(job.delegation?.ontologyRelease ?? null)) throw new DomainError('CONFLICT', 'A task\'s ontology release is immutable');
+        if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
+      }
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      projectTask(this.ontology, owner, job);
+      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.ontologyForJob(owner, job), owner, job);
+      this.projectExecution(owner, job);
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }
@@ -424,18 +681,32 @@ export class JobStore {
     return { jobs: rows.map(row => JSON.parse(String(row.body)) as Job), total };
   }
 
+  assertTransaction(): void {
+    assertBusinessTransaction(this.db);
+  }
+  sharesNetworkStore(store: NetworkStore): boolean { return store.usesConnection(this.db); }
+  hasClaim(owner: string, jobId: string): boolean {
+    this.get(owner, jobId); return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=?').get(jobId);
+  }
+  bindInquiryContext(owner: string, jobId: string, value: unknown): void {
+    this.assertTransaction(); this.get(owner, jobId);
+    this.db.prepare('INSERT INTO preparation_contexts VALUES(?,?,?,?)').run(owner, jobId, 'network-inquiry-source@1', JSON.stringify(value));
+  }
+
   // All mutations are synchronous inside one transaction, including the retry receipt.
   once(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
-    return this.transaction(() => {
-      const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
-        .get(owner, operation, requestId);
-      if (previous) {
-        if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
-        return JSON.parse(String(previous.response)) as Job;
-      }
-      const result = action();
-      this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
-      return result;
-    });
+    return this.transaction(() => this.onceInTransaction(owner, operation, requestId, fingerprint, action));
+  }
+  onceInTransaction(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
+    this.assertTransaction();
+    const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
+      .get(owner, operation, requestId);
+    if (previous) {
+      if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
+      return JSON.parse(String(previous.response)) as Job;
+    }
+    const result = action();
+    this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
+    return result;
   }
 }

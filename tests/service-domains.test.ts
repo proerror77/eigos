@@ -11,7 +11,7 @@ import { domainCapabilityId, projectDomainSnapshot } from '../packages/ontology/
 import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { domainCapability } from '../packages/capabilities/domain-service.js';
-import { backend, evidence, interpretation, observePlanning, owner, principal, proposal } from './backend-fixture.js';
+import { backend, evidence, interpretation, observePlanning, observeTaskContext, acknowledgeReads, owner, principal, proposal } from './backend-fixture.js';
 import { domainFixture, domainProvider } from './fixtures/service-domains.js';
 import type { Job } from '../packages/core/domain.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
@@ -132,7 +132,7 @@ test('equivalent appointment instants with different UTC offsets retain the same
 
 function runtimeFixture(domain: ServiceDomain, options: Parameters<typeof domainProvider>[1] = {}) {
   const f = domainProvider(domain, options), capability = domainCapability(domain), catalog = createExecutionCatalog({ domainSandboxProviders: [f.provider] });
-  const b = backend(catalog, { ground: async request => ({ decision: { ...interpretation(request, capability.ref.id, f.parameters), capabilityRef: capability.ref }, evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); const candidate = context.resolution.candidates[0]!; assert(candidate.ontologySubject); access.session.call('query_ontology', { object: candidate.ontologySubject }); const result = access.session.call('evaluate_ontology', { function: serviceDomain(domain).eligibleFunction, object: candidate.ontologySubject }) as { value: DomainAssessment }; assert.equal(result.value.status, 'satisfied'); return { decision: proposal(context), evidence: evidence() }; } }, undefined, { allowSandbox: true });
+  const b = backend(catalog, { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, capability.ref.id, f.parameters), capabilityRef: capability.ref }, evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); const candidate = context.resolution.candidates[0]!; assert(candidate.ontologySubject); access.session.call('query_ontology', { object: candidate.ontologySubject }); const result = access.session.call('evaluate_ontology', { function: serviceDomain(domain).eligibleFunction, object: candidate.ontologySubject }) as { value: DomainAssessment }; assert(result.value, JSON.stringify(result)); assert.equal(result.value.status, 'satisfied'); acknowledgeReads(access); return { decision: proposal(context), evidence: evidence() }; } }, undefined, { allowSandbox: true });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; b.tasks.authorize(principal, job.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
   const tick = async (jobId: string) => {
     // The coordinator can defer the task beyond the provider intent's nextAt.
@@ -178,7 +178,10 @@ test('canceling a prepared domain action prevents dispatch; live tasks cannot us
     f.submit({ executionEnvironment: 'sandbox' }); const ready = await f.run();
     f.tasks.cancel(principal, ready.id); assert.throws(() => f.approve(ready)); assert.equal(f.counters().submits, 0);
     const current = f.tasks.get(principal, ready.id); assert.equal(current.state, 'canceled');
-    f.submit({ executionEnvironment: 'live' }); await assert.rejects(f.run()); assert.equal(f.counters().submits, 0);
+    f.submit({ executionEnvironment: 'live' }); const unavailable = await f.run();
+    assert.equal(unavailable.state, 'working'); assert.equal(unavailable.delegation!.phase, 'grounding');
+    assert.match(unavailable.delegation!.groundingFeedback![0]!.message, /exact capability reference and version/);
+    assert.equal(unavailable.delegation!.plan, undefined); assert.equal(f.counters().submits, 0);
   } finally { f.store.close(); }
 });
 

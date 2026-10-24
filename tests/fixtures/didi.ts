@@ -13,7 +13,7 @@ import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packa
 import type { RideEstimateObservation } from '../../packages/ontology/ride-estimate.js';
 import { digest } from '../../packages/core/delegation.js';
 import { JobStore } from '../../packages/core/store.js';
-import { backend, evidence, interpretation } from '../backend-fixture.js';
+import { backend, evidence, interpretation, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 
 export const syntheticKey = 'didi-fixture-key-never-a-real-account';
 export const input = { mode: 'estimate', city: '北京市', origin: '北京西站', destination: '西二旗地铁站' } as const;
@@ -51,6 +51,7 @@ export function didiFixture() {
 const step = (id: string, action: string, arguments_: object): AgentStep => ({ id, action, argumentsJson: JSON.stringify(arguments_), dependsOn: [], inputRefs: [] });
 const decision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], completion?: object): AgentDecision => ({ kind: completion ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic choice based on the exact requested endpoints and source observations', steps, completionJson: completion ? JSON.stringify(completion) : '' });
 export function observeDidi(ctx: AgentPlanningContext, access: PlanningAccess) {
+  observeTaskContext(access);
   access.session.call('describe_ontology', { search: 'RideEstimate', limit: 5 });
   access.session.call('query_ontology', { object: { type: 'ServiceRequest', id: ctx.request.id } });
   access.session.call('query_ontology', { object: ctx.state.scope });
@@ -71,7 +72,7 @@ export const chooseDidi: DidiChoice = (ctx, access) => {
   return decision(ctx, [step('price', 'EstimateDidiRide', { scope, originObservation: from.ref, originPlaceId: from.snapshot.data.places[1]!.id, destinationObservation: to.ref, destinationPlaceId: to.snapshot.data.places[1]!.id })]);
 };
 export function didiModel(choice: DidiChoice = chooseDidi, taskInput: object = input): Reasoner {
-  return { ground: async request => ({ decision: { ...interpretation(request, DIDI_PROGRAM_REF.id, taskInput), capabilityRef: DIDI_PROGRAM_REF }, evidence: evidence() }), plan: async () => { throw new Error('No legacy route workflow'); }, act: async (ctx, _signal, access) => { const chosen = choice(ctx, access); return { decision: chosen, evidence: { ...evidence(), decisionDigest: digest(chosen) } }; } };
+  return { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, DIDI_PROGRAM_REF.id, taskInput), capabilityRef: DIDI_PROGRAM_REF }, evidence: evidence() }), plan: async () => { throw new Error('No legacy route workflow'); }, act: async (ctx, _signal, access) => { observeTaskContext(access); const chosen = choice(ctx, access); acknowledgeReads(access); return { decision: chosen, evidence: { ...evidence(), decisionDigest: digest(chosen) } }; } };
 }
 export function setupDidi(choice: DidiChoice = chooseDidi, taskInput: object = input) {
   const fixture = didiFixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, didi: { ...fixture.binding, connector: fixture.connector } }), b = backend(catalog, didiModel(choice, taskInput), store);

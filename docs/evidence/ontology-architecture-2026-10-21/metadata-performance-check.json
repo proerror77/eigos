@@ -1,0 +1,22 @@
+{
+  "scenario": "same signed sandbox commerce pipeline with replacement JobStore/runtime; exact order/cart/checkout call-count invariants",
+  "samplesPerVariant": 1,
+  "testOutcomeBefore": "passed",
+  "testOutcomeAfter": "passed",
+  "beforeMs": 49845.104,
+  "afterMs": 20011.325125,
+  "maxModelActBeforeMs": 3288.450499999999,
+  "maxModelActAfterMs": 1133.5662499999999,
+  "modelActsBefore": 15,
+  "modelActsAfter": 15,
+  "orderCountBefore": 1,
+  "orderCountAfter": 1,
+  "change": "Cache compiled static relationship definitions and complete type descriptions; return independent descriptions; no owned facts, observations, grants or membership result cache",
+  "unchanged": "Production lease duration, timeout, model/read budgets, source checks and authorization checks",
+  "limitation": "Single local diagnostic before/after pair, not a general latency guarantee",
+  "profileHashes": {
+    "before": "16356ef0df965d537ac48c73585fd69d0c510d7211fdf75a7386e6aaf5114afd",
+    "after": "37e4982b0e32b932fd6830cfdcb8518dfa3d4521e6a86b864d43afe9de275ff2"
+  },
+  "model": "Deterministic test Reasoner over real local ontology reads and signed sandbox HTTP; not LLM inference latency"
+}

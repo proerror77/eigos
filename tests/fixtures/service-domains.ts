@@ -1,7 +1,7 @@
 import { digest } from '../../packages/core/delegation.js';
 import type { DomainOperation, DomainSandboxProvider } from '../../packages/capabilities/domain-service.js';
 import type { DomainSnapshot } from '../../packages/ontology/domain-projection.js';
-import { domainBusinessLinks, serviceDomain, type DomainParameters, type DomainResults, type ServiceDomain } from '../../packages/ontology/service-domains.js';
+import { domainBusinessLinksFor, serviceDomain, type DomainParameters, type DomainResults, type ServiceDomain } from '../../packages/ontology/service-domains.js';
 
 /** Entirely synthetic administrative/business records; no real identity, address or provider. */
 export function domainFixture<K extends ServiceDomain>(domain: K, now = Date.now()) {
@@ -43,9 +43,17 @@ export function domainFixture<K extends ServiceDomain>(domain: K, now = Date.now
     RentalPolicy: { properties: { driverEligibilityRule: 'synthetic-eligibility-rule', cancellationPolicyRef: 'synthetic-policy-v1', insuranceTerms: 'synthetic-insurance', depositLimit: parameters.vehicle.depositLimit } },
     VehicleInspection: { properties: { stage: 'pickup', occurredAt: at(-1), accepted: true, damageReportRef: 'synthetic-inspection' } },
   };
-  const entities: DomainSnapshot['entities'] = serviceDomain(domain).objects.map(type => { const value = entityValues[type]!; const id = value.id ?? `${type}-synthetic`; return { type, id, title: `${type} 合成对象`, properties: { sourceId: id, sourceRevision: '1', ...value.properties } }; });
+  // Legacy fixtures deliberately omit newly supported optional source resources.
+  // Focused domain-schema cases add those exact facts instead of inventing them.
+  const entities: DomainSnapshot['entities'] = serviceDomain(domain).objects.filter(type => entityValues[type]).map(type => { const value = entityValues[type]!; const id = value.id ?? `${type}-synthetic`; return { type, id, title: `${type} 合成对象`, properties: { sourceId: id, sourceRevision: '1', ...value.properties } }; });
   if (domain === 'appointment') Object.assign(entities.find(e => e.type === 'PatientProfile')!.properties, { patientAlias: 'patient-alias-A', identityDocument: 'PRIVATE_PATIENT_FIXTURE', contact: 'PRIVATE_CONTACT_FIXTURE' });
-  const snapshot: DomainSnapshot = { domain, environment: 'sandbox', requestId: 'domain-request', requestRevision: 1, parameters: parameters[domain], option: { id: 'option-1', providerId: 'synthetic-domain-provider', parametersDigest: digest(parameters[domain]), offeredParameters: parameters[domain], availability: 'available', eligibility: 'verified', observedAt: at(-2), expiresAt: at(30), total, feesComplete: true, commitmentBy: at(10), commitments: domain === 'ride' ? { pickup: at(10), arrival: at(10), completion: at(10) } : domain === 'appointment' ? { registration: at(10), completion: at(10) } : domain === 'food' ? { completion: at(10) } : { completion: at(10) }, ...(domain === 'vehicle' ? { deposit: results.vehicle.deposit } : {}), termsMatch: true }, sourceId: 'synthetic-domain-provider', sourceEventId: 'event-1', sourceVersion: 1, entities, relationships: domainBusinessLinks.filter(r => r.domain === domain).map(r => ({ type: r.id, fromId: entities.find(e => e.type === r.from)!.id, toId: entities.find(e => e.type === r.to)!.id })) };
+  const snapshot: DomainSnapshot = { domain, environment: 'sandbox', requestId: 'domain-request', requestRevision: 1, parameters: parameters[domain], option: { id: 'option-1', providerId: 'synthetic-domain-provider', parametersDigest: digest(parameters[domain]), offeredParameters: parameters[domain], availability: 'available', eligibility: 'verified', observedAt: at(-2), expiresAt: at(30), total, feesComplete: true, commitmentBy: at(10), commitments: domain === 'ride' ? { pickup: at(10), arrival: at(10), completion: at(10) } : domain === 'appointment' ? { registration: at(10), completion: at(10) } : domain === 'food' ? { completion: at(10) } : { completion: at(10) }, ...(domain === 'vehicle' ? { deposit: results.vehicle.deposit } : {}), termsMatch: true }, sourceId: 'synthetic-domain-provider', sourceEventId: 'event-1', sourceVersion: 1, entities, relationships: domainBusinessLinksFor(domain).filter(r => entities.some(e => e.type === r.from) && entities.some(e => e.type === r.to)).map(r => ({ type: r.id, fromId: entities.find(e => e.type === r.from)!.id, toId: entities.find(e => e.type === r.to)!.id })) };
+  if (domain === 'itinerary') for (const leg of parameters.itinerary.legs.slice(1)) {
+    const itemId = `itinerary-item-${leg.id}`;
+    entities.push({ type: 'TravelLeg', id: leg.id, title: '合成交通路段', properties: { sourceId: leg.id, sourceRevision: '1', ...leg, feasibility: 'verified' } },
+      { type: 'ItineraryItem', id: itemId, title: '合成行程事项', properties: { sourceId: itemId, sourceRevision: '1', startsAt: leg.startsAt, endsAt: leg.endsAt, location: leg.destination, bookingRequired: leg.bookingRequired } });
+    snapshot.relationships.push({ type: 'ItineraryItemLeg', fromId: itemId, toId: leg.id });
+  }
   return { now, at, parameters: parameters[domain], result: results[domain], snapshot };
 }
 

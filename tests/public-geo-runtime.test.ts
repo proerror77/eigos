@@ -14,7 +14,7 @@ import { digest } from '../packages/core/delegation.js';
 import type { Job } from '../packages/core/domain.js';
 import type { Reasoner } from '../packages/coordinator/coordinator.js';
 import { readMeituan } from './fixtures/meituan-agent.js';
-import { owner, principal } from './backend-fixture.js';
+import { owner, principal, observeTaskContext, acknowledgeReads } from './backend-fixture.js';
 
 const query = { city: '北京市', keyword: '天安门' };
 const deniedQuery = { city: '北京市', keyword: '故宫博物院' };
@@ -24,19 +24,21 @@ const evidence = () => ({ id: randomUUID(), runtime: 'synthetic-public-geo-runti
 
 function fixedReasoner(input = query): Reasoner {
   return {
-    ground: async request => ({ decision: {
+    ground: async (request, _caps, _signal, access) => { request = observeTaskContext(access) ?? request; return { decision: {
       kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
       message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input),
       // Reproduce the real PA interpreter's city requirement, rather than hiding it.
       requirementsJson: JSON.stringify([{ requirement: { id: 'public-location-scope', strength: 'hard', kind: 'location', expected: { ref: '北京市' } }, messageId: request.messages[0]!.id, quote: '北京市' }]),
       conditionsJson: '[]',
-    }, evidence: evidence() }),
+    }, evidence: evidence() }; },
     plan: async () => { throw new Error('Eager legacy source preparation is forbidden'); },
     act: async (context, _signal, access) => {
+      observeTaskContext(access);
       const observations = readMeituan(context, access);
       const decision = context.state.feedback.length ? { kind: 'no_feasible_plan' as const, requestRevision: context.request.revision, message: 'Synthetic source unavailable; do not retry automatically', steps: [], completionJson: '' }
         : observations.length ? { kind: 'complete' as const, requestRevision: context.request.revision, message: 'Selected synthetic source result', steps: [], completionJson: JSON.stringify({ observation: observations[0]!.ref, rationale: 'Source status evaluated in this decision' }) }
         : { kind: 'execute' as const, requestRevision: context.request.revision, message: 'Model selects only the public read', steps: [{ id: 'public', action: 'SearchMeituanLocations', argumentsJson: JSON.stringify({ scope: context.state.scope }), dependsOn: [], inputRefs: [] }], completionJson: '' };
+      acknowledgeReads(access);
       return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
     },
   };
@@ -113,7 +115,8 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
       assert.equal(result.ontologyModule.id, 'meituan.reads'); assert.equal(result.noBusinessWrites, true);
       assert.equal(fixture.calls().length,1); assert.equal(fixture.calls()[0]!.command,'search_poi');
     } else {
-      assert(['failed','rejected'].includes(completed.state)); assert.equal(completed.artifact, undefined);
+      if (mode === 'denied') { assert.equal(completed.state, 'paused'); assert.equal(completed.delegation?.recovery?.code, 'validation_stalled'); }
+      else assert(['failed','rejected'].includes(completed.state)); assert.equal(completed.artifact, undefined);
       assert.equal(fixture.calls().length, mode === 'denied' ? 0 : 1);
     }
     await worker.close(); worker = undefined;

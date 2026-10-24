@@ -20,6 +20,7 @@ import { JobStore } from '../packages/core/store.js';
 import { TaskService } from '../packages/core/tasks.js';
 import type { Job } from '../packages/core/domain.js';
 import { principal, owner, reasoner, interpretation } from './backend-fixture.js';
+import { scheduleTaskRecovery } from '../packages/core/task-recovery.js';
 const pause = (ms: number) => new Promise(r => setTimeout(r, ms));
 const exec = promisify(execFile);
 
@@ -33,7 +34,7 @@ async function fixture(model: Reasoner = reasoner(r => r.messages.some(m => m.te
   const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, model, gateway.catalog), pollMs: 10 }); worker.start();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' };
   const rpc = async (method: string, params: object) => (await fetch(base + '/a2a', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) })).json();
-  const send = (text: string, taskId?: string, returnImmediately = true) => rpc('SendMessage', { configuration: { returnImmediately }, message: { messageId: randomUUID(), role: 'ROLE_USER', ...(taskId ? { taskId } : {}), parts: [{ text }] } });
+  const send = (text: string, taskId?: string, returnImmediately = true) => rpc('SendMessage', { configuration: { returnImmediately }, message: { messageId: randomUUID(), role: 'ROLE_USER', ...(taskId ? { taskId, metadata: { expectedRevision: gateway.tasks.get(principal, taskId).revision } } : {}), parts: [{ text }] } });
   const wait = async (id: string, state: Job['state']) => { for (let i = 0; i < 400; i++) { const j = gateway.tasks.get(principal, id); if (j.state === state) return j; await pause(10); } assert.fail(JSON.stringify(gateway.tasks.get(principal, id))); };
   const approval = (j: Job) => ({ action: 'confirm_simulated_payment', requestId: 'approve-' + j.id, quoteId: j.delegation!.plan!.quote!.id, quoteDigest: j.delegation!.plan!.quote!.digest });
   const approve = (j: Job, extra = {}) => fetch(base + `/tasks/${j.id}/authorize`, { method: 'POST', headers, body: JSON.stringify({ ...approval(j), ...extra }) });
@@ -45,7 +46,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
   try {
     const first = await f.send('审计 CSV'); const id = first.result.task.id;
     assert.equal(first.result.task.status.state, 'TASK_STATE_SUBMITTED'); await f.wait(id, 'input-required');
-    const reply = { configuration: { returnImmediately: true }, message: { messageId: 'stable-answer', taskId: id, role: 'ROLE_USER', parts: [{ text: 'sample.csv，全部已注册检查' }] } };
+    const reply = { configuration: { returnImmediately: true }, message: { messageId: 'stable-answer', taskId: id, metadata: { expectedRevision: f.gateway.tasks.get(principal, id).revision }, role: 'ROLE_USER', parts: [{ text: 'sample.csv，全部已注册检查' }] } };
     assert(!(await f.rpc('SendMessage', reply)).error); const ready = await f.wait(id, 'auth-required');
     assert(!(await f.rpc('SendMessage', reply)).error); assert((await f.send('yes', id)).error);
     assert.equal((await f.approve(ready, { quoteDigest: '0'.repeat(64) })).status, 409);
@@ -69,7 +70,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
 test('unsupported outcomes and invented capabilities fail without fallback or simulated payment', async () => {
   for (const mode of ['unsupported', 'invented'] as const) {
     const f = await fixture(reasoner(r => ({ ...interpretation(r), ...(mode === 'unsupported' ? { kind: 'unsupported', message: 'No supported coffee purchasing capability.' } : { capabilityRef: { id: 'invented', version: '2' } }) })));
-    try { const response = await f.send('买咖啡'); const j = await f.wait(response.result.task.id, mode === 'unsupported' ? 'rejected' : 'failed'); assert.equal(j.artifact, undefined); assert.equal(j.delegation!.intentId, undefined); }
+    try { const response = await f.send('买咖啡'); const j = await f.wait(response.result.task.id, mode === 'unsupported' ? 'rejected' : 'paused'); assert.equal(j.artifact, undefined); assert.equal(j.delegation!.intentId, undefined); }
     finally { await f.close(); }
   }
 });
@@ -111,4 +112,34 @@ test('existing Personal Agent Python client still discovers, resumes, approves a
     assert.equal((await run('get', '--task-id', ready.id)).status.state, 'TASK_STATE_COMPLETED');
     writeFileSync(input, 'changed goal'); await assert.rejects(run('send', '--text-file', input, '--request-id', 'one'));
   } finally { await f.close(); }
+});
+
+test('MCP and A2A bind continuation versions and expose technical recovery and member accounting', async () => {
+  const f = await fixture(), mcp = new Client({ name: 'continuation-test', version: '1' });
+  try {
+    const sent = await f.send('审计 CSV'), id = sent.result.task.id, asked = await f.wait(id, 'input-required');
+    await f.worker.close();
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${f.token}` } } }));
+    const call = (name: string, args: Record<string, unknown>) => mcp.callTool({ name, arguments: args });
+    const send = (data: object, operation = 'reply', requestId = randomUUID()) => f.rpc('SendMessage', { configuration: { returnImmediately: true }, message: { taskId: id, messageId: requestId, role: 'ROLE_USER', metadata: { taskOperation: operation }, parts: [{ data }] } });
+    const missing = { taskId: id, requestId: randomUUID(), answer: 'sample.csv' };
+    assert((await call('reply_to_task', missing)).isError);
+    assert((await send({ answer: 'sample.csv' })).error);
+    assert((await f.rpc('SendMessage', { configuration: { returnImmediately: true }, message: { taskId: id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'sample.csv' }] } })).error);
+    const correction = { ...missing, expectedRevision: asked.revision!, answer: '文件改为corrected.csv' };
+    assert(!(await call('amend_task', correction)).isError);
+    assert(!(await call('amend_task', correction)).isError, 'An exact retry returns the original receipt');
+    assert((await send({ answer: 'sample.csv', expectedRevision: asked.revision! })).error, 'A delayed reply cannot answer the revised task');
+    const amended = f.gateway.store.get(owner, id), businessRevision = amended.delegation!.request.revision;
+    scheduleTaskRecovery(amended, 'worker_timeout', 'Runtime repair required', { automatic: false }); f.gateway.store.save(owner, amended);
+    const read = await f.rpc('GetTask', { id }); assert.equal(read.result.status.state, 'TASK_STATE_WORKING'); assert.equal(read.result.metadata.internalState, 'paused');
+    assert.equal(read.result.metadata.delegation.recovery.ownerInputRequired, false); assert.equal(read.result.metadata.memberUsage.limitsEnforced, false);
+    assert(!(await call('get_member_usage', {})).isError);
+    assert(!(await call('resume_task', { taskId: id, requestId: randomUUID(), expectedRevision: amended.revision! })).isError);
+    const pausedAgain = f.gateway.store.get(owner, id); scheduleTaskRecovery(pausedAgain, 'worker_timeout', 'Runtime repaired again', { automatic: false }); f.gateway.store.save(owner, pausedAgain);
+    const resumeId = randomUUID(), resume = { expectedRevision: pausedAgain.revision! };
+    assert(!(await send(resume, 'resume', resumeId)).error); assert(!(await send(resume, 'resume', resumeId)).error);
+    const done = f.gateway.store.get(owner, id); assert.equal(done.state, 'working'); assert.equal(done.delegation!.request.messages.length, 2); assert.equal(done.delegation!.request.revision, businessRevision);
+    assert((await send({ ...resume, answer: '继续' }, 'resume')).error, 'Technical continuation has no business answer');
+  } finally { await mcp.close(); await f.close(); }
 });

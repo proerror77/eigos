@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/auth0.js';
+import { inviteBetaCodexConfig } from '../packages/members/native-mcp.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
 
@@ -17,6 +18,12 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.equal(plan.connector.refresh_token.rotation_type, 'rotating'); assert.equal(plan.connector.refresh_token.infinite_token_lifetime, false);
   assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
+  assert(!plan.api.scopes.some(s => s.value.startsWith('sources:')));
+  assert(!plan.api.scopes.some(s => s.value === 'ontology:admin'), 'Self-service OAuth setup cannot provision global ontology administration');
+  assert.deepEqual(plan.api.scopes.filter(scope => scope.value.startsWith('ontology:')).map(scope => scope.value), ['ontology:read', 'ontology:write', 'ontology:publish', 'ontology:object_write']);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:object_write')!.description, /exact preview/);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:publish')!.description, /your own ontology/);
+  assert.deepEqual(auth0Plan('https://eigos.example', undefined, { memberSources: true }).api.scopes.filter(s => s.value.startsWith('sources:')).map(s => s.value), ['sources:read', 'sources:write']);
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
   assert.throws(() => auth0Plan('https://eigos.example', 'https://attacker.example/callback'));
@@ -31,6 +38,21 @@ test('Auth0 connector refresh grants cannot authorize fresh installation enrollm
     } }, { idToken: { setCustomClaim: () => {} }, accessToken: { setCustomClaim: (key: string, value: unknown) => claims.set(key, value) }, access: { deny: () => assert.fail('Identity mapping should be valid') } });
     assert.equal(claims.get('https://eigos.example/claims/agent_enrollment'), allowed);
   }
+});
+
+test('the invite beta provisions only task scopes and a public native MCP authorization-code client with rotation', () => {
+  const plan = auth0Plan('https://beta.example', undefined, { inviteBeta: true });
+  assert.deepEqual(plan.api.scopes.map(scope => scope.value), ['services:read', 'tasks:read', 'tasks:write', 'members:write']);
+  assert(plan.mcp); assert.equal(plan.mcp.token_endpoint_auth_method, 'none');
+  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1:64517/callback']);
+  const nativeConfig = inviteBetaCodexConfig('https://beta.example', 'public-client');
+  assert.match(nativeConfig, /callback_url = "http:\/\/127\.0\.0\.1:64517\/callback"\ncallback_port = 64517/);
+  assert.match(nativeConfig, /url = "https:\/\/beta\.example\/mcp"/);
+  assert.deepEqual(plan.mcp.grant_types, ['authorization_code', 'refresh_token']);
+  assert.equal(plan.mcp.refresh_token.rotation_type, 'rotating');
+  assert.equal(plan.mcp.client_metadata.eigos_resource, 'https://beta.example');
+  assert.notEqual(plan.mcp.client_metadata.eigos_component, plan.connector.client_metadata.eigos_component);
+  assert.throws(() => auth0Plan('https://beta.example', undefined, { inviteBeta: true, memberSources: true }), /private supplier/);
 });
 
 async function action(clientId: string, resource?: string, configured = true) {

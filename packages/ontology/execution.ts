@@ -1,12 +1,12 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v15' as const;
+export const BACKEND_VERSION = 'ontology-execution-v18' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
 export const moneySchema = z.object({ minor: integer, currency: z.string().regex(/^[A-Z]{3}$/) }).strict();
 const base = { id: z.string().min(1).max(100), strength: z.enum(['hard', 'preference']) };
-export const quantityRoles = ['item_quantity', 'passenger_count', 'room_count', 'guest_count', 'traveler_count', 'patient_count', 'participant_count'] as const;
+export const quantityRoles = ['item_quantity', 'passenger_count', 'room_count', 'guest_count', 'traveler_count', 'patient_count', 'participant_count', 'result_count'] as const;
 export const amountRoles = ['service_total', 'deposit'] as const;
 export const deadlineRoles = ['completion', 'pickup', 'arrival', 'registration'] as const;
 export const locationRoles = ['origin', 'destination', 'pickup', 'return', 'venue'] as const;
@@ -21,6 +21,11 @@ export const requirementSchema = z.discriminatedUnion('kind', [
 export const requirementsSchema = z.array(requirementSchema).max(40).refine(items => new Set(items.map(i => i.id)).size === items.length, 'Requirement IDs must be unique');
 export type RequirementInput = z.infer<typeof requirementSchema>;
 export type Requirement = RequirementInput & { provenance: { source: 'pa'; interpretation: 'structured' | 'quoted_text'; messageId: string; receivedAt: string; quote?: string } };
+export interface ConfirmedInput {
+  field: string; status: 'confirmed' | 'ambiguous' | 'cleared'; value?: unknown; quote: string; revision: number;
+  source: { messageId: string; messageIndex: number; receivedAt: string };
+}
+export interface ConfirmedInputs { version: '1'; revision: number; messageDigest: string; fields: Record<string, ConfirmedInput>; history: ConfirmedInput[] }
 export interface ServiceRequest {
   id: string;
   revision: number;
@@ -28,7 +33,10 @@ export interface ServiceRequest {
   requestedDeliverable?: string;
   requirements: Requirement[];
   successCriteria?: Requirement[];
+  supersededRequirements?: Requirement[];
+  confirmedInputs?: Record<string, ConfirmedInputs>;
   conditions?: import('./business-model.js').BusinessCondition[];
+  supersededConditions?: import('./business-model.js').BusinessCondition[];
   messages: { id: string; text: string; receivedAt: string }[];
   outcome?: 'refund' | 'cancel';
   businessScopeId?: string;
@@ -48,6 +56,9 @@ export interface ServiceCapability {
   verifierRef: Ref;
   completion?: 'artifact' | 'delivery' | 'order' | 'refund' | 'domain';
   outcomePredicates?: string[];
+  /** Independently verifiable outcome and business phase, never an execution recipe. */
+  goalOutcomes?: { predicate: string; phase: import('../core/goal-contract.js').GoalCriterion['phase']; description: string }[];
+  effectConstraints?: { predicate: string; allowedEffects: import('./actions.js').EffectClass[] }[];
   requirementRoles?: RequirementRoleDefinition[];
   environment?: 'local' | 'live' | 'sandbox';
   locationSemantics?: 'search_area' | 'destination';
@@ -102,6 +113,14 @@ export interface PlanStep {
   input: Record<string, unknown>; inputRefs: import('./actions.js').InputReference[]; dependsOn: string[];
   cost?: { minor: string; currency: string; payeeId: string; purpose?: typeof amountRoles[number] };
 }
+/** Business context for a new fixed plan. This is never a provider argument or
+ * an accepted-output reference; dispatch input materialization ignores it. */
+export interface FixedCandidateBinding {
+  version: '1'; requestId: string; requestRevision: number;
+  candidateId: string; candidateDigest: string;
+  subject: import('./planning-contract.js').ObjectSnapshot;
+}
+export const FIXED_CANDIDATE_CONTEXT_PARAMETER = '@selected_candidate';
 export interface ExecutionPlan {
   id: string;
   version: '7';
@@ -112,6 +131,7 @@ export interface ExecutionPlan {
   capabilityRef: Ref;
   ontologyRef: Ref;
   candidateId: string;
+  candidateBinding?: FixedCandidateBinding;
   bindingRef: Ref;
   bindingSnapshots: import('./supply.js').DiscoveredBinding[];
   definitionDigests: { ref: Ref; digest: string }[];

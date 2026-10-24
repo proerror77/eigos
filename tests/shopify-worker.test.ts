@@ -16,9 +16,9 @@ import { merchant, input, ids, decision, step, observe, model, setup, fixture, k
 test('Catalog program is absent by default, owner scoped, configured consistently and construction makes no HTTP', () => {
   assert(!createExecutionCatalog().summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id));
   const t = setup(); try {
-    assert(t.catalog.summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id && c.ref.version === '2'));
+    assert(t.catalog.summaries(owner, 16, 'sandbox').some(c => c.ref.id === CATALOG_AGENT_REF.id && c.ref.version === '2'));
     assert(!t.catalog.summaries('other-owner').some(c => c.ref.id === CATALOG_AGENT_REF.id));
-    assert(!t.catalog.summaries(owner, 16, 'sandbox').some(c => c.ref.id === CATALOG_AGENT_REF.id));
+    assert(!t.catalog.summaries(owner).some(c => c.ref.id === CATALOG_AGENT_REF.id), 'synthetic sources cannot satisfy a live task');
     assert.deepEqual(t.catalog.bindings(CATALOG_AGENT_REF, owner), [], 'no legacy provider workflow is registered');
     const env = { EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(40), EIGOS_SHOPIFY_CATALOG_MERCHANTS: JSON.stringify([merchant]), EIGOS_SHOPIFY_AUDIT_DIR: '/tmp/shopify-private-test' };
     assert.deepEqual(readConfig(env).EIGOS_SHOPIFY_CATALOG_MERCHANTS, readWorkerConfig(env).EIGOS_SHOPIFY_CATALOG_MERCHANTS);
@@ -112,14 +112,14 @@ test('Unregistered writes, unconfigured merchants and fabricated IDs cannot disp
       if (bad === 'variant') return decision(ctx, [step('find', 'InspectCatalogVariant', { scope: ctx.state.scope, merchantId: 'coffee', observation: { type: 'CatalogObservation', id: 'invented' }, variantId: ids[0] })]);
       return decision(ctx, [step('bad', bad === 'merchant' ? 'SearchPublicCatalog' : bad, { scope: ctx.state.scope, merchantId: bad === 'merchant' ? 'unapproved' : 'coffee', query: 'coffee', limit: 1 })]);
     });
-    try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'input-required'); assert.equal(t.calls.length, 0); assert.equal(done.delegation!.agent!.feedback.length, 3); assert.equal(done.artifact, undefined); }
+    try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'paused'); assert.equal(t.calls.length, 0); assert.equal(done.delegation!.agent!.feedback.length, 3); assert.equal(done.artifact, undefined); }
     finally { t.store.close(); }
   }
 });
 
 test('Skipping ontology reads cannot produce an action plan or HTTP request', async () => {
   const t = setup(ctx => decision(ctx, [step('find', 'SearchPublicCatalog', { scope: ctx.state.scope, merchantId: 'coffee', query: 'coffee', limit: 1 })]));
-  try { t.b.submit({ goal: 'Read Coffee' }); await t.b.run(); await assert.rejects(t.b.run(), /actual definition and object reads/); assert.equal(t.calls.length, 0); }
+  try { t.b.submit({ goal: 'Read Coffee' }); await t.b.run(); await assert.rejects(t.b.run(), /actual definition and object reads|cite successful receipts/); assert.equal(t.calls.length, 0); }
   finally { t.store.close(); }
 });
 
@@ -128,7 +128,7 @@ test('Completion requires an actual current ontology status evaluation', async (
     const observed = observe(ctx, access, false);
     return observed.length ? decision(ctx, [], { selections: [{ observation: observed[0]!.ref, variantIds: [ids[0]] }], rationale: 'Missing evaluation fixture' }) : decision(ctx, [step('find', 'SearchPublicCatalog', { scope: ctx.state.scope, merchantId: 'coffee', query: 'coffee', limit: 1 })]);
   });
-  try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'input-required'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 1); }
+  try { const job = t.b.submit({ goal: 'Read Coffee' }); const done = await t.finish(job.id); assert.equal(done.state, 'paused'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 1); }
   finally { t.store.close(); }
 });
 
@@ -162,7 +162,7 @@ test('Lease loss rejects late projection and resumes the durable frontier withou
     release(); await pending;
     assert.equal(t.store.ontology.query(owner, { type: 'CatalogObservation' }).items.length, 0); assert.equal(t.store.intents(owner, job.id)[0]!.state, 'effect_unknown');
     await t.b.coordinator.run(replacement, new AbortController().signal); assert.equal(t.calls.length, 1); assert.equal(t.store.get(owner, job.id).delegation!.agent!.pendingPlanId, undefined);
-    assert.equal(t.store.get(owner, job.id).delegation!.agent!.feedback.at(-1)!.kind, 'action');
+    assert.equal(t.store.get(owner, job.id).delegation!.agent!.feedback.at(-1)!.kind, 'runtime');
   } finally { release?.(); t.store.close(); }
 });
 
@@ -182,8 +182,8 @@ test('Source observations from another task cannot be used as action inputs even
       observe(ctx, access); access.session.call('query_ontology', { object: foreign });
       return decision(ctx, [step('detail', 'InspectCatalogVariant', { scope: ctx.state.scope, merchantId: 'coffee', observation: foreign, variantId: ids[0] })]);
     }), t.store);
-    const job = second.submit({ goal: 'Read another Coffee' }); for (let i = 0; i < 4; i++) await second.run();
-    assert.equal(t.store.get(owner, job.id).state, 'input-required'); assert.equal(t.calls.length, 1);
+    const job = second.submit({ goal: 'Read another Coffee', executionEnvironment: 'sandbox' }); for (let i = 0; i < 4; i++) await second.run();
+    assert.equal(t.store.get(owner, job.id).state, 'paused'); assert.equal(t.calls.length, 1);
     const program = new CatalogAgentProgram([merchant], { connector: t.connector }); assert.throws(() => program.initialize(t.store.ontology, 'other-owner', done.delegation!.request, input));
   } finally { t.store.close(); }
 });
@@ -193,7 +193,7 @@ test('A restarted Worker continues from accepted observations without repeating 
   let store = new JobStore(path);
   const catalog = () => createExecutionCatalog({ store, shopifyCatalog: { merchants: [merchant], connector: f.connector } });
   try {
-    let b = backend(catalog(), model(), store); const job = b.submit({ goal: 'Read Coffee' });
+    let b = backend(catalog(), model(), store); const job = b.submit({ goal: 'Read Coffee', executionEnvironment: 'sandbox' });
     await b.run(); await b.run(); assert.equal(f.calls.length, 1); const before = store.get(owner, job.id).delegation!.agent!;
     store.close(); store = new JobStore(path); b = backend(catalog(), model(), store);
     const done = await b.run(); assert.equal(done.id, job.id); assert.equal(done.state, 'completed'); assert.equal(f.calls.length, 1);
@@ -205,7 +205,7 @@ test('Altered choices cannot dispatch under an unchanged model-output receipt', 
   const t = setup(); try {
     const reasoner = model(), original = reasoner.act!;
     reasoner.act = async (...args) => { const result = await original(...args); result.decision.steps[0]!.argumentsJson = JSON.stringify({ scope: args[0].state.scope, merchantId: 'coffee', query: 'changed after model return', limit: 1 }); return result; };
-    const b = backend(t.catalog, reasoner, t.store); b.submit({ goal: 'Read Coffee' }); await b.run();
+    const b = backend(t.catalog, reasoner, t.store); b.submit({ goal: 'Read Coffee', executionEnvironment: 'sandbox' }); await b.run();
     await assert.rejects(b.run(), /differs from the recorded model output/); assert.equal(t.calls.length, 0);
   } finally { t.store.close(); }
 });
@@ -219,7 +219,7 @@ test('A later contradictory observation prevents completing with the older price
   });
   try {
     t.flags.changeAtMerchant = true; const job = t.b.submit({ goal: 'Read Coffee' }), done = await t.finish(job.id);
-    assert.equal(done.state, 'input-required'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 3);
+    assert.equal(done.state, 'paused'); assert.equal(done.artifact, undefined); assert.equal(t.calls.length, 3);
     assert.match(done.delegation!.agent!.feedback.at(-1)!.message, /later observation disagrees/);
   } finally { t.store.close(); }
 });
@@ -236,12 +236,18 @@ test('The action model cannot search unrelated owner data or read another task o
   finally { t.store.close(); }
 });
 
-test('An expired task budget prevents new model decisions and source actions', async () => {
+test('An expired window with verified progress rolls over the SAME task without an owner reply', async () => {
   const t = setup(); try {
     const job = t.b.submit({ goal: 'Read Coffee' }); await t.b.run();
-    const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); t.store.save(owner, current);
+    const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); current.delegation!.executionBudget!.window.startedAt = current.createdAt; t.store.save(owner, current);
     const coordinator = new Coordinator(t.store, model(), t.catalog, { maxTaskMs: 1000 }), claim = t.store.claim(['eigos.delegate'], 15000)!;
     await coordinator.run(claim, new AbortController().signal);
-    const done = t.store.get(owner, job.id); assert.equal(done.state, 'failed'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
+    let done = t.store.get(owner, job.id); assert.equal(done.state, 'working'); assert.equal(done.runs!.length, current.runs!.length); assert.equal(t.calls.length, 0);
+    assert.equal(done.delegation!.executionBudget!.window.reason, 'automatic'); assert.equal(done.delegation!.request.messages.length, 1);
+    for (let n = 0; n < 10; n++) {
+      const next = t.store.claim(['eigos.delegate'], 15000); if (!next) break;
+      await coordinator.run(next, new AbortController().signal);
+    }
+    done = t.store.get(owner, job.id); assert.equal(done.state, 'completed'); assert.equal(done.id, job.id); assert.equal(done.createdAt, current.createdAt);
   } finally { t.store.close(); }
 });

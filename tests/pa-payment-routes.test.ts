@@ -1,17 +1,18 @@
+import { paPaymentRequestSchema } from '../packages/core/pa-payment.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { setTimeout as pause } from 'node:timers/promises';
 import { setupPABooking } from './fixtures/pa-booking.js';
 import { owner, principal } from './backend-fixture.js';
-import type { LinkWalletAvailability, PAPaymentRequest } from '../packages/core/pa-payment.js';
+import type { LinkWalletAvailability, PAHandoffRequest } from '../packages/core/pa-payment.js';
 import { digest } from '../packages/core/delegation.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 
 const ready = (): LinkWalletAvailability => ({ status: 'available', reason: 'ready', observedAt: new Date().toISOString() });
 const unavailable = (reason: Extract<LinkWalletAvailability, { status: 'unavailable' }>['reason'] = 'region_unsupported'): LinkWalletAvailability => ({ status: 'unavailable', reason, observedAt: new Date().toISOString() });
-async function checkoutForm(request: PAPaymentRequest) {
+async function checkoutForm(request: PAHandoffRequest) {
+  assert(request.version === '2');
   const response = await fetch(request.terms.checkout.url, { redirect: 'error' });
   assert.equal(response.status, 200);
   const page = await response.text();
@@ -20,14 +21,14 @@ async function checkoutForm(request: PAPaymentRequest) {
   const fields = Object.fromEntries([...page.matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)">/g)].map(m => [m[1]!, m[2]!]));
   return { page, fields };
 }
-async function confirmCheckout(request: PAPaymentRequest, fields: Record<string, string>, origin = new URL(request.terms.checkout.url).origin) {
+async function confirmCheckout(request: PAHandoffRequest, fields: Record<string, string>, origin = new URL(request.terms.checkout.url).origin) {
   return fetch(request.terms.checkout.url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', origin }, body: new URLSearchParams(fields), redirect: 'manual' });
 }
 
 test('A ready Link Agent Wallet is preferred; both source routes retain the same immutable booking and amount', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), original = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), original = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     assert.equal(original.terms.checkout.bookingId, original.terms.bookingId);
     assert.equal(original.terms.routePolicy, 'prefer_link_agent_wallet');
     const selected = t.selectRoute(waiting, ready()), payment = selected.delegation!.agent!.paPayment!;
@@ -47,7 +48,7 @@ test('A ready Link Agent Wallet is preferred; both source routes retain the same
 for (const reason of ['region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'] as const) test(`Link wallet ${reason} falls back to the provider checkout; only independent payment and booking close the task`, async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), original = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), original = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     const selected = t.selectRoute(waiting, unavailable(reason)), payment = selected.delegation!.agent!.paPayment!;
     assert.equal(payment.selection!.route, 'link_checkout');
     assert.equal(payment.selection!.reason, reason);
@@ -111,14 +112,14 @@ test('Provider-declared wallet incompatibility does not require connecting an un
 test('A recomputed local handoff cannot replace the provider checkout URL or payee', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), original = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), original = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     for (const checkout of [{ ...original.terms.checkout, url: 'https://untrusted.example/pay' }, { ...original.terms.checkout, payeeId: 'another-payee' }, { ...original.terms.checkout, bookingId: 'another-booking' }]) {
       const changed = t.store.get(owner, waiting.id), payment = changed.delegation!.agent!.paPayment!;
-      const { digest: _old, ...body } = payment.request;
+      const { digest: _old, ...body } = paPaymentRequestSchema.parse(payment.request);
       body.terms = { ...original.terms, checkout };
       payment.request = { ...body, digest: digest(body) };
       t.store.save(owner, changed);
-      assert.throws(() => t.selectRoute(changed, unavailable()), /original independently read provider terms/);
+      assert.throws(() => t.selectRoute(changed, unavailable()), /handoff integrity changed|original independently read provider terms/);
       assert.equal(t.b.tasks.get(principal, waiting.id).delegation!.agent!.paPayment!.selection, undefined);
     }
   } finally { await t.close(); }
@@ -127,7 +128,7 @@ test('A recomputed local handoff cannot replace the provider checkout URL or pay
 test('A disabled or changed provider configuration cannot issue an old checkout handoff', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), request = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     const input = { action: 'select_payment_route', taskId: waiting.id, requestId: randomUUID(), handoffId: request.id, handoffDigest: request.digest, wallet: unavailable() };
     for (const options of [
       { catalog: t.catalog, allowSandboxActions: false },
@@ -139,22 +140,24 @@ test('A disabled or changed provider configuration cannot issue an old checkout 
 });
 
 test('An expired user completion deadline blocks payment selection even while the provider hold remains valid', async () => {
-  const t = await setupPABooking();
+  const t = await setupPABooking(), originalNow = Date.now;
   try {
-    const deadline = new Date(Date.now() + 5000).toISOString();
+    const deadline = new Date(Date.now() + 600000).toISOString();
     const waiting = await t.finish(t.submit({ requirements: [{ id: 'finish', kind: 'deadline', role: 'completion', strength: 'hard', expected: { at: deadline, timezone: 'UTC', original: deadline } }] }).id);
     assert.equal(waiting.state, 'input-required');
-    assert(Date.parse(waiting.delegation!.agent!.paPayment!.request.terms.expiresAt) > Date.parse(deadline));
-    await pause(Math.max(1, Date.parse(deadline) - Date.now() + 20));
+    assert(Date.parse(paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request).terms.expiresAt) > Date.parse(deadline));
+    // Test expiry at selection, not whether fixture setup happens within five
+    // seconds on a busy host. No timer or real payment is involved.
+    Date.now = () => Date.parse(deadline) + 20;
     assert.throws(() => t.selectRoute(waiting, unavailable()), /completion deadline expired/);
     assert.equal(t.provider.audit().filter(a => a.caller !== 'eigos_source').length, 0);
-  } finally { await t.close(); }
+  } finally { Date.now = originalNow; await t.close(); }
 });
 
 test('Route selection is owned, credential-free, idempotent and cannot be switched after issuance', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), request = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     const input = { action: 'select_payment_route', taskId: waiting.id, requestId: randomUUID(), handoffId: request.id, handoffDigest: request.digest, wallet: ready() };
     assert.throws(() => t.b.tasks.selectPaymentRoute({ ...principal, subject: 'other' }, input), /not found/i);
     assert.throws(() => t.b.tasks.selectPaymentRoute({ ...principal, scopes: ['tasks:read'] }, input), /tasks:write/);
@@ -172,7 +175,7 @@ test('Route selection is owned, credential-free, idempotent and cannot be switch
 test('A checkout return URL and a PA submitted notification are not proof of payment', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     const response = await fetch(request.terms.checkout.url + '?payment_status=paid&success=true');
     assert.equal(response.status, 200);
     t.report(selected);
@@ -187,7 +190,7 @@ test('A checkout return URL and a PA submitted notification are not proof of pay
 test('A lost wallet response and a declined attempt never trigger checkout fallback', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, ready()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, ready()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     t.provider.flags.dropPAResponse = true;
     await assert.rejects(t.wallet.pay(request));
     assert.throws(() => t.selectRoute(selected, unavailable()), /already exists|unpaid/);
@@ -207,7 +210,7 @@ test('A lost wallet response and a declined attempt never trigger checkout fallb
 test('Checkout rejects changed amounts, bookings, CSRF nonces and origins before settling anything', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     const { fields } = await checkoutForm(request);
     const changes: Record<string, string>[] = [{ amountMinor: '1' }, { currency: 'USD' }, { bookingId: 'other' }, { csrfNonce: '0'.repeat(64) }, { termsDigest: '0'.repeat(64) }];
     for (const patch of changes) {
@@ -223,7 +226,7 @@ test('Checkout rejects changed amounts, bookings, CSRF nonces and origins before
 test('Lost checkout response and duplicate form submission preserve one booking and one payment', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     const { fields } = await checkoutForm(request);
     t.provider.flags.dropCheckoutResponse = true;
     await assert.rejects(confirmCheckout(request, fields));
@@ -239,21 +242,23 @@ test('Lost checkout response and duplicate form submission preserve one booking 
 });
 
 test('An expired checkout cannot be paid or replaced by a wallet route', async () => {
-  const t = await setupPABooking({ holdMs: 3000 });
+  const t = await setupPABooking(), originalNow = Date.now;
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     const { fields } = await checkoutForm(request);
-    await pause(Math.max(1, Date.parse(request.terms.expiresAt) - Date.now() + 20));
+    // Advance only this isolated test process after the handoff exists.
+    // Test duration must not make the booking expire during setup.
+    Date.now = () => Date.parse(request.terms.expiresAt) + 1;
     assert.equal((await confirmCheckout(request, fields)).status, 409);
     assert.throws(() => t.selectRoute(selected, ready()), /already exists|unpaid|expired/);
     assert.equal(t.provider.audit().filter(a => a.caller === 'checkout_user').length, 0);
-  } finally { await t.close(); }
+  } finally { Date.now = originalNow; await t.close(); }
 });
 
 test('Canceling EIGOS while checkout is open preserves cancellation even after a late provider payment', async () => {
   const t = await setupPABooking();
   try {
-    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = paPaymentRequestSchema.parse(selected.delegation!.agent!.paPayment!.request);
     const { fields } = await checkoutForm(request);
     t.b.tasks.cancel(principal, waiting.id);
     assert.throws(() => t.selectRoute(selected, ready()), /waiting task/);

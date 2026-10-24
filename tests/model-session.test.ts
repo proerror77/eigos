@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
+import { withModelUsage, type ModelUsageRecorder } from '../packages/core/model-usage-context.js';
 
 function fakeServer(mode = 'ok') {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-model-protocol-')), binary = join(directory, 'fake-codex'), trace = join(directory, 'trace.jsonl'), nativeConfig = join(directory, 'native');
@@ -49,6 +50,25 @@ readline.createInterface({ input:process.stdin }).on('line', line => {
   } };
 }
 const schema = { type: 'object', properties: { answer: { type: 'number' } }, required: ['answer'], additionalProperties: false };
+
+test('Reused model conversations record each owned response and failed attempt separately', async () => {
+  for (const mode of ['ok', 'failed']) {
+    const f = fakeServer(mode), session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal);
+    const begun: string[] = [], finished: Parameters<ModelUsageRecorder['finish']>[] = [];
+    const recorder: ModelUsageRecorder = { begin: (id, runtime) => { assert.equal(runtime, 'codex-app-server'); begun.push(id); }, finish: (...args) => { finished.push(args); } };
+    try {
+      await withModelUsage(recorder, async () => {
+        if (mode === 'failed') await assert.rejects(session.run('Synthetic failure'));
+        else for (let i = 0; i < 2; i++) await session.run('Synthetic owned response ' + i);
+      });
+      assert.equal(begun.length, mode === 'ok' ? 2 : 1);
+      assert.equal(new Set(begun).size, begun.length);
+      assert.deepEqual(finished.map(([id]) => id), begun);
+      assert(finished.every(([id, evidence, outcome]) => outcome === (mode === 'ok' ? 'completed' : 'failed') && (mode !== 'ok' || evidence?.id === id)));
+      if (mode === 'ok') assert.equal(finished.reduce((sum, [, evidence]) => sum + evidence!.usage!.input_tokens!, 0), 23);
+    } finally { await session.close(); f.close(); }
+  }
+});
 
 for (const mode of ['ok', 'early']) test(`A bounded ${mode} conversation reuses its thread and preserves each actual model response`, async () => {
   const f = fakeServer(mode); const session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal);
