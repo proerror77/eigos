@@ -18,7 +18,7 @@ import type { AgentPlanningContext } from '../packages/coordinator/coordinator.j
 import type { RideEstimateObservation } from '../packages/ontology/ride-estimate.js';
 import type { ObjectRef } from '../packages/ontology/model.js';
 import { planningSnapshot } from '../packages/ontology/planning-contract.js';
-import { expandPromptData } from '../packages/coordinator/prompt-data.js';
+import { expandPromptData, SessionPromptData, expandSessionPromptData } from '../packages/coordinator/prompt-data.js';
 import { verifyInitialPlan } from '../packages/coordinator/initial-selection.js';
 
 function sessionFixture() {
@@ -124,13 +124,15 @@ test('Cancellation during context preparation stops before opening or invoking a
   } finally { f.db.close(); }
 });
 
-function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' = false) {
+function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' = false, reuse = false) {
   const source = didiFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, didi: { ...source.binding, connector: source.connector } });
   const requests: { calls: number; packet: any }[] = [];
   const step = (id: string, action: string, args: object): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn: [], inputRefs: [] });
+  const dictionary: unknown[] = [], encoder = new SessionPromptData(), keys: (string | undefined)[] = [];
   const model = { ontologyContextPreparation: 'worker_snapshot' as const, runStructured: async (prompt: string) => {
-    const packet = frame(prompt); requests.push({ calls: source.calls.filter(call => call.method === 'tools/call').length, packet });
+    const packet = reuse ? expandSessionPromptData(JSON.parse(prompt.split('\n\n').at(-1)!), dictionary) : frame(prompt);
+    requests.push({ calls: source.calls.filter(call => call.method === 'tools/call').length, packet });
     assert(!prompt.includes(syntheticKey)); assert(!prompt.includes('PRIVATE_TRACE'));
     const blocks = [packet.task];
     const ctx = blocks.find(value => value.state?.scope) as AgentPlanningContext | undefined;
@@ -155,9 +157,31 @@ function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'depend
     }
     return { output: { kind: 'final', calls: [], finalJson: JSON.stringify(chosen) }, evidence: evidence() };
   } };
+  if (reuse) Object.assign(model, { openStructuredSession: async (_schema: object, _signal: AbortSignal, key?: string) => {
+    keys.push(key);
+    return { packData: (data: unknown) => encoder.pack(data), run: (prompt: string) => model.runStructured(prompt), close: async () => {} };
+  } });
   const b = backend(catalog, new CodexReasoner(model), store);
-  return { ...source, store, catalog, b, requests, close: () => { store.close(); source.close(); } };
+  return { ...source, store, catalog, b, requests, keys, close: () => { store.close(); source.close(); } };
 }
+
+test('Same-task conversation reuse still obtains fresh reads for every autonomous choice and independently validates completion', async () => {
+  const f = syntheticContextDidi('valid', true);
+  try {
+    f.b.submit(); await f.b.run(); await f.b.run(); const done = await f.b.run();
+    assert.equal(done.state, 'completed'); assert(done.delegation!.acceptance!.accepted);
+    assert.equal(f.keys.length, 3); assert(f.keys[0]); assert.equal(new Set(f.keys).size, 1);
+    assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
+    const contexts = done.runs!.map(run => run.ontologyContext!);
+    assert.equal(new Set(contexts.map(context => context.digest)).size, 3);
+    assert.equal(new Set(contexts.flatMap(context => context.receiptIds)).size, contexts.flatMap(context => context.receiptIds).length);
+    assert(done.runs!.every(run => run.promptData?.encoding === 'session-json-v1'));
+    assert(done.runs![2]!.promptData!.encodedBytes < done.runs![2]!.promptData!.sourceBytes * 0.6);
+    const base = new OntologyPlanningSession(f.store.ontology, owner, done.delegation!.request).modelSessionKey();
+    assert.notEqual(new OntologyPlanningSession(f.store.ontology, 'different-owner', done.delegation!.request).modelSessionKey(), base);
+    assert.notEqual(new OntologyPlanningSession(f.store.ontology, owner, { ...done.delegation!.request, revision: done.delegation!.request.revision + 1 }).modelSessionKey(), base);
+  } finally { f.close(); }
+});
 
 test('A real initial model choice merges interpretation and independent tool selection; scope reads are honestly after the model and before dispatch', async () => {
   const f = syntheticContextDidi('valid');

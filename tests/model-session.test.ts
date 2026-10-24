@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ModelSessionError } from '../packages/capabilities/model-session.js';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
+import { ModelSessionPool } from '../packages/capabilities/model-session-pool.js';
 
 function fakeServer(mode = 'ok') {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-model-protocol-')), binary = join(directory, 'fake-codex'), trace = join(directory, 'trace.jsonl'), nativeConfig = join(directory, 'native');
@@ -39,6 +40,7 @@ readline.createInterface({ input:process.stdin }).on('line', line => {
     if(mode==='oversize'){process.stdout.write('x'.repeat(2000001));return;}
     if(mode==='approval'){send({id:'approval',method:'item/commandExecution/requestApproval',params:{threadId:thread,turnId:turn}});return;}
     if(mode==='native-tool'){emit('item/started',{item:{type:'commandExecution',id:'forbidden'}});return;}
+    if(mode==='compacted'){emit('item/started',{item:{type:'contextCompaction',id:'unsafe-dictionary-loss'}});return;}
     emit('item/completed',{item:{type:'reasoning',id:'hidden',summary:['SYNTHETIC_HIDDEN_REASONING'],content:[]}});
     if(mode!=='early')emit('item/completed',{item:{type:'agentMessage',id:'answer',text:JSON.stringify({answer:count}),phase:'final_answer'}});
     emit('thread/tokenUsage/updated',{tokenUsage:{last:{inputTokens:10+count,cachedInputTokens:count===2?10:0,outputTokens:3},total:{inputTokens:999}}});
@@ -77,7 +79,7 @@ for (const mode of ['ok', 'early', 'notification']) test(`A bounded ${mode} conv
   } finally { await session.close(); f.close(); }
 });
 
-for (const mode of ['wrong-thread', 'approval', 'native-tool', 'failed', 'rpc-error', 'oversize']) test(`Bounded conversation fails closed on ${mode}`, async () => {
+for (const mode of ['wrong-thread', 'approval', 'native-tool', 'compacted', 'failed', 'rpc-error', 'oversize']) test(`Bounded conversation fails closed on ${mode}`, async () => {
   const f = fakeServer(mode), session = await new CodexExecutor(f.binary, 5000).openStructuredSession(schema, new AbortController().signal);
   try {
     await assert.rejects(session.run('Synthetic'), error => error instanceof Error && !error.message.includes('SYNTHETIC_UPSTREAM_SECRET'));
@@ -140,4 +142,37 @@ test('Thread startup can use the existing executor budget instead of an extra 15
     session = await new CodexExecutor(f.binary, 25000).openStructuredSession(schema, new AbortController().signal);
     assert.deepEqual((await session.run('Synthetic delayed startup only')).output, { answer: 1 });
   } finally { await session?.close(); f.close(); }
+});
+
+test('Explicit same-task leases reuse one conversation; other task keys and released signals stay isolated', async () => {
+  const f = fakeServer(), model = new CodexExecutor(f.binary, 5000), old = new AbortController();
+  try {
+    const first = await model.openStructuredSession(schema, old.signal, 'owner-a/request-a/revision-1/ontology-a');
+    const one = await first.run('First actual decision'); await first.close(); old.abort();
+    await assert.rejects(first.run('Released lease cannot act'), /closed/);
+    const next = await model.openStructuredSession(schema, new AbortController().signal, 'owner-a/request-a/revision-1/ontology-a');
+    const two = await next.run('Fresh host reads for next decision'); await next.close();
+    assert.deepEqual(two.output, { answer: 2 }); assert.equal(one.evidence.threadId, two.evidence.threadId);
+    assert.equal(two.evidence.sessionReused, true); assert.equal(two.evidence.sessionReadyAt, two.evidence.startedAt);
+    assert.equal(one.evidence.sessionReused, false); assert(one.evidence.processInitializedAt! <= one.evidence.threadReadyAt!);
+    const other = await model.openStructuredSession(schema, new AbortController().signal, 'owner-b/request-a/revision-1/ontology-a');
+    const three = await other.run('Isolated owner'); await other.close(); assert.notEqual(three.evidence.threadId, two.evidence.threadId);
+    assert.deepEqual(three.output, { answer: 1 });
+    await model.closeStructuredSessions(); assert.equal(f.events().filter(e => e.type === 'boot').length, 2);
+    assert(f.events().filter(e => e.type === 'boot').every(e => !existsSync(e.config)));
+  } finally { await model.closeStructuredSessions(); f.close(); }
+});
+
+test('A reused conversation cancellation destroys it, and idle expiry also requires a fresh conversation', async () => {
+  const f = fakeServer(), pool = new ModelSessionPool(f.binary, 5000, 30);
+  try {
+    const first = await pool.acquire('same-task', schema, new AbortController().signal), one = await first.run('Synthetic'); await first.close();
+    const cancel = new AbortController(), next = await pool.acquire('same-task', schema, cancel.signal);
+    cancel.abort(); await assert.rejects(next.run('Cannot run canceled lease'), /abort|canceled/i); await next.close();
+    const fresh = await pool.acquire('same-task', schema, new AbortController().signal), two = await fresh.run('Synthetic'); await fresh.close();
+    assert.notEqual(one.evidence.threadId, two.evidence.threadId);
+    await new Promise(resolve => setTimeout(resolve, 80));
+    const expired = await pool.acquire('same-task', schema, new AbortController().signal), three = await expired.run('Synthetic'); await expired.close();
+    assert.notEqual(two.evidence.threadId, three.evidence.threadId);
+  } finally { await pool.close(); f.close(); }
 });

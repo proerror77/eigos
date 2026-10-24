@@ -7,6 +7,8 @@ import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { modelEnvironment, modelFeatureArgs } from './model-process.js';
 import { openCodexModelSession } from './model-session.js';
+import { ModelSessionPool } from './model-session-pool.js';
+import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
 
 export const decisionSchema = z.object({
   decision: z.enum(['ask_user', 'complete']),
@@ -28,12 +30,16 @@ export interface RunEvidence {
   reasoningEffort?: string;
   serviceTier?: string;
   sessionReadyAt?: string;
+  sessionOpenedAt?: string;
+  processInitializedAt?: string;
+  threadReadyAt?: string;
+  sessionReused?: boolean;
   requestSentAt?: string;
   requestAcknowledgedAt?: string;
   threadId?: string;
   turnId?: string;
   promptBytes?: number;
-  promptData?: { encoding: 'inline-json' | 'shared-json-v1'; sourceBytes: number; encodedBytes: number; sharedValues: number };
+  promptData?: PromptDataMetrics;
   ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document';
@@ -58,8 +64,10 @@ const outputSchema = {
 // plugins or peer agents. All conversational state is supplied from the Job.
 export class CodexExecutor implements Executor {
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
-  constructor(private binary = 'codex', private timeoutMs = 120000) {}
-  openStructuredSession(schema: object, signal: AbortSignal) { return openCodexModelSession(this.binary, this.timeoutMs, schema, signal); }
+  private sessions: ModelSessionPool;
+  constructor(private binary = 'codex', private timeoutMs = 120000) { this.sessions = new ModelSessionPool(binary, timeoutMs); }
+  openStructuredSession(schema: object, signal: AbortSignal, taskKey?: string) { return taskKey ? this.sessions.acquire(taskKey, schema, signal) : openCodexModelSession(this.binary, this.timeoutMs, schema, signal); }
+  closeStructuredSessions(taskKey?: string) { return this.sessions.close(taskKey); }
 
   async run(job: Job, signal: AbortSignal): Promise<ExecutionResult> {
     const prompt = [
