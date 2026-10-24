@@ -1,6 +1,6 @@
 # Gateway、Worker 与共用任务核心
 
-可选的 `EIGOS_SECURITY_MODE=foundation` 已提供 [S1 身份与撤销控制面](security-s1.md)。默认 legacy 保留现有行为；foundation 使用新的持久任务库，Gateway／Worker 的 mode 必须一致。Worker 的身份校验依赖业务库中的资格投影，不读取会员库。foundation 业务协议仍关闭，旧实例迁移及真实部署不属于 S1。
+可选的 `EIGOS_SECURITY_MODE=foundation` 已接入 [S2–S4 三层权限](security-s2-s4.md)，默认 legacy 保留现有行为。foundation v2 使用新持久任务库和 `worker-security-v2` 队列；Gateway／Worker 的 mode、数据库及策略定义摘要必须一致。Worker 从业务库读取短期身份投影和当前任务授权，不读取会员库；旧 foundation 头／旧 Worker 被拒绝。协议已走共同安全视图，旧实例迁移及真实部署仍属待完成的 S5。
 
 ## 目录与职责
 

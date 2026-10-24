@@ -6,7 +6,7 @@ import { digest } from '../core/delegation.js';
 import type { ObjectRef } from '../ontology/model.js';
 import { compactSchema, packPromptData } from './prompt-data.js';
 
-export type OntologyReasoningModel = Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'openStructuredSession' | 'closeStructuredSessions' | 'ontologyContextPreparation'>>;
+export type OntologyReasoningModel = Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'openStructuredSession' | 'closeStructuredSessions' | 'ontologyContextPreparation' | 'securityChannelId'>>;
 export async function reasonWithOntology(model: OntologyReasoningModel, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
   record: (evidence: RunEvidence) => void, maxTurns = 8, context?: { actions?: string[]; refs?: ObjectRef[]; data?: unknown; prepare?: boolean }) {
   const transcript: unknown[] = [];
@@ -15,11 +15,13 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
   if (turnLimit < 1 || !Number.isInteger(turnLimit)) throw new Error('Ontology reasoning turn limit reached without a final decision');
   const prepared = context && context.prepare !== false && model.ontologyContextPreparation === 'worker_snapshot' ? session.prepareContext(context) : undefined;
   if (prepared) transcript.push(...prepared.entries);
+  session.authorizeModel(model.securityChannelId);
   const schema = z.toJSONSchema(reasoningTurnSchema), conversation = await model.openStructuredSession?.(schema, signal, prepared ? session.modelSessionKey() : undefined);
   let freshResults: unknown[] = [];
   try {
     for (let turn = 0; turn < turnLimit; turn++) {
       signal.throwIfAborted();
+      session.authorizeModel(model.securityChannelId);
       const budget = { modelResponse: turn + 1, maxModelResponses: turnLimit, responsesRemainingIncludingThis: turnLimit - turn, toolCallsRemaining: 20 - session.receipts().length };
       const data = (conversation?.packData ?? packPromptData)(conversation && turn > 0 ? { budget, conversation: freshResults } : {
         interface: session.catalog(), budget, finalSchema: compactSchema(finalSchema), requestRef: { type: 'ServiceRequest', id: session.request.id },
@@ -44,6 +46,7 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
         rendered,
       ].join('\n\n');
       const response = conversation ? await conversation.run(input) : await model.runStructured(input, schema, signal);
+      session.authorizeModel(model.securityChannelId);
       response.evidence = { ...response.evidence, promptData: data.metrics };
       if (prepared) response.evidence = { ...response.evidence, ontologyContext: { digest: prepared.digest, receiptIds: prepared.receiptIds, startedAt: prepared.startedAt, preparedAt: prepared.preparedAt, model: prepared.model, requestRevision: prepared.requestRevision } };
       signal.throwIfAborted();

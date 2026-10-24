@@ -9,6 +9,8 @@ import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
 import { SecurityStore, type SecurityMode } from '../security/store.js';
+import { authorizationScope } from '../security/context.js';
+import {agentDispatchGrant} from './agent-authorization.js';
 
 export interface ListFilter {
   limit: number;
@@ -18,7 +20,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string }
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -31,7 +33,9 @@ function equivalentFingerprint(a: string, b: string): boolean {
 export class JobStore {
   private db: DatabaseSync;
   private securitySequence = 0;
+  private transactionDepth = 0;
   readonly ontology: OntologyObjectStore;
+  private readonly taskProjection: OntologyObjectStore;
   readonly security: SecurityStore;
 
   constructor(path: string, options: { securityMode?: SecurityMode; securityNow?: () => number } = {}) {
@@ -85,7 +89,8 @@ export class JobStore {
     });
     try {
       this.security = new SecurityStore(this.db, options.securityMode, options.securityNow);
-      this.ontology = new OntologyObjectStore(this.db);
+      this.ontology = new OntologyObjectStore(this.db, undefined, undefined, this.security.enabled ? this.security.policies : undefined);
+      this.taskProjection = this.security.enabled ? new OntologyObjectStore(this.db) : this.ontology;
     } catch (error) { this.db.close(); throw error; }
   }
 
@@ -150,6 +155,13 @@ export class JobStore {
   dispatchIntent(owner: string, id: string, claim?: WorkClaim): void {
     this.authorizedDispatch(() => {
       if (this.security.enabled && (!claim || claim.owner !== owner || !this.active(claim, Date.now()) || this.intent(owner, id).jobId !== claim.job.id)) throw new DomainError('FORBIDDEN', 'Current task authority and claim are required for dispatch');
+      if (this.security.enabled) {
+        const intent=this.intent(owner,id),{plan,step}=this.security.policies.requireDispatch(owner,intent,'dispatch');
+        if(!['read','local'].includes(step.effect)) {
+          const permit=agentDispatchGrant(this,owner,intent.jobId,plan,step);
+          if(!permit || !step.cost || !this.db.prepare("SELECT 1 FROM budget_reservations WHERE owner=? AND intent_id=? AND grant_id=? AND minor=? AND currency=? AND state='held'").get(owner,intent.id,permit.id,step.cost.minor,step.cost.currency)) throw new DomainError('FORBIDDEN','Exact business permit and held budget are required');
+        }
+      }
       const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
       if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
     });
@@ -159,6 +171,7 @@ export class JobStore {
       const intent = this.intent(claim.owner, intentId);
       if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
       if (this.security.enabled && !this.active(claim, Date.now())) throw new DomainError('FORBIDDEN', 'Task authority or claim is no longer active');
+      if (this.security.enabled && kind!=='dispatch') this.security.policies.requireDispatch(claim.owner,intent,kind);
       if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId, claim);
       else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
       const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1 };
@@ -316,9 +329,11 @@ export class JobStore {
   }
 
   transaction<T>(action: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
+    if (this.transactionDepth || this.security?.inTransaction) return this.security.atomic(action);
+    this.db.exec('BEGIN IMMEDIATE'); this.transactionDepth++;
     try { const result = action(); this.db.exec('COMMIT'); return result; }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    finally { this.transactionDepth--; }
   }
 
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
@@ -349,7 +364,9 @@ export class JobStore {
       this.expireClaims(at);
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
-      if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
+      const active=Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n)
+        +(this.security.enabled?Number(this.db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running' AND lease_until>?").get(at)!.n):0);
+      if (active >= 2) return;
       const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
@@ -357,14 +374,14 @@ export class JobStore {
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims)
         ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
-      const row = this.security.enabled ? query.get({ securityNow: at }, 'worker-security-foundation', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
+      const row = this.security.enabled ? query.get({ securityNow: at,securityDefinition:this.security.policies.definitionDigest }, 'worker-security-v2', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
       const authority = this.security.workAuthority(String(row.owner), job.id, at);
-      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
+      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch,securityPolicyRevision:this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
 
@@ -382,7 +399,7 @@ export class JobStore {
     const current = this.get(claim.owner, claim.job.id);
     if (this.security.enabled) {
       const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
-      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch) return false;
+      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
     }
     return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
@@ -419,17 +436,24 @@ export class JobStore {
   }
 
   hasContext(owner: string, contextId: string): boolean {
+    if (this.security.enabled) {
+      const scope=this.security.policies.scope(owner,false);
+      return this.security.listGrants(owner).some(g=>g.kind==='task_data' && g.installationId===scope.actor.installationId && g.status==='active'
+        && this.get(owner,g.taskId).contextId===contextId && !!this.security.taskGrant(scope.actor,g.taskId));
+    }
     return !!this.db.prepare('SELECT 1 FROM jobs WHERE owner = ? AND context_id = ? LIMIT 1').get(owner, contextId);
   }
 
   hasRequest(owner: string, operation: string, requestId: string): boolean {
+    if (this.security.enabled) operation = `${this.security.policies.scope(owner,false).actor.installationId}:${operation}`;
     return !!this.db.prepare('SELECT 1 FROM requests WHERE owner=? AND operation=? AND request_id=?').get(owner, operation, requestId);
   }
+  hasActiveClaim(taskId:string):boolean { return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=? AND expires_at>?').get(taskId,this.security.now()); }
 
   save(owner: string, job: Job): void {
     // The old Worker queue selector must not claim a foundation task even if an
     // operator accidentally starts an old binary against this new database.
-    if (this.security.enabled) job.executionMode = 'worker-security-foundation';
+    if (this.security.enabled) job.executionMode = 'worker-security-v2';
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -438,14 +462,25 @@ export class JobStore {
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      projectTask(this.ontology, owner, job);
+      projectTask(this.taskProjection, owner, job);
+      if (this.security.enabled) this.security.policies.bindTaskProjection(owner, job.id);
+      const scope=authorizationScope();
+      if (this.security.enabled && scope?.actor.actorKind==='worker' && scope.grant?.taskId===job.id && scope.lineage.size) {
+        const envelope=this.security.policies.outputEnvelope(owner);
+        this.security.policies.validateLineage(scope,envelope);
+        if (job.question) this.security.policies.recordOutput(owner,job.id,'question',job.question,envelope);
+        if (job.artifact) this.security.policies.recordOutput(owner,job.id,'artifact',job.artifact,envelope);
+        if(job.delegation?.authorizationRequest) this.security.policies.recordOutput(owner,job.id,'authorization',job.delegation.authorizationRequest,envelope);
+        if(job.delegation?.agent?.paPayment) this.security.policies.recordOutput(owner,job.id,'payment',job.delegation.agent.paPayment.request,envelope);
+      }
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }
 
-  list(owner: string, filter: ListFilter): { jobs: Job[]; total: number } {
+  list(owner: string, filter: ListFilter, taskIds?: string[]): { jobs: Job[]; total: number } {
     const clauses = ['owner = ?'];
     const args: string[] = [owner];
+    if (taskIds) { clauses.push('id IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(taskIds)); }
     if (filter.contextId) { clauses.push('context_id = ?'); args.push(filter.contextId); }
     if (filter.state) { clauses.push('state = ?'); args.push(filter.state); }
     if (filter.updatedAfter) { clauses.push('updated_at >= ?'); args.push(filter.updatedAfter); }
@@ -458,15 +493,17 @@ export class JobStore {
 
   // All mutations are synchronous inside one transaction, including the retry receipt.
   once(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
+    if (this.security.enabled) operation = `${this.security.policies.scope(owner,false).actor.installationId}:${operation}`;
     return this.transaction(() => {
       const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
         .get(owner, operation, requestId);
       if (previous) {
         if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
-        return JSON.parse(String(previous.response)) as Job;
+        const response=JSON.parse(String(previous.response));
+        return this.security.enabled ? this.get(owner,String(response.taskId)) : response as Job;
       }
       const result = action();
-      this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
+      this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(this.security.enabled ? {taskId:result.id} : result));
       return result;
     });
   }

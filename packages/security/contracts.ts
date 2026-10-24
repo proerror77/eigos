@@ -82,6 +82,7 @@ export const taskExecutionAuthoritySchema = z.strictObject({
   version: z.literal(SECURITY_CONTRACT), id: z.uuid(), revision, ownerKey: ownerIdentitySchema,
   memberId: z.uuid(), installationId: z.uuid(), taskId: z.uuid(), requestRevision: revision,
   agentGrant: grantRefSchema, dataGrant: grantRefSchema, submittedScopes: scopeList,
+  authorityOrigin: z.enum(['agent_submission','member_controller']).default('agent_submission'),
   authEpoch: revision, policyVersion: z.literal(POLICY_VERSION), issuedAt: instant, expiresAt: instant,
 }).refine(v => Date.parse(v.expiresAt) > Date.parse(v.issuedAt)
   && Date.parse(v.expiresAt) - Date.parse(v.issuedAt) <= securityDefaults.taskGrantMaxSeconds * 1000, 'Invalid execution lifetime');
@@ -90,6 +91,7 @@ export const securityEnvelopeSchema = z.strictObject({
   requiredMarkings: z.array(z.enum(['member_private', 'personal_data', 'precise_location', 'health', 'financial', 'account_private'])).max(6),
   classification: z.enum(['private', 'sensitive', 'internal']),
   channels: z.array(channelSchema).max(4), policyVersion: z.literal(POLICY_VERSION),
-  lineage: z.array(z.strictObject({ object: objectRefSchema, revision, contentDigest: sha })).max(200),
+  lineage: z.array(z.strictObject({ object: objectRefSchema, revision, contentDigest: sha, fields: z.array(nameSchema).max(200).optional() })).max(200),
   lineageComplete: z.boolean(),
+  submission: z.strictObject({ taskId: z.uuid(), requestRevision: revision, contentDigest: sha }).optional(),
 });

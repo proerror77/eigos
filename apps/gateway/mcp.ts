@@ -5,14 +5,17 @@ import { TaskService } from '../../packages/core/tasks.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import {secureDescribeSchema,secureQuerySchema,secureEvaluateSchema,checkAccessSchema} from '../../packages/security/view.js';
+import { SecurityError } from '../../packages/security/store.js';
 
 function result(action: () => unknown): CallToolResult {
   try {
     const value = action();
     return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
   } catch (error) {
+    if(error instanceof z.ZodError) return {isError:true,content:[{type:'text',text:JSON.stringify({code:'INVALID_INPUT',message:'Input does not match the authorized tool contract'})}]};
     if (error instanceof DomainError) {
-      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code, message: error.message }) }] };
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error instanceof SecurityError ? error.reason : error.code, message: error.message }) }] };
     }
     throw error;
   }
@@ -23,16 +26,17 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict(), annotations: read,
-  }, args => result(() => tasks.describeOntology(principal, args)));
+    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict(), annotations: read,
+  }, (args:unknown) => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',
-    inputSchema: objectQuerySchema, annotations: read,
-  }, args => result(() => tasks.queryOntology(principal, args)));
+    inputSchema: tasks.secured ? secureQuerySchema : objectQuerySchema, annotations: read,
+  }, (args:unknown) => result(() => tasks.queryOntology(principal, args)));
   server.registerTool('evaluate_ontology', {
     description: 'Run a registered, bounded, read-only business calculation. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
-    inputSchema: functionCallSchema, annotations: read,
-  }, args => result(() => tasks.evaluateOntology(principal, args)));
+    inputSchema: tasks.secured ? secureEvaluateSchema : functionCallSchema, annotations: read,
+  }, (args:unknown) => result(() => tasks.evaluateOntology(principal, args)));
+  if (tasks.secured) server.registerTool('check_access',{description:'Check current access to your granted task and selected fields. This check grants no authority.',inputSchema:checkAccessSchema,annotations:read},args=>result(()=>tasks.checkAccess(principal,args)));
   server.registerTool('list_services', {
     description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',
     inputSchema: z.object({}), annotations: read,

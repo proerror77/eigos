@@ -2,7 +2,7 @@
 
 会员先通过身份提供方登录，再完成 EIGOS 会员开通；Personal Agent 取得针对 EIGOS 资源的 OAuth 访问令牌后才可调用。按用户决定采用通用 OIDC 接入与自助开通；当前 Auth0 实际接入与验收进度见 [提供方方案](auth0-integration.md)。
 
-本文的业务接入流程对应默认 `EIGOS_SECURITY_MODE=legacy`。新增的可选 `foundation` 模式复用同一会员、会话和安装登记，实现 [S1 授权控制面](security-s1.md)：控制者批准安装上限，所有停用路径先提交业务拒绝状态。该模式目前关闭业务 HTTP／MCP／A2A，不能直接替换现行实例；数据政策与输出保护需后续阶段接入。会员 CLI 会检查持久化 mode，遗漏环境变量不会绕过 foundation 的撤销协调。
+本文的既有业务接入流程对应默认 `EIGOS_SECURITY_MODE=legacy`。可选 [foundation v2](security-s2-s4.md) 复用同一会员、会话和安装登记；`/members/permissions` 提供安装上限、来源、固定任务范围、撤销与接管审阅。平台角色、模型及安装接收资格仍由本地管理独立配置。所有停用路径先提交业务拒绝状态；会员 CLI 检查持久化 mode，遗漏环境变量不会绕过撤销协调。旧库迁移与独立部署回读属于 S5。
 
 ## 身份、会员与业务授权
 

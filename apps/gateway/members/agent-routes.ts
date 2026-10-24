@@ -32,7 +32,7 @@ export function agentOnboardingMetadata(c: Config) {
 export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, verify: VerifyToken, security?: AuthorizationCoordinator): void {
   app.get('/.well-known/eigos-agent-registration', (_req, res) => {
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'agent_onboarding_not_configured' }); return; }
-    res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S1', businessAccess: false, authorizationContext: `${c.PUBLIC_URL}/security/context` } : {}) });
+    res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S4', businessAccess: 'task_grant_required', authorizationContext: `${c.PUBLIC_URL}/security/context` } : {}) });
   });
   const view = (value: AgentRegistration) => {
     let status = members.agents.status(value, c.EIGOS_MEMBERSHIP_APPROVAL);

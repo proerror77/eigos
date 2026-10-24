@@ -6,6 +6,7 @@ import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import type {TaskView} from '../../packages/security/task-service.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -25,6 +26,7 @@ const states: Record<JobState, TaskState> = {
 };
 
 function toTask(job: Job, historyLength?: number): Task {
+  const safe='view' in job && job.view==='eigos.task.v2' ? job as TaskView : undefined;
   if (historyLength !== undefined) z.number().int().min(0).max(1000).parse(historyLength);
   const messages = job.messages.map(message => ({
     messageId: message.id, contextId: job.contextId, taskId: job.id,
@@ -38,14 +40,15 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: safe ? {service:job.service,view:safe.view,outputStatus:safe.outputStatus,...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.error?{error:safe.error}:{})}
+      : { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }
 
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: c.EIGOS_SECURITY_MODE === 'foundation' ? 'Authorization management only. Business task access is unavailable until the data-policy and output-protection stages are enabled.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resource roles, task data, registered sources and output channels are checked separately. Connecting does not authorize a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,

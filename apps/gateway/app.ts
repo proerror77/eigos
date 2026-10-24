@@ -26,6 +26,7 @@ import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
 import { AuthorizationCoordinator } from '../../packages/security/coordinator.js';
 import { SecurityError } from '../../packages/security/store.js';
 import { accessContextSchema } from '../../packages/security/contracts.js';
+import {digest} from '../../packages/core/delegation.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 
@@ -54,12 +55,16 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
     sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
   const tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true' });
-  const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members) : undefined;
+  const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members, store, catalog) : undefined;
   try { security?.start(); } catch (error) { store.close(); members.close(); throw error; }
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
-      const entry = {
+      const entry = security ? {
+        at:new Date().toISOString(),path:req.path.startsWith('/tasks/')?'/tasks/:taskId/authorize':req.path.startsWith('/agents/registrations/')?'/agents/registrations/:id/:action':req.path,
+        method:['SendMessage','GetTask','ListTasks','CancelTask','tools/call','tools/list','initialize','approve_plan','confirm_simulated_payment'].includes(req.body?.method??req.body?.action)?req.body.method??req.body.action:req.method,
+        requestDigest:digest({requestId:req.body?.id,messageId:req.body?.params?.message?.messageId,taskId:req.body?.params?.id??req.body?.params?.message?.taskId,registrationId:req.body?.registrationId}),
+      } : {
         at: new Date().toISOString(), path: req.path, method: req.body?.method ?? req.body?.action ?? req.method,
         requestId: req.body?.id, messageId: req.body?.params?.message?.messageId,
         taskId: req.body?.params?.id ?? req.body?.params?.message?.taskId,
@@ -85,8 +90,8 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S1_foundation' : 'legacy' }));
-  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S4_foundation_v2' : 'legacy' }));
+  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: security ? 'metadata.payment.request' : 'metadata.delegation.agent.paPayment.request', selectionPath: security ? 'metadata.payment.selection' : 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(security ? paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true}) : paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider, security);
   mountAgentRoutes(app, config, members, verify, security);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
@@ -130,9 +135,6 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       }
       principals.set(req, principal);
       Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes, extra: { principal } } });
-      // S1 exposes the authorization control plane only. Until object policies
-      // and safe outputs land, do not route a new grant into old owner-wide APIs.
-      if (security && req.path !== '/security/context') { res.status(503).json({ error: 'security_stage_incomplete', stage: 'S1' }); return; }
       next();
     } catch {
       const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${metadataUrl}"` : '';
@@ -147,18 +149,39 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     const p = principals.get(req)!, context = p.access;
     if (!p.scopes.includes('services:read')) { res.status(403).json({ error: 'insufficient_scope' }); return; }
     if (context?.actorKind !== 'agent') { res.status(403).json({ error: 'AUTHORIZATION_REQUIRED' }); return; }
-    res.json({ stage: 'S1', actorKind: context.actorKind, installationId: context.installationId, grant: context.agentGrant, authEpoch: context.authEpoch, businessAccess: false });
+    res.json({ stage: 'S4', actorKind: context.actorKind, installationId: context.installationId, grant: context.agentGrant, authEpoch: context.authEpoch, businessAccess: 'task_grant_required' });
   });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
-  for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
+  for (const operation of ['describe', 'query', 'evaluate','check-access'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
     try {
       const p = principals.get(req)!;
-      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body) : tasks.evaluateOntology(p, req.body));
+      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body) : operation==='check-access' ? tasks.checkAccess(p,req.body) : tasks.evaluateOntology(p, req.body));
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }
       next(error);
+    }
+  });
+
+  const taskHttp=(action:(req:Request)=>unknown):RequestHandler=>(req,res,next)=>{
+    try {res.json(action(req));} catch(error) {
+      if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='NOT_FOUND'?404:error.code==='INVALID_INPUT'?400:409).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof z.ZodError){res.status(400).json({error:'invalid_task_input'});return;} next(error);
+    }
+  };
+  app.get('/tasks',authenticate,taskHttp(req=>tasks.list(principals.get(req)!,z.strictObject({limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).max(1_000_000).default(0)}).parse(req.query))));
+  app.get('/tasks/:taskId',authenticate,taskHttp(req=>tasks.get(principals.get(req)!,String(req.params.taskId))));
+  app.post('/tasks',authenticate,taskHttp(req=>tasks.submit(principals.get(req)!,req.body)));
+  app.post('/tasks/:taskId/reply',authenticate,taskHttp(req=>tasks.reply(principals.get(req)!,{...req.body,taskId:String(req.params.taskId)})));
+  app.post('/tasks/:taskId/cancel',authenticate,taskHttp(req=>{z.strictObject({}).parse(req.body);return tasks.cancel(principals.get(req)!,String(req.params.taskId));}));
+  app.get('/tasks/:taskId/artifacts/:artifactId',authenticate,(req,res,next)=>{
+    try {
+      const artifact=tasks.downloadArtifact(principals.get(req)!,String(req.params.taskId),String(req.params.artifactId));
+      res.set({'Content-Type':artifact.mediaType,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Disposition':`attachment; filename="artifact"; filename*=UTF-8''${encodeURIComponent(artifact.name)}`}).send(artifact.content);
+    } catch(error) {
+      if(error instanceof DomainError){res.status(error.code==='NOT_FOUND'?404:403).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof z.ZodError){res.status(400).json({error:'invalid_artifact'});return;}next(error);
     }
   });
 
@@ -190,7 +213,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const handleMcp = toNodeHandler(mcp);
   app.all('/mcp', authenticate, async (req, res) => { await handleMcp(req, res, req.body); });
 
-  const a2a = new A2AGateway(tasks, agentCard(config, security ? [] : tasks.services()));
+  const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()));
   app.get('/.well-known/agent-card.json', async (_req, res) => { res.json(AgentCard.toJSON(await a2a.getAgentCard())); });
   const a2aScopes: Record<string, Scope> = {
     SendMessage: 'tasks:write', SendStreamingMessage: 'tasks:write',

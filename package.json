@@ -19,6 +19,7 @@
     "ontology:check": "node scripts/ontology.mjs --check",
     "ontology:sync": "node scripts/ontology.mjs --sync",
     "security:s0": "node --import tsx scripts/security-s0.mjs",
+    "security:admin": "node --env-file-if-exists=.env scripts/security-admin.mjs",
     "start": "node --env-file-if-exists=.env scripts/run-local.mjs --built",
     "example": "node --env-file=.env --import tsx examples/round-trip.ts",
     "check": "tsc --noEmit",

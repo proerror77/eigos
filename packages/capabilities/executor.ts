@@ -63,6 +63,7 @@ const outputSchema = {
 // This bounded executor produces documents/plans, with no shell, MCP, browser,
 // plugins or peer agents. All conversational state is supplied from the Job.
 export class CodexExecutor implements Executor {
+  readonly securityChannelId: string = 'codex';
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
   private sessions: ModelSessionPool;
   constructor(private binary = 'codex', private timeoutMs = 120000) { this.sessions = new ModelSessionPool(binary, timeoutMs); }

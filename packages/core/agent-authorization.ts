@@ -44,6 +44,9 @@ export function createAgentSandboxGrant(owner: string, jobId: string, plan: Agen
   return { id: randomUUID(), owner, jobId, planDigest: plan.digest, bindingRefs: [plan.programRef], allowedEffects: permit.allowedEffects, maxAmount: permit.maxAmount, payeeIds: permit.payeeIds, expiresAt: permit.expiresAt, revoked: false, environment: required.environment, approvedAt: new Date().toISOString() };
 }
 export function agentDispatchGrant(store: JobStore, owner: string, jobId: string, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], now = Date.now()) {
+  return store.grants(owner,jobId).find(g=>matchesAgentGrant(g,plan,step,now));
+}
+export function matchesAgentGrant(g:PlanGrant,plan:AgentActionPlan,step:AgentActionPlan['steps'][number],now=Date.now()) {
   const required = [step.effect, ...(step.additionalEffects ?? [])];
-  return store.grants(owner, jobId).find(g => !g.revoked && g.planDigest === plan.digest && g.environment === (plan.environment ?? 'sandbox') && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => digest(r) === digest(plan.programRef)) && required.every(e => g.allowedEffects.includes(e)) && !!step.cost && g.payeeIds.includes(step.cost.payeeId) && g.maxAmount.currency === step.cost.currency && BigInt(g.maxAmount.minor) >= BigInt(step.cost.minor));
+  return !g.revoked && g.planDigest === plan.digest && g.environment === (plan.environment ?? 'sandbox') && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => digest(r) === digest(plan.programRef)) && required.every(e => g.allowedEffects.includes(e)) && !!step.cost && g.payeeIds.includes(step.cost.payeeId) && g.maxAmount.currency === step.cost.currency && BigInt(g.maxAmount.minor) >= BigInt(step.cost.minor);
 }

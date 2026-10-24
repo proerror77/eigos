@@ -1,0 +1,86 @@
+{
+  "stage": "S2-S4",
+  "date": "2026-10-24",
+  "mode": "foundation",
+  "securityDatabaseVersion": 2,
+  "queueMarker": "worker-security-v2",
+  "defaultMode": "legacy",
+  "inventory": {
+    "objectTypes": 103,
+    "storedProperties": 823,
+    "reviewedSourceSurfaces": 60,
+    "explicitVirtualViews": 2,
+    "sourcePoliciesWeakened": false
+  },
+  "validation": {
+    "typecheck": "passed",
+    "fullSuite": {
+      "command": "node --import tsx --test --test-concurrency=2 tests/*.test.ts",
+      "tests": 656,
+      "pass": 656,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "tapSha256": "3ee5309fa84063c4c291c453f94d0f9e4228453f35e7490a88cf4392df51921d"
+    },
+    "build": "passed",
+    "compiledProcessE2E": {
+      "tests": 10,
+      "pass": 10,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "tapSha256": "fb4c96b64133ac4daa81826b57c0cdee32c17b0457a2b7e62f8facf13541ec6e"
+    },
+    "inventoryRegression": {
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "tapSha256": "1cd75aa5c9f5a6996dd696de24d1a12193431b62058d53fab8f869f481e142ed"
+    },
+    "inventoryCli": "passed",
+    "diffCheck": "passed"
+  },
+  "validationNotes": [
+    "The initial unrestricted local run had one legacy cancellation-path regression and two lease-timing failures under concurrency pressure. The cancellation check was limited to foundation and the entire 656-test suite passed at concurrency 2. Runtime lease durations and assertions were preserved.",
+    "After the full-suite source load, three new files received whitespace-only EOF cleanup and their inventory hashes were refreshed. The final build, E2E and inventory regressions cover that state."
+  ],
+  "syntheticProofs": {
+    "existingDidiProgram": {
+      "sourceCalls": [
+        "maps_textsearch",
+        "maps_textsearch",
+        "taxi_estimate"
+      ],
+      "externalSourceCalls": 0,
+      "workerLeaseMs": 10000,
+      "testDeadlineMs": 30000,
+      "modelSelectedActions": true,
+      "inputLabelsOnOutputObjects": true,
+      "noRawSnapshotOrPrivateTraceToModel": true
+    },
+    "browser": {
+      "sourceCalls": 0,
+      "approvalReadbackAndRevoke": true,
+      "narrowViewportWidth": 390,
+      "documentWidth": 390,
+      "temporaryServerClosed": true
+    },
+    "originalOperationRecovery": {
+      "auditOnly": true,
+      "maxAttempts": 3,
+      "maxLifetimeSeconds": 3600,
+      "noOrdinaryGraphOrModel": true
+    }
+  },
+  "remoteCI": "Requires exact pushed commit readback; local validation does not establish remote CI success.",
+  "limits": [
+    "S5 offline migration and independent deployed readback remain pending.",
+    "No production deployment, real source invocation, order or payment.",
+    "Existing legacy provider paths without reviewed projections fail closed in foundation.",
+    "No real-provider original-operation observer is registered.",
+    "Definition review checks permissions and dependencies only; it does not compile or publish candidate definitions."
+  ]
+}

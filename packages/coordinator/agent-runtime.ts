@@ -18,6 +18,7 @@ import { agentOperation, agentPlanAuthorization, agentDispatchGrant, validateAge
 import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } from './initial-selection.js';
 import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
+import { secureAgentContext } from '../security/model.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -130,7 +131,10 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      const context=secureAgentContext({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...program.actionIds], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) },this.store.ontology);
+      access.session.authorizeModel(this.reasoner.securityChannelId);
+      response = await this.reasoner.act(context, signal, access);
+      access.session.authorizeModel(this.reasoner.securityChannelId);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;

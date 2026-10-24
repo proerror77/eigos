@@ -19,12 +19,15 @@ import { agentDecisionSchema, type AgentDecision, type AgentExecutionState } fro
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
 import { agentModelContext } from './model-context.js';
 import { initialActionIds } from './initial-selection.js';
+import { secureRequest } from '../security/model.js';
+import {withRecovery,type RecoveryWork} from '../security/recovery.js';
 
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
 export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[] }[] }
 export interface AgentPlanningContext { request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
 export interface Reasoner {
+  readonly securityChannelId?: string;
   closeTask?(key?: string): Promise<void>;
   ground(request: ServiceRequest, capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<Grounding>>;
   plan(context: PlanningContext, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<PlanProposal>>;
@@ -32,6 +35,7 @@ export interface Reasoner {
 }
 export class CodexReasoner implements Reasoner {
   constructor(private model: OntologyReasoningModel) {}
+  get securityChannelId() { return this.model.securityChannelId; }
   async closeTask(key?: string) { await this.model.closeStructuredSessions?.(key); }
   async act(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess) {
     const prompt = [
@@ -88,6 +92,7 @@ export class Coordinator {
   private runtime: ActionRuntime;
   private agentRuntime: AgentRuntime;
   constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, options: { allowSandbox?: boolean; maxTaskMs?: number } = {}) {
+    catalog.secureWith(store.security);
     this.resolver = new CapabilityResolver(catalog, (owner, ref, fingerprint) => store.providerEvidenceView(owner, ref, fingerprint)); this.runtime = new ActionRuntime(store, catalog, options);
     this.agentRuntime = new AgentRuntime(store, catalog, reasoner, (claim, signal) => {
       const d = this.store.get(claim.owner, claim.job.id).delegation!;
@@ -96,9 +101,21 @@ export class Coordinator {
   }
   async releaseModelContext(claim: WorkClaim) {
     const job = this.store.get(claim.owner, claim.job.id);
-    if (job.state !== 'working' && job.delegation) await this.reasoner.closeTask?.(modelSessionKey(claim.owner, job.delegation.request, this.store.ontology.model.ref));
+    if ((this.store.security.enabled || job.state !== 'working') && job.delegation) await this.reasoner.closeTask?.(claim.modelContextKey ?? modelSessionKey(claim.owner, job.delegation.request, this.store.ontology.model.ref));
   }
   async closeModelContexts() { await this.reasoner.closeTask?.(); }
+  claimRecovery() {return this.store.security.enabled?this.store.security.recoveries.claim():undefined;}
+  async recover(work:RecoveryWork,signal:AbortSignal) {
+    return withRecovery(work,this.store.security,()=>this.store.security.recoveries.assertCurrent(work),async()=>{
+      let result;
+      try {
+        signal.throwIfAborted();this.store.security.recoveries.assertCurrent(work);
+        const {owner,taskId,intentId,operationKey,remoteRef,action,programRef,programDigest,originalDispatchAt}=work.permit;
+        result=await this.catalog.observeOriginal({owner,taskId,intentId,operationKey,remoteRef,action,programRef,programDigest,originalDispatchAt},signal);
+      }catch{/* An unavailable source remains unknown; the original operation is never replayed. */}
+      this.store.security.recoveries.finish(work,result);
+    });
+  }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     const d = claim.job.delegation;
     if (d?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
@@ -114,7 +131,9 @@ export class Coordinator {
     });
     // No silent definition truncation. Broad catalogs use normal later planning.
     groundingAccess.initialPrograms = new Set(initialPrograms.flatMap(program => program.actionIds)).size <= 8 ? initialPrograms : [];
-    const grounded = await this.reasoner.ground(structuredClone(d.request), summaries, signal, groundingAccess);
+    groundingAccess.session.authorizeModel(this.reasoner.securityChannelId);
+    const grounded = await this.reasoner.ground(secureRequest(this.store.ontology,claim.owner,d.request), summaries, signal, groundingAccess);
+    groundingAccess.session.authorizeModel(this.reasoner.securityChannelId);
     signal.throwIfAborted();
     if (!this.recordRun(claim, grounded.evidence, 'request_interpreted')) return;
     const decision = groundingSchema.parse(grounded.decision);
@@ -169,6 +188,9 @@ export class Coordinator {
     })) return;
     if ((this.store.get(claim.owner, claim.job.id).runs?.length ?? 0) >= 12) throw new Error('Maximum reasoning turns reached');
     const access = this.access(claim, request, resolution.candidates, signal, 'plan_proposed'), session = access.session;
+    // Raw legacy preparation objects have no reviewed model projection. They
+    // remain available in legacy mode; foundation requires typed input evidence.
+    if (this.store.security.enabled) throw new DomainError('FORBIDDEN','This provider planning contract requires a reviewed secure projection');
     const planned = await this.reasoner.plan({ request: structuredClone(request), capability, resolution: { candidates: structuredClone(resolution.candidates), scope: resolution.scope, comparison: resolution.comparison } }, signal,
       access);
     signal.throwIfAborted();
@@ -204,6 +226,7 @@ export class Coordinator {
     }, receipt => {
       if (!this.store.checkpoint(claim, job => { job.delegation!.ontologyReads = [...(job.delegation!.ontologyReads ?? []), receipt]; })) throw new DomainError('CONFLICT', 'Planning read arrived after cancellation or lease loss');
     }, bounds?.readScope ?? (this.store.get(claim.owner, claim.job.id).delegation?.ontologyReadScope === 'owner' ? 'owner' : 'request'), bounds?.refs);
+    claim.modelContextKey=session.modelSessionKey();
     return { session, maxTurns: this.modelLimit(claim) - (this.store.get(claim.owner, claim.job.id).runs?.length ?? 0), record: evidence => { if (!this.recordRun(claim, evidence, purpose)) throw new DomainError('CONFLICT', 'Reasoning turn arrived after cancellation or lease loss'); } };
   }
   private modelLimit(claim: WorkClaim) { const d = this.store.get(claim.owner, claim.job.id).delegation, state = d?.agent ?? d?.agentHistory?.at(-1); return state ? agentLimits(this.catalog.agentProgram(state.programRef, claim.owner)).modelTurns : 12; }

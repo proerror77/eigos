@@ -16,32 +16,50 @@ import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authori
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
 import { readBookingObservation } from '../ontology/booking-functions.js';
 import { bookingDataSchema, bookingPaymentDataSchema } from '../ontology/booking.js';
+import { AuthorizedOntologyView } from '../security/view.js';
+import { TaskSecurity } from '../security/task-service.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
 export class TaskService {
   private stopping = false;
-  constructor(private store: JobStore, private options: TaskOptions) {}
+  private security?: TaskSecurity;
+  constructor(private store: JobStore, private options: TaskOptions) { options.catalog.secureWith(store.security);if (store.security.enabled) this.security=new TaskSecurity(store); }
+  get secured() { return !!this.security; }
 
   services() {
+    if (this.security) return [{id:'eigos.delegate',name:'Task-scoped EIGOS execution',description:'Delegate within the current installation and task grants. Resources, source operations, model processing and delivery channels require independent permission.',requiredInputs:['goal'],tags:['delegation'],examples:[],inputModes:['text/plain','application/json'],outputModes:['application/json','text/markdown']}];
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
   describeOntology(p: Principal, input: unknown) {
     requireScope(p, 'services:read');
+    if (this.security) return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).describe(input);
     const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional() }).strict().parse(input);
     return this.store.ontology.model.describe(query);
   }
   queryOntology(p: Principal, input: unknown) {
     requireScope(p, 'tasks:read');
+    if (this.security) return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).query(input);
     return this.store.ontology.query(ownerKey(p), input as import('../ontology/object-store.js').ObjectQuery);
   }
   evaluateOntology(p: Principal, input: unknown) {
     requireScope(p, 'tasks:read');
+    if (this.security) return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).evaluate(input);
     return this.store.ontology.evaluate(ownerKey(p), input);
   }
 
-  submit(p: Principal, input: unknown, contextId?: string): Job {
+  checkAccess(p: Principal,input:unknown) {
+    requireScope(p,'tasks:read');
+    if (!this.security) throw new DomainError('FORBIDDEN','Security foundation is not enabled');
+    return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).check(input);
+  }
+  downloadArtifact(p:Principal,taskId:string,artifactId:string) {
+    if (!this.security) throw new DomainError('NOT_FOUND','Controlled artifact not found');
+    return this.security.download(p,taskIdSchema.parse(taskId),z.uuid().parse(artifactId));
+  }
+  submit(p: Principal,input:unknown,contextId?:string):Job { return this.security ? this.security.submit(p,()=>this.submitRaw(p,input,contextId)) : this.submitRaw(p,input,contextId); }
+  private submitRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = submitSchema.parse(input);
     if (contextId) taskIdSchema.parse(contextId);
@@ -70,7 +88,8 @@ export class TaskService {
     return submitted;
   }
 
-  reply(p: Principal, input: unknown, contextId?: string): Job {
+  reply(p: Principal,input:unknown,contextId?:string):Job { const args=replySchema.parse(input); return this.security ? this.security.mutate(p,args.taskId,()=>this.replyRaw(p,args,contextId)) : this.replyRaw(p,args,contextId); }
+  private replyRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
@@ -131,10 +150,12 @@ export class TaskService {
 
   get(p: Principal, id: string): Job {
     requireScope(p, 'tasks:read');
+    if (this.security) return this.security.get(p,taskIdSchema.parse(id));
     return this.view(ownerKey(p), this.store.get(ownerKey(p), taskIdSchema.parse(id)));
   }
 
-  selectPaymentRoute(p: Principal, input: unknown, contextId?: string): Job {
+  selectPaymentRoute(p:Principal,input:unknown,contextId?:string):Job {const args=paPaymentRouteSchema.parse(input);return this.security?this.security.mutate(p,args.taskId,()=>this.selectPaymentRouteRaw(p,args,contextId)):this.selectPaymentRouteRaw(p,args,contextId);}
+  private selectPaymentRouteRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = paPaymentRouteSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `pa-route:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -168,7 +189,8 @@ export class TaskService {
     });
   }
 
-  reportPayment(p: Principal, input: unknown, contextId?: string): Job {
+  reportPayment(p:Principal,input:unknown,contextId?:string):Job {const args=paPaymentReportSchema.parse(input);return this.security?this.security.mutate(p,args.taskId,()=>this.reportPaymentRaw(p,args,contextId)):this.reportPaymentRaw(p,args,contextId);}
+  private reportPaymentRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = paPaymentReportSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `pa-payment:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -203,11 +225,13 @@ export class TaskService {
     const updatedAfter = filter.updatedAfter
       ? new Date(z.iso.datetime({ offset: true }).parse(filter.updatedAfter)).toISOString()
       : undefined;
+    if (this.security) return this.security.list(p,{...filter,updatedAfter});
     const owner = ownerKey(p); const found = this.store.list(owner, { ...filter, updatedAfter });
     return { ...found, jobs: found.jobs.map(job => this.view(owner, job)) };
   }
 
-  cancel(p: Principal, id: string): Job {
+  cancel(p:Principal,id:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.cancelRaw(p,id)):this.cancelRaw(p,id);}
+  private cancelRaw(p: Principal, id: string): Job {
     requireScope(p, 'tasks:write');
     const owner = ownerKey(p);
     taskIdSchema.parse(id);
@@ -230,7 +254,8 @@ export class TaskService {
     return canceled;
   }
 
-  authorize(p: Principal, id: string, input: unknown): Job {
+  authorize(p:Principal,id:string,input:unknown):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.authorizeRaw(p,id,input)):this.authorizeRaw(p,id,input);}
+  private authorizeRaw(p: Principal, id: string, input: unknown): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id);
     const args = z.object({ requestId: z.string().trim().min(1).max(128) }).passthrough().parse(input);
     const owner = ownerKey(p);
@@ -275,7 +300,8 @@ export class TaskService {
     });
   }
 
-  reconcile(p: Principal, id: string, requestId: string): Job {
+  reconcile(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.reconcileRaw(p,id,requestId)):this.reconcileRaw(p,id,requestId);}
+  private reconcileRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id);
@@ -310,7 +336,8 @@ export class TaskService {
       if (!terminal) { job.state = 'working'; delete job.question; } job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
     });
   }
-  revokeAuthorization(p: Principal, id: string, requestId: string): Job {
+  revokeAuthorization(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.revokeAuthorizationRaw(p,id,requestId)):this.revokeAuthorizationRaw(p,id,requestId);}
+  private revokeAuthorizationRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
@@ -330,7 +357,8 @@ export class TaskService {
       job.state = 'auth-required'; d.phase = 'awaiting_authorization'; job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
     });
   }
-  requestRemediation(p: Principal, input: unknown): Job {
+  requestRemediation(p:Principal,input:unknown):Job {const args=remediationSchema.parse(input);return this.security?this.security.mutate(p,args.originalTaskId,()=>this.requestRemediationRaw(p,args)):this.requestRemediationRaw(p,args);}
+  private requestRemediationRaw(p: Principal, input: unknown): Job {
     requireScope(p, 'tasks:write'); const args = remediationSchema.parse(input); const owner = ownerKey(p); const catalog = this.options.catalog;
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     if (!catalog) throw new DomainError('CONFLICT', 'Ontology backend is required for after-sales');
@@ -381,13 +409,16 @@ export class TaskService {
     // Durable execution is independent of this HTTP process and connection.
     const owner = ownerKey(p);
     const deadline = Date.now() + (this.options.waitTimeoutMs ?? 300000);
+    this.security?.assertTask(p,id);
     let job = this.store.get(owner, id);
+    if (this.security) this.security.project(p,job);
     while ((job.state === 'working' || job.state === 'submitted') && job.delegation?.backendVersion === BACKEND_VERSION) {
       if (this.stopping || Date.now() >= deadline) throw new Error('Blocking task wait interrupted; query the existing task or retry the same message with returnImmediately=true');
       await delay(50);
       job = this.store.get(owner, id);
+      if (this.security) this.security.project(p,job);
     }
-    return job;
+    return this.security ? this.security.project(p,job) : job;
   }
 
   async close(): Promise<void> { this.stopping = true; }

@@ -68,7 +68,7 @@ export interface Job {
   service: string;
   delegation?: Delegation;
   afterSales?: Omit<import('../ontology/actions.js').AfterSalesCase, 'owner'>[];
-  executionMode?: 'worker' | 'worker-security-foundation';
+  executionMode?: 'worker' | 'worker-security-foundation' | 'worker-security-v2';
   goal: string;
   deliverable?: string;
   state: JobState;

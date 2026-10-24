@@ -1,6 +1,6 @@
 # PA 接入 EIGOS
 
-以下业务接口对应默认 `EIGOS_SECURITY_MODE=legacy`。可选的 `foundation` 模式目前只提供 [S1 身份／授权控制面](security-s1.md)：注册 Agent 可通过 `POST /security/context` 检查自身安装与授权引用，业务 HTTP／MCP／A2A 返回 `503 security_stage_incomplete`，Agent Card 不声明可执行 skills。对象、字段与安全输出策略接入前，不能把此模式当作现行服务的替代部署。
+以下既有示例对应默认 `EIGOS_SECURITY_MODE=legacy`。[foundation v2 的 S2–S4 合同](security-s2-s4.md)已接入资源／任务数据／输出保护，查询要求版本 2 和 taskId，任务响应统一为安全 TaskView。`POST /security/context` 返回 S4 与当前安装／授权引用。新模式仍需逐项配置来源、角色、模型与接收资格；旧库迁移和真实部署验收属于 S5，不能直接替换现行实例。
 
 完整对象目录、来源接入及工作分支／常驻运行版本见[模型与接入能力总览](ontology-and-integrations.md)。
 

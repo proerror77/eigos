@@ -17,7 +17,7 @@ export function openMembershipAdministration(databasePath: string, membershipPat
     if (!table) mode = 'legacy';
     else {
       const row = reader.prepare('SELECT version,mode FROM security_settings WHERE slot=1').get();
-      if (!row || row.version !== 1 || !['legacy', 'foundation'].includes(String(row.mode))) throw new Error('Unknown security database mode');
+      if (!row || row.version !== (row.mode==='foundation'?2:1) || !['legacy', 'foundation'].includes(String(row.mode))) throw new Error('Unknown security database mode');
       mode = row.mode as SecurityMode;
     }
   } finally { reader.close(); }

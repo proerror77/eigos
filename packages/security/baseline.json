@@ -1350,100 +1350,100 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "f4ba8c2466d72c7333c6daa00e7cd382bf68db2c16c8d46984d935c8380eb040",
+      "sourceDigest": "53e813968f8124b2b97eb3b294440c4bdb5c710a47512044dfe5a5c2073bc79e",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Legacy authentication/membership/scopes; foundation verifies bound installation and current grant, blocks business APIs until S2-S4",
+      "currentControl": "Foundation v2 authenticated TaskView, controlled downloads, v2 ontology reads and sanitized audit; legacy remains explicit",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "22c873fa47b4449334c3c048b2e29fbd16a17b27e901daa879f4586aff525088",
+      "sourceDigest": "0001894bd93a134f65cda6af8653b38d0c986e0ee402f2b6b4fdf6006b8da34a",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "TaskService scopes and owner",
+      "currentControl": "Foundation v2 task-bound ontology schemas and shared TaskView on all task responses",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "c46a2fc400841659c3a401a407468188dec0833221648a9088dd636acedc289c",
+      "sourceDigest": "40fe374204073c6251640c0044759a640c3f78391576d0c7c7acbcd8898d735f",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Legacy TaskService scopes/owner; foundation business endpoint closed and no skills advertised",
+      "currentControl": "Foundation v2 safe metadata and current read/replay checks; no raw Job delegation",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "8a45d8b22e1248d209285dbed1bbb1a5e478b9d4ebc91f037838dcacbdcf34dc",
+      "sourceDigest": "d88237e5a37519613d1020b7ddee10e3c1ec19d725c89a9152ca16b79c0194ae",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Owner and scopes; write-only submission response",
+      "currentControl": "Foundation v2 installation/task guards wrap all public mutations and reads",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "bdcd903e9e500dfc2b213fa32b6a09582a8365fb63e2f67324414c943633726b",
+      "sourceDigest": "f2d64ef1f93f61eef8579b3ef003561f3548d5a8e1f89662038fd3a662700d60",
       "channels": [
         "sqlite",
         "idempotency"
       ],
       "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
-      "currentControl": "Owner, lease and foundation task authority predicates; secure queue marker; atomic dispatch and fenced late results",
+      "currentControl": "Foundation v2 durable claim, current policy/permit/budget checks, atomic projection and reference-only retry records",
       "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
       "stage": "S3"
     },
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "f5a83fb39b8911eb7d2b0d42cf4b24ae79188e5d470c5b953e91baf8b37effbd",
+      "sourceDigest": "38edc06e19353db35f454b2300483200433c69cdba4530c060c886d720e38f08",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Owner and restricted fields",
+      "currentControl": "Foundation v2 checked rows/fields/relationships/functions and pre-pagination filtering; trusted registered writes bind atomically",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
     {
       "id": "member-ui",
       "file": "apps/gateway/members/routes.ts",
-      "sourceDigest": "b34bb18060c2af511cbc206198d7890fbf16a77631a66a4e8c27903998a981aa",
+      "sourceDigest": "6fa1343db2a2fb538fcde6f6a2ab52f901e2e97812b0a37c2e5588cb51085058",
       "channels": [
         "member_ui"
       ],
       "content": "Member profile, connections, installation revoke and invitation flows",
-      "currentControl": "Existing browser session, Origin/CSRF; foundation grant controls and deny-first connection/installation revocation",
+      "currentControl": "Controller session plus Origin/CSRF; immutable five-minute review and atomic policy-version check",
       "targetControl": "Reuse identity and coordinate all revocation with business fence",
       "stage": "S1"
     },
     {
       "id": "member-page",
       "file": "apps/gateway/members/page.ts",
-      "sourceDigest": "9d4e185b8900a1b39670ff28efef829b21257644b245e04dcd919e79016b2dba",
+      "sourceDigest": "2991cc3baaf0cb24af6c23cad92d6791651b8ac6f67d6169edb62906736ee4aa",
       "channels": [
         "member_ui"
       ],
       "content": "Rendered member and connection/installation information",
-      "currentControl": "Caller member session",
+      "currentControl": "Foundation links to explicit installation, source and task permission review",
       "targetControl": "Installation and task authorization review UI",
       "stage": "S1"
     },
@@ -1474,12 +1474,12 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "2a31bd8556d9f5b0e8e225073f89fa75bfb4bce30b7d2ddc96d6d923141dda49",
+      "sourceDigest": "9fd2e2ee4db0eb06b1e553a3e3caf5db87ad096ea5232b44a04d9174d9890e7a",
       "channels": [
         "http"
       ],
       "content": "Registration status, binding and revoke",
-      "currentControl": "Existing credential/token binding; foundation self-revoke uses coordinated fence; no business-ready claim",
+      "currentControl": "Existing installation binding and revocation; S4 task-grant readiness metadata",
       "targetControl": "No self-issued data grant; coordinate revoke",
       "stage": "S1"
     },
@@ -1498,13 +1498,13 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "6e5762bbd3f8957ccfcafe22b769ce367830474f20733c145237595c0a1e9de5",
+      "sourceDigest": "ba717d7a23706a62c905bacc1df821eabbdc714ff7b241c806c7892ea7558b14",
       "channels": [
         "model",
         "query"
       ],
       "content": "Planning tools, reads, seen references, functions, receipts and session key",
-      "currentControl": "Owner/request readScope and snapshot validation",
+      "currentControl": "Foundation v2 authorized definitions/data and access-qualified receipts/session keys",
       "targetControl": "Uniform task view; grants and policy epoch in snapshots/session key",
       "stage": "S3"
     },
@@ -1523,27 +1523,27 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "a1bf2bb9ee8817d04b4079796f8c7683fe9e089a5915d47c38ef6d21a9e02ef0",
+      "sourceDigest": "92b43a694cd05990ba602b251229496e39e603b08b172416faef4830649a93a7",
       "channels": [
         "model",
         "dispatch"
       ],
       "content": "Task interpretation, initial context, selection and execution orchestration",
-      "currentControl": "Request/owner bounds and current claim",
+      "currentControl": "Foundation v2 source/role/channel gates; raw legacy preparation path fails closed",
       "targetControl": "Persisted task authority with source/input/output checks",
       "stage": "S3"
     },
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "6afd6a3ad7516737d4e6b33106256139f2f3a1c88bbd4f83107281aea717ae65",
+      "sourceDigest": "e3aa29631b2f03e6ed76f52f67eaf5b8a5ffad99fc272484dc8df9442f7c890c",
       "channels": [
         "model",
         "dispatch",
         "artifact"
       ],
       "content": "Action plans, dispatch, observations, result acceptance and recovery",
-      "currentControl": "PlanGrant and claim/current evidence checks",
+      "currentControl": "Foundation v2 approved context before model invocation and exact dispatch/late-result checks",
       "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
       "stage": "S3"
     },
@@ -1598,13 +1598,13 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "f86c48be15a7b9c686562022b297d572390d3b24cb92bb015dcabdeffaa2641c",
+      "sourceDigest": "d478c088defc7a45388d89c853a7b58bfe77c06f0dd7b7a7e2b87b0e32b0bd9b",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Goal/messages to model process; temporary schema/output files",
-      "currentControl": "Bounded private subprocess work directory",
+      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
       "targetControl": "Model channel approval and label propagation; files stay private",
       "stage": "S3"
     },
@@ -1781,7 +1781,7 @@
     {
       "id": "security-contracts",
       "file": "packages/security/contracts.ts",
-      "sourceDigest": "9bf71078c113b74e54f4792d1afb68ec2b428610a3cea813e9754fb189b2d64c",
+      "sourceDigest": "b7f5c9a5dca5d72be0c746001a4599381d4c6b9707b25e2b3e0b91859826f351",
       "channels": [
         "authorization_control"
       ],
@@ -1793,31 +1793,31 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "27c97150a3287ce82c11d5a2ffca4f8dc3212fba2d52dba7ba5c33eb0021c906",
+      "sourceDigest": "ac2a989c72c97dc629f49bd3fae238fc7d941e18ac35bcf2998bfb8e8b96ba61",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Deny-first fenced writes, single publisher, explicit controller grants",
+      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "3d790fe3bad63551601f2a44265e8704c48b64d4427d0b4a488bc0091515b29a",
+      "sourceDigest": "6827e99253fce62eebadc5b083c4b82b4b5b3732812f54508349b7b02b86187c",
       "channels": [
         "authorization_control"
       ],
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Owner/install/revision/lease constraints; no automatic legacy grants",
+      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-admin",
       "file": "packages/security/admin.ts",
-      "sourceDigest": "cd3841a9aa0be01c1e2bef883d5bb69fc5a5ec517d7281baa0d5d2b53fb6a148",
+      "sourceDigest": "9d8ec225a142aadd72e42b379df23020e91c753cdcc71064fff704cc2eb87c07",
       "channels": [
         "authorization_control"
       ],
@@ -1853,19 +1853,19 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "a7fd39070391a908501a6866abeee953e51549900240b015eb618938bc44eee1",
+      "sourceDigest": "ee9775a0ebe097976effd036f3c1c7551cd9e9c8eaccc02b5f178afee045dab4",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-aware renew/finish stop revoked work; late result protections retained",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "2a7c661cd1339a364ba2f9e9c1d271e551ad40b8cf7f6b8dd71c37cae80fd75b",
+      "sourceDigest": "97fc85569d771bbfc35216acac3084631693fe870b3bb07062cb69af9f1c1aea",
       "channels": [
         "authorization_control"
       ],
@@ -1873,6 +1873,222 @@
       "currentControl": "Server-derived AccessContext; ownerKey remains issuer/tenant/subject",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
+    },
+    {
+      "id": "permission-review-page",
+      "file": "apps/gateway/members/permissions-page.ts",
+      "sourceDigest": "000d15cdf9b9b29f6ede3d788b48febe8e3b907edb9e980751f2763fb3ec220f",
+      "channels": [
+        "member-ui"
+      ],
+      "content": "Exact immutable controller review, source readback and revocation",
+      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-context",
+      "file": "packages/security/context.ts",
+      "sourceDigest": "28124cfecf95ba47bb447f8f1ba81f369d111a9b227423ce6aef41ccc26e8095",
+      "channels": [
+        "internal"
+      ],
+      "content": "Server-only actor, projection and integrity scopes",
+      "currentControl": "Foundation v2: Server-only actor, projection and integrity scopes",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-envelope",
+      "file": "packages/security/envelope.ts",
+      "sourceDigest": "6f7c198c5580299ec5f7775dbdddde9bae994cde094121dd7b5ec29f1976db7f",
+      "channels": [
+        "all-outputs"
+      ],
+      "content": "Monotonic classification, mandatory markings, channels and lineage",
+      "currentControl": "Foundation v2: Monotonic classification, mandatory markings, channels and lineage",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-execution",
+      "file": "packages/security/execution.ts",
+      "sourceDigest": "26894ea5988c66fe932ab10e99e38c769747f2b3a845a0dce155918a86444745",
+      "channels": [
+        "worker"
+      ],
+      "content": "Current source and action guards around registered programs/adapters",
+      "currentControl": "Foundation v2: Current source and action guards around registered programs/adapters",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-model",
+      "file": "packages/security/model.ts",
+      "sourceDigest": "b7375126a2e6c811d7b48b5d5149de9b04a9bc6c3a7574f87e3ddf5368599e02",
+      "channels": [
+        "model"
+      ],
+      "content": "Current task inputs, model clearance and input-lineage checks",
+      "currentControl": "Foundation v2: Current task inputs, model clearance and input-lineage checks",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-data-policy",
+      "file": "packages/security/policy-store.ts",
+      "sourceDigest": "79ee67c239e7e9912381c66d4660c16f1b722f6d59303a9d25a196f0d40e0d68",
+      "channels": [
+        "all-reads"
+      ],
+      "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
+      "currentControl": "Foundation v2: Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-safe-projections",
+      "file": "packages/security/projections.ts",
+      "sourceDigest": "81a53b08041d76edc435dfae80dd849094eee6d8ae985bff4db1c9e2e295e85e",
+      "channels": [
+        "model-and-agent"
+      ],
+      "content": "Explicit typed DiDi observedData projections; raw snapshots remain internal",
+      "currentControl": "Foundation v2: Explicit typed DiDi observedData projections; raw snapshots remain internal",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-original-recovery",
+      "file": "packages/security/recovery.ts",
+      "sourceDigest": "65c4e3dbd98b611ddf59665b79dba2cb2bc3dad284faf694f1859b95c0943863",
+      "channels": [
+        "audit"
+      ],
+      "content": "Separate approved observer for the exact original operation, audit only",
+      "currentControl": "Foundation v2: Separate approved observer for the exact original operation, audit only",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-task-view",
+      "file": "packages/security/task-service.ts",
+      "sourceDigest": "16d08d498f6eda5069e45d20024fd4ccdeb74c35c2edd897d2a175d91148388b",
+      "channels": [
+        "http-mcp-a2a"
+      ],
+      "content": "Common safe views for mutations, reads, waits, replay and downloads",
+      "currentControl": "Foundation v2: Common safe views for mutations, reads, waits, replay and downloads",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-ontology-view",
+      "file": "packages/security/view.ts",
+      "sourceDigest": "925aa0d3e19ec7b5bdbb8241d5666634be799966fc52a99b4f132f56037cd096",
+      "channels": [
+        "http-mcp-model"
+      ],
+      "content": "Version 2 task-bound reads, authorized definitions and check_access",
+      "currentControl": "Foundation v2: Version 2 task-bound reads, authorized definitions and check_access",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-policy-cli",
+      "file": "scripts/security-admin.mjs",
+      "sourceDigest": "9e07659ce37674e6f22a35623b2bb48784330cf57c564543022026eaf7533d69",
+      "channels": [
+        "local-admin"
+      ],
+      "content": "Trusted local role, recipient and model qualification; non-publishing definition review",
+      "currentControl": "Foundation v2: Trusted local role, recipient and model qualification; non-publishing definition review",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "execution-catalog",
+      "file": "packages/core/catalog.ts",
+      "sourceDigest": "a8688ab2a6bcbf407f6e41017c20aa2d6c34515e73d5bf90d91f14e855e6a296",
+      "channels": [
+        "worker"
+      ],
+      "content": "Bind executable catalog to this SecurityStore and isolate original-operation observer",
+      "currentControl": "Foundation v2: Bind executable catalog to this SecurityStore and isolate original-operation observer",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-program-contract",
+      "file": "packages/core/agent-program.ts",
+      "sourceDigest": "fb34ddc0f1a9dbb17ad54054982ae5ed0e57ce970cc4004fe013fdee2a5fc5bf",
+      "channels": [
+        "worker"
+      ],
+      "content": "Narrow optional original-operation observer contract",
+      "currentControl": "Foundation v2: Narrow optional original-operation observer contract",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-business-authorization",
+      "file": "packages/core/agent-authorization.ts",
+      "sourceDigest": "507bd390bbc5a32d36db60fb57d066bb597c06cac9bd1c7e7e9c669ad8a799a4",
+      "channels": [
+        "worker"
+      ],
+      "content": "Independent exact plan/effect/cost/payee grant matching",
+      "currentControl": "Foundation v2: Independent exact plan/effect/cost/payee grant matching",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "source-evidence-validation",
+      "file": "packages/ontology/object-evidence.ts",
+      "sourceDigest": "773e1f78d717e47f1952623f0fb37b68515db563dac8796381d46cd3d5ee2002",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded private integrity checks with no raw evidence body output",
+      "currentControl": "Foundation v2: Bounded private integrity checks with no raw evidence body output",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "planning-authority-contract",
+      "file": "packages/ontology/planning-contract.ts",
+      "sourceDigest": "1d84c58ce86133910e8855816bbc40be032e023cac6b55451b917373a540b5f1",
+      "channels": [
+        "internal"
+      ],
+      "content": "Authority-qualified read receipt and planning snapshot",
+      "currentControl": "Foundation v2: Authority-qualified read receipt and planning snapshot",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "model-turn-channel",
+      "file": "packages/coordinator/reasoning-loop.ts",
+      "sourceDigest": "1fb7fb3acec5416eeb5e72e98f0779d851a83a4b35de21c5a56e048d4c9558c6",
+      "channels": [
+        "model"
+      ],
+      "content": "Recheck channel before every model invocation and output acceptance",
+      "currentControl": "Foundation v2: Recheck channel before every model invocation and output acceptance",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-build",
+      "file": "scripts/build.mjs",
+      "sourceDigest": "b1188c412af6c74ccbc9983a00f76bb5abd12b886ceee4e97e81fdcc1fca30a4",
+      "channels": [
+        "build"
+      ],
+      "content": "Compile all runtime surfaces and copy the reviewed field baseline",
+      "currentControl": "Foundation v2: Compile all runtime surfaces and copy the reviewed field baseline",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
     }
   ]
 }

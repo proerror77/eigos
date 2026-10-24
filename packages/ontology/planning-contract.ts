@@ -20,6 +20,8 @@ export interface PlanningReadReceipt {
   datasetRevision: number; status: 'ok' | 'rejected'; objects: ObjectSnapshot[];
   origin?: 'model' | 'worker_context';
   outputBytes?: number;
+  accessDigest?: string;
+  securityEnvelope?: import('../security/envelope.js').SecurityEnvelope;
 }
 export interface DecisionActionProposal {
   action: string; definitionDigest: string; inputs: Record<string, { object: ObjectRef; revision: number }>;
@@ -33,6 +35,7 @@ export interface PlanningSnapshot {
   reads: PlanningReadReceipt[]; objects: ObjectSnapshot[];
   conditionChecks: ConditionCheck[]; actionProposals: DecisionActionProposal[];
   digest: string;
+  accessDigest?: string;
 }
 export function planningSnapshot(body: Omit<PlanningSnapshot, 'digest'>): PlanningSnapshot { return { ...body, digest: digest(body) }; }
 

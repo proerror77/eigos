@@ -1,9 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { DomainError } from '../core/domain.js';
+import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
-import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySchema, securityDefaults } from './contracts.js';
+import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySchema, securityDefaults, accessContextSchema, POLICY_VERSION, SECURITY_CONTRACT, type AccessContext } from './contracts.js';
+import { SecurityPolicies } from './policy-store.js';
+import { withAuthorization, type AuthorizationScope } from './context.js';
+import {RecoveryStore} from './recovery.js';
 
 export type SecurityMode = 'legacy' | 'foundation';
 export type AgentAccessGrant = z.infer<typeof agentAccessGrantSchema>;
@@ -13,7 +16,7 @@ export interface SubjectFacts { ownerKey: string; memberId: string; installation
 export interface Subject extends SubjectFacts { epoch: number; validUntil: number }
 export interface Fence { ownerKey: string; kind: 'member' | 'connection' | 'installation'; targetId: string; revision: number; state: 'pending' | 'applied' | 'cleared' }
 export class SecurityError extends DomainError {
-  constructor(readonly reason: 'AUTHORIZATION_REQUIRED' | 'ACCESS_REVOKED' | 'AUTHORITY_UNAVAILABLE' | 'REVOCATION_PENDING' | 'POLICY_CHANGED', message: string = reason) { super('FORBIDDEN', message); }
+  constructor(readonly reason: 'AUTHORIZATION_REQUIRED' | 'ACCESS_REVOKED' | 'AUTHORITY_UNAVAILABLE' | 'REVOCATION_PENDING' | 'POLICY_CHANGED' | 'SOURCE_NOT_AUTHORIZED' | 'OUTPUT_NOT_ALLOWED' | 'INSUFFICIENT_ACCESS', message: string = reason) { super('FORBIDDEN', message); }
 }
 type Row = Record<string, unknown>;
 const subject = (r: Row): Subject => ({ ownerKey: String(r.owner), memberId: String(r.member_id), installationId: String(r.installation_id), clientId: String(r.client_id), active: r.state === 'active', epoch: Number(r.epoch), validUntil: Number(r.valid_until) });
@@ -25,23 +28,34 @@ const authorityQuery = `FROM security_task_authorities a
  JOIN security_grants g ON g.id=a.agent_grant_id AND g.owner=a.owner AND g.installation_id=a.installation_id AND g.kind='agent_access'
  JOIN security_grants d ON d.id=a.data_grant_id AND d.owner=a.owner AND d.installation_id=a.installation_id AND d.kind='task_data' AND d.parent_id=g.id AND d.parent_revision=g.revision
  JOIN security_manager m ON m.slot=1
- JOIN security_settings cfg ON cfg.slot=1 AND cfg.version=1 AND cfg.mode='foundation'
+ JOIN security_settings cfg ON cfg.slot=1 AND cfg.version=2 AND cfg.mode='foundation'
+ JOIN security_policy pol ON pol.slot=1 AND pol.revision>0
+ JOIN security_policy_definitions pd ON pd.slot=1 AND pd.digest=:securityDefinition
  WHERE a.state='active' AND s.state='active' AND g.state='active' AND d.state='active'
  AND s.epoch=a.auth_epoch AND g.revision=a.agent_grant_revision AND d.revision=a.data_grant_revision
  AND a.request_revision=json_extract(j.body,'$.delegation.request.revision')
+ AND json_extract(d.body,'$.purpose')='delegated_task'
  AND a.expires_at>:securityNow AND s.valid_until>:securityNow AND g.expires_at>:securityNow AND d.expires_at>:securityNow AND m.expires_at>:securityNow`;
 
 /** Uses the JobStore connection. Membership/token/profile data stay in their
  * separate database. This store never derives grants from an OAuth scope. */
 export class SecurityStore {
   private sequence = 0;
+  private atomicDepth = 0;
+  get inTransaction() { return this.atomicDepth > 0; }
   readonly enabled: boolean;
+  readonly policies: SecurityPolicies;
+  readonly recoveries: RecoveryStore;
   constructor(private db: DatabaseSync, mode: SecurityMode = 'legacy', readonly now: () => number = Date.now) {
+    const version=mode==='foundation'?2:1;
     const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_settings'").get();
     const orphanedSecurity = !table && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('security_subjects','security_grants','security_task_authorities') LIMIT 1").get();
     const existing = table ? db.prepare('SELECT version,mode FROM security_settings WHERE slot=1').get() : undefined;
     if (orphanedSecurity || table && !existing) throw new Error('Security database configuration is missing; no automatic fallback');
-    if (existing && (existing.version !== 1 || existing.mode !== mode)) throw new Error('Security database mode/version mismatch; no automatic downgrade or cutover');
+    if (existing && (existing.version !== version || existing.mode !== mode)) throw new Error('Security database mode/version mismatch; no automatic downgrade or cutover');
+    if(existing && mode==='foundation')for(const name of ['security_manager','security_subjects','security_fences','security_grants','security_task_authorities','security_events']) {
+      if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw new Error('Security authority table is missing; explicit recovery is required');
+    }
     if (!existing && mode === 'foundation' && Number(db.prepare('SELECT count(*) AS n FROM jobs').get()!.n) > 0) throw new Error('Existing tasks require an explicit offline security migration');
     this.enabled = mode === 'foundation';
     this.atomic(() => {
@@ -55,15 +69,19 @@ export class SecurityStore {
       CREATE TABLE IF NOT EXISTS security_task_authorities(id TEXT PRIMARY KEY,owner TEXT NOT NULL,member_id TEXT NOT NULL,installation_id TEXT NOT NULL,task_id TEXT NOT NULL,request_revision INTEGER NOT NULL,agent_grant_id TEXT NOT NULL,agent_grant_revision INTEGER NOT NULL,data_grant_id TEXT NOT NULL,data_grant_revision INTEGER NOT NULL,auth_epoch INTEGER NOT NULL,state TEXT NOT NULL,expires_at INTEGER NOT NULL,body TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS security_active_task_authority ON security_task_authorities(task_id) WHERE state='active';
       CREATE TABLE IF NOT EXISTS security_events(id TEXT PRIMARY KEY,at INTEGER NOT NULL,kind TEXT NOT NULL,subject_digest TEXT NOT NULL,revision INTEGER NOT NULL);`);
-      db.prepare('INSERT OR IGNORE INTO security_settings VALUES(1,1,?)').run(mode);
+      db.prepare('INSERT OR IGNORE INTO security_settings VALUES(1,?,?)').run(version,mode);
       if (db.prepare('SELECT mode FROM security_settings WHERE slot=1').get()?.mode !== mode) throw new Error('Security mode changed concurrently');
     });
+    this.policies = new SecurityPolicies(db, this);
+    this.recoveries = new RecoveryStore(db,this);
   }
-  private atomic<T>(fn: () => T): T {
+  atomic<T>(fn: () => T): T {
     const name = `security_${++this.sequence}`;
     this.db.exec(`SAVEPOINT ${name}`);
+    this.atomicDepth++;
     try { const result = fn(); this.db.exec(`RELEASE ${name}`); return result; }
     catch (error) { this.db.exec(`ROLLBACK TO ${name}; RELEASE ${name}`); throw error; }
+    finally { this.atomicDepth--; }
   }
   private event(kind: string, ref: unknown, revision: number) { this.db.prepare('INSERT INTO security_events VALUES(?,?,?,?,?)').run(randomUUID(), this.now(), kind, digest(ref), revision); }
   acquireManager(): string {
@@ -80,7 +98,8 @@ export class SecurityStore {
   }
   releaseManager(token: string) { this.db.prepare('UPDATE security_manager SET expires_at=0 WHERE slot=1 AND token=?').run(token); }
   private requireManager(token?: string) {
-    const row = this.db.prepare("SELECT m.token,m.expires_at FROM security_manager m JOIN security_settings c ON c.slot=m.slot WHERE m.slot=1 AND c.version=1 AND c.mode='foundation'").get();
+    this.policies.revision();
+    const row = this.db.prepare("SELECT m.token,m.expires_at FROM security_manager m JOIN security_settings c ON c.slot=m.slot WHERE m.slot=1 AND c.version=2 AND c.mode='foundation'").get();
     if (!this.enabled || !row || Number(row.expires_at) <= this.now() || token !== undefined && row.token !== token) throw new SecurityError('AUTHORITY_UNAVAILABLE');
   }
   subjects(): Subject[] { return this.db.prepare('SELECT * FROM security_subjects ORDER BY installation_id').all().map(subject); }
@@ -195,7 +214,8 @@ export class SecurityStore {
         const object = this.db.prepare('SELECT revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(g.ownerKey, input.object.type, input.object.id);
         if (!object || object.revision !== input.objectRevision) throw new DomainError('CONFLICT', 'Grant input must reference a current owned object revision');
       }
-      this.insertGrant(g); this.event('task_grant_issued', g.id, g.revision); return g;
+      if(g.purpose!=='delegated_task' || g.inputs.length && !g.operations.includes('member_asset.read')) throw new SecurityError('AUTHORIZATION_REQUIRED');
+      this.insertGrant(g); this.policies.bindInputs(g); this.event('task_grant_issued', g.id, g.revision); return g;
     });
   }
   attachTaskAuthority(input: unknown): TaskAuthority {
@@ -208,7 +228,7 @@ export class SecurityStore {
       if (a.ownerKey !== s.ownerKey || a.memberId !== s.memberId || a.agentGrant.id !== p.id || a.agentGrant.revision !== p.revision
         || d.installationId !== a.installationId || d.ownerKey !== a.ownerKey || d.memberId !== a.memberId || d.revision !== a.dataGrant.revision
         || d.parentGrant.id !== p.id || d.parentGrant.revision !== p.revision || d.taskId !== a.taskId || d.requestRevision !== a.requestRevision
-        || !d.operations.includes('task.process') || !a.submittedScopes.includes('tasks:write') || d.inputs.length > 0 && !a.submittedScopes.includes('tasks:read')
+        || !d.operations.includes('task.process') || (a.authorityOrigin==='agent_submission' ? !a.submittedScopes.includes('tasks:write') || d.inputs.length > 0 && !a.submittedScopes.includes('tasks:read') : a.submittedScopes.length!==0)
         || a.revision !== 1 || Date.parse(a.issuedAt) > this.now() || Date.parse(a.expiresAt) <= this.now() || Date.parse(a.expiresAt) > Math.min(Date.parse(d.expiresAt), Date.parse(p.expiresAt))) throw new SecurityError('ACCESS_REVOKED');
       this.db.prepare("INSERT INTO security_task_authorities VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?,?)").run(a.id, a.ownerKey, a.memberId, a.installationId, a.taskId, a.requestRevision, p.id, p.revision, d.id, d.revision, s.epoch, Date.parse(a.expiresAt), JSON.stringify(a));
       this.event('task_authority_attached', a.id, a.revision); return a;
@@ -217,7 +237,54 @@ export class SecurityStore {
   readonly workPredicate = `AND id IN (SELECT a.task_id ${authorityQuery})`;
   workAuthority(owner: string, jobId: string, now = this.now()): TaskAuthority | undefined {
     if (!this.enabled) return;
-    const row = this.db.prepare(`SELECT a.body ${authorityQuery} AND a.owner=? AND a.task_id=?`).get({ securityNow: now }, owner, jobId);
+    try{this.policies.revision();}catch{return;}
+    const row = this.db.prepare(`SELECT a.body ${authorityQuery} AND a.owner=? AND a.task_id=?`).get({ securityNow: now,securityDefinition:this.policies.definitionDigest }, owner, jobId);
     return row ? taskExecutionAuthoritySchema.parse(JSON.parse(String(row.body))) : undefined;
+  }
+  agentContext(principal: Principal): Extract<AccessContext, { actorKind: 'agent' }> {
+    const actor = accessContextSchema.parse(principal.access);
+    if (actor.actorKind !== 'agent' || actor.ownerKey !== ownerKey(principal) || actor.clientId !== principal.clientId
+      || digest([...actor.tokenScopes].sort()) !== digest([...new Set(principal.scopes)].sort())) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.requireSubject(actor.installationId, actor.authEpoch);
+    const parent = this.agentGrant(actor.installationId);
+    if (parent.id !== actor.agentGrant.id || parent.revision !== actor.agentGrant.revision) throw new SecurityError('POLICY_CHANGED');
+    return actor;
+  }
+  taskGrant(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string): TaskDataGrant {
+    this.requireSubject(actor.installationId, actor.authEpoch);
+    const parent = this.agentGrant(actor.installationId);
+    const rows = this.db.prepare("SELECT d.* FROM security_grants d JOIN jobs j ON j.id=json_extract(d.body,'$.taskId') AND j.owner=d.owner WHERE d.owner=? AND d.installation_id=? AND d.kind='task_data' AND d.state='active' AND d.expires_at>? AND d.parent_id=? AND d.parent_revision=? AND json_extract(d.body,'$.taskId')=? AND json_extract(d.body,'$.requestRevision')=json_extract(j.body,'$.delegation.request.revision') ORDER BY d.rowid DESC")
+      .all(actor.ownerKey, actor.installationId, this.now(), parent.id, parent.revision, taskId);
+    if (rows.length !== 1) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    return taskDataGrantSchema.parse(grant(rows[0]!));
+  }
+  scope(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string | undefined, operation: AuthorizationScope['operation']): AuthorizationScope {
+    const data = taskId ? this.taskGrant(actor, taskId) : undefined, policyRevision = this.policies.revision();
+    if (data && (data.purpose!=='delegated_task' || !data.operations.includes(operation) || data.inputs.length>0 && !data.operations.includes('member_asset.read'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const parent = this.agentGrant(actor.installationId);
+    const scope: AuthorizationScope = { actor, policies: this.policies, grant: data, operation, policyRevision, lineage: new Map(), assertCurrent: () => {
+      this.requireSubject(actor.installationId, actor.authEpoch);
+      const currentParent = this.agentGrant(actor.installationId);
+      if (currentParent.id !== parent.id || currentParent.revision !== parent.revision || this.policies.revision() !== policyRevision) throw new SecurityError('POLICY_CHANGED');
+      if (data) { const current = this.taskGrant(actor, data.taskId); if (current.id !== data.id || current.revision !== data.revision) throw new SecurityError('POLICY_CHANGED'); }
+      if (actor.actorKind === 'worker') {
+        const lease=this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(actor.taskId);
+        if (this.workAuthority(actor.ownerKey, actor.taskId)?.id !== actor.authorityRef.id || !lease || Number(lease.expires_at)<=this.now() || digest(String(lease.token))!==actor.claimRef) throw new SecurityError('ACCESS_REVOKED');
+      }
+    } };
+    scope.assertCurrent(); if(actor.actorKind==='worker') this.policies.loadLineage(scope); return scope;
+  }
+  withAgent<T>(principal: Principal, taskId: string | undefined, operation: AuthorizationScope['operation'], action: (scope: AuthorizationScope) => T): T {
+    const scope = this.scope(this.agentContext(principal), taskId, operation);
+    return withAuthorization(scope, () => { const value = action(scope); scope.assertCurrent(); return value; });
+  }
+  workerScope(owner: string, taskId: string, authorityId: string, claimToken: string): AuthorizationScope {
+    const a = this.workAuthority(owner, taskId), subject = a && this.requireSubject(a.installationId, a.authEpoch);
+    if (!a || !subject || a.id !== authorityId) throw new SecurityError('ACCESS_REVOKED');
+    const actor = accessContextSchema.parse({ version: SECURITY_CONTRACT, actorKind: 'worker', ownerKey: owner, memberId: a.memberId, installationId: a.installationId,
+      clientId: subject.clientId, tokenScopes: a.submittedScopes, authEpoch: a.authEpoch, policyVersion: POLICY_VERSION, checkedAt: new Date(this.now()).toISOString(),
+      taskId, requestRevision: a.requestRevision, authorityRef: { id: a.id, revision: a.revision }, dataGrant: a.dataGrant, claimRef: digest(claimToken) });
+    if (actor.actorKind !== 'worker') throw new SecurityError('ACCESS_REVOKED');
+    return this.scope(actor, taskId, 'task.process');
   }
 }

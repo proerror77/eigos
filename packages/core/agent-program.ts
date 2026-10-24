@@ -39,6 +39,9 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  /** Optional minimal observer for an explicitly approved original-operation
+   * recovery. It must not call invoke or receive a graph/model/dispatch context. */
+  observeOriginal?(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal):Promise<import('../security/recovery.js').RecoveryObservation|undefined>;
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   readonly ref: Ref;

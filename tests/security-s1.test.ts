@@ -10,6 +10,7 @@ import { openMembershipAdministration } from '../packages/security/admin.js';
 import { SecurityError } from '../packages/security/store.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { securityFixture } from './fixtures/security.js';
+import {historicalAttempt} from './fixtures/security-ledger.js';
 
 test('S1 preserves verified installation identity and never enrolls a token into a data grant implicitly', () => {
   const f = securityFixture();
@@ -184,7 +185,7 @@ test('S1 records already dispatched late facts as audit-only without accepting t
     const id = randomUUID();
     f.jobs.createIntent(f.owner, { id, owner: f.owner, jobId: t.job.id, stepId: 'read', businessOperationKey: randomUUID(), planDigest: 'synthetic-plan',
       bindingRef: { id: 'synthetic', version: '1' }, inputDigest: 'input', privateDigest: 'private', privateData: {}, effect: 'read', state: 'ready', nextAt: 0, createdAt: new Date().toISOString() });
-    const attempt = f.jobs.startAttempt(claim, id, 'dispatch', 'input');
+    const attempt = historicalAttempt(f.database,claim,id,'synthetic-plan');
     f.coordinator.revokeInstallation(f.member.id, a.id);
     assert.throws(() => f.jobs.startAttempt(claim, id, 'observe', 'input'), /no longer active/);
     assert.equal(f.jobs.attempts(f.owner, id).length, 1);

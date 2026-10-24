@@ -35,7 +35,7 @@ export function securityFixture(now: () => number = Date.now) {
     jobs.save(owner, job);
     const grant = jobs.security.issueTaskGrant({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, kind: 'task_data', status: 'active', ownerKey: owner,
       memberId: member.id, approvedByMemberId: member.id, installationId, issuedAt: at, expiresAt: parent.expiresAt,
-      parentGrant: { id: parent.id, revision: parent.revision }, taskId: id, requestRevision: 1, purpose: 'synthetic_test', operations: ['task.process'], inputs: [], outputs: [], channels: ['registered_model'] });
+      parentGrant: { id: parent.id, revision: parent.revision }, taskId: id, requestRevision: 1, purpose: 'delegated_task', operations: ['task.process'], inputs: [], outputs: [], channels: ['registered_model'] });
     const authority = jobs.security.attachTaskAuthority({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, ownerKey: owner, memberId: member.id, installationId,
       taskId: id, requestRevision: 1, agentGrant: { id: parent.id, revision: parent.revision }, dataGrant: { id: grant.id, revision: grant.revision },
       submittedScopes: ['tasks:write'], authEpoch: jobs.security.requireSubject(installationId).epoch, policyVersion: POLICY_VERSION, issuedAt: at, expiresAt: grant.expiresAt });

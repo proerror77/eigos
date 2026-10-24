@@ -2,9 +2,11 @@ import { ModelSessionError } from '../../packages/capabilities/model-session.js'
 import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
+import { withAuthorization,type AuthorizationScope } from '../../packages/security/context.js';
+import type {RecoveryWork} from '../../packages/security/recovery.js';
 
 export interface WorkerOptions {
-  coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts'>>;
+  coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts' | 'claimRecovery' | 'recover'>>;
   pollMs?: number;
   leaseMs?: number;
   timeoutMs?: number;
@@ -36,24 +38,40 @@ export class Worker {
     const services = ['eigos.delegate'];
     while (this.running.size < 2) {
       const claim = this.store.claim(services, this.leaseMs);
-      if (!claim) break;
+      if (!claim) {
+        const recovery=this.options.coordinator.recover && this.options.coordinator.claimRecovery?.();
+        if(recovery){this.executeRecovery(recovery);continue;}
+        break;
+      }
       this.execute(claim);
     }
+  }
+  private executeRecovery(work:RecoveryWork) {
+    const key=`recovery:${work.permit.id}`,controller=new AbortController(),run={controller,done:Promise.resolve()};this.running.set(key,run);
+    const heartbeat=setInterval(()=>{if(!this.store.security.recoveries.renew(work))controller.abort();},Math.min(this.pollMs,5000));
+    const timeout=setTimeout(()=>controller.abort(),this.options.timeoutMs??300000);
+    run.done=Promise.resolve().then(()=>this.options.coordinator.recover!(work,controller.signal)).catch(()=>this.store.security.recoveries.finish(work)).finally(()=>{
+      clearInterval(heartbeat);clearTimeout(timeout);this.running.delete(key);
+    });
+    void run.done.catch(()=>console.error('Original-operation audit writeback failed; no business replay'));
   }
 
   private execute(claim: WorkClaim): void {
     const { job, owner } = claim;
     const controller = new AbortController();
+    let scope:AuthorizationScope|undefined;
     const run = { controller, done: Promise.resolve() };
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
-      try { if (!this.store.renew(claim, this.leaseMs)) controller.abort(); }
+      try { scope?.assertCurrent(); if (!this.store.renew(claim, this.leaseMs)) controller.abort(); }
       catch { controller.abort(); }
     }, Math.min(this.pollMs, Math.floor(this.leaseMs / 3)));
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 300000);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
-      await this.options.coordinator.run(claim, controller.signal);
+      scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
+      if (scope) await withAuthorization(scope,()=>this.options.coordinator.run(claim,controller.signal));
+      else await this.options.coordinator.run(claim, controller.signal);
     }).catch(error => {
       this.store.finish(claim, current => {
         const intentId = current.delegation?.intentId;

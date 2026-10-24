@@ -5,6 +5,10 @@ import { DomainError } from '../core/domain.js';
 import { businessModel } from './business-model.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
 import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
+import type { SecurityPolicies } from '../security/policy-store.js';
+import { authorizationScope } from '../security/context.js';
+import { SecurityError } from '../security/store.js';
+import {accessDigest} from '../security/model.js';
 
 const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
@@ -34,7 +38,7 @@ function failure(message: string): never { throw new DomainError('INVALID_INPUT'
 /** Owned business objects only. Writes are internal source mappings, never public query operations. */
 export class OntologyObjectStore {
   readonly model: OntologyModel;
-  constructor(private db: DatabaseSync, model = businessModel, readonly now: () => number = Date.now) {
+  constructor(private db: DatabaseSync, model = businessModel, readonly now: () => number = Date.now, readonly security?: SecurityPolicies) {
     this.model = model;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ontology_objects (owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,type,id));
@@ -44,11 +48,13 @@ export class OntologyObjectStore {
       CREATE TABLE IF NOT EXISTS ontology_revisions (owner TEXT PRIMARY KEY,revision INTEGER NOT NULL);
     `);
   }
+  private guard() { return authorizationScope()?.projection ? undefined : this.security; }
+  private properties(type:string) {return this.guard()?.fields(type) ?? this.model.properties(type);}
   private charge(budget: ReadBudget, count = 1) {
     budget.remaining -= count;
     if (budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query');
   }
-  revision(owner: string): number { return Number(this.db.prepare('SELECT revision FROM ontology_revisions WHERE owner=?').get(owner)?.revision ?? 0); }
+  revision(owner: string): number { return this.guard()?.visibleRevision(owner) ?? Number(this.db.prepare('SELECT revision FROM ontology_revisions WHERE owner=?').get(owner)?.revision ?? 0); }
   private raw(owner: string, ref: ObjectRef, budget: ReadBudget): StoredObject {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     const row = this.db.prepare('SELECT * FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, ref.type, ref.id);
@@ -57,20 +63,35 @@ export class OntologyObjectStore {
     return { ref, revision: Number(row.revision), ...JSON.parse(String(row.body)) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
+    this.guard()?.requireObject(owner, ref);
     return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
   }
+  /** Internal evidence validation returns a digest, never the unprojected body. */
+  evidencePropertiesDigest(owner:string,ref:ObjectRef,budget:ReadBudget):string {
+    if(this.guard()) {
+      if(!authorizationScope()?.integrity) throw new SecurityError('AUTHORIZATION_REQUIRED');
+      this.guard()!.requireObject(owner,ref);
+    }
+    return digest(this.raw(owner,ref,budget).properties);
+  }
   relationshipDigest(owner: string, ref: ObjectRef, budget: ReadBudget): string {
+    this.guard()?.requireObject(owner, ref);
     this.raw(owner, ref, budget);
     const rows = this.db.prepare("SELECT * FROM ontology_links WHERE owner=? AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201").all(owner, ref.type, ref.id);
     this.charge(budget, rows.length);
     if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship evidence exceeds the read bound');
-    return linkSnapshotDigest(ref, rows.map(row => {
+    return linkSnapshotDigest(ref, rows.filter(row => {
+      const guard = this.guard(); if (!guard || authorizationScope()?.integrity) return true;
+      const scope = guard.scope(owner);
+      return guard.resourceAllowed(scope, 'linkType', String(row.type)) && !!guard.binding(scope, { type: String(row.to_type), id: String(row.to_id) });
+    }).map(row => {
       if (row.definition_digest !== digest(this.model.link(String(row.type)))) throw new DomainError('CONFLICT', 'Pinned link definition changed');
       return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
     }));
   }
   /** Atomic import with schema, identity, revision, endpoint and cardinality checks. */
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void {
+    if (this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
     z.string().min(1).max(2000).parse(owner);
     if (Buffer.byteLength(JSON.stringify(input)) > 1_000_000) failure('Ontology import byte limit exceeded');
     const batch = batchSchema.parse(input), source = sourceSchema.parse(provenance);
@@ -131,30 +152,51 @@ export class OntologyObjectStore {
         }
       }
       if (changed) this.db.prepare('INSERT INTO ontology_revisions VALUES(?,1) ON CONFLICT(owner) DO UPDATE SET revision=revision+1').run(owner);
+      this.security?.recordProjection(owner, batch, source);
       this.db.exec('RELEASE ontology_import');
     } catch (error) { this.db.exec('ROLLBACK TO ontology_import; RELEASE ontology_import'); throw error; }
   }
   private project(owner: string, object: StoredObject, target: string, select: string[] | undefined, budget: ReadBudget): ObjectView {
     const properties: Record<string, unknown> = {}, derived: NonNullable<ObjectView['derived']> = {};
-    const selected = select ?? Object.keys(this.model.properties(target)).filter(k => { const p = this.model.properties(target)[k]!; return !p.restricted && !p.derived; });
+    const guard = this.guard(), binding = guard?.requireObject(owner, object.ref, object.revision);
+    const selected = select ?? Object.keys(this.properties(target)).filter(k => { const p = this.properties(target)[k]!; return !p.restricted && !p.derived; });
     for (const name of selected) {
-      const p = this.model.properties(target)[name];
+      const p = this.properties(target)[name];
       if (!p) failure('Unknown property');
       if (p.restricted) throw new DomainError('FORBIDDEN', 'Property is not available through the agent query interface');
       const actual = this.model.propertyName(object.ref.type, target, name);
+      if (binding && !binding.fields.includes(actual)) {
+        if(!(authorizationScope()?.integrity && guard!.integrityAllowed(object.ref.type,actual,binding.fields))) {
+          if (select || authorizationScope()?.inference && guard!.fieldPolicy(object.ref.type,actual)!=='internal_only') throw new SecurityError('INSUFFICIENT_ACCESS');
+          continue;
+        }
+      }
       if (p.derived) {
-        const computation = deriveProperty(this, owner, object.ref, p.derived, budget);
+        const computation = guard ? guard.infer(owner, p.derived, () => deriveProperty(this, owner, object.ref, p.derived!, budget)) : deriveProperty(this, owner, object.ref, p.derived, budget);
         if (computation.status === 'known') properties[name] = computation.value;
         derived[name] = { status: computation.status, reason: computation.reason, functionRef: { id: p.derived, version: this.model.function(p.derived).version }, evidenceRefs: computation.evidenceRefs, evidenceLevels: computation.evidenceLevels };
-      } else if (Object.hasOwn(object.properties, actual)) properties[name] = object.properties[actual];
+      } else {
+        const value=guard?guard.value(object.ref.type,actual,object.properties):object.properties[actual];
+        if(value!==undefined) properties[name]=value;
+      }
     }
-    return { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
+    const value = { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
+    // Interface names are projected from concrete policy fields, never a second
+    // independently visible copy of a hidden concrete field.
+    if (guard && target === object.ref.type) return guard.project(owner, value, select);
+    if (guard) {
+      const safe = guard.project(owner, { ...object, properties: Object.fromEntries(Object.entries(properties).map(([k,v]) => [this.model.propertyName(object.ref.type, target, k), v])) });
+      value.properties = Object.fromEntries(Object.entries(properties).filter(([k]) => Object.hasOwn(safe.properties, this.model.propertyName(object.ref.type, target, k))));
+    }
+    return value;
   }
   query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }) {
     const args = objectQuerySchema.parse(input);
+    const guard = this.guard(), scope = guard?.scope(owner);
     const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined });
     let last: ObjectRef | undefined;
-    if (args.cursor) {
+    if (args.cursor && guard) last = guard.cursor(owner, queryDigest, args.cursor) as ObjectRef;
+    else if (args.cursor) {
       let cursor: z.infer<typeof cursorSchema>;
       try { cursor = cursorSchema.parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString())); } catch { return failure('Invalid ontology cursor'); }
       if (cursor.owner !== digest(owner) || cursor.query !== queryDigest || cursor.model !== this.model.ref.digest || cursor.revision !== revision) throw new DomainError('CONFLICT', 'Query context changed; restart the bounded query');
@@ -162,13 +204,16 @@ export class OntologyObjectStore {
     }
     let target: string, sql: string, params: (string | number)[];
     if ('object' in args) {
+      guard?.requireObject(owner, args.object);
       this.raw(owner, args.object, budget);
       target = args.object.type;
       sql = 'SELECT o.* FROM ontology_objects o WHERE o.owner=? AND o.type=? AND o.id=?';
       params = [owner, args.object.type, args.object.id];
     } else if ('from' in args) {
+      guard?.requireObject(owner, args.from);
       this.raw(owner, args.from, budget);
       const nav = this.model.navigation(args.from.type, args.link);
+      if (guard && scope) guard.requireResource(scope, 'linkType', nav.link.id);
       target = nav.other.type;
       const side = nav.direction === 'forward' ? 'from' : 'to', other = nav.direction === 'forward' ? 'to' : 'from';
       if (this.db.prepare(`SELECT 1 FROM ontology_links WHERE owner=? AND type=? AND ${side}_type=? AND ${side}_id=? AND definition_digest<>? LIMIT 1`).get(owner, nav.link.id, args.from.type, args.from.id, digest(nav.link))) throw new DomainError('CONFLICT', 'Pinned link definition changed');
@@ -180,7 +225,12 @@ export class OntologyObjectStore {
       sql = `SELECT o.* FROM ontology_objects o WHERE o.owner=? AND o.type IN (${types.map(() => '?').join(',')})`;
       params = [owner, ...types];
     }
-    const properties = this.model.properties(target);
+    if (guard && scope) {
+      guard.requireResource(scope, this.model.isInterface(target) ? 'interface' : 'objectType', target);
+      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property));
+      sql += bound.sql; params.push(...bound.params);
+    }
+    const properties = this.properties(target);
     for (const name of args.select ?? []) {
       if (!Object.hasOwn(properties, name)) failure('Unknown selected property');
       if (properties[name]!.restricted) throw new DomainError('FORBIDDEN', 'Restricted property cannot be selected');
@@ -206,6 +256,8 @@ export class OntologyObjectStore {
       const ref = { type: String(row.type), id: String(row.id) };
       if (row.definition_digest !== this.model.fingerprint(ref.type)) throw new DomainError('CONFLICT', 'Pinned object definition changed');
       const object = { ref, revision: Number(row.revision), ...JSON.parse(String(row.body)) } as StoredObject;
+      const binding = guard?.requireObject(owner, ref, object.revision);
+      if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
       const matches = args.where.every(f => {
         const value = object.properties[this.model.propertyName(ref.type, target, f.property)];
         if (value === undefined) return false;
@@ -223,20 +275,37 @@ export class OntologyObjectStore {
       }
       last = ref;
     }
-    const cursor = hasMore && last ? Buffer.from(JSON.stringify({ owner: digest(owner), query: queryDigest, model: this.model.ref.digest, revision, last })).toString('base64url') : undefined;
+    const cursor = hasMore && last ? guard ? guard.cursor(owner, queryDigest, undefined, last) as string : Buffer.from(JSON.stringify({ owner: digest(owner), query: queryDigest, model: this.model.ref.digest, revision, last })).toString('base64url') : undefined;
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during query; retry against the current revision');
     return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision };
   }
   /** Single bounded relationship read for registered functions; never follows unlimited pages. */
   related(owner: string, from: ObjectRef, link: string, budget: ReadBudget): ObjectView[] | undefined {
     const result = this.query(owner, { from, link, limit: 50 }, budget);
+    if (this.guard()) {
+      const nav = this.model.navigation(from.type, link), side = nav.direction === 'forward' ? 'from' : 'to';
+      // Completeness is used only inside trusted calculations, never returned as
+      // a hidden neighbor count. Missing rows cannot imply a zero/full result.
+      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM ontology_links WHERE owner=? AND type=? AND ${side}_type=? AND ${side}_id=?`).get(owner, nav.link.id, from.type, from.id)?.n ?? 0);
+      if (total !== result.items.length) return undefined;
+    }
     return result.page.hasMore ? undefined : result.items;
   }
   evaluate(owner: string, input: unknown, budget: ReadBudget = { remaining: 1000 }) {
     const revision = this.revision(owner);
     const args = functionCallSchema.parse(input), definition = this.model.function(args.function);
     if (!definition.inputTypes.some(t => this.model.implements(args.object.type, t))) failure('Function requires its registered object type');
-    const result = { ...evaluateFunction(this, owner, args, budget), functionRef: { id: definition.id, version: definition.version }, model: this.model.ref };
+    const guard = this.guard();
+    if(guard){const scope=guard.scope(owner);guard.requireResource(scope,'function',args.function);guard.requireResource(scope,'function',args.function,'function.invoke');guard.requireObject(owner,args.object);}
+    let computation;
+    try { computation = guard ? guard.infer(owner, args.function, () => evaluateFunction(this, owner, args, budget)) : evaluateFunction(this, owner, args, budget); }
+    catch (error) {
+      if (!guard || !(error instanceof SecurityError && ['INSUFFICIENT_ACCESS','AUTHORIZATION_REQUIRED','OUTPUT_NOT_ALLOWED'].includes(error.reason) || error instanceof DomainError && error.code === 'NOT_FOUND')) throw error;
+      computation = { status: 'unknown' as const, reason: 'insufficient_access', evidenceRefs: [], evidenceLevels: [] };
+    }
+    const functionRef={id:definition.id,version:definition.version};
+    const model=this.security?{id:this.model.ref.id,version:'authorized.v2',digest:digest({functionRef,access:accessDigest()})}:this.model.ref;
+    const result = { ...computation, functionRef, model };
     if (Buffer.byteLength(JSON.stringify(result)) > 64000) throw new DomainError('CONFLICT', 'Function response limit exceeded; narrow the investigation');
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during calculation; retry against the current revision');
     return result;
