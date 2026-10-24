@@ -11,6 +11,7 @@ import { JobStore } from '../packages/core/store.js';
 import { digest } from '../packages/core/delegation.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, evidence, interpretation, owner, principal } from './backend-fixture.js';
+import { didiDataflow, dataflowCompletion } from './fixtures/didi-dataflow.js';
 import { didiFixture, input, syntheticKey } from './fixtures/didi.js';
 import { DIDI_PROGRAM_REF } from '../packages/capabilities/didi/program.js';
 import type { AgentDecision, AgentStep } from '../packages/ontology/agent-actions.js';
@@ -124,7 +125,7 @@ test('Cancellation during context preparation stops before opening or invoking a
   } finally { f.db.close(); }
 });
 
-function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' = false, reuse = false) {
+function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' | 'dataflow' = false, reuse = false) {
   const source = didiFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, didi: { ...source.binding, connector: source.connector } });
   const requests: { calls: number; packet: any }[] = [];
@@ -138,11 +139,11 @@ function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'depend
     const ctx = blocks.find(value => value.state?.scope) as AgentPlanningContext | undefined;
     if (!ctx) {
       const request = packet.task.request;
-      const initialSteps = initial ? [
+      const initialSteps = initial === 'dataflow' ? didiDataflow().map(step => ({ ...step, scopeInputs: ['scope'] })) : initial ? [
         { id: 'chosen_destination', action: initial === 'dependent' ? 'EstimateDidiRide' : 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'destination', keywords: input.destination }), scopeInputs: [initial === 'bad_binding' ? 'notTheScope' : 'scope'] },
         { id: 'chosen_origin', action: 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'origin', keywords: input.origin }), scopeInputs: ['scope'] },
       ] : undefined;
-      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF, ...(initialSteps ? { initialSteps } : {}) }) }, evidence: evidence() };
+      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF, ...(initialSteps ? { initialSteps } : {}), ...(initial === 'dataflow' ? { plannedCompletion: dataflowCompletion } : {}) }) }, evidence: evidence() };
     }
     const objects = packet.conversation.flatMap((entry: any) => entry.result.items ?? []);
     const observations: { ref: ObjectRef; snapshot: RideEstimateObservation }[] = objects.filter((object: any) => object.properties.snapshot).map((object: any) => ({ ref: object.ref, snapshot: object.properties.snapshot as RideEstimateObservation }));
@@ -278,5 +279,27 @@ test('Context evaluation retains expired source status and prevents dispatch eve
     const evaluations = f.requests.at(-1)!.packet.conversation.filter((entry: any) => entry.call.tool === 'evaluate_ontology');
     assert(evaluations.length && evaluations.every((entry: any) => entry.result.status === 'unknown'));
     assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read'));
+  } finally { f.close(); }
+});
+
+
+test('One grounding model response can choose a dynamic read graph and a conditional future evidence binding', async () => {
+  const f = syntheticContextDidi('dataflow', true);
+  try {
+    const job = f.b.submit(); const done = await f.b.run();
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+    assert.equal(f.requests.length, 1); assert.equal(done.runs!.length, 1);
+    assert.equal(f.requests[0]!.calls, 0, 'The model has no future provider facts');
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 3);
+    const state = done.delegation!.agent!, plan = state.plans[0]!;
+    assert(plan.initialSelection); verifyInitialPlan(done, f.store.ontology, f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!, plan);
+    assert.equal(plan.steps[2]!.inputRefs[1]!.compute!.function, 'selectDidiPlace');
+    assert.equal(state.completion!.mode, 'planned');
+    const preModelReads = new Set(done.runs![0]!.ontologyContext!.receiptIds);
+    for (const proof of [state.inputResolutions![0]!.ontologyPlanning, state.completion!.ontologyPlanning]) {
+      assert(proof.reads.every(read => read.origin === 'worker_context' && !preModelReads.has(read.id)));
+    }
+    assert.equal(state.completion!.modelRunId, done.runs![0]!.id);
+    assert.equal(f.store.get(owner, job.id).delegation!.acceptance!.accepted, true);
   } finally { f.close(); }
 });

@@ -1,0 +1,825 @@
+{
+  "format": "eigos.readonly-dataflow-measurement.v1",
+  "date": "2026-10-24",
+  "environment": {
+    "kind": "isolated_local_gateway_worker_with_real_model_and_live_readonly_didi",
+    "residentChanged": false,
+    "baseline": {
+      "backend": "ontology-execution-v19",
+      "sourceCommit": "8d2fb7ac893411c69666921085711ea35419b44e",
+      "buildDigest": "d8c6b3165d77a616da044b68c25d153fc81d65430132c1b1b1f74ec23c7ca412"
+    },
+    "candidate": {
+      "backend": "ontology-execution-v20",
+      "source": "implementation in this commit",
+      "buildDigest": "94915123c448b2d85135d7372bae3ac0f0e9673b167ea4b52cbcac1230d57070"
+    },
+    "sameNaturalLanguageGoalBytesVerified": true,
+    "configurationDifferenceOnly": [
+      "loopback port and URL",
+      "private database/audit paths",
+      "local development bearer",
+      "code release digest"
+    ],
+    "sourceAccountBindingEqual": true,
+    "modelNames": [
+      "gpt-6.1-sol"
+    ],
+    "order": "baseline1,candidate1,baseline2,candidate2",
+    "samplesPerVariant": 2,
+    "timing": "task receipt to host independent acceptance; continuous client separately; model runtime includes client/process overhead, not pure inference",
+    "readbackTiming": "independent MCP/store/raw-source audit after completion, with freshness replayed at acceptance"
+  },
+  "primarySamples": [
+    {
+      "sample": "controlled-baseline-1",
+      "backend": "ontology-execution-v19",
+      "accepted": true,
+      "taskSeconds": 31.069,
+      "continuousClientSeconds": 31.33370337499946,
+      "modelReplies": 3,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 29.05,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 15.704,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24175,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 784,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 37393
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 6.655,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 38061,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 393,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 41616
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 6.691,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 51928,
+            "cached_input_tokens": 38272,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 278,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 40349
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 1.246,
+      "graphCount": 2,
+      "completionMode": "model",
+      "inputResolutions": 0,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.332
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.352
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.562
+        }
+      ],
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 5,
+      "hostReadOrigins": {
+        "worker_context": 21
+      },
+      "selectedActionGraphs": [
+        {
+          "selectionPhase": "grounding",
+          "steps": [
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            }
+          ]
+        },
+        {
+          "selectionPhase": "planning",
+          "steps": [
+            {
+              "action": "EstimateDidiRide",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sample": "controlled-candidate-1",
+      "backend": "ontology-execution-v20",
+      "accepted": true,
+      "taskSeconds": 20.261,
+      "continuousClientSeconds": 20.586454250000315,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 18.697,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 18.697,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 25780,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 977,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 43776
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 1.07,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "inputResolutions": 1,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.327
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.299
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.444
+        }
+      ],
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 7,
+      "hostReadOrigins": {
+        "worker_context": 21
+      },
+      "selectedActionGraphs": [
+        {
+          "selectionPhase": "grounding",
+          "steps": [
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "EstimateDidiRide",
+              "dependencies": 2,
+              "deferredInputs": [
+                "originObservation",
+                "originPlaceId",
+                "destinationObservation",
+                "destinationPlaceId"
+              ],
+              "functions": [
+                "selectDidiPlace",
+                "selectDidiPlace"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sample": "controlled-baseline-2",
+      "backend": "ontology-execution-v19",
+      "accepted": true,
+      "taskSeconds": 32.293,
+      "continuousClientSeconds": 32.64403775000028,
+      "modelReplies": 3,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 30.513,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 15.526,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24221,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 832,
+            "reasoning_output_tokens": 35
+          },
+          "promptBytes": 37393
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 6.726,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 38041,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 394,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 41233
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 8.261,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 51426,
+            "cached_input_tokens": 38272,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 263,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 38966
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 0.998,
+      "graphCount": 2,
+      "completionMode": "model",
+      "inputResolutions": 0,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.278
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.313
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.407
+        }
+      ],
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 5,
+      "hostReadOrigins": {
+        "worker_context": 21
+      },
+      "selectedActionGraphs": [
+        {
+          "selectionPhase": "grounding",
+          "steps": [
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            }
+          ]
+        },
+        {
+          "selectionPhase": "planning",
+          "steps": [
+            {
+              "action": "EstimateDidiRide",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "sample": "controlled-candidate-2",
+      "backend": "ontology-execution-v20",
+      "accepted": true,
+      "taskSeconds": 27.746,
+      "continuousClientSeconds": 28.05978200000027,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 26.296,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 26.296,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 25748,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1029,
+            "reasoning_output_tokens": 47
+          },
+          "promptBytes": 43777
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 1.012,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "inputResolutions": 1,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.295
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.283
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.434
+        }
+      ],
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 7,
+      "hostReadOrigins": {
+        "worker_context": 21
+      },
+      "selectedActionGraphs": [
+        {
+          "selectionPhase": "grounding",
+          "steps": [
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "SearchDidiPlaces",
+              "dependencies": 0,
+              "deferredInputs": [],
+              "functions": []
+            },
+            {
+              "action": "EstimateDidiRide",
+              "dependencies": 2,
+              "deferredInputs": [
+                "originObservation",
+                "originPlaceId",
+                "destinationObservation",
+                "destinationPlaceId"
+              ],
+              "functions": [
+                "selectDidiPlace",
+                "selectDidiPlace"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "means": {
+    "taskSeconds": {
+      "baseline": 31.681,
+      "candidate": 24.0035,
+      "reductionPercent": 24.2338
+    },
+    "continuousClientSeconds": {
+      "baseline": 31.988871,
+      "candidate": 24.323118,
+      "reductionPercent": 23.9638
+    },
+    "modelReplies": {
+      "baseline": 3,
+      "candidate": 1,
+      "reductionPercent": 66.6667
+    },
+    "modelSessions": {
+      "baseline": 1,
+      "candidate": 1
+    },
+    "modelRuntimeSeconds": {
+      "baseline": 29.7815,
+      "candidate": 22.4965
+    },
+    "sourceCalls": {
+      "baseline": 3,
+      "candidate": 3
+    },
+    "sourceClientSecondsSum": {
+      "baseline": 1.122,
+      "candidate": 1.041
+    }
+  },
+  "dynamicVariation": {
+    "sample": "dynamic-places",
+    "backend": "ontology-execution-v20",
+    "accepted": true,
+    "taskSeconds": 13.472,
+    "continuousClientSeconds": 13.653810499999963,
+    "modelReplies": 1,
+    "modelSessions": 1,
+    "modelRuntimeSeconds": 12.553,
+    "modelRuns": [
+      {
+        "runtime": "codex-app-server",
+        "model": "gpt-6.1-sol",
+        "reasoningEffort": null,
+        "serviceTier": null,
+        "seconds": 12.553,
+        "sessionReused": false,
+        "usage": {
+          "input_tokens": 25760,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 525,
+          "reasoning_output_tokens": 45
+        },
+        "promptBytes": 43842
+      }
+    ],
+    "sourceCalls": 1,
+    "sourceClientSecondsSum": 0.305,
+    "graphCount": 1,
+    "completionMode": "planned",
+    "inputResolutions": 0,
+    "independentReadback": {
+      "a2aMcpStoreEqual": true,
+      "rawSourceHashesVerified": 1,
+      "allEffectsReadOnly": true,
+      "evaluationTime": "acceptance_time_replay"
+    },
+    "sourceOperations": [
+      {
+        "tool": "maps_textsearch",
+        "seconds": 0.305
+      }
+    ],
+    "hostOntologyReadReceipts": 10,
+    "recordedOntologyEvaluations": 1,
+    "hostReadOrigins": {
+      "worker_context": 10
+    },
+    "selectedActionGraphs": [
+      {
+        "selectionPhase": "grounding",
+        "steps": [
+          {
+            "action": "SearchDidiPlaces",
+            "dependencies": 0,
+            "deferredInputs": [],
+            "functions": []
+          }
+        ]
+      }
+    ]
+  },
+  "exploratorySamples": [
+    {
+      "sample": "baseline-1",
+      "backend": "ontology-execution-v19",
+      "accepted": true,
+      "taskSeconds": 84.219,
+      "continuousClientSeconds": null,
+      "modelReplies": 3,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 80.735,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 61.917,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 23231,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 768,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 51025
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 9.866,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 47447,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 391,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 41138
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 8.952,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 62757,
+            "cached_input_tokens": 47616,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 280,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 45868
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 1.247,
+      "graphCount": 2,
+      "completionMode": "model",
+      "inputResolutions": 0,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.305
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.352
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.59
+        }
+      ],
+      "excludedFromPrimaryReason": "Resident catalog differs from controlled instances; client polling was interrupted.",
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 5,
+      "hostReadOrigins": {
+        "worker_context": 21
+      }
+    },
+    {
+      "sample": "baseline-2",
+      "backend": "ontology-execution-v19",
+      "accepted": true,
+      "taskSeconds": 80.728,
+      "continuousClientSeconds": null,
+      "modelReplies": 3,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 57.256,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 32.649,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 27498,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 812,
+            "reasoning_output_tokens": 31
+          },
+          "promptBytes": 51025
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 10.587,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 41284,
+            "cached_input_tokens": 27264,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 403,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 41130
+        },
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 14.02,
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 56525,
+            "cached_input_tokens": 41088,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 293,
+            "reasoning_output_tokens": 0
+          },
+          "promptBytes": 45868
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 2.091,
+      "graphCount": 2,
+      "completionMode": "model",
+      "inputResolutions": 0,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.565
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.848
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.678
+        }
+      ],
+      "excludedFromPrimaryReason": "Resident catalog differs; overlapped local test execution and interrupted client polling.",
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 5,
+      "hostReadOrigins": {
+        "worker_context": 21
+      }
+    },
+    {
+      "sample": "candidate-pilot",
+      "backend": "ontology-execution-v20",
+      "accepted": true,
+      "taskSeconds": 28.681,
+      "continuousClientSeconds": 28.99079091600015,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "modelRuntimeSeconds": 26.691,
+      "modelRuns": [
+        {
+          "runtime": "codex-app-server",
+          "model": "gpt-6.1-sol",
+          "reasoningEffort": null,
+          "serviceTier": null,
+          "seconds": 26.691,
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 25742,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1039,
+            "reasoning_output_tokens": 37
+          },
+          "promptBytes": 43776
+        }
+      ],
+      "sourceCalls": 3,
+      "sourceClientSecondsSum": 1.111,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "inputResolutions": 1,
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.255
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.284
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.572
+        }
+      ],
+      "excludedFromPrimaryReason": "Exploratory pre-final source-selection refinement; overlapped local tests.",
+      "hostOntologyReadReceipts": 21,
+      "recordedOntologyEvaluations": 7,
+      "hostReadOrigins": {
+        "worker_context": 21
+      }
+    }
+  ],
+  "validation": {
+    "localFullTests": {
+      "passed": 619,
+      "failed": 0
+    },
+    "currentFocusedRegressions": {
+      "passed": 60,
+      "failed": 0
+    },
+    "processE2E": {
+      "passed": 8,
+      "failed": 0
+    },
+    "typeCheck": true,
+    "build": true,
+    "securityInventory": {
+      "passed": true,
+      "enforcement": "not_installed",
+      "surfaces": 34,
+      "functions": 35
+    },
+    "diffCheck": true
+  },
+  "limits": [
+    "Two samples per variant on one unambiguous route; no percentile or universal speed guarantee.",
+    "No native Grok conversation/UI dispatch time included.",
+    "Estimates only; provider quote expiry, final fees and ride fulfillment remain unknown.",
+    "Resident runtime was not upgraded; this validates the isolated implementation."
+  ]
+}

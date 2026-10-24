@@ -17,6 +17,7 @@ const argument: z.ZodType<Expression> = z.lazy(() => z.discriminatedUnion('from'
 export const mcpDependencySchema = z.strictObject({
   name: field, action: field.optional(), objectType: field, observationInput: field,
   selectionInput: field.optional(), role: field.optional(), evaluate: field, optional: z.boolean().optional(), evidence: z.enum(['model_evaluated', 'accepted']).optional(),
+  derive: z.strictObject({ function: field, path }).optional(),
 });
 export type McpReadDependency = z.infer<typeof mcpDependencySchema>;
 export const mcpReadBindingSchema = z.strictObject({
@@ -43,7 +44,7 @@ export type McpReadBinding = z.infer<typeof mcpReadBindingSchema>;
 const readModuleSchema = z.strictObject({
   format: z.literal('eigos.ontology.mcp-reads.v1'),
   id: z.string().regex(/^[a-z][a-z0-9.-]{0,99}$/), version: z.string().regex(/^[1-9][0-9]*$/),
-  completion: z.strictObject({ evaluate: field }),
+  completion: z.strictObject({ evaluate: field, planned: z.boolean().optional() }),
   actions: z.array(z.strictObject({ id: field, description: z.string().min(1).max(3000), resultType: field, mcp: mcpReadBindingSchema })).min(1).max(32),
 });
 export type McpReadModule = z.infer<typeof readModuleSchema>;

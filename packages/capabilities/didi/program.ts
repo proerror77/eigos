@@ -128,7 +128,7 @@ export class DidiAgentProgram implements AgentProgram {
   }
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input); const call = this.call(ctx, action, input);
-    if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
+    if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.inputPlanning ?? ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
     const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId }, call.tool, call.args, signal);
     const data = didiDataSchema.parse(result.data), receipt = didiReceiptSchema.parse(result.receipt);
     if (receipt.tool !== call.tool || receipt.inputDigest !== digest(call.args) || receipt.resultDigest !== digest(data) || receipt.endpoint !== didiEndpoint(this.binding.environment) || receipt.bindingId !== this.binding.bindingId || receipt.environment !== this.binding.environment) invalid('DiDi source receipt differs from the selected action');

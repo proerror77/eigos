@@ -50,7 +50,7 @@ export interface ActionDefinition {
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
   read?: { version: string; effect: 'read'; inputSchema: object; resultType: string;
-    mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string } } };
+    mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string; planned?: boolean } } };
   operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'live_free'; inputSchema: object; resultType: string };
 }
 export interface FunctionDefinition { id: string; version: string; inputTypes: string[]; description: string }
@@ -130,6 +130,7 @@ export class OntologyModel {
       if (a.read?.mcp) {
         mcpReadBindingSchema.parse(a.read.mcp);
         for (const dep of a.read.mcp.requires) if ((dep.action ? this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        for (const dep of a.read.mcp.requires) if (dep.derive && (!dep.selectionInput || !this.functions.some(f => f.id === dep.derive!.function && f.inputTypes.some(type => this.implements(dep.objectType, type))))) invalid('Unresolved ontology source derivation');
         if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
       }
       if (a.operation && (a.read || !['sandbox', 'live_free'].includes(a.operation.environment) || a.operation.environment === 'live_free' && (!['reserve', 'local'].includes(a.operation.effect) || !!a.operation.additionalEffects?.length) || !['local', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid bounded operation definition');

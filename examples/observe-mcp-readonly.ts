@@ -10,6 +10,8 @@ import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import type { Job } from '../packages/core/domain.js';
 import type { ActionIntent } from '../packages/ontology/actions.js';
+import type { AgentActionPlan } from '../packages/ontology/agent-actions.js';
+import type { McpReadDependency } from '../packages/ontology/mcp-read.js';
 
 const argument = (name: string) => { const i = process.argv.indexOf(name); return i < 0 ? undefined : process.argv[i + 1]; };
 assert(process.argv.includes('--live'), 'Use --live only to inspect an authorized existing test');
@@ -81,17 +83,18 @@ try {
       assert.equal(plan.modelDecision.steps.length, original.initialSteps.length);
       assert.equal(plan.modelDecision.completionJson, '');
       for (const [index, draft] of original.initialSteps.entries()) {
-        const definition = graph.model.action(draft.action); assert(definition.read?.mcp && !definition.read.mcp.requires.length);
+        const definition = graph.model.action(draft.action); assert(definition.read?.mcp && definition.read.mcp.requires.every(dep => dep.derive || dep.evidence === 'accepted'));
         assert(proof.definitionActions.includes(draft.action));
         const args = JSON.parse(draft.argumentsJson); assert(draft.scopeInputs.length && new Set(draft.scopeInputs).size === draft.scopeInputs.length);
         for (const key of draft.scopeInputs) { assert(!Object.hasOwn(args, key)); assert(Object.hasOwn(definition.inputs, key)); assert(graph.model.implements(plan.scope.type, definition.inputs[key]!)); args[key] = plan.scope; }
-        assert.equal(digest(plan.modelDecision.steps[index]), digest({ id: draft.id, action: draft.action, argumentsJson: JSON.stringify(args), dependsOn: [], inputRefs: [] }));
+        assert.equal(digest(plan.modelDecision.steps[index]), digest({ id: draft.id, action: draft.action, argumentsJson: JSON.stringify(args), dependsOn: draft.dependsOn ?? [], inputRefs: draft.inputRefs ?? [] }));
       }
+      assert.equal(digest(plan.modelDecision.plannedCompletion ?? null), digest(original.plannedCompletion ?? null));
       const { digest: expected, ...source } = proof.groundingPlanning; assert.equal(digest(source), expected);
       assert(proof.definitionActions.length <= 8);
       const functions = [...new Set(proof.definitionActions.flatMap(id => {
         const read = graph.model.action(id).read; assert(read?.mcp);
-        return [...read.mcp.requires.map(dependency => dependency.evaluate), ...(read.module ? [read.module.completion.evaluate] : [])];
+        return [...read.mcp.requires.flatMap(dependency => [dependency.evaluate, ...(dependency.derive ? [dependency.derive.function] : [])]), ...(read.module ? [read.module.completion.evaluate] : [])];
       }))];
       const definitionInput = { search: 'ServiceRequest', limit: 1, actions: proof.definitionActions, functions: functions.slice(0, 20), includeLinks: false };
       assert(source.reads.some(read => read.tool === 'describe_ontology' && read.status === 'ok' && read.inputDigest === digest(definitionInput)));
@@ -115,6 +118,34 @@ try {
       const accepted = JSON.parse(String(intent.body)); assert.equal(accepted.effect, 'read'); assert.equal(accepted.state, 'effect_confirmed');
       const ref = accepted.acceptedOutput.object;
       const snapshot = graph.read(owner, ref).properties.snapshot as { receipt: { tool?: string; operation?: string }; observedAt: string };
+      if (step.inputRefs.some(ref => ref.compute)) {
+        const resolution = delegation.agent!.inputResolutions?.find(item => item.planId === plan.id && item.stepId === step.id && item.intentId === step.intentId); assert(resolution);
+        assert.equal(resolution.ontologyPlanning.mode, 'worker_context');
+        const input = JSON.parse(step.argumentsJson);
+        for (const binding of step.inputRefs) {
+          const sourceStep = plan.steps.find(source => source.id === binding.stepId); assert(sourceStep && step.dependsOn.includes(sourceStep.id));
+          const row = db.prepare('SELECT body FROM action_intents WHERE owner=? AND id=?').get(owner, sourceStep.intentId); assert(row);
+          const source = JSON.parse(String(row.body)); assert.equal(source.state, 'effect_confirmed');
+          const object = source.acceptedOutput.object;
+          const sourceAt = String((graph.read(owner, object).properties.snapshot as { observedAt: string }).observedAt);
+          assert(resolution.ontologyPlanning.reads.every(read => read.at >= sourceAt), 'Binding reads must follow the actual source result');
+          if (binding.compute) {
+            const dep: McpReadDependency | undefined = definition.read.mcp.requires.find(dep => dep.selectionInput === binding.targetKey); assert(dep?.derive);
+            assert.equal(digest(dep.derive), digest(binding.compute));
+            assert(step.inputRefs.some(ref => ref.stepId === binding.stepId && ref.targetKey === dep.observationInput && !ref.compute));
+            const args = { function: binding.compute.function, object }, computed = graph.evaluate(owner, args); assert.equal(computed.status, 'known');
+            assert(resolution.ontologyPlanning.reads.some(read => read.tool === 'evaluate_ontology' && read.status === 'ok' && read.inputDigest === digest(args) && read.outputDigest === digest(computed)));
+            let value = computed.value;
+            for (const key of binding.compute.path) { assert(value && typeof value === 'object' && Object.hasOwn(value, key)); value = (value as Record<string, unknown>)[key]; }
+            input[binding.targetKey] = value;
+          } else input[binding.targetKey] = object;
+        }
+        assert.equal(resolution.inputDigest, digest(input));
+        assert.equal(digest((snapshot as unknown as { actionInput: unknown }).actionInput), digest(input));
+        const attempts = db.prepare('SELECT body FROM action_attempts WHERE owner=? AND intent_id=?').all(owner, step.intentId).map(row => JSON.parse(String(row.body)));
+        assert(attempts.length === 1 && attempts[0].inputDigest === digest(input));
+        assert(resolution.ontologyPlanning.reads.every(read => read.origin === 'worker_context' && read.at <= attempts[0].startedAt && digest(read) === digest(readById.get(read.id))));
+      }
       assert.equal(snapshot.receipt.tool ?? snapshot.receipt.operation, definition.read.mcp.tool);
       assert.equal(graph.evaluate(owner, { function: definition.read.module.completion.evaluate, object: ref }).status, 'known');
       return { action: step.action, tool: definition.read.mcp.tool, transport: definition.read.mcp.transport ?? 'mcp', module: definition.read.module, observation: ref, observedAt: snapshot.observedAt };
@@ -122,13 +153,31 @@ try {
   });
   const completion = delegation.agent.completion; assert(completion);
   const completionRun = job.runs!.find(run => run.id === completion.modelRunId); assert(completionRun);
-  assert.equal(completion.modelDecision.kind, 'complete');
-  assert.equal(completionRun.decisionDigest, digest(completion.modelDecision));
-  assert.equal(digest(JSON.parse(completion.modelDecision.completionJson)), digest(completion.proposal));
-  assert(bindings.every(binding => binding.observedAt <= (completionRun.requestSentAt ?? completionRun.startedAt)), 'The completion model response must follow actual source results');
-  if (completionRun.ontologyContext) assert(completionRun.ontologyContext.receiptIds.every(id => completion.ontologyPlanning.reads.some(read => read.id === id)));
+  if (completion.mode === 'planned') {
+    const plan = delegation.agent.plans.find(plan => plan.id === completion.planId); assert(plan);
+    assert.equal(digest(completion.modelDecision), digest(plan.modelDecision));
+    const selected = plan.modelDecision.plannedCompletion; assert(selected);
+    const proposal = JSON.parse(selected.argumentsJson);
+    for (const binding of selected.inputRefs) {
+      const step: AgentActionPlan['steps'][number] | undefined = plan.steps.find(step => step.id === binding.stepId); assert(step && !binding.compute);
+      assert.equal(graph.model.action(step.action).read?.module?.completion.planned, true);
+      const row = db.prepare('SELECT body FROM action_intents WHERE owner=? AND id=?').get(owner, step.intentId); assert(row);
+      const source = JSON.parse(String(row.body)); assert.equal(source.state, 'effect_confirmed');
+      proposal[binding.targetKey] = source.acceptedOutput.object;
+    }
+    assert.equal(digest(proposal), digest(completion.proposal));
+    assert(completion.ontologyPlanning.reads.every(read => read.origin === 'worker_context' && read.at >= completionRun.completedAt && digest(read) === digest(readById.get(read.id))));
+    assert(completion.ontologyPlanning.reads.every(read => bindings.every(binding => binding.observedAt <= read.at)), 'Planned completion reads must follow all selected source results');
+    assert.equal(completion.modelDecision.kind, 'execute', 'A prospective evidence binding is not a model claim to have observed its result');
+  } else {
+    assert.equal(completion.modelDecision.kind, 'complete');
+    assert.equal(completionRun.decisionDigest, digest(completion.modelDecision));
+    assert.equal(digest(JSON.parse(completion.modelDecision.completionJson)), digest(completion.proposal));
+    assert(bindings.every(binding => binding.observedAt <= (completionRun.requestSentAt ?? completionRun.startedAt)), 'The completion model response must follow actual source results');
+    if (completionRun.ontologyContext) assert(completionRun.ontologyContext.receiptIds.every(id => completion.ontologyPlanning.reads.some(read => read.id === id)));
+  }
   const initialSelections = delegation.agent.plans.filter(plan => plan.initialSelection).map(plan => ({ modelRunId: plan.modelRunId, actualGroundingAndInitialChoiceOneResponse: true, beforeModelReads: plan.initialSelection!.groundingPlanning.reads.length, postModelScopeBindingReads: plan.ontologyPlanning.reads.length, scopeActuallyReadBeforeDispatch: true }));
-  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, initialSelections, noOrderOrPayment: true };
+  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, initialSelections, completionMode: completion.mode ?? 'model', inputResolutions: delegation.agent.inputResolutions?.length ?? 0, noOrderOrPayment: true };
   writeFileSync(join(directory, 'ontology-mcp-observer.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ taskId: id, accepted: true, callerArtifactMatches: true, readActions: bindings.length, evaluationTime: report.evaluationTime }));
 } finally { db.close(); }

@@ -24,7 +24,7 @@ export const modelSessionKey = (owner: string, request: ServiceRequest, model: O
 export function contextDefinitionInput(graph: OntologyObjectStore, actions: string[]) {
   const functions = [...new Set(actions.flatMap(id => {
     const action = graph.model.action(id);
-    return action.read?.mcp ? [...action.read.mcp.requires.map(dependency => dependency.evaluate), ...(action.read.module ? [action.read.module.completion.evaluate] : [])] : [];
+    return action.read?.mcp ? [...action.read.mcp.requires.flatMap(dependency => [dependency.evaluate, ...(dependency.derive ? [dependency.derive.function] : [])]), ...(action.read.module ? [action.read.module.completion.evaluate] : [])] : [];
   }))];
   return { search: 'ServiceRequest', limit: 1, actions: actions.slice(0, 8), functions: functions.slice(0, 20), includeLinks: false };
 }

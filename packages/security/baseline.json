@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "16",
-    "digest": "7b258742833342b3f0653c8ca762ebeb36501da8ce861a79d2721fdb9f1efd2e"
+    "version": "17",
+    "digest": "549d0b3aa4a33c0223615629fd79fcbd843a361747e2013948184567f02fdbad"
   },
   "types": {
     "ServiceRequest": {
@@ -1498,7 +1498,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "0ef41a74288dc596ff61634064969a94071b078a65bbafdfae024300fee034bd",
+      "sourceDigest": "6e5762bbd3f8957ccfcafe22b769ce367830474f20733c145237595c0a1e9de5",
       "channels": [
         "model",
         "query"
@@ -1523,7 +1523,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "dc69f2675732ddb8d8fe2f2d93d3e3d8ea9696b6ad6dcdd534771b61aa9e0c55",
+      "sourceDigest": "a1bf2bb9ee8817d04b4079796f8c7683fe9e089a5915d47c38ef6d21a9e02ef0",
       "channels": [
         "model",
         "dispatch"
@@ -1536,7 +1536,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "9bc42fcd6631ec3aa81089e3835b7884b96204ed11468520daea51904e90c0aa",
+      "sourceDigest": "6afd6a3ad7516737d4e6b33106256139f2f3a1c88bbd4f83107281aea717ae65",
       "channels": [
         "model",
         "dispatch",
@@ -1713,7 +1713,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "a81a66b9b76870e0b5635e7fd8ff739c12ae171b17a6a9a59567965e8e2024b1",
+      "sourceDigest": "0664035e60d741143dcdcbda56a1bb048a4afb77bc3ed6c92bdc49582ac07be0",
       "channels": [
         "definition"
       ],
@@ -1721,6 +1721,62 @@
       "currentControl": "Authenticated describe call; no per-type policy",
       "targetControl": "Resource policy filtering including all action/function dependencies",
       "stage": "S2"
+    },
+    {
+      "id": "read-dataflow",
+      "file": "packages/coordinator/read-dataflow.ts",
+      "sourceDigest": "4d5a74eb98e220ebe2d25469cdb2447d7e362a6ee323395284a8dcf734e792eb",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Model-selected function bindings and future evidence selection",
+      "currentControl": "Declared read-only source functions; accepted own-task outputs; no host-generated steps",
+      "targetControl": "Intersect task/source grants and preserve derived labels",
+      "stage": "S3"
+    },
+    {
+      "id": "read-dataflow-contract",
+      "file": "packages/ontology/dataflow-contract.ts",
+      "sourceDigest": "8694a950dc5c5246f623217655b40896f38e0bb12c1fe0c22b7cf552d6c9675c",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Typed deferred bindings and conditional completion contract",
+      "currentControl": "Strict bounded schemas; no executable expressions or prototype paths",
+      "targetControl": "Versioned model channel contract and labeled evidence references",
+      "stage": "S3"
+    },
+    {
+      "id": "initial-selection",
+      "file": "packages/coordinator/initial-selection.ts",
+      "sourceDigest": "0c65b436b4f6f00c1934ec88d99ff17dd79e9ec805db1e3fa20b1dcf6231536b",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Grounding graph binding to the actual initialized task scope",
+      "currentControl": "Exact model response and fresh reads; scope-only binding; read-only eligibility",
+      "targetControl": "Current task authority and source policy before every dispatch",
+      "stage": "S3"
+    },
+    {
+      "id": "source-selection",
+      "file": "packages/ontology/ride-estimate-functions.ts",
+      "sourceDigest": "b3a1fb5e3b46ea3f38834ee01cef35bc247e8b960d8cc549324b81632f416524",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Pure source-derived place identity and source/freshness evaluation",
+      "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
+      "targetControl": "Caller-scoped inputs and derived-output protection",
+      "stage": "S3"
     }
   ]
 }

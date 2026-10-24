@@ -26,7 +26,7 @@ export const functionCallSchema = z.union([
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('meituanReadStatus'), simple('catalogObservationStatus'), simple('rideEstimateStatus'),
+  simple('meituanReadStatus'), simple('catalogObservationStatus'), simple('rideEstimateStatus'), simple('selectDidiPlace'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),

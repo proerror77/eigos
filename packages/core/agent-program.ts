@@ -18,6 +18,8 @@ export interface AgentActionContext extends AgentProgramContext {
   assertDispatchAllowed?: () => void;
   /** Private source/cache writes share the current claim/revision transaction. */
   persistPrivate?: (write: () => void) => boolean;
+  /** Actual post-source host reads for an explicitly model-selected dataflow. */
+  inputPlanning?: PlanningSnapshot;
 }
 export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];

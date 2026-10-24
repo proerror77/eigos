@@ -13,7 +13,7 @@ export function initialActionIds(graph: OntologyObjectStore, program: AgentProgr
   if (!program.actionIds.every(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; })) return [];
   return program.actionIds.filter(id => {
     const definition = graph.model.action(id);
-    return !definition.read!.mcp!.requires.length && Object.keys(definition.inputs).length > 0;
+    return definition.read!.mcp!.requires.every(dependency => dependency.derive || dependency.evidence === 'accepted') && Object.keys(definition.inputs).length > 0;
   });
 }
 
@@ -23,7 +23,7 @@ export function bindInitialSelection(graph: OntologyObjectStore, program: AgentP
   if (grounding.kind !== 'resolve' || !grounding.initialSteps?.length || digest(grounding.capabilityRef) !== digest(program.ref)) fail('Initial selection requires an exact resolved program');
   const available = initialActionIds(graph, program);
   const steps = grounding.initialSteps!.map(step => {
-    if (!available.includes(step.action)) fail('Initial actions must be source-independent, read-only MCP actions');
+    if (!available.includes(step.action)) fail('Initial actions require permitted read-only MCP actions with declared source bindings');
     const definition = graph.model.action(step.action), input: unknown = JSON.parse(step.argumentsJson);
     if (!input || typeof input !== 'object' || Array.isArray(input)) fail('Initial arguments must be an object');
     const bound = { ...input as Record<string, unknown> };
@@ -32,9 +32,9 @@ export function bindInitialSelection(graph: OntologyObjectStore, program: AgentP
       if (Object.hasOwn(bound, key) || !Object.hasOwn(definition.inputs, key) || !graph.model.implements(scope.type, definition.inputs[key]!)) fail('Initial scope binding does not match the registered input');
       bound[key] = scope;
     }
-    return { id: step.id, action: step.action, argumentsJson: JSON.stringify(bound), dependsOn: [], inputRefs: [] };
+    return { id: step.id, action: step.action, argumentsJson: JSON.stringify(bound), dependsOn: step.dependsOn ?? [], inputRefs: step.inputRefs ?? [] };
   });
-  return { kind: 'execute', requestRevision: grounding.requestRevision, message: grounding.message, steps, completionJson: '' };
+  return { kind: 'execute', requestRevision: grounding.requestRevision, message: grounding.message, steps, completionJson: '', ...(grounding.plannedCompletion ? { plannedCompletion: grounding.plannedCompletion } : {}) };
 }
 
 export function recordedInitialSelection(job: Job, modelRunId: string): Grounding {

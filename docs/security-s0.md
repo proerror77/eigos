@@ -9,7 +9,7 @@
 | 会员／安装／Worker 身份合同 | [contracts.ts](../packages/security/contracts.ts)：AccessContext 判别联合；复用原 ownerKey 语义、会员 UUID、registration.id、任务 revision 和 scopes，不重建登录系统。 |
 | 安装／任务数据／执行授权合同 | 同上：AgentAccessGrant、TaskDataGrant、TaskExecutionAuthority 的严格数据结构；已有 PlanGrant 保持原状。解析成功只证明结构有效，不证明权限有效。 |
 | 安全标签与默认规则 | 同上：SecurityEnvelope、角色权限、无自动降密／跨会员共享／旧任务补权；运行时策略组合和撤销由 S1–S4 实现。 |
-| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：103 个类型、823 个顶层属性的明确政策，模型和逐类型摘要，以及 30 个出口／控制路径的源码摘要。 |
+| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：103 个类型、823 个顶层属性的明确政策，模型和逐类型摘要，以及 34 个出口／控制路径的源码摘要（含 v20 只读数据流接缝）。 |
 | 嵌套字段覆盖和变化检测 | [inventory.ts](../packages/security/inventory.ts)：枚举对象／接口／关系／动作／函数；属性树覆盖数组、union、开放 record 和未知结构。新定义／字段、嵌套 schema 变化、已限制字段降级、已登记出口变化使检查失败。 |
 | 只读快照迁移报告 | [migration-audit.ts](../packages/security/migration-audit.ts)：直接 readOnly 打开显式快照，不构造会创建表的 JobStore／MemberStore，不执行迁移 SQL。 |
 | 可重复入口和回归 | [security-s0.mjs](../scripts/security-s0.mjs)、[测试](../tests/security-s0.test.ts)：清单检查、合同反例、离线副本、隐私和无改写验证。 |
@@ -29,9 +29,9 @@
 
 每条字段政策覆盖整棵子树，具体 schema 摘要固定。共记录 3,625 条规范化 schema 路径（含父节点、数组和通配路径，**不是 3,625 个独立业务属性**）。开放 record 的所有未知键继承 internal_only；不能只根据已知 key 的名称放行其余内容。
 
-类型行策略统一预定为 owner 与显式 task grant 交集；可复用资产不强制变成单任务实体。256 条关系要求两端与任务绑定；52 个动作独立检查执行许可并保留 PlanGrant；34 个函数沿调用者权限读取。三个接口不能绕过具体类型权限。定义摘要与安全策略摘要分开，现有业务证据 digest 不改写。
+类型行策略统一预定为 owner 与显式 task grant 交集；可复用资产不强制变成单任务实体。256 条关系要求两端与任务绑定；52 个动作独立检查执行许可并保留 PlanGrant；35 个函数沿调用者权限读取。三个接口不能绕过具体类型权限。定义摘要与安全策略摘要分开，现有业务证据 digest 不改写。
 
-S0 的出口清单覆盖 HTTP／MCP／A2A、任务变更响应、等待／列表／幂等、会员／安装控制、模型输入与缓存、来源连接器／浏览器桥、临时文件、CSV／Markdown 交付及日志接缝。它是经过源代码核查的明确清单，不是静态污点分析器；后续增加入口或新渠道必须更新清单及测试。30 个路径文件摘要用于阻止已有路径变更未复核就继续通过 S0。
+S0 的出口清单覆盖 HTTP／MCP／A2A、任务变更响应、等待／列表／幂等、会员／安装控制、模型输入与缓存、来源连接器／浏览器桥、临时文件、CSV／Markdown 交付及日志接缝。它是经过源代码核查的明确清单，不是静态污点分析器；后续增加入口或新渠道必须更新清单及测试。34 个路径文件摘要用于阻止已有路径变更未复核就继续通过 S0。
 
 ## 冻结的首期默认值
 
@@ -85,6 +85,8 @@ npm run security:s0 -- \
 脱敏机器记录见 [summary.json](evidence/security-s0-2026-10-24/summary.json)。结果证明 S0 清单与只读分析完成，不证明 S1 权限已生效或这些历史数据可直接自动迁移。
 
 ## 验证与接续
+
+v20 只读数据流改造保留全部对象字段政策与逐类型指纹，新增 `selectDidiPlace` 纯函数，并复核模型上下文、协调、执行和定义接缝；额外登记延后绑定、数据流合同、首轮 scope 绑定及来源选择四个路径。模型整体摘要随动作／函数合同变化，历史 S0 快照统计仍按原版本解释；没有借更新基线授予权限或改写业务证据。见[数据流合同](ontology-read-dataflow-2026-10-24.md)。
 
 回归覆盖定义／嵌套 schema 漂移、restricted 不降级、来源路径漂移、安装身份缺失、原始凭据注入、控制者不匹配、通配范围、许可超期、旧任务补权禁止、错误定义／任务版本、无隐私输出、快照不改写、缺表／缺文件和报告不覆盖。本地类型检查、601 项测试、构建、8 项进程 E2E、S0 清单检查和 diff 检查通过；最终清单目录下的 8 项 S0 专项另行复跑通过。远端 CI 和部署状态分别回读。
 

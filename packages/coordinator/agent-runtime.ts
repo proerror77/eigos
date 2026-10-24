@@ -16,6 +16,8 @@ import { checkRequirements } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
 import { agentOperation, agentPlanAuthorization, agentDispatchGrant, validateAgentAuthority, isLiveFreeOperation } from '../core/agent-authorization.js';
 import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } from './initial-selection.js';
+import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
+import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -74,6 +76,28 @@ export class AgentRuntime {
       job.messages.push({ id: randomUUID(), role: 'agent', text: message, at: job.updatedAt });
     });
   }
+  private accept(claim: WorkClaim, program: AgentProgram, selection: NonNullable<AgentExecutionState['completion']>) {
+    this.store.finish(claim, current => {
+      const fresh = this.context(claim), reads = selection.ontologyPlanning;
+      validatePlanningSnapshot(this.store.ontology, claim.owner, fresh.request, reads, true);
+      const delivery = program.complete(fresh, selection.proposal, reads), capability = program.capability();
+      const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
+      const checks = checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
+      if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
+      const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, undefined, 'result');
+      if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
+      const at = new Date().toISOString();
+      current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
+      if (current.delegation!.agent!.paPayment) current.delegation!.agent!.paPayment!.status = 'verified';
+      delete current.delegation!.agent!.pendingPlanId;
+      current.delegation!.phase = 'accepted'; current.delegation!.agent!.completion = selection;
+      current.delegation!.acceptance = { accepted: true, reason: selection.mode === 'planned'
+        ? 'The model selected a conditional future evidence binding; fresh post-source host reads, independent source validation and hard requirements passed'
+        : 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
+      current.delegation!.events.push({ at, event: selection.mode === 'planned' ? 'agent_planned_completion_verified' : 'agent_completion_verified', evidence: selection.modelRunId });
+      current.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
+    });
+  }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     if (claim.recovery) { await this.recoverTerminal(claim, this.program(claim), signal); return; }
     if (!this.withinTaskBudget(claim)) return;
@@ -111,6 +135,7 @@ export class AgentRuntime {
     }
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
+    validatePlannedCompletion(this.store.ontology, program, decision);
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
     const reads = access.session.finish();
@@ -125,23 +150,7 @@ export class AgentRuntime {
       try {
         if (decision.steps.length || !decision.completionJson) failure('A completion decision must contain only its evidence selection');
         const proposal: unknown = JSON.parse(decision.completionJson);
-        this.store.finish(claim, current => {
-          const fresh = this.context(claim);
-          validatePlanningSnapshot(this.store.ontology, claim.owner, fresh.request, reads, true);
-          const delivery = program.complete(fresh, proposal, reads), capability = program.capability();
-          const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
-          const checks = checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
-          if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
-          const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, undefined, 'result');
-          if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
-          const at = new Date().toISOString();
-          current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
-          if (current.delegation!.agent!.paPayment) current.delegation!.agent!.paPayment!.status = 'verified';
-          current.delegation!.phase = 'accepted'; current.delegation!.agent!.completion = { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads };
-          current.delegation!.acceptance = { accepted: true, reason: 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
-          current.delegation!.events.push({ at, event: 'agent_completion_verified', evidence: response.evidence.id });
-          current.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
-        });
+        this.accept(claim, program, { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads });
       } catch (error) {
         if (!this.store.claimActive(claim)) return;
         this.store.finish(claim, current => { this.feedback(current, 'completion', errorMessage(error), digest(decision.completionJson)); current.delegation!.nextAt = 0; });
@@ -162,14 +171,8 @@ export class AgentRuntime {
         if (!['read', 'local'].includes(operation.effect) && ((!isLiveFreeOperation(program, ctx, operation) && (!this.options.allowSandbox || program.capability().environment !== 'sandbox' || ctx.request.executionEnvironment !== 'sandbox')) || !program.authority || step.inputRefs.length)) failure('Business operations require a configured environment, current source inputs and exact authority');
         const parsed: unknown = JSON.parse(step.argumentsJson);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) failure('Action arguments must be an object');
-        const input = parsed as Record<string, unknown>, checked = { ...input }, targets = new Set<string>();
-        for (const link of step.inputRefs) {
-          const source = preceding.get(link.stepId) ?? failure('Unknown action output reference');
-          if (!step.dependsOn.includes(link.stepId) || Object.hasOwn(input, link.targetKey) || targets.has(link.targetKey)) failure('Invalid or ambiguous action output reference');
-          targets.add(link.targetKey);
-          checked[link.targetKey] = { type: agentOperation(program.definition(this.store.ontology, source.action)).resultType, id: `pending:${source.id}` };
-        }
-        program.schema(step.action).parse(checked);
+        const input = parsed as Record<string, unknown>;
+        validateReadBindings(this.store.ontology, program, step, definition, input, preceding);
         for (const value of Object.values(input)) {
           const ref = objectRefSchema.safeParse(value);
           if (ref.success && !reads.objects.some(o => equal(o.ref, ref.data))) failure('Read referenced ontology objects before selecting an action');
@@ -238,6 +241,22 @@ export class AgentRuntime {
       // A business-effect frontier remains serial and retains exact-plan grants.
       for (const step of plan.steps) if (!await this.executeStep(claim, program, plan, step, signal)) return;
     }
+    if (plan.modelDecision.plannedCompletion && plan.steps.every(step => this.store.intent(claim.owner, step.intentId).state === 'effect_confirmed')) {
+      try {
+        validatePlannedCompletion(this.store.ontology, program, plan.modelDecision);
+        const selected = plan.modelDecision.plannedCompletion;
+        const accepted = (id: string) => this.store.intent(claim.owner, plan.steps.find(step => step.id === id)!.intentId).acceptedOutput?.object;
+        const proposal = bindAcceptedObjects(dataflowArguments(selected.argumentsJson), selected.inputRefs, accepted);
+        const access = this.access(claim, signal);
+        access.session.prepareContext({ actions: selected.inputRefs.map(ref => plan.steps.find(step => step.id === ref.stepId)!.action), refs: [plan.scope, ...selected.inputRefs.map(ref => objectRefSchema.parse(accepted(ref.stepId)))] });
+        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId, modelDecision: plan.modelDecision, proposal, ontologyPlanning: access.session.finish() });
+        return;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!this.store.claimActive(claim)) return;
+        this.store.checkpoint(claim, job => this.feedback(job, 'completion', errorMessage(error), digest(plan.modelDecision.plannedCompletion)));
+      }
+    }
     this.store.finish(claim, job => { delete job.delegation!.agent!.pendingPlanId; job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0; job.updatedAt = new Date().toISOString(); });
   }
 
@@ -264,16 +283,26 @@ export class AgentRuntime {
     if (dependencies.some(i => i.state !== 'effect_confirmed')) {
       this.store.checkpoint(claim, () => { intent.state = 'canceled_before_dispatch'; this.store.saveIntent(claim.owner, intent); }); return true;
     }
-    const input = structuredClone(step.input);
-    for (const link of step.inputRefs) input[link.targetKey] = objectRefSchema.parse(dependencies.find(i => i.stepId === link.stepId)?.acceptedOutput?.object);
+    let input = structuredClone(step.input), inputPlanning: PlanningSnapshot | undefined;
     let attempt: ExecutionAttempt | undefined;
     try {
       const current = this.context(claim);
+      if (step.inputRefs.some(ref => ref.compute)) {
+        validateReadBindings(this.store.ontology, program, step, program.definition(this.store.ontology, step.action), step.input, new Map(plan.steps.filter(item => item.id !== step.id).map(item => [item.id, item])));
+        const access = this.access(claim, signal);
+        access.session.prepareContext({ actions: [step.action], refs: [plan.scope, ...dependencies.map(intent => objectRefSchema.parse(intent.acceptedOutput?.object))] });
+        input = bindAcceptedObjects(input, step.inputRefs, id => dependencies.find(intent => intent.stepId === id)?.acceptedOutput?.object, (ref, object) => {
+          const result = access.session.call('evaluate_ontology', { function: ref.compute!.function, object }, { origin: 'worker_context', maxOutputBytes: 30000 }) as { status?: string; value?: unknown; reason?: string };
+          if (result.status !== 'known') failure(result.reason ?? 'Deferred source input requires a new decision');
+          return dataflowValue(result.value, ref.compute!.path);
+        });
+        inputPlanning = access.session.finish();
+      } else input = bindAcceptedObjects(input, step.inputRefs, id => dependencies.find(intent => intent.stepId === id)?.acceptedOutput?.object);
       if (current.state.paPayment && !['read', 'local'].includes(step.effect)) failure('Only original provider readback is permitted after PA payment handoff');
       validatePlanningSnapshot(this.store.ontology, claim.owner, current.request, plan.ontologyPlanning, true);
       if (step.definitionDigest !== digest(program.definition(this.store.ontology, step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
-      program.validatePlanning?.(current, step.action, input, plan.ontologyPlanning);
+      program.validatePlanning?.(current, step.action, input, inputPlanning ?? plan.ontologyPlanning);
       validateAgentAuthority(program, current, plan, step);
       if (!['read', 'local'].includes(step.effect)) {
         if (!this.options.allowSandbox && !isLiveFreeOperation(program, current, agentOperation(program.definition(current.graph, step.action)))) failure('Business operations are disabled');
@@ -282,17 +311,18 @@ export class AgentRuntime {
           return false;
         }
       }
-      if (!this.store.checkpoint(claim, () => {
+      if (!this.store.checkpoint(claim, job => {
         if (!['read', 'local'].includes(step.effect)) {
           const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Sandbox authority expired before dispatch');
           this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
         }
+        if (inputPlanning) job.delegation!.agent!.inputResolutions = [...(job.delegation!.agent!.inputResolutions ?? []), { planId: plan.id, stepId: step.id, intentId: intent.id, inputDigest: digest(input), ontologyPlanning: inputPlanning }];
         attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input));
       })) return false;
     } catch (error) {
       this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); }); return true;
     }
-    const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt };
+    const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt!.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt, ...(inputPlanning ? { inputPlanning } : {}) };
     context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     context.assertDispatchAllowed = () => {
       signal.throwIfAborted();
