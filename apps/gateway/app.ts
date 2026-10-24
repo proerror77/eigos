@@ -4,7 +4,7 @@ import { mountSourceRoutes } from './sources.js';
 import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { mountNetworkRoutes } from './network/routes.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
-import { paPaymentRequestSchema, paPaymentReportSchema, paPaymentRouteSchema, paPaymentSelectionSchema } from '../../packages/core/pa-payment.js';
+import { paPaymentProtocol } from '../../packages/core/pa-payment.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -61,6 +61,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS } : undefined,
       shopifyCheckout: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR } : undefined,
+      shopifyPaymentSandbox: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL ? { endpoint: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL, tokenFile: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE! } : undefined,
       bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
@@ -106,7 +107,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST }));
   mountInviteBeta(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
-  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: 'metadata.delegation.agent.paPayment.request', selectionPath: 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
+  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json(paPaymentProtocol(!!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL)));
   mountMemberRoutes(app, config, members, loginProvider);
   mountAgentRoutes(app, config, members, verify);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;

@@ -1,3 +1,4 @@
+import { paPaymentRequestSchema } from '../packages/core/pa-payment.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -55,7 +56,7 @@ test('EIGOS pauses on an unpaid booking, PA pays separately, then both independe
     assert.equal(done.state, 'completed', JSON.stringify({ feedback: done.delegation?.agent?.feedback, error: done.error }));
     const data = done.artifact!.data.result as any;
     assert.equal(data.payment.state, 'paid'); assert.equal(data.booking.state, 'confirmed'); assert.equal(data.handoffId, payment.request.id); assert.equal(data.paymentAuthority, 'pa_owned'); assert.equal(data.realPayment, false);
-    assert.equal(data.payment.bookingId, data.booking.bookingId); assert.equal(data.booking.bookingId, payment.request.terms.bookingId);
+    assert.equal(data.payment.bookingId, data.booking.bookingId); assert.equal(data.booking.bookingId, paPaymentRequestSchema.parse(payment.request).terms.bookingId);
     assert.equal(done.delegation!.agent!.paPayment!.status, 'verified'); assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 1);
     assert.equal(t.store.intents(owner, id).filter(i => i.effect === 'payment').length, 0); assert(!t.store.budget(owner, id).some(b => b.state === 'consumed'));
     const publicData = JSON.stringify(done); assert(!publicData.includes(t.provider.sourceToken)); assert(!publicData.includes(t.provider.paToken));
@@ -64,18 +65,18 @@ test('EIGOS pauses on an unpaid booking, PA pays separately, then both independe
 
 test('An authenticated PA payment claim without provider payment never completes the booking', async () => {
   const t = await setupPABooking(); try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     assert.throws(() => t.b.tasks.reply(principal, { taskId: id, requestId: randomUUID(), answer: 'I paid; mark this completed' }), /report_payment_result/);
     t.report(waiting);
     const pending = await t.finish(id); assert.equal(pending.state, 'input-required', JSON.stringify(pending.delegation?.agent?.feedback)); assert.equal(pending.artifact, undefined);
-    assert.equal(pending.delegation!.agent!.paPayment!.request.id, request.id); assert.equal(pending.delegation!.agent!.paPayment!.status, 'awaiting_provider');
+    assert.equal(paPaymentRequestSchema.parse(pending.delegation!.agent!.paPayment!.request).id, request.id); assert.equal(pending.delegation!.agent!.paPayment!.status, 'awaiting_provider');
     assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 0); assert.equal(t.provider.countBookings(), 1);
   } finally { await t.close(); }
 });
 
 test('Payment notifications are scoped, credential-free and idempotent across task continuations', async () => {
   const t = await setupPABooking(); try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     const input = { taskId: id, requestId: randomUUID(), action: 'report_payment_result', handoffId: request.id, handoffDigest: request.digest, outcome: 'submitted' };
     assert.throws(() => t.b.tasks.reportPayment({ ...principal, subject: 'someone-else' }, input), /not found/i);
     assert.throws(() => t.b.tasks.reportPayment({ ...principal, scopes: ['tasks:read'] }, input), /tasks:write/);
@@ -93,12 +94,12 @@ test('Payment notifications are scoped, credential-free and idempotent across ta
 test('Neither a confirmed booking alone nor a paid amount alone satisfies the task', async () => {
   for (const only of ['booking', 'payment']) {
     const t = await setupPABooking(); try {
-      const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+      const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
       if (only === 'booking') t.provider.mutate(request.terms.bookingId, { state: 'confirmed', confirmedAt: new Date().toISOString() });
       else { t.provider.flags.confirmBooking = false; await t.wallet.pay(request); }
       t.report(waiting); const pending = await t.finish(id);
       assert.equal(pending.state, 'input-required', JSON.stringify(pending.delegation?.agent?.feedback)); assert.equal(pending.artifact, undefined);
-      assert.equal(pending.delegation!.agent!.paPayment!.request.digest, request.digest); assert.equal(t.provider.countBookings(), 1);
+      assert.equal(paPaymentRequestSchema.parse(pending.delegation!.agent!.paPayment!.request).digest, request.digest); assert.equal(t.provider.countBookings(), 1);
     } finally { await t.close(); }
   }
 });
@@ -106,7 +107,7 @@ test('Neither a confirmed booking alone nor a paid amount alone satisfies the ta
 test('Processing payment resumes on fresh provider facts without another booking or another PA charge', async () => {
   const t = await setupPABooking(); try {
     t.provider.flags.paymentMode = 'processing';
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     await t.wallet.pay(request); t.report(waiting, 'unknown');
     const pending = await t.finish(id); assert.equal(pending.state, 'input-required');
     assert.equal(pending.delegation!.agent!.observations.filter(ref => ref.type === 'PAPaymentRequest').length, 1, 'Repeated waiting preserves one handoff object and separate action attempts');
@@ -120,7 +121,7 @@ test('Processing payment resumes on fresh provider facts without another booking
 
 test('A lost PA response uses the same PA idempotency key and EIGOS reads the original provider outcome', async () => {
   const t = await setupPABooking(); try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     t.provider.flags.dropPAResponse = true;
     await assert.rejects(t.wallet.pay(request));
     await t.wallet.pay(request);
@@ -133,7 +134,7 @@ test('A lost PA response uses the same PA idempotency key and EIGOS reads the or
 test('A lost PA notification can be recovered by querying the original booking without initiating payment again', async () => {
   const t = await setupPABooking(); try {
     const id = t.submit().id, waiting = await t.finish(id);
-    await t.wallet.pay(waiting.delegation!.agent!.paPayment!.request);
+    await t.wallet.pay(paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request));
     t.b.tasks.reconcile(principal, id, randomUUID());
     const done = await t.finish(id); assert.equal(done.state, 'completed');
     assert.equal(done.delegation!.agent!.paPayment!.reports.length, 0); assert.equal(t.wallet.attempts.length, 1);
@@ -142,7 +143,7 @@ test('A lost PA notification can be recovered by querying the original booking w
 
 for (const change of ['amount', 'currency', 'payee', 'booking', 'terms', 'refunded'] as const) test(`Independent provider ${change} mismatch cannot close a PA payment task`, async () => {
   const t = await setupPABooking(); try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     await t.wallet.pay(request);
     const patch = change === 'amount' ? { amount: { minor: '1', currency: 'CNY' }, paidAmount: { minor: '1', currency: 'CNY' } } : change === 'currency' ? { amount: { minor: '12500', currency: 'USD' }, paidAmount: { minor: '12500', currency: 'USD' } } : change === 'payee' ? { payeeId: 'other-merchant' } : change === 'booking' ? { bookingId: 'other-booking' } : change === 'terms' ? { bookingTermsDigest: '0'.repeat(64) } : { state: 'refunded' };
     t.provider.mutate(request.terms.bookingId, {}, patch);
@@ -182,7 +183,7 @@ test('An already paid but unconfirmed provider booking never produces a new PA p
 
 test('The provider rejects an incorrect PA-approved amount and never accepts EIGOS source credentials for payment', async () => {
   const t = await setupPABooking(); try {
-    const waiting = await t.finish(t.submit().id), request = waiting.delegation!.agent!.paPayment!.request;
+    const waiting = await t.finish(t.submit().id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     await assert.rejects(t.wallet.pay(request, { minor: '12501', currency: 'CNY' }), /rejected/);
     const forbidden = await fetch(request.terms.handler.endpoint, { method: 'POST', headers: { authorization: `Bearer ${t.provider.sourceToken}`, 'content-type': 'application/json', connection: 'close' }, body: '{}' });
     assert.equal(forbidden.status, 403); assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 0);
@@ -191,7 +192,7 @@ test('The provider rejects an incorrect PA-approved amount and never accepts EIG
 
 test('Expired provider holds reject PA payment and never produce a confirmed booking artifact', async () => {
   const t = await setupPABooking(); try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     t.provider.mutate(request.terms.bookingId, { state: 'expired' });
     await assert.rejects(t.wallet.pay(request)); t.report(waiting, 'unknown');
     const result = await t.finish(id); assert.equal(result.state, 'rejected'); assert.equal(result.artifact, undefined); assert.equal(t.provider.audit().filter(a => a.caller === 'pa_wallet').length, 0);
@@ -228,9 +229,9 @@ test('Durable PA handoff survives a replacement Worker and returns the same book
   const dir = mkdtempSync(join(tmpdir(), 'pa-booking-restart-')), path = join(dir, 'tasks.sqlite');
   const t = await setupPABooking({ databasePath: path }); let second: JobStore | undefined;
   try {
-    const id = t.submit().id, waiting = await t.finish(id), original = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), original = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     second = new JobStore(path); const catalog = createExecutionCatalog({ store: second, bookingSandbox: t.settings }), replacement = backend(catalog, t.model, second, { allowSandbox: true });
-    const restored = replacement.tasks.get(principal, id); assert.deepEqual(restored.delegation!.agent!.paPayment!.request, original);
+    const restored = replacement.tasks.get(principal, id); assert.deepEqual(paPaymentRequestSchema.parse(restored.delegation!.agent!.paPayment!.request), original);
     await t.wallet.pay(original);
     replacement.tasks.reportPayment(principal, { taskId: id, requestId: randomUUID(), action: 'report_payment_result', handoffId: original.id, handoffDigest: original.digest, outcome: 'submitted' });
     for (let n = 0; n < 8 && ['submitted', 'working'].includes(second.get(owner, id).state); n++) await replacement.run();
@@ -240,7 +241,7 @@ test('Durable PA handoff survives a replacement Worker and returns the same book
 
 test('Canceling while the PA payment response is in flight preserves cancellation and only audits original provider results', async () => {
   const t = await setupPABooking(); let release = () => {}; try {
-    const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
+    const id = t.submit().id, waiting = await t.finish(id), request = paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request);
     let entered!: () => void; const reached = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
     t.provider.flags.beforeResponse = async action => { if (action === 'PAPayment') { entered(); await gate; } };
     const paying = t.wallet.pay(request); await reached;
@@ -254,7 +255,7 @@ test('Canceling while the PA payment response is in flight preserves cancellatio
 
 test('Canceled tasks cannot publish late provider readback as completed booking', async () => {
   const t = await setupPABooking(); let release = () => {}; try {
-    const id = t.submit().id, waiting = await t.finish(id); await t.wallet.pay(waiting.delegation!.agent!.paPayment!.request); t.report(waiting);
+    const id = t.submit().id, waiting = await t.finish(id); await t.wallet.pay(paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request)); t.report(waiting);
     let entered!: () => void; const reached = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
     t.provider.flags.beforeResponse = async action => { if (action === 'ReadProviderPayment') { entered(); await gate; } };
     const claim = t.store.claim(['eigos.delegate'], 15000)!;
@@ -267,7 +268,7 @@ test('Canceled tasks cannot publish late provider readback as completed booking'
 
 test('A replacement lease drops late readback and the next model decision reads the same provider booking', async () => {
   const t = await setupPABooking(); let release = () => {}; try {
-    const id = t.submit().id, waiting = await t.finish(id); await t.wallet.pay(waiting.delegation!.agent!.paPayment!.request); t.report(waiting);
+    const id = t.submit().id, waiting = await t.finish(id); await t.wallet.pay(paPaymentRequestSchema.parse(waiting.delegation!.agent!.paPayment!.request)); t.report(waiting);
     let entered!: () => void; const reached = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
     t.provider.flags.beforeResponse = async action => { if (action === 'ReadProviderPayment') { entered(); await gate; } };
     const first = t.store.claim(['eigos.delegate'], 15000)!, running = t.b.coordinator.run(first, new AbortController().signal);

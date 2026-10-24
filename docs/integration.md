@@ -54,7 +54,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 原始交付要求、更正、执行关系以及默认业务摘要的真实 PA 验证见[2026-10-20 验收记录](evidence/ontology-graph-live-2026-10-20/README.md)。业务验收时的有效报价与之后的历史回读分别记载，不以过期结果承诺当前价格或来源授权。
 
-六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v18`，新建注册库默认内核为 `eigos.business@18`；历史 v15/v16/v17 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v18`，新建注册库默认内核为 `eigos.business@19`；历史 v15/v16/v17/v18 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -110,6 +110,8 @@ T12 的 `/members/network/workbench` 汇总本人私有任务、询价、草稿�
 `booking.pa-payment.sandbox@2` 把预约准备到待付款，发布 `PAPaymentRequest` 后以 `awaiting_pa_payment` 暂停。PA 先用 `select_payment_route` 提供当前钱包可用性：可用且商家支持时优先 Link Agent Wallet；明确不可用或商家不支持钱包、但提供普通 Link 时，交给用户在同一预约的测试结账页确认。状态未知时先查询，不自动改路。路线及操作键持久保存，提交后不自动改路。随后用 A2A 结构化 `SendMessage` 或 MCP `report_payment_result` 通知同一任务。通知不含凭据、不证明付款；EIGOS 必须独立回读原付款和预约，二者匹配后才完成。
 
 Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求、路线选择与通知 Schema。Python 客户端支持 `payment-route`、`payment-result`，并通过 `reconcile` 复用已有原操作回读接口。此路径没有 EIGOS 付款动作，不需要 EIGOS Stripe 账户；旧商家付款环境开关已禁用。所有测试均在隔离服务商和 PA 钱包夹具中完成，真实钱包及服务商未接入。详见 [PA 预约付款流程](pa-booking-payment-flow.md)。
+
+显式启用 `shopify.checkout.pa-payment.sandbox@1` 时，同一扩展发布版本 3 并声明兼容版本 2。v3 把原 Shopify 合约测试结账、最终金额和支付入口交给 PA，PA 用自己的测试 Vault 或支付账户付款；路线选择提交 `capability`，原 v2 继续提交 `wallet`。两者共用持久请求、原操作键、通知、等待、取消保护与独立回读。EIGOS 必须分别验证原付款和商家确认的同一订单。来源为本机隔离模拟器，`realPayment=false`；不是官方 Shopify 测试店或真实 Grok Vault 验收。配置及完整模型验证见 [Shopify PA 付款测试](shopify-pa-payment-sandbox.md)。
 
 ## 动态本体定义与受管数据动作
 

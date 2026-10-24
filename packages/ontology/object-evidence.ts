@@ -15,6 +15,7 @@ export function sourceProof(store: OntologyObjectStore, owner: string, ref: Obje
   scopes.CatalogRead = 'goods_offer';
   scopes.CatalogObservation = 'goods_offer'; scopes.CatalogEndpoint = 'goods_offer';
   scopes.ShopifyCheckoutProducts = 'goods_offer'; scopes.ShopifyCheckoutObservation = 'checkout_session';
+  scopes.ShopifyPaymentProducts = 'goods_offer'; scopes.ShopifyPaymentCheckoutObservation = 'checkout_session'; scopes.ShopifyCheckoutPaymentObservation = 'payment';
   Object.assign(scopes, commerceEvidenceScopes);
   if (!scopes[ref.type] || !receipts?.length || receipts.some(r => !r.properties.sourceIdentity || !r.properties.sourceEventId || !r.properties.contentDigest || !r.properties.evidenceLevel || r.properties.evidenceLevel === 'user_asserted' || r.properties.scope !== scopes[ref.type] || !r.properties.observedAt || Date.parse(String(r.properties.observedAt)) > store.now() || !(r.properties.subjects as { object: ObjectRef; digest: string; linksDigest: string }[] | undefined)?.some(s => s.object.type === ref.type && s.object.id === ref.id && s.digest === digest(subject.properties) && s.linksDigest === linksDigest))) return undefined;
   return { refs: receipts.map(r => r.ref), levels: receipts.map(r => String(r.properties.evidenceLevel)) };

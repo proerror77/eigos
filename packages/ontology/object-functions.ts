@@ -1,5 +1,6 @@
 import { evaluateBookingFunction } from './booking-functions.js';
 import { evaluateShopCheckoutFunction } from './shopify-checkout-functions.js';
+import { evaluateShopifyPAFunction } from './shopify-pa-payment-functions.js';
 import { productAttributeFunctionSchemas } from './product-attributes.js';
 import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
 import { identityFunctionSchemas } from './identity-model.js';
@@ -27,7 +28,7 @@ export interface Computation { status: 'known' | 'unknown'; value?: unknown; rea
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
-  simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'), simple('shopifyCheckoutObservationStatus'),
+  simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'), simple('shopifyCheckoutObservationStatus'), simple('shopifyPAPaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
@@ -68,6 +69,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const paCheckoutResult = evaluateShopifyPAFunction(store, owner, input, budget);
+  if (paCheckoutResult) return paCheckoutResult;
   const shopCheckoutResult = evaluateShopCheckoutFunction(store, owner, input, budget);
   if (shopCheckoutResult) return shopCheckoutResult;
   const productResult = evaluateProductAttributeFunction(store, owner, input, budget);

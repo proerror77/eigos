@@ -56,15 +56,27 @@ async function setup() {
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '仅在隔离沙箱准备结账并确认同一订单；独立核验结账与订单，不要求配送。', executionEnvironment: 'sandbox' });
   const approve = (id: string) => { const a = store.get(owner, id).delegation!.authorizationRequest!; b.tasks.authorize(principal, id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
-  const run = async (id: string) => { if (store.get(owner, id).state === 'auth-required') approve(id); const claim = store.claim(['eigos.delegate'], 15000); if (claim) await b.coordinator.run(claim, new AbortController().signal); else await pause(100); return store.get(owner, id); };
-  return { merchant, store, b, submit, approve, run, close: async () => { store.close(); await merchant.close(); } };
+  const run = async (id: string) => {
+    if (store.get(owner, id).state === 'auth-required') approve(id);
+    // Direct test driving has no Worker heartbeat. Bound the lease to the same
+    // execution wait and release it even when a transient read needs recovery.
+    const claim = store.claim(['eigos.delegate'], 120000);
+    if (claim) { try { await b.coordinator.run(claim, new AbortController().signal); } finally { store.release(claim); } }
+    else await pause(100);
+    return store.get(owner, id);
+  };
+  const finish = async (id: string) => {
+    const deadline = Date.now() + 120000;
+    while (['submitted', 'working', 'auth-required'].includes(store.get(owner, id).state) && Date.now() < deadline) await run(id);
+    return store.get(owner, id);
+  };
+  return { merchant, store, b, submit, approve, run, finish, close: async () => { store.close(); await merchant.close(); } };
 }
 
 test('one goal composes two UCP bindings without pretending its preparation task already completed', async () => {
   const t = await setup(); try {
     const id = t.submit().id;
-    for (let i = 0; i < 14 && ['submitted', 'working', 'auth-required'].includes(t.store.get(owner, id).state); i++) await t.run(id);
-    const done = t.store.get(owner, id);
+    const done = await t.finish(id);
     assert.equal(done.state, 'completed', JSON.stringify({ error: done.error, feedback: done.delegation?.agent?.feedback, assessment: done.delegation?.agent?.composition?.assessment }));
     assert.deepEqual(t.merchant.counts(), { creates: 1, completes: 1 });
     assert.equal(done.delegation!.plan, undefined); assert.equal(t.store.grants(owner, id).length, 2);
@@ -89,8 +101,7 @@ test('composed UCP rechecks changed quote after approval and retains the useful 
 test('composed UCP lost completion response queries the original checkout and keeps exactly one write', async () => {
   const t = await setup(); try {
     const id = t.submit().id; t.merchant.flags.dropComplete = true;
-    for (let i = 0; i < 35 && ['submitted', 'working', 'auth-required'].includes(t.store.get(owner, id).state); i++) await t.run(id);
-    const done = t.store.get(owner, id);
+    const done = await t.finish(id);
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
     assert.deepEqual(t.merchant.counts(), { creates: 1, completes: 1 });
     assert.equal(t.merchant.requests.filter(value => value.method === 'POST' && value.path.endsWith('/complete')).length, 1);

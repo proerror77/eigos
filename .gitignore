@@ -12,3 +12,4 @@ data/
 /docs/eigos-alipay-sms-verification-2026-10-15.jpg
 /docs/alipay-free-resource-request-2026-10-15.jpg
 coverage/
+__pycache__/

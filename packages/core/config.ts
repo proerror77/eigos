@@ -56,6 +56,8 @@ const schema = z.object({
   EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
   EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_COMMERCE_SANDBOX_AUDIT_DIR: z.string().optional(),
+  EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL: z.url().optional(),
+  EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_BOOKING_SANDBOX_URL: z.url().optional(),
   EIGOS_BOOKING_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ENABLED: z.enum(['false', 'true']).default('false'),
@@ -112,7 +114,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
       || c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN || c.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES?.length
       || c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || c.EIGOS_SHOPIFY_AUDIT_DIR || c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length || c.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR || c.EIGOS_CSV_INPUT_DIR || c.EIGOS_CSV_PILOT === 'true'
       || c.EIGOS_ACTION_SANDBOX === 'true' || c.EIGOS_SANDBOX_PROVIDER_URL || c.EIGOS_SANDBOX_TOKEN_FILE
-      || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE
+      || c.EIGOS_COMMERCE_SANDBOX_URL || c.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE || c.EIGOS_BOOKING_SANDBOX_URL || c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE || c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL || c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE
       || c.EIGOS_STRIPE_TEST_ENABLED === 'true' || c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE) throw new Error('Invite beta exposes document tasks only; private sources, development credentials, network publication and transaction fixtures cannot be enabled');
   }
   if (c.EIGOS_NETWORK_ENABLED === 'true' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_CLIENT_ID || !c.OIDC_AGENT_CLIENT_ID || !c.EIGOS_NETWORK_MEMBER_IDS.length || c.DATABASE_PATH === ':memory:')) throw new Error('Network pilot requires persistent JWT membership, browser/agent clients and explicit enrolled member IDs');
@@ -155,6 +157,11 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR && (!c.EIGOS_COMMERCE_SANDBOX_URL || !isAbsolute(c.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR))) throw new Error('Commerce audit requires an enabled sandbox and an absolute private directory');
   const stripeConfigured = !!(c.EIGOS_STRIPE_TEST_SECRET_KEY_FILE || c.EIGOS_STRIPE_TEST_ACCOUNT_ID || c.EIGOS_STRIPE_TEST_MERCHANT_ID);
   if (c.EIGOS_STRIPE_TEST_ENABLED === 'true' || stripeConfigured) throw new Error('Merchant-side Stripe payment is not an EIGOS runtime capability; use PA-owned booking payment handoff');
+  if (!!c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL !== !!c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE) throw new Error('Shopify test payment source requires its endpoint and source token file');
+  if (c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL) {
+    const u = new URL(c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL);
+    if (c.EIGOS_AUTH_MODE !== 'development' || c.EIGOS_ACTION_SANDBOX !== 'true' || env.NODE_ENV === 'production' || u.protocol !== 'http:' || u.hostname !== '127.0.0.1' || !u.port || u.pathname !== '/' || u.search || u.hash || u.username || u.password || !isAbsolute(c.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE!)) throw new Error('Shopify PA payment requires explicit isolated loopback test configuration');
+  }
   if (!!c.EIGOS_BOOKING_SANDBOX_URL !== !!c.EIGOS_BOOKING_SANDBOX_TOKEN_FILE) throw new Error('Booking sandbox requires its endpoint and private source token file');
   if (c.EIGOS_BOOKING_SANDBOX_URL) {
     const u = new URL(c.EIGOS_BOOKING_SANDBOX_URL);

@@ -70,7 +70,7 @@ test('explicit unpinned compatibility records stay on the imported baseline whil
     store.save(owner, legacy);
     const requestDigest = digest(legacy.delegation!.request);
     assert.equal(store.ontologyForJob(owner, legacy).model.ref.version, '15');
-    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '18');
+    assert.equal(store.ontologyForJob(owner, current).model.ref.version, '19');
     const oldAuthorization = store.ontologyForJob(owner, legacy).model.action('AuthorizeProposal');
     const currentAuthorization = store.ontologyForJob(owner, current).model.action('AuthorizeProposal');
     assert.equal(oldAuthorization.version, '1'); assert(oldAuthorization.submissionCriteria.includes('sandbox_only'));

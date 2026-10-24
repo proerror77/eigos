@@ -18,8 +18,7 @@ import { projectPreparedResolution } from '../ontology/capability-catalog.js';
 import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
 import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, createAgentExternalDraftGrant, validateAgentAuthority } from './agent-authorization.js';
 import { externalDraftPermitSchema } from '../ontology/external-draft.js';
-import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
-import { assertPaymentRouteReadback } from '../capabilities/booking/payment-route.js';
+import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest, paymentRouteQuestion } from './pa-payment.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { objectWriteScopeSchema } from '../ontology/actions.js';
 import { objectRefSchema } from '../ontology/model.js';
@@ -340,13 +339,11 @@ export class TaskService {
       const program = this.catalogForJob(owner, job).agentProgram(component?.programRef ?? state.programRef, owner);
       if (!this.options.allowSandboxActions || job.delegation.request.executionEnvironment !== 'sandbox' || !program || program.configurationDigest !== payment.request.configurationDigest) throw new DomainError('FORBIDDEN', 'The original payment source is no longer enabled with the same configuration');
       const root = { graph: this.store.ontologyForJob(owner, job), owner, request: job.delegation.request, state, intents: this.store.intents(owner, job.id), modelRuns: job.runs };
-      assertPaymentRouteReadback(component ? componentContext(root, component, program) : root, payment);
-      const terms = payment.request.terms;
-      const selected = recordPAPaymentSelection(payment, args.wallet);
+      if (!program.validatePaymentRoute) throw new DomainError('FORBIDDEN', 'The original source does not support payment route validation');
+      program.validatePaymentRoute(component ? componentContext(root, component, program) : root, payment);
+      const selected = recordPAPaymentSelection(payment, args);
       job.updatedAt = selected.selectedAt;
-      job.question = selected.route === 'link_agent_wallet'
-        ? '已选择 Link Agent Wallet 测试路线。请 PA 使用自己的测试钱包和原操作键处理此预约；结果未知时只查询原付款，不切换路线或重付。'
-        : `已转到普通 Link 测试结账路线。请用户在服务商提供的页面确认模拟付款：${terms.checkout.url}。不得真实付款；页面完成提示不代替服务商付款及预约回读。`;
+      job.question = paymentRouteQuestion(payment);
       job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt });
       job.delegation.events.push({ at: job.updatedAt, event: 'pa_payment_route_selected', evidence: selected.digest });
       job.revision = (job.revision ?? 0) + 1;

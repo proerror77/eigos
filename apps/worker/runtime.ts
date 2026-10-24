@@ -22,6 +22,7 @@ export function createWorker(config: Config, overrides: {
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_AUDIT_DIR } : undefined,
       shopifyCheckout: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR } : undefined,
+      shopifyPaymentSandbox: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL ? { endpoint: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL, tokenFile: config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE! } : undefined,
       bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!, auditDirectory: config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
