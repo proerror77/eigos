@@ -3,6 +3,7 @@ import { open, mkdir, writeFile, appendFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import type { z } from 'zod';
 import { digest } from '../../core/delegation.js';
 import { AgentReadError } from '../../core/agent-program.js';
 import { didiBindingSchema, didiEndpoint, didiReceiptSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiData, type DidiEvidenceKind, type DidiReceipt, type DidiTool } from './contracts.js';
@@ -42,7 +43,9 @@ export class DidiMcpConnector implements DidiConnector {
     finally { await file?.close(); }
   }
   async verifyCredential(): Promise<void> { await this.key(); }
-  private async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>): Promise<T> {
+  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }): Promise<T> {
+    if (mock && this.binding.environment !== 'mock') throw new DidiReadError('MOCK_OPERATIONS_ONLY');
+    const allowed = mock?.tools ?? didiToolInputs;
     signal.throwIfAborted();
     const secret = await this.key(), endpoint = didiEndpoint(this.binding.environment), url = new URL(endpoint);
     url.searchParams.set('key', secret);
@@ -57,8 +60,9 @@ export class DidiMcpConnector implements DidiConnector {
         let request; try { request = JSON.parse(String(init.body)); } catch { throw new DidiReadError('INVALID_RPC'); }
         if (!['initialize', 'notifications/initialized', 'notifications/cancelled', 'tools/list', 'tools/call', 'ping'].includes(request.method)) throw new DidiReadError('RPC_NOT_ALLOWED');
         if (request.method === 'tools/call') {
-          if (!DIDI_TOOLS.includes(request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
-          if (!didiToolInputs[request.params.name as DidiTool].safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
+          if (!Object.hasOwn(allowed, request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
+          if (!allowed[request.params.name as keyof typeof allowed]!.safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
+          mock?.beforeCall?.();
         }
       }
       const response = await this.fetcher(target, { ...init, redirect: 'manual', signal: bounded });

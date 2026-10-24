@@ -1,0 +1,235 @@
+{
+  "id": "fa3af83f40b0eecf4c45b05d9eaf0a2ddc504e1babddfbbd5da8c30de55d21c9",
+  "name": "goal-result.json",
+  "data": {
+    "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+    "deliverable": "所有必需目标条件已由原始执行结果独立核验。",
+    "execution": "completed",
+    "result": {
+      "version": "1",
+      "goalDigest": "a3cbf982a22003eb6d49d1ee543a21bd212625d08815c3fe2f9894e758269220",
+      "criteria": [
+        {
+          "id": "coffee_source_facts",
+          "result": "pass",
+          "reason": "Current component verifiers prove the exact required outcome and business phase",
+          "contextIds": [
+            "coffeeCatalogContext"
+          ],
+          "evidenceRefs": [
+            "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+            "117f2887-e357-4c1f-9946-be11d979eeec"
+          ],
+          "subjects": []
+        },
+        {
+          "id": "coffee_merchant_facts",
+          "result": "pass",
+          "reason": "Current component verifiers prove the exact required outcome and business phase",
+          "contextIds": [
+            "coffeeCatalogContext"
+          ],
+          "evidenceRefs": [
+            "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+            "117f2887-e357-4c1f-9946-be11d979eeec"
+          ],
+          "subjects": []
+        },
+        {
+          "id": "coffee_comparison_document",
+          "result": "pass",
+          "reason": "Current component verifiers prove the exact required outcome and business phase",
+          "contextIds": [
+            "coffeeDocumentContext"
+          ],
+          "evidenceRefs": [
+            "598e721f-4c56-41b7-8d37-9f1082417273"
+          ],
+          "subjects": []
+        }
+      ],
+      "requirements": [
+        {
+          "requirementId": "coffee_result_count",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+            "117f2887-e357-4c1f-9946-be11d979eeec",
+            "598e721f-4c56-41b7-8d37-9f1082417273"
+          ]
+        },
+        {
+          "requirementId": "read_only_no_order",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+            "117f2887-e357-4c1f-9946-be11d979eeec",
+            "598e721f-4c56-41b7-8d37-9f1082417273"
+          ]
+        },
+        {
+          "requirementId": "document_no_external_effects",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "598e721f-4c56-41b7-8d37-9f1082417273"
+          ]
+        }
+      ],
+      "conditions": [],
+      "components": [
+        {
+          "contextId": "coffeeCatalogContext",
+          "status": "verified",
+          "artifact": {
+            "id": "85fdbb78-8bd2-4ce4-956e-fea9cdaa3364",
+            "name": "agent-catalog-result.json",
+            "data": {
+              "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+              "deliverable": "已按 Agent 选择的商品和来源完成匿名只读查询。显示价格不代表完整税费或配送报价；库存数量、配送承诺、目录完整性及合作状态未知。未创建购物车、结账、订单或付款。",
+              "execution": "completed",
+              "result": {
+                "catalogAnswer": {
+                  "scope": {
+                    "type": "CatalogTask",
+                    "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+                  },
+                  "country": "US",
+                  "selections": [
+                    {
+                      "observation": {
+                        "type": "CatalogObservation",
+                        "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+                      },
+                      "merchant": {
+                        "id": "coffee-lab",
+                        "name": "Coffee Lab",
+                        "shopId": "gid://shopify/Shop/9012",
+                        "domain": "eigos-coffee-fixture.myshopify.com"
+                      },
+                      "sourceOperation": "lookup_catalog",
+                      "observedAt": "2026-10-22T14:20:12.253Z",
+                      "expiresAt": "2026-10-22T14:25:12.243Z",
+                      "receiptId": "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+                      "evidenceKind": "fixture",
+                      "items": [
+                        {
+                          "productId": "gid://shopify/Product/9001",
+                          "variantId": "gid://shopify/ProductVariant/9034",
+                          "title": "Synthetic coffee — Light roast",
+                          "sku": "FIXTURE-0",
+                          "displayPrice": {
+                            "minor": "1000",
+                            "currency": "USD"
+                          },
+                          "availableReported": true,
+                          "nativeCheckoutEligibleReported": false
+                        }
+                      ]
+                    },
+                    {
+                      "observation": {
+                        "type": "CatalogObservation",
+                        "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+                      },
+                      "merchant": {
+                        "id": "coffee-lab",
+                        "name": "Coffee Lab",
+                        "shopId": "gid://shopify/Shop/9012",
+                        "domain": "eigos-coffee-fixture.myshopify.com"
+                      },
+                      "sourceOperation": "lookup_catalog",
+                      "observedAt": "2026-10-22T14:21:08.381Z",
+                      "expiresAt": "2026-10-22T14:26:08.377Z",
+                      "receiptId": "117f2887-e357-4c1f-9946-be11d979eeec",
+                      "evidenceKind": "fixture",
+                      "items": [
+                        {
+                          "productId": "gid://shopify/Product/9001",
+                          "variantId": "gid://shopify/ProductVariant/9036",
+                          "title": "Synthetic coffee — Dark roast",
+                          "sku": "FIXTURE-2",
+                          "displayPrice": {
+                            "minor": "3000",
+                            "currency": "USD"
+                          },
+                          "availableReported": true,
+                          "nativeCheckoutEligibleReported": false
+                        }
+                      ]
+                    }
+                  ],
+                  "priceComparison": {
+                    "currency": "USD",
+                    "firstMinusSecondMinor": "-2000",
+                    "basis": "display_price_only"
+                  },
+                  "selectionRationale": "两款具有不同变体 ID，均由 ReadMerchantVariants 在 Coffee Lab 商家端点独立读取，且 catalogObservationStatus 均返回 known。仅采纳有来源的显示价格与商品身份；库存数量、配送承诺、合作状态及完整目录覆盖保持未知。",
+                  "completeness": "partial_or_unknown",
+                  "stockQuantity": "unknown",
+                  "deliveryCommitment": "unknown",
+                  "partnerTrust": "unverified",
+                  "noBusinessWrites": true
+                }
+              }
+            }
+          },
+          "evidenceRefs": [
+            "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+            "117f2887-e357-4c1f-9946-be11d979eeec"
+          ]
+        },
+        {
+          "contextId": "coffeeDocumentContext",
+          "status": "verified",
+          "artifact": {
+            "id": "a80bfe6eb402db9ab113675d058bcd72982fa44077b25458aae81299ea375ff3",
+            "name": "deliverable.md",
+            "data": {
+              "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+              "deliverable": "文档草稿已生成，原始模型回执、内容摘要和引用版本已核对；内容质量仍需按用途审阅。",
+              "execution": "completed",
+              "markdown": "# Coffee Lab 两款咖啡候选比较\n\n## 范围与结论\n\n本文仅依据已提供的两份目录观测编写，未执行新的查询或业务操作。来源为 Coffee Lab 隔离测试商家，证据类型为 `fixture`（测试数据），不能据此认定真实商家的商品、库存或履约能力。\n\n两款候选具有不同变体 ID，但属于同一产品 `gid://shopify/Product/9001`。因此，本文将“两款不同候选”理解为两个不同的咖啡变体。\n\n## 候选比较\n\n| 项目 | 浅烘焙候选 | 深烘焙候选 |\n|---|---|---|\n| 来源名称原文 | Synthetic coffee — Light roast | Synthetic coffee — Dark roast |\n| 变体 ID | `gid://shopify/ProductVariant/9034` | `gid://shopify/ProductVariant/9036` |\n| SKU | `FIXTURE-0` | `FIXTURE-2` |\n| 观测时显示价格 | 10.00 | 30.00 |\n| 币种 | USD（美元） | USD（美元） |\n| 来源 | 观测 A，见下方来源记录 | 观测 B，见下方来源记录 |\n| 来源报告可用 | 是（`availableReported: true`） | 是（`availableReported: true`） |\n| 库存数量 | 未知，尚未核验 | 未知，尚未核验 |\n| 配送承诺 | 未知，尚未核验 | 未知，尚未核验 |\n| 商家合作状态 | 未核验（`partnerTrust: unverified`） | 未核验（`partnerTrust: unverified`） |\n| 来源报告原生结账资格 | 否（`nativeCheckoutEligibleReported: false`） | 否（`nativeCheckoutEligibleReported: false`） |\n\n价格换算采用 USD 每 100 个最小货币单位等于 1 美元：来源值 `1000` 和 `3000` 分别对应 10.00 USD 和 30.00 USD。深烘焙候选显示价格高出 20.00 USD，为浅烘焙候选的 3 倍；未提供规格、重量、税费或运费信息，无法比较单位价格或到手总价。\n\n## 来源记录\n\n两份观测均指向以下商家与接口：\n\n- 商家：Coffee Lab（`coffee-lab`）\n- Shop ID：`gid://shopify/Shop/9012`\n- 域名：`eigos-coffee-fixture.myshopify.com`\n- 接口：`https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp`\n- 动作：`ReadMerchantVariants`；接口操作：`lookup_catalog`\n- 国家字段：US；证据类型：`fixture`\n- 回执 HTTP 状态：200；认证方式：匿名\n\n| 来源 | CatalogObservation ID | 观测时间（UTC） | 来源标注有效期截至（UTC） |\n|---|---|---|---|\n| A | `08f1ca56-a2a3-4fe4-8e09-7634e4427293` | 2026-10-22 14:20:12.253 | 2026-10-22 14:25:12.243 |\n| B | `117f2887-e357-4c1f-9946-be11d979eeec` | 2026-10-22 14:21:08.381 | 2026-10-22 14:26:08.377 |\n\n上述有效期依据均为 `local_refresh_limit`。本文所称显示价格仅指各自观测时点的返回值，未重新核验生成文档时的实时价格，也未确认来源有效期是否仍覆盖使用时点。\n\n## 证据限制\n\n- 两份目录结果均标记为 `partial_or_unknown`，只能确认这两个已返回候选，不能认定目录完整或没有其他候选。\n- “来源报告可用”不等于已核实库存数量、可下单或可配送；两款的原生结账资格均被来源报告为否。\n- 库存数量、配送承诺及商家合作状态均未核验，不能据此承诺供货、送达时间或合作关系。\n- 名称包含浅烘焙与深烘焙描述，但没有风味、产地、包装规格等证据，无法进一步判断口味或性价比。\n- 两份来源均记录 `noBusinessWrites: true`。本文仅整理已提供数据，未创建购物车、预订、下单或付款。\n",
+              "result": {
+                "modelGenerated": true,
+                "contentSha256": "3e4e4dcee1bba505825c3661fdb0228f65231e3e795247e787b3f1253e283d3a",
+                "noExternalActions": true,
+                "citations": [
+                  {
+                    "object": {
+                      "type": "CatalogObservation",
+                      "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "44be008795dd11cc3739133371bbc8379789dc0e055a6705a548c171b4c0e07b",
+                    "receiptDigest": "a581bf886933dc6c06c8d144fb4ca0429a1f742baa9c72be5de1e6df52e84cf6",
+                    "evidenceRefs": [
+                      "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+                    ]
+                  },
+                  {
+                    "object": {
+                      "type": "CatalogObservation",
+                      "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "5bb3ff2ff0a476ef62ff49226f92d4fc6cc3970fc24df430451c9f91434a0c89",
+                    "receiptDigest": "e57c70aafd2ea74a3873b808dcd303008d4b2beda523fb030bcace0f28549f10",
+                    "evidenceRefs": [
+                      "117f2887-e357-4c1f-9946-be11d979eeec"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "evidenceRefs": [
+            "598e721f-4c56-41b7-8d37-9f1082417273"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,3 +1,4 @@
+const validationBlocked = (job: import('../packages/core/domain.js').Job) => job.state === 'paused' && job.delegation?.recovery?.code === 'validation_stalled' && job.delegation.recovery.state === 'blocked' && job.delegation.recovery.ownerInputRequired === false;
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
@@ -68,7 +69,7 @@ for (const flag of ['paid', 'missingFees', 'consent'] as const) test(`${flag}: u
 
 test('a browser observation for another signed-in participant cannot authorize registration', async () => {
   const f = participantFixture(); f.flags.wrongParticipant = true;
-  try { f.submit(); const blocked = await f.until(j => j.state === 'input-required'); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 0); } finally { f.store.close(); }
+  try { f.submit(); const blocked = await f.until(validationBlocked); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 0); } finally { f.store.close(); }
 });
 
 test('an asynchronous source stays on its original key through more than three healthy pending reads', async () => {
@@ -108,7 +109,7 @@ test('a fresh task cannot create another registration for the same participant, 
   const f = participantFixture();
   try {
     f.submit(); await f.until(j => j.state === 'completed');
-    const second = f.submit(); const blocked = await f.until(j => j.id === second.id && j.state === 'input-required');
+    const second = f.submit(); const blocked = await f.until(j => j.id === second.id && validationBlocked(j));
     assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 1);
   } finally { f.store.close(); }
 });
@@ -118,7 +119,7 @@ test('readback cannot replace the original registration reference or complete wi
   try {
     f.submit(); await f.until(j => !!j.delegation?.agent?.observations.some(r => r.type === 'RegistrationRecord'));
     f.flags.changedReference = true;
-    const blocked = await f.until(j => j.state === 'input-required'); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 1);
+    const blocked = await f.until(validationBlocked); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 1);
   } finally { f.store.close(); }
   const missing = participantFixture(); missing.flags.noConfirmation = true;
   try {
@@ -148,5 +149,5 @@ for (const requirement of [
   { id: 'unsupported-venue', kind: 'location', strength: 'hard', expected: { ref: 'specific-venue-not-proven-by-source' } },
 ]) test(`${requirement.id}: hard requirements block a partial participant registration before writing`, async () => {
   const f = participantFixture();
-  try { f.submit({ requirements: [requirement] }); const blocked = await f.until(j => j.state === 'input-required'); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 0); } finally { f.store.close(); }
+  try { f.submit({ requirements: [requirement] }); const blocked = await f.until(validationBlocked); assert.equal(blocked.artifact, undefined); assert.equal(f.counters().submits, 0); } finally { f.store.close(); }
 });

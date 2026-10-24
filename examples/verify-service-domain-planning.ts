@@ -43,8 +43,8 @@ server.on('request', gateway.app);
 const model = new CodexExecutor(process.env.EIGOS_CODEX_BIN ?? 'codex', 120000);
 let activeDomain = ''; const responses: unknown[] = [], failures: unknown[] = [], tasks: unknown[] = [];
 const persist = () => writeFileSync(join(output, 'verification.json'), JSON.stringify({ scope: 'Actual Codex reasoning, synthetic domain sources, local A2A/MCP observer; not actual user PA or real business execution', backendVersion: BACKEND_VERSION, model: businessModel.ref, requestedDomains, tasks, responses, failures }, null, 2), { mode: 0o600 });
-const coordinator = new Coordinator(gateway.store, new CodexReasoner({ runStructured: async (prompt, schema, signal) => {
-  const response = await model.runStructured(prompt, schema, signal); responses.push({ domain: activeDomain, evidence: response.evidence, output: response.output });
+const coordinator = new Coordinator(gateway.store, new CodexReasoner({ runStructured: async (prompt, schema, signal, options) => {
+  const response = await model.runStructured(prompt, schema, signal, options); responses.push({ domain: activeDomain, evidence: response.evidence, output: response.output });
   appendFileSync(join(output, 'model-turns.jsonl'), JSON.stringify({ domain: activeDomain, evidence: response.evidence, output: response.output }) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ domain: activeDomain, modelTurn: responses.length, receiptId: response.evidence.id })); return response;
 } }), gateway.catalog, { allowSandbox: true });

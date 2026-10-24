@@ -3,8 +3,9 @@ import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/ser
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
+import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
+import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 
 export class AgentUser implements User {
@@ -21,11 +22,13 @@ const states: Record<JobState, TaskState> = {
   completed: TaskState.TASK_STATE_COMPLETED,
   canceled: TaskState.TASK_STATE_CANCELED,
   working: TaskState.TASK_STATE_WORKING,
+  paused: TaskState.TASK_STATE_WORKING,
   failed: TaskState.TASK_STATE_FAILED,
 };
 
 function toTask(job: Job, historyLength?: number): Task {
   if (historyLength !== undefined) z.number().int().min(0).max(1000).parse(historyLength);
+  const summary = taskSummary(job);
   const messages = job.messages.map(message => ({
     messageId: message.id, contextId: job.contextId, taskId: job.id,
     role: message.role === 'user' ? 'ROLE_USER' : 'ROLE_AGENT',
@@ -34,22 +37,25 @@ function toTask(job: Job, historyLength?: number): Task {
   return Task.fromJSON({
     id: job.id, contextId: job.contextId,
     status: { state: states[job.state], timestamp: job.updatedAt, message: messages.at(-1) },
-    history: historyLength === undefined ? messages : historyLength === 0 ? [] : messages.slice(-historyLength),
+    history: !historyLength ? [] : messages.slice(-historyLength),
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
-      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
+      ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
+    metadata: { view: summary.view, service: summary.service, revision: summary.revision, internalState: summary.state, counts: summary.counts,
+      ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
+      ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
+      ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
   });
 }
 
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Use explicit service IDs in structured submissions. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      extensions: [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }, ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
+      extensions: [...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
     },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
@@ -108,9 +114,10 @@ export class A2AGateway implements A2ARequestHandler {
         input = parts[0].content.value;
       } else if (parts.length && parts.every(part => part.content?.$case === 'text')) {
         const text = parts.map(part => part.content?.value).join('\n');
-        input = message.taskId ? { answer: text } : { goal: text, service: 'eigos.delegate' };
+        input = message.taskId ? { answer: text, expectedRevision: message.metadata?.expectedRevision } : { goal: text, service: 'eigos.delegate' };
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
+      if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
         if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
           const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
@@ -118,9 +125,12 @@ export class A2AGateway implements A2ARequestHandler {
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
           const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.reportPayment(p, report, message.contextId || undefined);
+        } else if (message.metadata?.taskOperation === 'resume') {
+          const resume = resumeTaskSchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
+          job = this.tasks.resume(p, resume, message.contextId || undefined);
         } else {
-          const answer = replySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
-          job = this.tasks.reply(p, answer, message.contextId || undefined);
+          const answer = versionedReplySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
+          job = message.metadata?.taskOperation === 'amend' ? this.tasks.amend(p, answer, message.contextId || undefined) : this.tasks.reply(p, answer, message.contextId || undefined);
         }
       } else {
         const data = submitSchema.parse({ ...(input as object), requestId: message.messageId });

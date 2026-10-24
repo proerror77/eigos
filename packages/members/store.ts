@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { DomainError, type Principal } from '../core/domain.js';
-import { AgentRegistrations } from './agents.js';
+import { AgentRegistrations, type RevocationObserver } from './agents.js';
 
 export const profileSchema = z.object({
   displayName: z.string().trim().min(1).max(80),
@@ -41,6 +41,8 @@ function member(row: Row): Member {
 export class MemberStore {
   private db: DatabaseSync;
   readonly agents: AgentRegistrations;
+  private beforeRevoke?: RevocationObserver;
+  setRevocationObserver(observer: RevocationObserver | undefined) { this.beforeRevoke = observer; this.agents.setRevocationObserver(observer); }
   constructor(path: string) {
     if (path !== ':memory:') {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -121,6 +123,7 @@ export class MemberStore {
   setStatus(id: string, status: 'active' | 'suspended'): Member {
     return this.transaction(() => {
       const current = this.get(id);
+      if (status === 'suspended') this.beforeRevoke?.({ memberId: id, kind: 'member' });
       if (status === 'active' && !current.acceptedAt) throw new DomainError('CONFLICT', 'Member must complete the application first');
       this.db.prepare('UPDATE members SET status=?,updated_at=? WHERE id=?').run(status, new Date().toISOString(), id);
       return this.get(id);
@@ -143,6 +146,9 @@ export class MemberStore {
       .map(row => ({ id: String(row.id), clientId: String(row.client_id), scopes: JSON.parse(String(row.scopes)), blocked: !!row.blocked, lastSeenAt: String(row.last_seen_at) }));
   }
   block(memberId: string, connectionId: string, blocked: boolean): void {
+    const connection = this.connections(memberId).find(c => c.id === connectionId);
+    if (!connection) throw new DomainError('NOT_FOUND', 'Connection not found');
+    if (blocked) this.beforeRevoke?.({ memberId, kind: 'client', target: connection.clientId });
     const result = this.db.prepare('UPDATE member_connections SET blocked=? WHERE id=? AND member_id=?').run(blocked ? 1 : 0, connectionId, memberId);
     if (!result.changes) throw new DomainError('NOT_FOUND', 'Connection not found');
   }

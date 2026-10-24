@@ -68,6 +68,7 @@ try {
     return [{ modelRunId: run.id, digest: context.digest, reads: reads.length, preparedBeforeModel: true }];
   });
   const bindings = delegation.agent.plans.flatMap(plan => {
+    assert(plan.modelDecision, 'This model-read observer requires a recorded model decision');
     assert.equal(digest(plan.ontologyPlanning.model), digest(graph.model.ref), 'Independent ontology definition changed');
     const run = job.runs!.find(r => r.id === plan.modelRunId); assert(run);
     if (plan.initialSelection) {

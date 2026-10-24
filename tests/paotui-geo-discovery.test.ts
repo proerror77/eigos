@@ -1,3 +1,4 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import { templatePlanning } from '../packages/ontology/planning-contract.js';
 // Every provider response in this file is synthetic. No personal CLI, credential,
 // model, public POI endpoint, or live service is invoked by these tests.
@@ -15,6 +16,7 @@ import { proposePlan, validatePlan } from '../packages/coordinator/plan.js';
 import { PaotuiGeoDiscoverySource } from './fixtures/legacy-paotui/paotui-geo-discovery.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS } from './fixtures/legacy-paotui/paotui-ontology.js';
+import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
 import type { PaotuiQuery, PaotuiReader } from '../packages/capabilities/paotui-contracts.js';
 import type { OntologyReceipt } from './fixtures/legacy-paotui/paotui-mcp-server.js';
 import { backend, owner, principal, proposal, reasoner } from './backend-fixture.js';
@@ -50,7 +52,7 @@ async function resolvedPlan(h: ReturnType<typeof harness>, ctx = context()) {
   const candidate = resolution.candidates[0]!;
   assert.equal(candidate?.status, 'ready');
   const plan = proposePlan(h.catalog, ctx.owner, ctx.request, capability, candidate,
-    proposal({ request: ctx.request, capability, resolution }), templatePlanning(ctx.request));
+    proposal({ request: ctx.request, capability, resolution }), templatePlanning(ctx.request, businessModel.ref));
   return { ctx, resolution, candidate, plan, privateData: resolution.privateData.get(candidate.id) };
 }
 
@@ -253,14 +255,14 @@ test('configuration fingerprints normalize the allowlist and change with reader 
 test('discovered plan restores only for the same owner, request and allowed source configuration', async () => {
   const h = harness(); const { ctx, plan } = await resolvedPlan(h);
   const restarted = harness();
-  validatePlan(restarted.catalog, ctx.owner, ctx.request, plan);
+  validatePlan(restarted.catalog, ctx.owner, ctx.request, plan, businessModel.ref);
   assert.deepEqual(restarted.calls, []);
   assert.equal(restarted.catalog.binding(plan.bindingRef, owner, ctx.request.id).binding.configurationDigest, h.source.configurationDigest);
   assert.throws(() => restarted.catalog.binding(plan.bindingRef, 'another-owner', ctx.request.id));
   assert.throws(() => restarted.catalog.binding(plan.bindingRef, owner, randomUUID()));
-  assert.throws(() => validatePlan(harness(response(), []).catalog, owner, ctx.request, plan));
-  assert.throws(() => validatePlan(harness(response(), [otherPublicQuery]).catalog, owner, ctx.request, plan));
-  assert.throws(() => validatePlan(harness(response(), [publicQuery], 'changed-reader').catalog, owner, ctx.request, plan));
+  assert.throws(() => validatePlan(harness(response(), []).catalog, owner, ctx.request, plan, businessModel.ref));
+  assert.throws(() => validatePlan(harness(response(), [otherPublicQuery]).catalog, owner, ctx.request, plan, businessModel.ref));
+  assert.throws(() => validatePlan(harness(response(), [publicQuery], 'changed-reader').catalog, owner, ctx.request, plan, businessModel.ref));
 });
 
 test('search delivery preserves source evidence and independent verification rejects altered result or receipt', async () => {
@@ -318,7 +320,7 @@ test('a synthetic public-query task completes and its exact evidence survives du
     assert.equal(readback.delegation!.actions![0]!.state, 'effect_confirmed');
     assert.equal(readback.delegation!.businessFacts!.length, 0);
     assert.equal(opened.intents(owner, submitted.id)[0]!.effect, 'read');
-    validatePlan(restartedSource.catalog, owner, readback.delegation!.request, readback.delegation!.plan!);
+    validatePlan(restartedSource.catalog, owner, readback.delegation!.request, readback.delegation!.plan!, opened.ontologyForJob(owner, readback).model.ref);
     assert.deepEqual(restartedSource.calls, []);
   } finally { opened.close(); rmSync(directory, { recursive: true, force: true }); }
 });

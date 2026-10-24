@@ -2,8 +2,32 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
 import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/auth0.js';
+import { inviteBetaCodexConfig } from '../packages/members/native-mcp.js';
+import { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } from 'jose';
+import { jwtVerifier } from '../apps/gateway/auth.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
+
+test('canonical public resource and explicit prior origin retain exact JWT audience and tenant binding', async () => {
+  const keys = await generateKeyPair('RS256'), jwk = await exportJWK(keys.publicKey);
+  const verify = jwtVerifier('https://identity.example/', ['https://eigos.example/', 'https://eigos.example'], createLocalJWKSet({ keys: [{ ...jwk, alg: 'RS256', use: 'sig' }] }), 'https://eigos.example/claims/tenant_id');
+  for (const audience of ['https://eigos.example/', 'https://eigos.example', 'https://eigos.example/other', 'https://eigos.example.attacker/']) {
+    const token = await new SignJWT({ client_id: 'native-mcp', scope: 'services:read', 'https://eigos.example/claims/tenant_id': 'personal' }).setProtectedHeader({ alg: 'RS256', typ: 'at+jwt' }).setIssuer('https://identity.example/').setAudience(audience).setSubject('alice').setIssuedAt().setExpirationTime('10m').sign(keys.privateKey);
+    if (audience === 'https://eigos.example/' || audience === 'https://eigos.example') assert.equal((await verify(token)).subject, 'alice');
+    else await assert.rejects(verify(token));
+  }
+});
+
+test('canonical and legacy API grants use the same controlled enrollment claim without accepting other resources', async () => {
+  for (const resource of ['https://eigos.example/', 'https://eigos.example', 'https://eigos.example/other']) {
+    const claims = new Map();
+    await onExecutePostLogin({ client: { client_id: 'connector' }, resource_server: { identifier: resource }, transaction: { protocol: 'oauth2-device-code' }, secrets: {
+      EIGOS_RESOURCE: 'https://eigos.example/', EIGOS_LEGACY_RESOURCE: 'https://eigos.example', EIGOS_TENANT_CLAIM: 'https://eigos.example/claims/tenant_id', EIGOS_TENANT_ID: 'personal', EIGOS_AGENT_CONNECTOR_CLIENT_ID: 'connector',
+    } }, { idToken: { setCustomClaim: () => {} }, accessToken: { setCustomClaim: (key: string, value: unknown) => claims.set(key, value) }, access: { deny: () => assert.fail('Unexpected denial') } });
+    assert.equal(claims.get('https://eigos.example/claims/agent_enrollment'), resource.endsWith('/other') ? undefined : true);
+    assert(!claims.has('https://eigos.example//claims/agent_enrollment'));
+  }
+});
 
 test('Auth0 blueprint binds two distinct clients and a short-lived, consented RFC 9068 resource', () => {
   const plan = auth0Plan('https://eigos.example');
@@ -17,6 +41,12 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.equal(plan.connector.refresh_token.rotation_type, 'rotating'); assert.equal(plan.connector.refresh_token.infinite_token_lifetime, false);
   assert.deepEqual(plan.agent.grant_types, ['authorization_code']);
   assert.equal(plan.tenantClaim, 'https://eigos.example/claims/tenant_id');
+  assert(!plan.api.scopes.some(s => s.value.startsWith('sources:')));
+  assert(!plan.api.scopes.some(s => s.value === 'ontology:admin'), 'Self-service OAuth setup cannot provision global ontology administration');
+  assert.deepEqual(plan.api.scopes.filter(scope => scope.value.startsWith('ontology:')).map(scope => scope.value), ['ontology:read', 'ontology:write', 'ontology:publish', 'ontology:object_write']);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:object_write')!.description, /exact preview/);
+  assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:publish')!.description, /your own ontology/);
+  assert.deepEqual(auth0Plan('https://eigos.example', undefined, { memberSources: true }).api.scopes.filter(s => s.value.startsWith('sources:')).map(s => s.value), ['sources:read', 'sources:write']);
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
   assert.throws(() => auth0Plan('https://eigos.example', 'https://attacker.example/callback'));
@@ -31,6 +61,22 @@ test('Auth0 connector refresh grants cannot authorize fresh installation enrollm
     } }, { idToken: { setCustomClaim: () => {} }, accessToken: { setCustomClaim: (key: string, value: unknown) => claims.set(key, value) }, access: { deny: () => assert.fail('Identity mapping should be valid') } });
     assert.equal(claims.get('https://eigos.example/claims/agent_enrollment'), allowed);
   }
+});
+
+test('the invite beta provisions only task scopes and a public native MCP authorization-code client with rotation', () => {
+  const plan = auth0Plan('https://beta.example', undefined, { inviteBeta: true });
+  assert.deepEqual(plan.api.scopes.map(scope => scope.value), ['services:read', 'tasks:read', 'tasks:write', 'members:write']);
+  assert(plan.mcp); assert.equal(plan.mcp.token_endpoint_auth_method, 'none');
+  assert.equal(plan.api.identifier, 'https://beta.example/');
+  assert.deepEqual(plan.mcp.callbacks, ['http://127.0.0.1:64517/callback', 'https://www.cursor.com/agents/mcp/oauth/callback']);
+  const nativeConfig = inviteBetaCodexConfig('https://beta.example', 'public-client');
+  assert.match(nativeConfig, /callback_url = "http:\/\/127\.0\.0\.1:64517\/callback"\ncallback_port = 64517/);
+  assert.match(nativeConfig, /url = "https:\/\/beta\.example\/mcp"/);
+  assert.deepEqual(plan.mcp.grant_types, ['authorization_code', 'refresh_token']);
+  assert.equal(plan.mcp.refresh_token.rotation_type, 'rotating');
+  assert.equal(plan.mcp.client_metadata.eigos_resource, 'https://beta.example');
+  assert.notEqual(plan.mcp.client_metadata.eigos_component, plan.connector.client_metadata.eigos_component);
+  assert.throws(() => auth0Plan('https://beta.example', undefined, { inviteBeta: true, memberSources: true }), /private supplier/);
 });
 
 async function action(clientId: string, resource?: string, configured = true) {

@@ -34,9 +34,12 @@ test('Existing PA A2A client authorizes Stripe test payment and MCP independentl
     writeFileSync(input, JSON.stringify({ service: 'eigos.delegate', goal: 'Query the sandbox order facts and complete its Stripe test payment with independent capture readback.', executionEnvironment: 'sandbox', requirements: [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, { id: 'payment', kind: 'condition', strength: 'hard', expected: { predicate: 'commerce.payment_confirmed' } }] }));
     const sent = await run('submit', '--input-file', input, '--request-id', 'stripe-pa-submit');
     let task: any, permits = 0;
-    for (let n = 0; n < 8; n++) {
+    const deadline = Date.now() + 180000;
+    while (Date.now() < deadline) {
       task = (await run('poll', '--task-id', sent.id, '--seconds', '8')).task;
+      if (['TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'].includes(task.status.state)) continue;
       if (task.status.state !== 'TASK_STATE_AUTH_REQUIRED') break;
+      assert(permits < 8, 'Bounded sandbox approval count');
       const a = task.metadata.delegation.authorizationRequest;
       if (a.effects.includes('payment')) {
         assert.equal(t.stripe.calls.filter(c => c.path.endsWith('/confirm')).length, 0);
@@ -50,7 +53,8 @@ test('Existing PA A2A client authorizes Stripe test payment and MCP independentl
     assert.equal(task.status.state, 'TASK_STATE_COMPLETED', JSON.stringify({ state: task.status, error: gateway.tasks.get(principal, sent.id).error })); assert.equal(permits, 4);
     const a2a = await run('get', '--task-id', sent.id), mcp = await call('get_task', { taskId: sent.id });
     assert.deepEqual(a2a.artifacts[0].parts[0].data, mcp.artifact.data);
-    const payment = mcp.delegation.agent.observations.filter((r: any) => r.type === 'StripePaymentObservation').at(-1);
+    assert.equal(mcp.delegation.agent, undefined);
+    const payment = mcp.artifact.data.result.provenance.sourceRefs.find((r: any) => r.type === 'StripePaymentObservation');
     const read = await call('query_ontology', { object: payment }), status = await call('evaluate_ontology', { function: 'stripePaymentStatus', object: payment });
     assert.equal(status.value.status, 'test_paid'); assert.equal(status.value.evidenceLevel, 'synthetic'); assert.equal(status.value.bankSettlementVerified, false);
     assert.equal(read.items[0].properties.data.independentRead, true);

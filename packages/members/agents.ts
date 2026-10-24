@@ -11,6 +11,8 @@ export type AgentRegistration = { id: string; displayName: string; memberId?: st
 export class AgentAccessError extends Error {
   constructor(readonly code: 'agent_registration_required' | 'agent_registration_revoked' | 'registration_expired' | 'fresh_authorization_required' | 'registration_credential_invalid' | 'registration_limit') { super(code); }
 }
+export interface RevocationChange { memberId: string; kind: 'member' | 'client' | 'installation'; target?: string }
+export type RevocationObserver = (change: RevocationChange) => void;
 type Row = Record<string, unknown>;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const registration = (row: Row): AgentRegistration => ({ id: String(row.id), displayName: String(row.display_name),
@@ -19,6 +21,8 @@ const registration = (row: Row): AgentRegistration => ({ id: String(row.id), dis
 // Uses the membership database connection. Only hashes of registration, access
 // and invitation credentials are persisted; upstream refresh tokens stay on the Agent.
 export class AgentRegistrations {
+  private beforeRevoke?: RevocationObserver;
+  setRevocationObserver(observer: RevocationObserver | undefined) { this.beforeRevoke = observer; }
   constructor(private db: DatabaseSync) {
     db.exec(`CREATE TABLE IF NOT EXISTS agent_registrations (
       id TEXT PRIMARY KEY, credential_hash TEXT NOT NULL, display_name TEXT NOT NULL,
@@ -107,6 +111,8 @@ export class AgentRegistrations {
     const value = registration(row); this.requireOwner(value, principal); return value;
   }
   revoke(memberId: string, id: string): void {
+    if (!this.db.prepare('SELECT 1 FROM agent_registrations WHERE id=? AND member_id=?').get(id, memberId)) throw new DomainError('NOT_FOUND', 'Agent registration not found');
+    this.beforeRevoke?.({ memberId, kind: 'installation', target: id });
     if (!this.db.prepare('UPDATE agent_registrations SET revoked=1 WHERE id=? AND member_id=?').run(id, memberId).changes) throw new DomainError('NOT_FOUND', 'Agent registration not found');
   }
   invite(memberId: string, lifetimeMs = 86400000): { id: string; token: string; expiresAt: number } {

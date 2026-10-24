@@ -58,6 +58,7 @@ try {
   assert.equal(sourceReads.length, intents.length); assert.equal(new Set(sourceReads.map(r => r.intentId)).size, sourceReads.length);
   assert(job.runs!.every(r => r.runtime === 'codex-exec' && r.threadId && /^[a-f0-9]{64}$/.test(r.outputSha256)));
   for (const plan of state.plans) {
+    assert(plan.modelRunId && plan.modelDecision && !plan.callerDecision, 'Expected original model-selected source evidence');
     const { digest: hash, ...body } = plan; assert.equal(digest(body), hash);
     const run = job.runs!.find(r => r.id === plan.modelRunId)!; assert.equal(run.decisionDigest, digest(plan.modelDecision));
     assert.equal(plan.steps.length, plan.modelDecision.steps.length);

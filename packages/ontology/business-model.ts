@@ -1,13 +1,22 @@
 import { registrationObjects, registrationLinks, registrationActions, registrationFunctions } from './free-booking.js';
 import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
+import { rideEstimateActions, rideEstimateFunctions, rideEstimateLinks, rideEstimateObjects } from './ride-estimate.js';
+import { rideBookingActions, rideBookingFunctions, rideBookingLinks, rideBookingObjects } from './ride-booking.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
 import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
-import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
+import { domainActions, domainConditionSchemas, domainFunctions, domainInterfaces, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } from './commerce.js';
 import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './catalog-read.js';
-import { rideEstimateActions, rideEstimateFunctions, rideEstimateLinks, rideEstimateObjects } from './ride-estimate.js';
+import { paotuiAgentActions, paotuiAgentFunctions, paotuiAgentLinks, paotuiAgentObjects } from './paotui-agent.js';
 import { catalogAgentActions, catalogAgentFunctions, catalogAgentLinks, catalogAgentObjects } from './catalog-agent.js';
+import { executionObjects, executionLinks, executionReferenceLinks } from './execution-model.js';
+import { extendBusinessChain } from './business-chain-model.js';
+import { extendProductAttributesModel, productAttributeConstraintsSchema } from './product-attributes.js';
+import { extendIdentityMappingModel } from './identity-model.js';
+import { extendErrandDomainModel, errandConstraintsSchema } from './errand-model.js';
+import { networkObjects, networkLinks, isVirtualRef } from './network-model.js';
+import { capabilityCatalogObjects, capabilityCatalogLinks } from './capability-catalog.js';
 import { commerceJourneyActions, commerceJourneyFunctions, commerceJourneyLinks, commerceJourneyObjects } from './commerce-journey.js';
 import { customsPolicyObjects, customsPolicyLinks, customsPolicyFunctions } from './customs-policy.js';
 import { OntologyModel, objectRefSchema, type ModelDefinition, type ObjectTypeDefinition, type PropertyDefinition as P, type LinkDefinition } from './model.js';
@@ -36,6 +45,8 @@ export const businessConditionSchema = z.union([
   condition('parcel.quote_matches_request', ['DeliveryQuote'], 'parcel_quote', ['result'], 'eq', z.object({ weight: quantitySchema.refine(v => ['kg', 'g'].includes(v.unit)), serviceLevel: z.enum(['ordinary', 'express']), parcel: objectRefSchema.extend({ type: z.literal('Parcel') }).optional(), route: objectRefSchema.extend({ type: z.literal('DeliveryRoute') }).optional() }).strict()),
   condition('offer.total_within_budget', ['DeliveryQuote', 'ProductOffer'], 'total_price', ['precondition'], 'lte', z.object({ amount: moneyValueSchema, priceBasis: z.enum(['estimate', 'firm_quote']), scope: z.literal('all_mandatory_fees') }).strict()),
   condition('goods.variant_matches', ['ProductOffer', 'OrderLine'], 'product_variant', ['precondition', 'result'], 'eq', objectRefSchema.extend({ type: z.literal('ProductVariant') })),
+  condition('goods.attributes_match', ['ProductVariant', 'ProductOffer', 'CommerceProduct'], 'product_attributes', ['precondition', 'result'], 'eq', productAttributeConstraintsSchema),
+  condition('errand.quote_matches', ['DeliveryQuote'], 'errand_requirements', ['result'], 'eq', errandConstraintsSchema),
   condition('goods.capacity_covers_quantity', ['ProductOffer'], 'capacity', ['precondition'], 'gte', quantitySchema),
   condition('delivery.commitment_covers_deadline', ['ProductOffer'], 'delivery_commitment', ['precondition'], 'lte', z.object({ at: z.iso.datetime({ offset: true }), timeZone: timeZoneSchema, originalText: z.string().min(1).max(200) }).strict()),
   condition('delivery.receipt_matches_request', ['OrderLine'], 'actual_delivery', ['result'], 'eq', z.object({ quantity: quantitySchema, specificationRef: z.string().min(1).max(200), destination: addressValueSchema, deadline: z.iso.datetime({ offset: true }) }).strict()),
@@ -78,7 +89,7 @@ const offer = (idName: string, name: string, primaryKey: string, properties: Rec
     { interfaces: [{ id: 'Offer', propertyMap: { offerId: primaryKey } }] });
 };
 const objects: ObjectTypeDefinition[] = [
-  type('ServiceRequest', '服务委托', 'requestId', { originalGoal: str('Original PA goal', 10000, { required: true, source: 'Authenticated user or PA message' }), revision: integer('Business request revision'), requestedOutcome: str('Requested business outcome', 100), conditions: p('array', z.array(businessConditionSchema).max(40), 'Versioned conditions with subject, role, phase, typed value, unit and quoted instruction; no inferred authority'), progress: choice(['received', 'clarifying', 'planning', 'awaiting_authorization', 'executing', 'accepted', 'unmet', 'needs_review', 'canceled'], 'Request progress, not provider state'), projectionState: choice(['request_only', 'typed_result', 'invalid_source'], 'Coverage of this read projection; never business completion'), createdAt: time('Received time') }, { titleKey: 'originalGoal' }),
+  type('ServiceRequest', '服务委托', 'requestId', { originalGoal: str('Original PA goal', 10000, { required: true, source: 'Authenticated user or PA message' }), revision: integer('Business request revision'), confirmedInputs: p('struct', z.record(z.string(), z.unknown()), 'Current owner-confirmed inputs with field versions and exact source messages; historical values are not active'), requestedOutcome: str('Requested business outcome', 100), conditions: p('array', z.array(businessConditionSchema).max(40), 'Versioned conditions with subject, role, phase, typed value, unit and quoted instruction; no inferred authority'), progress: choice(['received', 'clarifying', 'planning', 'awaiting_authorization', 'executing', 'accepted', 'unmet', 'needs_review', 'canceled'], 'Request progress, not provider state'), projectionState: choice(['request_only', 'typed_result', 'invalid_source'], 'Coverage of this read projection; never business completion'), createdAt: time('Received time') }, { titleKey: 'originalGoal' }),
   type('Proposal', '选择方案', 'proposalId', { requestRevision: integer('Fixed request revision'), selectedAt: time('Decision time'), termsVersion: str('Fixed terms version'), decisionReason: str('Decision rationale', 2000) }),
   type('Authorization', '业务许可记录', 'authorizationId', { actor: str('Authenticated approving actor'), allowedActions: textArray('Allowed actions'), dataScope: textArray('Permitted data scope'), limits: money('Maximum permitted amount'), expiresAt: time('Grant expiry'), revoked: p('boolean', z.boolean(), 'Revocation state') }),
   type('OutcomeAssessment', '结果核验', 'assessmentId', { requestRevision: integer('Assessed revision'), judgment: choice(['satisfied', 'unsatisfied', 'unknown', 'needs_human'], 'Evidence-backed assessment'), assessedAt: time('Assessment time'), criterionResults: p('array', z.array(z.object({ criterion: z.string().max(100), result: z.enum(['pass', 'fail', 'unknown', 'needs_human']), evidenceIds: z.array(z.string().max(200)).max(30) }).strict()).max(40), 'Per-criterion results') }),
@@ -105,9 +116,10 @@ const objects: ObjectTypeDefinition[] = [
   type('Payment', '付款记录', 'paymentId', { providerReference: str('Provider payment reference'), purpose: choice(['goods', 'deposit'], 'Payment business purpose'), amount: money('Observed payment amount'), paymentState: choice(['not_started', 'pending', 'paid', 'failed', 'unknown'], 'Payment source state'), observedAt: time('Payment observation') }),
   type('Refund', '退款记录', 'refundId', { providerReference: str('Provider refund reference'), amount: money('Observed refund amount'), refundState: choice(['not_started', 'pending', 'refunded', 'rejected', 'unknown'], 'Refund state; acceptance is not receipt of funds'), observedAt: time('Refund observation') }),
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
-  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
+  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', 'identity_mapping', 'party_role', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
-// Only changed definitions advance. Historical object fingerprints are never rewritten.
+// Object and model versions are separate. Historical compatibility accepts only
+// the named frozen predecessors in the migration modules.
 objects.find(o => o.id === 'ServiceRequest')!.version = '4';
 objects.find(o => o.id === 'Order')!.version = '2';
 const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
@@ -165,26 +177,25 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '16', objects: [...objects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
+const businessObjects = [...objects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...paotuiAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects];
+const predecessorDefinition: ModelDefinition = { id: 'eigos.business', version: '9', objects: [...businessObjects, ...executionObjects, ...capabilityCatalogObjects], links: [...links, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...paotuiAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...executionLinks, ...capabilityCatalogLinks],
   interfaces: [
+    ...domainInterfaces,
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
   actions: [
-    ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions, ...registrationActions,
-    ...catalogAgentActions,
-    ...rideEstimateActions, ...meituanReadActions,
+    ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions,
+    ...catalogAgentActions, ...paotuiAgentActions,
     ...commerceActions,
     ...domainActions,
     { id: 'RequestDeliveryQuote', description: 'Record the decision to request a quote; does not create a price or order', inputs: { request: 'ServiceRequest', parcel: 'Parcel', route: 'DeliveryRoute' }, changes: ['ServiceRequest.progress', 'ServiceRequest.selectedRoute'], submissionCriteria: ['same_owner', 'current_request_revision', 'explicit_read_scope', 'complete_route_and_parcel'], providerOperation: 'delivery_preview' },
     { id: 'SelectOffer', description: 'Record a version-bound choice; grants no payment or order authority', inputs: { request: 'ServiceRequest', offer: 'Offer' }, changes: ['Proposal', 'Proposal.selectedOffer', 'ServiceRequest.selectedProposal'], submissionCriteria: ['same_owner', 'same_request', 'current_request_revision', 'fresh_offer', 'hard_preconditions_pass'] },
   ],
   functions: [
-    ...customsPolicyFunctions,
-    ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions, ...registrationFunctions,
-    ...catalogAgentFunctions,
-    ...rideEstimateFunctions, ...meituanReadFunctions,
+    ...customsPolicyFunctions, ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions,
+    ...catalogAgentFunctions, ...paotuiAgentFunctions,
     ...commerceFunctions,
     ...catalogReadFunctions,
     ...domainFunctions,
@@ -199,4 +210,26 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'slotAvailability', version: '1', inputTypes: ['ReservationSlot'], description: 'Check current evidenced slot eligibility for venue, time, timezone and party size' },
   ],
 };
+predecessorDefinition.links.push(...executionReferenceLinks(businessObjects, predecessorDefinition.actions, predecessorDefinition.interfaces));
+export const businessModelV9 = new OntologyModel(predecessorDefinition);
+const businessChain = extendBusinessChain(predecessorDefinition, { quantity: quantitySchema, pricing: pricingSchema, condition: businessConditionSchema });
+const productAndIdentity = extendIdentityMappingModel(extendProductAttributesModel(businessChain));
+export const BUSINESS_MODEL_DEFINITION = extendErrandDomainModel(productAndIdentity);
+BUSINESS_MODEL_DEFINITION.version = '15';
+BUSINESS_MODEL_DEFINITION.objects.push(...networkObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...networkLinks);
+const knownLinks = new Set(BUSINESS_MODEL_DEFINITION.links.map(link => link.id));
+BUSINESS_MODEL_DEFINITION.links.push(...executionReferenceLinks(BUSINESS_MODEL_DEFINITION.objects.filter(type => type.visibility !== 'technical' && !isVirtualRef({ type: type.id })), BUSINESS_MODEL_DEFINITION.actions, BUSINESS_MODEL_DEFINITION.interfaces).filter(link => !knownLinks.has(link.id)));
+BUSINESS_MODEL_DEFINITION.objects.push(...rideEstimateObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...rideEstimateLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...rideEstimateActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...rideEstimateFunctions);
+BUSINESS_MODEL_DEFINITION.objects.push(...rideBookingObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...rideBookingLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...rideBookingActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...rideBookingFunctions);
+BUSINESS_MODEL_DEFINITION.objects.push(...registrationObjects, ...meituanReadObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...registrationLinks, ...meituanReadLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...registrationActions, ...meituanReadActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...registrationFunctions, ...meituanReadFunctions);
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);

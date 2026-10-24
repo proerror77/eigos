@@ -19,7 +19,7 @@ import { AnonymousShopifyConnector, type CatalogConnector, type CatalogCall } fr
 
 export const CATALOG_AGENT_REF = { id: 'commerce.catalog.query', version: '2' } as const;
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
-const baseFacts = () => ({ conditions: ['execution.no_order', 'catalog.public_only'] });
+const baseFacts = () => ({ conditions: ['execution.no_order', 'catalog.public_only', 'catalog.observed'] });
 const invalid = (message: string): never => { throw new DomainError('CONFLICT', message); };
 
 /** Business action binding and source validation. The LLM owns the step graph,
@@ -41,19 +41,19 @@ export class CatalogAgentProgram implements AgentProgram {
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: 'catalog.agent.actions', version: catalogReadDefinition.version }, name: 'Agent 公开商品查询与比较',
       description: `根据用户目标选择和组合商品搜索、变体详情、商家目录发现、指定变体读取，返回有来源的公开商品信息或比较。支持商家：${this.merchants.map(m => `${m.name}（merchantId=${m.id}）`).join('、')}。解释请求时只确定 merchantIds 和 country=US；查询词、结果数量、商品变体及后续动作由 Agent 在读取 Ontology 后决定。US 是目录市场。比较两款、取两条等是检索目标，不是采购数量；单价筛选不是完整服务预算。只查询，不创建购物车、不下单付款；库存数量、配送及合作状态未知。`,
-      tags: ['catalog', 'shopify', 'read-only', 'agent'], environment: 'live', completion: 'artifact',
+      tags: ['catalog', 'shopify', 'read-only', 'agent'], environment: this.connector.evidenceKind === 'fixture' ? 'sandbox' : 'live', completion: 'artifact',
       inputSchema: z.toJSONSchema(catalogTaskInputSchema.extend({ merchantIds: z.array(z.enum(this.merchants.map(m => m.id) as [string, ...string[]])).min(1).max(8) })),
       ontology: { objects: ['CatalogTask', 'CatalogObservation', 'CatalogEndpoint', 'ProductOffer', 'SourceReceipt'], planning: 'Model-selected read actions and observation-based follow-up decisions; no prepared recipe.' },
       actions: this.actionIds.map(id => ({ ref: { id, version: catalogReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'catalog.agent.source-readback', version: '1' },
       predicates: [{ id: 'execution.no_order', description: '不创建购物车、结账、订单或付款' }, { id: 'catalog.public_only', description: '仅匿名公开商品数据' }],
-      outcomePredicates: ['catalog.merchant_verified'],
+      outcomePredicates: ['catalog.merchant_verified'], goalOutcomes: [{ predicate: 'catalog.merchant_verified', phase: 'fact', description: 'Merchant-backed variant facts independently checked for the requested catalog result' }], requirementRoles: [{ kind: 'quantity', role: 'result_count', description: 'Number of source-backed variants in the selected result' }], effectConstraints: [{ predicate: 'execution.no_order', allowedEffects: ['read', 'local'] }],
     };
   }
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown) {
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Catalog program is unavailable to this identity');
     const input = catalogTaskInputSchema.parse(value), merchants = input.merchantIds.map(id => this.merchants.find(m => m.id === id) ?? invalid('Merchant is outside configured scope'));
     if (new Set(input.merchantIds).size !== input.merchantIds.length) invalid('Duplicate merchant scope');
-    const root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'CatalogTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest }) };
+    const root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'CatalogTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { component: component.id } : {}) }) };
     if (graph.read(owner, root).properties.revision !== request.revision) invalid('Request revision changed before scope creation');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: '公开商品查询任务', requestRevision: request.revision, input, merchants, configurationDigest: this.configurationDigest, allowedActions: [...this.actionIds] } }], links: [{ type: 'CatalogTaskRequest', from: scope, to: root }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
@@ -111,6 +111,7 @@ export class CatalogAgentProgram implements AgentProgram {
     }
   }
   async invoke(ctx: AgentActionContext, action: string, value: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
+    if (!ctx.modelRunId || ctx.callerRequestId) throw new DomainError('FORBIDDEN', 'Catalog source calls require an original model-selected plan');
     this.validate(ctx, action, value);
     const input = this.schema(action).parse(value), merchant = this.merchants.find(m => m.id === input.merchantId)!;
     const binding = this.definition(ctx.graph, action).read!.mcp!;
@@ -151,6 +152,27 @@ export class CatalogAgentProgram implements AgentProgram {
     if (s.action !== action || !equal(s.actionInput, input) || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== this.configurationDigest || !equal(s.scope, ctx.state.scope) || !equal(result.evidenceRefs, [s.receipt.id]) || s.evidenceKind !== this.connector.evidenceKind) invalid('Result does not bind the exact agent decision and action attempt');
     if (Date.parse(s.expiresAt) <= ctx.graph.now()) invalid('Catalog response expired before projection');
     return projectAgentCatalogObservation(ctx.graph, ctx.owner, s);
+  }
+  projectOutputs(_ctx: AgentActionContext, action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const observation = checkedAgentCatalogObservation(result.value);
+    return { values: { result: object, ...(action === 'DiscoverMerchantCatalog' ? {} : { citations: [object] }) }, evidence: {
+      origin: observation.evidenceKind === 'fixture' ? 'synthetic' as const : 'provider' as const, refs: result.evidenceRefs, observedAt: observation.observedAt, expiresAt: observation.expiresAt,
+    } };
+  }
+  validateOutput(ctx: AgentProgramContext, output: import('../ontology/composition-contract.js').AcceptedPortValue) {
+    const refs = (output.definition.cardinality === 'many' ? output.value : [output.value]) as ObjectRef[];
+    for (const ref of refs) {
+      const { snapshot } = this.observation(ctx, ref), index = ctx.state.observations.findIndex(value => equal(value, ref));
+      for (const laterRef of ctx.state.observations.slice(index + 1)) {
+        const later = checkedAgentCatalogObservation(ctx.graph.read(ctx.owner, laterRef).properties.snapshot);
+        if (later.merchant.id !== snapshot.merchant.id) continue;
+        if (snapshot.profile && later.profile && !equal(snapshot.profile, later.profile)) invalid('A later discovery changed the original endpoint facts');
+        for (const item of snapshot.items) {
+          const current = later.items.find(value => value.variantId === item.variantId);
+          if (current && !equal(current, item)) invalid('A later source observation conflicts with this accepted output; select current facts');
+        }
+      }
+    }
   }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     this.scope(ctx);

@@ -169,7 +169,7 @@ test('Same-task conversation reuse still obtains fresh reads for every autonomou
   const f = syntheticContextDidi('valid', true);
   try {
     f.b.submit(); await f.b.run(); await f.b.run(); const done = await f.b.run();
-    assert.equal(done.state, 'completed'); assert(done.delegation!.acceptance!.accepted);
+    assert.equal(done.state, 'completed', JSON.stringify({ feedback: done.delegation?.agent?.feedback, recovery: done.delegation?.recovery, error: done.error })); assert(done.delegation!.acceptance!.accepted);
     assert.equal(f.keys.length, 3); assert(f.keys[0]); assert.equal(new Set(f.keys).size, 1);
     assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
     const contexts = done.runs!.map(run => run.ontologyContext!);
@@ -189,7 +189,7 @@ test('A real initial model choice merges interpretation and independent tool sel
     const task = f.b.submit({ goal: 'Synthetic exact route only; no order or payment' });
     const first = await f.b.run();
     assert.equal(f.requests.length, 1); assert.equal(first.runs!.length, 1);
-    assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 2);
+    assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 2, JSON.stringify({ state: first.state, feedback: first.delegation?.agent?.feedback, recovery: first.delegation?.recovery, events: first.delegation?.events.slice(-3) }));
     const plan = first.delegation!.agent!.plans[0]!;
     assert(plan.initialSelection); assert.equal(plan.modelRunId, first.runs![0]!.id);
     assert.deepEqual(plan.steps.map(step => step.id), ['chosen_destination', 'chosen_origin']);
@@ -204,7 +204,7 @@ test('A real initial model choice merges interpretation and independent tool sel
     assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read' && intent.state === 'effect_confirmed'));
     const program = f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!;
     verifyInitialPlan(done, f.store.ontology, program, plan);
-    const altered = structuredClone(plan); altered.modelDecision.steps[0]!.argumentsJson = '{}';
+    const altered = structuredClone(plan); assert(altered.modelDecision); altered.modelDecision.steps[0]!.argumentsJson = '{}';
     assert.throws(() => verifyInitialPlan(done, f.store.ontology, program, altered), /differs/);
     const invented = structuredClone(plan); invented.initialSelection!.definitionActions = [];
     assert.throws(() => verifyInitialPlan(done, f.store.ontology, program, invented), /definitions/);

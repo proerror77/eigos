@@ -1,0 +1,381 @@
+{
+  "id": "101dfb70c3009a3ded74872d6287b29199a4501b45942a6661ff3f490bd584bb",
+  "name": "partial-goal-result.json",
+  "data": {
+    "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+    "deliverable": "已保留原任务取得的来源结果；整个目标尚未完成。",
+    "execution": "partial",
+    "result": {
+      "version": "1",
+      "goalDigest": "f61f4f67182c60d3b2285354f668af33a44621bf1858ea6dff6c9f3cc7e18fa1",
+      "accepted": false,
+      "criteria": [
+        {
+          "id": "coffee_source_facts",
+          "description": "在已配置的 Coffee Lab 隔离测试商家中取得两款不同咖啡候选的当前来源事实，包括名称、变体 ID、显示价格、币种和来源；目录部分返回不代表候选穷尽。",
+          "status": "unknown"
+        },
+        {
+          "id": "coffee_merchant_verification",
+          "description": "两款选定候选的信息须经已核验的 Coffee Lab 商家端点读取并具有来源依据。",
+          "status": "unknown"
+        },
+        {
+          "id": "chinese_markdown_comparison",
+          "description": "交付中文 Markdown 比较文档，引用两款已核验候选的来源；每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。",
+          "status": "unknown"
+        }
+      ],
+      "observedResults": [
+        {
+          "object": {
+            "type": "CatalogEndpoint",
+            "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf"
+          },
+          "revision": 1,
+          "source": {
+            "kind": "synthetic",
+            "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf",
+            "observedAt": "2026-10-22T14:18:43.336Z"
+          },
+          "intentId": "40e40f4b-d1de-4956-ba90-e6e9b6cdab27",
+          "evidenceRefs": [
+            "68cb1877-1c55-4ff1-b850-1220ba0136bf"
+          ],
+          "contentIncluded": true,
+          "properties": {
+            "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf",
+            "displayTitle": "Coffee Lab: DiscoverMerchantCatalog",
+            "requestRevision": 1,
+            "snapshot": {
+              "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf",
+              "requestId": "0c6fb8cc-6828-4cc6-a0ab-96f1f63255a7",
+              "requestRevision": 1,
+              "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+              "action": "DiscoverMerchantCatalog",
+              "actionInput": {
+                "scope": {
+                  "type": "CatalogTask",
+                  "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+                },
+                "merchantId": "coffee-lab"
+              },
+              "planId": "a0c0468c-e072-4776-8ed6-55890ae55cf7",
+              "intentId": "40e40f4b-d1de-4956-ba90-e6e9b6cdab27",
+              "attemptId": "2dd4a636-7da0-4c79-a2b4-41bb14a4a9e4",
+              "modelRunId": "0ba32d8c-8124-40ed-891e-448c696c4866",
+              "scope": {
+                "type": "CatalogTask",
+                "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+              },
+              "merchant": {
+                "id": "coffee-lab",
+                "name": "Coffee Lab",
+                "shopId": "gid://shopify/Shop/9012",
+                "domain": "eigos-coffee-fixture.myshopify.com"
+              },
+              "country": "US",
+              "evidenceKind": "fixture",
+              "receipt": {
+                "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf",
+                "endpoint": "https://eigos-coffee-fixture.myshopify.com/.well-known/ucp",
+                "operation": "discovery",
+                "startedAt": "2026-10-22T14:18:43.307Z",
+                "receivedAt": "2026-10-22T14:18:43.336Z",
+                "httpStatus": 200,
+                "authentication": "anonymous",
+                "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                "responseSha256": "7889ef2e5a736552945ee3b4d402589fc8aec9d8152e5425a334c54f3c0db9f1",
+                "responseBytes": 421
+              },
+              "observedAt": "2026-10-22T14:18:43.336Z",
+              "expiresAt": "2026-10-22T14:23:43.307Z",
+              "validityBasis": "local_refresh_limit",
+              "items": [],
+              "profile": {
+                "ucp": {
+                  "version": "2026-08-25",
+                  "capabilities": {
+                    "dev.ucp.shopping.catalog.search": [
+                      {
+                        "version": "2026-08-25"
+                      }
+                    ],
+                    "dev.ucp.shopping.catalog.lookup": [
+                      {
+                        "version": "2026-08-25"
+                      }
+                    ],
+                    "dev.shopify.catalog": [
+                      {
+                        "version": "2026-08-25"
+                      }
+                    ],
+                    "dev.shopify.catalog.global": [
+                      {
+                        "version": "2026-08-25"
+                      }
+                    ]
+                  },
+                  "services": {
+                    "dev.ucp.shopping": [
+                      {
+                        "version": "2026-08-25",
+                        "transport": "mcp",
+                        "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp"
+                      }
+                    ]
+                  }
+                }
+              },
+              "completeness": "partial_or_unknown",
+              "stockQuantity": "unknown",
+              "deliveryCommitment": "unknown",
+              "partnerTrust": "unverified",
+              "noBusinessWrites": true,
+              "contentDigest": "2313fa645d13f0cf76796ff12bc3f81c6b298d4e07f3bdcf2ce489d168e8ac99"
+            }
+          }
+        },
+        {
+          "object": {
+            "type": "CatalogObservation",
+            "id": "2c930689-d56f-42a2-9258-9a211d05da25"
+          },
+          "revision": 1,
+          "source": {
+            "kind": "synthetic",
+            "id": "2c930689-d56f-42a2-9258-9a211d05da25",
+            "observedAt": "2026-10-22T14:18:43.335Z"
+          },
+          "intentId": "04cca968-a57f-43df-aa93-5dbc1928156f",
+          "evidenceRefs": [
+            "2c930689-d56f-42a2-9258-9a211d05da25"
+          ],
+          "contentIncluded": true,
+          "properties": {
+            "id": "2c930689-d56f-42a2-9258-9a211d05da25",
+            "displayTitle": "Coffee Lab: SearchPublicCatalog",
+            "requestRevision": 1,
+            "snapshot": {
+              "id": "2c930689-d56f-42a2-9258-9a211d05da25",
+              "requestId": "0c6fb8cc-6828-4cc6-a0ab-96f1f63255a7",
+              "requestRevision": 1,
+              "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+              "action": "SearchPublicCatalog",
+              "actionInput": {
+                "scope": {
+                  "type": "CatalogTask",
+                  "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+                },
+                "merchantId": "coffee-lab",
+                "query": "coffee",
+                "limit": 10
+              },
+              "planId": "a0c0468c-e072-4776-8ed6-55890ae55cf7",
+              "intentId": "04cca968-a57f-43df-aa93-5dbc1928156f",
+              "attemptId": "f6649d77-16f6-46a5-83aa-fc83c469d42c",
+              "modelRunId": "0ba32d8c-8124-40ed-891e-448c696c4866",
+              "scope": {
+                "type": "CatalogTask",
+                "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+              },
+              "merchant": {
+                "id": "coffee-lab",
+                "name": "Coffee Lab",
+                "shopId": "gid://shopify/Shop/9012",
+                "domain": "eigos-coffee-fixture.myshopify.com"
+              },
+              "country": "US",
+              "evidenceKind": "fixture",
+              "receipt": {
+                "id": "2c930689-d56f-42a2-9258-9a211d05da25",
+                "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+                "operation": "search_catalog",
+                "startedAt": "2026-10-22T14:18:43.192Z",
+                "receivedAt": "2026-10-22T14:18:43.335Z",
+                "httpStatus": 200,
+                "authentication": "anonymous",
+                "inputSha256": "45cc1fd84b793ddac463c2c9d5b3dfbd7e8b7c32ef0537b3ab3f251d15c7b604",
+                "responseSha256": "f4002f34787903558563a4ccf74e5f5d21661e0f9ec9274587b07d6b16a248b0",
+                "responseBytes": 1986
+              },
+              "observedAt": "2026-10-22T14:18:43.335Z",
+              "expiresAt": "2026-10-22T14:23:43.192Z",
+              "validityBasis": "local_refresh_limit",
+              "items": [
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9034",
+                  "title": "Synthetic coffee — Light roast",
+                  "sku": "FIXTURE-0",
+                  "displayPrice": {
+                    "minor": "1000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                },
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9035",
+                  "title": "Synthetic coffee — Medium roast",
+                  "sku": "FIXTURE-1",
+                  "displayPrice": {
+                    "minor": "2000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                },
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9036",
+                  "title": "Synthetic coffee — Dark roast",
+                  "sku": "FIXTURE-2",
+                  "displayPrice": {
+                    "minor": "3000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                },
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9037",
+                  "title": "Synthetic coffee — Espresso roast",
+                  "sku": "FIXTURE-3",
+                  "displayPrice": {
+                    "minor": "4000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                }
+              ],
+              "completeness": "partial_or_unknown",
+              "stockQuantity": "unknown",
+              "deliveryCommitment": "unknown",
+              "partnerTrust": "unverified",
+              "noBusinessWrites": true,
+              "contentDigest": "7cad7225c840fd63fcd7e7b6f4509341fdb00034e60dd392bf27a6bf9fa086c1"
+            }
+          }
+        },
+        {
+          "object": {
+            "type": "CatalogObservation",
+            "id": "6a67c404-cc23-4dce-8e64-17905a1934a7"
+          },
+          "revision": 1,
+          "source": {
+            "kind": "synthetic",
+            "id": "6a67c404-cc23-4dce-8e64-17905a1934a7",
+            "observedAt": "2026-10-22T14:19:57.058Z"
+          },
+          "intentId": "85121454-76bb-4be8-970c-c5761d3953dc",
+          "evidenceRefs": [
+            "6a67c404-cc23-4dce-8e64-17905a1934a7"
+          ],
+          "contentIncluded": true,
+          "properties": {
+            "id": "6a67c404-cc23-4dce-8e64-17905a1934a7",
+            "displayTitle": "Coffee Lab: ReadMerchantVariants",
+            "requestRevision": 1,
+            "snapshot": {
+              "id": "6a67c404-cc23-4dce-8e64-17905a1934a7",
+              "requestId": "0c6fb8cc-6828-4cc6-a0ab-96f1f63255a7",
+              "requestRevision": 1,
+              "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+              "action": "ReadMerchantVariants",
+              "actionInput": {
+                "scope": {
+                  "type": "CatalogTask",
+                  "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+                },
+                "merchantId": "coffee-lab",
+                "endpoint": {
+                  "type": "CatalogEndpoint",
+                  "id": "68cb1877-1c55-4ff1-b850-1220ba0136bf"
+                },
+                "variantIds": [
+                  "gid://shopify/ProductVariant/9034",
+                  "gid://shopify/ProductVariant/9035"
+                ],
+                "observation": {
+                  "type": "CatalogObservation",
+                  "id": "2c930689-d56f-42a2-9258-9a211d05da25"
+                }
+              },
+              "planId": "66e87455-49c3-48d0-be11-8e7f34e69ad9",
+              "intentId": "85121454-76bb-4be8-970c-c5761d3953dc",
+              "attemptId": "ce5ab99b-72ab-49f5-ad59-505522da7aee",
+              "modelRunId": "bf40f702-48af-4d01-a919-438699de96f3",
+              "scope": {
+                "type": "CatalogTask",
+                "id": "3625f565ae3ce1fc5309f875a806389508b8804a4d4f7a9c82653a46527bffa1"
+              },
+              "merchant": {
+                "id": "coffee-lab",
+                "name": "Coffee Lab",
+                "shopId": "gid://shopify/Shop/9012",
+                "domain": "eigos-coffee-fixture.myshopify.com"
+              },
+              "country": "US",
+              "evidenceKind": "fixture",
+              "receipt": {
+                "id": "6a67c404-cc23-4dce-8e64-17905a1934a7",
+                "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp",
+                "operation": "lookup_catalog",
+                "startedAt": "2026-10-22T14:19:57.043Z",
+                "receivedAt": "2026-10-22T14:19:57.058Z",
+                "httpStatus": 200,
+                "authentication": "anonymous",
+                "inputSha256": "45d95037bfed584b6752432fba5c8de31f309826273c65cc49ab162352263551",
+                "responseSha256": "568c8a1ac1c5ef07e85dbe434bcfef590d849709d797794d54016a90f82ca6b9",
+                "responseBytes": 1238
+              },
+              "observedAt": "2026-10-22T14:19:57.058Z",
+              "expiresAt": "2026-10-22T14:24:57.043Z",
+              "validityBasis": "local_refresh_limit",
+              "items": [
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9034",
+                  "title": "Synthetic coffee — Light roast",
+                  "sku": "FIXTURE-0",
+                  "displayPrice": {
+                    "minor": "1000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                },
+                {
+                  "productId": "gid://shopify/Product/9001",
+                  "variantId": "gid://shopify/ProductVariant/9035",
+                  "title": "Synthetic coffee — Medium roast",
+                  "sku": "FIXTURE-1",
+                  "displayPrice": {
+                    "minor": "2000",
+                    "currency": "USD"
+                  },
+                  "availableReported": true,
+                  "nativeCheckoutEligibleReported": false
+                }
+              ],
+              "completeness": "partial_or_unknown",
+              "stockQuantity": "unknown",
+              "deliveryCommitment": "unknown",
+              "partnerTrust": "unverified",
+              "noBusinessWrites": true,
+              "contentDigest": "7bd9742207fb83d923425db467c4574e2629b91637307b118744be823ba01b60"
+            }
+          }
+        }
+      ],
+      "omittedObservationCount": 0,
+      "meaning": "Accepted action observations remain available. Required whole-goal conditions have not all passed independent verification."
+    }
+  }
+}

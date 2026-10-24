@@ -1,13 +1,15 @@
+import { NETWORK_SCOPES } from '../../packages/network/contracts.js';
+import { SOURCE_SCOPES } from '../../packages/core/member-source.js';
 import { timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { SCOPES, type Principal } from '../../packages/core/domain.js';
+import { SCOPES, TASK_SCOPES, type Principal } from '../../packages/core/domain.js';
 import { readTenantClaim } from '../../packages/core/identity-claims.js';
 
 export type VerifyToken = (token: string) => Promise<Principal>;
 
-export function jwtVerifier(issuer: string, audience: string, keys: JWTVerifyGetKey, tenantClaim = 'tenant_id'): VerifyToken {
+export function jwtVerifier(issuer: string, audience: string | string[], keys: JWTVerifyGetKey, tenantClaim = 'tenant_id'): VerifyToken {
   return async token => {
     const { payload } = await jwtVerify(token, keys, {
       issuer, audience, algorithms: ['RS256', 'ES256', 'EdDSA'],
@@ -33,14 +35,17 @@ export function createVerifier(c: Config): VerifyToken {
       return { issuer: 'local-development', subject: 'developer', tenant: 'local', clientId: 'eigos-local-dev', scopes: [...SCOPES] };
     };
   }
-  return jwtVerifier(c.OAUTH_ISSUER!, c.OAUTH_AUDIENCE!, createRemoteJWKSet(new URL(c.OAUTH_JWKS_URL!)), c.OAUTH_TENANT_CLAIM);
+  return jwtVerifier(c.OAUTH_ISSUER!, c.OAUTH_LEGACY_AUDIENCE ? [c.OAUTH_AUDIENCE!, c.OAUTH_LEGACY_AUDIENCE] : c.OAUTH_AUDIENCE!, createRemoteJWKSet(new URL(c.OAUTH_JWKS_URL!)), c.OAUTH_TENANT_CLAIM);
 }
 
 export function protectedResourceMetadata(c: Config): object {
   return {
     resource: c.OAUTH_AUDIENCE ?? c.PUBLIC_URL,
     authorization_servers: c.OAUTH_ISSUER ? [c.OAUTH_ISSUER] : [],
-    scopes_supported: SCOPES,
+    // Public OAuth discovery must not request an operator-only grant that the
+    // self-service issuer setup deliberately does not provision.
+    scopes_supported: c.EIGOS_INVITE_BETA === 'true' ? ['openid', 'offline_access', ...TASK_SCOPES]
+      : [...SCOPES.filter(scope => scope !== 'ontology:admin'), ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     bearer_methods_supported: ['header'],
     resource_name: 'EIGOS task gateway',
     ...(c.OIDC_AGENT_CLIENT_ID ? { eigos_agent_registration: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}),

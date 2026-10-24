@@ -45,8 +45,8 @@ const gateway = createApp(readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV
 });
 server.on('request', gateway.app);
 const model = new CodexExecutor(process.env.EIGOS_CODEX_BIN ?? 'codex', 120000);
-const coordinator = new Coordinator(gateway.store, new CodexReasoner({ runStructured: async (prompt, schema, signal) => {
-  const result = await model.runStructured(prompt, schema, signal); modelResponses.push({ evidenceId: result.evidence.id, output: result.output }); return result;
+const coordinator = new Coordinator(gateway.store, new CodexReasoner({ runStructured: async (prompt, schema, signal, options) => {
+  const result = await model.runStructured(prompt, schema, signal, options); modelResponses.push({ evidenceId: result.evidence.id, output: result.output }); return result;
 } }), gateway.catalog);
 const worker = new Worker(gateway.store, { coordinator: { run: async (claim, signal) => { try { await coordinator.run(claim, signal); } catch (e) { failures.push(e instanceof Error ? e.message : String(e)); throw e; } } }, pollMs: 100, leaseMs: 15000, timeoutMs: 600000 });
 worker.start();

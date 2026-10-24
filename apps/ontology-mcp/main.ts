@@ -1,3 +1,7 @@
+import { DatabaseSync } from 'node:sqlite';
+import { PersonalSourceAccess, personalSourceAdmitted } from '../../packages/core/personal-source.js';
+import { MemberSourceVault, sourceGrantSchema } from '../../packages/core/member-source.js';
+import { digest } from '../../packages/core/delegation.js';
 import { closeSync, constants, openSync, writeSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';

@@ -1,3 +1,4 @@
+import { objectResultProjection } from '../../core/composed-actions.js';
 import { readRegistration, projectRegistration, registrationStatus, isFreeRegistration } from '../../ontology/free-booking-functions.js';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
@@ -41,12 +42,12 @@ export class ParticipantBookingProgram implements AgentProgram {
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
     const predicates = ['registration.free', 'registration.submitted', 'registration.confirmed'];
-    return { ref: this.ref, ontologyRef: { id: 'eigos.registration', version: '1' }, name: '免费活动报名与通用预约', description: `普通参与者的免费报名／预约、审核与候补跟踪、独立确认回读；支付不是必需步骤。${this.source.environment === 'live' ? '通过本机已登录 Luma 浏览器操作，需要在线操作代理。' : '仅合成来源验证。'}`, tags: ['registration', 'booking', 'free', 'participant', this.source.environment], environment: this.source.environment, inputSchema: z.toJSONSchema(registrationInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: id.startsWith('Submit') ? 'reserve' : id === 'WaitForRegistration' ? 'local' : 'read' })), predicates: predicates.map(id => ({ id, description: id })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'registration.independent', version: '1' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of registered participants; this initial participant connector supports one signed-in person' }, { kind: 'budget', role: 'service_total', description: 'Complete mandatory service charges, including zero' }, { kind: 'deadline', role: 'completion', description: 'Deadline for the requested submission or confirmation endpoint' }], ontology: { objects: ['RegistrationTask', 'RegistrationOffer', 'RegistrationRecord'], functions: ['registrationStatus'], payment: 'optional', livePaymentsEnabled: false, provider: this.source.identity, execution: 'agent_selected_atomic_actions', source: 'operator_assisted_browser' } };
+    return { ref: this.ref, ontologyRef: { id: 'eigos.registration', version: '1' }, name: '免费活动报名与通用预约', description: `普通参与者的免费报名／预约、审核与候补跟踪、独立确认回读；支付不是必需步骤。${this.source.environment === 'live' ? '通过本机已登录 Luma 浏览器操作，需要在线操作代理。' : '仅合成来源验证。'}`, tags: ['registration', 'booking', 'free', 'participant', this.source.environment], environment: this.source.environment, inputSchema: z.toJSONSchema(registrationInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: id.startsWith('Submit') ? 'reserve' : id === 'WaitForRegistration' ? 'local' : 'read' })), predicates: predicates.map(id => ({ id, description: id })), outcomePredicates: predicates, goalOutcomes: [{ predicate: 'registration.free', phase: 'fact', description: 'Independently observed complete zero-charge terms' }, { predicate: 'registration.submitted', phase: 'commitment', description: 'Original participant submission independently read back' }, { predicate: 'registration.confirmed', phase: 'commitment', description: 'Independently confirmed participant eligibility, not attendance' }], completion: 'domain', verifierRef: { id: 'registration.independent', version: '1' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of registered participants; this initial participant connector supports one signed-in person' }, { kind: 'budget', role: 'service_total', description: 'Complete mandatory service charges, including zero' }, { kind: 'deadline', role: 'completion', description: 'Deadline for the requested submission or confirmation endpoint' }], ontology: { objects: ['RegistrationTask', 'RegistrationOffer', 'RegistrationRecord'], functions: ['registrationStatus'], payment: 'optional', livePaymentsEnabled: false, provider: this.source.identity, execution: 'agent_selected_atomic_actions', source: 'operator_assisted_browser' } };
   }
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown) {
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner) || (request.executionEnvironment ?? 'live') !== this.source.environment) throw new DomainError('FORBIDDEN', 'Participant source is unavailable in this request environment');
-    const input = registrationInputSchema.parse(raw), scope = { type: 'RegistrationTask', id: `${request.id}:r${request.revision}` };
-    graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: input.kind === 'event_registration' ? '免费活动报名' : '免费通用预约', requestRevision: request.revision, input, bindingDigest: this.configurationDigest } }], links: [{ type: 'RegistrationTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
+    const input = registrationInputSchema.parse(raw), scope = { type: 'RegistrationTask', id: `${request.id}:r${request.revision}${component ? `:c${component.scopeKey}` : ''}` };
+    graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: input.kind === 'event_registration' ? '免费活动报名' : '免费通用预约', requestRevision: request.revision, input, bindingDigest: this.configurationDigest, allowedActions: this.actionIds } }], links: [{ type: 'RegistrationTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
   }
   schema(action: string) {
@@ -60,7 +61,7 @@ export class ParticipantBookingProgram implements AgentProgram {
   }
   private scope(ctx: AgentProgramContext) {
     const record = ctx.graph.read(ctx.owner, ctx.state.scope);
-    if (!this.permitted(ctx.owner) || ctx.state.programDigest !== this.configurationDigest || record.properties.bindingDigest !== this.configurationDigest || record.properties.requestRevision !== ctx.request.revision || (ctx.request.executionEnvironment ?? 'live') !== this.source.environment) fail('Participant owner, binding or request changed');
+    if (!this.permitted(ctx.owner) || ctx.state.programDigest !== this.configurationDigest || record.properties.bindingDigest !== this.configurationDigest || !same(record.properties.allowedActions, this.actionIds) || record.properties.requestRevision !== ctx.request.revision || (ctx.request.executionEnvironment ?? 'live') !== this.source.environment) fail('Participant owner, binding or request changed');
     return registrationInputSchema.parse(record.properties.input);
   }
   private observed(ctx: AgentProgramContext, raw: unknown, historical = false) {
@@ -140,6 +141,14 @@ export class ParticipantBookingProgram implements AgentProgram {
       for (const key of ['registrationId', 'serviceUrl', 'attendeeRef', 'startsAt', 'endsAt', 'timeZone', 'participants', 'kind', 'termsRef', 'payment'] as const) if (!same(original[key], actual[key])) fail('Readback changed the original participant registration');
     }
     return projectRegistration(ctx, action, source);
+  }
+  projectOutputs(ctx: AgentActionContext, _action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const source = this.observed(ctx, object);
+    return objectResultProjection(object, { origin: source.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', refs: result.evidenceRefs, observedAt: source.receipt.receivedAt, expiresAt: source.payload.expiresAt }, false, true);
+  }
+  validateOutput(ctx: AgentProgramContext, output: import('../../ontology/composition-contract.js').AcceptedPortValue) {
+    const refs = output.definition.cardinality === 'many' ? output.value as ObjectRef[] : [output.value as ObjectRef];
+    for (const ref of refs) this.observed(ctx, ref);
   }
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
     const input = this.scope(ctx), proposal = completion.parse(raw), s = this.observed(ctx, proposal.registration), result = this.evaluate(ctx, proposal.registration, reads), data = registrationRecordSchema.parse(s.payload.data);

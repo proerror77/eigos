@@ -1,10 +1,12 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import assert from 'node:assert/strict';
+
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { checkRequirements } from '../packages/coordinator/resolver.js';
 import { domainRequirementRoles } from '../packages/ontology/service-domains.js';
-import { equivalentQuantities } from '../packages/ontology/quantity.js';
+import { equivalentQuantities, quantityAppearsInQuote } from '../packages/ontology/quantity.js';
 import { DomainServiceAdapter, domainCapability } from '../packages/capabilities/domain-service.js';
 import { domainProvider } from './fixtures/service-domains.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
@@ -89,7 +91,7 @@ test('declared step costs respect separate service/deposit caps and reject an un
   const facts = { amounts: { service_total: { minor: '40000', currency: 'CNY' }, deposit: { minor: '150000', currency: 'CNY' } } };
   const catalog = new ExecutionCatalog([capability], [binding], [fixtureAdapter(binding.adapterId, facts)]);
   const candidate = { id: 'cost-candidate', binding, status: 'ready' as const, input: {}, details: {}, facts, evidenceRefs: ['synthetic-quote'], requirementChecks: checkRequirements(r, facts, ['synthetic-quote']), observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(), recipe: (['service_total', 'deposit'] as const).map((purpose, i) => ({ id: purpose, operationId: purpose, actionTypeRef: action, input: {}, inputRefs: [], dependsOn: [], cost: { minor: i === 0 ? '40000' : '150000', currency: 'CNY', payeeId: binding.providerId, purpose } })) };
-  const plan = (value: typeof candidate) => proposePlan(catalog, owner, r, capability, value, { kind: 'propose_plan', requestRevision: 1, candidateId: value.id, message: 'Synthetic cost declaration only; no execution or approval', steps: value.recipe.map(s => ({ id: s.id, actionTypeRef: action, bindingRef: binding.ref, inputJson: '{}', dependsOn: [] })) }, templatePlanning(r));
+  const plan = (value: typeof candidate) => proposePlan(catalog, owner, r, capability, value, { kind: 'propose_plan', requestRevision: 1, candidateId: value.id, message: 'Synthetic cost declaration only; no execution or approval', steps: value.recipe.map(s => ({ id: s.id, actionTypeRef: action, bindingRef: binding.ref, inputJson: '{}', dependsOn: [] })) }, templatePlanning(r, businessModel.ref));
   assert.equal(plan(candidate).steps.length, 2);
   const missing = structuredClone(candidate); delete (missing.recipe[1]!.cost as { purpose?: string }).purpose;
   assert.throws(() => plan(missing), /fixed request budget/);
@@ -118,4 +120,29 @@ for (const domain of ['ride', 'hotel', 'vehicle'] as const) test(`${domain}: the
     b.tasks.authorize(principal, ready.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: grant.planDigest, allowedEffects: grant.effects, maxAmount: grant.maxAmount, payeeIds: grant.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' });
     const done = await b.run(); assert.equal(done.state, 'completed'); assert.equal(done.delegation!.request.requirements.length, roles.length); assert(done.delegation!.acceptance!.checks.every(c => c.result === 'pass')); assert.equal(f.counters().submits, 1);
   } finally { b.store.close(); }
+});
+
+test('quoted Chinese quantities preserve the explicit unit and reject ordinals or partial numerals', () => {
+  assert(quantityAppearsInQuote('查到两款不同的咖啡候选', { amount: '2', unit: 'result' }));
+  assert(quantityAppearsInQuote('比较十二款商品', { amount: '12', unit: '款' }));
+  assert(quantityAppearsInQuote('需要二十三杯', { amount: '23', unit: 'cup' }));
+  assert(quantityAppearsInQuote('包裹两公斤', { amount: '2000', unit: 'g' }));
+  assert(!quantityAppearsInQuote('两份饭', { amount: '2', unit: 'result' }));
+  assert(!quantityAppearsInQuote('第二款咖啡', { amount: '2', unit: 'result' }));
+  assert(!quantityAppearsInQuote('第2款咖啡', { amount: '2', unit: 'result' }));
+  assert(!quantityAppearsInQuote('一百二十三款', { amount: '23', unit: 'result' }));
+  assert(!quantityAppearsInQuote('二三款', { amount: '3', unit: 'result' }));
+  assert(!quantityAppearsInQuote('十十款', { amount: '10', unit: 'result' }));
+});
+
+
+test('native grounding accepts exact Chinese result counts without weakening ordinal provenance', () => {
+  const count: RequirementInput = { id: 'count', kind: 'quantity', role: 'result_count', strength: 'hard', expected: { amount: '2', unit: '款' } };
+  const roles = [{ kind: 'quantity' as const, role: 'result_count', description: 'Distinct source results' }];
+  const source = '查到两款不同的咖啡候选';
+  const result = groundRequirements(request(source), JSON.stringify([extracted(count, '两款')]), [], roles);
+  assert.equal(result.requirements[0]!.kind, 'quantity');
+  assert.equal(result.requirements[0]!.provenance.quote, '两款');
+  assert.throws(() => groundRequirements(request('第二款'), JSON.stringify([extracted(count, '第二款')]), [], roles), /Quantity interpretation/);
+  assert.throws(() => groundRequirements(request('第2款'), JSON.stringify([extracted(count, '第2款')]), [], roles), /Quantity interpretation/);
 });

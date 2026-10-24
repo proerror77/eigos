@@ -5,13 +5,13 @@ import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalo
 import { JobStore } from '../packages/core/store.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { SCOPES, ownerKey } from '../packages/core/domain.js';
-import type { Grounding, PlanProposal } from '../packages/core/delegation.js';
+import type { Grounding, LegacyGrounding, PlanProposal } from '../packages/core/delegation.js';
 import type { ServiceRequest, CandidateFacts, ProviderBinding, ServiceCapability } from '../packages/ontology/execution.js';
 
 export const principal = { issuer: 'local-development', tenant: 'local', subject: 'developer', clientId: 'test', scopes: [...SCOPES] };
 export const owner = ownerKey(principal);
 export const evidence = () => ({ id: randomUUID(), runtime: 'ontology-v2-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'fixture' });
-export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): Grounding {
+export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): LegacyGrounding {
   return { kind: 'resolve', requestRevision: request.revision, capabilityRef: { id, version: '2' }, message: 'Fixture interpretation', inputJson: JSON.stringify(input), requirementsJson: '[]', conditionsJson: '[]' };
 }
 export function proposal(context: PlanningContext, index = 0): PlanProposal {
@@ -20,9 +20,23 @@ export function proposal(context: PlanningContext, index = 0): PlanProposal {
     steps: candidate.recipe ? candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) : [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
 }
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
-  return { ground: async request => ({ decision: ground(request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
+  return { ground: async (request, _caps, _signal, access) => ({ decision: ground(observeTaskContext(access) ?? request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
 }
+const observedContexts = new WeakMap<PlanningAccess['session'], ServiceRequest>();
+/** The synthetic model explicitly reads and acknowledges its delivered context. */
+export function observeTaskContext(access: PlanningAccess): ServiceRequest | undefined {
+  if (!access.session.usesTaskContext()) return;
+  const prior = observedContexts.get(access.session);
+  if (prior) return prior;
+  const result = access.session.call('read_task_context', {}) as { data: { request: ServiceRequest }; receipt: { id: string } };
+  if (!result.receipt) throw new Error(`Synthetic model context read was rejected: ${JSON.stringify(result)}`);
+  access.session.acceptReceipts([result.receipt.id]);
+  observedContexts.set(access.session, result.data.request);
+  return result.data.request;
+}
+export function acknowledgeReads(access: PlanningAccess) { if (access.session.usesTaskContext()) access.session.acceptReceipts(access.session.receipts().filter(r => r.status === 'ok').map(r => r.id)); }
 export function observePlanning(context: PlanningContext, access: PlanningAccess) {
+  if (observeTaskContext(access)) return;
   access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 });
   access.session.call('query_ontology', { type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: context.request.id }] });
 }

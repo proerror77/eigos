@@ -1,0 +1,268 @@
+{
+  "scope": "synthetic; independent fresh-context participants; coordinator assessment against frozen fixture facts, not human validation",
+  "baselineCommit": "07f462e92c26f225c5deded76d6894cb86b0c6e7",
+  "model": {
+    "id": "eigos.business",
+    "version": "14",
+    "digest": "8482a64b0e6d058454af37bc8951dd703e152061d8ced023785cbf8b619c0f94"
+  },
+  "answerAndArchitectureAreSeparate": true,
+  "humanParticipant": "not_performed",
+  "validBaselineCases": 18,
+  "preservedAttempts": 25,
+  "fixtureCalibration": {
+    "initialRunPreserved": "baseline",
+    "replacementRun": "baseline-validated",
+    "architectureCodeChanged": false,
+    "changes": {
+      "G04": "Use the sandbox catalogue for the sandbox request; preserve runtime filtering.",
+      "H01": "Use a real isolated proposal and permit, a 350 CNY total budget, and separate 300/360 CNY observations.",
+      "S01": "Use piece consistently for the device quantity in request conditions, offers and lines.",
+      "S04": "Include the second pending shipment explicitly.",
+      "V01": "Use the sandbox capability catalogue for this sandbox question.",
+      "V02": "Align the requested 08:00 pickup and airport destination; preserve intentional ambiguous pickup and missing capacity.",
+      "V05": "Put confirmation before pickup, and record the requested unresolved return dispute explicitly."
+    },
+    "unresolvedCoverage": {
+      "S03": "Initial source shows a stable checkout. It supports authority/terms interpretation, not an actual changed-price runtime test; separate behavior verification is required."
+    }
+  },
+  "cases": [
+    {
+      "caseId": "G01",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "fixture_data"
+      ],
+      "review": "最新白色256GB全新三件、350元、地址B可由当前指令还原；未给截止时间。结构化条件未由该夹具生成，不能把数据缺失写成类型缺失。",
+      "calls": 7,
+      "elapsedMs": 314970,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "G02",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "runtime_verification"
+      ],
+      "review": "真实隔离预约账本仅有reserve许可且已撤销，125元仍未付款；模型答对不能替代派发拒绝测试。",
+      "calls": 8,
+      "elapsedMs": 315113,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "G03",
+      "run": "baseline",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "navigation",
+        "binding"
+      ],
+      "review": "真实询价转换存在于NetworkStore，基线统一本体无法导航。夹具业务是配送报价；购物和用车入口不可据此算已贯通。",
+      "calls": 9,
+      "elapsedMs": 315215,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "G04",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "discovery",
+        "binding"
+      ],
+      "review": "修正后的sandbox目录可发现简报、酒店及用车能力；定义/环境不能证明实际来源权限或真实交易绑定。",
+      "calls": 9,
+      "elapsedMs": 405753,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "G05",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "runtime_verification"
+      ],
+      "review": "原操作处于effect_unknown，保留原intent/dispatch；不重复提交。原始外部幂等键私有不是缺陷，仍须运行恢复验证。",
+      "calls": 10,
+      "elapsedMs": 315434,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "H01",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "execution_relationship"
+      ],
+      "review": "实际300/360元、房态1/0与旧精确许可均可追踪；旧候选unknown、新候选unsatisfied。候选executionInputs为空是真实绑定缺口。",
+      "calls": 16,
+      "elapsedMs": 405888,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "H02",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "endpoint_separation"
+      ],
+      "review": "付款已记录而预约pending，不得报已订妥或住宿完成。",
+      "calls": 5,
+      "elapsedMs": 315610,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "H03",
+      "run": "baseline",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "identity",
+        "domain_schema"
+      ],
+      "review": "相同酒店编号按来源隔离；缺可验证跨源映射、独立套餐早餐和取消条款。",
+      "calls": 10,
+      "elapsedMs": 315717,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "S01",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "domain_schema"
+      ],
+      "review": "自由文字规格可读出A黑色256新/B128翻新，但尚无严格属性profile及逐字段判定。",
+      "calls": 11,
+      "elapsedMs": 406024,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "S02",
+      "run": "baseline",
+      "answerAssessment": "partial",
+      "gapCategories": [
+        "discovery",
+        "party_role"
+      ],
+      "review": "正确拒绝把390元partial价格当到手总价；漏读既有ChannelParticipation中的seller和fulfiller。精确本交易角色仍需单独证明。",
+      "calls": 14,
+      "elapsedMs": 321139,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "S03",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "fixture_coverage",
+        "runtime_verification"
+      ],
+      "review": "实际夹具仅展示稳定270元checkout及cart许可；回答价格/库存变化的条件判断正确，但变化分支未实际发生，不能记为运行通过。",
+      "calls": 16,
+      "elapsedMs": 321272,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "S04",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "fulfillment_allocation"
+      ],
+      "review": "两包裹下已验收14、错规格1、尚余6，不能报完成；每包裹预期分配尚不充分。",
+      "calls": 11,
+      "elapsedMs": 406142,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "S05",
+      "run": "baseline",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "fixture_data",
+        "unsupported_operation"
+      ],
+      "review": "50元退款pending关联480元付款，不能宣称到账；该夹具缺审批/原需求/验收，通用业务链已有对应结构，不应重复建设。商品专属退货接口尚未支持。",
+      "calls": 15,
+      "elapsedMs": 321464,
+      "assistanceNeeded": true
+    },
+    {
+      "caseId": "V01",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "domain_schema"
+      ],
+      "review": "可区分即时叫车、预约接送、自驾；仍需按mode细化行李、地点、资格和交接字段。",
+      "calls": 6,
+      "elapsedMs": 406253,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "V02",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "domain_schema"
+      ],
+      "review": "四人两大箱、同名入口未确认且容量缺失，不可选。需要来源地点和行李类型schema。",
+      "calls": 9,
+      "elapsedMs": 406831,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "V03",
+      "run": "baseline",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "domain_schema",
+        "execution_relationship"
+      ],
+      "review": "accepted不能代表接送完成；需司机/车辆分配及抵达、上车、送达阶段证据。",
+      "calls": 7,
+      "elapsedMs": 293235,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "V04",
+      "run": "baseline",
+      "answerAssessment": "supported_unknown",
+      "gapCategories": [
+        "unsupported_operation",
+        "fixture_data"
+      ],
+      "review": "仅有用户改约/取消陈述与原pending结果，无独立改退回读，不得另订或接受加价。",
+      "calls": 12,
+      "elapsedMs": 293365,
+      "assistanceNeeded": false
+    },
+    {
+      "caseId": "V05",
+      "run": "baseline-validated",
+      "answerAssessment": "supported_with_limits",
+      "gapCategories": [
+        "domain_schema"
+      ],
+      "review": "车辆已归还但验收false、押金disputed，业务未结清；不得以物理归还覆盖争议。",
+      "calls": 9,
+      "elapsedMs": 406934,
+      "assistanceNeeded": false
+    }
+  ],
+  "rawQueryFiles": [
+    {
+      "path": "baseline/queries.jsonl",
+      "sha256": "15eb110cea51e0f537e650344a8003e79fdb5ef7e18a66eee866a159748c3351",
+      "bytes": 2445200
+    },
+    {
+      "path": "baseline-validated/queries.jsonl",
+      "sha256": "24af3543afd0c1010edf365d1ac0fe826438b0b6f8fd5b7d2417edd8823534ac",
+      "bytes": 969674
+    }
+  ]
+}

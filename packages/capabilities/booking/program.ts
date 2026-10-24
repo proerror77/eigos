@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { objectResultProjection } from '../../core/composed-actions.js';
 import { digest } from '../../core/delegation.js';
-import { DomainError } from '../../core/domain.js';
+import { DomainError, type Job } from '../../core/domain.js';
 import type { AgentProgram, AgentProgramContext, AgentActionContext, AgentActionResult } from '../../core/agent-program.js';
 import type { Delivery } from '../../core/catalog.js';
-import { paPaymentRequestSchema, verifyPAPaymentSelection, type PAPaymentTerms } from '../../core/pa-payment.js';
+import { paPaymentRequestSchema, recordPAPaymentHandoff, verifyPAPaymentSelection, type PAPaymentTerms } from './pa-payment.js';
 import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import { objectRefSchema, type ObjectRef } from '../../ontology/model.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
@@ -38,11 +39,11 @@ export class BookingAgentProgram implements AgentProgram {
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
     const predicates = ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed', 'booking.payment_not_required'];
-    return { ref: this.ref, ontologyRef: { id: 'eigos.booking.pa-payment', version: '3' }, name: '可选付款预约与独立回读', description: '在隔离服务商沙箱查询和建立预约。明确无需付款且完整费用为零时，只独立核验原预约确认；需要付款时保留 PA 的 Link Agent Wallet／普通 Link 付款和双重回读。无真实预约、扣款或服务履约。', tags: ['booking', 'pa-payment', 'sandbox'], environment: 'sandbox', inputSchema: z.toJSONSchema(bookingInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: bookingActionMetadata[id as BookingAction].effect })), predicates: predicates.map(id => ({ id, description: id === 'booking.payment_confirmed' ? 'Independent provider receipt confirms exact PA-funded synthetic payment' : id === 'booking.confirmed' ? 'Independent provider receipt confirms the original booking' : 'All provider and wallet operations stay in the isolated sandbox' })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'booking.pa-payment.independent', version: '3' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of participants in the service booking, in person units' }, { kind: 'budget', role: 'service_total', description: 'Complete fixed booking price including every mandatory fee' }, { kind: 'deadline', role: 'completion', description: 'Deadline for obtaining confirmed booking and payment, not service attendance' }, { kind: 'location', role: 'venue', description: 'Exact source venue reference' }], ontology: { objects: ['BookingTask', 'BookingOffers', 'BookingObservation', 'BookingPaymentObservation', 'PAPaymentRequest'], functions: ['bookingObservationStatus'], execution: 'agent_selected_atomic_actions', paymentAuthority: 'pa_owned', realSourceConnected: false } };
+    return { ref: this.ref, ontologyRef: { id: 'eigos.booking.pa-payment', version: '3' }, name: '可选付款预约与独立回读', description: '在隔离服务商沙箱查询和建立预约。明确无需付款且完整费用为零时，只独立核验原预约确认；需要付款时保留 PA 的 Link Agent Wallet／普通 Link 付款和双重回读。无真实预约、扣款或服务履约。', tags: ['booking', 'pa-payment', 'sandbox'], environment: 'sandbox', inputSchema: z.toJSONSchema(bookingInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: bookingActionMetadata[id as BookingAction].effect })), predicates: predicates.map(id => ({ id, description: id === 'booking.payment_confirmed' ? 'Independent provider receipt confirms exact PA-funded synthetic payment' : id === 'booking.confirmed' ? 'Independent provider receipt confirms the original booking' : 'All provider and wallet operations stay in the isolated sandbox' })), outcomePredicates: predicates, goalOutcomes: [{ predicate: 'booking.confirmed', phase: 'commitment', description: 'Original independently confirmed sandbox booking, not service attendance' }, { predicate: 'booking.payment_confirmed', phase: 'payment', description: 'Independent provider readback confirms the exact PA-funded sandbox payment' }, { predicate: 'booking.sandbox_only', phase: 'fact', description: 'Explicit synthetic provider scope' }], completion: 'domain', verifierRef: { id: 'booking.pa-payment.independent', version: '3' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of participants in the service booking, in person units' }, { kind: 'budget', role: 'service_total', description: 'Complete fixed booking price including every mandatory fee' }, { kind: 'deadline', role: 'completion', description: 'Deadline for obtaining confirmed booking and payment, not service attendance' }, { kind: 'location', role: 'venue', description: 'Exact source venue reference' }], ontology: { objects: ['BookingTask', 'BookingOffers', 'BookingObservation', 'BookingPaymentObservation', 'PAPaymentRequest'], functions: ['bookingObservationStatus'], execution: 'agent_selected_atomic_actions', paymentAuthority: 'pa_owned', realSourceConnected: false } };
   }
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown) {
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, raw: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner) || request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Booking PA-payment program is local sandbox only');
-    const input = bookingInputSchema.parse(raw), scope = { type: 'BookingTask', id: `${request.id}:r${request.revision}` };
+    const input = bookingInputSchema.parse(raw), scope = { type: 'BookingTask', id: `${request.id}:r${request.revision}${component ? `:c${component.scopeKey}` : ''}` };
     for (const r of request.requirements) if (r.strength === 'hard' && r.kind === 'quantity' && (!r.role || r.role === 'participant_count') && (r.expected.unit !== 'person' || r.expected.amount !== String(input.participants))) fail('Booking participants must match the explicit user quantity');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: 'PA 自主付款预约范围', requestRevision: request.revision, input, configurationDigest: this.configurationDigest, allowedActions: this.actionIds } }], links: [{ type: 'BookingTaskRequest', from: scope, to: { type: 'ServiceRequest', id: request.id } }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
@@ -130,7 +131,9 @@ export class BookingAgentProgram implements AgentProgram {
     this.validate(ctx, action, input);
     if (action !== 'CreatePendingBooking') fail('Only unpaid booking reservation has a provider write');
     const s = this.observation(ctx, input.offers), data = bookingEntitySchemas.BookingOffers.parse(s.payload.data), offer = data.offers.find(o => o.id === input.offerId)!;
-    return { cost: { minor: '0', currency: offer.total.currency, payeeId: offer.providerId }, operationScope: `booking:${digest({ owner: ctx.owner, request: ctx.request.id, revision: ctx.request.revision, provider: offer.providerId })}` };
+    return { cost: { minor: '0', currency: offer.total.currency, payeeId: offer.providerId },
+      budgetImpact: { key: `booking:${digest({ provider: offer.providerId, offer: offer.id, scope: ctx.state.scope })}`, kind: 'commitment' as const, role: 'service_total' as const, amount: offer.total },
+      operationScope: `booking:${digest({ owner: ctx.owner, request: ctx.request.id, revision: ctx.request.revision, provider: offer.providerId, scope: ctx.state.scope })}` };
   }
   private paymentTerms(ctx: AgentProgramContext, booking: ObjectRef, payment: ObjectRef): PAPaymentTerms {
     const { data } = this.booking(ctx, booking);
@@ -140,7 +143,7 @@ export class BookingAgentProgram implements AgentProgram {
     this.validate(ctx, action, input);
     if (action === 'RequestPAPayment' || action === 'WaitForPAPayment') {
       const terms = action === 'RequestPAPayment' ? this.paymentTerms(ctx, objectRefSchema.parse(input.booking), objectRefSchema.parse(input.payment)) : ctx.state.paPayment!.request.terms;
-      return { value: { terms }, evidenceRefs: [], paPayment: { mode: action === 'RequestPAPayment' ? 'request' : 'wait', terms } };
+      return { value: { terms }, evidenceRefs: [`local:payment-handoff:${digest({ intent: ctx.intentId, terms })}`] };
     }
     let payload: Record<string, unknown>;
     if (action === 'SearchBookingOffers') payload = { ...this.scope(ctx), query: input.query };
@@ -157,17 +160,47 @@ export class BookingAgentProgram implements AgentProgram {
     if (result) return { value: result, evidenceRefs: [result.receipt.id] };
   }
   project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult) {
-    if (!result.paPayment) return projectBookingObservation(ctx, action, input, result.value as BookingSourceResult);
-    const terms = result.paPayment.terms, ref = { type: 'PAPaymentRequest', id: digest({ request: ctx.request.id, revision: ctx.request.revision, configuration: ctx.state.programDigest, booking: terms.bookingId, termsDigest: terms.bookingTermsDigest }) };
+    if (action !== 'RequestPAPayment' && action !== 'WaitForPAPayment') return projectBookingObservation(ctx, action, input, result.value as BookingSourceResult);
+    const terms = (result.value as { terms: PAPaymentTerms }).terms, ref = { type: 'PAPaymentRequest', id: digest({ request: ctx.request.id, revision: ctx.request.revision, configuration: ctx.state.programDigest, booking: terms.bookingId, termsDigest: terms.bookingTermsDigest }) };
     if (action === 'WaitForPAPayment') { const existing = ctx.graph.read(ctx.owner, ref); if (!same(existing.properties.terms, terms)) fail('Original payment request changed'); return ref; }
     if (!same(terms, this.paymentTerms(ctx, objectRefSchema.parse(input.booking), objectRefSchema.parse(input.payment)))) fail('Payment handoff terms differ from the independently observed booking');
     ctx.graph.ingest(ctx.owner, { objects: [{ ref, properties: { id: ref.id, displayTitle: 'PA 自有支付能力付款请求', requestRevision: ctx.request.revision, terms, configurationDigest: ctx.state.programDigest } }], links: [{ type: 'PAPaymentRequestRequest', from: ref, to: { type: 'ServiceRequest', id: ctx.request.id } }, { type: 'PAPaymentRequestScope', from: ref, to: ctx.state.scope }, { type: 'PAPaymentBooking', from: ref, to: terms.booking }, { type: 'PAPaymentUnpaidProof', from: ref, to: terms.unpaidObservation }] }, { kind: 'task', id: ctx.request.id, observedAt: new Date().toISOString() });
     return ref;
   }
+  onAccepted(ctx: AgentActionContext, action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef, job: Job) {
+    if (action !== 'RequestPAPayment' && action !== 'WaitForPAPayment') return;
+    const plan = ctx.state.plans.find(value => value.id === ctx.planId), step = plan?.steps.find(value => value.intentId === ctx.intentId);
+    if (step?.effect !== 'local' || plan!.steps.length !== 1 || object.type !== 'PAPaymentRequest') fail('Payment handoff requires its explicit local action');
+    recordPAPaymentHandoff(job, ctx.owner, object.id, (result.value as { terms: PAPaymentTerms }).terms, action === 'RequestPAPayment' ? 'request' : 'wait', step.contextId);
+  }
+  onCompletionAccepted(ctx: AgentProgramContext, job: Job) {
+    if (ctx.state.paPayment && job.delegation?.agent?.paPayment?.request.digest === ctx.state.paPayment.request.digest) job.delegation.agent.paPayment.status = 'verified';
+  }
+  terminalHandoff(ctx: AgentProgramContext) {
+    const payment = ctx.state.paPayment;
+    if (!payment) return;
+    return { canRecover: (payment.recoveryAttempts ?? 0) < 3,
+      recover: (signal: AbortSignal) => this.reconcilePAPayment(ctx, signal),
+      record: (job: Job, result: unknown | undefined) => {
+        const current = job.delegation!.agent!.paPayment!;
+        if (current.request.digest !== payment.request.digest) fail('Original payment handoff changed during terminal readback');
+        current.recoveryAttempts = (current.recoveryAttempts ?? 0) + 1;
+        if (result) current.recovery = result as NonNullable<typeof current.recovery>;
+        job.delegation!.recoveryPending = !result && current.recoveryAttempts < 3;
+        job.delegation!.nextAt = Date.now() + 1000;
+        job.updatedAt = new Date().toISOString();
+        job.delegation!.events.push({ at: job.updatedAt, event: result ? 'terminal_pa_payment_readback' : 'terminal_pa_payment_readback_unknown', evidence: current.request.digest });
+      } };
+  }
   private matchPayment(ctx: AgentProgramContext, booking: z.infer<typeof bookingDataSchema>, payment: z.infer<typeof bookingPaymentDataSchema>) {
     const terms = ctx.state.paPayment?.request.terms ?? fail('Completion requires the original PA payment handoff');
     if (booking.termsDigest !== digest({ offer: booking.offer, paymentHandler: booking.paymentHandler, checkout: booking.checkout }) || !same(booking.paymentHandler, terms.handler) || !same(booking.checkout, terms.checkout) || booking.holdExpiresAt !== terms.expiresAt) return false;
     return booking.bookingId === terms.bookingId && booking.providerId === terms.providerId && booking.termsDigest === terms.bookingTermsDigest && payment.bookingId === booking.bookingId && payment.providerId === booking.providerId && payment.payeeId === terms.handler.payeeId && payment.bookingTermsDigest === terms.bookingTermsDigest && same(booking.offer.total, terms.amount) && same(payment.amount, terms.amount) && same(payment.paidAmount, terms.amount) && payment.state === 'paid' && !!payment.paymentId && !!payment.capturedAt && Date.parse(payment.capturedAt) <= Date.now() && Date.parse(payment.capturedAt) <= Date.parse(terms.expiresAt) && booking.state === 'confirmed' && !!booking.confirmedAt && Date.parse(booking.confirmedAt) <= Date.now();
+  }
+  projectOutputs(ctx: AgentActionContext, action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    const view = ctx.graph.read(ctx.owner, object);
+    return objectResultProjection(object, { origin: object.type === 'PAPaymentRequest' ? 'managed' : 'synthetic', refs: result.evidenceRefs, observedAt: view.source.observedAt },
+      !!ctx.graph.model.action(action).composition?.outputs.identity, !!ctx.graph.model.action(action).composition?.outputs.citations);
   }
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
     const selected = completion.parse(raw); this.scope(ctx);
@@ -192,7 +225,7 @@ export class BookingAgentProgram implements AgentProgram {
   }
   async reconcilePAPayment(ctx: AgentProgramContext, signal: AbortSignal) {
     this.scope(ctx); const payment = ctx.state.paPayment ?? fail('Original PA handoff is missing');
-    const step = ctx.state.plans.flatMap(p => p.steps.map(s => ({ p, s }))).find(x => x.s.action === 'RequestPAPayment') ?? fail('Original handoff plan is missing');
+    const step = ctx.state.plans.flatMap(p => p.steps.map(s => ({ p, s }))).find(x => x.s.action === 'RequestPAPayment' && (!ctx.state.composition || x.s.contextId === ctx.state.composition.paymentContextId)) ?? fail('Original handoff plan is missing');
     const context: AgentActionContext = { ...ctx, planId: step.p.id, intentId: step.s.intentId, attemptId: randomUUID(), modelRunId: step.p.modelRunId, operationKey: `terminal-pa-read:${payment.request.id}` };
     const [b, p] = await Promise.all(['ReadProviderBooking', 'ReadProviderPayment'].map(action => this.connector.call({ ...context, attemptId: randomUUID() }, action, { bookingId: payment.request.terms.bookingId }, signal)));
     const booking = bookingDataSchema.parse(b!.payload.data), paid = bookingPaymentDataSchema.parse(p!.payload.data);

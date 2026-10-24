@@ -107,6 +107,7 @@ test('non-members can register and query admission; invitation gate protects bot
     const discovery = await (await f.call('/.well-known/eigos-agent-registration')).json(); assert.equal(discovery.client_id, 'connector');
     assert.equal(discovery.registration_credential.length, 43); assert(discovery.registration_request.schema.required.includes('registrationId'));
     assert.equal(discovery.membership_application.required_scope, MEMBERSHIP_SCOPE); assert.equal(discovery.membership_application.schema.properties.consent.const, true);
+    assert.deepEqual(discovery.scopes, ['openid', 'offline_access', MEMBERSHIP_SCOPE, 'services:read', 'tasks:read', 'tasks:write'], 'Existing Agent onboarding must not silently request model editing, publishing or administrator permissions');
     const card = await (await f.call('/.well-known/agent-card.json')).json();
     assert(card.capabilities.extensions.some((value: { uri: string }) => value.uri === f.base + '/.well-known/eigos-agent-registration'));
     const created = await f.request('/agents/registrations', secret, undefined, { registrationId: id, displayName: 'External Agent' }); assert.equal(created.status, 201);
@@ -158,9 +159,9 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
     mcp = new Client({ name: 'self-enrolled-agent', version: '1' });
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my onboarding brief', requestId: randomUUID() } });
-    const job = (submitted.structuredContent as { result: { id: string } }).result;
-    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required') break;await new Promise(r=>setTimeout(r,10));}
-    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
+    const job = (submitted.structuredContent as { result: { id: string } }).result; let questionRevision: number | undefined;
+    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required'){questionRevision=(read.structuredContent as {result:{revision:number}}).result.revision;break;}await new Promise(r=>setTimeout(r,10));}
+    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, metadata: { expectedRevision: questionRevision }, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
     assert.equal((await reply.json()).result.task.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } }); assert.equal((readback.structuredContent as { result: { state: string } }).result.state, 'completed');
     assert.equal((await agent.revoke()).status, 'agent_registration_revoked');
@@ -168,6 +169,36 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
     for (const path of ['/mcp', '/a2a']) assert.equal((await f.call(path, { method: 'POST', headers: { Authorization: `Bearer ${tokens[0]}`, 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
     assert.equal(statSync(options.credentialPath).mode & 0o777, 0o600);
   } finally { await mcp?.close(); await f.close(); }
+});
+
+test('PA source helper loads credentials only for the fixed private upload path and keeps them out of its cache and errors', async () => {
+  const f = await fixture(), secret = 'test-private-provider-token', calls: { path: string; body: any; headers: Headers }[] = [];
+  let badDestination = false, acknowledged = false, loads = 0;
+  try {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname.startsWith('/sources/')) {
+        assert.equal(url.origin, f.base); assert.equal(init?.redirect, 'error');
+        const body = JSON.parse(String(init?.body)), headers = new Headers(init?.headers); calls.push({ path: url.pathname, body, headers });
+        assert(headers.get('Authorization')?.startsWith('Bearer ')); assert(!headers.get('Authorization')?.includes(secret));
+        return new Response(JSON.stringify(url.pathname.endsWith('/begin') ? { requestId: body.requestId, uploadPath: badDestination ? 'https://foreign.test/credential' : '/sources/meituan-paotui/credential', completed: acknowledged, ...(acknowledged ? { status: { state: 'connected' } } : {}) } : { state: 'connected' }), { headers: { 'Content-Type': 'application/json' } });
+      }
+      return f.fetcher(input, init);
+    };
+    const path = join(f.directory, 'agent', 'credentials.json'), agent = await AgentConnector.open({ baseUrl: f.base, credentialPath: path, displayName: 'Private source PA', fetch: fetcher });
+    await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
+    const loadCredential = async () => { loads++; return { token: secret, expiresAt: new Date(Date.now() + 3600000).toISOString() }; };
+    assert.deepEqual(await agent.connectSource({ requestId: randomUUID(), expectedRevision: 0, loadCredential }), { state: 'connected' });
+    assert(!JSON.stringify(calls[0]!.body).includes(secret)); assert.equal(calls[1]!.body.token, secret); assert.equal(loads, 1);
+    assert(!readFileSync(path, 'utf8').includes(secret));
+    acknowledged = true;
+    assert.deepEqual(await agent.connectSource({ requestId: calls[0]!.body.requestId, expectedRevision: 0, loadCredential }), { state: 'connected' }); assert.equal(loads, 1, 'Lost acknowledgement recovers status without fetching or uploading credentials again');
+    acknowledged = false;
+    badDestination = true;
+    await assert.rejects(agent.connectSource({ requestId: randomUUID(), expectedRevision: 1, loadCredential }), /source_connection_failed/); assert.equal(loads, 1);
+    badDestination = false;
+    await assert.rejects(agent.connectSource({ requestId: randomUUID(), expectedRevision: 1, loadCredential: async () => { throw new Error(secret); } }), e => e instanceof Error && e.message === 'source_connection_failed');
+  } finally { await f.close(); }
 });
 
 test('uncertain rotating refresh is not retried; external destinations and unapproved credentials fail closed', async () => {

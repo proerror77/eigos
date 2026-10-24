@@ -15,7 +15,9 @@ test('eighteen frozen business drills contain the intended successes, failures a
     try {
       data.initialize(graph, data.id);
       const queryType = data.id === 'B02' ? definition.candidateType : definition.resultType;
-      const values = graph.query(data.id, { type: queryType }).items.map(item => graph.evaluate(data.id, { function: data.id === 'B02' ? definition.eligibleFunction : definition.outcomeFunction, object: item.ref }));
+      const items = graph.query(data.id, { type: queryType }).items;
+      if (data.id === 'B02') items.sort((a, b) => Number(b.properties.feesComplete) - Number(a.properties.feesComplete));
+      const values = items.map(item => graph.evaluate(data.id, { function: data.id === 'B02' ? definition.eligibleFunction : definition.outcomeFunction, object: item.ref }));
       assert(values.every(v => v.status === 'known'), `${data.id}: source projection must be valid before assessing its business meaning`);
       assert.equal((values[0]!.value as DomainAssessment).status, expected[i], data.id);
       if (data.id === 'B02') assert.equal((values[1]!.value as DomainAssessment).status, 'unknown');

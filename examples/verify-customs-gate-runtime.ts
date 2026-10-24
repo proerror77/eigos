@@ -58,6 +58,7 @@ try {
   const graphAt = (at: string) => new OntologyObjectStore(memory, businessModel, () => Date.parse(at));
   const gates: unknown[] = [];
   for (const plan of state.plans) {
+    assert(plan.modelRunId && plan.modelDecision && !plan.callerDecision, 'Expected original model-selected source evidence');
     const { digest: expected, ...body } = plan; assert.equal(digest(body), expected); assert.equal(run(plan.modelRunId).decisionDigest, digest(plan.modelDecision));
     assert.deepEqual(plan.ontologyPlanning.model, businessModel.ref);
     for (const [n, step] of plan.steps.entries()) {
@@ -75,7 +76,7 @@ try {
   const rows = lines(join(config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR!, 'http.jsonl'), baseline.commerceAuditBytes).filter(r => r.requestId === job.id);
   const observations = state.observations.map(ref => ({ ref, snapshot: checkedCommerceObservation(graphAt(job.updatedAt).read(owner, ref).properties.snapshot) }));
   for (const row of rows) {
-    const plan = state.plans.find(p => p.id === row.planId)!, step = plan?.steps.find(s => s.intentId === row.intentId); assert(plan && step && step.effect === 'read'); assert.equal(row.action, step.action); assert.equal(row.modelRunId, plan.modelRunId);
+    const plan = state.plans.find(p => p.id === row.planId)!, step = plan?.steps.find(s => s.intentId === row.intentId); assert(plan.modelRunId && plan.modelDecision && !plan.callerDecision); assert(plan && step && step.effect === 'read'); assert.equal(row.action, step.action); assert.equal(row.modelRunId, plan.modelRunId);
     const attempt = JSON.parse(String(db.prepare('SELECT body FROM action_attempts WHERE owner=? AND id=? AND intent_id=?').get(owner, row.attemptId, row.intentId)!.body)) as ExecutionAttempt;
     const input = structuredClone(step.input); for (const link of step.inputRefs) input[link.targetKey] = intents.find(i => i.id === plan.steps.find(s => s.id === link.stepId)!.intentId)!.acceptedOutput!.object;
     assert.equal(attempt.inputDigest, digest(input)); assert.equal(attempt.planDigest, plan.digest); assert.equal(attempt.kind, 'dispatch'); assert(Date.parse(run(plan.modelRunId).completedAt) <= Date.parse(attempt.startedAt)); assert(Date.parse(attempt.startedAt) <= Date.parse(row.startedAt));

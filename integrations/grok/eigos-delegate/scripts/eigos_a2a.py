@@ -175,16 +175,18 @@ class Client:
             'messageId': request_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
         }}, endpoint)
 
-    def reply(self, task_id, data, request_id):
+    def reply(self, task_id, data, request_id, operation='reply'):
         if not isinstance(data, dict) or any(k in data for k in ('taskId', 'requestId', 'contextId', 'service')):
             raise ClientError('Reply must contain only answer or the service-specific confirmation fields')
+        if not isinstance(data.get('expectedRevision'), int) or isinstance(data.get('expectedRevision'), bool) or data['expectedRevision'] < 1:
+            raise ClientError('Reply must bind expectedRevision from the question that was shown; do not silently use a newer question')
         # Check task ownership/service before sending a continuation. Exact retries remain allowed.
         current = self.rpc('GetTask', {'id': task_id})
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured delegation allowlist')
         _, endpoint = self.discover()
-        return self.write('reply:' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
-            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
+        return self.write(operation + ':' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'metadata': {'taskOperation': operation}, 'parts': [{'data': data}],
         }}, endpoint)
 
     def payment_route(self, task_id, data, request_id):
@@ -225,6 +227,8 @@ class Client:
     def send_text(self, text, request_id, task_id=None, discovered=None):
         card, endpoint = discovered if discovered is not None else self.discover()
         if task_id:
+            if not isinstance(expected_revision, int) or expected_revision < 1:
+                raise ClientError('A continuation requires --expected-revision from the question being answered')
             current = self.rpc('GetTask', {'id': task_id}, endpoint)
             service = current.get('metadata', {}).get('service')
         else:
@@ -235,6 +239,7 @@ class Client:
         message = {'messageId': request_id, 'role': 'ROLE_USER', 'parts': parts}
         if task_id:
             message['taskId'] = task_id
+            message['metadata'] = {'expectedRevision': expected_revision}
         return self.write('reply:' + task_id if task_id else 'submit', request_id,
                           {'configuration': {'returnImmediately': True}, 'message': message}, endpoint)
 
@@ -285,6 +290,8 @@ class Client:
         while True:
             task = self.rpc('GetTask', {'id': task_id}, endpoint)
             state = task['status']['state']
+            if task.get('metadata', {}).get('internalState') == 'paused':
+                return {'task': task, 'resumeRequired': True, 'ownerInputRequired': False}
             if state in TERMINAL or state in ('TASK_STATE_INPUT_REQUIRED', 'TASK_STATE_AUTH_REQUIRED'):
                 return {'task': task, 'resumeRequired': False}
             if state not in ('TASK_STATE_WORKING', 'TASK_STATE_SUBMITTED'):
@@ -449,10 +456,11 @@ def main():
     submit = commands.add_parser('submit')
     submit.add_argument('--input-file', required=True)
     submit.add_argument('--request-id', required=True)
-    reply = commands.add_parser('reply')
-    reply.add_argument('--task-id', required=True)
-    reply.add_argument('--input-file', required=True)
-    reply.add_argument('--request-id', required=True)
+    for operation in ('reply', 'amend', 'resume'):
+        continuation = commands.add_parser(operation)
+        continuation.add_argument('--task-id', required=True)
+        continuation.add_argument('--input-file', required=True)
+        continuation.add_argument('--request-id', required=True)
     get = commands.add_parser('get')
     get.add_argument('--task-id', required=True)
     poll = commands.add_parser('poll')
@@ -524,8 +532,8 @@ def main():
             output = client.reconcile(args.task_id, args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
-        elif args.command == 'reply':
-            output = client.reply(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command in ('reply', 'amend', 'resume'):
+            output = client.reply(args.task_id, read_json(args.input_file), args.request_id, args.command)
         elif args.command == 'poll':
             if not 0 <= args.seconds <= 45 or not 0.1 <= args.interval <= 30:
                 raise ClientError('Poll for at most 45 seconds with a 0.1–30 second interval; resume with the same task ID')

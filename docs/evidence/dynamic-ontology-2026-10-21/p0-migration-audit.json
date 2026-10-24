@@ -1,0 +1,55 @@
+{
+  "model": {
+    "id": "eigos.business",
+    "version": "15",
+    "digest": "efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776"
+  },
+  "counts": {
+    "objects": 153,
+    "interfaces": 7,
+    "links": 655,
+    "actions": 55,
+    "functions": 40
+  },
+  "propertyCount": 1537,
+  "customRefinementProperties": 90,
+  "normalizationProperties": 447,
+  "roundtripChangedProperties": 263,
+  "counterexamples": [
+    {
+      "property": "Parcel.declaredWeight",
+      "input": {
+        "amount": "1",
+        "unit": "piece"
+      },
+      "originalAccepted": false,
+      "jsonRoundtripAccepted": true
+    },
+    {
+      "property": "ProductOffer.offeredQuantity",
+      "input": {
+        "amount": "1.5",
+        "unit": "piece"
+      },
+      "originalAccepted": false,
+      "jsonRoundtripAccepted": true
+    },
+    {
+      "property": "Venue.timeZone",
+      "input": "Not/AZone",
+      "originalAccepted": false,
+      "jsonRoundtripAccepted": true
+    },
+    {
+      "property": "HotelRequest.breakfast",
+      "input": {
+        "included": false,
+        "servingsPerRoom": 2
+      },
+      "originalAccepted": false,
+      "jsonRoundtripAccepted": true
+    }
+  ],
+  "baselineCommit": "4530e009adf88c24a8ac5942f3b9cf01ab1d36da",
+  "interpretation": "JSON Schema round-trip alone is not equivalent to the original Zod contracts. Frozen metadata and versioned trusted validators preserve the exact v15 seed; kernel 16 adds object_write explicitly."
+}

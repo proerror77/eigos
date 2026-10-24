@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { releaseFiles } from '../dist/packages/deployment/files.js';
 import { parseEnv } from 'node:util';
 import { readWorkerConfig } from '../dist/packages/core/config.js';
 import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.js';
@@ -31,7 +32,10 @@ const xml = value => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt
 for (const path of [directory, runtime, dirname(plistPath)]) { mkdirSync(path, { recursive: true, mode: 0o700 }); }
 chmodSync(directory, 0o700); chmodSync(runtime, 0o700);
 const ownership = join(runtime, 'owner.json');
-if (existsSync(ownership) && JSON.parse(read(ownership)).sourceRoot !== root) throw new Error('Runtime belongs to another checkout');
+const previousOwner = existsSync(ownership) ? JSON.parse(read(ownership)).sourceRoot : undefined;
+const takeOverFrom = process.argv.find(arg => arg.startsWith('--take-over-from='))?.slice('--take-over-from='.length);
+if (previousOwner && previousOwner !== root && takeOverFrom !== previousOwner) throw new Error('Runtime belongs to another checkout; an authorized transfer must name its exact source root');
+if (takeOverFrom && (!isAbsolute(takeOverFrom) || takeOverFrom !== previousOwner)) throw new Error('Runtime ownership changed before transfer');
 const previousPlist = read(plistPath);
 if (previousPlist && !previousPlist.includes(xml(envPath)) && !previousPlist.includes(xml(runtimeEnv))) throw new Error('LaunchAgent belongs to another runtime');
 const oldSettings = read(runtimeEnv) || read(envPath);
@@ -72,17 +76,11 @@ const commerceTokenFile = commerceDisabled ? undefined : process.env.EIGOS_COMME
 const commerce = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development', EIGOS_ACTION_SANDBOX: commerceUrl ? 'true' : 'false', EIGOS_COMMERCE_SANDBOX_URL: commerceUrl, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: commerceTokenFile });
 const participant = participantDeploymentSettings(process.env, parseEnv(oldSettings), join(runtime, 'tasks.sqlite'));
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
+const workerModel = readWorkerConfig({ EIGOS_CODEX_MODEL: process.env.EIGOS_CODEX_MODEL ?? field(oldSettings, 'EIGOS_CODEX_MODEL'), EIGOS_CODEX_REASONING_EFFORT: process.env.EIGOS_CODEX_REASONING_EFFORT ?? field(oldSettings, 'EIGOS_CODEX_REASONING_EFFORT'), EIGOS_CODEX_SERVICE_TIER: process.env.EIGOS_CODEX_SERVICE_TIER ?? field(oldSettings, 'EIGOS_CODEX_SERVICE_TIER') });
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
 if (!isAbsolute(codex) || !existsSync(codex)) throw new Error('Codex executable unavailable');
 const runtimePath = [...new Set([dirname(process.execPath), dirname(codex), dirname(passport), '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'])].join(':');
-const scan = path => readdirSync(path, { withFileTypes: true }).flatMap(e => e.isDirectory() ? scan(join(path, e.name)) : e.name.endsWith('.ts') ? [join(path, e.name)] : []);
-const sourceFiles = [...scan(join(sourceRoot, 'apps')), ...scan(join(sourceRoot, 'packages'))].sort();
-const ontologyFiles = readdirSync(join(sourceRoot, 'ontology')).filter(name => name.endsWith('.json')).sort().map(name => {
-  const path = 'dist/ontology/' + name;
-  if (!existsSync(join(sourceRoot, path)) || !readFileSync(join(sourceRoot, path)).equals(readFileSync(join(sourceRoot, 'ontology', name)))) throw new Error('Run npm run ontology:sync before updating the runtime');
-  return path;
-});
-const files = [...sourceFiles.map(path => 'dist/' + path.slice(sourceRoot.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
+const files = releaseFiles(sourceRoot);
 const fingerprint = createHash('sha256');
 for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(sourceRoot, path))); }
 const buildDigest = fingerprint.digest('hex');
@@ -98,7 +96,7 @@ if (!existsSync(dependencyRoot)) { mkdirSync(dirname(dependencyRoot), { recursiv
 if (!existsSync(join(release, 'node_modules'))) symlinkSync(dependencyRoot, join(release, 'node_modules'));
 const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430', 'PUBLIC_URL=http://127.0.0.1:3430',
   `DATABASE_PATH=${join(runtime, 'tasks.sqlite')}`, 'EIGOS_AUTH_MODE=development', `EIGOS_DEV_TOKEN=${token}`,
-  'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
+  'EIGOS_COORDINATOR=codex', 'EIGOS_EXECUTOR=codex', `EIGOS_CODEX_BIN=${codex}`, `EIGOS_CODEX_MODEL=${workerModel.EIGOS_CODEX_MODEL}`, `EIGOS_CODEX_REASONING_EFFORT=${workerModel.EIGOS_CODEX_REASONING_EFFORT}`, `EIGOS_CODEX_SERVICE_TIER=${workerModel.EIGOS_CODEX_SERVICE_TIER}`, 'EIGOS_EXECUTOR_TIMEOUT_MS=120000', 'EIGOS_CSV_PILOT=false',
   'EIGOS_PAOTUI_ORDERS_ENABLED=false', `EIGOS_PAOTUI_SKILL_DIR=${skill}`, `EIGOS_AUDIT_PATH=${join(runtime, 'http.jsonl')}`,
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,

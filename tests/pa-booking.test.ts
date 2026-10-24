@@ -52,7 +52,20 @@ test('EIGOS pauses on an unpaid booking, PA pays separately, then both independe
     const payment = handoff.delegation!.agent!.paPayment!;
     assert.equal(payment.status, 'awaiting_pa'); assert.equal(payment.request.terms.amount.minor, '12500'); assert.equal(t.provider.countBookings(), 1);
     assert.equal(t.wallet.attempts.length, 0); assert(t.provider.audit().every(a => a.caller === 'eigos_source'));
-    assert.equal(t.store.grants(owner, id).length, 1); assert.deepEqual(t.store.grants(owner, id)[0]!.allowedEffects, ['reserve']); assert.equal(t.store.grants(owner, id)[0]!.maxAmount.minor, '0');
+    assert.equal(t.store.grants(owner, id).length, 1); assert.deepEqual(t.store.grants(owner, id)[0]!.allowedEffects, ['reserve']); assert.equal(t.store.grants(owner, id)[0]!.maxAmount?.minor, '0');
+    const grant = t.store.grants(owner, id)[0]!;
+    const authorization = t.store.ontology.read(owner, { type: 'Authorization', id: grant.id });
+    assert.deepEqual(authorization.properties.allowedActions, ['CreatePendingBooking']);
+    assert.deepEqual(authorization.properties.allowedEffects, ['reserve']);
+    const proposals = t.store.ontology.related(owner, authorization.ref, 'proposal', { remaining: 1000 })!;
+    assert.equal(proposals.length, 1); assert.equal(proposals[0]!.properties.kind, 'execution');
+    assert.equal(proposals[0]!.properties.authorizationMode, 'required');
+    assert.equal(proposals[0]!.properties.completionTarget, 'domain');
+    assert.equal(proposals[0]!.properties.termsVersion, grant.planDigest);
+    const plans = t.store.ontology.related(owner, authorization.ref, 'executionPlan', { remaining: 1000 })!;
+    assert.equal(plans[0]!.properties.planDigest, grant.planDigest);
+    const step = t.store.ontology.related(owner, plans[0]!.ref, 'steps', { remaining: 1000 })![0]!;
+    assert.equal(step.properties.effect, 'reserve');
     await t.wallet.pay(payment.request);
     assert.equal(t.store.get(owner, id).state, 'input-required', 'Provider payment alone does not rewrite the task');
     t.report(handoff);
@@ -114,6 +127,7 @@ test('Processing payment resumes on fresh provider facts without another booking
     const id = t.submit().id, waiting = await t.finish(id), request = waiting.delegation!.agent!.paPayment!.request;
     await t.wallet.pay(request); t.report(waiting, 'unknown');
     const pending = await t.finish(id); assert.equal(pending.state, 'input-required');
+    assert.equal(pending.delegation!.agent!.observations.filter(ref => ref.type === 'PAPaymentRequest').length, 1, 'Repeated waiting preserves one handoff object and separate action attempts');
     t.provider.settle(request.terms.bookingId, 'paid');
     t.b.tasks.reconcile(principal, id, randomUUID());
     const done = await t.finish(id); assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
@@ -170,7 +184,7 @@ test('A provider cannot silently replace the already reserved service terms befo
     const original = t.store.ontology.read(owner, ref).properties.data as any;
     const changed = { ...original.offer, title: 'Different service', total: { ...original.offer.total, minor: '19000' } };
     t.provider.mutate(original.bookingId, { offer: changed, termsDigest: digest({ offer: changed, paymentHandler: original.paymentHandler, checkout: original.checkout }) });
-    const result = await t.finish(id); assert.equal(result.state, 'input-required'); assert.equal(result.delegation!.agent!.paPayment, undefined); assert.equal(result.artifact, undefined); assert.equal(t.wallet.attempts.length, 0);
+    const result = await t.finish(id); assert.equal(result.state, 'paused'); assert.equal(result.delegation!.recovery?.code, 'validation_stalled'); assert.equal(result.delegation!.agent!.paPayment, undefined); assert.equal(result.artifact, undefined); assert.equal(t.wallet.attempts.length, 0);
   } finally { await t.close(); }
 });
 

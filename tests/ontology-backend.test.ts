@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { JobStore } from '../packages/core/store.js';
+import type { Job } from '../packages/core/domain.js';
 import { ActionRuntime } from '../packages/coordinator/runtime.js';
 import { Worker } from '../apps/worker/worker.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
@@ -127,6 +128,11 @@ test('CSV full-audit contract rejects subsets; approval, snapshot and independen
     b.tasks.authorize(principal, ready.id, approval); b.tasks.authorize(principal, ready.id, approval);
     const done = await b.run(); assert.equal(done.state, 'completed'); assert(done.delegation!.acceptance!.accepted);
     assert.equal(done.delegation!.request.revision, 1); assert.equal(b.store.observations(owner, done.delegation!.intentId!).length, 1);
+    const authorizations = b.store.ontology.query(owner, { from: { type: 'ServiceRequest', id: done.id }, link: 'authorizations' }).items;
+    assert.equal(authorizations.length, 1); assert.equal(authorizations[0]!.properties.kind, 'simulation_approval');
+    assert.equal(authorizations[0]!.properties.environment, 'local_simulation');
+    assert.equal(b.store.ontology.query(owner, { from: authorizations[0]!.ref, link: 'attempts' }).items.length, 1);
+    assert.equal(b.store.grants(owner, done.id).length, 0, 'A local quote approval is never a sandbox or real payment permit');
     assert.throws(() => b.store.intent('different-owner', done.delegation!.intentId!), /not found/);
   } finally { b.store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
@@ -169,7 +175,9 @@ test('new backend does not advertise or accept legacy direct-execution fallbacks
   try {
     assert.deepEqual(b.tasks.services().map(s => s.id), ['eigos.delegate']);
     for (const service of ['brief.prepare', 'agent.execute', 'meituan.paotui.read']) assert.throws(() => b.tasks.submit(principal, { service, goal: 'fixture', requestId: randomUUID() }), /Invalid input/);
-    const old = b.submit(); old.service = 'brief.prepare'; old.state = 'input-required'; delete old.delegation; b.store.save(owner, old);
+    const now = new Date().toISOString();
+    const old: Job = { id: randomUUID(), contextId: randomUUID(), service: 'brief.prepare', goal: 'Historical direct-service fixture', state: 'input-required', messages: [{ id: 'legacy-request', role: 'user', text: 'Historical direct-service fixture', at: now }], createdAt: now, updatedAt: now };
+    b.store.save(owner, old);
     assert.throws(() => b.tasks.reply(principal, { taskId: old.id, answer: 'continue', requestId: 'old-reply' }), /read-only/);
     assert.throws(() => b.tasks.cancel(principal, old.id), /read-only/);
   } finally { b.store.close(); }

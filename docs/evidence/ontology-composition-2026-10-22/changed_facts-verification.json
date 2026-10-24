@@ -1,0 +1,3586 @@
+{
+  "version": 1,
+  "scenario": "changed_facts",
+  "passed": true,
+  "startedAt": "2026-10-22T14:14:59.699Z",
+  "completedAt": "2026-10-22T14:24:22.752Z",
+  "elapsedMs": 563053,
+  "taskId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+  "state": "completed",
+  "wholeGoalAccepted": true,
+  "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+  "boundary": "Actual native Codex PA and Worker, private loopback MCP/A2A, synthetic catalog transported over HTTP and a separate bounded document model. No real merchant integration, live orders, payment or deployment.",
+  "code": {
+    "baselineHead": "99ca9104c71364ce5c586299a43d18bd9410d7b3",
+    "runtimeManifest": "runtime-manifest.json",
+    "runtimeManifestDigest": "c04832a5bc19e21c3b28172e6211174c5e8c95a59eb010100f51d4de74cc3daf",
+    "driverSha256": "5a62f2f6f8fd84e165c69a76d96e6f7a3a64b42215906efccd39da9924ff70dc",
+    "runtimeFilesMatchedBeforeWhitespaceCleanup": true,
+    "finalSourceEquivalenceChecked": true
+  },
+  "caller": {
+    "threadId": "01a163f7-1d05-7a70-8e5a-2c6a889ee27b",
+    "toolCalls": [
+      {
+        "tool": "list_services",
+        "status": "completed"
+      },
+      {
+        "tool": "submit_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      },
+      {
+        "tool": "get_task",
+        "status": "completed"
+      }
+    ],
+    "submittedTaskCount": 1,
+    "readIdenticalOriginalArtifact": true
+  },
+  "independentReadbacks": {
+    "mcpPersonalAgent": true,
+    "a2a": true,
+    "database": true,
+    "artifactDigest": "f7e0b55c46b10f90ff3a63a9622814309edf1eb5964e95ed773e25e3e141de7b",
+    "a2aState": "TASK_STATE_COMPLETED"
+  },
+  "modelSelection": "Native Codex default; no model/provider override. Absent reported model IDs remain unknown.",
+  "modelRuns": [
+    {
+      "id": "0ee9db17-08e0-446a-be11-62c04ce50ba6",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f7-65fc-7061-ad8c-21db6fcdfccc",
+      "startedAt": "2026-10-22T14:15:20.230Z",
+      "completedAt": "2026-10-22T14:15:34.328Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "grounding",
+      "usage": {
+        "input_tokens": 35680,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 76,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "8db695c8-c272-4d7c-a908-48c586e0f898",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f7-9d1a-7631-ba67-1eec4c46ef17",
+      "startedAt": "2026-10-22T14:15:34.357Z",
+      "completedAt": "2026-10-22T14:16:13.544Z",
+      "outputSha256": "aa0c896ffc044fb4085eb1d2bbb06ee4176ea39863f1a72f4a3df825555b37f7",
+      "decisionDigest": "5312b45874a9646fe2312086c855296e77ebad81839e550e738247cf4fe1a775",
+      "purpose": "grounding",
+      "usage": {
+        "input_tokens": 42727,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1220,
+        "reasoning_output_tokens": 98
+      }
+    },
+    {
+      "id": "353ae8e5-ef34-44ee-94ad-e5c05c7cf0e5",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f8-3676-7691-9a56-ebe6c8c346c7",
+      "startedAt": "2026-10-22T14:16:13.618Z",
+      "completedAt": "2026-10-22T14:16:23.344Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 35925,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 61,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "72d87727-d726-46f2-9505-0bc7b5492d57",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f8-5c84-7d61-aec1-7a9ed16239ea",
+      "startedAt": "2026-10-22T14:16:23.370Z",
+      "completedAt": "2026-10-22T14:16:36.564Z",
+      "outputSha256": "9515ab59dd3f3f0e3384d91b6c32159f3fba36ae32e817a2c03b39b9a519ecad",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 44510,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 116,
+        "reasoning_output_tokens": 8
+      }
+    },
+    {
+      "id": "0f30ec22-8b6c-4014-9007-f0e9a04954bf",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f8-903e-7140-9784-2db0c0455f9c",
+      "startedAt": "2026-10-22T14:16:36.609Z",
+      "completedAt": "2026-10-22T14:16:50.369Z",
+      "outputSha256": "c87f030d0161fa0189d397fb6128bbd8a9753bab5aa393378524a4f4b94fe8dc",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 45171,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 141,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "314519c0-400d-4428-9b93-aeb4a05c3d0c",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f8-c643-71a0-bcbd-0b34850d5717",
+      "startedAt": "2026-10-22T14:16:50.428Z",
+      "completedAt": "2026-10-22T14:17:09.209Z",
+      "outputSha256": "817a9a246d1db88898af0fa07d37bd0d8c1064ba0d4b91f720fd062c033096f1",
+      "decisionDigest": "0d732e92d07bd2918b0fb32c60f972df8f566365972fd65d81d1d70b4c3bb15a",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 57191,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 394,
+        "reasoning_output_tokens": 32
+      }
+    },
+    {
+      "id": "1b8374fd-69e7-4dcd-986a-d9047e70ff35",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f9-1026-7ec1-bde8-9daed67c417a",
+      "startedAt": "2026-10-22T14:17:09.303Z",
+      "completedAt": "2026-10-22T14:17:19.888Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 35927,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 69,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "7a7606b7-d7ba-4550-91d8-a3eada484364",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f9-39ad-7100-9e15-69ec90a8861a",
+      "startedAt": "2026-10-22T14:17:19.938Z",
+      "completedAt": "2026-10-22T14:17:31.582Z",
+      "outputSha256": "28ffe38fa22ad840e53fd4b40a50c34b6d54c8204e328f4073910043302a4537",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 46236,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 79,
+        "reasoning_output_tokens": 8
+      }
+    },
+    {
+      "id": "1feee34a-e23e-4a2f-9393-9595f0d50752",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f9-6741-7580-af83-a892fff96ea6",
+      "startedAt": "2026-10-22T14:17:31.639Z",
+      "completedAt": "2026-10-22T14:17:50.508Z",
+      "outputSha256": "7c3613b8092a606aa8732801de7ed61a3cc844219e0ff1b14aa5492b74acd899",
+      "decisionDigest": "1ff07fdc5d284481c48660fa5aa1b5375fa19ca98210a77582bcbc7e4a580b65",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 50197,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 360,
+        "reasoning_output_tokens": 12
+      }
+    },
+    {
+      "id": "70dd3cad-350b-44f6-bdf9-571c20c2808f",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f9-b15d-7e61-ada4-e57a986c32be",
+      "startedAt": "2026-10-22T14:17:50.605Z",
+      "completedAt": "2026-10-22T14:18:00.768Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 35927,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 66,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "b8b81259-11f3-4071-967c-40656f1efacf",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163f9-d92f-7681-993b-73b97bbfd8f4",
+      "startedAt": "2026-10-22T14:18:00.815Z",
+      "completedAt": "2026-10-22T14:18:11.974Z",
+      "outputSha256": "786451286be9b45a17426687d01a7c23f19f7f55e05ae64781ad54262a21d3a3",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 47258,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 105,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "a143e2b3-f78d-4ad5-bace-2d0ca2edacb3",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fa-04f4-7e90-89f0-8180d9489a01",
+      "startedAt": "2026-10-22T14:18:12.020Z",
+      "completedAt": "2026-10-22T14:18:25.282Z",
+      "outputSha256": "7d840c8ad3e6f10a66907fd6bfea02278b493f2de97c8459e8ece54f88130016",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 51222,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 126,
+        "reasoning_output_tokens": 16
+      }
+    },
+    {
+      "id": "df59c7b9-5701-43da-9ff4-c5c4aef74ad2",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fa-38ff-7983-9bb8-9838faa687b9",
+      "startedAt": "2026-10-22T14:18:25.336Z",
+      "completedAt": "2026-10-22T14:18:39.052Z",
+      "outputSha256": "abb7389ce4e66f12eff1af0f6b22ab76d14311cb85e7638af0a5b4c0f6f73bcb",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 55334,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 199,
+        "reasoning_output_tokens": 28
+      }
+    },
+    {
+      "id": "1f9bef25-4bf5-4839-a90b-9a1b98975a6e",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fa-6eea-72c0-ae83-4c53e2971538",
+      "startedAt": "2026-10-22T14:18:39.135Z",
+      "completedAt": "2026-10-22T14:19:03.475Z",
+      "outputSha256": "5b0502ad71b3e7aa497bafa2747be272fc9841d6f389a79c906055d02fb881f7",
+      "decisionDigest": "7e33a398319a5c535a6578c6d15242b21f700a80f05704299e385af2732290df",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 59999,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 587,
+        "reasoning_output_tokens": 51
+      }
+    },
+    {
+      "id": "d8982576-6a60-46a9-b6bf-d035ea36f090",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fa-d04e-7450-9e4c-b33aebcc0999",
+      "startedAt": "2026-10-22T14:19:04.073Z",
+      "completedAt": "2026-10-22T14:19:15.429Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 36479,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 63,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "3e0cbbaa-9660-49f3-93de-8c0ecdb49bba",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fa-fcf8-7eb2-bc53-3344f290306e",
+      "startedAt": "2026-10-22T14:19:15.504Z",
+      "completedAt": "2026-10-22T14:19:29.220Z",
+      "outputSha256": "e8edc76669281cbf3d46663dbcc79a30cc16648e7d5eeda7408593f633e5100a",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 57384,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 187,
+        "reasoning_output_tokens": 10
+      }
+    },
+    {
+      "id": "004bf1fb-6c77-4c93-be51-237dd07175bb",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fb-33b3-7093-a984-a32624853bab",
+      "startedAt": "2026-10-22T14:19:29.510Z",
+      "completedAt": "2026-10-22T14:19:40.215Z",
+      "outputSha256": "fc1235dcd1b82bb7e90801af21f3bf246df6087e10a6676a85d9bbed7738e2df",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 62927,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 93,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "93d2099d-c55e-4bd0-96f6-823d66710b9b",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fb-5dbe-77f3-a6a7-f0ec27db1e81",
+      "startedAt": "2026-10-22T14:19:40.279Z",
+      "completedAt": "2026-10-22T14:20:11.696Z",
+      "outputSha256": "3ea08fa2e722989c533e386ab90dba859265862176dfa1eab5caa172686a9e52",
+      "decisionDigest": "ba55d62428340d79efd5f8ed1f65bd45fc98316a540b30ff32aba658ac45fb3d",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 65004,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 838,
+        "reasoning_output_tokens": 96
+      }
+    },
+    {
+      "id": "bc745019-88f3-436d-b1a0-8b51c200ecde",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fb-db5d-7832-821f-b8b41777e33f",
+      "startedAt": "2026-10-22T14:20:12.449Z",
+      "completedAt": "2026-10-22T14:20:22.962Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 37161,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 68,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "c9b8bc04-6cac-4807-b8fe-e40213daff6d",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fc-055b-7d20-b3ef-7803f011a8d6",
+      "startedAt": "2026-10-22T14:20:23.083Z",
+      "completedAt": "2026-10-22T14:20:40.874Z",
+      "outputSha256": "243e12673de8669244daa0f10c849fd4aacd315c3f3cb1d77a40bebb30be95b3",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 66993,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 276,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "6270404f-422b-45e3-bbcf-010894565efe",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fc-4b4d-7310-9c6c-ac7ad3ff24a3",
+      "startedAt": "2026-10-22T14:20:41.089Z",
+      "completedAt": "2026-10-22T14:21:07.772Z",
+      "outputSha256": "2917c7983dd64ae5882bcb6eded41ef1de26edcef5b158c963dfa9d3454fad0b",
+      "decisionDigest": "c9e09dba14624dbc3f05dad2495e40c0f544e987661e8f31f9eb6f99cad18a7a",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 80324,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 639,
+        "reasoning_output_tokens": 24
+      }
+    },
+    {
+      "id": "e122f4ff-ae44-4a48-b196-38b7284ac533",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fc-b678-7c13-98f8-e2e9c7723eba",
+      "startedAt": "2026-10-22T14:21:08.527Z",
+      "completedAt": "2026-10-22T14:21:18.828Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 37484,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 64,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "07dc1749-9ede-488f-954d-37fb45bab18d",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fc-df52-78c0-8f4e-a0523df86bd1",
+      "startedAt": "2026-10-22T14:21:18.964Z",
+      "completedAt": "2026-10-22T14:21:40.787Z",
+      "outputSha256": "e7caad72986abdab8579adf1a11b29d3a738e5c9f96da8d48fc223c581a2343f",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 66217,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 230,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "19e274e1-e2a7-4b7b-8c42-8f5fbc71e325",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fd-36e1-78c0-90fe-5742bbdc2a08",
+      "startedAt": "2026-10-22T14:21:41.341Z",
+      "completedAt": "2026-10-22T14:22:04.838Z",
+      "outputSha256": "4961b96a4fee68d1c46998cf8ffded1de93d86de4631b3128943d277a759ff82",
+      "decisionDigest": "cb6b06bb5177033f8c9fbcd59498b9d1c756e5d92af5a266ebe5034480be777d",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 70199,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 557,
+        "reasoning_output_tokens": 17
+      }
+    },
+    {
+      "id": "598e721f-4c56-41b7-8d37-9f1082417273",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fd-96fb-7513-a9fd-bca18042375e",
+      "startedAt": "2026-10-22T14:22:05.797Z",
+      "completedAt": "2026-10-22T14:22:48.073Z",
+      "outputSha256": "a9ba06eacb6c43b1bc28f87c64f6f94cab7b077da93fd3e325e725ef6b7986bf",
+      "purpose": "document",
+      "usage": {
+        "input_tokens": 25727,
+        "cached_input_tokens": 0,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1142,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "c83ee11b-5083-4570-b891-4bf09c128007",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fe-3c41-7f73-a691-68ece61b0733",
+      "startedAt": "2026-10-22T14:22:48.321Z",
+      "completedAt": "2026-10-22T14:23:01.555Z",
+      "outputSha256": "f76690d5d67061d77180d575df29d562aa41d14cd2fbc4ef396abe8bffbba031",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 37708,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 65,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "c7872d16-2dc4-4a7b-b814-8bd091a485bf",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fe-7088-7f03-8ed0-a6658a938cf9",
+      "startedAt": "2026-10-22T14:23:01.686Z",
+      "completedAt": "2026-10-22T14:23:16.736Z",
+      "outputSha256": "349a8e9c2c953e13af551b95c7dafedb5985e2000ec31c5b25c50d90f20b2b3b",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 63800,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 262,
+        "reasoning_output_tokens": 0
+      }
+    },
+    {
+      "id": "c7748a9b-4bd0-4947-82e9-7b84e43f539b",
+      "runtime": "codex-exec",
+      "model": null,
+      "threadId": "01a163fe-ac5d-7e30-a62c-a126ef6b9301",
+      "startedAt": "2026-10-22T14:23:16.999Z",
+      "completedAt": "2026-10-22T14:23:50.141Z",
+      "outputSha256": "797df45ad43fefc2ee7f254240f8621dd60df4ce10ef37efeaf952342a4466b5",
+      "decisionDigest": "31f582b06016018d8ae9aaa94713ef39d4225584390744d74a2da6599dde74cf",
+      "purpose": "planning",
+      "usage": {
+        "input_tokens": 71472,
+        "cached_input_tokens": 21376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 850,
+        "reasoning_output_tokens": 65
+      }
+    }
+  ],
+  "executionBudget": {
+    "version": "1",
+    "profile": "extended",
+    "limits": {
+      "window": {
+        "modelTurns": 64,
+        "plans": 16,
+        "actions": 32
+      },
+      "task": {
+        "modelTurns": 256,
+        "plans": 64,
+        "actions": 128
+      }
+    },
+    "used": {
+      "modelTurns": 28,
+      "plans": 4,
+      "actions": 6
+    },
+    "windowUsed": {
+      "modelTurns": 28,
+      "plans": 4,
+      "actions": 6
+    },
+    "window": {
+      "sequence": 1,
+      "reason": "initial",
+      "requestRevision": 1,
+      "startedAt": "2026-10-22T14:15:20.162Z",
+      "baseline": {
+        "modelTurns": 0,
+        "plans": 0,
+        "actions": 0
+      }
+    }
+  },
+  "goalContract": {
+    "version": "1",
+    "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+    "requestRevision": 1,
+    "ontologyRelease": {
+      "ontologyId": "eigos.business",
+      "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+      "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+    },
+    "originalGoalDigest": "b58162454c351888ae2427cc812208890e53ab1a07fe5726ea063353d8a0d666",
+    "constraintsDigest": "bec8cee694c3dd87677d7495bbd6fa676efdf13c87ac5ad03a5ecf6f51f15786",
+    "criteria": [
+      {
+        "id": "coffee_source_facts",
+        "description": "取得 Coffee Lab 隔离测试商家两款不同咖啡候选的当前、有来源支持的名称、变体 ID、显示价格和币种；不将部分目录视为完整目录，不将未知库存、配送承诺或合作状态视为已核验。",
+        "predicate": "catalog.observed",
+        "phase": "fact",
+        "messageId": "coffee-lab-comparison-20261022-01",
+        "quote": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选",
+        "requirementIds": [
+          "coffee_result_count",
+          "read_only_no_order"
+        ]
+      },
+      {
+        "id": "coffee_merchant_facts",
+        "description": "两款所选咖啡候选的信息均在已核验的 Coffee Lab 商家端点独立读取；端点核验不代表商家合作状态已核验。",
+        "predicate": "catalog.merchant_verified",
+        "phase": "fact",
+        "messageId": "coffee-lab-comparison-20261022-01",
+        "quote": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选",
+        "requirementIds": [
+          "coffee_result_count",
+          "read_only_no_order"
+        ]
+      },
+      {
+        "id": "coffee_comparison_document",
+        "description": "交付基于这两款已接受核验来源的非空中文 Markdown 比较文档，每款列出名称、变体 ID、当前显示价格、币种和来源，并明确标注库存数量、配送承诺和商家合作状态中尚未核验的部分。",
+        "predicate": "document.markdown",
+        "phase": "artifact",
+        "messageId": "coffee-lab-comparison-20261022-01",
+        "quote": "并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。",
+        "requirementIds": [
+          "coffee_result_count",
+          "read_only_no_order",
+          "document_no_external_effects"
+        ]
+      }
+    ],
+    "effectConstraints": [
+      {
+        "requirementId": "read_only_no_order",
+        "allowedEffects": [
+          "read",
+          "local",
+          "object_write"
+        ]
+      },
+      {
+        "requirementId": "document_no_external_effects",
+        "allowedEffects": [
+          "read",
+          "local",
+          "object_write"
+        ]
+      }
+    ],
+    "digest": "a3cbf982a22003eb6d49d1ee543a21bd212625d08815c3fe2f9894e758269220"
+  },
+  "assessment": {
+    "version": "1",
+    "goalDigest": "a3cbf982a22003eb6d49d1ee543a21bd212625d08815c3fe2f9894e758269220",
+    "accepted": true,
+    "at": "2026-10-22T14:23:50.294Z",
+    "criteria": [
+      {
+        "id": "coffee_source_facts",
+        "result": "pass",
+        "reason": "Current component verifiers prove the exact required outcome and business phase",
+        "contextIds": [
+          "coffeeCatalogContext"
+        ],
+        "evidenceRefs": [
+          "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+          "117f2887-e357-4c1f-9946-be11d979eeec"
+        ],
+        "subjects": []
+      },
+      {
+        "id": "coffee_merchant_facts",
+        "result": "pass",
+        "reason": "Current component verifiers prove the exact required outcome and business phase",
+        "contextIds": [
+          "coffeeCatalogContext"
+        ],
+        "evidenceRefs": [
+          "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+          "117f2887-e357-4c1f-9946-be11d979eeec"
+        ],
+        "subjects": []
+      },
+      {
+        "id": "coffee_comparison_document",
+        "result": "pass",
+        "reason": "Current component verifiers prove the exact required outcome and business phase",
+        "contextIds": [
+          "coffeeDocumentContext"
+        ],
+        "evidenceRefs": [
+          "598e721f-4c56-41b7-8d37-9f1082417273"
+        ],
+        "subjects": []
+      }
+    ],
+    "requirements": [
+      {
+        "requirementId": "coffee_result_count",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+          "117f2887-e357-4c1f-9946-be11d979eeec",
+          "598e721f-4c56-41b7-8d37-9f1082417273"
+        ]
+      },
+      {
+        "requirementId": "read_only_no_order",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+          "117f2887-e357-4c1f-9946-be11d979eeec",
+          "598e721f-4c56-41b7-8d37-9f1082417273"
+        ]
+      },
+      {
+        "requirementId": "document_no_external_effects",
+        "result": "pass",
+        "reason": "Observed fact meets the fixed requirement",
+        "evidenceRefs": [
+          "598e721f-4c56-41b7-8d37-9f1082417273"
+        ]
+      }
+    ],
+    "conditions": [],
+    "components": [
+      {
+        "contextId": "coffeeCatalogContext",
+        "status": "verified",
+        "evidenceRefs": [
+          "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+          "117f2887-e357-4c1f-9946-be11d979eeec"
+        ],
+        "artifactDigest": "d5727ac18e6e923c37c06a3727701afa4039c6da3860d61d6b1848ee78a9ca37"
+      },
+      {
+        "contextId": "coffeeDocumentContext",
+        "status": "verified",
+        "evidenceRefs": [
+          "598e721f-4c56-41b7-8d37-9f1082417273"
+        ],
+        "artifactDigest": "7cdffd059b586cc7180ee9cdeeb94e8b8c8a32a413e33f4253f48750f2da22ee"
+      }
+    ]
+  },
+  "decisions": [
+    {
+      "id": "330eebfb-7f08-4d72-9635-82279da273ee",
+      "sealedPlanDigest": "4681ebf456f9b2c31a02e4fb1abbda603448e0709e748d4e4bcd131439659225",
+      "modelRunId": "1f9bef25-4bf5-4839-a90b-9a1b98975a6e",
+      "modelDecision": {
+        "kind": "execute",
+        "requestRevision": 1,
+        "message": "先在 Coffee Lab 的 US 公开目录检索咖啡候选，同时核验商家目录端点；随后根据实际返回的候选读取商家变体信息。目录结果仅代表本次查询覆盖范围。",
+        "steps": [
+          {
+            "id": "searchCoffee",
+            "action": "SearchPublicCatalog",
+            "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"query\":\"coffee\",\"limit\":10}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a",
+            "contextId": "coffeeCatalogContext",
+            "contributesTo": [
+              "coffee_source_facts"
+            ]
+          },
+          {
+            "id": "discoverCoffeeEndpoint",
+            "action": "DiscoverMerchantCatalog",
+            "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\"}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "4abddf5fdcb56f3da8da9847ab4490133e91daab187ba17de8b565e6d8e0a381",
+            "contextId": "coffeeCatalogContext",
+            "contributesTo": [
+              "coffee_merchant_facts"
+            ]
+          }
+        ],
+        "completionJson": ""
+      },
+      "steps": [
+        {
+          "id": "searchCoffee",
+          "action": "SearchPublicCatalog",
+          "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"query\":\"coffee\",\"limit\":10}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a",
+          "contextId": "coffeeCatalogContext",
+          "contributesTo": [
+            "coffee_source_facts"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "commerce.catalog.query",
+              "version": "2"
+            },
+            "actionId": "SearchPublicCatalog",
+            "actionVersion": "1",
+            "definitionDigest": "006a3aebcb4f90d071af3649a3e70a6b43afba8a3d470b504c53d82bdcfb2a3f",
+            "compositionDigest": "3341fc4a43cde3e671d35bda43eaf4f6ecd91a171ec94eaeced87d86febc9113",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a"
+          },
+          "contextDigest": "c9fe6ab1e51e77201bc44f1ef4c518c01c95a84412f503493babda2fa03734ea",
+          "contextScope": {
+            "type": "CatalogTask",
+            "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+          },
+          "scopeDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+          "input": {
+            "scope": {
+              "type": "CatalogTask",
+              "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+            },
+            "merchantId": "coffee-lab",
+            "query": "coffee",
+            "limit": 10
+          },
+          "definitionDigest": "006a3aebcb4f90d071af3649a3e70a6b43afba8a3d470b504c53d82bdcfb2a3f",
+          "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+          "effect": "read",
+          "operationKey": "223d141acadea8eb1d529f62043ec61e2ab2397aecdcaf5b51516211eb9d0bec"
+        },
+        {
+          "id": "discoverCoffeeEndpoint",
+          "action": "DiscoverMerchantCatalog",
+          "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\"}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "4abddf5fdcb56f3da8da9847ab4490133e91daab187ba17de8b565e6d8e0a381",
+          "contextId": "coffeeCatalogContext",
+          "contributesTo": [
+            "coffee_merchant_facts"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:c9c31ca66332ca836a66902ed59f5d0dc2a21aeb8da913db8db4a02374777674",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "commerce.catalog.query",
+              "version": "2"
+            },
+            "actionId": "DiscoverMerchantCatalog",
+            "actionVersion": "1",
+            "definitionDigest": "cc284adca76176cb4656c54031b226a55b2e6b3a0afa7151336cea71d6715c8c",
+            "compositionDigest": "da6b2fc34334bc2e9172f9d2c11805fc6ac235f5792cbc55233e0024ad48e7e8",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "4abddf5fdcb56f3da8da9847ab4490133e91daab187ba17de8b565e6d8e0a381"
+          },
+          "contextDigest": "c9fe6ab1e51e77201bc44f1ef4c518c01c95a84412f503493babda2fa03734ea",
+          "contextScope": {
+            "type": "CatalogTask",
+            "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+          },
+          "scopeDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+          "input": {
+            "scope": {
+              "type": "CatalogTask",
+              "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+            },
+            "merchantId": "coffee-lab"
+          },
+          "definitionDigest": "cc284adca76176cb4656c54031b226a55b2e6b3a0afa7151336cea71d6715c8c",
+          "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+          "effect": "read",
+          "operationKey": "034c6f19d0ad493134ae4d7df1016b7b1009f0fd8356daeebf3c45535390c246"
+        }
+      ],
+      "reads": [
+        {
+          "id": "50689edf-82a6-424a-88a7-01cec29d68e7",
+          "tool": "read_task_context",
+          "status": "ok",
+          "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "outputDigest": "63de5966d4d7faad3d80c13c929b477d3514ee2081499c92b2bd9d8a887d6a7c",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "f6e28a73-c53a-4a98-b32a-16d25ce828eb"
+              },
+              "revision": 4,
+              "propertiesDigest": "ffa16071fb2fde8093e89bf0fd7e36ee02f6948bf21b0c5c5a4217e79bceae0e",
+              "linksDigest": "f511f2bd593bd1a10ca83ecdda3590dde3448334acdea64886a5840b24bba275"
+            },
+            {
+              "ref": {
+                "type": "RequestSpecification",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 2,
+              "propertiesDigest": "8bc01a24c626e1cd7431c7074a6a329c4bb5f155726e0c9c57438505bc00116e",
+              "linksDigest": "9f24b286600c42f4d4ef4f1046285f4881e4ff8ecc2a0ea22f8df52747c70590"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "fa22fa96d781c434d05ffd70b1e36d95a7bba98be9bbcb635f3cb08419782ffb"
+              },
+              "revision": 1,
+              "propertiesDigest": "d3e6739bfb1af076734b438cb92beba425dd17a584bc22145d2004fd4c8d7f81",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "78672ad14e4df7e52896dc92270a9dad686a72e9bfaf5b0f978a14bc2bb59353"
+              },
+              "revision": 1,
+              "propertiesDigest": "b2f0543be93991b34d9538662c6ca0d66a135b1bc08bfdf3fee2cee3b7b670c1",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+              },
+              "revision": 1,
+              "propertiesDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b8ad27998783a83210f5dc4489b36f627c723d854b47c2010510753a2cbe2817",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "RequestInstruction",
+                "id": "002061d3e4b62bd544d30187c66f4450c5844a58cdd7108f3253c41977e6e1ac"
+              },
+              "revision": 1,
+              "propertiesDigest": "dde582e6fc2e89541c000b7b0322967af2d54ca6eaf9f2a5c511af2c890ccfc5",
+              "linksDigest": "1d689ad34e995a004604010fd45c7313d927a85e855fbbe742c0a0964e351696"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "3abc703254923df9dbc513155ff3ded4f0bfb27b8d5e669aa1780c638e6fe839"
+              },
+              "revision": 1,
+              "propertiesDigest": "f5f29d3b6a5d81b9f71706686675a8462814142873cc70775351d4a8c53dd3be",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "7d7773d804489c7e39156b126e30a63d13bbfaebcc019f338cf8835e621b8f97"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b4887edf5a6af43d0aa5a65ab0626f32fa8e1e0cff1c415ec1f12b50ce2fce3",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "e765dd14909b3b55f4649b278d826067963ad1b070e9ecfde0f289a04c6435c7"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b1870c7a5fcfdfbffcf26228cf3323b378755368676f78622d37721cbeca8c7",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "ExecutionContext",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 5,
+              "propertiesDigest": "662c6e8220bb2ebebcf62b8f15d73ce61048669b3b667ad90e1b7dd11a3f1bb0",
+              "linksDigest": "692c6e249f51df166f3a2355c127bb00053c82c213ea25fcc1fd36aff85bc11d"
+            }
+          ]
+        },
+        {
+          "id": "36a595b5-6145-48c7-a765-ccd8fdf6be5f",
+          "tool": "query_ontology",
+          "status": "ok",
+          "inputDigest": "8595207eb48a65a402ef2ca38016c4678e5e9f003914aba623defbee49940ed4",
+          "outputDigest": "ab42a2a2b50228d0aa6f195983cd1091ff34a8a2fa0931b2bdccc5b1163560db",
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+              },
+              "revision": 1,
+              "propertiesDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            }
+          ]
+        },
+        {
+          "id": "aae96e30-bada-44f8-a9e0-08ee2029a96a",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "bbcd4d3f79b0997f41456b961a519a02054600702b47dfe86937cadc30e0afc9",
+          "outputDigest": "1752f49e681f41d4b81e1e83555136649fc1f3d7a22f730a021aaf1a6e2ff052",
+          "objects": [],
+          "actionBindingDigests": [
+            "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a"
+          ]
+        },
+        {
+          "id": "e3159201-e0fb-4e48-905e-25cbfa04ee7f",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "5e3b02f9ddc7420245de8b56f3a9462b73aa9d4c9b0e493de1390e5671049276",
+          "outputDigest": "d9c963457ae779afc9c7f3bd62554b1598f1d1fb32c31377548d83a77dbcaaf4",
+          "objects": [],
+          "actionBindingDigests": [
+            "4abddf5fdcb56f3da8da9847ab4490133e91daab187ba17de8b565e6d8e0a381"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "806e7660-b50d-447b-bbd0-add52391836a",
+      "sealedPlanDigest": "b557724e1e4e04a541d737360cbce9a2e36587bd761991460f3d4d728b5e9320",
+      "modelRunId": "93d2099d-c55e-4bd0-96f6-823d66710b9b",
+      "modelDecision": {
+        "kind": "execute",
+        "requestRevision": 1,
+        "message": "已有搜索仅返回一款且目录覆盖未知；检索深烘焙候选，同时在已核验商家端点读取已发现的浅烘焙变体。所有操作均为只读，库存数量、配送承诺和合作状态继续保持未核验。",
+        "steps": [
+          {
+            "id": "searchDarkCoffee",
+            "action": "SearchPublicCatalog",
+            "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"query\":\"dark roast coffee\",\"limit\":10}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a",
+            "contextId": "coffeeCatalogContext",
+            "contributesTo": [
+              "coffee_source_facts"
+            ]
+          },
+          {
+            "id": "verifyLightCoffee",
+            "action": "ReadMerchantVariants",
+            "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"variantIds\":[\"gid://shopify/ProductVariant/9034\"]}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5",
+            "contextId": "coffeeCatalogContext",
+            "acceptedInputs": [
+              {
+                "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+                "port": "result",
+                "targetKey": "endpoint"
+              },
+              {
+                "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+                "port": "result",
+                "targetKey": "observation"
+              }
+            ],
+            "contributesTo": [
+              "coffee_source_facts",
+              "coffee_merchant_facts"
+            ]
+          }
+        ],
+        "completionJson": ""
+      },
+      "steps": [
+        {
+          "id": "searchDarkCoffee",
+          "action": "SearchPublicCatalog",
+          "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"query\":\"dark roast coffee\",\"limit\":10}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a",
+          "contextId": "coffeeCatalogContext",
+          "contributesTo": [
+            "coffee_source_facts"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "commerce.catalog.query",
+              "version": "2"
+            },
+            "actionId": "SearchPublicCatalog",
+            "actionVersion": "1",
+            "definitionDigest": "006a3aebcb4f90d071af3649a3e70a6b43afba8a3d470b504c53d82bdcfb2a3f",
+            "compositionDigest": "3341fc4a43cde3e671d35bda43eaf4f6ecd91a171ec94eaeced87d86febc9113",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a"
+          },
+          "contextDigest": "c9fe6ab1e51e77201bc44f1ef4c518c01c95a84412f503493babda2fa03734ea",
+          "contextScope": {
+            "type": "CatalogTask",
+            "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+          },
+          "scopeDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+          "input": {
+            "scope": {
+              "type": "CatalogTask",
+              "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+            },
+            "merchantId": "coffee-lab",
+            "query": "dark roast coffee",
+            "limit": 10
+          },
+          "definitionDigest": "006a3aebcb4f90d071af3649a3e70a6b43afba8a3d470b504c53d82bdcfb2a3f",
+          "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+          "effect": "read",
+          "operationKey": "6047ba7a5691d9014e61083a7b46cacbd35cf8c0d42f525d86347e6980605e91"
+        },
+        {
+          "id": "verifyLightCoffee",
+          "action": "ReadMerchantVariants",
+          "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"variantIds\":[\"gid://shopify/ProductVariant/9034\"]}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5",
+          "contextId": "coffeeCatalogContext",
+          "acceptedInputs": [
+            {
+              "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+              "port": "result",
+              "targetKey": "endpoint"
+            },
+            {
+              "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+              "port": "result",
+              "targetKey": "observation"
+            }
+          ],
+          "contributesTo": [
+            "coffee_source_facts",
+            "coffee_merchant_facts"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "commerce.catalog.query",
+              "version": "2"
+            },
+            "actionId": "ReadMerchantVariants",
+            "actionVersion": "1",
+            "definitionDigest": "34eca0cf5e0119c42d21452c0308b6d0bcc7f1cec1b238fd6761cddf05dd549a",
+            "compositionDigest": "4bee1d6b027ca9e3b07c90b60a93becc548f282a104681f83f48748e22e64145",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5"
+          },
+          "contextDigest": "c9fe6ab1e51e77201bc44f1ef4c518c01c95a84412f503493babda2fa03734ea",
+          "contextScope": {
+            "type": "CatalogTask",
+            "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+          },
+          "scopeDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+          "acceptedInputSources": [
+            {
+              "targetKey": "endpoint",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "138a9e8cc3121d95d506720f0d7b8fd4ac8e1e95657c56dfdea722a7f124dd6e"
+              }
+            },
+            {
+              "targetKey": "observation",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "e2a4266ecb1bea93db28832b5c7d0f2dc5eb450ec3b9233e221f061d6c2789ae"
+              }
+            }
+          ],
+          "input": {
+            "scope": {
+              "type": "CatalogTask",
+              "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+            },
+            "merchantId": "coffee-lab",
+            "variantIds": [
+              "gid://shopify/ProductVariant/9034"
+            ]
+          },
+          "definitionDigest": "34eca0cf5e0119c42d21452c0308b6d0bcc7f1cec1b238fd6761cddf05dd549a",
+          "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+          "effect": "read",
+          "operationKey": "32c7c96578fcbd75856cf0d9fce554821688478d2b0df2efe0b4c13561c2d0bc"
+        }
+      ],
+      "reads": [
+        {
+          "id": "9d224857-d4ec-457f-83b5-fd93a34fa2c3",
+          "tool": "read_task_context",
+          "status": "ok",
+          "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "outputDigest": "e90c5daf5496a7042275e70dd6d8f4fb5772f6ff834f1f5cc68c65fc8130e205",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "f6e28a73-c53a-4a98-b32a-16d25ce828eb"
+              },
+              "revision": 4,
+              "propertiesDigest": "ffa16071fb2fde8093e89bf0fd7e36ee02f6948bf21b0c5c5a4217e79bceae0e",
+              "linksDigest": "f511f2bd593bd1a10ca83ecdda3590dde3448334acdea64886a5840b24bba275"
+            },
+            {
+              "ref": {
+                "type": "CatalogEndpoint",
+                "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "7f851869fee29a38b96f084d85fb87ef87bf4b5c55931f9d2ef59001dbeb5bcf",
+              "linksDigest": "cec9ae1a17a2feecfa9d956b536473411cd379a553952103b25d1136c9fc7ca0"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "0049f44311eeac479f2b8a5c90756d0f16559ae8f7ca985bdf262a9ff79b0a18",
+              "linksDigest": "0d261932223d5d70bd9a8d9840ba66922abaec1f2f4bee98f481576d854e799d"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+              },
+              "revision": 1,
+              "propertiesDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "RequestSpecification",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 2,
+              "propertiesDigest": "8bc01a24c626e1cd7431c7074a6a329c4bb5f155726e0c9c57438505bc00116e",
+              "linksDigest": "9f24b286600c42f4d4ef4f1046285f4881e4ff8ecc2a0ea22f8df52747c70590"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "fa22fa96d781c434d05ffd70b1e36d95a7bba98be9bbcb635f3cb08419782ffb"
+              },
+              "revision": 1,
+              "propertiesDigest": "d3e6739bfb1af076734b438cb92beba425dd17a584bc22145d2004fd4c8d7f81",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "78672ad14e4df7e52896dc92270a9dad686a72e9bfaf5b0f978a14bc2bb59353"
+              },
+              "revision": 1,
+              "propertiesDigest": "b2f0543be93991b34d9538662c6ca0d66a135b1bc08bfdf3fee2cee3b7b670c1",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b8ad27998783a83210f5dc4489b36f627c723d854b47c2010510753a2cbe2817",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "RequestInstruction",
+                "id": "002061d3e4b62bd544d30187c66f4450c5844a58cdd7108f3253c41977e6e1ac"
+              },
+              "revision": 1,
+              "propertiesDigest": "dde582e6fc2e89541c000b7b0322967af2d54ca6eaf9f2a5c511af2c890ccfc5",
+              "linksDigest": "1d689ad34e995a004604010fd45c7313d927a85e855fbbe742c0a0964e351696"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "3abc703254923df9dbc513155ff3ded4f0bfb27b8d5e669aa1780c638e6fe839"
+              },
+              "revision": 1,
+              "propertiesDigest": "f5f29d3b6a5d81b9f71706686675a8462814142873cc70775351d4a8c53dd3be",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "7d7773d804489c7e39156b126e30a63d13bbfaebcc019f338cf8835e621b8f97"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b4887edf5a6af43d0aa5a65ab0626f32fa8e1e0cff1c415ec1f12b50ce2fce3",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "e765dd14909b3b55f4649b278d826067963ad1b070e9ecfde0f289a04c6435c7"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b1870c7a5fcfdfbffcf26228cf3323b378755368676f78622d37721cbeca8c7",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "784543165c177fedacae24975e86072df5d2cefdc01b5ddfdd135806de78f678",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "fe39874e45b97c13c1ebe2bd76601d1c1ee488430bd9f87109ffd8cd91d4e3b6"
+              },
+              "revision": 1,
+              "propertiesDigest": "7998a521fd9e9baa9b6c6b78a300ea8e5dfe245a4ca5d6c6d81c12969c250214",
+              "linksDigest": "e5ab71dd26cefac4dc9d79b3be645abdbd5263a1fcb55b64c04250957a5b9ab6"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "22922007360df666c1dd67d9492125827bd817cc9e99558ece5ec87f1de2ed64",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "53ac44c45cf7534162d858edb9d2268c5f66aa89f97f3120b79b515ef35bb266"
+              },
+              "revision": 1,
+              "propertiesDigest": "a8c59594a3a486815da4f183ba80e520254eb1c5ffd8d75a03b225532a0a524b",
+              "linksDigest": "dd5e4e08618f2c242c302e4bbbb201081ba9083c77852098c4dcffbe885951f7"
+            },
+            {
+              "ref": {
+                "type": "Provider",
+                "id": "7ddf12fe783cea0b1cd431986a7799480222efa32168c63059d2de50e2868cfb"
+              },
+              "revision": 1,
+              "propertiesDigest": "01fc62fce31f72a3607892d05871d411281a162833aa1ab28b849729e0ef1853",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            },
+            {
+              "ref": {
+                "type": "Channel",
+                "id": "6eeab3c5c4e85d49bb1d5620911a234e40d9293593cf6ffe4a58c854773e1f66"
+              },
+              "revision": 1,
+              "propertiesDigest": "1b0b3b80bdfbac2b2af29c659cfd4da71afd2726ee91646a2cf1e0cbed77fa06",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            },
+            {
+              "ref": {
+                "type": "ExecutionContext",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 9,
+              "propertiesDigest": "6aeae3931e5777aacc131156a537a8ff4f95e1c6711faa358b4b20ba3f6695c0",
+              "linksDigest": "0cc9a9cbced09a464faa46ed41cdc89d3129c4b604a23101289ff50f14a736aa"
+            },
+            {
+              "ref": {
+                "type": "ExecutionPlan",
+                "id": "66cfad561242c7a49ca5190210ecf9aea17750a967a67367167ecb519f92dc79"
+              },
+              "revision": 2,
+              "propertiesDigest": "f9b2845962ca881db264690be3a2f3e8a93e2deaff7d8b5088c7e4d9af553a02",
+              "linksDigest": "f3f5329c224ba4c0f4932ea403dde20d46564bf4177019ae9e46cff2fd2a7ded"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "e2a4266ecb1bea93db28832b5c7d0f2dc5eb450ec3b9233e221f061d6c2789ae"
+              },
+              "revision": 3,
+              "propertiesDigest": "c34759fad7131d41b3de6495d8ccfec87ecbb4c3ad6a618717adeb34536a296f",
+              "linksDigest": "3e83b759d21706314139a7086d30392eea626ffea6a317362c67c6f6675621ea"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "138a9e8cc3121d95d506720f0d7b8fd4ac8e1e95657c56dfdea722a7f124dd6e"
+              },
+              "revision": 3,
+              "propertiesDigest": "f94fc3ae861a2844e70b8350ae0ee81146e8e9ba0efb902849a9498a00c04a0e",
+              "linksDigest": "e6625ff661078448e11c638528d9618e809ea8d084347e728e52c5df5c9a5439"
+            }
+          ]
+        },
+        {
+          "id": "8f8f7b4d-e447-45a9-afc7-a2b7448b36b3",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "acfccf34d06426bdc10e44d58bd609287c0336fa30a429ad4482bd5bbea0cc7c",
+          "outputDigest": "be87ab2c1bca3cf9c4977550c263fc53421c4840d9a023508dc56903f99c3a16",
+          "objects": []
+        },
+        {
+          "id": "46f2b081-1dd0-4528-90eb-e26f3ed909b5",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "10240733f3280ae26628b5e10c5a02adc94bbddd5130e0b5831ae342b2d9c1c6",
+          "outputDigest": "33e595132df77c59af130e641b6ee4acd06ab83f1f4066e5b00dc478fe539cf6",
+          "objects": []
+        },
+        {
+          "id": "e61f2afd-bfc2-440c-922d-fd68c68aba8c",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "87183563e16ac022f7456b47e519bc817b49a26781a08dd72f47d6fdd0ac1f76",
+          "outputDigest": "a22b553b22ad065641ac0413f4e53e426cd42def6120ea484fe2b2a967cbc644",
+          "objects": [],
+          "actionBindingDigests": [
+            "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5"
+          ]
+        },
+        {
+          "id": "4b66eb8a-1456-4584-8f06-bfbdeae85673",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "bbcd4d3f79b0997f41456b961a519a02054600702b47dfe86937cadc30e0afc9",
+          "outputDigest": "1752f49e681f41d4b81e1e83555136649fc1f3d7a22f730a021aaf1a6e2ff052",
+          "objects": [],
+          "actionBindingDigests": [
+            "3616c19ab337b889b84e585df960683175e3aeee17462e0e84eef166d6dbbb2a"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "0fb8992b-4785-47f3-a1ef-1f87dd04c25a",
+      "sealedPlanDigest": "79cfbc4cbd87fc1b4393bf617f7f5499263747c226c9f0091c8e9292578e1d73",
+      "modelRunId": "6270404f-422b-45e3-bbcf-010894565efe",
+      "modelDecision": {
+        "kind": "execute",
+        "requestRevision": 1,
+        "message": "选择浅焙与深焙两个不同变体进行比较。浅焙已取得商家读取证据；现对搜索中实际返回的深焙变体进行独立商家读取，以满足两款候选均经商家端点核验的固定条件。目录覆盖仍为部分或未知，端点核验不代表合作状态核验。",
+        "steps": [
+          {
+            "id": "verifyDarkCoffee",
+            "action": "ReadMerchantVariants",
+            "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"variantIds\":[\"gid://shopify/ProductVariant/9036\"]}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5",
+            "contextId": "coffeeCatalogContext",
+            "acceptedInputs": [
+              {
+                "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+                "port": "result",
+                "targetKey": "observation"
+              },
+              {
+                "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+                "port": "result",
+                "targetKey": "endpoint"
+              }
+            ],
+            "contributesTo": [
+              "coffee_source_facts",
+              "coffee_merchant_facts"
+            ]
+          }
+        ],
+        "completionJson": ""
+      },
+      "steps": [
+        {
+          "id": "verifyDarkCoffee",
+          "action": "ReadMerchantVariants",
+          "argumentsJson": "{\"scope\":{\"type\":\"CatalogTask\",\"id\":\"4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d\"},\"merchantId\":\"coffee-lab\",\"variantIds\":[\"gid://shopify/ProductVariant/9036\"]}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5",
+          "contextId": "coffeeCatalogContext",
+          "acceptedInputs": [
+            {
+              "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+              "port": "result",
+              "targetKey": "observation"
+            },
+            {
+              "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+              "port": "result",
+              "targetKey": "endpoint"
+            }
+          ],
+          "contributesTo": [
+            "coffee_source_facts",
+            "coffee_merchant_facts"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "commerce.catalog.query",
+              "version": "2"
+            },
+            "actionId": "ReadMerchantVariants",
+            "actionVersion": "1",
+            "definitionDigest": "34eca0cf5e0119c42d21452c0308b6d0bcc7f1cec1b238fd6761cddf05dd549a",
+            "compositionDigest": "4bee1d6b027ca9e3b07c90b60a93becc548f282a104681f83f48748e22e64145",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5"
+          },
+          "contextDigest": "c9fe6ab1e51e77201bc44f1ef4c518c01c95a84412f503493babda2fa03734ea",
+          "contextScope": {
+            "type": "CatalogTask",
+            "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+          },
+          "scopeDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+          "acceptedInputSources": [
+            {
+              "targetKey": "observation",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "49ed761559aed7c4b849dbcaf5efdc2c271c711d38c3c4a840ff387733c63b36"
+              }
+            },
+            {
+              "targetKey": "endpoint",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "138a9e8cc3121d95d506720f0d7b8fd4ac8e1e95657c56dfdea722a7f124dd6e"
+              }
+            }
+          ],
+          "input": {
+            "scope": {
+              "type": "CatalogTask",
+              "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+            },
+            "merchantId": "coffee-lab",
+            "variantIds": [
+              "gid://shopify/ProductVariant/9036"
+            ]
+          },
+          "definitionDigest": "34eca0cf5e0119c42d21452c0308b6d0bcc7f1cec1b238fd6761cddf05dd549a",
+          "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+          "effect": "read",
+          "operationKey": "c6db071022431548e6b9a56e500fbca45d6a98e518532835370fd01732fc9d20"
+        }
+      ],
+      "reads": [
+        {
+          "id": "e1fd1d9d-3fce-4f83-b56b-d28d560fbcec",
+          "tool": "read_task_context",
+          "status": "ok",
+          "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "outputDigest": "3c2b00075ad1405291105c1ef4ce563506b27a1bb251bbde87225457cff87c2d",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "f6e28a73-c53a-4a98-b32a-16d25ce828eb"
+              },
+              "revision": 4,
+              "propertiesDigest": "ffa16071fb2fde8093e89bf0fd7e36ee02f6948bf21b0c5c5a4217e79bceae0e",
+              "linksDigest": "f511f2bd593bd1a10ca83ecdda3590dde3448334acdea64886a5840b24bba275"
+            },
+            {
+              "ref": {
+                "type": "CatalogEndpoint",
+                "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "7f851869fee29a38b96f084d85fb87ef87bf4b5c55931f9d2ef59001dbeb5bcf",
+              "linksDigest": "cec9ae1a17a2feecfa9d956b536473411cd379a553952103b25d1136c9fc7ca0"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "0049f44311eeac479f2b8a5c90756d0f16559ae8f7ca985bdf262a9ff79b0a18",
+              "linksDigest": "0d261932223d5d70bd9a8d9840ba66922abaec1f2f4bee98f481576d854e799d"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "propertiesDigest": "31fc9036401073fcb40830783182d5a8533749e17dba14e22f8eacb76079d818",
+              "linksDigest": "56455c05993b3a0dc4bb1499067b20fb8c7dd0210d080689252bd0971a0180b1"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+              },
+              "revision": 1,
+              "propertiesDigest": "44be008795dd11cc3739133371bbc8379789dc0e055a6705a548c171b4c0e07b",
+              "linksDigest": "6b0f0654d7b6c0063bf3042ce1af1da77827f7edebbcfafc9a03bcc40adf5b83"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+              },
+              "revision": 1,
+              "propertiesDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "RequestSpecification",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 2,
+              "propertiesDigest": "8bc01a24c626e1cd7431c7074a6a329c4bb5f155726e0c9c57438505bc00116e",
+              "linksDigest": "9f24b286600c42f4d4ef4f1046285f4881e4ff8ecc2a0ea22f8df52747c70590"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "fa22fa96d781c434d05ffd70b1e36d95a7bba98be9bbcb635f3cb08419782ffb"
+              },
+              "revision": 1,
+              "propertiesDigest": "d3e6739bfb1af076734b438cb92beba425dd17a584bc22145d2004fd4c8d7f81",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "78672ad14e4df7e52896dc92270a9dad686a72e9bfaf5b0f978a14bc2bb59353"
+              },
+              "revision": 1,
+              "propertiesDigest": "b2f0543be93991b34d9538662c6ca0d66a135b1bc08bfdf3fee2cee3b7b670c1",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b8ad27998783a83210f5dc4489b36f627c723d854b47c2010510753a2cbe2817",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "RequestInstruction",
+                "id": "002061d3e4b62bd544d30187c66f4450c5844a58cdd7108f3253c41977e6e1ac"
+              },
+              "revision": 1,
+              "propertiesDigest": "dde582e6fc2e89541c000b7b0322967af2d54ca6eaf9f2a5c511af2c890ccfc5",
+              "linksDigest": "1d689ad34e995a004604010fd45c7313d927a85e855fbbe742c0a0964e351696"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "3abc703254923df9dbc513155ff3ded4f0bfb27b8d5e669aa1780c638e6fe839"
+              },
+              "revision": 1,
+              "propertiesDigest": "f5f29d3b6a5d81b9f71706686675a8462814142873cc70775351d4a8c53dd3be",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "7d7773d804489c7e39156b126e30a63d13bbfaebcc019f338cf8835e621b8f97"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b4887edf5a6af43d0aa5a65ab0626f32fa8e1e0cff1c415ec1f12b50ce2fce3",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "e765dd14909b3b55f4649b278d826067963ad1b070e9ecfde0f289a04c6435c7"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b1870c7a5fcfdfbffcf26228cf3323b378755368676f78622d37721cbeca8c7",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "784543165c177fedacae24975e86072df5d2cefdc01b5ddfdd135806de78f678",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "fe39874e45b97c13c1ebe2bd76601d1c1ee488430bd9f87109ffd8cd91d4e3b6"
+              },
+              "revision": 1,
+              "propertiesDigest": "7998a521fd9e9baa9b6c6b78a300ea8e5dfe245a4ca5d6c6d81c12969c250214",
+              "linksDigest": "42892ac764b59db0301bc25da9eb5ca7d52357d665c022f8073ab16c673d09f3"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "22922007360df666c1dd67d9492125827bd817cc9e99558ece5ec87f1de2ed64",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "53ac44c45cf7534162d858edb9d2268c5f66aa89f97f3120b79b515ef35bb266"
+              },
+              "revision": 1,
+              "propertiesDigest": "a8c59594a3a486815da4f183ba80e520254eb1c5ffd8d75a03b225532a0a524b",
+              "linksDigest": "dd5e4e08618f2c242c302e4bbbb201081ba9083c77852098c4dcffbe885951f7"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "106cc6677b94f735f3d5ede3551ad55b693f01152ee4d9dee890f0d80e6dcda5"
+              },
+              "revision": 1,
+              "propertiesDigest": "24235abe03434e2cd0af5ca7b94af1c481169f7b5c3ee415bb32a15e664e3cbf",
+              "linksDigest": "01186c56a30502ac04f7292563f4c12b323d24c0b2a167dea707605855d48335"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "476f756745ea8aa685f2cf3d55c354ec0a63812f257077c3fea2c9d25844669d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b3fda6e4d0994b6f595518afb7d588d8c5ebb72a670c2bfc5ff2427bcc820803",
+              "linksDigest": "01186c56a30502ac04f7292563f4c12b323d24c0b2a167dea707605855d48335"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "5ef3ff070aa7ddda3dcf4ea10c12878bb75659caf808cc87632161e34adebbeb"
+              },
+              "revision": 1,
+              "propertiesDigest": "0f416fdd84b53fbf93de5aae91d6afc2314b2d2831f3f53b56212b02168ec5f4",
+              "linksDigest": "01186c56a30502ac04f7292563f4c12b323d24c0b2a167dea707605855d48335"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "propertiesDigest": "c9d0059b4468940455243ad8bdab00bc2f3cd0473e5bfec624693beb9c98ca68",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "261df48e88a84233643aef69b2011044f56f46e46a75a9ada9059a158122de7b"
+              },
+              "revision": 1,
+              "propertiesDigest": "7c2a5f61ce50f83dae6343cdc8ca7cc61db7df7956db4423b024a6a0d504d44f",
+              "linksDigest": "6d96ff33ede391e11eea1a4cecc1f01002eedba95b02d361565bd708222b8a73"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "4a6fc3868506f54eba86f63e1ffb047ff522b5473fdfe493bb4e05979f62d3a2"
+              },
+              "revision": 1,
+              "propertiesDigest": "23c441930ff703f863960ebb7c82c7a156f1cd925471ddc7dab07423319c6c49",
+              "linksDigest": "05a0c03c64b00c849aa413d03a4131e5ba8b11061e0a48b5f8dce0fc04e9eba6"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "768d2a3635948b2bc138cc4ebca23385c5082b6f2c05214877a1f80847bd9a57"
+              },
+              "revision": 1,
+              "propertiesDigest": "346dc4b7600b822e39d081aebdd12edbe1b46b9666f1500500d685781adaea27",
+              "linksDigest": "2d81608c4f813908780797425aba1e68056e571e1e9279d503afc2d87b279029"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+              },
+              "revision": 1,
+              "propertiesDigest": "c7c2e7f8591b11c9e0749c3759e5f7c2a3051c6e96c05be05a854798bb2cb7d3",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "50f85b994ba430293e15a1fe0749c31734782e5d5b461d55f4bf50c8229fe45a"
+              },
+              "revision": 1,
+              "propertiesDigest": "4e96622beccb1c5dc635c96f70b60ef4e87b25138e753774cdbabd94a64b381d",
+              "linksDigest": "9c808975d3dfdd63739f45b56d56e69edf0d1d597348998c731af69bde9c8b1c"
+            },
+            {
+              "ref": {
+                "type": "Provider",
+                "id": "7ddf12fe783cea0b1cd431986a7799480222efa32168c63059d2de50e2868cfb"
+              },
+              "revision": 1,
+              "propertiesDigest": "01fc62fce31f72a3607892d05871d411281a162833aa1ab28b849729e0ef1853",
+              "linksDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+            },
+            {
+              "ref": {
+                "type": "ExecutionContext",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 13,
+              "propertiesDigest": "e7e7d9d2b80c42c83b9411adaed899bca103a2b6d32c2eae78c9e7a236522360",
+              "linksDigest": "2b29f82eff09163b762dbea243933d98beacdfc6d0de08896cdc522bab5f9112"
+            },
+            {
+              "ref": {
+                "type": "ExecutionPlan",
+                "id": "66cfad561242c7a49ca5190210ecf9aea17750a967a67367167ecb519f92dc79"
+              },
+              "revision": 2,
+              "propertiesDigest": "f9b2845962ca881db264690be3a2f3e8a93e2deaff7d8b5088c7e4d9af553a02",
+              "linksDigest": "f3f5329c224ba4c0f4932ea403dde20d46564bf4177019ae9e46cff2fd2a7ded"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "e2a4266ecb1bea93db28832b5c7d0f2dc5eb450ec3b9233e221f061d6c2789ae"
+              },
+              "revision": 3,
+              "propertiesDigest": "c34759fad7131d41b3de6495d8ccfec87ecbb4c3ad6a618717adeb34536a296f",
+              "linksDigest": "3e83b759d21706314139a7086d30392eea626ffea6a317362c67c6f6675621ea"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "138a9e8cc3121d95d506720f0d7b8fd4ac8e1e95657c56dfdea722a7f124dd6e"
+              },
+              "revision": 3,
+              "propertiesDigest": "f94fc3ae861a2844e70b8350ae0ee81146e8e9ba0efb902849a9498a00c04a0e",
+              "linksDigest": "e6625ff661078448e11c638528d9618e809ea8d084347e728e52c5df5c9a5439"
+            },
+            {
+              "ref": {
+                "type": "ExecutionPlan",
+                "id": "85b3a8482da97f016008497a71642c904549eca6874139dd740e5b891eff3a98"
+              },
+              "revision": 2,
+              "propertiesDigest": "af1558846b6a35dc6fca456434e98def25785e332832266876f54bda5096dd4f",
+              "linksDigest": "f3f5329c224ba4c0f4932ea403dde20d46564bf4177019ae9e46cff2fd2a7ded"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "49ed761559aed7c4b849dbcaf5efdc2c271c711d38c3c4a840ff387733c63b36"
+              },
+              "revision": 3,
+              "propertiesDigest": "cf39980209fd92ebe1eae76c7a5c67d17d2ce9a572e5e7d7d6dae7d9b3d50de3",
+              "linksDigest": "773f4ec2a3a3d39bfd504cace25713249ac7428f93b9775d85bda046433eba4a"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "34bedb3084fc582fda20786f12304eb8a93d61b390b8e8a937b3bed4c139e87f"
+              },
+              "revision": 3,
+              "propertiesDigest": "639f1ec93f7d3e711cb724fbd50e936cc7b646d43afbdd3042e91dbace22ec34",
+              "linksDigest": "c665bdddce36108161e45bf4e71c93333b3b96c974c8fe37db659e61c9491b07"
+            }
+          ]
+        },
+        {
+          "id": "bb749b68-9903-4d92-96ac-1827bd0e6b58",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "87183563e16ac022f7456b47e519bc817b49a26781a08dd72f47d6fdd0ac1f76",
+          "outputDigest": "a22b553b22ad065641ac0413f4e53e426cd42def6120ea484fe2b2a967cbc644",
+          "objects": [],
+          "actionBindingDigests": [
+            "40af6332472df4fd87497b2336ed324efec3630d084c4a74f3c84661c76b2cc5"
+          ]
+        },
+        {
+          "id": "baa4e3fb-bdb3-4bd6-858f-789754f926ad",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "5e3f405e7e5a6eb8b0be45c16c25293aa8da84e91a4f178244916a3ff4e9111e",
+          "outputDigest": "68e69ed182b53594ebcb21cacd40bd9c6c689e07bceefe5e44bdfc9b42c1f30f",
+          "objects": []
+        },
+        {
+          "id": "837270e9-87f4-48c4-a7cf-620115f99f23",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "10240733f3280ae26628b5e10c5a02adc94bbddd5130e0b5831ae342b2d9c1c6",
+          "outputDigest": "33e595132df77c59af130e641b6ee4acd06ab83f1f4066e5b00dc478fe539cf6",
+          "objects": []
+        },
+        {
+          "id": "729b8c0e-2a0f-488f-8bbd-dd3a18a7a7bd",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "19e402d921188e6769a5255866180398d21ead3f4e4ab3597fd615c7ae02309d",
+          "outputDigest": "d794b3056af84b96cf3cdaada7e03523d700cdd51c83c933efe8b0fd87ca572d",
+          "objects": []
+        },
+        {
+          "id": "0ea21ef7-7c31-4a2b-99ad-5d7c346564a1",
+          "tool": "describe_ontology",
+          "status": "ok",
+          "inputDigest": "a6e1ae54e97aa5b39e58a8276f6d3a7b99d3509ff4ab11f1fd26665cc2f2a962",
+          "outputDigest": "50bdc35cf7e435f1109d04fd1b37fed75516a211424a1e166ece36a7e59fc4ab",
+          "objects": []
+        }
+      ]
+    },
+    {
+      "id": "382874f9-fad8-4b09-a0c1-2ded4e00f2a5",
+      "sealedPlanDigest": "fb1f9942fb0221485d78fd0037612313828bac2c5793eecf962b2424f413c243",
+      "modelRunId": "19e274e1-e2a7-4b7b-8c42-8f5fbc71e325",
+      "modelDecision": {
+        "kind": "execute",
+        "requestRevision": 1,
+        "message": "将已分别通过 Coffee Lab 隔离测试商家端点核验的浅烘焙和深烘焙两款候选作为引用，生成中文 Markdown 比较文档。保留测试来源性质、显示价语义、目录不完整及库存数量、配送承诺、商家合作状态尚未核验的限制。",
+        "steps": [
+          {
+            "id": "composeCoffeeComparison",
+            "action": "ComposeDocument",
+            "argumentsJson": "{\"scope\":{\"type\":\"DocumentTask\",\"id\":\"655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d\"}}",
+            "dependsOn": [],
+            "inputRefs": [],
+            "bindingDigest": "1c72c9aacc48a8240825d83cdce4c03180b5d4da50a623c30a8fe6e317971991",
+            "contextId": "coffeeDocumentContext",
+            "acceptedInputs": [
+              {
+                "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+                "port": "citations",
+                "targetKey": "citations"
+              },
+              {
+                "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+                "port": "citations",
+                "targetKey": "additionalCitations"
+              }
+            ],
+            "contributesTo": [
+              "coffee_comparison_document"
+            ]
+          }
+        ],
+        "completionJson": ""
+      },
+      "steps": [
+        {
+          "id": "composeCoffeeComparison",
+          "action": "ComposeDocument",
+          "argumentsJson": "{\"scope\":{\"type\":\"DocumentTask\",\"id\":\"655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d\"}}",
+          "dependsOn": [],
+          "inputRefs": [],
+          "bindingDigest": "1c72c9aacc48a8240825d83cdce4c03180b5d4da50a623c30a8fe6e317971991",
+          "contextId": "coffeeDocumentContext",
+          "acceptedInputs": [
+            {
+              "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+              "port": "citations",
+              "targetKey": "citations"
+            },
+            {
+              "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+              "port": "citations",
+              "targetKey": "additionalCitations"
+            }
+          ],
+          "contributesTo": [
+            "coffee_comparison_document"
+          ],
+          "binding": {
+            "ref": {
+              "id": "action:a13e7e3f4bcfd561b17c02b022af4bc6c452408a112c1581c82319fc9a0dd9b7",
+              "version": "1"
+            },
+            "programRef": {
+              "id": "document.compose",
+              "version": "2"
+            },
+            "actionId": "ComposeDocument",
+            "actionVersion": "1",
+            "definitionDigest": "7cf5d55a00aae6474ec39e206aeaecd06bdcd25fad723f27c0103026ecb5daf3",
+            "compositionDigest": "eb7c1fd826ee9d85138bf1b9dc639506744a65cb0f79e4cf6c3697c2e23535f8",
+            "configurationDigest": "f8b4b2b7a9efc7218c7bbc497e20667de0da7ffaa569c4ccb85fc56377473eeb",
+            "providerBinding": {
+              "id": "local-codex-document",
+              "version": "2"
+            },
+            "providerSnapshot": {
+              "ref": {
+                "id": "local-codex-document",
+                "version": "2"
+              },
+              "capabilityRef": {
+                "id": "document.compose",
+                "version": "2"
+              },
+              "providerId": "local-codex",
+              "channelId": "local",
+              "adapterId": "document.codex.v2",
+              "protocol": "local",
+              "enabled": true,
+              "verification": {
+                "level": "local_test",
+                "evidenceRefs": [
+                  "tests/executor.test.ts"
+                ]
+              },
+              "recovery": {
+                "idempotency": "none",
+                "lookup": false
+              },
+              "configurationDigest": "f8b4b2b7a9efc7218c7bbc497e20667de0da7ffaa569c4ccb85fc56377473eeb"
+            },
+            "providerDefinitionDigest": "48383d8dad90c0d12132a13c0031fec08643fc948dd36f71bc05e6bc2ced0a5b",
+            "ontologyRelease": {
+              "ontologyId": "eigos.business",
+              "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+              "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+            },
+            "ownerDigest": "d1cc552d3d186f0a5aa20d4aab8da36a44b06a507d7e1e7bd3b513732d8076b4",
+            "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+            "requestRevision": 1,
+            "digest": "1c72c9aacc48a8240825d83cdce4c03180b5d4da50a623c30a8fe6e317971991"
+          },
+          "contextDigest": "b2372a3e5bfc0669e39615a521fa9e8851b87ad3c9ae19f67b7e4e20513ce038",
+          "contextScope": {
+            "type": "DocumentTask",
+            "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+          },
+          "scopeDigest": "b8ad27998783a83210f5dc4489b36f627c723d854b47c2010510753a2cbe2817",
+          "acceptedInputSources": [
+            {
+              "targetKey": "citations",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "34bedb3084fc582fda20786f12304eb8a93d61b390b8e8a937b3bed4c139e87f"
+              }
+            },
+            {
+              "targetKey": "additionalCitations",
+              "sourceStep": {
+                "type": "ExecutionStep",
+                "id": "5da5cd9194067aeb14a0a142e82773ba26a485235ad080ff0528bc51236acae4"
+              }
+            }
+          ],
+          "input": {
+            "scope": {
+              "type": "DocumentTask",
+              "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+            }
+          },
+          "definitionDigest": "7cf5d55a00aae6474ec39e206aeaecd06bdcd25fad723f27c0103026ecb5daf3",
+          "intentId": "242a96aa-cdfd-476e-9ea8-6d6b7d31c2cb",
+          "effect": "local",
+          "operationKey": "90810908dab133b3d3bbb2e149c59878b6f303e1ba237cea67c8ec846e42aede"
+        }
+      ],
+      "reads": [
+        {
+          "id": "29525e34-6dca-4b0e-9706-5e16ee84bd92",
+          "tool": "read_task_context",
+          "status": "ok",
+          "inputDigest": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "outputDigest": "ec5da5ff153d640809505650502f08d65f2e2bff8607c32996d70f6b9f02755a",
+          "objects": [
+            {
+              "ref": {
+                "type": "ServiceRequest",
+                "id": "f6e28a73-c53a-4a98-b32a-16d25ce828eb"
+              },
+              "revision": 4,
+              "propertiesDigest": "ffa16071fb2fde8093e89bf0fd7e36ee02f6948bf21b0c5c5a4217e79bceae0e",
+              "linksDigest": "f511f2bd593bd1a10ca83ecdda3590dde3448334acdea64886a5840b24bba275"
+            },
+            {
+              "ref": {
+                "type": "CatalogEndpoint",
+                "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "7f851869fee29a38b96f084d85fb87ef87bf4b5c55931f9d2ef59001dbeb5bcf",
+              "linksDigest": "cec9ae1a17a2feecfa9d956b536473411cd379a553952103b25d1136c9fc7ca0"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "0049f44311eeac479f2b8a5c90756d0f16559ae8f7ca985bdf262a9ff79b0a18",
+              "linksDigest": "0d261932223d5d70bd9a8d9840ba66922abaec1f2f4bee98f481576d854e799d"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "propertiesDigest": "31fc9036401073fcb40830783182d5a8533749e17dba14e22f8eacb76079d818",
+              "linksDigest": "56455c05993b3a0dc4bb1499067b20fb8c7dd0210d080689252bd0971a0180b1"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+              },
+              "revision": 1,
+              "propertiesDigest": "44be008795dd11cc3739133371bbc8379789dc0e055a6705a548c171b4c0e07b",
+              "linksDigest": "6b0f0654d7b6c0063bf3042ce1af1da77827f7edebbcfafc9a03bcc40adf5b83"
+            },
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+              },
+              "revision": 1,
+              "propertiesDigest": "5bb3ff2ff0a476ef62ff49226f92d4fc6cc3970fc24df430451c9f91434a0c89",
+              "linksDigest": "468ba1896b39f7313e91690bcb59210a1b396bf644101379baad0d27e301f807"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "4bcd7434fb9b527bec2a74dc83eac437fc9ecb2fe766e79bf710dab97176bb7d"
+              },
+              "revision": 1,
+              "propertiesDigest": "f3323385b002ad2b87de93f55fc47a94f79cd4bdb106b1e27559c598e0c2700b",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "RequestSpecification",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 2,
+              "propertiesDigest": "8bc01a24c626e1cd7431c7074a6a329c4bb5f155726e0c9c57438505bc00116e",
+              "linksDigest": "9f24b286600c42f4d4ef4f1046285f4881e4ff8ecc2a0ea22f8df52747c70590"
+            },
+            {
+              "ref": {
+                "type": "CatalogTask",
+                "id": "fa22fa96d781c434d05ffd70b1e36d95a7bba98be9bbcb635f3cb08419782ffb"
+              },
+              "revision": 1,
+              "propertiesDigest": "d3e6739bfb1af076734b438cb92beba425dd17a584bc22145d2004fd4c8d7f81",
+              "linksDigest": "e26f097cedee8d19482ed2f1f9e213b53dca9b5ab34cd8423011b136e76f1c8d"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "78672ad14e4df7e52896dc92270a9dad686a72e9bfaf5b0f978a14bc2bb59353"
+              },
+              "revision": 1,
+              "propertiesDigest": "b2f0543be93991b34d9538662c6ca0d66a135b1bc08bfdf3fee2cee3b7b670c1",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "DocumentTask",
+                "id": "655720b7b0ea53e2ea19b445781d61f781b2e895cc002b642d8d895cf0868d8d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b8ad27998783a83210f5dc4489b36f627c723d854b47c2010510753a2cbe2817",
+              "linksDigest": "c73c82438c318056ef73439d8bf80579ac2ccbf140f97b2c43a5e2acb84c03a0"
+            },
+            {
+              "ref": {
+                "type": "RequestInstruction",
+                "id": "002061d3e4b62bd544d30187c66f4450c5844a58cdd7108f3253c41977e6e1ac"
+              },
+              "revision": 1,
+              "propertiesDigest": "dde582e6fc2e89541c000b7b0322967af2d54ca6eaf9f2a5c511af2c890ccfc5",
+              "linksDigest": "1d689ad34e995a004604010fd45c7313d927a85e855fbbe742c0a0964e351696"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "3abc703254923df9dbc513155ff3ded4f0bfb27b8d5e669aa1780c638e6fe839"
+              },
+              "revision": 1,
+              "propertiesDigest": "f5f29d3b6a5d81b9f71706686675a8462814142873cc70775351d4a8c53dd3be",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "7d7773d804489c7e39156b126e30a63d13bbfaebcc019f338cf8835e621b8f97"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b4887edf5a6af43d0aa5a65ab0626f32fa8e1e0cff1c415ec1f12b50ce2fce3",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "RequestConstraint",
+                "id": "e765dd14909b3b55f4649b278d826067963ad1b070e9ecfde0f289a04c6435c7"
+              },
+              "revision": 1,
+              "propertiesDigest": "5b1870c7a5fcfdfbffcf26228cf3323b378755368676f78622d37721cbeca8c7",
+              "linksDigest": "32759b1a9936b04c77b6463ca37c54cd18418ea9389eae380638ab0314931d9f"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "propertiesDigest": "784543165c177fedacae24975e86072df5d2cefdc01b5ddfdd135806de78f678",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "fe39874e45b97c13c1ebe2bd76601d1c1ee488430bd9f87109ffd8cd91d4e3b6"
+              },
+              "revision": 1,
+              "propertiesDigest": "7998a521fd9e9baa9b6c6b78a300ea8e5dfe245a4ca5d6c6d81c12969c250214",
+              "linksDigest": "42892ac764b59db0301bc25da9eb5ca7d52357d665c022f8073ab16c673d09f3"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "propertiesDigest": "22922007360df666c1dd67d9492125827bd817cc9e99558ece5ec87f1de2ed64",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "53ac44c45cf7534162d858edb9d2268c5f66aa89f97f3120b79b515ef35bb266"
+              },
+              "revision": 1,
+              "propertiesDigest": "a8c59594a3a486815da4f183ba80e520254eb1c5ffd8d75a03b225532a0a524b",
+              "linksDigest": "dd5e4e08618f2c242c302e4bbbb201081ba9083c77852098c4dcffbe885951f7"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "106cc6677b94f735f3d5ede3551ad55b693f01152ee4d9dee890f0d80e6dcda5"
+              },
+              "revision": 1,
+              "propertiesDigest": "24235abe03434e2cd0af5ca7b94af1c481169f7b5c3ee415bb32a15e664e3cbf",
+              "linksDigest": "01186c56a30502ac04f7292563f4c12b323d24c0b2a167dea707605855d48335"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "476f756745ea8aa685f2cf3d55c354ec0a63812f257077c3fea2c9d25844669d"
+              },
+              "revision": 1,
+              "propertiesDigest": "b3fda6e4d0994b6f595518afb7d588d8c5ebb72a670c2bfc5ff2427bcc820803",
+              "linksDigest": "d3b17c09a24bdfbbb8dedbc4e114d2f86df8d7fb04e4228de0ff203e4f79c0ef"
+            },
+            {
+              "ref": {
+                "type": "ProductVariant",
+                "id": "5ef3ff070aa7ddda3dcf4ea10c12878bb75659caf808cc87632161e34adebbeb"
+              },
+              "revision": 1,
+              "propertiesDigest": "0f416fdd84b53fbf93de5aae91d6afc2314b2d2831f3f53b56212b02168ec5f4",
+              "linksDigest": "01186c56a30502ac04f7292563f4c12b323d24c0b2a167dea707605855d48335"
+            },
+            {
+              "ref": {
+                "type": "SourceReceipt",
+                "id": "agent-catalog:60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "propertiesDigest": "c9d0059b4468940455243ad8bdab00bc2f3cd0473e5bfec624693beb9c98ca68",
+              "linksDigest": "c44d719785f762be74cbe2afd2ae91711281e73cbf8e29539e2e36c525f60366"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "261df48e88a84233643aef69b2011044f56f46e46a75a9ada9059a158122de7b"
+              },
+              "revision": 1,
+              "propertiesDigest": "7c2a5f61ce50f83dae6343cdc8ca7cc61db7df7956db4423b024a6a0d504d44f",
+              "linksDigest": "6d96ff33ede391e11eea1a4cecc1f01002eedba95b02d361565bd708222b8a73"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "4a6fc3868506f54eba86f63e1ffb047ff522b5473fdfe493bb4e05979f62d3a2"
+              },
+              "revision": 1,
+              "propertiesDigest": "23c441930ff703f863960ebb7c82c7a156f1cd925471ddc7dab07423319c6c49",
+              "linksDigest": "05a0c03c64b00c849aa413d03a4131e5ba8b11061e0a48b5f8dce0fc04e9eba6"
+            },
+            {
+              "ref": {
+                "type": "ProductOffer",
+                "id": "768d2a3635948b2bc138cc4ebca23385c5082b6f2c05214877a1f80847bd9a57"
+              },
+              "revision": 1,
+              "propertiesDigest": "346dc4b7600b822e39d081aebdd12edbe1b46b9666f1500500d685781adaea27",
+              "linksDigest": "2d81608c4f813908780797425aba1e68056e571e1e9279d503afc2d87b279029"
+            },
+            {
+              "ref": {
+                "type": "ExecutionContext",
+                "id": "eaabfdd0444e16a3a70acc1478c609030eaa869b9ef7f4adbba3bc7e21dc910e"
+              },
+              "revision": 16,
+              "propertiesDigest": "0d1078cad7e13e99ee94d2bb1088455876225dbfbeefdf5144644d1448a5bf54",
+              "linksDigest": "53703d4110fc0c0e2a1dc273c4c8ca3198395dd58bc853f88a609ba6d4edeaa3"
+            },
+            {
+              "ref": {
+                "type": "ExecutionPlan",
+                "id": "85b3a8482da97f016008497a71642c904549eca6874139dd740e5b891eff3a98"
+              },
+              "revision": 2,
+              "propertiesDigest": "af1558846b6a35dc6fca456434e98def25785e332832266876f54bda5096dd4f",
+              "linksDigest": "f3f5329c224ba4c0f4932ea403dde20d46564bf4177019ae9e46cff2fd2a7ded"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "49ed761559aed7c4b849dbcaf5efdc2c271c711d38c3c4a840ff387733c63b36"
+              },
+              "revision": 3,
+              "propertiesDigest": "cf39980209fd92ebe1eae76c7a5c67d17d2ce9a572e5e7d7d6dae7d9b3d50de3",
+              "linksDigest": "773f4ec2a3a3d39bfd504cace25713249ac7428f93b9775d85bda046433eba4a"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "34bedb3084fc582fda20786f12304eb8a93d61b390b8e8a937b3bed4c139e87f"
+              },
+              "revision": 3,
+              "propertiesDigest": "639f1ec93f7d3e711cb724fbd50e936cc7b646d43afbdd3042e91dbace22ec34",
+              "linksDigest": "c665bdddce36108161e45bf4e71c93333b3b96c974c8fe37db659e61c9491b07"
+            },
+            {
+              "ref": {
+                "type": "ExecutionPlan",
+                "id": "249a16cee10787df55bd83951760276bed77304d2e0c651bc66798e55b75847f"
+              },
+              "revision": 2,
+              "propertiesDigest": "e07622b14aa9be2f594114eb9617b41af10cc5aa3aa6361f2f57daf421b659d1",
+              "linksDigest": "f3f5329c224ba4c0f4932ea403dde20d46564bf4177019ae9e46cff2fd2a7ded"
+            },
+            {
+              "ref": {
+                "type": "ExecutionStep",
+                "id": "5da5cd9194067aeb14a0a142e82773ba26a485235ad080ff0528bc51236acae4"
+              },
+              "revision": 3,
+              "propertiesDigest": "e989501f6ec981be3ba6ce027e78c45e2c8b7711781f10959ed9f4f0aacb02e3",
+              "linksDigest": "8af7ac2f23dc6a2be6ab611e005e197b02aad80b11dc0f242d105b938482f654"
+            }
+          ]
+        },
+        {
+          "id": "d2222dcb-d0b5-467e-b040-17dc4b78ce06",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "19e402d921188e6769a5255866180398d21ead3f4e4ab3597fd615c7ae02309d",
+          "outputDigest": "d794b3056af84b96cf3cdaada7e03523d700cdd51c83c933efe8b0fd87ca572d",
+          "objects": []
+        },
+        {
+          "id": "899b840b-2a67-4f62-b68c-3ae3e73c30e8",
+          "tool": "evaluate_ontology",
+          "status": "ok",
+          "inputDigest": "29f80781b32389b70780fe77fe08e59d8a3bcbe496268b0323f3958666292edd",
+          "outputDigest": "ef1507c60680c29635c12d9ba2c9b0498f37f063e3734f948da788cfbfd4582d",
+          "objects": []
+        },
+        {
+          "id": "0cb1906a-29c7-40cb-9627-e532e409bf38",
+          "tool": "discover_actions",
+          "status": "ok",
+          "inputDigest": "dbd355473a811ceec923a28cc451b6958ef6868a52ed3b7fc8d260e0e037e3b8",
+          "outputDigest": "4ad55727d999d9ceff8264aeaea5fc9e5582853eb0f37f5ed01e33f17e333be6",
+          "objects": [],
+          "actionBindingDigests": [
+            "1c72c9aacc48a8240825d83cdce4c03180b5d4da50a623c30a8fe6e317971991"
+          ]
+        },
+        {
+          "id": "5a26e3fb-8328-4102-88e9-e66fd9d4c313",
+          "tool": "describe_ontology",
+          "status": "ok",
+          "inputDigest": "6f024f4c302412c045a153592e94addf9bc87941093286886be8c06095af4113",
+          "outputDigest": "74e1d8c444580c793dd8fd014759e7f972f68e02b9a2a097cb91961f7684baa2",
+          "objects": []
+        }
+      ]
+    }
+  ],
+  "sourceRequests": [
+    {
+      "ordinal": 1,
+      "at": "2026-10-22T14:19:03.886Z",
+      "logicalEndpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "transport": "actual_loopback_http",
+      "operation": "search_catalog",
+      "arguments": {
+        "query": "coffee",
+        "context": {
+          "address_country": "US"
+        },
+        "pagination": {
+          "limit": 10
+        },
+        "filters": {
+          "shops": [
+            "gid://shopify/Shop/9012"
+          ]
+        }
+      },
+      "returnedVariantIds": [
+        "gid://shopify/ProductVariant/9034"
+      ]
+    },
+    {
+      "ordinal": 2,
+      "at": "2026-10-22T14:19:03.896Z",
+      "logicalEndpoint": "https://eigos-coffee-fixture.myshopify.com/.well-known/ucp",
+      "transport": "actual_loopback_http",
+      "operation": "discovery",
+      "arguments": null,
+      "returnedVariantIds": []
+    },
+    {
+      "ordinal": 3,
+      "at": "2026-10-22T14:20:12.252Z",
+      "logicalEndpoint": "https://catalog.shopify.com/api/ucp/mcp",
+      "transport": "actual_loopback_http",
+      "operation": "search_catalog",
+      "arguments": {
+        "query": "dark roast coffee",
+        "context": {
+          "address_country": "US"
+        },
+        "pagination": {
+          "limit": 10
+        },
+        "filters": {
+          "shops": [
+            "gid://shopify/Shop/9012"
+          ]
+        }
+      },
+      "returnedVariantIds": [
+        "gid://shopify/ProductVariant/9035",
+        "gid://shopify/ProductVariant/9036",
+        "gid://shopify/ProductVariant/9037"
+      ]
+    },
+    {
+      "ordinal": 4,
+      "at": "2026-10-22T14:20:12.253Z",
+      "logicalEndpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp",
+      "transport": "actual_loopback_http",
+      "operation": "lookup_catalog",
+      "arguments": {
+        "ids": [
+          "gid://shopify/ProductVariant/9034"
+        ],
+        "context": {
+          "address_country": "US"
+        }
+      },
+      "returnedVariantIds": [
+        "gid://shopify/ProductVariant/9034"
+      ]
+    },
+    {
+      "ordinal": 5,
+      "at": "2026-10-22T14:21:08.381Z",
+      "logicalEndpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp",
+      "transport": "actual_loopback_http",
+      "operation": "lookup_catalog",
+      "arguments": {
+        "ids": [
+          "gid://shopify/ProductVariant/9036"
+        ],
+        "context": {
+          "address_country": "US"
+        }
+      },
+      "returnedVariantIds": [
+        "gid://shopify/ProductVariant/9036"
+      ]
+    }
+  ],
+  "connectorCalls": [
+    {
+      "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "requestRevision": 1,
+      "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+      "action": "DiscoverMerchantCatalog",
+      "actionInputDigest": "18d33ad022079c28513b8d61c46501a51d8e645d2b533447b2f22bae2c8a70c1",
+      "planId": "330eebfb-7f08-4d72-9635-82279da273ee",
+      "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+      "attemptId": "263702fd-19bd-4c5d-8b2c-542a79b09de0",
+      "modelRunId": "1f9bef25-4bf5-4839-a90b-9a1b98975a6e",
+      "call": {
+        "operation": "discovery",
+        "merchantDomain": "eigos-coffee-fixture.myshopify.com"
+      },
+      "receipt": {
+        "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711",
+        "endpoint": "https://eigos-coffee-fixture.myshopify.com/.well-known/ucp",
+        "operation": "discovery",
+        "startedAt": "2026-10-22T14:19:03.872Z",
+        "receivedAt": "2026-10-22T14:19:03.897Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "responseSha256": "7889ef2e5a736552945ee3b4d402589fc8aec9d8152e5425a334c54f3c0db9f1",
+        "responseBytes": 421
+      }
+    },
+    {
+      "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "requestRevision": 1,
+      "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+      "action": "SearchPublicCatalog",
+      "actionInputDigest": "da455a4759952bcc6f8922552582efc34d207ea8f3cc4112b1615eb25933e1de",
+      "planId": "330eebfb-7f08-4d72-9635-82279da273ee",
+      "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+      "attemptId": "bf5f26ca-c1c2-409e-a5b2-1a35607a1b0e",
+      "modelRunId": "1f9bef25-4bf5-4839-a90b-9a1b98975a6e",
+      "call": {
+        "operation": "search_catalog",
+        "input": {
+          "query": "coffee",
+          "context": {
+            "address_country": "US"
+          },
+          "pagination": {
+            "limit": 10
+          },
+          "filters": {
+            "shops": [
+              "gid://shopify/Shop/9012"
+            ]
+          }
+        }
+      },
+      "receipt": {
+        "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "search_catalog",
+        "startedAt": "2026-10-22T14:19:03.774Z",
+        "receivedAt": "2026-10-22T14:19:03.895Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "10fe1ef6dc6a31f119efda47961bad56c667fe75fb11c72d16e572fb772f695e",
+        "responseSha256": "343d969b11696860cfaaffc68e4db94cb2a586302845bf481810bb4bb47a4d69",
+        "responseBytes": 864
+      }
+    },
+    {
+      "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "requestRevision": 1,
+      "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+      "action": "SearchPublicCatalog",
+      "actionInputDigest": "172c82551a5831d7efad63bbdd2377f5004306426d893f8124412badaa245837",
+      "planId": "806e7660-b50d-447b-bbd0-add52391836a",
+      "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+      "attemptId": "e32c27c6-0026-4fa8-814d-85f6bd861c1b",
+      "modelRunId": "93d2099d-c55e-4bd0-96f6-823d66710b9b",
+      "call": {
+        "operation": "search_catalog",
+        "input": {
+          "query": "dark roast coffee",
+          "context": {
+            "address_country": "US"
+          },
+          "pagination": {
+            "limit": 10
+          },
+          "filters": {
+            "shops": [
+              "gid://shopify/Shop/9012"
+            ]
+          }
+        }
+      },
+      "receipt": {
+        "id": "60ca3f43-4023-4051-93eb-239040596af8",
+        "endpoint": "https://catalog.shopify.com/api/ucp/mcp",
+        "operation": "search_catalog",
+        "startedAt": "2026-10-22T14:20:12.073Z",
+        "receivedAt": "2026-10-22T14:20:12.253Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "13b4699f73f336c6713b9230144d5c984165aa921883a3f219c809227c9dfe5e",
+        "responseSha256": "6dc947df4625263694a51e40f7790e361e5530f297d8a54c7385acafd6dea38d",
+        "responseBytes": 1613
+      }
+    },
+    {
+      "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "requestRevision": 1,
+      "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+      "action": "ReadMerchantVariants",
+      "actionInputDigest": "cb3703408d1b1f6a825a1dca36b7253bc9ea45adf7e96aeafbe03d8a7a0c676a",
+      "planId": "806e7660-b50d-447b-bbd0-add52391836a",
+      "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+      "attemptId": "17427cbd-a8b7-45f4-b02e-6f3a51151918",
+      "modelRunId": "93d2099d-c55e-4bd0-96f6-823d66710b9b",
+      "call": {
+        "operation": "lookup_catalog",
+        "merchantDomain": "eigos-coffee-fixture.myshopify.com",
+        "discoveredProfile": {
+          "ucp": {
+            "version": "2026-08-25",
+            "capabilities": {
+              "dev.ucp.shopping.catalog.search": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.ucp.shopping.catalog.lookup": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.shopify.catalog": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.shopify.catalog.global": [
+                {
+                  "version": "2026-08-25"
+                }
+              ]
+            },
+            "services": {
+              "dev.ucp.shopping": [
+                {
+                  "version": "2026-08-25",
+                  "transport": "mcp",
+                  "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp"
+                }
+              ]
+            }
+          }
+        },
+        "input": {
+          "ids": [
+            "gid://shopify/ProductVariant/9034"
+          ],
+          "context": {
+            "address_country": "US"
+          }
+        }
+      },
+      "receipt": {
+        "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293",
+        "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp",
+        "operation": "lookup_catalog",
+        "startedAt": "2026-10-22T14:20:12.243Z",
+        "receivedAt": "2026-10-22T14:20:12.253Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "9a9139c47063b477af56666d4027147bd63919896d170fc99df8e1a0b93d65ca",
+        "responseSha256": "2c5ae3ffacc4157442961969e3b5c8edb86801ee5d6188b6ae8bbc67d8f0d7f3",
+        "responseBytes": 864
+      }
+    },
+    {
+      "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "requestRevision": 1,
+      "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867",
+      "action": "ReadMerchantVariants",
+      "actionInputDigest": "aae21a0e2074553c471dea7e6a529680c697feff4add65eef2c1abcee9d1ddd9",
+      "planId": "0fb8992b-4785-47f3-a1ef-1f87dd04c25a",
+      "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+      "attemptId": "d581869e-1105-4a14-a49c-5f92fa7f45d4",
+      "modelRunId": "6270404f-422b-45e3-bbcf-010894565efe",
+      "call": {
+        "operation": "lookup_catalog",
+        "merchantDomain": "eigos-coffee-fixture.myshopify.com",
+        "discoveredProfile": {
+          "ucp": {
+            "version": "2026-08-25",
+            "capabilities": {
+              "dev.ucp.shopping.catalog.search": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.ucp.shopping.catalog.lookup": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.shopify.catalog": [
+                {
+                  "version": "2026-08-25"
+                }
+              ],
+              "dev.shopify.catalog.global": [
+                {
+                  "version": "2026-08-25"
+                }
+              ]
+            },
+            "services": {
+              "dev.ucp.shopping": [
+                {
+                  "version": "2026-08-25",
+                  "transport": "mcp",
+                  "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp"
+                }
+              ]
+            }
+          }
+        },
+        "input": {
+          "ids": [
+            "gid://shopify/ProductVariant/9036"
+          ],
+          "context": {
+            "address_country": "US"
+          }
+        }
+      },
+      "receipt": {
+        "id": "117f2887-e357-4c1f-9946-be11d979eeec",
+        "endpoint": "https://eigos-coffee-fixture.myshopify.com/api/ucp/mcp",
+        "operation": "lookup_catalog",
+        "startedAt": "2026-10-22T14:21:08.377Z",
+        "receivedAt": "2026-10-22T14:21:08.381Z",
+        "httpStatus": 200,
+        "authentication": "anonymous",
+        "inputSha256": "05e2abc9ddc1920f52eb2ceaf0626689fd26de13372373649ea5f39ceec0401b",
+        "responseSha256": "17ffdd814d9e57a40a9439903b6cd4fda55448aa0479be2bdbf25975cdea18a0",
+        "responseBytes": 863
+      }
+    }
+  ],
+  "documentCalls": [
+    {
+      "taskId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+      "at": "2026-10-22T14:22:05.797Z",
+      "suppliedInputDigest": "09836be49e937431e0e24033df89ab46d34f2db4062b94b0e34767751ffb0610",
+      "outcome": "complete",
+      "run": {
+        "id": "598e721f-4c56-41b7-8d37-9f1082417273",
+        "runtime": "codex-exec",
+        "startedAt": "2026-10-22T14:22:05.797Z",
+        "completedAt": "2026-10-22T14:22:48.073Z",
+        "outputSha256": "a9ba06eacb6c43b1bc28f87c64f6f94cab7b077da93fd3e325e725ef6b7986bf",
+        "threadId": "01a163fd-96fb-7513-a9fd-bca18042375e",
+        "usage": {
+          "input_tokens": 25727,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1142,
+          "reasoning_output_tokens": 0
+        }
+      }
+    }
+  ],
+  "intents": [
+    {
+      "id": "242a96aa-cdfd-476e-9ea8-6d6b7d31c2cb",
+      "state": "effect_confirmed",
+      "effect": "local",
+      "planDigest": "fb1f9942fb0221485d78fd0037612313828bac2c5793eecf962b2424f413c243",
+      "bindingRef": {
+        "id": "action:a13e7e3f4bcfd561b17c02b022af4bc6c452408a112c1581c82319fc9a0dd9b7",
+        "version": "1"
+      },
+      "observationId": "19bce659-91ea-416b-a384-96c199e9576c",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "ComposeDocument",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:a13e7e3f4bcfd561b17c02b022af4bc6c452408a112c1581c82319fc9a0dd9b7",
+            "version": "1",
+            "configurationDigest": "f8b4b2b7a9efc7218c7bbc497e20667de0da7ffaa569c4ccb85fc56377473eeb"
+          },
+          "intentId": "242a96aa-cdfd-476e-9ea8-6d6b7d31c2cb",
+          "observationId": "19bce659-91ea-416b-a384-96c199e9576c",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "document_draft",
+              "phase": "artifact"
+            },
+            "evidence": {
+              "origins": [
+                "model"
+              ]
+            },
+            "kind": "object",
+            "type": "DocumentDraft"
+          },
+          "value": {
+            "type": "DocumentDraft",
+            "id": "a80bfe6eb402db9ab113675d058bcd72982fa44077b25458aae81299ea375ff3"
+          },
+          "evidence": {
+            "origin": "model",
+            "refs": [
+              "598e721f-4c56-41b7-8d37-9f1082417273"
+            ],
+            "observedAt": "2026-10-22T14:22:48.073Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "DocumentDraft",
+                "id": "a80bfe6eb402db9ab113675d058bcd72982fa44077b25458aae81299ea375ff3"
+              },
+              "revision": 1,
+              "digest": "d0ffe6d68d2461e587851f83c82ad4cc718f3aeaed766ca851c0193a9985c5bb"
+            }
+          ],
+          "digest": "0fef0f4e2b8a7ca035ba2cac5c84cabf5acaab1c16c7cd09675c86dbbb6adb3f"
+        }
+      ]
+    },
+    {
+      "id": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+      "state": "effect_confirmed",
+      "effect": "read",
+      "planDigest": "b557724e1e4e04a541d737360cbce9a2e36587bd761991460f3d4d728b5e9320",
+      "bindingRef": {
+        "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+        "version": "1"
+      },
+      "observationId": "81ef00fd-23c8-4269-aba5-2fbc1265bf35",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "SearchPublicCatalog",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+          "observationId": "81ef00fd-23c8-4269-aba5-2fbc1265bf35",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "CatalogObservation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": {
+            "type": "CatalogObservation",
+            "id": "60ca3f43-4023-4051-93eb-239040596af8"
+          },
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "60ca3f43-4023-4051-93eb-239040596af8"
+            ],
+            "observedAt": "2026-10-22T14:20:12.253Z",
+            "expiresAt": "2026-10-22T14:25:12.073Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "digest": "31fc9036401073fcb40830783182d5a8533749e17dba14e22f8eacb76079d818"
+            }
+          ],
+          "digest": "fa3fe305bf3bfd48085f786af548301d4f79e53a4b71d1c90ea53a4187c1f6a6"
+        },
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "SearchPublicCatalog",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "2c7d094d-03db-4485-ba36-c9e455ccd76c",
+          "observationId": "81ef00fd-23c8-4269-aba5-2fbc1265bf35",
+          "port": "citations",
+          "definition": {
+            "cardinality": "many",
+            "semantics": {
+              "role": "source_citation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic",
+                "managed",
+                "model",
+                "user"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": [
+            {
+              "type": "CatalogObservation",
+              "id": "60ca3f43-4023-4051-93eb-239040596af8"
+            }
+          ],
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "60ca3f43-4023-4051-93eb-239040596af8"
+            ],
+            "observedAt": "2026-10-22T14:20:12.253Z",
+            "expiresAt": "2026-10-22T14:25:12.073Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "60ca3f43-4023-4051-93eb-239040596af8"
+              },
+              "revision": 1,
+              "digest": "31fc9036401073fcb40830783182d5a8533749e17dba14e22f8eacb76079d818"
+            }
+          ],
+          "digest": "d79d193ebfd9f29df4759b33f2dba29442eb71dfed953fb88235c13cc80b2f4e"
+        }
+      ]
+    },
+    {
+      "id": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+      "state": "effect_confirmed",
+      "effect": "read",
+      "planDigest": "b557724e1e4e04a541d737360cbce9a2e36587bd761991460f3d4d728b5e9320",
+      "bindingRef": {
+        "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+        "version": "1"
+      },
+      "observationId": "8eb3d1f5-1e8c-4518-b9a6-7a733668ae27",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "ReadMerchantVariants",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+          "observationId": "8eb3d1f5-1e8c-4518-b9a6-7a733668ae27",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "CatalogObservation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": {
+            "type": "CatalogObservation",
+            "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+          },
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+            ],
+            "observedAt": "2026-10-22T14:20:12.253Z",
+            "expiresAt": "2026-10-22T14:25:12.243Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+              },
+              "revision": 1,
+              "digest": "44be008795dd11cc3739133371bbc8379789dc0e055a6705a548c171b4c0e07b"
+            }
+          ],
+          "digest": "d64341dccc891cd69c344029bf7af061ba281a0bda2f5344196a3306fc3bebf9"
+        },
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "ReadMerchantVariants",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "58dc7ece-6a1a-457f-b91a-1f094b66590d",
+          "observationId": "8eb3d1f5-1e8c-4518-b9a6-7a733668ae27",
+          "port": "citations",
+          "definition": {
+            "cardinality": "many",
+            "semantics": {
+              "role": "source_citation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic",
+                "managed",
+                "model",
+                "user"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": [
+            {
+              "type": "CatalogObservation",
+              "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+            }
+          ],
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+            ],
+            "observedAt": "2026-10-22T14:20:12.253Z",
+            "expiresAt": "2026-10-22T14:25:12.243Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "08f1ca56-a2a3-4fe4-8e09-7634e4427293"
+              },
+              "revision": 1,
+              "digest": "44be008795dd11cc3739133371bbc8379789dc0e055a6705a548c171b4c0e07b"
+            }
+          ],
+          "digest": "a581bf886933dc6c06c8d144fb4ca0429a1f742baa9c72be5de1e6df52e84cf6"
+        }
+      ]
+    },
+    {
+      "id": "69763862-1f42-44e3-a43f-ad970f2f909a",
+      "state": "effect_confirmed",
+      "effect": "read",
+      "planDigest": "79cfbc4cbd87fc1b4393bf617f7f5499263747c226c9f0091c8e9292578e1d73",
+      "bindingRef": {
+        "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+        "version": "1"
+      },
+      "observationId": "d4d77106-2ade-4fab-ac10-ee9e7d36f757",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "ReadMerchantVariants",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+          "observationId": "d4d77106-2ade-4fab-ac10-ee9e7d36f757",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "CatalogObservation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": {
+            "type": "CatalogObservation",
+            "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+          },
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "117f2887-e357-4c1f-9946-be11d979eeec"
+            ],
+            "observedAt": "2026-10-22T14:21:08.381Z",
+            "expiresAt": "2026-10-22T14:26:08.377Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+              },
+              "revision": 1,
+              "digest": "5bb3ff2ff0a476ef62ff49226f92d4fc6cc3970fc24df430451c9f91434a0c89"
+            }
+          ],
+          "digest": "2de16bf6ea5fd7d678e788c28af815e785c1981880316129c49a4830eb4bd214"
+        },
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "ReadMerchantVariants",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:48bd58baa4714e7d02cc1334def3aa8208a4f9fdc7eef9bbeb8c1887056f338b",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "69763862-1f42-44e3-a43f-ad970f2f909a",
+          "observationId": "d4d77106-2ade-4fab-ac10-ee9e7d36f757",
+          "port": "citations",
+          "definition": {
+            "cardinality": "many",
+            "semantics": {
+              "role": "source_citation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic",
+                "managed",
+                "model",
+                "user"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": [
+            {
+              "type": "CatalogObservation",
+              "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+            }
+          ],
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "117f2887-e357-4c1f-9946-be11d979eeec"
+            ],
+            "observedAt": "2026-10-22T14:21:08.381Z",
+            "expiresAt": "2026-10-22T14:26:08.377Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "117f2887-e357-4c1f-9946-be11d979eeec"
+              },
+              "revision": 1,
+              "digest": "5bb3ff2ff0a476ef62ff49226f92d4fc6cc3970fc24df430451c9f91434a0c89"
+            }
+          ],
+          "digest": "e57c70aafd2ea74a3873b808dcd303008d4b2beda523fb030bcace0f28549f10"
+        }
+      ]
+    },
+    {
+      "id": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+      "state": "effect_confirmed",
+      "effect": "read",
+      "planDigest": "4681ebf456f9b2c31a02e4fb1abbda603448e0709e748d4e4bcd131439659225",
+      "bindingRef": {
+        "id": "action:c9c31ca66332ca836a66902ed59f5d0dc2a21aeb8da913db8db4a02374777674",
+        "version": "1"
+      },
+      "observationId": "1b1ec3b6-e410-42a9-932b-36d25271151a",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "DiscoverMerchantCatalog",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:c9c31ca66332ca836a66902ed59f5d0dc2a21aeb8da913db8db4a02374777674",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "a07ec5bb-222e-4f93-8c3b-99f669dc1af5",
+          "observationId": "1b1ec3b6-e410-42a9-932b-36d25271151a",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "CatalogEndpoint",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogEndpoint"
+          },
+          "value": {
+            "type": "CatalogEndpoint",
+            "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+          },
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+            ],
+            "observedAt": "2026-10-22T14:19:03.897Z",
+            "expiresAt": "2026-10-22T14:24:03.872Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogEndpoint",
+                "id": "b2c5fed3-f7da-4989-9ecd-a7c831c1c711"
+              },
+              "revision": 1,
+              "digest": "7f851869fee29a38b96f084d85fb87ef87bf4b5c55931f9d2ef59001dbeb5bcf"
+            }
+          ],
+          "digest": "795b4d459f3ae8d329575fa7c6584f02c68842098c8012d14a1de5ce2e48c882"
+        }
+      ]
+    },
+    {
+      "id": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+      "state": "effect_confirmed",
+      "effect": "read",
+      "planDigest": "4681ebf456f9b2c31a02e4fb1abbda603448e0709e748d4e4bcd131439659225",
+      "bindingRef": {
+        "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+        "version": "1"
+      },
+      "observationId": "d58376d2-f52a-4e1a-a03f-456b217f4335",
+      "acceptedPorts": [
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "SearchPublicCatalog",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+          "observationId": "d58376d2-f52a-4e1a-a03f-456b217f4335",
+          "port": "result",
+          "definition": {
+            "cardinality": "one",
+            "semantics": {
+              "role": "CatalogObservation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": {
+            "type": "CatalogObservation",
+            "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+          },
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+            ],
+            "observedAt": "2026-10-22T14:19:03.895Z",
+            "expiresAt": "2026-10-22T14:24:03.774Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "digest": "0049f44311eeac479f2b8a5c90756d0f16559ae8f7ca985bdf262a9ff79b0a18"
+            }
+          ],
+          "digest": "d2215f400c303b47be9ebec78c36512b675edd103945fdb9d8838165b6efe02b"
+        },
+        {
+          "version": "1",
+          "owner": "[\"local-development\",\"local\",\"developer\"]",
+          "requestId": "f6e28a73-c53a-4a98-b32a-16d25ce828eb",
+          "requestRevision": 1,
+          "ontologyRelease": {
+            "ontologyId": "eigos.business",
+            "releaseId": "774779a2-a134-4653-8dc9-d1179712b990",
+            "digest": "5a6828cff240c9d56e16948df1fca25ed55cdf311704b0b46cfae7ad5064f049"
+          },
+          "actionId": "SearchPublicCatalog",
+          "actionVersion": "1",
+          "binding": {
+            "id": "action:5f051531c984ba9851b3fed58260593d84e5d91d94b6ac3afad6a9a474286b1c",
+            "version": "1",
+            "configurationDigest": "08111d0d3b0438852ddba8f31d4e2b3402f9ea3b18c12f7ecf45b44f59e2b867"
+          },
+          "intentId": "fa618871-2ef8-4dd6-8c72-ad3080e5f792",
+          "observationId": "d58376d2-f52a-4e1a-a03f-456b217f4335",
+          "port": "citations",
+          "definition": {
+            "cardinality": "many",
+            "semantics": {
+              "role": "source_citation",
+              "phase": "fact"
+            },
+            "evidence": {
+              "origins": [
+                "provider",
+                "synthetic",
+                "managed",
+                "model",
+                "user"
+              ],
+              "maxAgeMs": 300000
+            },
+            "kind": "object",
+            "type": "CatalogObservation"
+          },
+          "value": [
+            {
+              "type": "CatalogObservation",
+              "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+            }
+          ],
+          "evidence": {
+            "origin": "synthetic",
+            "refs": [
+              "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+            ],
+            "observedAt": "2026-10-22T14:19:03.895Z",
+            "expiresAt": "2026-10-22T14:24:03.774Z"
+          },
+          "objects": [
+            {
+              "ref": {
+                "type": "CatalogObservation",
+                "id": "f9fdf4a6-86f2-4dc4-ad27-1c9fa02fad3e"
+              },
+              "revision": 1,
+              "digest": "0049f44311eeac479f2b8a5c90756d0f16559ae8f7ca985bdf262a9ff79b0a18"
+            }
+          ],
+          "digest": "ffa0c325246ee45c8b827d8921ebb0301bd5888c147888fc56e264476eab931f"
+        }
+      ]
+    }
+  ],
+  "noBusinessWrites": true,
+  "grants": 0,
+  "artifactFile": "changed_facts-artifact.json",
+  "personalAgentReport": "changed_facts-pa.md",
+  "documentFile": "changed_facts-document.md"
+}

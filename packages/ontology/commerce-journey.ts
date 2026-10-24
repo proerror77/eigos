@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { moneySchema, requirementSchema } from './execution.js';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { stockRegulationSchema, shippingLegSchema, shippingRegimeSchema } from './shipping-policy.js';
+import { productAttributesSchema } from './product-attributes.js';
 
 const text = z.string().trim().min(1).max(500), id = z.string().min(1).max(200), sha = z.string().regex(/^[a-f0-9]{64}$/);
 const instant = z.iso.datetime({ offset: true }), country = z.string().regex(/^[A-Z]{2}$/), count = z.number().int().min(1).max(1000);
@@ -52,6 +53,7 @@ export const commerceEntitySchemas = {
   }),
   CommerceProduct: z.strictObject({
     merchantId: id, variantId: id, title: text, sku: id, unitPrice: moneySchema,
+    typedAttributes: productAttributesSchema.optional(),
     goodsOriginCountry: country.optional(), hsCode: z.string().regex(/^[0-9]{6,13}$/).optional(),
     weightGrams: z.number().int().positive().optional(), category: text, availableReported: z.boolean(),
     restrictions: z.array(text).max(20),

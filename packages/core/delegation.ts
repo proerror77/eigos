@@ -16,7 +16,7 @@ export const digest = (value: unknown) => createHash('sha256').update(canonical(
 export const actionOperationKey = (owner: string, scope: string, operationId: string) => digest({ owner, requestId: scope, operationId });
 export function validPlanDigest(plan: ExecutionPlan): boolean { const { digest: expected, ...body } = plan; return digest(body) === expected; }
 
-export const groundingSchema = z.object({
+const legacyGroundingSchema = z.object({
   kind: z.enum(['clarify', 'resolve', 'unsupported']), requestRevision: z.number().int().positive(),
   capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
   requirementsJson: z.string().max(16000),
@@ -26,6 +26,14 @@ export const groundingSchema = z.object({
     argumentsJson: z.string().max(16000), scopeInputs: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)).min(1).max(4),
   })).max(4).optional(),
 }).strict();
+export type LegacyGrounding = z.infer<typeof legacyGroundingSchema>;
+export const goalGroundingSchema = z.strictObject({
+  kind: z.enum(['compose', 'clarify', 'unsupported']), requestRevision: z.number().int().positive(),
+  message: z.string().trim().min(1).max(4000), requirementsJson: z.string().max(16000), conditionsJson: z.string().max(24000), criteriaJson: z.string().max(24000),
+});
+/** The native model uses only goalGroundingSchema. Legacy decisions remain
+ * decodable for explicit compatibility fixtures and original audit records. */
+export const groundingSchema = z.union([goalGroundingSchema, legacyGroundingSchema]);
 export type Grounding = z.infer<typeof groundingSchema>;
 export const proposalSchema = z.object({
   kind: z.enum(['propose_plan', 'clarify', 'no_feasible_plan']), requestRevision: z.number().int().positive(),
@@ -37,16 +45,27 @@ export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
   groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
+  /** Exact immutable metadata contract; absent only on pre-registry records. */
+  ontologyRelease?: import('../ontology/definition-contracts.js').OntologyReleaseRef;
+  callerAction?: { version: '1'; requestId: string; ownerDigest: string; ontologyRelease: import('../ontology/definition-contracts.js').OntologyReleaseRef;
+    programRef: import('../ontology/execution.js').Ref; action: string; input: Record<string, unknown>; inputDigest: string;
+    interfaceInvocation?: { object: import('../ontology/model.js').ObjectRef; interfaceId: string; actionId: string; input: Record<string, unknown> } };
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  recovery?: import('./task-recovery.js').TaskRecovery;
+  recoveryHistory?: import('./task-recovery.js').TaskRecovery[];
   plan?: ExecutionPlan;
   agent?: import('../ontology/agent-actions.js').AgentExecutionState;
   agentHistory?: import('../ontology/agent-actions.js').AgentExecutionState[];
   planHistory?: ExecutionPlan[];
+  executionBudget?: import('./execution-budget.js').ExecutionBudget;
+  executionBudgetStatus?: ReturnType<typeof import('./execution-budget.js').executionBudgetStatus>;
+  suspendedAgent?: { programRef: import('../ontology/execution.js').Ref; programDigest: string; input: Record<string, unknown>; requestDigest: string };
   replans?: number;
   manualReconciliation?: string;
   resolution?: { candidates: ResolvedCandidate[]; scope: ResolutionScope; comparison?: import('../ontology/supply.js').Comparison };
   reasoning?: { summary: string; evidenceRef: string };
+  groundingFeedback?: { requestRevision: number; stage: 'interpretation' | 'input'; message: string; decisionDigest?: string; at: string }[];
   ontologyReads?: import('../ontology/planning-contract.js').PlanningReadReceipt[];
   ontologyReadScope?: 'owner' | 'request';
   conditionChecks?: import('../ontology/planning-contract.js').ConditionCheck[];
@@ -59,9 +78,10 @@ export interface Delegation {
   pendingActionInput?: { intentId: string; question: string };
   actionReply?: { intentId: string; messageId: string; answer: string };
   actions?: { id: string; stepId: string; state: import('../ontology/actions.js').IntentState; remoteRef?: string; latestObservationId?: string }[];
-  authorizationRequest?: { planDigest: string; effects: import('../ontology/actions.js').EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[]; environment: 'sandbox' | 'live_free'; realOperationsAllowed: boolean };
+  authorizationRequest?: import('../ontology/actions.js').PlanAuthorizationRequest;
+  sourceAuthorization?: { provider: string; nextAction: string; resumeAction: string };
   businessFacts?: { intentId: string; snapshot: import('../ontology/actions.js').BusinessSnapshot; sourceVersion: number; evidenceRefs: string[] }[];
-  authorizationBudget?: { minor: string; currency: string; state: string; intentId: string }[];
+  authorizationBudget?: { minor: string; currency: string; state: string; intentId: string; role?: string }[];
   approval?: { planDigest: string; quoteDigest: string; at: string; simulationOnly: true };
   acceptance?: { accepted: boolean; reason: string; at: string; checks: RequirementCheck[]; evidenceRefs: string[] };
   events: { at: string; event: string; evidence?: string }[];

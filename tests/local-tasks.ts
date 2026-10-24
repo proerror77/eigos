@@ -5,17 +5,23 @@ import { Worker } from '../apps/worker/worker.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { Coordinator } from '../packages/coordinator/coordinator.js';
 import { interpretation, reasoner } from './backend-fixture.js';
+import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { BRIEF_BINDING, BRIEF_CAPABILITY, BriefAdapter } from '../packages/capabilities/brief.js';
+import { DOCUMENT_BINDING, DOCUMENT_CAPABILITY, DocumentAdapter } from '../packages/capabilities/document.js';
 
 export const briefReasoner = () => reasoner(r => {
   const deliverable = r.requestedDeliverable ?? (r.messages.length > 1 ? r.messages.at(-1)!.text : undefined);
   return deliverable ? interpretation(r, 'brief.prepare', { goal: r.originalGoal, deliverable }) : { ...interpretation(r), kind: 'clarify', message: 'What deliverable and acceptance criteria should the brief record?' };
 });
 export const documentReasoner = () => reasoner(r => ({ ...interpretation(r, 'document.compose', { format: 'markdown' }), capabilityRef: { id: 'document.compose', version: '1' } }));
-// Fixtures use the production ontology coordinator and persistent action runtime.
+// Explicit historical document protocol fixture. The production catalog now
+// exposes the composed document program; it never falls back to this adapter.
+export const legacyDocumentCatalog = (executor?: Executor) => new ExecutionCatalog([BRIEF_CAPABILITY, DOCUMENT_CAPABILITY], [BRIEF_BINDING, DOCUMENT_BINDING], [new BriefAdapter(), new DocumentAdapter(executor)]);
+// Fixtures use the production coordinator and durable historical action runtime.
 export class LocalTasks extends TaskService {
   readonly worker: Worker;
   constructor(store: JobStore, executor?: Executor) {
-    const catalog = createExecutionCatalog({ documentEnabled: !!executor, documentExecutor: executor });
+    const catalog = executor ? legacyDocumentCatalog(executor) : createExecutionCatalog();
     super(store, { catalog });
     this.worker = new Worker(store, { coordinator: new Coordinator(store, executor ? documentReasoner() : briefReasoner(), catalog), pollMs: 10 });
   }

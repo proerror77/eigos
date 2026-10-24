@@ -1,3 +1,4 @@
+import { scheduleTaskRecovery } from '../packages/core/task-recovery.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 // Real MCP/A2A transports with synthetic model decisions, no live merchant or payment.
 import assert from 'node:assert/strict';
@@ -179,4 +180,34 @@ test('PA private run specification uses the saved profile and stable identity; r
     await assert.rejects(run('run', '--spec-file', spec, '--request-id', 'different'), /Conflicting/);
     chmodSync(spec, 0o644); await assert.rejects(run('run', '--spec-file', spec), /owned private/);
   } finally { await f.close(); }
+});
+
+test('MCP and A2A bind continuation versions and expose technical recovery and member accounting', async () => {
+  const f = await fixture(), mcp = new Client({ name: 'continuation-test', version: '1' });
+  try {
+    const sent = await f.send('审计 CSV'), id = sent.result.task.id, asked = await f.wait(id, 'input-required');
+    await f.worker.close();
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${f.token}` } } }));
+    const call = (name: string, args: Record<string, unknown>) => mcp.callTool({ name, arguments: args });
+    const send = (data: object, operation = 'reply', requestId = randomUUID()) => f.rpc('SendMessage', { configuration: { returnImmediately: true }, message: { taskId: id, messageId: requestId, role: 'ROLE_USER', metadata: { taskOperation: operation }, parts: [{ data }] } });
+    const missing = { taskId: id, requestId: randomUUID(), answer: 'sample.csv' };
+    assert((await call('reply_to_task', missing)).isError);
+    assert((await send({ answer: 'sample.csv' })).error);
+    assert((await f.rpc('SendMessage', { configuration: { returnImmediately: true }, message: { taskId: id, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'sample.csv' }] } })).error);
+    const correction = { ...missing, expectedRevision: asked.revision!, answer: '文件改为corrected.csv' };
+    assert(!(await call('amend_task', correction)).isError);
+    assert(!(await call('amend_task', correction)).isError, 'An exact retry returns the original receipt');
+    assert((await send({ answer: 'sample.csv', expectedRevision: asked.revision! })).error, 'A delayed reply cannot answer the revised task');
+    const amended = f.gateway.store.get(owner, id), businessRevision = amended.delegation!.request.revision;
+    scheduleTaskRecovery(amended, 'worker_timeout', 'Runtime repair required', { automatic: false }); f.gateway.store.save(owner, amended);
+    const read = await f.rpc('GetTask', { id }); assert.equal(read.result.status.state, 'TASK_STATE_WORKING'); assert.equal(read.result.metadata.internalState, 'paused');
+    assert.equal(read.result.metadata.delegation.recovery.ownerInputRequired, false); assert.equal(read.result.metadata.memberUsage.limitsEnforced, false);
+    assert(!(await call('get_member_usage', {})).isError);
+    assert(!(await call('resume_task', { taskId: id, requestId: randomUUID(), expectedRevision: amended.revision! })).isError);
+    const pausedAgain = f.gateway.store.get(owner, id); scheduleTaskRecovery(pausedAgain, 'worker_timeout', 'Runtime repaired again', { automatic: false }); f.gateway.store.save(owner, pausedAgain);
+    const resumeId = randomUUID(), resume = { expectedRevision: pausedAgain.revision! };
+    assert(!(await send(resume, 'resume', resumeId)).error); assert(!(await send(resume, 'resume', resumeId)).error);
+    const done = f.gateway.store.get(owner, id); assert.equal(done.state, 'working'); assert.equal(done.delegation!.request.messages.length, 2); assert.equal(done.delegation!.request.revision, businessRevision);
+    assert((await send({ ...resume, answer: '继续' }, 'resume')).error, 'Technical continuation has no business answer');
+  } finally { await mcp.close(); await f.close(); }
 });

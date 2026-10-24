@@ -26,6 +26,8 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
   assert(businessModel.hasType('MeituanReadTask'));
   assert(businessModel.implements('MeituanReadObservation', 'EvidenceBacked'));
   assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'ProductOffer', 'ReservationOffer']);
+  for (const id of ['ServiceRequest', 'ProductVariant', 'ExecutionPlan', 'ExecutionStep', 'RegisteredActionType', 'RequestSpecification', 'RoomInventoryObservation', 'BookingTask', 'PAPaymentRequest', 'CommerceTask', 'CustomsRuleSet', 'StripePaymentObservation']) assert(businessModel.hasType(id));
+  assert.deepEqual(businessModel.concreteTypes('Offer'), ['DeliveryQuote', 'FulfillmentOffer', 'ProductOffer', 'ReservationOffer']);
   assert(businessModel.implements('DeliveryQuote', 'EvidenceBacked'));
   assert.equal(businessModel.propertyName('DeliveryQuote', 'Offer', 'offerId'), 'quoteId');
   const all: string[] = []; let after: string | undefined;
@@ -34,7 +36,9 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
     assert(page.types.length <= 2); assert(page.actions.every(a => a.execution === 'definition_only'));
     all.push(...page.types.map(t => (t as { id: string }).id)); after = page.next;
   } while (after);
-  assert.equal(new Set(all).size, BUSINESS_MODEL_DEFINITION.objects.length + BUSINESS_MODEL_DEFINITION.interfaces.length);
+  assert.equal(new Set(all).size, BUSINESS_MODEL_DEFINITION.objects.filter(object => object.visibility !== 'technical').length + BUSINESS_MODEL_DEFINITION.interfaces.length);
+  assert(!all.includes('ExecutionAttempt'));
+  assert(businessModel.describe({ search: 'ExecutionAttempt' }).types.some(type => (type as { id: string }).id === 'ExecutionAttempt'));
   assert(businessModel.implements('StripePaymentObservation', 'EvidenceBacked'));
   assert.equal(businessModel.action('PayStripePayment').operation?.effect, 'payment');
   assert(businessModel.implements('CatalogRead', 'EvidenceBacked'));
@@ -51,7 +55,7 @@ test('Ontology compiles core, service, checkout and catalog types, inherited int
 
 test('N1 rejects ambiguous, cyclic, unresolved and incompatible model contracts', () => {
   let d = definition(); d.objects.push(d.objects[0]!); assert.throws(() => new OntologyModel(d), /Duplicate/);
-  d = definition(); d.interfaces[0]!.parents = ['Offer']; assert.throws(() => new OntologyModel(d), /cyclic/);
+  d = definition(); d.interfaces.find(i => i.id === 'EvidenceBacked')!.parents = ['Offer']; assert.throws(() => new OntologyModel(d), /cyclic/);
   d = definition(); d.links[0]!.to.type = 'Missing'; assert.throws(() => new OntologyModel(d), /Unresolved/);
   d = definition(); d.objects.find(o => o.id === 'DeliveryQuote')!.properties.observedAt = { ...d.objects.find(o => o.id === 'DeliveryQuote')!.properties.observedAt!, schema: z.number() }; assert.throws(() => new OntologyModel(d), /Incompatible/);
   d = definition(); d.links.push({ ...d.links[0]!, id: 'DuplicateNavigation' }); assert.throws(() => new OntologyModel(d), /Ambiguous/);
@@ -143,7 +147,8 @@ test('N1 version checks reject stale updates and changed definitions without leg
     const page = f.graph.query('alice', { type: 'Offer', limit: 1 });
     f.graph.ingest('alice', { objects: [{ ref: { type: 'Provider', id: 'new' }, properties: { providerId: 'new', displayTitle: 'new', name: 'new' } }] }, f.source);
     assert.throws(() => f.graph.query('alice', { type: 'Offer', limit: 1, cursor: page.page.cursor }), /context changed/);
-    const d = definition(); d.objects.find(o => o.id === 'Parcel')!.version = '2';
+    const d = definition(), parcel = d.objects.find(o => o.id === 'Parcel')!;
+    parcel.version = `${parcel.version}-changed`;
     assert.throws(() => new OntologyObjectStore(f.db, new OntologyModel(d)).read('alice', f.ids.parcel!), /definition changed/);
   } finally { f.db.close(); }
 });

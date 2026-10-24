@@ -14,11 +14,11 @@
 
 | 能力 | 作用与边界 |
 | --- | --- |
-| `describe_ontology` | 按名称／别名读取类型、属性、关系、函数及 Action 定义。模型内默认简要属性说明，可用 includeSchemas 获取完整 schema |
+| `describe_ontology` | 按名称／别名读取类型、属性、关系、函数及 Action 定义。模型内默认简要属性说明及相关函数/动作，可用 includeSchemas 获取完整 schema；kind=actions/functions 可分页发现完整目录 |
 | `query_ontology` | 对象集、单跳关系或准确对象读取，沿用 owner 和字段限制。函数使用对象前先实际读取它 |
 | `evaluate_ontology` | 运行登记的只读函数，保留 unknown 和证据等级 |
 | `assess_conditions` | 对当前委托按 precondition／result 阶段计算条件；可指定已检索候选或对象，不能借此核验其他委托 |
-| `propose_action` | 校验登记 Action 的输入类型、准确对象版本及请求归属，返回固定变更集和提交条件；始终 proposal_only、executionAllowed=false |
+| `propose_action` | 校验业务决策 Action 的输入类型、准确对象版本及请求归属，返回固定变更集和提交条件；始终 proposal_only、executionAllowed=false。Agent 的来源读取与沙箱操作由 execute 决策及其准确许可路径处理，此工具明确拒绝这类调用 |
 
 公共 MCP／HTTP 继续提供 N1 的三个只读入口。新增的精确对象读取输入为：
 
@@ -27,6 +27,8 @@
 ```
 
 业务决策提案与技术执行步骤分开。SelectOffer 可以表达选择哪份报价，但不会创建订单、付款或获得执行许可。只有现有受控适配器的固定步骤可以进入 Action Runtime；现实副作用拒绝策略继续生效。既有确定性沙箱售后使用显式 trusted_template 路径，仍受原计划、原业务键和准确许可约束。
+
+当前领域补足增加 `goods.attributes_match` 与 `errand.quote_matches`：只对本请求可追溯的候选比较来源字段，缺失/过期为 unknown。常见明确颜色、成色、容量和寄件条件可从原话规范化，复杂组合须有准确结构化原文；不能让模型从标题推断供应商事实。详细边界见 [架构验证记录](ontology-architecture-completion-2026-10-21.md)。
 
 ## 条件与证据
 

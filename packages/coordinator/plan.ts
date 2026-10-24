@@ -2,17 +2,43 @@ import { randomUUID } from 'node:crypto';
 import { DomainError } from '../core/domain.js';
 import { type ExecutionCatalog, sameRef, bindingDigest } from '../core/catalog.js';
 import { digest, validPlanDigest, type PlanProposal } from '../core/delegation.js';
-import { amountRoles, moneySchema, type ExecutionPlan, type ServiceCapability, type ServiceRequest } from '../ontology/execution.js';
+import { amountRoles, FIXED_CANDIDATE_CONTEXT_PARAMETER, moneySchema, type ExecutionPlan, type FixedCandidateBinding, type ServiceCapability, type ServiceRequest } from '../ontology/execution.js';
+import { fixedCandidateBindingSchema } from '../ontology/execution-model.js';
 import type { PreparedStep } from '../ontology/actions.js';
-import { businessModel } from '../ontology/business-model.js';
+import type { OntologyModel } from '../ontology/model.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { hardRequirementsPass, type ResolvedCandidate } from './resolver.js';
 import { requiredEffects } from '../core/policy.js';
+function bindCandidate(request: ServiceRequest, candidate: ResolvedCandidate, planning: PlanningSnapshot): FixedCandidateBinding | undefined {
+  if (!candidate.ontologySubject) return;
+  const objects = planning.objects.filter(object => digest(object.ref) === digest(candidate.ontologySubject));
+  if (objects.length !== 1 || planning.requestRevision !== request.revision) throw new DomainError('CONFLICT', 'Selected business candidate lacks its exact sealed planning object snapshot');
+  return fixedCandidateBindingSchema.parse({ version: '1', requestId: request.id, requestRevision: request.revision, candidateId: candidate.id, candidateDigest: digest(candidate), subject: structuredClone(objects[0]) });
+}
+export function assertCandidateBindingSeal(plan: ExecutionPlan): FixedCandidateBinding | undefined {
+  if (plan.candidateBinding === undefined) return;
+  const parsed = fixedCandidateBindingSchema.safeParse(plan.candidateBinding);
+  if (!parsed.success) throw new DomainError('CONFLICT', 'Fixed candidate context does not match its sealed schema');
+  const binding = parsed.data, objects = plan.ontologyPlanning.objects.filter(object => digest(object.ref) === digest(binding.subject.ref));
+  if (binding.requestId !== plan.requestId || binding.requestRevision !== plan.requestRevision || binding.candidateId !== plan.candidateId || objects.length !== 1 || digest(objects[0]) !== digest(binding.subject)) throw new DomainError('CONFLICT', 'Fixed candidate context differs from the selected plan or request revision');
+  if (plan.steps.some(step => Object.hasOwn(step.input, FIXED_CANDIDATE_CONTEXT_PARAMETER) || step.inputRefs.some(input => input.targetKey === FIXED_CANDIDATE_CONTEXT_PARAMETER))) throw new DomainError('CONFLICT', 'Candidate context cannot be a provider input or output parameter');
+  return binding;
+}
+/** New plans use the sealed selection. An absent or replaced current candidate
+ * cannot make submission checks inspect another same-typed business object. */
+export function selectedCandidateSubject(plan: ExecutionPlan, candidate?: ResolvedCandidate) {
+  const binding = assertCandidateBindingSeal(plan);
+  if (!binding) return candidate?.ontologySubject; // Historical plans are not upgraded or rehashed.
+  if (!candidate || candidate.id !== binding.candidateId || digest(candidate) !== binding.candidateDigest || !candidate.ontologySubject || digest(candidate.ontologySubject) !== digest(binding.subject.ref)) throw new DomainError('CONFLICT', 'Current candidate differs from the sealed business selection');
+  return structuredClone(binding.subject.ref);
+}
 
 export function proposePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, capability: ServiceCapability, candidate: ResolvedCandidate, proposal: PlanProposal, ontologyPlanning: PlanningSnapshot, now = Date.now()): ExecutionPlan {
   if (proposal.kind !== 'propose_plan' || proposal.requestRevision !== request.revision || proposal.candidateId !== candidate.id) throw new DomainError('CONFLICT', 'Plan proposal has a stale request or unknown candidate');
   if (candidate.status !== 'ready' || !candidate.input || !candidate.details || !sameRef(candidate.binding.capabilityRef, capability.ref) || !hardRequirementsPass(request, candidate.requirementChecks)) throw new DomainError('CONFLICT', 'Candidate has failed or unknown hard requirements');
   if (!Number.isFinite(Date.parse(candidate.expiresAt)) || Date.parse(candidate.expiresAt) <= now || !Number.isFinite(Date.parse(candidate.observedAt)) || Date.parse(candidate.observedAt) > now) throw new DomainError('CONFLICT', 'Candidate facts are expired or have an invalid observation time');
+  if (capability.completion === 'domain' && !candidate.ontologySubject) throw new DomainError('CONFLICT', 'A domain plan requires its exact prepared business candidate');
+  const candidateBinding = bindCandidate(request, candidate, ontologyPlanning);
   const recipe: PreparedStep[] = candidate.recipe ?? [{ id: proposal.steps[0]?.id ?? 'action', operationId: 'primary', actionTypeRef: capability.actions[0]!.ref, input: candidate.input, inputRefs: [], dependsOn: [] }];
   if (!recipe.length || recipe.length > 8 || proposal.steps.length !== recipe.length) throw new DomainError('INVALID_INPUT', 'Plan must contain exactly the prepared business steps');
   const steps = proposal.steps.map(step => {
@@ -37,17 +63,21 @@ export function proposePlan(catalog: ExecutionCatalog, owner: string, request: S
   }
   const body = { id: randomUUID(), version: '7' as const, ontologyPlanning, requestId: request.id, requestRevision: request.revision, requestDigest: digest(request),
     capabilityRef: capability.ref, ontologyRef: capability.ontologyRef, candidateId: candidate.id, bindingRef: candidate.binding.ref, verifierRef: capability.verifierRef,
+    ...(candidateBinding ? { candidateBinding } : {}),
     steps, details: candidate.details, completionTarget: capability.completion ?? 'artifact', requirementChecks: candidate.requirementChecks, expiresAt: candidate.expiresAt, ...(candidate.quote ? { quote: candidate.quote } : {}) };
   const capabilityRefs = [...new Map([capability.ref, ...steps.map(s => s.capabilityRef)].map(r => [JSON.stringify(r), r])).values()];
   const bindings = [...new Map([candidate.binding.ref, ...steps.map(s => s.bindingRef)].map(r => [JSON.stringify(r), catalog.binding(r, owner, request.id).binding])).values()];
   const pinned = { ...body, definitionDigests: capabilityRefs.map(ref => ({ ref, digest: digest(catalog.capability(ref)) })), bindingDigests: bindings.map(b => ({ ref: b.ref, digest: bindingDigest(b) })),
     bindingSnapshots: bindings.flatMap(b => b.discovery ? [{ ...b, discovery: b.discovery }] : []) };
-  return { ...pinned, digest: digest(pinned) };
+  const plan = { ...pinned, digest: digest(pinned) };
+  assertCandidateBindingSeal(plan);
+  return plan;
 }
-export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
+export function validatePlan(catalog: ExecutionCatalog, owner: string, request: ServiceRequest, plan: ExecutionPlan, model: OntologyModel['ref'], now = Date.now(), purpose: 'dispatch' | 'observe' = 'dispatch'): void {
   if (plan.version !== '7' || !validPlanDigest(plan) || plan.requestId !== request.id || plan.requestRevision !== request.revision || plan.requestDigest !== digest(request)) throw new DomainError('CONFLICT', 'Plan or fixed request has changed');
+  assertCandidateBindingSeal(plan);
   const { digest: proofDigest, ...proof } = plan.ontologyPlanning;
-  if (digest(proof) !== proofDigest || digest(proof.model) !== digest(businessModel.ref) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
+  if (digest(proof) !== proofDigest || digest(proof.model) !== digest(model) || proof.requestRevision !== request.revision || proof.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning proof changed');
   const capability = catalog.capability(plan.capabilityRef);
   for (const snapshot of plan.bindingSnapshots) catalog.registerDiscovered({ owner, request }, snapshot);
   const { binding } = catalog.binding(plan.bindingRef, owner, request.id);

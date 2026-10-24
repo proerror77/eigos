@@ -1,49 +1,48 @@
 ---
 name: eigos-delegate
-description: Discover and hand off everyday service requests to the user's configured EIGOS connection when the user asks for shopping, hotel or flight arrangements, errands, food delivery, household or similar life services. Trigger by the requested outcome; the user need not name EIGOS. Preserve the original goal and report the actual receipt and execution boundary.
+description: Discover the user's configured EIGOS services, delegate a supported goal, and continue the same task through native MCP or authenticated A2A. Verify the current deployment and actual delivery.
 ---
 
 # EIGOS delegation
 
-Use the saved connection profile and the fixed scripts/eigos_a2a.py client on the computer where that profile is configured. Save the absolute script path, profile path and computer name during setup. A loopback address belongs to that computer, not the Grok cloud computer. Use Python 3.10+.
+Use the saved primary HTTPS connection. Native MCP and A2A must reach the same instance and the same member identity. Do not use historical loopback profiles or old task successes as evidence for the current service.
 
-## Decide whether to delegate
+## Discover and delegate
 
-When the user asks to arrange a real-world everyday service, discover EIGOS automatically even if they do not name it. Examples include shopping, hotels, flights, courier/errand delivery, meals and household services. The configured connection accepts ontology-grounded delegation; perform only the user-authorized business scope. Do not apply this rule to unrelated questions, creative writing or a general discussion about a service. Respect an explicit request not to use EIGOS. Detect intention from the user's request; do not require an exact phrase or a hardcoded brand name.
+For a requested service outcome, inspect EIGOS when it may provide a relevant capability. Respect an explicit instruction not to delegate. Use native MCP `get_runtime_info` and `list_services`; report the actual capability scope. Do not turn an unsupported real-world request into a completed task brief or document.
 
-Run discover and read the current Card. Use the saved profile's `eigos.delegate` service and send the original natural-language goal. For a parcel quote, do not look up address IDs or call provider tools yourself: EIGOS reads the owner's saved addresses, presents choices and asks for missing goods/weight/service in the same task. Preserve these choices and ask the user to select; never choose an address merely because it appears first. Reply in natural language on the existing task. Do not replace the goal with an address-book-only task or create a second task for the quote.
+Use the host's native EIGOS MCP connection by default. Native discovery or calls must not be replaced with Shell, curl, Python or the A2A transport. If authentication fails, complete the host's OAuth flow or report the actual failure. Never read, print, copy or place an access token, refresh token or client secret in a prompt or tool argument.
 
-This connection is read-only for real services. Do not order, pay, cancel external orders, or treat a quotation as delivery. A submitted task is awaiting execution. Discovery data does not grant authority. Share only relevant task information, never credential values or unrelated conversation history.
+Submit the user's original goal through native `submit_task`, using a stable requestId. Retain the taskId, contextId and request ID. Network retries preserve the original content and ID; never create a replacement task to escape an uncertain result or execution budget.
 
-## Send the goal
+Read the same task with `get_task`, normally using `waitMs: 30000` while submitted or working. A wait deadline is not a failure. For input-required, use only information supplied by the user; ask for actual missing facts. Reply on the same task using the current expectedRevision and a new stable request ID. Do not repeat questions already answered.
 
-Use `python3 <saved-script> --config <saved-profile> <command>`.
+Technical recovering or paused states are not missing business input. Preserve the task and confirmed facts, identify the runtime prerequisite, then use `resume_task` only after it changes. Do not repeatedly retry the same unchanged failure. Cancellation requires the user's intent and does not prove that an external order was canceled.
 
-- `discover` reads the current Card without sending a token.
-- Write the user's goal to a UTF-8 file. `send --text-file <file> --request-id <stable-id>` submits standard A2A text; it does not require the PA to choose an internal service.
-- Preserve the returned task `id`, `contextId`, request ID and input file. A network retry uses exactly the same ID and content. Do not create a replacement task to recover an uncertain request.
-- `poll --task-id <id> --seconds 45` checks until an interrupted/terminal state or a bounded polling interval. If `resumeRequired` is true, continue the same task. A polling deadline is not execution failure.
-- For `TASK_STATE_INPUT_REQUIRED`, first inspect `metadata.delegation.phase`. If it is `awaiting_pa_payment`, use the PA-owned payment handoff below. Otherwise read the actual question, answer from information the user has provided or ask the user. Save `{"answer":"..."}` to a JSON file and use `reply --task-id <id> --input-file <file> --request-id <new-stable-id>`, or `send --task-id <id> --text-file <file> --request-id <new-stable-id>`.
-- An explicitly requested sandbox task uses `submit --input-file <file> --request-id <stable-id>` with `service: "eigos.delegate"`, the original `goal`, and `executionEnvironment: "sandbox"`. Preserve supplied structured requirements. Real-service requests retain their real-service boundary; do not silently turn them into simulations.
-- For commerce address choices, use the labels EIGOS actually returned. When EIGOS requests a structured destination choice, return the user's selected label in a location requirement with `role: "destination"` and `expected: {"ref": "<selected label>"}`, alongside the answer. EIGOS obtains merchant, warehouse, inventory and customs facts itself; the PA supplies user context and choices.
+## A2A on the same primary instance
 
-## Authorization and delivery
+A2A is an independently authenticated protocol path. Use the saved client on the user's connected Mac, where its private profile lives. The client uses device OAuth and rotating refresh credentials through AgentConnector; it does not expose token values to the model.
 
-For `TASK_STATE_AUTH_REQUIRED`, present the plan, exact input, checks, quote and limitations. Use an existing explicit authorization only if it covers these details. Otherwise ask the user. Never infer authorization from the model's assessment or from the fact that EIGOS is connected.
+Commands follow this form:
 
-Local simulation uses an EIGOS application authorization endpoint separate from A2A messages. It approves only a local simulated workflow, not actual funds. With authorization, save a JSON file containing `action: "confirm_simulated_payment"`, the task's exact `quoteId` and `quoteDigest`, and a new stable `requestId`; run `authorize --task-id <id> --input-file <file>`. Reuse that exact payload for a network retry. Do not put credential values in the JSON. The client reads its configured credential source internally.
+```text
+node <saved-client> --profile <saved-profile> discover
+node <saved-client> --profile <saved-profile> login
+node <saved-client> --profile <saved-profile> status
+node <saved-client> --profile <saved-profile> a2a --input <request.json> --output <receipt.json>
+```
 
-When `metadata.delegation.authorizationRequest` contains a `planDigest`, use `action: "approve_plan"` instead. Copy the exact plan digest, declared `effects` as `allowedEffects`, `maxAmount` and `payeeIds`; add a short explicit future `expiresAt`, `environment: "sandbox"` and a stable `requestId`. Check that the effects and cumulative spending remain within the user's existing sandbox authorization. Each new plan has its own binding. A changed plan, missing payment effect or unapproved payee is not covered by an earlier permit. The same `authorize` command submits this form; a network retry preserves the whole payload and request ID.
+`discover` returns the current runtime and Agent Card. Compare instance and releaseDigest with native MCP `get_runtime_info`. Complete device login as the same EIGOS member used for native MCP. An active installation and a successful protocol response are separate checks.
 
-Then resume polling. For current delegation tasks, report completion only if the task is `TASK_STATE_COMPLETED` and `metadata.delegation.acceptance.accepted` is true. Inspect `metadata.delegation.agent.programRef`, or the existing `metadata.delegation.plan.capabilityRef`, to explain what was delivered. A brief must explicitly retain `execution=not_started`; its completion does not mean its underlying business goal was performed. Sandbox artifacts remain synthetic, including merchant facts, tax rules, orders, payments and delivery events. `FAILED`, `REJECTED` and `CANCELED` are not successful deliveries. Inspect ontology outcome and afterSales records when present. Return the actual artifact, not an invented replacement. Save the actual artifact unchanged if files are requested: brief data is in the artifact's JSON part; CSV JSON/Markdown is in the artifact's result.
+For readback, write an A2A 1.0 JSON-RPC request with method `GetTask` and `params.id` equal to the existing taskId. For a continuation, use `SendMessage` with `configuration.returnImmediately=true`, `message.role="ROLE_USER"`, a new stable `message.messageId`, the original `message.taskId` and `message.contextId`, text parts, and `message.metadata.expectedRevision` from the current task. Save the exact request before sending. The client preserves the request, injects authorization internally, and never automatically replays writes.
 
-## PA-owned payment handoff — isolated tests only
+An A2A continuation must not create a second task. Inspect the actual JSON-RPC response; a transport success containing an `error` is not success.
 
-When the task pauses with `phase: "awaiting_pa_payment"`, read `metadata.delegation.agent.paPayment`. Its `request` binds the task, provider booking, final amount/currency, payee, payment handler and expiry. The optional Agent Card extension `/.well-known/eigos-pa-payment` publishes the schemas. This is an EIGOS application contract carried by A2A, not a universal A2A payment standard.
+## Verify delivery
 
-The PA retains its own wallet and payment authorization. The reservation permit has zero payment spend and does not authorize charging the user. Version 2 keeps both routes: prefer Link Agent Wallet when usable, otherwise hand the provider's ordinary Link checkout to the user. In the current sandbox, the wallet handler is `sandbox.pa-wallet` and the checkout is an explicitly labeled local simulation. Never turn a synthetic request into a real Stripe/Link purchase. Actual Link and merchant connections require their own admission and verified bindings.
+Report completion only when the same task is completed, its independent acceptance is true, and the requested artifact is present. A document delivery proves that document was produced; a task brief does not prove its underlying business goal occurred. Discovery, a model proposal, an authorization notice or a payment notice is not fulfillment.
 
-Before choosing a route, inspect the PA's existing wallet capability and current eligibility. A logged-in ordinary Link checkout account does not prove Agent Wallet eligibility. Report `available/ready` only when the appropriate wallet capability is usable; otherwise use `unavailable` with `region_unsupported`, `not_connected`, `connector_missing` or `wallet_unavailable`. Unknown status remains `unknown/unknown`. Do not repeat authorization attempts for an unchanged region denial, and do not interpret a declined or already submitted payment as wallet unavailability.
+When checking both protocols, retrieve the same taskId through native MCP and A2A, compare the actual artifact content, status and acceptance, and retain both receipts. Distinguish this live PA check from fixed probes or synthetic internal tests.
 
 Save `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","wallet":{"status":"unavailable","reason":"region_unsupported","observedAt":"<current ISO time>"}}` to a file and run `payment-route --task-id <id> --input-file <file> --request-id <stable-UUID>`. EIGOS checks the original unpaid booking and selects the preferred usable route. Preserve `metadata.delegation.agent.paPayment.selection`; retries reuse the exact UUID and input. If a selection already exists, use it rather than selecting again. This observation and selection grant no new payment authority.
 

@@ -1,0 +1,692 @@
+{
+  "model": {
+    "id": "eigos.business",
+    "version": "14",
+    "digest": "8482a64b0e6d058454af37bc8951dd703e152061d8ced023785cbf8b619c0f94"
+  },
+  "source": "Minimal synthetic facts validated against the independently frozen v14 property schemas. Not business completion evidence.",
+  "rows": [
+    {
+      "type": "AppointmentOption",
+      "id": "AppointmentOption-v14",
+      "properties": {
+        "objectId": "AppointmentOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "AppointmentRequest",
+      "id": "AppointmentRequest-v14",
+      "properties": {
+        "objectId": "AppointmentRequest-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "AppointmentSlot",
+      "id": "AppointmentSlot-v14",
+      "properties": {
+        "objectId": "AppointmentSlot-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "Authorization",
+      "id": "Authorization-v14",
+      "properties": {
+        "authorizationId": "Authorization-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "BusinessResult",
+      "id": "BusinessResult-v14",
+      "properties": {
+        "resultId": "BusinessResult-v14",
+        "displayTitle": "legacy",
+        "requestRevision": 1,
+        "planDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "intentId": "legacy",
+        "observationId": "legacy",
+        "kind": "pending",
+        "effect": "local",
+        "sourceVersion": 1,
+        "observedAt": "2026-10-20T10:00:00.000Z",
+        "evidenceLevel": "synthetic",
+        "evidenceIds": [],
+        "states": {}
+      }
+    },
+    {
+      "type": "CatalogEndpoint",
+      "id": "CatalogEndpoint-v14",
+      "properties": {
+        "id": "CatalogEndpoint-v14",
+        "displayTitle": "legacy",
+        "requestRevision": 1,
+        "snapshot": {
+          "id": "legacy",
+          "requestId": "legacy",
+          "requestRevision": 1,
+          "configurationDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "action": "SearchPublicCatalog",
+          "actionInput": {},
+          "planId": "legacy",
+          "intentId": "legacy",
+          "attemptId": "legacy",
+          "modelRunId": "legacy",
+          "scope": {
+            "type": "CatalogTask",
+            "id": "legacy"
+          },
+          "merchant": {
+            "id": "legacy",
+            "name": "legacy",
+            "shopId": "gid://shopify/Shop/1",
+            "domain": "legacy.myshopify.com"
+          },
+          "country": "US",
+          "evidenceKind": "live_readonly",
+          "receipt": {
+            "id": "legacy",
+            "endpoint": "https://legacy.example.test",
+            "operation": "discovery",
+            "startedAt": "2026-10-20T10:00:00.000Z",
+            "receivedAt": "2026-10-20T10:00:00.000Z",
+            "httpStatus": 200,
+            "authentication": "anonymous",
+            "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseBytes": 1
+          },
+          "observedAt": "2026-10-20T10:00:00.000Z",
+          "expiresAt": "2026-10-20T10:00:00.000Z",
+          "validityBasis": "local_refresh_limit",
+          "items": [],
+          "completeness": "partial_or_unknown",
+          "stockQuantity": "unknown",
+          "deliveryCommitment": "unknown",
+          "partnerTrust": "unverified",
+          "noBusinessWrites": true,
+          "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "type": "CatalogObservation",
+      "id": "CatalogObservation-v14",
+      "properties": {
+        "id": "CatalogObservation-v14",
+        "displayTitle": "legacy",
+        "requestRevision": 1,
+        "snapshot": {
+          "id": "legacy",
+          "requestId": "legacy",
+          "requestRevision": 1,
+          "configurationDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "action": "SearchPublicCatalog",
+          "actionInput": {},
+          "planId": "legacy",
+          "intentId": "legacy",
+          "attemptId": "legacy",
+          "modelRunId": "legacy",
+          "scope": {
+            "type": "CatalogTask",
+            "id": "legacy"
+          },
+          "merchant": {
+            "id": "legacy",
+            "name": "legacy",
+            "shopId": "gid://shopify/Shop/1",
+            "domain": "legacy.myshopify.com"
+          },
+          "country": "US",
+          "evidenceKind": "live_readonly",
+          "receipt": {
+            "id": "legacy",
+            "endpoint": "https://legacy.example.test",
+            "operation": "discovery",
+            "startedAt": "2026-10-20T10:00:00.000Z",
+            "receivedAt": "2026-10-20T10:00:00.000Z",
+            "httpStatus": 200,
+            "authentication": "anonymous",
+            "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseBytes": 1
+          },
+          "observedAt": "2026-10-20T10:00:00.000Z",
+          "expiresAt": "2026-10-20T10:00:00.000Z",
+          "validityBasis": "local_refresh_limit",
+          "items": [],
+          "completeness": "partial_or_unknown",
+          "stockQuantity": "unknown",
+          "deliveryCommitment": "unknown",
+          "partnerTrust": "unverified",
+          "noBusinessWrites": true,
+          "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "type": "CommerceProduct",
+      "id": "CommerceProduct-v14",
+      "properties": {
+        "id": "CommerceProduct-v14",
+        "displayTitle": "legacy",
+        "requestRevision": 1,
+        "data": {
+          "merchantId": "legacy",
+          "variantId": "legacy",
+          "title": "legacy",
+          "sku": "legacy",
+          "unitPrice": {
+            "minor": "1",
+            "currency": "CNY"
+          },
+          "category": "legacy",
+          "availableReported": false,
+          "restrictions": []
+        },
+        "snapshot": {
+          "type": "FulfillmentContext",
+          "sourceId": "legacy",
+          "sourceVersion": 1,
+          "requestId": "legacy",
+          "requestRevision": 1,
+          "configurationDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "scope": {
+            "type": "CommerceTask",
+            "id": "legacy"
+          },
+          "action": "legacy",
+          "actionInput": {},
+          "data": {},
+          "dependencies": [],
+          "observedAt": "2026-10-20T10:00:00.000Z",
+          "expiresAt": "2026-10-20T10:00:00.000Z",
+          "receipt": {
+            "id": "legacy",
+            "requestId": "legacy",
+            "requestRevision": 1,
+            "ownerDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "action": "legacy",
+            "planId": "legacy",
+            "intentId": "legacy",
+            "attemptId": "legacy",
+            "modelRunId": "legacy",
+            "source": "pa_context",
+            "sourceIdentity": "legacy",
+            "operationKey": "legacy",
+            "operationId": "legacy",
+            "operationVersion": 1,
+            "method": "GET",
+            "path": "legacy",
+            "status": 1,
+            "inputDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "responseBytes": 1,
+            "startedAt": "2026-10-20T10:00:00.000Z",
+            "receivedAt": "2026-10-20T10:00:00.000Z",
+            "payloadDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "environment": "sandbox"
+          },
+          "evidenceLevel": "synthetic",
+          "realOperationsAllowed": false,
+          "contentDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "type": "DeliveryAllocation",
+      "id": "DeliveryAllocation-v14",
+      "properties": {
+        "allocationId": "DeliveryAllocation-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "DeliveryQuote",
+      "id": "DeliveryQuote-v14",
+      "properties": {
+        "quoteId": "DeliveryQuote-v14",
+        "displayTitle": "legacy",
+        "observedAt": "2026-10-20T10:00:00.000Z",
+        "validityBasis": "provider_expiry",
+        "priceKind": "display_price",
+        "pricingCompleteness": "complete"
+      }
+    },
+    {
+      "type": "DeliveryRoute",
+      "id": "DeliveryRoute-v14",
+      "properties": {
+        "routeId": "DeliveryRoute-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "ExecutionInput",
+      "id": "ExecutionInput-v14",
+      "properties": {
+        "id": "ExecutionInput-v14",
+        "displayTitle": "legacy",
+        "parameter": "legacy",
+        "sourceKind": "literal",
+        "valueDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "valueType": "legacy"
+      }
+    },
+    {
+      "type": "FoodDelivery",
+      "id": "FoodDelivery-v14",
+      "properties": {
+        "objectId": "FoodDelivery-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "FoodMerchant",
+      "id": "FoodMerchant-v14",
+      "properties": {
+        "objectId": "FoodMerchant-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "FoodOption",
+      "id": "FoodOption-v14",
+      "properties": {
+        "objectId": "FoodOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "FoodRequest",
+      "id": "FoodRequest-v14",
+      "properties": {
+        "objectId": "FoodRequest-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "HotelOption",
+      "id": "HotelOption-v14",
+      "properties": {
+        "objectId": "HotelOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "HotelProperty",
+      "id": "HotelProperty-v14",
+      "properties": {
+        "objectId": "HotelProperty-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "HotelRequest",
+      "id": "HotelRequest-v14",
+      "properties": {
+        "objectId": "HotelRequest-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "HotelReservation",
+      "id": "HotelReservation-v14",
+      "properties": {
+        "objectId": "HotelReservation-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "Itinerary",
+      "id": "Itinerary-v14",
+      "properties": {
+        "objectId": "Itinerary-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "ItineraryOption",
+      "id": "ItineraryOption-v14",
+      "properties": {
+        "objectId": "ItineraryOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "ItineraryRequest",
+      "id": "ItineraryRequest-v14",
+      "properties": {
+        "objectId": "ItineraryRequest-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "MedicalAppointment",
+      "id": "MedicalAppointment-v14",
+      "properties": {
+        "objectId": "MedicalAppointment-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "MenuItem",
+      "id": "MenuItem-v14",
+      "properties": {
+        "objectId": "MenuItem-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "Order",
+      "id": "Order-v14",
+      "properties": {
+        "orderId": "Order-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "OrderLine",
+      "id": "OrderLine-v14",
+      "properties": {
+        "orderLineId": "OrderLine-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "OutcomeAssessment",
+      "id": "OutcomeAssessment-v14",
+      "properties": {
+        "assessmentId": "OutcomeAssessment-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "Parcel",
+      "id": "Parcel-v14",
+      "properties": {
+        "parcelId": "Parcel-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "PatientProfile",
+      "id": "PatientProfile-v14",
+      "properties": {
+        "objectId": "PatientProfile-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "ProductOffer",
+      "id": "ProductOffer-v14",
+      "properties": {
+        "offerId": "ProductOffer-v14",
+        "displayTitle": "legacy",
+        "observedAt": "2026-10-20T10:00:00.000Z",
+        "validityBasis": "provider_expiry",
+        "priceKind": "display_price",
+        "pricingCompleteness": "complete"
+      }
+    },
+    {
+      "type": "ProductVariant",
+      "id": "ProductVariant-v14",
+      "properties": {
+        "variantId": "ProductVariant-v14",
+        "displayTitle": "legacy",
+        "name": "legacy"
+      }
+    },
+    {
+      "type": "Proposal",
+      "id": "Proposal-v14",
+      "properties": {
+        "proposalId": "Proposal-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "Provider",
+      "id": "Provider-v14",
+      "properties": {
+        "providerId": "Provider-v14",
+        "displayTitle": "legacy",
+        "name": "legacy"
+      }
+    },
+    {
+      "type": "RegisteredActionType",
+      "id": "RegisteredActionType-v14",
+      "properties": {
+        "id": "RegisteredActionType-v14",
+        "displayTitle": "legacy",
+        "contractKind": "semantic_definition",
+        "actionId": "legacy",
+        "actionVersion": "legacy",
+        "definitionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "description": "legacy",
+        "inputs": {},
+        "effect": "local",
+        "effects": [],
+        "resultTypes": [],
+        "changes": [],
+        "submissionCriteria": [],
+        "execution": "definition_only"
+      }
+    },
+    {
+      "type": "RegisteredCapability",
+      "id": "RegisteredCapability-v14",
+      "properties": {
+        "id": "RegisteredCapability-v14",
+        "name": "legacy",
+        "capabilityRef": {
+          "id": "legacy",
+          "version": "legacy"
+        },
+        "description": "legacy",
+        "tags": [],
+        "inputSchema": {},
+        "predicates": [],
+        "outcomePredicates": [],
+        "requirementRoles": [],
+        "definitionDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "type": "RentalPolicy",
+      "id": "RentalPolicy-v14",
+      "properties": {
+        "objectId": "RentalPolicy-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RequestCondition",
+      "id": "RequestCondition-v14",
+      "properties": {
+        "conditionId": "RequestCondition-v14",
+        "displayTitle": "legacy",
+        "sequence": 1,
+        "condition": {
+          "id": "legacy",
+          "predicateRef": {
+            "id": "domain.ride.eligible",
+            "version": "2"
+          },
+          "subject": {
+            "type": "RideOption",
+            "role": "domain_option"
+          },
+          "phase": "precondition",
+          "strength": "hard",
+          "operator": "eq",
+          "expected": {
+            "type": "RideRequest",
+            "id": "legacy"
+          },
+          "source": {
+            "messageId": "legacy",
+            "quote": "legacy"
+          }
+        }
+      }
+    },
+    {
+      "type": "RequestSpecification",
+      "id": "RequestSpecification-v14",
+      "properties": {
+        "id": "RequestSpecification-v14",
+        "displayTitle": "legacy",
+        "requestRevision": 1,
+        "requestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "instructionCount": 1,
+        "constraintCount": 1,
+        "confirmedInputDigests": {}
+      }
+    },
+    {
+      "type": "RideOption",
+      "id": "RideOption-v14",
+      "properties": {
+        "objectId": "RideOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RideRequest",
+      "id": "RideRequest-v14",
+      "properties": {
+        "objectId": "RideRequest-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RideRoute",
+      "id": "RideRoute-v14",
+      "properties": {
+        "objectId": "RideRoute-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RideTrip",
+      "id": "RideTrip-v14",
+      "properties": {
+        "objectId": "RideTrip-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RoomInventory",
+      "id": "RoomInventory-v14",
+      "properties": {
+        "objectId": "RoomInventory-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "RoomType",
+      "id": "RoomType-v14",
+      "properties": {
+        "objectId": "RoomType-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "SavedAddress",
+      "id": "SavedAddress-v14",
+      "properties": {
+        "savedAddressId": "SavedAddress-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "ServiceRequest",
+      "id": "ServiceRequest-v14",
+      "properties": {
+        "requestId": "ServiceRequest-v14",
+        "displayTitle": "legacy",
+        "originalGoal": "legacy"
+      }
+    },
+    {
+      "type": "Shipment",
+      "id": "Shipment-v14",
+      "properties": {
+        "shipmentId": "Shipment-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "SourceReceipt",
+      "id": "SourceReceipt-v14",
+      "properties": {
+        "receiptId": "SourceReceipt-v14",
+        "displayTitle": "legacy",
+        "safeSummary": "legacy"
+      }
+    },
+    {
+      "type": "TransportVehicle",
+      "id": "TransportVehicle-v14",
+      "properties": {
+        "objectId": "TransportVehicle-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "TravelLeg",
+      "id": "TravelLeg-v14",
+      "properties": {
+        "objectId": "TravelLeg-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "VehicleBooking",
+      "id": "VehicleBooking-v14",
+      "properties": {
+        "objectId": "VehicleBooking-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "VehicleClass",
+      "id": "VehicleClass-v14",
+      "properties": {
+        "objectId": "VehicleClass-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "VehicleInspection",
+      "id": "VehicleInspection-v14",
+      "properties": {
+        "objectId": "VehicleInspection-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "VehicleOption",
+      "id": "VehicleOption-v14",
+      "properties": {
+        "objectId": "VehicleOption-v14",
+        "displayTitle": "legacy"
+      }
+    },
+    {
+      "type": "VehicleRequest",
+      "id": "VehicleRequest-v14",
+      "properties": {
+        "objectId": "VehicleRequest-v14",
+        "displayTitle": "legacy"
+      }
+    }
+  ]
+}

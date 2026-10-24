@@ -2,6 +2,11 @@ import { ModelSessionError } from '../../packages/capabilities/model-session.js'
 import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
+import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.js';
+import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource } from '../../packages/core/task-recovery.js';
+import { withModelUsage } from '../../packages/core/model-usage-context.js';
+import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
+import { partialGoalArtifact } from '../../packages/coordinator/goal-program.js';
 
 export interface WorkerOptions {
   coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts'>>;
@@ -53,11 +58,40 @@ export class Worker {
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 300000);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
-      await this.options.coordinator.run(claim, controller.signal);
+      if (claim.job.delegation?.recovery?.state === 'scheduled') {
+        if (!this.store.checkpoint(claim, current => resumeScheduledRecovery(current))) return;
+        claim.job = this.store.get(owner, job.id);
+      }
+      await withModelUsage({ begin: (id, runtime, startedAt) => this.store.beginModelUsage(claim, id, runtime, startedAt),
+        finish: (id, evidence, outcome) => this.store.finishModelUsage(claim, id, evidence, outcome) }, () => this.options.coordinator.run(claim, controller.signal));
     }).catch(error => {
       this.store.finish(claim, current => {
+        if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
+          request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
+        const readOnly = canRecoverReadOnly(current, this.store.intents(owner, current.id));
+        if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation && readOnly) {
+          scheduleTaskRecovery(current, 'reasoning_incomplete', '推理尚未形成有效决策，系统将保留当前信息继续处理，无需重复补充。');
+          return;
+        }
+        if (error instanceof ConnectionAuthorizationRequired && error.connection && !controller.signal.aborted && current.delegation && canResumeSource(current, this.store.intents(owner, current.id))) {
+          const d = current.delegation;
+          current.state = 'auth-required'; d.phase = 'awaiting_authorization';
+          d.sourceAuthorization = structuredClone(error.connection);
+          current.updatedAt = new Date().toISOString(); current.question = error.message; delete current.error;
+          current.messages.push({ id: randomUUID(), role: 'agent', text: error.message, at: current.updatedAt });
+          return;
+        }
         const intentId = current.delegation?.intentId;
         const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
+        if (current.delegation && readOnly) {
+          if (error instanceof DomainError && !controller.signal.aborted) {
+            scheduleTaskRecovery(current, 'validation_stalled', '当前执行未通过权限或状态校验。原任务与确认信息保留，需修复运行条件后继续。', { automatic: false });
+            return;
+          }
+          scheduleTaskRecovery(current, controller.signal.aborted ? this.stopping ? 'worker_interrupted' : 'worker_timeout' : 'model_unavailable',
+            '运行暂时中断，原任务、已确认信息和执行记录均已保留。系统会自动恢复；持续异常时等待运行环境修复，无需重复确认业务信息。');
+          return;
+        }
         current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
         if (error instanceof ModelSessionError) current.delegation?.events.push({ at: current.updatedAt, event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
         current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'

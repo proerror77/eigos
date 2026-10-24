@@ -1,0 +1,214 @@
+{
+  "id": "673490f4eff6f67cd7ea2f5f02022a53ab2b86a9651dc47c698e886997f918eb",
+  "name": "goal-result.json",
+  "data": {
+    "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+    "deliverable": "所有必需目标条件已由原始执行结果独立核验。",
+    "execution": "completed",
+    "result": {
+      "version": "1",
+      "goalDigest": "35149413c9f8ee5852975aa583c420389c2cf2f369d59f5ba54e4f924ede9584",
+      "criteria": [
+        {
+          "id": "coffee_source_facts",
+          "result": "pass",
+          "reason": "Current component verifiers prove the exact required outcome and business phase",
+          "contextIds": [
+            "coffeeQueryReady"
+          ],
+          "evidenceRefs": [
+            "f878657c-06bb-4ad2-9278-c96abf29575e",
+            "171462cf-e678-4f37-99ad-18166b45fc58"
+          ],
+          "subjects": []
+        },
+        {
+          "id": "coffee_comparison_document",
+          "result": "pass",
+          "reason": "Current component verifiers prove the exact required outcome and business phase",
+          "contextIds": [
+            "coffeeDocReady"
+          ],
+          "evidenceRefs": [
+            "e2098aed-dd10-4c50-b2ac-bc2b7a7a79b4"
+          ],
+          "subjects": []
+        }
+      ],
+      "requirements": [
+        {
+          "requirementId": "coffee_result_count",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "f878657c-06bb-4ad2-9278-c96abf29575e",
+            "171462cf-e678-4f37-99ad-18166b45fc58",
+            "e2098aed-dd10-4c50-b2ac-bc2b7a7a79b4"
+          ]
+        },
+        {
+          "requirementId": "read_only_no_order",
+          "result": "pass",
+          "reason": "Observed fact meets the fixed requirement",
+          "evidenceRefs": [
+            "f878657c-06bb-4ad2-9278-c96abf29575e",
+            "171462cf-e678-4f37-99ad-18166b45fc58",
+            "e2098aed-dd10-4c50-b2ac-bc2b7a7a79b4"
+          ]
+        }
+      ],
+      "conditions": [],
+      "components": [
+        {
+          "contextId": "coffeeQueryReady",
+          "status": "verified",
+          "artifact": {
+            "id": "a39a039e-e3a4-4aef-bfc3-5d64db3bb401",
+            "name": "agent-catalog-result.json",
+            "data": {
+              "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+              "deliverable": "已按 Agent 选择的商品和来源完成匿名只读查询。显示价格不代表完整税费或配送报价；库存数量、配送承诺、目录完整性及合作状态未知。未创建购物车、结账、订单或付款。",
+              "execution": "completed",
+              "result": {
+                "catalogAnswer": {
+                  "scope": {
+                    "type": "CatalogTask",
+                    "id": "db251364678ded4ff1ee85143f742d8eeb8f221f9df5bbc3b4bde1b4627ed2bf"
+                  },
+                  "country": "US",
+                  "selections": [
+                    {
+                      "observation": {
+                        "type": "CatalogObservation",
+                        "id": "f878657c-06bb-4ad2-9278-c96abf29575e"
+                      },
+                      "merchant": {
+                        "id": "coffee-lab",
+                        "name": "Coffee Lab",
+                        "shopId": "gid://shopify/Shop/9012",
+                        "domain": "eigos-coffee-fixture.myshopify.com"
+                      },
+                      "sourceOperation": "get_product",
+                      "observedAt": "2026-10-22T14:22:12.650Z",
+                      "expiresAt": "2026-10-22T14:27:12.439Z",
+                      "receiptId": "f878657c-06bb-4ad2-9278-c96abf29575e",
+                      "evidenceKind": "fixture",
+                      "items": [
+                        {
+                          "productId": "gid://shopify/Product/9001",
+                          "variantId": "gid://shopify/ProductVariant/9034",
+                          "title": "Synthetic coffee — Light roast",
+                          "sku": "FIXTURE-0",
+                          "displayPrice": {
+                            "minor": "1000",
+                            "currency": "USD"
+                          },
+                          "availableReported": true,
+                          "nativeCheckoutEligibleReported": false
+                        }
+                      ]
+                    },
+                    {
+                      "observation": {
+                        "type": "CatalogObservation",
+                        "id": "171462cf-e678-4f37-99ad-18166b45fc58"
+                      },
+                      "merchant": {
+                        "id": "coffee-lab",
+                        "name": "Coffee Lab",
+                        "shopId": "gid://shopify/Shop/9012",
+                        "domain": "eigos-coffee-fixture.myshopify.com"
+                      },
+                      "sourceOperation": "get_product",
+                      "observedAt": "2026-10-22T14:22:12.651Z",
+                      "expiresAt": "2026-10-22T14:27:12.634Z",
+                      "receiptId": "171462cf-e678-4f37-99ad-18166b45fc58",
+                      "evidenceKind": "fixture",
+                      "items": [
+                        {
+                          "productId": "gid://shopify/Product/9001",
+                          "variantId": "gid://shopify/ProductVariant/9035",
+                          "title": "Synthetic coffee — Medium roast",
+                          "sku": "FIXTURE-1",
+                          "displayPrice": {
+                            "minor": "2000",
+                            "currency": "USD"
+                          },
+                          "availableReported": true,
+                          "nativeCheckoutEligibleReported": false
+                        }
+                      ]
+                    }
+                  ],
+                  "priceComparison": {
+                    "currency": "USD",
+                    "firstMinusSecondMinor": "-1000",
+                    "basis": "display_price_only"
+                  },
+                  "selectionRationale": "两条详情观察经 catalogObservationStatus 独立核验为 known，分别支持浅烘焙和中烘焙两个不同变体的名称、变体 ID、显示价格、币种及来源。证据属于用户指定的隔离测试环境；不主张真实商家事实、完整目录、库存数量、配送承诺或合作状态。",
+                  "completeness": "partial_or_unknown",
+                  "stockQuantity": "unknown",
+                  "deliveryCommitment": "unknown",
+                  "partnerTrust": "unverified",
+                  "noBusinessWrites": true
+                }
+              }
+            }
+          },
+          "evidenceRefs": [
+            "f878657c-06bb-4ad2-9278-c96abf29575e",
+            "171462cf-e678-4f37-99ad-18166b45fc58"
+          ]
+        },
+        {
+          "contextId": "coffeeDocReady",
+          "status": "verified",
+          "artifact": {
+            "id": "998a669912fe0c44b69c146f975ca9ce52fa415e6300e432df3be0fbf99ab841",
+            "name": "deliverable.md",
+            "data": {
+              "goal": "请在已配置的 Coffee Lab 隔离测试商家中查到两款不同的咖啡候选，并交付一份基于这两款已核验来源信息的中文 Markdown 比较文档。每款列出名称、变体 ID、当前显示价格、币种和来源，注明库存数量、配送承诺和商家合作状态中尚未核验的部分。目录可能只返回部分候选。只做只读查询与文档生成，不创建购物车、不预订、不下单、不付款。",
+              "deliverable": "文档草稿已生成，原始模型回执、内容摘要和引用版本已核对；内容质量仍需按用途审阅。",
+              "execution": "completed",
+              "markdown": "# Coffee Lab 咖啡候选比较\n\n## 依据与范围\n\n本文仅整理已提供的两条 `InspectCatalogVariant` 观测，未执行新的查询。来源属于 Coffee Lab 隔离测试数据（`evidenceKind: fixture`），不代表真实商家的实时销售情况。\n\n两款候选属于同一商品 `gid://shopify/Product/9001` 的不同变体；本文按两个不同变体进行比较，不将其视为两个独立商品。目录完整性为 `partial_or_unknown`，因此不能据此认定它们是全部候选。\n\n## 候选比较\n\n| 项目 | 候选一 | 候选二 |\n|---|---|---|\n| 来源名称（保留原文） | Synthetic coffee — Light roast | Synthetic coffee — Medium roast |\n| 名称中文释义 | 合成咖啡 — 浅烘焙 | 合成咖啡 — 中烘焙 |\n| 变体 ID | `gid://shopify/ProductVariant/9034` | `gid://shopify/ProductVariant/9035` |\n| SKU | `FIXTURE-0` | `FIXTURE-1` |\n| 观测时显示价格 | 10.00 | 20.00 |\n| 币种 | USD（美元） | USD（美元） |\n| 来源 | Coffee Lab，详见来源 [1] | Coffee Lab，详见来源 [2] |\n| 来源报告可用 | 是（`availableReported: true`） | 是（`availableReported: true`） |\n| 库存数量 | 未知，尚未核验 | 未知，尚未核验 |\n| 配送承诺 | 未知，尚未核验 | 未知，尚未核验 |\n| 商家合作状态 | 未核验（`partnerTrust: unverified`） | 未核验（`partnerTrust: unverified`） |\n| 来源报告原生结账资格 | 否（`nativeCheckoutEligibleReported: false`） | 否（`nativeCheckoutEligibleReported: false`） |\n\n价格换算采用 USD 的标准单位：100 美分 = 1 美元。原始价格分别为 `minor: \"1000\"` 和 `minor: \"2000\"`。\n\n浅烘焙变体的显示价格比中烘焙变体低 **10.00 USD**；中烘焙变体价格为浅烘焙变体的 **2 倍**。来源未提供重量、包装规格、产地或风味信息，无法比较单位价格或判断哪款更适合具体口味。\n\n## 来源与时效\n\n共同来源身份：\n\n- 商家：Coffee Lab（`coffee-lab`）\n- 商店 ID：`gid://shopify/Shop/9012`\n- 域名：`eigos-coffee-fixture.myshopify.com`\n- 国家上下文：US\n- 接口：`https://catalog.shopify.com/api/ucp/mcp`\n- 操作：`get_product`；认证方式：匿名；两条回执 HTTP 状态均为 200。\n\n| 来源 | 观测 ID / 回执 ID | 观测时间（UTC） | 本地刷新期限（UTC） |\n|---|---|---|---|\n| [1] 浅烘焙变体 | `f878657c-06bb-4ad2-9278-c96abf29575e` | 2026-10-22 14:22:12.650 | 2026-10-22 14:27:12.439 |\n| [2] 中烘焙变体 | `171462cf-e678-4f37-99ad-18166b45fc58` | 2026-10-22 14:22:12.651 | 2026-10-22 14:27:12.634 |\n\n上述价格是观测时显示值。刷新期限依据为 `local_refresh_limit`，不构成商家锁价或库存保证；本文未重新查询，无法确认交付时是否仍有效。\n\n## 证据限制\n\n- “来源报告可用”不能证明具体库存数量，也不能形成配送或履约承诺。\n- 商家名称、域名及成功接口回执不能证明商家合作关系已核验。\n- 两条来源均记录 `noBusinessWrites: true`。本次仅生成文档，未创建购物车、预订、下单或付款。\n",
+              "result": {
+                "modelGenerated": true,
+                "contentSha256": "03a0098e53852cd09e98b9e0c14fc662d09a68a1dbef30e69712371d9194c749",
+                "noExternalActions": true,
+                "citations": [
+                  {
+                    "object": {
+                      "type": "CatalogObservation",
+                      "id": "f878657c-06bb-4ad2-9278-c96abf29575e"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "dc089505a382134bf8d9c3226840bee82137487e852c2bb525d1dfe885c72112",
+                    "receiptDigest": "371c2503f01240acb934c344a4a323dd5bc4370a8c9af3187b7b386a4c76e552",
+                    "evidenceRefs": [
+                      "f878657c-06bb-4ad2-9278-c96abf29575e"
+                    ]
+                  },
+                  {
+                    "object": {
+                      "type": "CatalogObservation",
+                      "id": "171462cf-e678-4f37-99ad-18166b45fc58"
+                    },
+                    "revision": 1,
+                    "propertiesDigest": "02e8a47493dd9c95d468adeb78e349ae2a6ef6df8cf67b824b624ce4f947d1f4",
+                    "receiptDigest": "6d9f57396ff3cc50dbf3af4b2fd3f96969d356d63e5b0ace4d3f16544697b897",
+                    "evidenceRefs": [
+                      "171462cf-e678-4f37-99ad-18166b45fc58"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "evidenceRefs": [
+            "e2098aed-dd10-4c50-b2ac-bc2b7a7a79b4"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -10,23 +10,44 @@ import { createCommerceSandboxProvider, type CommerceSandboxScenario } from '../
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { JobStore } from '../../packages/core/store.js';
 import { digest } from '../../packages/core/delegation.js';
-import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, principal, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import type { AgentDecision, AgentStep } from '../../packages/ontology/agent-actions.js';
-import type { CommerceObservation, CommerceEntityType } from '../../packages/ontology/commerce-journey.js';
+import { commerceObservationSchema, type CommerceObservation, type CommerceEntityType } from '../../packages/ontology/commerce-journey.js';
 import { commerceDestinationChoice } from '../../packages/ontology/commerce-journey-functions.js';
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
+import type { ObjectView } from '../../packages/ontology/object-store.js';
 
 export const commerceStep = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const commerceDecision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], result?: unknown): AgentDecision => ({ kind: result ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic decision from currently observed commerce facts', steps, completionJson: result ? JSON.stringify(result) : '' });
+type ObservedCommerceFact = { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } };
+const receivedCommerceContexts = new WeakMap<PlanningAccess['session'], { objects: ObjectView[]; facts: Map<string, ObservedCommerceFact> }>();
 export function commerceReads(ctx: AgentPlanningContext, access: PlanningAccess) {
-  access.session.call('describe_ontology', { search: 'CommerceTask', limit: 1 });
-  access.session.call('query_ontology', { object: ctx.state.scope });
-  const cache = new Map<string, { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } }>();
+  let received = receivedCommerceContexts.get(access.session);
+  if (!received) {
+    const objects: ObjectView[] = [];
+    if (access.session.usesTaskContext()) {
+      const context = access.session.call('read_task_context', {}) as { data?: { graph?: { objects?: ObjectView[] } }; receipt?: { id: string; status: string } };
+      if (context.receipt?.status !== 'ok' || !context.data?.graph?.objects) throw new Error('Synthetic commerce decision did not receive its current task context');
+      access.session.acceptReceipts([context.receipt.id]);
+      objects.push(...context.data.graph.objects);
+    } else access.session.call('describe_ontology', { search: 'CommerceTask', limit: 1 });
+    const facts = new Map<string, ObservedCommerceFact>();
+    // These snapshots were actually returned by this session's context tool.
+    // Unread references and observations from earlier turns are never cached.
+    // Source-status and customs-gate evaluations remain explicit fresh calls.
+    for (const object of objects) {
+      const parsed = commerceObservationSchema.safeParse(object.properties.snapshot);
+      if (parsed.success && parsed.data.type === object.ref.type) facts.set(object.ref.id, { ref: object.ref, snapshot: parsed.data });
+    }
+    received = { objects, facts }; receivedCommerceContexts.set(access.session, received);
+  }
+  if (!received.objects.some(object => object.ref.type === ctx.state.scope.type && object.ref.id === ctx.state.scope.id)) access.session.call('query_ontology', { object: ctx.state.scope });
+  const cache = received.facts;
   const read = (ref: ObjectRef, evaluate = false) => {
     let value = cache.get(ref.id);
-    if (!value) { const query = access.session.call('query_ontology', { object: ref }) as { items: { properties: { snapshot: CommerceObservation } }[] }; value = { ref, snapshot: query.items[0]!.properties.snapshot }; cache.set(ref.id, value); }
+    if (!value) { const query = access.session.call('query_ontology', { object: ref, select: ['snapshot'] }) as { items: { properties: { snapshot: CommerceObservation } }[] }; value = { ref, snapshot: query.items[0]!.properties.snapshot }; cache.set(ref.id, value); }
     if (evaluate && !value.assessment) { const r = access.session.call('evaluate_ontology', { function: 'commerceObservationStatus', object: ref }) as { status: string; value?: { assessment: { status: string; gaps: { fact: string }[] } }; reason?: string }; value.assessment = r.status === 'known' ? r.value!.assessment : { status: 'unknown', gaps: [{ fact: r.reason ?? 'source_unknown' }] }; }
     return value;
   };
@@ -43,6 +64,14 @@ export function commerceChoice(options: { target?: 'quote' | 'cart' | 'checkout'
       const payment = last('CommercePaymentObservation', true), delivery = last('CommerceDeliveryObservation', true), cart = options.cart === false ? undefined : last('Cart', true);
       if (!payment || !delivery) return commerceDecision(ctx, [...(!payment ? [commerceStep('payment', 'ReadCommercePayment', { scope, order: existingOrder.ref })] : []), ...(!delivery ? [commerceStep('delivery', 'ReadCommerceDelivery', { scope, order: existingOrder.ref })] : [])]);
       return commerceDecision(ctx, [], { selected: existingOrder.ref, ...(cart ? { cart: cart.ref } : {}), order: existingOrder.ref, payment: payment.ref, delivery: delivery.ref, rationale: 'Independent original order, separate payment and exact package events' });
+    }
+    // A prepared checkout already pins the upstream source facts. The next
+    // frontier queries that exact checkout and current gates instead of
+    // retransmitting every earlier observation in the same bounded read turn.
+    const preparedCheckout = last('CommerceCheckout', true);
+    if (preparedCheckout) {
+      if (target === 'checkout') return commerceDecision(ctx, [], { selected: preparedCheckout.ref, rationale: 'Exact sandbox checkout prepared' });
+      return commerceDecision(ctx, [commerceStep('submit', 'SubmitCommerceOrder', { scope, checkout: preparedCheckout.ref })]);
     }
     const context = target === 'cart' ? undefined : last('FulfillmentContext', true), directory = last('CommerceMerchantSearch');
     if ((!context && target !== 'cart') || !directory) return commerceDecision(ctx, [...(!context && target !== 'cart' ? [commerceStep('context', 'ReadCommerceContext', { scope })] : []), ...(!directory ? [commerceStep('directory', 'SearchCommerceMerchants', { scope, query: 'coffee' })] : [])]);
@@ -98,7 +127,7 @@ export async function setupCommerce(options: { scenario?: CommerceSandboxScenari
   program.project=(...args)=>{try{return project(...args);}catch(error){diagnostic('project',args[1],error);throw error;}};
   program.recover=async(...args)=>{try{return await recover(...args);}catch(error){diagnostic('recover',args[1],error);throw error;}};
   const choice = options.choice ?? commerceChoice(options);
-  const model: Reasoner = { ground: async request => ({ decision: { ...interpretation(request, programRef.id, { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: programRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+  const model: Reasoner = { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, programRef.id, { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: programRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '在沙箱选择能供两袋整豆咖啡的商家并完成所需交易阶段；先查询保存的地址和跨境信息。', executionEnvironment: 'sandbox', requirements: [{ id: 'quantity', kind: 'quantity', role: 'item_quantity', strength: 'hard', expected: { amount: '2', unit: 'piece' } }, ...(options.target === 'cart' ? [] : [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, { id: 'arrival', kind: 'deadline', role: 'arrival', strength: 'hard', expected: { at: new Date(Date.now() + 7 * 86400000).toISOString(), timezone: 'UTC', original: 'within seven days' } }]), { id: 'sandbox', kind: 'condition', strength: 'hard', expected: { predicate: 'commerce.sandbox_only' } }] });
   const approve = (job: Job, effects = job.delegation!.authorizationRequest!.effects) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };

@@ -239,15 +239,17 @@ test('Lost checkout response and duplicate form submission preserve one booking 
 });
 
 test('An expired checkout cannot be paid or replaced by a wallet route', async () => {
-  const t = await setupPABooking({ holdMs: 3000 });
+  const t = await setupPABooking(), originalNow = Date.now;
   try {
     const waiting = await t.finish(t.submit().id), selected = t.selectRoute(waiting, unavailable()), request = selected.delegation!.agent!.paPayment!.request;
     const { fields } = await checkoutForm(request);
-    await pause(Math.max(1, Date.parse(request.terms.expiresAt) - Date.now() + 20));
+    // Advance only this isolated test process after the handoff exists.
+    // Test duration must not make the booking expire during setup.
+    Date.now = () => Date.parse(request.terms.expiresAt) + 1;
     assert.equal((await confirmCheckout(request, fields)).status, 409);
     assert.throws(() => t.selectRoute(selected, ready()), /already exists|unpaid|expired/);
     assert.equal(t.provider.audit().filter(a => a.caller === 'checkout_user').length, 0);
-  } finally { await t.close(); }
+  } finally { Date.now = originalNow; await t.close(); }
 });
 
 test('Canceling EIGOS while checkout is open preserves cancellation even after a late provider payment', async () => {

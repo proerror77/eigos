@@ -1,0 +1,29 @@
+{
+  "checkedAt": "2026-10-19T14:51:23.939Z",
+  "sourceCommit": "522cc0f1ffdc38802c8e85fd7d59f60eeca28fda",
+  "buildDigest": "64c499b15b7ff4cbdb52b778b5a8091b8ec4bed1077478de701d8259036d7e43",
+  "filesMatched": 132,
+  "endpoint": "https://mandonothing-bravo-1-1.tail6046a5.ts.net:8443",
+  "health": {
+    "status": "ok",
+    "version": "0.1.0",
+    "backend": "ontology-execution-v8",
+    "releaseDigest": "64c499b15b7ff4cbdb52b778b5a8091b8ec4bed1077478de701d8259036d7e43"
+  },
+  "sourceScopesAdvertised": [
+    "sources:read",
+    "sources:write"
+  ],
+  "unauthenticated": {
+    "source": 401,
+    "mcp": 401,
+    "a2a": 401
+  },
+  "businessDatabase": {
+    "tasks": 0,
+    "sourceCredentials": 0,
+    "claims": 0
+  },
+  "liveSourceVerified": false,
+  "auth0Status": "human_reauthentication_pending"
+}

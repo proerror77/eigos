@@ -47,8 +47,8 @@ export class UcpSandboxAdapter implements ActionAdapter {
   }
   permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
   private scope(ctx: AdapterContext) { if (!this.permitted(ctx.owner) || ctx.request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'UCP reference integration is available only to the explicit local sandbox identity'); }
-  private operationScope(checkoutId: string) { return `ucp-checkout:${digest({ merchant: this.configurationDigest, checkoutId })}`; }
-  async prepare(ctx: AdapterContext, raw: unknown, signal: AbortSignal): Promise<Preparation> {
+  operationScope(checkoutId: string) { return `ucp-checkout:${digest({ merchant: this.configurationDigest, checkoutId })}`; }
+  async prepare(ctx: AdapterContext, raw: unknown, signal: AbortSignal, acceptedCheckout?: CommerceSnapshot): Promise<Preparation> {
     this.scope(ctx); const input = (this.mode === 'prepare' ? prepareCheckoutInput : confirmCheckoutInput).parse(raw);
     const discovery = await this.client.discover(signal); signal.throwIfAborted();
     const fixed: PreparedData = { mode: this.mode, requestId: ctx.request.id, requestRevision: ctx.request.revision, configurationDigest: this.configurationDigest, inputDigest: digest(input), preparationTaskId: ctx.request.id, expectedItems: [] };
@@ -60,18 +60,24 @@ export class UcpSandboxAdapter implements ActionAdapter {
       fixed.createBody = { line_items: input.items.map(i => ({ item: { id: i.id }, quantity: i.quantity })), payment: { instruments: [] }, fulfillment: { methods: [{ id: 'shipping', type: 'shipping', destinations: [{ id: 'destination', ...profile.destination }], selected_destination_id: 'destination', groups: [{ id: 'package', selected_option_id: profile.optionId }] }] } };
     } else {
       if (!this.client.supportsMockPayment()) return { kind: 'unavailable', reason: '该本地商家未声明本次允许的官方模拟支付处理器。' };
-      const previous = this.store.get(ctx.owner, input.preparationTaskId);
-      if (previous.state !== 'completed' || previous.delegation?.plan?.capabilityRef.id !== UCP_PREPARE) throw new DomainError('CONFLICT', 'Reference an owned, completed checkout preparation task');
-      const result = previous.artifact?.data.result as { ucpSnapshot?: unknown } | undefined;
-      const original = commerceSnapshotSchema.parse(result?.ucpSnapshot);
-      if (original.configurationDigest !== this.configurationDigest || original.preparationTaskId !== previous.id || original.operation !== 'prepare') throw new DomainError('CONFLICT', 'Prepared checkout belongs to a different merchant configuration');
+      let original: CommerceSnapshot;
+      if (acceptedCheckout) {
+        original = commerceSnapshotSchema.parse(acceptedCheckout);
+        if (original.requestId !== ctx.request.id || original.requestRevision !== ctx.request.revision || original.preparationTaskId !== ctx.request.id || input.preparationTaskId !== ctx.request.id) throw new DomainError('CONFLICT', 'Same-task checkout must retain its original request and revision');
+      } else {
+        const previous = this.store.get(ctx.owner, input.preparationTaskId);
+        if (previous.state !== 'completed' || previous.delegation?.plan?.capabilityRef.id !== UCP_PREPARE) throw new DomainError('CONFLICT', 'Reference an owned, completed checkout preparation task');
+        const result = previous.artifact?.data.result as { ucpSnapshot?: unknown } | undefined;
+        original = commerceSnapshotSchema.parse(result?.ucpSnapshot);
+      }
+      if (original.configurationDigest !== this.configurationDigest || original.preparationTaskId !== input.preparationTaskId || original.operation !== 'prepare') throw new DomainError('CONFLICT', 'Prepared checkout belongs to a different merchant configuration');
       const prior = this.store.intentByBusinessKey(ctx.owner, actionOperationKey(ctx.owner, this.operationScope(original.checkout.id), 'complete-checkout'));
       if (prior && prior.jobId !== ctx.request.id) return { kind: 'unavailable', reason: '该结账会话已有确认任务，请读取或查证原任务，不能另建购买意图。', details: { originalTaskId: prior.jobId } };
       const response = await this.client.getCheckout(original.checkout.id, signal), checkout = checkoutSnapshot(response);
       if (checkout.id !== original.checkout.id || checkout.quoteDigest !== original.checkout.quoteDigest) return { kind: 'unavailable', reason: '结账商品、费用、地址或条款已经变化，需要重新准备并确认准确方案。' };
       if (checkout.state !== 'ready_for_complete' || checkout.messageCodes.length || !checkout.destinationDigest || !checkout.destinationComplete) return { kind: 'unavailable', reason: checkout.state === 'completed' ? '该会话已有订单，应查询原订单；不能作为新的购买再次提交。' : '商家尚未提供可确认的完整结账会话，请先处理商家要求。', details: { state: checkout.state, ...(checkout.continueUrl ? { continueUrl: checkout.continueUrl } : {}), messageCodes: checkout.messageCodes } };
       if (checkout.total.currency !== input.budget.currency || BigInt(checkout.total.minor) > BigInt(input.budget.minor)) return { kind: 'unavailable', reason: '商家当前完整总额超过指定预算，或币种不一致。' };
-      fixed.preparationTaskId = previous.id; fixed.expectedItems = original.expectedItems; fixed.checkout = checkout; fixed.expectedDestinationDigest = original.checkout.destinationDigest; fixed.budget = input.budget;
+      fixed.preparationTaskId = original.preparationTaskId; fixed.expectedItems = original.expectedItems; fixed.checkout = checkout; fixed.expectedDestinationDigest = original.checkout.destinationDigest; fixed.budget = input.budget;
       facts = this.facts(checkout); observedAt = response.receipt.receivedAt;
       expiresAt = new Date(Math.min(Date.now() + 300000, checkout.expiresAt ? Date.parse(checkout.expiresAt) : Infinity)).toISOString();
       Object.assign(details, { checkoutId: checkout.id, total: checkout.total, quoteDigest: checkout.quoteDigest, requiresOrderAndPaymentAuthority: true, fulfillment: 'not_started' });
@@ -92,11 +98,15 @@ export class UcpSandboxAdapter implements ActionAdapter {
   }
   async dispatch(ctx: ActionContext, raw: unknown, signal: AbortSignal): Promise<ActionResult> {
     const fixed = this.fixed(ctx, raw); await this.client.discover(signal);
-    if (this.mode === 'prepare') return this.result(ctx, fixed, await this.client.createCheckout(fixed.createBody!, ctx.intent.businessOperationKey, signal), signal);
+    if (this.mode === 'prepare') {
+      ctx.assertDispatchAllowed?.();
+      return this.result(ctx, fixed, await this.client.createCheckout(fixed.createBody!, ctx.intent.businessOperationKey, signal), signal);
+    }
     const current = await this.client.getCheckout(fixed.checkout!.id, signal), snapshot = checkoutSnapshot(current);
     if (snapshot.id !== fixed.checkout!.id || snapshot.quoteDigest !== fixed.checkout!.quoteDigest) return this.reject(ctx, fixed, snapshot, 'quote_changed');
     if (snapshot.state === 'completed' || snapshot.state === 'complete_in_progress') return this.result(ctx, fixed, current, signal);
     if (snapshot.state !== 'ready_for_complete' || snapshot.messageCodes.length) return this.reject(ctx, fixed, snapshot, 'checkout_not_ready');
+    ctx.assertDispatchAllowed?.();
     return this.result(ctx, fixed, await this.client.completeMockCheckout(snapshot.id, ctx.intent.businessOperationKey, signal), signal);
   }
   async observe(ctx: ActionContext, raw: unknown, signal: AbortSignal) { return this.reconcile(ctx, raw, signal); }
@@ -137,7 +147,7 @@ export class UcpSandboxAdapter implements ActionAdapter {
       return { accepted: same && result.kind === (assessment.status === 'unknown' ? 'pending' : 'confirmed') && (!result.delivery || result.delivery.artifact.id === digest(snapshot)) && digest(result.business) === digest(business), reason: 'Independently checked original checkout, original order, source receipts and fixed requirements' };
     } catch { return { accepted: false, reason: 'UCP observation is not bound to the fixed owned operation' }; }
   }
-  verify(ctx: AdapterContext, plan: ExecutionPlan, raw: unknown, delivery: Delivery) {
+  verify(ctx: AdapterContext, plan: import('../../core/catalog.js').AdapterPlan, raw: unknown, delivery: Delivery) {
     try {
       this.scope(ctx); const fixed = raw as PreparedData, report = delivery.artifact.data.result as { ucpSnapshot: unknown; assessment: unknown }, snapshot = commerceSnapshotSchema.parse(report.ucpSnapshot), assessment = assessCommerce(snapshot);
       const accepted = fixed.configurationDigest === this.configurationDigest && snapshot.configurationDigest === this.configurationDigest && snapshot.requestId === ctx.request.id && snapshot.requestRevision === ctx.request.revision && snapshot.inputDigest === digest(plan.steps[0]!.input) && digest(snapshot.expectedItems) === digest(fixed.expectedItems) && digest(snapshot.budget ?? null) === digest(fixed.budget ?? null) && snapshot.preparationTaskId === fixed.preparationTaskId && snapshot.operation === this.mode && (!fixed.checkout || snapshot.checkout.quoteDigest === fixed.checkout.quoteDigest) && (!fixed.expectedDestinationDigest || snapshot.checkout.destinationDigest === fixed.expectedDestinationDigest) && assessment.status === 'satisfied' && digest(report.assessment) === digest(assessment) && delivery.artifact.id === digest(snapshot) && delivery.evidenceRefs.includes(snapshot.checkout.receipt.id) && (!snapshot.order || delivery.evidenceRefs.includes(snapshot.order.receipt.id));

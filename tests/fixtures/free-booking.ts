@@ -7,7 +7,7 @@ import { AgentOperationRejected, type AgentActionContext, type AgentActionResult
 import { registrationOfferSchema, registrationRecordSchema, registrationResultSchema, type RegistrationData } from '../../packages/ontology/free-booking.js';
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import { commerceDecision as decision, commerceStep as step } from './commerce-agent.js';
-import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, principal, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
 
@@ -61,7 +61,7 @@ export function participantFixture(options: { target?: 'submitted' | 'confirmed'
       return result(ctx, action);
     } };
   const catalog = createExecutionCatalog({ participantBookingSource: source });
-  const model: Reasoner = { ground: async request => ({ decision: { ...interpretation(request, 'booking.participant.free', input), capabilityRef: { id: 'booking.participant.free', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('Participant registration must use the business Agent'); }, act: async (ctx, _signal, access) => { const selected = (options.choice ?? participantChoice)(ctx, access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
+  const model: Reasoner = { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, 'booking.participant.free', input), capabilityRef: { id: 'booking.participant.free', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('Participant registration must use the business Agent'); }, act: async (ctx, _signal, access) => { observeTaskContext(access); const selected = (options.choice ?? participantChoice)(ctx, access); acknowledgeReads(access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
   const b = backend(catalog, model, undefined, { allowSandbox: true });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
   const until = async (predicate: (job: Job) => boolean, max = 80) => {

@@ -1,6 +1,8 @@
+import { DatabaseSync } from 'node:sqlite';
+import { NetworkStore } from '../dist/packages/network/store.js';
 import { MemberStore } from '../dist/packages/members/store.js';
 import { parseArgs } from 'node:util';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
 
 const { positionals, values } = parseArgs({ allowPositionals: true, options: { output: { type: 'string' }, 'expires-hours': { type: 'string', default: '24' } } });
@@ -11,6 +13,15 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
 } else {
   const path = process.env.MEMBERSHIP_DATABASE_PATH ?? `${process.env.DATABASE_PATH ?? './data/eigos.sqlite'}.members`;
   const store = new MemberStore(path);
+  const businessPath = process.env.DATABASE_PATH ?? './data/eigos.sqlite';
+  const business = existsSync(businessPath) ? new DatabaseSync(businessPath) : undefined;
+  if (business) {
+    business.exec('PRAGMA busy_timeout=5000;');
+    if (business.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='network_auth_fences'").get()) {
+      const network = new NetworkStore(business);
+      store.setRevocationObserver(change => network.fence(change.memberId, change.kind, change.target));
+    }
+  }
   try {
     if (action === 'list') console.table(store.list().map(({ id, displayName, status, createdAt }) => ({ id, displayName, status, createdAt })));
     else if (action === 'invite') {
@@ -27,5 +38,5 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
       console.log(JSON.stringify({ id: member.id, status: member.status }));
     }
   } catch (error) { console.error(error instanceof Error ? error.message : 'Member operation failed'); process.exitCode = 1; }
-  finally { store.close(); }
+  finally { store.close(); business?.close(); }
 }

@@ -1,3 +1,4 @@
+import { businessModel } from '../packages/ontology/business-model.js';
 import { templatePlanning } from '../packages/ontology/planning-contract.js';
 // Synthetic supply exercises generic discovery; it is not a real provider probe.
 import assert from 'node:assert/strict';
@@ -33,8 +34,8 @@ test('generic discovered bindings pin owner, request, source and definition acro
   assert.equal(resolved.candidates.length, 2); assert.equal(resolved.comparison!.merchantGroups.length, 2);
   assert(resolved.candidates.every(c => c.offer!.availability.capacity === 'unknown'));
   const context = { request: req, capability: fixtureCapability, resolution: { candidates: resolved.candidates, scope: resolved.scope } };
-  const plan = proposePlan(c, owner, req, fixtureCapability, resolved.candidates[0]!, proposal(context), templatePlanning(req));
-  const restarted = catalog(); validatePlan(restarted, owner, req, plan);
+  const plan = proposePlan(c, owner, req, fixtureCapability, resolved.candidates[0]!, proposal(context), templatePlanning(req, businessModel.ref));
+  const restarted = catalog(); validatePlan(restarted, owner, req, plan, businessModel.ref);
   assert.throws(() => restarted.binding(plan.bindingRef, 'other-owner', req.id), /unavailable/);
 });
 test('same-name specifications and duplicate merchant channels preserve distinct quotes', () => {

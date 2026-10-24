@@ -15,16 +15,17 @@ import type { AgentDecision } from '../../packages/ontology/agent-actions.js';
 import type { BookingEntityType, BookingSnapshot } from '../../packages/ontology/booking.js';
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
-import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, principal, observeTaskContext, acknowledgeReads } from '../backend-fixture.js';
 import { commerceDecision as decision, commerceStep as step } from './commerce-agent.js';
 
 export const bookingProgramRef = { id: 'booking.pa-payment.sandbox', version: '3' };
 export function bookingReads(ctx: AgentPlanningContext, access: PlanningAccess) {
-  access.session.call('describe_ontology', { search: 'BookingTask', limit: 1 });
+  observeTaskContext(access);
+  if (!access.session.usesTaskContext()) access.session.call('describe_ontology', { search: 'BookingTask', limit: 1 });
   access.session.call('query_ontology', { object: ctx.state.scope });
   const last = (type: BookingEntityType) => {
     const ref = ctx.state.observations.filter(r => r.type === type).at(-1); if (!ref) return;
-    const read = access.session.call('query_ontology', { object: ref }) as { items: { properties: { snapshot: BookingSnapshot } }[] };
+    const read = access.session.call('query_ontology', { object: ref, select: ['snapshot'] }) as { items: { properties: { snapshot: BookingSnapshot } }[] };
     const status = access.session.call('evaluate_ontology', { function: 'bookingObservationStatus', object: ref }) as { status: string; value?: Record<string, any> };
     return { ref, snapshot: read.items[0]!.properties.snapshot, status: status.status === 'known' ? status.value! : undefined };
   };
@@ -73,11 +74,11 @@ export class FixturePAWallet {
     return response.json() as Promise<{ paymentState: string }>;
   }
 }
-export async function setupPABooking(options: { databasePath?: string; provider?: Awaited<ReturnType<typeof createBookingSandboxProvider>>; holdMs?: number; choice?: (ctx: AgentPlanningContext, access: PlanningAccess) => AgentDecision } = {}) {
+export async function setupPABooking(options: { document?: boolean; databasePath?: string; provider?: Awaited<ReturnType<typeof createBookingSandboxProvider>>; holdMs?: number; choice?: (ctx: AgentPlanningContext, access: PlanningAccess) => AgentDecision } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-pa-booking-')), provider = options.provider ?? await createBookingSandboxProvider({ holdMs: options.holdMs }), tokenFile = join(directory, 'source-token');
   writeFileSync(tokenFile, provider.sourceToken, { mode: 0o600 });
-  const settings = { endpoint: provider.endpoint, tokenFile }, store = new JobStore(options.databasePath ?? ':memory:'), catalog = createExecutionCatalog({ store, bookingSandbox: settings });
-  const model: Reasoner = { ground: async request => ({ decision: { ...interpretation(request, bookingProgramRef.id, { query: 'consultation', participants: 2, startsAt: null }), capabilityRef: bookingProgramRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy booking recipe must not run'); }, act: async (ctx, _signal, access) => { const result = (options.choice ?? bookingChoice)(ctx, access); return { decision: result, evidence: { ...evidence(), decisionDigest: digest(result) } }; } };
+  const settings = { endpoint: provider.endpoint, tokenFile }, store = new JobStore(options.databasePath ?? ':memory:'), catalog = createExecutionCatalog({ store, bookingSandbox: settings, documentEnabled: options.document, documentExecutor: options.document ? { run: async () => ({ output: { decision: 'complete', message: 'Synthetic appointment report', artifact: '# Appointment report\n\nBoth original provider receipts are cited.' }, evidence: evidence() }) } : undefined });
+  const model: Reasoner = { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, bookingProgramRef.id, { query: 'consultation', participants: 2, startsAt: null }), capabilityRef: bookingProgramRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy booking recipe must not run'); }, act: async (ctx, _signal, access) => { const result = (options.choice ?? bookingChoice)(ctx, access); acknowledgeReads(access); return { decision: result, evidence: { ...evidence(), decisionDigest: digest(result) } }; } };
   const b = backend(catalog, model, store, { allowSandbox: true }), wallet = new FixturePAWallet(provider.endpoint, provider.paToken);
   const submit = (extra: object = {}) => b.submit({ goal: '在沙箱预约两人的咨询服务，预算 200 元；交给 PA 自己付款后，独立核验原付款和预约。', executionEnvironment: 'sandbox', requirements: [{ id: 'count', kind: 'quantity', role: 'participant_count', strength: 'hard', expected: { amount: '2', unit: 'person' } }, { id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '20000', currency: 'CNY' } }, { id: 'confirmed', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.confirmed' } }, { id: 'paid', kind: 'condition', strength: 'hard', expected: { predicate: 'booking.payment_confirmed' } }], ...extra });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };

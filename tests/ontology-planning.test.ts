@@ -10,8 +10,14 @@ import { groundConditions, assessConditions } from '../packages/coordinator/cond
 import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { checkRequirements } from '../packages/coordinator/resolver.js';
 import { CodexReasoner, type PlanningContext } from '../packages/coordinator/coordinator.js';
-import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
+import { reasonWithOntology as nativeReasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
+import { scriptedMcpModel } from './fixtures/native-ontology-model.js';
+const reasonWithOntology: typeof nativeReasonWithOntology = (model, ...args) => nativeReasonWithOntology(model.openStructuredSession || model.ontologyContextPreparation ? model : scriptedMcpModel(model), ...args);
 import { ExecutionCatalog } from '../packages/core/catalog.js';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import type { TaskContextPayload } from '../packages/coordinator/task-context.js';
+import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
+import type { AgentDecision } from '../packages/ontology/agent-actions.js';
 import { BRIEF_CAPABILITY, BRIEF_BINDING, BriefAdapter } from '../packages/capabilities/brief.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import { businessConditionSchema, type BusinessCondition } from '../packages/ontology/business-model.js';
@@ -31,10 +37,10 @@ function observe(f: ReturnType<typeof fixture>, type = 'DeliveryQuote') {
 test('Planning descriptions expose full action schemas on demand without repeating every registered input contract', () => {
   const f = fixture();
   try {
-    const summary = f.session.call('describe_ontology', { search: 'ServiceRequest' }) as any;
+    const summary = f.session.call('describe_ontology', { search: 'BookingTask' }) as any;
     const action = summary.actions.find((a: any) => a.read || a.operation);
     assert(action); assert.equal((action.read ?? action.operation).inputSchema, undefined);
-    const exact = f.session.call('describe_ontology', { search: 'ServiceRequest', actions: [action.id] }) as any;
+    const exact = f.session.call('describe_ontology', { search: 'BookingTask', actions: [action.id] }) as any;
     assert.equal(exact.actions.length, 1); assert((exact.actions[0].read ?? exact.actions[0].operation).inputSchema);
     // Compare alternate discovery strategies in separate decision contexts;
     // requesting every schema after both summary and exact reads consumes the
@@ -147,6 +153,20 @@ test('N2 model reads are bounded, owner-scoped, schema-checked and cannot execut
   } finally { f.db.close(); }
 });
 
+test('proposal-only tools identify agent operations as a different execution path rather than a foreign request', () => {
+  const f = fixture();
+  try {
+    const before = f.graph.revision(owner);
+    for (const action of ['ReadSavedAddresses', 'SubmitCommerceOrder', 'CreatePendingBooking']) {
+      const result = f.session.call('propose_action', { action, inputs: [{ name: 'scope', object: { type: 'CommerceTask', id: 'not-used' }, revision: 1 }] }) as { error: string; message: string };
+      assert.equal(result.error, 'INVALID_INPUT');
+      assert.match(result.message, /selected in an agent execute decision/);
+      assert(!result.message.includes('another request'));
+    }
+    assert.equal(f.graph.revision(owner), before);
+  } finally { f.db.close(); }
+});
+
 test('N2 decision Action proposals fix changes and input versions but do not grant execution', () => {
   const f = fixture();
   try {
@@ -174,40 +194,54 @@ test('N2 plans require actual reads and reject changed object snapshots before a
   } finally { f.db.close(); }
 });
 
-test('N2 Codex reasoning transport drives real host queries in both interpretation and planning', async () => {
+test('N2 Codex reasoning transport drives host queries for whole-goal interpretation and bound-action planning', async () => {
   const prompts: string[] = [];
   const model = { runStructured: async (prompt: string) => {
     prompts.push(prompt);
-    const packet = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!));
-    const parts = [packet.task, ...prompt.split('\n\n').flatMap(part => { try { return [JSON.parse(part)]; } catch { return []; } })].filter(Boolean);
-    const request = parts.find(p => p?.originalGoal) ?? parts.find(p => p?.request)?.request;
-    const output = !packet.conversation.length ? { kind: 'read', calls: [
-      { tool: 'describe_ontology', argumentsJson: JSON.stringify({ search: 'ServiceRequest', limit: 1 }) },
-      { tool: 'query_ontology', argumentsJson: JSON.stringify({ type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: request.id }] }) },
-    ], finalJson: '' } : { kind: 'final', calls: [], finalJson: packet.finalSchema.properties.requirementsJson
-      ? JSON.stringify(interpretation(request))
-      : JSON.stringify(proposal(parts.find(p => p?.resolution && p?.capability) as PlanningContext)) };
+    const packet = JSON.parse(prompt.split('\n\n').at(-1)!) as { request?: ServiceRequest; conversation: { result: unknown; receipt: { id: string } }[]; finalSchema: { properties: Record<string, unknown> } };
+    assert.equal(packet.request, undefined, 'Task facts must arrive through an actual Ontology read');
+    const context = (packet.conversation[0]?.result as { data: TaskContextPayload } | undefined)?.data;
+    let output: unknown;
+    if (!context) output = { kind: 'read', calls: [{ tool: 'read_task_context', argumentsJson: '{}' }], receiptIds: [], finalJson: '' };
+    else if (packet.finalSchema.properties.criteriaJson) output = { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: JSON.stringify({ kind: 'compose', requestRevision: context.request.revision, message: 'Keep the task brief as its only requested artifact', requirementsJson: '[]', conditionsJson: '[]', criteriaJson: JSON.stringify([{ id: 'brief', predicate: 'brief.json', phase: 'artifact', description: 'An actual brief, with underlying execution not started', messageId: context.request.messages[0]!.id, quote: context.request.originalGoal, requirementIds: [] }]) }) };
+    else if (packet.conversation.length === 1) output = { kind: 'read', calls: [{ tool: 'discover_actions', argumentsJson: JSON.stringify({ actionId: 'PrepareTaskBrief' }) }], receiptIds: [], finalJson: '' };
+    else {
+      const pin = (packet.conversation[1]!.result as ActionDiscoveryPage).items[0]!.bindings[0]!.pin;
+      const base: AgentDecision = { kind: 'execute', requestRevision: context.request.revision, message: 'Synthetic transport selects a current exact action', steps: [], completionJson: '' };
+      const component = context.execution?.composition?.components[0], result = context.graph.objects.find(value => value.ref.type === 'TaskBrief');
+      const decision: AgentDecision = !component ? { ...base, kind: 'prepare', contexts: [{ id: 'brief', bindingDigest: pin.digest, inputJson: JSON.stringify({ goal: context.request.originalGoal, deliverable: context.request.requestedDeliverable }) }] }
+        : result ? { ...base, kind: 'complete', completionJson: JSON.stringify({ components: [{ contextId: 'brief', proposalJson: JSON.stringify({ result: result.ref }) }], criteria: [{ id: 'brief', contextIds: ['brief'] }], conditions: [] }) }
+        : { ...base, steps: [{ id: 'brief', action: 'PrepareTaskBrief', contextId: 'brief', bindingDigest: pin.digest, argumentsJson: JSON.stringify({ scope: component.scope }), dependsOn: [], inputRefs: [], contributesTo: ['brief'] }] };
+      output = { kind: 'final', calls: [], receiptIds: packet.conversation.map(turn => turn.receipt.id), finalJson: JSON.stringify(decision) };
+    }
     return { output, evidence: evidence() };
   } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(createExecutionCatalog(), new CodexReasoner(scriptedMcpModel(model)));
   try {
-    b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
-    assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
+    const submitted = b.submit({ deliverable: 'Record acceptance requirements' });
+    for (let i = 0; i < 6 && ['working', 'submitted'].includes(b.store.get(owner, submitted.id).state); i++) await b.run();
+    const done = b.store.get(owner, submitted.id);
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+    assert(done.runs!.length < prompts.length); assert(prompts.length >= 8);
+    assert(done.runs!.every(run => run.ontologyMcp?.decisionSubmitted && run.nativeMcpCalls?.some(call => call.tool === 'submit_decision')));
     assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
-    assert.equal(done.delegation!.groundingDecisions!.length, 1);
-    assert.equal(done.delegation!.ontologyReads!.length, 4); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 2);
-    assert.equal(done.delegation!.plan!.version, '7');
-    assert(prompts.some(p => p.includes('propertiesDigest')) === false, 'Internal snapshot hashes need not be shown as business data');
+    assert.equal(done.delegation!.groundingDecisions!.length, 1); assert.equal(done.delegation!.plan, undefined);
+    const plan = done.delegation!.agent!.plans[0]!; assert.equal(plan.version, '3');
+    assert(plan.steps[0]!.binding); assert(plan.ontologyPlanning.reads.some(read => read.tool === 'discover_actions' && read.status === 'ok'));
+    assert(done.delegation!.ontologyReads!.filter(read => read.tool === 'read_task_context').every(read => read.status === 'ok'));
   } finally { b.store.close(); }
 });
 
-test('N2 read loop rejects a final answer without reads and honors its model-turn budget', async () => {
+test('native reasoning rejects an unsupported final decision and enforces the Ontology read budget', async () => {
   const f = fixture();
   try {
     await assert.rejects(reasonWithOntology({ runStructured: async () => ({ output: { kind: 'final', calls: [], finalJson: '{}' }, evidence: evidence() }) }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}), /skipped required/);
     let calls = 0;
-    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), /turn limit/);
-    assert.equal(calls, 1);
+    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), /limit/);
+    assert.equal(calls, 21); assert.equal(f.session.receipts().length, 20);
+    calls = 0;
+    await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; throw new Error('must not start'); } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 0));
+    assert.equal(calls, 0);
   } finally { f.db.close(); }
 });
 
@@ -264,9 +298,9 @@ test('N2 cancellation fences model responses and prevents the next read or dispa
   let started!: () => void, release!: () => void;
   const entered = new Promise<void>(r => { started = r; }), waiting = new Promise<void>(r => { release = r; });
   const model = { runStructured: async () => { started(); await waiting; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(scriptedMcpModel(model)));
   try {
-    const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss/);
+    const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss|claim is no longer active/);
     await entered; b.tasks.cancel(principal, job.id); release(); await rejected;
     const canceled = b.store.get(owner, job.id); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.artifact, undefined); assert.equal(canceled.delegation!.ontologyReads, undefined);
   } finally { release(); b.store.close(); }

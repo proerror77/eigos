@@ -48,7 +48,12 @@ export class HttpCommerceSandboxConnector implements CommerceSandboxConnector {
     // Local simulators restart between isolated runs. Do not retain a pooled
     // socket to a prior process that happened to own the same loopback port.
     const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', connection: 'close', 'x-eigos-context': Buffer.from(JSON.stringify(context)).toString('base64url') };
-    signal.throwIfAborted(); const startedAt = new Date().toISOString();
+    signal.throwIfAborted();
+    if (!recovery && commerceActionMetadata[action as CommerceJourneyAction]?.effect !== 'read') {
+      if (!ctx.assertDispatchAllowed) throw new DomainError('FORBIDDEN', 'Commerce write requires its current dispatch authority');
+      ctx.assertDispatchAllowed();
+    }
+    const startedAt = new Date().toISOString();
     const response = await this.fetcher(`${this.origin}${path}`, { method, headers, ...(requestBody ? { body: requestBody } : {}), redirect: 'manual', signal });
     if (response.status >= 300 && response.status < 400 || !response.headers.get('content-type')?.includes('application/json') || Number(response.headers.get('content-length') ?? 0) > 524288) throw new AgentReadError('Sandbox response is redirected, non-JSON or oversized');
     const reader = response.body?.getReader(); if (!reader) throw new AgentReadError('Sandbox response has no body');
