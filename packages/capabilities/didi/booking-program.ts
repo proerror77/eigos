@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
 import type { AgentProgramContext, AgentActionContext, AgentActionResult } from '../../core/agent-program.js';
+import { objectResultProjection } from '../../core/composed-actions.js';
+import type { AcceptedPortValue } from '../../ontology/composition-contract.js';
 import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import type { ServiceRequest } from '../../ontology/execution.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
@@ -142,6 +144,21 @@ export class DidiBookingProgram extends DidiAgentProgram {
     const s = checkedRideOrder(result.value), expected = this.result(ctx, action, input, s.source).value as RideOrderSnapshot;
     if (!same(s, expected) || !same(result.evidenceRefs, [s.id])) fail('DiDi order result does not bind this exact accepted attempt');
     return projectRideOrder(ctx.graph, ctx.owner, s);
+  }
+  override projectOutputs(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {
+    if (object.type !== 'DidiOrderObservation') return super.projectOutputs(ctx, action, input, result, object);
+    const snapshot = checkedRideOrder(ctx.graph.read(ctx.owner, object).properties.snapshot);
+    return objectResultProjection(object, {
+      origin: snapshot.evidenceKind === 'fixture' ? 'synthetic' : 'provider', refs: result.evidenceRefs,
+      observedAt: snapshot.observedAt, expiresAt: new Date(Date.parse(snapshot.observedAt) + 300000).toISOString(),
+    }, true, true);
+  }
+  override validateOutput(ctx: AgentProgramContext, output: AcceptedPortValue) {
+    const refs = output.definition.cardinality === 'many' ? output.value as ObjectRef[] : [output.value as ObjectRef];
+    for (const ref of refs) {
+      if (ref.type === 'DidiOrderObservation') this.order(ctx, ref);
+      else this.observation(ctx, ref);
+    }
   }
   override complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     const completion = rideBookingCompletionSchema.parse(proposal), s = this.order(ctx, completion.order), query = { function: 'didiOrderStatus', object: completion.order }, status = ctx.graph.evaluate(ctx.owner, query);
