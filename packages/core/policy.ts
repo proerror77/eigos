@@ -20,7 +20,7 @@ export function checkDispatchPermit(store: JobStore, owner: string, plan: Execut
   if (intent.effect === 'local' || intent.effect === 'read') return;
   if (intent.effect === 'object_write') throw new DomainError('FORBIDDEN', 'Managed data writes require the exact object-write runtime and scope');
   if (!allowSandbox || !isActionAdapter(adapter) || adapter.environment !== 'sandbox' || store.get(owner, intent.jobId).delegation?.request.executionEnvironment !== 'sandbox') throw new DomainError('FORBIDDEN', 'Real business side effects are disabled; only explicitly requested and configured sandbox actions may dispatch');
-  const grant = store.grants(owner, intent.jobId).find((g): g is FinancialPlanGrant => g.kind !== 'object_write' && !g.revoked && g.planDigest === plan.digest && g.environment === 'sandbox' && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => sameRef(r, step.bindingRef)) && requiredEffects(step).every(e => g.allowedEffects.includes(e)));
+  const grant = store.grants(owner, intent.jobId).find((g): g is FinancialPlanGrant => (g.kind === undefined || g.kind === 'financial') && !g.revoked && g.planDigest === plan.digest && g.environment === 'sandbox' && Date.parse(g.expiresAt) > now && g.bindingRefs.some(r => sameRef(r, step.bindingRef)) && requiredEffects(step).every(e => g.allowedEffects.includes(e)));
   if (!grant || (step.cost && (!grant.payeeIds.includes(step.cost.payeeId) || grant.maxAmount.currency !== step.cost.currency))) throw new DomainError('FORBIDDEN', 'No current owner-bound permit for this exact action and payee');
   if (step.cost && BigInt(step.cost.minor) > BigInt(grant.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Action amount exceeds the exact permit');
   return grant;

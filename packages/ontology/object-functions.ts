@@ -3,6 +3,7 @@ import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateRideOrder } from './ride-booking-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
+import { evaluateShopCheckoutFunction } from './shopify-checkout-functions.js';
 import { productAttributeFunctionSchemas } from './product-attributes.js';
 import { evaluateProductAttributeFunction } from './product-attribute-functions.js';
 import { identityFunctionSchemas } from './identity-model.js';
@@ -32,6 +33,7 @@ export const functionCallSchema = z.union([
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('registrationStatus'),
+  simple('shopifyCheckoutObservationStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
@@ -77,6 +79,8 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   if (rideResult) return rideResult;
   const orderResult = evaluateRideOrder(store, owner, input, budget);
   if (orderResult) return orderResult;
+  const shopCheckoutResult = evaluateShopCheckoutFunction(store, owner, input, budget);
+  if (shopCheckoutResult) return shopCheckoutResult;
   const productResult = evaluateProductAttributeFunction(store, owner, input, budget);
   if (productResult) return productResult;
   const identityResult = evaluateIdentityFunction(store, owner, input, budget);

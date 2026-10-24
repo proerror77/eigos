@@ -1,7 +1,0 @@
-{"at":"2026-10-15T08:19:14.079Z","path":"/mcp","method":"initialize","requestId":0,"httpStatus":200}
-{"at":"2026-10-15T08:19:14.091Z","path":"/mcp","method":"notifications/initialized","httpStatus":202}
-{"at":"2026-10-15T08:19:14.102Z","path":"/mcp","method":"tools/list","requestId":1,"httpStatus":200}
-{"at":"2026-10-15T08:19:26.231Z","path":"/mcp","method":"tools/call","requestId":2,"httpStatus":200}
-{"at":"2026-10-15T08:19:48.421Z","path":"/a2a","method":"SendMessage","requestId":"50f8b525-6d91-4a01-bb50-3c1f50740cf3","messageId":"repair-create-20261015-1","httpStatus":200}
-{"at":"2026-10-15T08:19:54.179Z","path":"/mcp","method":"tools/call","requestId":3,"httpStatus":200}
-{"at":"2026-10-15T08:20:00.885Z","path":"/a2a","method":"GetTask","requestId":"51556c8a-2471-45e9-b4fe-98ad28fd0274","taskId":"ea9f349d-7dbc-4a39-8e56-135eb349aafa","httpStatus":200}

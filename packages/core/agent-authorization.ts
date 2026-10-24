@@ -6,8 +6,9 @@ import type { AgentActionPlan } from '../ontology/agent-actions.js';
 import type { ActionDefinition } from '../ontology/model.js';
 import type { AgentProgram, AgentProgramContext } from './agent-program.js';
 import { stepBindingRef, stepInputDigest } from './composed-actions.js';
-import { authorizationPresentationSchema, actionBudgetImpactSchema, objectWriteScopeSchema, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
+import { authorizationPresentationSchema, actionBudgetImpactSchema, objectWriteScopeSchema, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ExternalDraftPlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
 import { assertGoalEffects } from './goal-contract.js';
+import { externalDraftScopeSchema, type ExternalDraftScope } from '../ontology/external-draft.js';
 
 export function agentOperation(definition: ActionDefinition) {
   if (definition.implementation?.kind === 'declarative') return { version: '1' as const, effect: 'object_write' as const, environment: 'managed' as const, inputSchema: definition.inputSchema, resultType: definition.resultTypes?.[0] ?? 'ServiceRequest' };
@@ -37,11 +38,15 @@ export function agentPlanAuthorization(plan: AgentActionPlan): PlanAuthorization
   const writes = plan.steps.filter(s => !['read', 'local'].includes(s.effect));
   if (writes.length !== 1) throw new DomainError('FORBIDDEN', 'An execution frontier must contain exactly one accurately bounded write');
   const step = writes[0]!;
+  if (step.effect === 'external_draft') {
+    if (!step.externalDraft || step.cost || step.budgetImpact || step.objectWrite || step.additionalEffects?.length || !step.operationScope) throw new DomainError('FORBIDDEN', 'External drafts require one exact nonfinancial source scope');
+    return { kind: 'external_draft', planDigest: plan.digest, effects: ['external_draft'], draft: externalDraftScopeSchema.parse(step.externalDraft), environment: 'live', realOperationsAllowed: true, orderAllowed: false, paymentAllowed: false };
+  }
   if (step.effect === 'object_write') {
-    if (!step.objectWrite || step.cost || step.budgetImpact || step.additionalEffects?.length) throw new DomainError('FORBIDDEN', 'Managed writes require an exact nonfinancial scope');
+    if (!step.objectWrite || step.cost || step.budgetImpact || step.externalDraft || step.additionalEffects?.length) throw new DomainError('FORBIDDEN', 'Managed writes require an exact nonfinancial scope');
     return { kind: 'object_write', planDigest: plan.digest, effects: ['object_write'], objectWrite: objectWriteScopeSchema.parse(step.objectWrite), environment: 'managed', realOperationsAllowed: false } satisfies ObjectWriteAuthorizationRequest;
   }
-  if (!step.cost || step.objectWrite) throw new DomainError('FORBIDDEN', 'A sandbox frontier must contain exactly one fully priced business operation');
+  if (!step.cost || step.objectWrite || step.externalDraft) throw new DomainError('FORBIDDEN', 'A sandbox frontier must contain exactly one fully priced business operation');
   const environment = plan.environment ?? 'sandbox';
   if (environment === 'live_free' && (step.effect !== 'reserve' || step.additionalEffects?.length || step.cost.minor !== '0')) throw new DomainError('FORBIDDEN', 'Live permits are limited to one zero-charge reservation');
   return { planDigest: plan.digest, effects: [...new Set([step.effect, ...(step.additionalEffects ?? [])])], maxAmount: { minor: step.cost!.minor, currency: step.cost!.currency }, payeeIds: [step.cost!.payeeId], environment, realOperationsAllowed: environment === 'live_free',
@@ -60,6 +65,7 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
   if (ctx.state.composition) assertGoalEffects(ctx.state.composition.goal, [step.effect, ...(step.additionalEffects ?? [])]);
   if (op.effect !== step.effect || digest('additionalEffects' in op ? op.additionalEffects ?? [] : []) !== digest(step.additionalEffects ?? [])) throw new DomainError('CONFLICT', 'Declared business effects changed');
   if (step.effect === 'read' || step.effect === 'local') {
+    if (step.externalDraft) throw new DomainError('FORBIDDEN', 'Read and local actions cannot carry external draft authority');
     const expected = program.simulatedApproval?.(ctx, step.action, step.input);
     if (digest(expected ?? null) !== digest(step.simulatedApproval ?? null)) throw new DomainError('CONFLICT', 'Local simulation terms changed');
     if (expected) {
@@ -73,8 +79,18 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
     }
     return;
   }
+  if (step.effect === 'external_draft') {
+    if (!program.authority || !step.externalDraft || step.cost || step.budgetImpact || step.objectWrite || step.additionalEffects?.length
+      || step.inputRefs.length || step.acceptedInputs?.length || !step.operationScope || ctx.request.executionEnvironment === 'sandbox'
+      || program.capability().environment !== 'live' || !('environment' in op) || op.environment !== 'live') throw new DomainError('FORBIDDEN', 'External draft authority is restricted to one bound live nonfinancial operation');
+    program.validate(ctx, step.action, step.input);
+    const current = program.authority(ctx, step.action, step.input);
+    if (!current.externalDraft || current.cost || current.objectWrite || current.budgetImpact || current.operationScope !== step.operationScope
+      || digest(externalDraftScopeSchema.parse(current.externalDraft)) !== digest(step.externalDraft)) throw new DomainError('CONFLICT', 'External draft merchant, items, source or exact operation changed');
+    return;
+  }
   if (step.effect === 'object_write') {
-    if (!program.authority || !step.objectWrite || step.cost || step.additionalEffects?.length || step.inputRefs.length) throw new DomainError('FORBIDDEN', 'Managed write scope must be materialized before approval');
+    if (!program.authority || !step.objectWrite || step.cost || step.externalDraft || step.additionalEffects?.length || step.inputRefs.length) throw new DomainError('FORBIDDEN', 'Managed write scope must be materialized before approval');
     program.validate(ctx, step.action, step.input);
     const authority = program.authority(ctx, step.action, step.input), scope = authority.objectWrite && objectWriteScopeSchema.parse(authority.objectWrite);
     if (!scope || digest(scope) !== digest(step.objectWrite) || authority.operationScope !== step.operationScope
@@ -87,7 +103,7 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
   program.validate(ctx, step.action, step.input);
   const current = program.authority(ctx, step.action, step.input);
   if (liveFree && current.cost?.minor !== '0') throw new DomainError('FORBIDDEN', 'A live free reservation cannot create a financial obligation');
-  if (digest(('confirmation' in current ? current.confirmation : undefined) ?? null) !== digest(step.confirmation ?? null) || !current.cost || current.objectWrite || step.objectWrite || digest(current.cost) !== digest(step.cost) || current.operationScope !== step.operationScope
+  if (digest(('confirmation' in current ? current.confirmation : undefined) ?? null) !== digest(step.confirmation ?? null) || !current.cost || current.objectWrite || current.externalDraft || step.objectWrite || step.externalDraft || digest(current.cost) !== digest(step.cost) || current.operationScope !== step.operationScope
     || digest(current.budgetImpact ?? null) !== digest(step.budgetImpact ?? null)) throw new DomainError('CONFLICT', 'Payee, amount, budget commitment or business operation scope changed');
 }
 export function hasSimulationApproval(job: Job, plan: AgentActionPlan) {
@@ -96,7 +112,7 @@ export function hasSimulationApproval(job: Job, plan: AgentActionPlan) {
 }
 export function createAgentSandboxGrant(owner: string, jobId: string, plan: AgentActionPlan, permit: { allowedEffects: EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[]; expiresAt: string; planDigest: string; environment?: 'sandbox' | 'live_free' }) : FinancialPlanGrant {
   const required = agentPlanAuthorization(plan);
-  if (required.environment === 'managed' || (permit.environment ?? 'sandbox') !== required.environment || permit.planDigest !== plan.digest || !Number.isFinite(Date.parse(permit.expiresAt)) || Date.parse(permit.expiresAt) <= Date.now()
+  if (required.kind === 'object_write' || required.kind === 'external_draft' || (permit.environment ?? 'sandbox') !== required.environment || permit.planDigest !== plan.digest || !Number.isFinite(Date.parse(permit.expiresAt)) || Date.parse(permit.expiresAt) <= Date.now()
     || permit.allowedEffects.some(e => !required.effects.includes(e)) || permit.payeeIds.some(p => !required.payeeIds.includes(p))
     || permit.maxAmount.currency !== required.maxAmount.currency || BigInt(permit.maxAmount.minor) > BigInt(required.maxAmount.minor)) throw new DomainError('FORBIDDEN', 'Permit exceeds this exact sandbox plan');
   return { id: randomUUID(), owner, jobId, planDigest: plan.digest, bindingRefs: plan.steps.filter(step => !['read', 'local'].includes(step.effect)).map(step => stepBindingRef(plan, step)), allowedEffects: permit.allowedEffects, maxAmount: permit.maxAmount, payeeIds: permit.payeeIds, expiresAt: permit.expiresAt, revoked: false, environment: required.environment, approvedAt: new Date().toISOString(), ...(required.budgetImpact ? { budgetImpact: required.budgetImpact } : {}) };
@@ -107,11 +123,20 @@ export function createAgentObjectWriteGrant(owner: string, jobId: string, plan: 
     || digest(objectWriteScopeSchema.parse(permit.objectWrite)) !== digest(required.objectWrite)) throw new DomainError('FORBIDDEN', 'Permit differs from the exact managed write preview');
   return { kind: 'object_write', id: randomUUID(), owner, jobId, planDigest: plan.digest, bindingRefs: plan.steps.filter(step => step.effect === 'object_write').map(step => stepBindingRef(plan, step)), allowedEffects: ['object_write'], objectWrite: structuredClone(required.objectWrite), expiresAt: permit.expiresAt, revoked: false, environment: 'managed', approvedAt: new Date().toISOString() };
 }
+export function createAgentExternalDraftGrant(owner: string, jobId: string, plan: AgentActionPlan, permit: { planDigest: string; draft: ExternalDraftScope; expiresAt: string }): ExternalDraftPlanGrant {
+  const required = agentPlanAuthorization(plan);
+  if (required.kind !== 'external_draft' || permit.planDigest !== plan.digest || !Number.isFinite(Date.parse(permit.expiresAt)) || Date.parse(permit.expiresAt) <= Date.now()
+    || Date.parse(permit.expiresAt) > Date.parse(required.draft.sourceExpiresAt)
+    || digest(externalDraftScopeSchema.parse(permit.draft)) !== digest(required.draft)) throw new DomainError('FORBIDDEN', 'Permit differs from the exact unpaid checkout preview');
+  return { kind: 'external_draft', id: randomUUID(), owner, jobId, planDigest: plan.digest, bindingRefs: plan.steps.filter(step => step.effect === 'external_draft').map(step => stepBindingRef(plan, step)),
+    allowedEffects: ['external_draft'], draft: structuredClone(required.draft), expiresAt: permit.expiresAt, revoked: false, environment: 'live', approvedAt: new Date().toISOString() };
+}
 export function agentDispatchGrant(store: JobStore, owner: string, jobId: string, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], now = Date.now()) {
   const required = [step.effect, ...(step.additionalEffects ?? [])];
   return store.grants(owner, jobId).find(g => {
     if (g.revoked || g.owner !== owner || g.jobId !== jobId || g.planDigest !== plan.digest || Date.parse(g.expiresAt) <= now || !g.bindingRefs.some(r => digest(r) === digest(stepBindingRef(plan, step))) || !required.every(e => g.allowedEffects.includes(e))) return false;
     if (step.effect === 'object_write') return g.kind === 'object_write' && g.environment === 'managed' && g.allowedEffects.length === 1 && g.allowedEffects[0] === 'object_write' && !!step.objectWrite && !step.cost && !step.additionalEffects?.length && digest(g.objectWrite) === digest(step.objectWrite);
-    return g.kind !== 'object_write' && g.environment === (plan.environment ?? 'sandbox') && !!step.cost && g.payeeIds.includes(step.cost.payeeId) && g.maxAmount.currency === step.cost.currency && BigInt(g.maxAmount.minor) >= BigInt(step.cost.minor) && digest(g.budgetImpact ?? null) === digest(step.budgetImpact ?? null);
+    if (step.effect === 'external_draft') return g.kind === 'external_draft' && g.environment === 'live' && g.allowedEffects.length === 1 && g.allowedEffects[0] === 'external_draft' && !!step.externalDraft && !step.cost && !step.additionalEffects?.length && digest(g.draft) === digest(step.externalDraft);
+    return (g.kind === undefined || g.kind === 'financial') && g.environment === (plan.environment ?? 'sandbox') && !!step.cost && g.payeeIds.includes(step.cost.payeeId) && g.maxAmount.currency === step.cost.currency && BigInt(g.maxAmount.minor) >= BigInt(step.cost.minor) && digest(g.budgetImpact ?? null) === digest(step.budgetImpact ?? null);
   });
 }

@@ -75,7 +75,7 @@ export interface ActionDefinition {
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
   read?: { version: string; effect: 'read'; inputSchema: object; resultType: string; mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string } } };
-  operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'local' | 'live_free'; inputSchema: object; resultType: string };
+  operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'local' | 'live_free' | 'live'; inputSchema: object; resultType: string };
   inputSchema?: Record<string, unknown>;
   implementation?: ActionImplementation;
   composition?: import('./composition-contract.js').ActionCompositionContract;
@@ -190,7 +190,7 @@ export class OntologyModel {
     for (const a of this.actions) {
       nameSchema.parse(a.id);
       if (a.version !== undefined && !a.version.trim()) invalid('Invalid action version');
-      if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)))) invalid('Invalid declared action effects');
+      if (a.effects && (!a.effects.length || a.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)))) invalid('Invalid declared action effects');
       if (a.resultTypes?.some(type => !this.hasType(type))) invalid('Unknown declared action result type');
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
@@ -200,7 +200,15 @@ export class OntologyModel {
         for (const dep of a.read.mcp.requires) if ((dep.action ? this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
         if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
       }
-      if (a.operation && (a.read || !['sandbox', 'local', 'live_free'].includes(a.operation.environment) || a.operation.environment === 'local' && a.operation.effect !== 'local' || a.operation.environment === 'live_free' && (!['reserve', 'local'].includes(a.operation.effect) || !!a.operation.additionalEffects?.length) || !['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(a.operation.effect) || a.operation.effect === 'local' && !!a.operation.additionalEffects?.length || !a.operation.version || !this.objects.has(a.operation.resultType) || !a.operation.inputSchema || typeof a.operation.inputSchema !== 'object')) invalid('Invalid bounded operation definition');
+      if (a.operation) {
+        const op = a.operation;
+        const environmentAllowed = op.environment === 'sandbox' && op.effect !== 'external_draft'
+          || op.environment === 'live_free' && ['reserve', 'local'].includes(op.effect) && !op.additionalEffects?.length
+          || op.environment === 'local' && op.effect === 'local'
+          || op.environment === 'live' && op.effect === 'external_draft' && !op.additionalEffects?.length && a.effects?.length === 1 && a.effects[0] === 'external_draft';
+        if (a.read || !environmentAllowed || !['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(op.effect)
+          || op.effect === 'local' && !!op.additionalEffects?.length || !op.version || !this.objects.has(op.resultType) || !op.inputSchema || typeof op.inputSchema !== 'object') invalid('Invalid local, sandbox or nonfinancial draft operation definition');
+      }
       for (const path of a.changes) {
         const [type, field, extra] = path.split('.');
         if (!type || !this.objects.has(type) || extra || field && (!Object.hasOwn(this.properties(type), field) && !this.sides(type).some(s => s.side.name === field))) invalid('Unresolved action change path');
@@ -209,7 +217,7 @@ export class OntologyModel {
     }
     for (const id of this.interfaces.keys()) for (const constraint of this.interfaceActions(id)) {
       nameSchema.parse(constraint.id);
-      if (!Object.keys(constraint.inputs).length || Object.entries(constraint.inputs).some(([name, type]) => !nameSchema.safeParse(name).success || !this.hasType(type)) || !constraint.effects.length || constraint.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'].includes(effect)) || constraint.resultTypes?.some(type => !this.hasType(type))) invalid('Invalid interface action constraint');
+      if (!Object.keys(constraint.inputs).length || Object.entries(constraint.inputs).some(([name, type]) => !nameSchema.safeParse(name).success || !this.hasType(type)) || !constraint.effects.length || constraint.effects.some(effect => !['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'].includes(effect)) || constraint.resultTypes?.some(type => !this.hasType(type))) invalid('Invalid interface action constraint');
     }
     for (const item of definition.objects) for (const implementation of item.interfaces ?? []) {
       const constraints = this.interfaceActions(implementation.id);

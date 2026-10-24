@@ -114,9 +114,10 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
     const permittedActions = steps.filter(step => [step.effect, ...(step.additionalEffects ?? [])].every(effect => (grant.allowedEffects as readonly import('./actions.js').EffectClass[]).includes(effect))
       && grant.bindingRefs.some(binding => digest(binding) === digest(step.bindingRef))
       && (grant.kind === 'object_write' ? step.effect === 'object_write' && 'objectWrite' in step && digest(step.objectWrite) === digest(grant.objectWrite)
+        : grant.kind === 'external_draft' ? step.effect === 'external_draft' && 'externalDraft' in step && digest(step.externalDraft) === digest(grant.draft)
         : !step.cost || grant.payeeIds.includes(step.cost.payeeId) && step.cost.currency === grant.maxAmount.currency && BigInt(step.cost.minor) <= BigInt(grant.maxAmount.minor))).map(step => step.actionId);
     write(graph, owner, ref, { actor: party.id, allowedActions: [...new Set(permittedActions)],
-      dataScope: [job.id], ...(grant.kind === 'object_write' ? { objectWriteScope: grant.objectWrite } : { limits: grant.maxAmount, payeeIds: grant.payeeIds, ...(grant.budgetImpact ? { budgetImpact: grant.budgetImpact } : {}) }), expiresAt: grant.expiresAt, revoked: grant.revoked,
+      dataScope: [job.id], ...(grant.kind === 'object_write' ? { objectWriteScope: grant.objectWrite } : grant.kind === 'external_draft' ? { externalDraftScope: grant.draft } : { limits: grant.maxAmount, payeeIds: grant.payeeIds, ...(grant.budgetImpact ? { budgetImpact: grant.budgetImpact } : {}) }), expiresAt: grant.expiresAt, revoked: grant.revoked,
       kind: 'plan_grant', ledgerDigest: digest(grant), planDigest: grant.planDigest, approvedAt: grant.approvedAt,
       ...(grant.revokedAt ? { revokedAt: grant.revokedAt } : {}), environment: grant.environment, allowedEffects: grant.allowedEffects, bindingRefs: grant.bindingRefs },
     [edge('AuthorizationProposal', ref, proposal), edge('AuthorizationRequest', ref, request), edge('AuthorizationActor', ref, party), edge('AuthorizationPlan', ref, executionPlanRef(plan)),

@@ -1,3 +1,4 @@
+import { CURRENT_KERNEL_VERSION } from '../packages/ontology/seed-definition.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -62,7 +63,7 @@ test('seed validators preserve refinements, normalization and old effect restric
   assert.deepEqual(model.properties('HotelRequest').cancellation!.schema.parse({ policyRef: '  stated-policy  ', kind: 'unknown' }), { policyRef: 'stated-policy', kind: 'unknown' });
   assert.equal(model.properties('Venue').timeZone!.schema.safeParse('Asia/Shanghai').success, true);
   const current = createCurrentKernelDefinition(seed.registry);
-  assert.equal(current.document.version, '18');
+  assert.equal(current.document.version, CURRENT_KERNEL_VERSION);
   assert.equal(compileOntologyDocument(current.document, current.registry).properties('RegisteredActionType').effect!.schema.safeParse('object_write').success, true);
   assert.deepEqual(compileOntologyDocument(seed.document, current.registry).ref, LEGACY_SEED_MODEL_REF, 'Registering current code never relabels the original release');
 });

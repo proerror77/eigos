@@ -29,7 +29,7 @@ test('A2A participant submission, exact authorization and MCP confirmation share
     const sent = await rpc('SendMessage', { configuration: { returnImmediately: true }, message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: { service: 'eigos.delegate', goal: '合成验证免费报名并取得确认，不付款。', executionEnvironment: 'sandbox' } }] } });
     assert(!sent.error); const id = sent.result.task.id;
     const ready = await wait(id, 'auth-required'), grant = ready.delegation!.authorizationRequest!;
-    assert(grant.environment !== 'managed');
+    assert(grant.environment === 'sandbox');
     assert.equal(grant.maxAmount.minor, '0'); assert.deepEqual(grant.effects, ['reserve']);
     const approved = await fetch(base + `/tasks/${id}/authorize`, { method: 'POST', headers, body: JSON.stringify({ action: 'approve_plan', requestId: randomUUID(), planDigest: grant.planDigest, allowedEffects: grant.effects, maxAmount: grant.maxAmount, payeeIds: grant.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }) }); assert.equal(approved.status, 200);
     const done = await wait(id, 'completed'), a2a = (await rpc('GetTask', { id })).result;

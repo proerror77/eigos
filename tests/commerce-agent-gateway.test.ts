@@ -42,7 +42,9 @@ test('Existing PA client submits a sandbox task, approves its exact Agent plan a
 });
 
 test('Authenticated MCP exposes request-bound customs references and the exact synthetic gate used by the Agent', { timeout: 180000 }, async () => {
-  const t = await setupCommerce({ target: 'quote' }), server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  // This fixture shares an event loop with the Worker. Slow synchronous turns
+  // can outlast HTTP's idle timer; teardown still closes every connection.
+  const t = await setupCommerce({ target: 'quote' }), server = createServer({ keepAliveTimeout: 0 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`, token = 'customs-readonly-gateway-test'.repeat(2);
   const gateway = createApp(readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: token, PUBLIC_URL: base, DATABASE_PATH: ':memory:', EIGOS_ACTION_SANDBOX: 'true' }), undefined, store => createExecutionCatalog({ store, commerceSandbox: t.settings }));
   server.on('request', gateway.app);

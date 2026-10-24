@@ -24,7 +24,7 @@ export const DELIVERY_REQUEST_CAPABILITY: ServiceCapability = {
 };
 export const DELIVERY_REQUEST_BINDING: ProviderBinding = { ref: { id: 'meituan:delivery.quote', version: '2' }, capabilityRef: DELIVERY_REQUEST_CAPABILITY.ref,
   providerId: 'meituan-paotui', channelId: 'meituan', adapterId: 'meituan:delivery.quote.request', protocol: 'mcp', enabled: true,
-  verification: { level: 'read_only_probe', evidenceRefs: ['docs/meituan-paotui-integration.md'] }, recovery: { idempotency: 'none', lookup: false } };
+  verification: { level: 'read_only_probe', evidenceRefs: ['docs/integrations/meituan.md'] }, recovery: { idempotency: 'none', lookup: false } };
 const addressSchema = z.object({ addressId: z.union([z.string(), z.number()]).transform(String), address: z.string().min(1).max(300), houseNumber: z.string().max(200).optional(), cityId: z.union([z.string(), z.number()]).transform(String), tag: z.unknown().optional() });
 type Address = z.infer<typeof addressSchema>;
 type Choices = { generation: number; addresses: Address[]; observedAt: string; presentedRevision?: number; presentedMessageCount?: number; receipt?: unknown };

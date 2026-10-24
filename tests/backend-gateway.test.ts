@@ -34,7 +34,7 @@ async function fixture(model: Reasoner = reasoner(r => r.messages.some(m => m.te
   const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, model, gateway.catalog), pollMs: 10 }); worker.start();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' };
   const rpc = async (method: string, params: object) => (await fetch(base + '/a2a', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) })).json();
-  const send = (text: string, taskId?: string, returnImmediately = true) => rpc('SendMessage', { configuration: { returnImmediately }, message: { messageId: randomUUID(), role: 'ROLE_USER', ...(taskId ? { taskId } : {}), parts: [{ text }] } });
+  const send = (text: string, taskId?: string, returnImmediately = true) => rpc('SendMessage', { configuration: { returnImmediately }, message: { messageId: randomUUID(), role: 'ROLE_USER', ...(taskId ? { taskId, metadata: { expectedRevision: gateway.tasks.get(principal, taskId).revision } } : {}), parts: [{ text }] } });
   const wait = async (id: string, state: Job['state']) => { for (let i = 0; i < 400; i++) { const j = gateway.tasks.get(principal, id); if (j.state === state) return j; await pause(10); } assert.fail(JSON.stringify(gateway.tasks.get(principal, id))); };
   const approval = (j: Job) => ({ action: 'confirm_simulated_payment', requestId: 'approve-' + j.id, quoteId: j.delegation!.plan!.quote!.id, quoteDigest: j.delegation!.plan!.quote!.digest });
   const approve = (j: Job, extra = {}) => fetch(base + `/tasks/${j.id}/authorize`, { method: 'POST', headers, body: JSON.stringify({ ...approval(j), ...extra }) });
@@ -46,7 +46,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
   try {
     const first = await f.send('审计 CSV'); const id = first.result.task.id;
     assert.equal(first.result.task.status.state, 'TASK_STATE_SUBMITTED'); await f.wait(id, 'input-required');
-    const reply = { configuration: { returnImmediately: true }, message: { messageId: 'stable-answer', taskId: id, role: 'ROLE_USER', parts: [{ text: 'sample.csv，全部已注册检查' }] } };
+    const reply = { configuration: { returnImmediately: true }, message: { messageId: 'stable-answer', taskId: id, metadata: { expectedRevision: f.gateway.tasks.get(principal, id).revision }, role: 'ROLE_USER', parts: [{ text: 'sample.csv，全部已注册检查' }] } };
     assert(!(await f.rpc('SendMessage', reply)).error); const ready = await f.wait(id, 'auth-required');
     assert(!(await f.rpc('SendMessage', reply)).error); assert((await f.send('yes', id)).error);
     assert.equal((await f.approve(ready, { quoteDigest: '0'.repeat(64) })).status, 409);
@@ -70,7 +70,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
 test('unsupported outcomes and invented capabilities fail without fallback or simulated payment', async () => {
   for (const mode of ['unsupported', 'invented'] as const) {
     const f = await fixture(reasoner(r => ({ ...interpretation(r), ...(mode === 'unsupported' ? { kind: 'unsupported', message: 'No supported coffee purchasing capability.' } : { capabilityRef: { id: 'invented', version: '2' } }) })));
-    try { const response = await f.send('买咖啡'); const j = await f.wait(response.result.task.id, mode === 'unsupported' ? 'rejected' : 'failed'); assert.equal(j.artifact, undefined); assert.equal(j.delegation!.intentId, undefined); }
+    try { const response = await f.send('买咖啡'); const j = await f.wait(response.result.task.id, mode === 'unsupported' ? 'rejected' : 'paused'); assert.equal(j.artifact, undefined); assert.equal(j.delegation!.intentId, undefined); }
     finally { await f.close(); }
   }
 });

@@ -1,7 +1,0 @@
-{
-  "at": "2026-10-15T10:09:06.749594+00:00",
-  "httpStatus": 200,
-  "traceId": "0b44079717920589468416627e1d17",
-  "body": "{\"jsonrpc\":\"2.0\",\"id\":\"a764f95e-181c-4af6-8835-2573a169a550\",\"error\":{\"code\":-50001,\"message\":\"Authorization is required\"}}",
-  "note": "Negative control without credentials; no personal data or funds"
-}

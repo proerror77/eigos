@@ -1,7 +1,0 @@
-{
-  "source": "fresh-generated-test-file",
-  "sha256": "69df841ca9b1e961fc205a75008708f4910e832820c1bdfff85eccada6460622",
-  "byteLength": 5089,
-  "rowCount": 64,
-  "note": "Real file ingestion; payment and fault provider remain simulated"
-}

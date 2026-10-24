@@ -1,7 +1,0 @@
-{
-  "checkedAt": "2026-10-17T00:06:22.507Z",
-  "method": "SIGTERM managed launcher; launchd restarted automatically",
-  "gatewayBefore": 63999,
-  "gatewayAfter": 68782,
-  "healthRestored": true
-}

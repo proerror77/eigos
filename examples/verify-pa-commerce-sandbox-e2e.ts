@@ -109,7 +109,7 @@ try{
       else {assert.equal(typeof raw.error.applied,'boolean');if(raw.error.applied)assert(rows.some(r=>r.intentId===row.intentId&&r.recovery&&r.status===200&&Date.parse(r.receivedAt)>Date.parse(row.receivedAt)),'An applied or uncertain write needs original-operation readback');}
       if(row.recovery)assert(row.path.startsWith('/operations/'));else assert.equal(row.path,`/actions/${step.action}`);
       if(step.effect!=='read'&&!row.recovery){
-        const grant=grants.find(g=>g.kind!=='object_write'&&g.planDigest===plan.digest&&!g.revoked&&g.bindingRefs.some(r=>digest(r)===digest(program.ref))&&[step.effect,...(step.additionalEffects??[])].every(e=>g.allowedEffects.includes(e))&&g.payeeIds.includes(step.cost!.payeeId)&&g.maxAmount.currency===step.cost!.currency&&BigInt(g.maxAmount.minor)>=BigInt(step.cost!.minor)&&Date.parse(g.approvedAt)<=Date.parse(attempt.startedAt)&&Date.parse(g.expiresAt)>Date.parse(attempt.startedAt));assert(grant,'Missing exact pre-dispatch PA authority');
+        const grant=grants.find(g=>g.kind!=='object_write'&&g.kind!=='external_draft'&&g.planDigest===plan.digest&&!g.revoked&&g.bindingRefs.some(r=>digest(r)===digest(program.ref))&&[step.effect,...(step.additionalEffects??[])].every(e=>g.allowedEffects.includes(e))&&g.payeeIds.includes(step.cost!.payeeId)&&g.maxAmount.currency===step.cost!.currency&&BigInt(g.maxAmount.minor)>=BigInt(step.cost!.minor)&&Date.parse(g.approvedAt)<=Date.parse(attempt.startedAt)&&Date.parse(g.expiresAt)>Date.parse(attempt.startedAt));assert(grant,'Missing exact pre-dispatch PA authority');
       }
     }
     const sourceDb=new DatabaseSync(join(sandboxRuntime,'sandbox.sqlite'),{readOnly:true});let sourceAudit:any[];

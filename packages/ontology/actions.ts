@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { objectRefSchema, type ObjectRef } from './model.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 
-export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | 'change' | 'cancel' | 'refund' | 'object_write';
+export type EffectClass = 'local' | 'read' | 'reserve' | 'order' | 'payment' | 'change' | 'cancel' | 'refund' | 'object_write' | 'external_draft';
 const budgetObligationSchema = z.strictObject({
   key: z.string().min(1).max(200), kind: z.enum(['commitment', 'spend']), role: z.enum(['service_total', 'deposit']),
   amount: z.strictObject({ minor: z.string().regex(/^(0|[1-9]\d{0,17})$/), currency: z.string().regex(/^[A-Z]{3}$/) }),
@@ -34,12 +34,18 @@ export const authorizationPresentationSchema = z.strictObject({ title: z.string(
 export type AuthorizationPresentation = z.infer<typeof authorizationPresentationSchema>;
 export interface FinancialAuthorizationRequest {
   confirmation?: AuthorizationPresentation;
+  kind?: 'financial';
   planDigest: string; effects: EffectClass[]; maxAmount: { minor: string; currency: string }; payeeIds: string[];
   environment: 'sandbox' | 'live_free'; realOperationsAllowed: boolean;
   actionBinding?: { actionId: string; ref: Ref; programRef: Ref; configurationDigest: string };
   budgetImpact?: ActionBudgetImpact;
 }
-export type PlanAuthorizationRequest = FinancialAuthorizationRequest | ObjectWriteAuthorizationRequest;
+export interface ExternalDraftAuthorizationRequest {
+  kind: 'external_draft'; planDigest: string; effects: EffectClass[]; draft: import('./external-draft.js').ExternalDraftScope;
+  environment: 'live'; realOperationsAllowed: true; orderAllowed: false; paymentAllowed: false;
+  maxAmount?: never; payeeIds?: never;
+}
+export type PlanAuthorizationRequest = FinancialAuthorizationRequest | ObjectWriteAuthorizationRequest | ExternalDraftAuthorizationRequest;
 export interface InputReference { stepId: string; path: string; targetKey: string }
 export interface PreparedStep {
   id: string; operationId: string; actionTypeRef: Ref; bindingRef?: Ref; capabilityRef?: Ref;
@@ -111,7 +117,11 @@ export interface FinancialPlanGrant extends GrantBase {
 export interface ObjectWritePlanGrant extends GrantBase {
   kind: 'object_write'; objectWrite: ObjectWriteScope; environment: 'managed'; maxAmount?: never; payeeIds?: never;
 }
-export type PlanGrant = FinancialPlanGrant | ObjectWritePlanGrant;
+export interface ExternalDraftPlanGrant extends GrantBase {
+  kind: 'external_draft'; draft: import('./external-draft.js').ExternalDraftScope; environment: 'live';
+  maxAmount?: never; payeeIds?: never;
+}
+export type PlanGrant = FinancialPlanGrant | ObjectWritePlanGrant | ExternalDraftPlanGrant;
 export interface OutcomeAssessment {
   requestId: string; requestRevision: number; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human';
   criterionResults: { requirementId: string; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human'; evidenceRefs: string[] }[];

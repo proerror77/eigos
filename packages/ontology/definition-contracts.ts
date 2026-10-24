@@ -32,7 +32,7 @@ export const definitionKindSchema = z.enum(['object', 'interface', 'link', 'acti
 const text = z.string().min(1).max(5000);
 const schema = z.record(z.string(), z.unknown());
 const names = z.array(nameSchema).max(500);
-const effects = z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(9);
+const effects = z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'])).min(1).max(10);
 const propertySchema = z.strictObject({
   description: text, kind: z.enum(['string', 'integer', 'boolean', 'timestamp', 'decimal', 'struct', 'array']), schema,
   source: text, required: z.boolean().optional(), restricted: z.boolean().optional(), derived: nameSchema.optional(),
@@ -61,7 +61,7 @@ export const serializableActionSchema = z.strictObject({
   changes: z.array(z.string().min(1).max(200)).min(1).max(200), submissionCriteria: z.array(z.string().min(1).max(200)).min(1).max(100),
   providerOperation: z.string().min(1).max(200).optional(),
   read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema, mcp: mcpReadBindingSchema.optional(), module: z.strictObject({ id: ontologyIdSchema, version: versionSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), completion: z.strictObject({ evaluate: nameSchema }) }).optional() }).optional(),
-  operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local', 'live_free']), inputSchema: schema, resultType: nameSchema }).optional(),
+  operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local', 'live_free', 'live']), inputSchema: schema, resultType: nameSchema }).optional(),
   inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(), composition: compositionContractSchema.optional(),
 });
 export const serializableFunctionSchema = z.strictObject({ id: nameSchema, version: versionSchema, inputTypes: names.min(1), description: text, handlerRef: handlerRefSchema.optional() });

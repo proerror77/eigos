@@ -25,11 +25,12 @@ export function createWorker(config: Config, overrides: {
       didi: config.EIGOS_DIDI_KEY_FILE ? { keyFile: config.EIGOS_DIDI_KEY_FILE, keySha256: config.EIGOS_DIDI_KEY_SHA256!, bindingId: config.EIGOS_DIDI_BINDING_ID!, bookingEnabled: config.EIGOS_DIDI_ORDERS_ENABLED === 'mock', environment: config.EIGOS_DIDI_ENVIRONMENT, auditDirectory: config.EIGOS_DIDI_AUDIT_DIR } : undefined,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_AUDIT_DIR } : undefined,
       participantBooking: config.EIGOS_FREE_BOOKING_BRIDGE_URL ? { endpoint: config.EIGOS_FREE_BOOKING_BRIDGE_URL, tokenFile: config.EIGOS_FREE_BOOKING_TOKEN_FILE!, bindingId: config.EIGOS_FREE_BOOKING_BINDING_ID!, attendeeRef: config.EIGOS_FREE_BOOKING_ATTENDEE_SHA256! } : undefined,
+      shopifyCheckout: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS, auditDirectory: config.EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR } : undefined,
       bookingSandbox: config.EIGOS_BOOKING_SANDBOX_URL ? { endpoint: config.EIGOS_BOOKING_SANDBOX_URL, tokenFile: config.EIGOS_BOOKING_SANDBOX_TOKEN_FILE! } : undefined,
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE!, auditDirectory: config.EIGOS_COMMERCE_SANDBOX_AUDIT_DIR } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
     const worker = new Worker(store, { coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
-      { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });
+      { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length, maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });
     worker.start();
     return { worker, close: async () => { await worker.close(); if (!overrides.store) store.close(); } };
   } catch (error) { if (!overrides.store) store.close(); throw error; }

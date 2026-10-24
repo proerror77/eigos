@@ -53,7 +53,7 @@ node scripts/alipay-platform.mjs templates --complete grant
 
 - 支付宝要求扫码、短信/支付密码核身等本人操作。
 - 需要接受有约束力的协议：说明具体协议并取得当次确认，不能用“允许追加权限”代替签约授权。
-- 所需功能没有已核实的 CLI 接口，例如本次资源市场关键词搜索；只把这一部分转网页，完成后继续复用 CLI 会话。
+- 所需功能没有已核实的 CLI 接口；只把这一部分转网页，完成后继续复用 CLI 会话。
 - 需要人工审核、运营开白名单或专项合作准入：先整理已有证据与明确缺项；已有申请/咨询先查状态，不重复提交。
 
 ## 成功与失败的判断
@@ -68,6 +68,5 @@ node scripts/alipay-platform.mjs templates --complete grant
 
 - [Alipay CLI 官方文档](https://opendocs.alipay.com/ai/0k16jg?pathHash=ef356ee4)
 - [官方 onboarding Skill 安装说明](https://opengw.alipay.com/alipaycli/skill/alipay-onboarding/setup)
-- [阿宝外部调用方研究](abao-external-agent-research-2026-10-16.md)
 
 此流程依据 CLI 0.2.0 的实际授权与查询行为制定；操作前仍以本机 help、线上 schema 和当前返回为准。

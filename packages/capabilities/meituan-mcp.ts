@@ -27,7 +27,7 @@ export function createMeituanPrimitiveServer(reader: MeituanPrimitiveReader, rec
   return server;
 }
 
-export class OntologyMeituanMcpReader implements MeituanPrimitiveReader {
+export class MeituanMcpReader implements MeituanPrimitiveReader {
   readonly evidenceKind = 'live_readonly' as const;
   readonly configurationDigest: string;
   constructor(private directory: string, private audit?: string) {
@@ -37,7 +37,7 @@ export class OntologyMeituanMcpReader implements MeituanPrimitiveReader {
   async invoke(tool: string, input: Record<string, unknown>, signal: AbortSignal, context: MeituanReadContext = {}): Promise<MeituanPrimitiveResult> {
     if (!Object.hasOwn(meituanPrimitiveSchemas, tool)) throw new Error('Meituan write or unknown tool is forbidden');
     const parsed = meituanPrimitiveSchemas[tool as keyof typeof meituanPrimitiveSchemas].parse(input);
-    const source = import.meta.url.endsWith('.ts'), script = fileURLToPath(new URL(`../../apps/ontology-mcp/main.${source ? 'ts' : 'js'}`, import.meta.url));
+    const source = import.meta.url.endsWith('.ts'), script = fileURLToPath(new URL(`../../apps/provider-mcp/meituan.${source ? 'ts' : 'js'}`, import.meta.url));
     const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'TMPDIR'].flatMap(k => process.env[k] ? [[k, process.env[k]!]] : []));
     env.EIGOS_PAOTUI_SKILL_DIR = this.directory;
     if (this.audit) env.EIGOS_ONTOLOGY_AUDIT_PATH = this.audit;

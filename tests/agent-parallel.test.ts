@@ -15,6 +15,7 @@ const frontier = (ctx: AgentPlanningContext, access: PlanningAccess) => {
     commerceStep('product', 'ReadCommerceProduct', { scope: ctx.state.scope, merchantId: 'cedar-ca', query: 'coffee' }, ['directory'], [{ stepId: 'directory', targetKey: 'discovery' }]),
   ]);
 };
+// Latches prove dispatch ordering; the wall-clock limit only bounds a stalled test.
 test('Independent reads overlap; a consumer starts when its own dependency settles without waiting for another branch', { timeout: 60000 }, async () => {
   const t = await setupCommerce({ target: 'quote', choice: frontier }), held = latch(), firstRead = latch(), consumer = latch(); let pending: Promise<unknown> | undefined;
   const started: string[] = [];

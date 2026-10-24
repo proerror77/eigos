@@ -1,9 +1,0 @@
-{
-  "capturedBeforeRun": "2026-10-18T14:45:21.295458+00:00",
-  "sha256": {
-    "packages/capabilities/shopify/read-only.ts": "4e71b93678da05fcc3be65e127be2fe74f98ef06fa8108e4082ee2d8985d35f3",
-    "examples/verify-shopify-readonly.ts": "7f09e1e954cc332fe8be13dafa1a59e218b99de41ff61ed7e6f7b57af34fbbbf",
-    "tests/shopify-readonly.test.ts": "a3b93a99e577819cac6ed54b4b421af8c1b0e72cb2aeacf340f826b5ecc3df2d",
-    "package.json": "b4367f29a42f0fec3e7265c49d21c6688a67f04873dcbcfe348e1360ada75fef"
-  }
-}

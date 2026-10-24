@@ -141,7 +141,7 @@ export class Coordinator {
   private resolver: CapabilityResolver;
   private runtime: ActionRuntime;
   private agentRuntime: AgentRuntime;
-  constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, private options: { allowSandbox?: boolean; maxTaskMs?: number } = {}, private inquiryScoped = false) {
+  constructor(private store: JobStore, private reasoner: Reasoner, private catalog: ExecutionCatalog, private options: { allowSandbox?: boolean; allowExternalDrafts?: boolean; maxTaskMs?: number } = {}, private inquiryScoped = false) {
     if (!inquiryScoped) store.setOntologyCatalog(catalog);
     this.resolver = new CapabilityResolver(catalog, (owner, ref, fingerprint) => store.providerEvidenceView(owner, ref, fingerprint)); this.runtime = new ActionRuntime(store, catalog, options);
     this.agentRuntime = new AgentRuntime(store, catalog, reasoner, (claim, signal) => {

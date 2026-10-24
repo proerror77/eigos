@@ -1,9 +1,0 @@
-{
-  "source": "Actual Grok skill-library export on connected Mac",
-  "remotePath": "/home/box/agent-data/workflows/eigos-delegate/SKILL.md",
-  "sha256": "8c73c32ccdf5ab7262811ec896a1949b08dfdd0a6fbc7abfc0e6e68082b9b191",
-  "peerReportedSha256": "8c73c32ccdf5ab7262811ec896a1949b08dfdd0a6fbc7abfc0e6e68082b9b191",
-  "sha256Matches": true,
-  "containsProjectSkillVerbatim": true,
-  "usesUnprotectedMacPaths": true
-}

@@ -51,7 +51,7 @@ export class PaotuiAgentProgram implements AgentProgram {
   validateRequest(request: ServiceRequest) { validatePaotuiRequest(request); }
   listingBinding(): ProviderBinding {
     return { ref: { id: `meituan:${this.ref.id}`, version: this.ref.version }, capabilityRef: this.ref, providerId: 'meituan-paotui', channelId: 'meituan', adapterId: `meituan:${this.ref.id}.agent`, protocol: 'mcp', enabled: true, configurationDigest: this.configurationDigest,
-      verification: { level: 'read_only_probe', evidenceRefs: ['docs/meituan-paotui-integration.md'] }, recovery: { idempotency: 'none', lookup: false } };
+      verification: { level: 'read_only_probe', evidenceRefs: ['docs/integrations/meituan.md'] }, recovery: { idempotency: 'none', lookup: false } };
   }
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: 'paotui.agent.actions', version: '2' }, name: this.kind === 'quote' ? 'Agent 本人地址查价' : 'Agent 本人地址簿查询', environment: this.options.connector ? 'sandbox' : 'live', completion: 'artifact', tags: ['meituan', 'read-only', 'agent'],

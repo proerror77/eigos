@@ -1,3 +1,4 @@
+import architectureQuestions from './architecture-questions.json' with { type: 'json' };
 // Scenario inputs only. No expected answers or navigation paths are exposed to participants.
 // All identities, provider records and operational effects are synthetic.
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
@@ -28,9 +29,7 @@ import { inquiryFixture } from './network-inquiry.js';
 import { backend, owner, principal, reasoner, interpretation } from '../backend-fixture.js';
 
 export const architectureQuestionIds = ['G01','G02','G03','G04','G05','H01','H02','H03','S01','S02','S03','S04','S05','V01','V02','V03','V04','V05'];
-const questionMap = () => new Map(readFileSync(resolve('docs/ontology-validation-and-completion-plan-2026-10-21.md'), 'utf8').split('\n').flatMap(line => {
-  const m = /^\| ([GHSV]\d{2}) [^|]+\| ([^|]+) \|/.exec(line); return m ? [[m[1]!, m[2]!] as const] : [];
-}));
+const questionMap = () => new Map(Object.entries(architectureQuestions));
 const at = (now: number, minutes = 0) => new Date(now + minutes * 60000).toISOString();
 function request(id: string, goal: string, now: number): ServiceRequest { return { id: `architecture-${id}`, revision: 1, originalGoal: goal, requirements: [], executionEnvironment: 'sandbox', messages: [{ id: `instruction-${id}`, text: goal, receivedAt: at(now, -10) }] }; }
 function projectRequest(graph: OntologyObjectStore, actor: string, r: ServiceRequest, now: number) {

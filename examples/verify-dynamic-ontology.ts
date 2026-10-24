@@ -17,7 +17,7 @@ import type { OntologyReleaseRef } from '../packages/ontology/definition-contrac
 import { installOfficeManagementFixture, startOntologyManagementFixture } from '../tests/fixtures/ontology-management.js';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const evidencePath = join(repo, 'docs/evidence/dynamic-ontology-2026-10-21/real-model-runtime.json');
+const evidencePath = join(repo, 'data/verification/dynamic-ontology/real-model-runtime.json');
 const maximumClaims = 10, maximumWallMs = 590000;
 const target = { type: 'OfficeRoom', id: 'model-room' }, action = 'CreateOfficeRoom';
 const actionInput = { id: target.id, label: '模型验收会议室' };

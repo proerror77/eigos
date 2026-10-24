@@ -5,7 +5,6 @@ RUN npm ci
 COPY tsconfig.json ./
 COPY apps ./apps
 COPY packages ./packages
-COPY ontology ./ontology
 COPY scripts/build.mjs scripts/ontology.mjs ./scripts/
 RUN npm run build && npm prune --omit=dev
 

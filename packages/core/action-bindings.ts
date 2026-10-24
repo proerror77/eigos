@@ -31,7 +31,7 @@ export const actionDiscoverySchema = z.strictObject({
   programRef: z.strictObject({ id: z.string().min(1).max(200), version: z.string().min(1).max(200) }).optional(),
   inputType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional(),
   outputType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional(),
-  effects: z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).max(9).optional(),
+  effects: z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'])).max(10).optional(),
   search: z.string().max(100).optional(), limit: z.number().int().min(1).max(10).default(5), cursor: z.string().max(1000).optional(),
 });
 export type ActionDiscoveryQuery = z.input<typeof actionDiscoverySchema>;

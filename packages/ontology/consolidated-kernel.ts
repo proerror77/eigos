@@ -28,7 +28,7 @@ export function extendConsolidatedKernel(original: OntologyDocument, registry: T
   const authorization = document.objects.find(type => type.id === 'Authorization')!;
   authorization.properties.environment = property('Authorization', 'environment', {
     ...current.objects.find(type => type.id === 'Authorization')!.properties.environment!,
-    schema: z.enum(['sandbox', 'managed', 'live_free']),
+    schema: z.enum(['sandbox', 'local_simulation', 'managed', 'live', 'live_free']),
   });
   document.links.push(...[...registrationLinks, ...meituanReadLinks].map(value => ({ ...value, resourceId: `builtin:eigos.business:link:${value.id}`, writePolicy: 'source' as const })));
   const evidenceTypes = new Set(document.objects.filter(type => type.interfaces?.some(value => value.id === 'EvidenceBacked')).map(type => type.id));
