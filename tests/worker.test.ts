@@ -17,6 +17,7 @@ import { SCOPES, ownerKey, type Job, type Principal } from '../packages/core/dom
 import { readWorkerConfig } from '../packages/core/config.js';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig } from '../packages/core/config.js';
+import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 
 const principal: Principal = { issuer: 'test', tenant: 'one', subject: 'alice', clientId: 'test', scopes: [...SCOPES] };
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -58,6 +59,43 @@ test('two database connections: exclusive claims, durable queue, expiry fencing 
     assert.equal(b.claim(['eigos.delegate'], 100, 1202), undefined);
 
   } finally { a.close(); b.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Queue lookup and queued-state persistence cannot consume the newly granted execution lease', t => {
+  const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
+  let clock = 100000;
+  t.mock.method(Date, 'now', () => clock);
+  try {
+    const job = tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'delayed-claim' });
+    const save = store.save.bind(store);
+    t.mock.method(store, 'save', (...args: Parameters<JobStore['save']>) => { const result = save(...args); clock += 20000; return result; });
+    const claim = store.claim(['eigos.delegate'], 15000)!;
+    assert.equal(claim.job.id, job.id); assert(store.claimActive(claim)); assert(store.renew(claim, 15000));
+  } finally { store.close(); }
+});
+
+test('A delayed renewal cannot revive a lease that expired while its task state was read', t => {
+  const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
+  let clock = 100000;
+  t.mock.method(Date, 'now', () => clock);
+  try {
+    tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'delayed-renewal' });
+    const claim = store.claim(['eigos.delegate'], 15000)!, get = store.get.bind(store);
+    t.mock.method(store, 'get', (...args: Parameters<JobStore['get']>) => { const job = get(...args); clock += 20000; return job; });
+    assert.equal(store.renew(claim, 15000), false);
+  } finally { store.close(); }
+});
+
+test('The actual idle Worker query uses its pending/recovery index instead of scanning historical task bodies', t => {
+  const store = new JobStore(':memory:'), db = (store as unknown as { db: DatabaseSync }).db;
+  const prepare = db.prepare.bind(db); let query = '';
+  t.mock.method(db, 'prepare', (sql: string) => { if (sql.startsWith('SELECT owner,body FROM jobs WHERE')) query = sql; return prepare(sql); });
+  try {
+    assert.equal(store.claim(['eigos.delegate'], 15000), undefined); assert(query);
+    const plan = prepare('EXPLAIN QUERY PLAN ' + query).all('eigos.delegate', BACKEND_VERSION, Date.now());
+    assert(plan.some(row => String(row.detail).includes('jobs_worker_ready')), JSON.stringify(plan));
+    assert(!plan.some(row => String(row.detail).includes('SCAN jobs')), JSON.stringify(plan));
+  } finally { store.close(); }
 });
 
 test('migration never automatically replays legacy in-flight work', () => {
