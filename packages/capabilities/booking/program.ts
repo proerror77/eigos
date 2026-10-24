@@ -13,6 +13,7 @@ import type { AgentDecision } from '../../ontology/agent-actions.js';
 import type { ServiceCapability, ServiceRequest } from '../../ontology/execution.js';
 import { bookingActionMetadata, bookingActionSchemas, bookingInputSchema, bookingDataSchema, bookingEntitySchemas, bookingPaymentDataSchema, type BookingAction, type BookingSourceResult } from '../../ontology/booking.js';
 import { readBookingObservation, projectBookingObservation } from '../../ontology/booking-functions.js';
+import { assertPaymentRouteReadback } from './payment-route.js';
 import { BookingSandboxConnector, type BookingSandboxOptions } from './connector.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
@@ -61,6 +62,11 @@ export class BookingAgentProgram implements AgentProgram {
       const { digest: expected, ...request } = paPaymentRequestSchema.parse(ctx.state.paPayment.request);
       const stored = ctx.graph.read(ctx.owner, { type: 'PAPaymentRequest', id: request.id });
       if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== this.configurationDigest || !same(stored.properties.terms, request.terms)) fail('Original PA payment handoff integrity changed');
+      if (stored.properties.configurationDigest !== this.configurationDigest || stored.properties.requestRevision !== ctx.request.revision) fail('Original booking handoff metadata changed');
+      for (const [relation, target] of [['request', { type: 'ServiceRequest', id: ctx.request.id }], ['scope', ctx.state.scope], ['booking', request.terms.booking], ['unpaidObservation', request.terms.unpaidObservation]] as const) {
+        const linked = ctx.graph.related(ctx.owner, stored.ref, relation, { remaining: 1000 });
+        if (linked?.length !== 1 || !same(linked[0]!.ref, target)) fail('Original booking handoff relationship changed');
+      }
       verifyPAPaymentSelection(ctx.state.paPayment);
     }
     return bookingInputSchema.parse(scope.properties.input);
@@ -101,7 +107,7 @@ export class BookingAgentProgram implements AgentProgram {
       const offer = data.offers.find(o => o.id === input.offerId) ?? fail('Choose an offer from the observed source list'); this.checkOffer(ctx, offer, true);
     } else if (action !== 'SearchBookingOffers') {
       const { data, s } = this.booking(ctx, input.booking, ['ReadProviderBooking', 'ReadProviderPayment'].includes(action));
-      if (ctx.state.paPayment && (data.bookingId !== ctx.state.paPayment.request.terms.bookingId || data.termsDigest !== ctx.state.paPayment.request.terms.bookingTermsDigest)) fail('Only the original PA-funded booking may be read');
+      if (ctx.state.paPayment && (data.bookingId !== paPaymentRequestSchema.parse(ctx.state.paPayment.request).terms.bookingId || data.termsDigest !== paPaymentRequestSchema.parse(ctx.state.paPayment.request).terms.bookingTermsDigest)) fail('Only the original PA-funded booking may be read');
       if (action === 'RequestPAPayment') {
         if (data.offer.paymentRequirement === 'not_required') fail('A free booking must not publish a payment request');
         if (data.offer.paymentRequirement === 'unknown') fail('Resolve the payment requirement from the provider before a payment handoff');
@@ -142,7 +148,7 @@ export class BookingAgentProgram implements AgentProgram {
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input);
     if (action === 'RequestPAPayment' || action === 'WaitForPAPayment') {
-      const terms = action === 'RequestPAPayment' ? this.paymentTerms(ctx, objectRefSchema.parse(input.booking), objectRefSchema.parse(input.payment)) : ctx.state.paPayment!.request.terms;
+      const terms = action === 'RequestPAPayment' ? this.paymentTerms(ctx, objectRefSchema.parse(input.booking), objectRefSchema.parse(input.payment)) : paPaymentRequestSchema.parse(ctx.state.paPayment!.request).terms;
       return { value: { terms }, evidenceRefs: [`local:payment-handoff:${digest({ intent: ctx.intentId, terms })}`] };
     }
     let payload: Record<string, unknown>;
@@ -176,6 +182,7 @@ export class BookingAgentProgram implements AgentProgram {
   onCompletionAccepted(ctx: AgentProgramContext, job: Job) {
     if (ctx.state.paPayment && job.delegation?.agent?.paPayment?.request.digest === ctx.state.paPayment.request.digest) job.delegation.agent.paPayment.status = 'verified';
   }
+  validatePaymentRoute(ctx: AgentProgramContext, payment: import('./pa-payment.js').PAPaymentState) { this.scope(ctx); assertPaymentRouteReadback(ctx, payment); }
   terminalHandoff(ctx: AgentProgramContext) {
     const payment = ctx.state.paPayment;
     if (!payment) return;
@@ -193,7 +200,7 @@ export class BookingAgentProgram implements AgentProgram {
       } };
   }
   private matchPayment(ctx: AgentProgramContext, booking: z.infer<typeof bookingDataSchema>, payment: z.infer<typeof bookingPaymentDataSchema>) {
-    const terms = ctx.state.paPayment?.request.terms ?? fail('Completion requires the original PA payment handoff');
+    const terms = paPaymentRequestSchema.parse(ctx.state.paPayment?.request ?? fail('Completion requires the original PA payment handoff')).terms;
     if (booking.termsDigest !== digest({ offer: booking.offer, paymentHandler: booking.paymentHandler, checkout: booking.checkout }) || !same(booking.paymentHandler, terms.handler) || !same(booking.checkout, terms.checkout) || booking.holdExpiresAt !== terms.expiresAt) return false;
     return booking.bookingId === terms.bookingId && booking.providerId === terms.providerId && booking.termsDigest === terms.bookingTermsDigest && payment.bookingId === booking.bookingId && payment.providerId === booking.providerId && payment.payeeId === terms.handler.payeeId && payment.bookingTermsDigest === terms.bookingTermsDigest && same(booking.offer.total, terms.amount) && same(payment.amount, terms.amount) && same(payment.paidAmount, terms.amount) && payment.state === 'paid' && !!payment.paymentId && !!payment.capturedAt && Date.parse(payment.capturedAt) <= Date.now() && Date.parse(payment.capturedAt) <= Date.parse(terms.expiresAt) && booking.state === 'confirmed' && !!booking.confirmedAt && Date.parse(booking.confirmedAt) <= Date.now();
   }
@@ -224,12 +231,12 @@ export class BookingAgentProgram implements AgentProgram {
     return { artifact: { id: digest(result), name: 'pa-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验原预约与 PA 模拟付款均获服务商确认；这是沙箱预约确认，不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed'], totalPrice: booking.data.offer.total, amounts: { service_total: booking.data.offer.total }, quantity: { amount: String(booking.data.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(booking.data.offer.participants), unit: 'person' } }, deliveryBy: booking.data.confirmedAt, deadlines: { completion: booking.data.confirmedAt }, locationRef: booking.data.offer.venue, locations: { venue: booking.data.offer.venue } }, evidenceRefs };
   }
   async reconcilePAPayment(ctx: AgentProgramContext, signal: AbortSignal) {
-    this.scope(ctx); const payment = ctx.state.paPayment ?? fail('Original PA handoff is missing');
+    this.scope(ctx); const payment = ctx.state.paPayment ?? fail('Original PA handoff is missing'), terms = paPaymentRequestSchema.parse(payment.request).terms;
     const step = ctx.state.plans.flatMap(p => p.steps.map(s => ({ p, s }))).find(x => x.s.action === 'RequestPAPayment' && (!ctx.state.composition || x.s.contextId === ctx.state.composition.paymentContextId)) ?? fail('Original handoff plan is missing');
     const context: AgentActionContext = { ...ctx, planId: step.p.id, intentId: step.s.intentId, attemptId: randomUUID(), modelRunId: step.p.modelRunId, operationKey: `terminal-pa-read:${payment.request.id}` };
-    const [b, p] = await Promise.all(['ReadProviderBooking', 'ReadProviderPayment'].map(action => this.connector.call({ ...context, attemptId: randomUUID() }, action, { bookingId: payment.request.terms.bookingId }, signal)));
+    const [b, p] = await Promise.all(['ReadProviderBooking', 'ReadProviderPayment'].map(action => this.connector.call({ ...context, attemptId: randomUUID() }, action, { bookingId: terms.bookingId }, signal)));
     const booking = bookingDataSchema.parse(b!.payload.data), paid = bookingPaymentDataSchema.parse(p!.payload.data);
-    if (b!.receipt.sourceIdentity !== payment.request.terms.providerId || p!.receipt.sourceIdentity !== payment.request.terms.providerId || booking.bookingId !== payment.request.terms.bookingId || paid.bookingId !== booking.bookingId || booking.termsDigest !== payment.request.terms.bookingTermsDigest || paid.bookingTermsDigest !== booking.termsDigest) fail('Terminal readback returned another provider booking');
+    if (b!.receipt.sourceIdentity !== terms.providerId || p!.receipt.sourceIdentity !== terms.providerId || booking.bookingId !== terms.bookingId || paid.bookingId !== booking.bookingId || booking.termsDigest !== terms.bookingTermsDigest || paid.bookingTermsDigest !== booking.termsDigest) fail('Terminal readback returned another provider booking');
     return { observedAt: new Date().toISOString(), result: this.matchPayment(ctx, booking, paid) ? 'confirmed' as const : ['awaiting_payment', 'unknown'].includes(booking.state) ? 'pending' as const : 'mismatch' as const, evidenceRefs: [b!.receipt.id, p!.receipt.id] };
   }
 }

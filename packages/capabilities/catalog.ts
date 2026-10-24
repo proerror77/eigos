@@ -34,10 +34,12 @@ import { UcpSandboxAdapter, ucpCapabilities, type UcpSandboxOptions } from './uc
 import { CommerceAgentProgram } from './commerce-agent.js';
 import type { CommerceSandboxOptions, CommerceSandboxConnector } from './commerce-sandbox/connector.js';
 import type { StripeTestOptions } from './stripe/client.js';
+import { ShopifyPAPaymentProgram } from './shopify/pa-checkout-program.js';
+import type { ShopifyPASandboxOptions } from './shopify/pa-checkout-connector.js';
 import { ShopifyCheckoutProgram } from './shopify/checkout-program.js';
 import type { ShopCheckoutConnector } from './shopify/checkout-contracts.js';
 
-export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveReader; participantBooking?: ParticipantBrowserOptions; participantBookingSource?: ParticipantBookingSource; didi?: DidiBinding & { connector?: DidiConnector; bookingEnabled?: boolean; bookingConnector?: DidiBookingConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
+export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveReader; participantBooking?: ParticipantBrowserOptions; participantBookingSource?: ParticipantBookingSource; didi?: DidiBinding & { connector?: DidiConnector; bookingEnabled?: boolean; bookingConnector?: DidiBookingConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
   const didi = options.didi ? new DidiAgentProgram({ bindingId: options.didi.bindingId, keyFile: options.didi.keyFile, keySha256: options.didi.keySha256, environment: options.didi.environment, auditDirectory: options.didi.auditDirectory }, { connector: options.didi.connector }) : undefined;
   const didiBooking = didi && options.didi?.bookingEnabled ? new DidiBookingProgram(didi.binding, options.didi.bookingConnector, options.didi.connector) : undefined;
   const brief = new LocalArtifactProgram('brief'), csv = options.csvInputDirectory ? new LocalArtifactProgram('csv', options.csvInputDirectory) : undefined;
@@ -46,6 +48,7 @@ export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveRead
   const registration = registrationSource ? new ParticipantBookingProgram(registrationSource) : undefined;
   if (options.shopifyCheckout?.merchants.length && !options.store) throw new Error('Unpaid Shopify checkout requires the shared owned task store');
   const shopifyCheckout = options.shopifyCheckout?.merchants.length ? new ShopifyCheckoutProgram(options.store!, options.shopifyCheckout.merchants, { ...options.shopifyCheckout, execute: options.executionHost !== 'gateway' }) : undefined;
+  const shopifyPayment = options.shopifyPaymentSandbox ? new ShopifyPAPaymentProgram({ ...options.shopifyPaymentSandbox, execute: options.executionHost !== 'gateway' }) : undefined;
   const booking = options.bookingSandbox ? new BookingAgentProgram(options.bookingSandbox) : undefined;
   const document = options.documentEnabled ? new DocumentAgentProgram(options.documentExecutor) : undefined;
   const commerce = options.commerceSandbox ? new CommerceAgentProgram(options.commerceSandbox) : undefined;
@@ -76,7 +79,7 @@ export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveRead
     ...paotuiPrograms.map(program => program.capability()), ...domainCapabilities,
     ...(sandboxProgram ? [sandboxProgram.capability()] : []), ...ucpPrograms.map(program => program.capability()),
     ...(shopify ? [shopify.capability()] : []), ...(shopifyCheckout ? [shopifyCheckout.capability()] : []), ...(commerce ? [commerce.capability()] : []), ...(stripe ? [stripe.capability()] : []),
-    ...(booking ? [booking.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []),
+    ...(booking ? [booking.capability()] : []), ...(shopifyPayment ? [shopifyPayment.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []),
     ...(csv ? [csv.capability()] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(document ? [document.capability()] : [])],
     [BRIEF_BINDING, ...domainProviders.map(domainBinding), ...ucp.map(adapter => adapter.binding()),
       ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : [])],
@@ -84,6 +87,6 @@ export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveRead
       ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : [])],
     [], [ ...(registration ? [registration] : []), ...meituan, ...(didiBooking ? [didiBooking] : []), ...(didi ? [didi] : []), brief,
       ...(sandboxProgram ? [sandboxProgram] : []), ...(csv ? [csv] : []), ...domainPrograms, ...ucpPrograms, ...paotuiPrograms,
-      ...(shopify ? [shopify] : []), ...(shopifyCheckout ? [shopifyCheckout] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : []),
+      ...(shopify ? [shopify] : []), ...(shopifyCheckout ? [shopifyCheckout] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : []), ...(shopifyPayment ? [shopifyPayment] : []),
       ...(document ? [document] : [])], createDynamicOntologyProgram);
 }

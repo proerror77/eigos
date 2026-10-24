@@ -103,6 +103,8 @@ export interface AgentProgram {
   /** Pure selection of one already evidenced operation for a new, separately
    * authorized after-sales task. Ambiguous operations must be rejected. */
   remediationTarget?(ctx: AgentProgramContext, action: 'cancel' | 'refund'): { originalIntentId: string; remoteRef: string; predicate: string; constraintPredicate: string } | undefined;
+  /** Source-specific unpaid readback, independent of PA capability availability. */
+  validatePaymentRoute?(ctx: AgentProgramContext, payment: import('./pa-payment.js').PAPaymentState): void;
   terminalHandoff?(ctx: AgentProgramContext): AgentTerminalHandoff | undefined;
   /** Named outputs are projected by trusted code and sealed with the accepted
    * observation. A model cannot supply this mapping or upgrade evidence origin. */

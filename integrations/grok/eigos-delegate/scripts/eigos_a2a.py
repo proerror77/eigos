@@ -190,13 +190,21 @@ class Client:
         }}, endpoint)
 
     def payment_route(self, task_id, data, request_id):
-        allowed = {'handoffId', 'handoffDigest', 'wallet'}
-        if not isinstance(data, dict) or set(data) != allowed:
-            raise ClientError('Payment route accepts only handoffId, handoffDigest and wallet availability')
-        wallet = data.get('wallet')
-        reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
-        if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
-            raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        if not isinstance(data, dict):
+            raise ClientError('Payment route requires a structured capability observation')
+        if set(data) == {'handoffId', 'handoffDigest', 'capability'}:
+            capability = data['capability']
+            if (not isinstance(capability, dict) or set(capability) != {'route', 'status', 'environment', 'observedAt'}
+                    or capability.get('route') not in ('pa_vault', 'pa_payment_account') or capability.get('status') != 'available'
+                    or capability.get('environment') != 'sandbox' or not isinstance(capability.get('observedAt'), str)):
+                raise ClientError('Report a currently available isolated PA Vault or payment-account capability; never include credentials')
+        elif set(data) == {'handoffId', 'handoffDigest', 'wallet'}:
+            wallet = data['wallet']
+            reasons = {'available': ('ready',), 'unavailable': ('region_unsupported', 'not_connected', 'connector_missing', 'wallet_unavailable'), 'unknown': ('unknown',)}
+            if not isinstance(wallet, dict) or set(wallet) != {'status', 'reason', 'observedAt'} or wallet.get('reason') not in reasons.get(wallet.get('status'), ()) or not isinstance(wallet.get('observedAt'), str):
+                raise ClientError('Report current PA wallet availability; never include credentials or treat a failed payment as unavailable')
+        else:
+            raise ClientError('Provide only handoffId, handoffDigest and one current wallet or capability observation')
         return self.payment_continuation(task_id, data, request_id, 'select_payment_route', 'payment-route:')
 
     def payment_result(self, task_id, data, request_id):

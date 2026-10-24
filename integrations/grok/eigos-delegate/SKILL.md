@@ -38,11 +38,19 @@ For readback, write an A2A 1.0 JSON-RPC request with method `GetTask` and `param
 
 An A2A continuation must not create a second task. Inspect the actual JSON-RPC response; a transport success containing an `error` is not success.
 
-## Verify delivery
+## Shopify checkout payment handoff v3 — isolated tests only
 
-Report completion only when the same task is completed, its independent acceptance is true, and the requested artifact is present. A document delivery proves that document was produced; a task brief does not prove its underlying business goal occurred. Discovery, a model proposal, an authorization notice or a payment notice is not fulfillment.
+When `paPayment.request.version == "3"`, the original checkout belongs to the local Shopify contract simulator. Payment authority stays with the user and PA. Use the PA's already configured isolated test Vault or account; never route synthetic terms to a real wallet. EIGOS receives no card, account token or Vault credential.
 
-When checking both protocols, retrieve the same taskId through native MCP and A2A, compare the actual artifact content, status and acceptance, and retain both receipts. Distinguish this live PA check from fixed probes or synthetic internal tests.
+Read the exact request, full amount/currency, payee, source checkout and expiry. Inspect your own current test capability. With the supplied `eigos_test_payment.py` helper, use `--config <private PA payment profile> capabilities --task-id <original id>`. Select one supported returned capability by saving `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","capability":<returned capability>}` and calling the existing `payment-route` command with a stable UUID. Do not include `wallet` for v3 or invent an available capability.
+
+Keep the selected route and `selection.operationId`. The PA payment helper re-reads the same task, checks its private exact test authorization and environment, persists dispatch before payment, and keeps credentials outside tool output. Call its `pay --task-id <original id>` only for the authorized original checkout. Once a dispatch exists, repeated `pay` calls query it; `query` explicitly reads that same operation. Unknown, declined, expired or missing results never authorize another payment or route switch. The helper supports only pinned loopback simulation and documented test instruments, not a real Grok Vault or payment provider.
+
+After an attempt, use the existing `payment-result` command with only the original handoff ID/digest and `submitted`, `unknown`, `declined` or `canceled`. Continue reading the same EIGOS task until its independent merchant payment AND original order checks finish. Read the final artifact back to the user and label it as synthetic test checkout/payment with `realPayment=false`; it is not official Shopify development-store integration or fulfillment.
+
+## Booking payment handoff v2 — isolated tests only
+
+Apply this section only when `paPayment.request.version == "2"`. Inspect the original booking, full price, payee and expiry. The PA observes its own current Link Agent Wallet test availability; unknown availability does not authorize a fallback or a new payment.
 
 Save `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","wallet":{"status":"unavailable","reason":"region_unsupported","observedAt":"<current ISO time>"}}` to a file and run `payment-route --task-id <id> --input-file <file> --request-id <stable-UUID>`. EIGOS checks the original unpaid booking and selects the preferred usable route. Preserve `metadata.delegation.agent.paPayment.selection`; retries reuse the exact UUID and input. If a selection already exists, use it rather than selecting again. This observation and selection grant no new payment authority.
 
@@ -55,6 +63,12 @@ Before any authorized payment, re-read the task: it must still be waiting, its s
 After the wallet attempt or the user's checkout response, save only `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","outcome":"submitted"}` and run `payment-result --task-id <id> --input-file <file> --request-id <stable-UUID>`. Outcomes are `submitted`, `declined`, `unknown`, or `canceled`; none proves success. Do not send wallet keys, tokens, card data or a free-text “paid” reply. The client sends a structured A2A continuation with `action: "report_payment_result"`; MCP callers can use `report_payment_result` with the same fields plus `taskId` and `requestId`. Browser redirects, page success messages and URL parameters are not payment evidence.
 
 Reuse the identical notification UUID and payload on a network retry. If an independent readback is already running, query the task and retry the same notification later. EIGOS must separately read the provider's payment and booking before completion. A lost notification can be followed by an `unknown` notification or `reconcile_task`; neither initiates another payment. Cancellation withdraws the EIGOS handoff but does not reverse an already dispatched PA payment. Report a late outcome for audit; a canceled task must stay canceled.
+
+## Verify delivery
+
+Report completion only when the same task is completed, its independent acceptance is true, and the requested artifact is present. A document delivery proves that document was produced; a task brief does not prove its underlying business goal occurred. Discovery, a model proposal, an authorization notice or a payment notice is not fulfillment.
+
+When checking both protocols, retrieve the same taskId through native MCP and A2A, compare the actual artifact content, status and acceptance, and retain both receipts. Distinguish this live PA check from fixed probes or synthetic internal tests.
 
 For a newly authorized request, `run --text-file <goal> --request-id <stable-id> --save-dir <private-directory>` combines discovery, one submission, polling and saving raw receipts in one client invocation. It outputs compact delivery text for the PA to relay; complete structured artifacts remain saved. It polls for up to 55 seconds (default interval 0.25 seconds); the separate poll command retains its 45-second limit. `run --spec-file <private-JSON>` can supply saved profile, textFile, requestId, saveDir and optional seconds/interval without credential values or a business plan. When `resumeRequired=true`, repeat the identical command and directory: it reads the saved task, never submits a replacement. An uncertain send stops for inspection of the original request identity. Input-required, authorization-required and failed states stop without responding, approving, paying or retrying. Use the explicit continuation flow for any user input or authority. The run also saves phase timing and the actual received UTC before final readback and artifact processing.
 

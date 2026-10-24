@@ -33,6 +33,8 @@
     "setup:primary-pa": "node scripts/setup-primary-pa.mjs",
     "source:personal": "node --env-file-if-exists=.env scripts/personal-source.mjs",
     "setup:booking-sandbox": "node scripts/setup-booking-sandbox.mjs",
+    "setup:shopify-payment-sandbox": "node scripts/setup-shopify-payment-sandbox.mjs",
+    "dev:shopify-payment-sandbox": "node --env-file=data/shopify-payment-sandbox/provider.env --import tsx apps/shopify-payment-sandbox/main.ts",
     "dev:booking-sandbox": "node --env-file=data/booking-sandbox/provider.env --import tsx apps/booking-sandbox/main.ts",
     "setup:commerce-sandbox": "node scripts/setup-commerce-sandbox.mjs"
   },

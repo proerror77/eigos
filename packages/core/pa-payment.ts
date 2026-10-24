@@ -1,2 +1,2 @@
-/** Public compatibility exports; booking payment semantics belong to the domain. */
-export * from '../capabilities/booking/pa-payment.js';
+// Shared PA-owned payment protocol; execution remains with the user's PA.
+export * from '../capabilities/payment-handoff.js';

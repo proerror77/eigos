@@ -9,7 +9,7 @@ import { createBookingSandboxProvider } from '../../packages/capabilities/bookin
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
 import { JobStore } from '../../packages/core/store.js';
 import { digest } from '../../packages/core/delegation.js';
-import type { PAPaymentRequest, LinkWalletAvailability } from '../../packages/core/pa-payment.js';
+import { paPaymentRequestSchema, type PAHandoffRequest, type LinkWalletAvailability } from '../../packages/core/pa-payment.js';
 import type { AgentPlanningContext, PlanningAccess, Reasoner } from '../../packages/coordinator/coordinator.js';
 import type { AgentDecision } from '../../packages/ontology/agent-actions.js';
 import type { BookingEntityType, BookingSnapshot } from '../../packages/ontology/booking.js';
@@ -63,7 +63,8 @@ export class FixturePAWallet {
   readonly attempts: { handoffId: string; key: string }[] = [];
   private keys = new Map<string, string>();
   constructor(private origin: string, private credential: string) {}
-  async pay(request: PAPaymentRequest, approvedAmount = request.terms.amount, operationId?: string) {
+  async pay(raw: PAHandoffRequest, approvedAmount = raw.terms.amount, operationId?: string) {
+    const request = paPaymentRequestSchema.parse(raw);
     const { digest: expected, ...body } = request;
     if (digest(body) !== expected || request.terms.environment !== 'sandbox' || request.terms.handler.endpoint !== this.origin + '/pa/payments' || Date.parse(request.terms.expiresAt) <= Date.now()) throw new Error('PA refuses changed, expired or unbound payment handoff');
     let key = this.keys.get(request.id); if (!key) { key = operationId ?? randomUUID(); this.keys.set(request.id, key); }

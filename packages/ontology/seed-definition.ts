@@ -9,12 +9,14 @@ import { extendDidiKernel } from './didi-kernel.js';
 import { extendConsolidatedKernel } from './consolidated-kernel.js';
 import { predecessorImplementation } from './history/consolidation-compatibility.js';
 import { extendCheckoutKernel } from './checkout-kernel.js';
+import { extendPAPaymentKernel } from './pa-payment-kernel.js';
 import { compileOntologyDocument, TrustedDefinitionRegistry } from './model-compiler.js';
 import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type OntologyDocument, type SerializableProperty } from './definition-contracts.js';
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
 export const CURRENT_KERNEL_VERSION = '20';
+export const CHECKOUT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '18', digest: 'da1bfa28f9c3a2635913e93a3c3889702c82c2a82ed3d9c9d9dbf9dc38817ee6' });
 export const COMPOSITION_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '17', digest: '67436b02a6f26e5e9d494c14bfdf4953eaaaa5ada723e7369920341f12e8c835' });
 const SEMANTICS_VERSION = 'eigos-v15.1';
 type FrozenProperty = Omit<PropertyDefinition, 'schema'> & { schema: JsonSchema };
@@ -111,10 +113,19 @@ export function createSeedDefinition(registry = new TrustedDefinitionRegistry())
 /** A separate immutable kernel release can add supported engine contracts without relabelling old facts. */
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const composition = createCompositionKernelDefinition(registry);
-  const previous = complete(extendDidiKernel(composition.document, registry), registry, false);
-  // Register each predecessor independently before constructing the combined release.
-  complete(extendCheckoutKernel(composition.document, registry), registry, false);
-  return complete(extendConsolidatedKernel(extendCheckoutKernel(previous.document, registry), registry, BUSINESS_MODEL_DEFINITION), registry, false);
+  const didi = complete(extendDidiKernel(composition.document, registry), registry, false);
+  const checkout = checkoutKernelFromComposition(composition.document, registry);
+  complete(extendPAPaymentKernel(checkout.document, registry), registry, false);
+  const combined = extendPAPaymentKernel(extendCheckoutKernel(didi.document, registry), registry);
+  return complete(extendConsolidatedKernel(combined, registry, BUSINESS_MODEL_DEFINITION), registry, false);
+}
+export function createCheckoutKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  return checkoutKernelFromComposition(createCompositionKernelDefinition(registry).document, registry);
+}
+function checkoutKernelFromComposition(document: OntologyDocument, registry: TrustedDefinitionRegistry): SeedDefinition {
+  const checkout = complete(extendCheckoutKernel(document, registry), registry, false);
+  if (digest(checkout.audit.model) !== digest(CHECKOUT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT', 'The original v18 model fingerprint changed');
+  return checkout;
 }
 export function createCompositionKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const historical = createHistoricalKernelDefinition(registry);

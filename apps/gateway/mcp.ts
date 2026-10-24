@@ -97,12 +97,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));
   if (options.payment !== false) server.registerTool('select_payment_route', {
-    description: 'Select a payment route for the original unpaid booking using current PA wallet availability: prefer Link Agent Wallet, otherwise the provider Link checkout requiring user confirmation. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
+    description: 'Select a route for the original unpaid handoff. Version 2 uses current Link wallet availability; version 3 uses the PA own sandbox Vault or payment-account capability supported by the merchant checkout. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
     inputSchema: paPaymentRouteSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.selectPaymentRoute(principal, args))));
   if (options.payment !== false) server.registerTool('report_payment_result', {
-    description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment or booking completion.',
+    description: 'Notify an owned task after the PA used its own payment capability. Exact handoff ID/digest required. Accepts no payment credentials; notifications trigger independent provider readback and never prove payment, order or booking completion.',
     inputSchema: paPaymentReportSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.reportPayment(principal, args))));

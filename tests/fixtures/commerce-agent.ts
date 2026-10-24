@@ -138,7 +138,10 @@ export async function setupCommerce(options: { scenario?: CommerceSandboxScenari
       const job = store.get(owner, id);
       if (job.state === 'auth-required' && autoApprove) { approve(job); work++; continue; }
       if (!['working', 'submitted'].includes(job.state)) return job;
-      const claim = store.claim(['eigos.delegate'], 15000);
+      // This fixture runs a whole coordinator turn without the Worker heartbeat.
+      // Its lease must cover the same bounded wait; lease-loss behavior has
+      // separate explicit tests and is not the subject of these commerce cases.
+      const claim = store.claim(['eigos.delegate'], 120000);
       if (!claim) {
         // Timers can wake slightly before nextAt, especially on a busy runner.
         // A healthy queued task is not a missing/failed execution attempt.

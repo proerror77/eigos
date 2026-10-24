@@ -31,6 +31,7 @@
 - [免费报名与预约](integrations/free-booking.md)。
 - [预约与 PA 付款交接](integrations/booking-payment.md)。
 - [Shopify 未付款结账](integrations/shopify-checkout.md)。
+- [Shopify PA 付款沙箱](integrations/shopify-pa-payment.md)。
 - [支付宝 CLI 流程](alipay-cli-workflow.md)。
 - [Stripe Treasury 预留](integrations/stripe-treasury.md)。
 - [品牌说明](brand-brief.md)。
