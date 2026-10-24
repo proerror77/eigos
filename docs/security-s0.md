@@ -9,7 +9,7 @@
 | 会员／安装／Worker 身份合同 | [contracts.ts](../packages/security/contracts.ts)：AccessContext 判别联合；复用原 ownerKey 语义、会员 UUID、registration.id、任务 revision 和 scopes，不重建登录系统。 |
 | 安装／任务数据／执行授权合同 | 同上：AgentAccessGrant、TaskDataGrant、TaskExecutionAuthority 的严格数据结构；已有 PlanGrant 保持原状。解析成功只证明结构有效，不证明权限有效。 |
 | 安全标签与默认规则 | 同上：SecurityEnvelope、角色权限、无自动降密／跨会员共享／旧任务补权；运行时策略组合和撤销由 S1–S4 实现。 |
-| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：103 个类型、823 个顶层属性的明确政策，模型和逐类型摘要，以及 34 个出口／控制路径的源码摘要（含 v20 只读数据流接缝）。 |
+| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：103 个类型、823 个顶层属性的明确政策，模型和逐类型摘要，以及 36 个出口／控制路径的源码摘要（含 v20 只读数据流接缝）。 |
 | 嵌套字段覆盖和变化检测 | [inventory.ts](../packages/security/inventory.ts)：枚举对象／接口／关系／动作／函数；属性树覆盖数组、union、开放 record 和未知结构。新定义／字段、嵌套 schema 变化、已限制字段降级、已登记出口变化使检查失败。 |
 | 只读快照迁移报告 | [migration-audit.ts](../packages/security/migration-audit.ts)：直接 readOnly 打开显式快照，不构造会创建表的 JobStore／MemberStore，不执行迁移 SQL。 |
 | 可重复入口和回归 | [security-s0.mjs](../scripts/security-s0.mjs)、[测试](../tests/security-s0.test.ts)：清单检查、合同反例、离线副本、隐私和无改写验证。 |
@@ -31,7 +31,7 @@
 
 类型行策略统一预定为 owner 与显式 task grant 交集；可复用资产不强制变成单任务实体。256 条关系要求两端与任务绑定；52 个动作独立检查执行许可并保留 PlanGrant；35 个函数沿调用者权限读取。三个接口不能绕过具体类型权限。定义摘要与安全策略摘要分开，现有业务证据 digest 不改写。
 
-S0 的出口清单覆盖 HTTP／MCP／A2A、任务变更响应、等待／列表／幂等、会员／安装控制、模型输入与缓存、来源连接器／浏览器桥、临时文件、CSV／Markdown 交付及日志接缝。它是经过源代码核查的明确清单，不是静态污点分析器；后续增加入口或新渠道必须更新清单及测试。34 个路径文件摘要用于阻止已有路径变更未复核就继续通过 S0。
+S0 的出口清单覆盖 HTTP／MCP／A2A、任务变更响应、等待／列表／幂等、会员／安装控制、模型输入与缓存、来源连接器／浏览器桥、临时文件、CSV／Markdown 交付及日志接缝。它是经过源代码核查的明确清单，不是静态污点分析器；后续增加入口或新渠道必须更新清单及测试。36 个路径文件摘要用于阻止已有路径变更未复核就继续通过 S0。
 
 ## 冻结的首期默认值
 
@@ -91,3 +91,6 @@ v20 只读数据流改造保留全部对象字段政策与逐类型指纹，新�
 回归覆盖定义／嵌套 schema 漂移、restricted 不降级、来源路径漂移、安装身份缺失、原始凭据注入、控制者不匹配、通配范围、许可超期、旧任务补权禁止、错误定义／任务版本、无隐私输出、快照不改写、缺表／缺文件和报告不覆盖。本地类型检查、601 项测试、构建、8 项进程 E2E、S0 清单检查和 diff 检查通过；最终清单目录下的 8 项 S0 专项另行复跑通过。远端 CI 和部署状态分别回读。
 
 下一阶段 S1 复用现有 MemberStore 和 AgentRegistrations：保留验证后的 registration.id，建立 AccessContext、最小资格投影、grant 存储与共用撤销协调；把会员 UI、安装 revoke、连接停用和管理 CLI 接入同一拒绝边界。到 S1 完成时仍不能称为三层权限全部完成。
+
+
+模型分段测量补充复核 model-session／executor，并登记 model-timing 与 model-reasoning 接缝（现 36 个路径）。仅保存客户端时钟、流式边界、计数与摘要；不保存隐藏推理文字，不把首输出前的合并等待当成服务端排队或纯推理。业务模型、字段政策、来源权限与验收合同保持原状。

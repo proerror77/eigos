@@ -1550,7 +1550,7 @@
     {
       "id": "model-session",
       "file": "packages/capabilities/model-session.ts",
-      "sourceDigest": "bbbf80f822f0ecf80418650d37ecd1e44a31fd3b620c357e7c4489eb4237e092",
+      "sourceDigest": "2a2ba7c07380fc77b300f662c7ef18a0e55563fc104d9d61fbe6a69282bf2c7c",
       "channels": [
         "registered_model"
       ],
@@ -1598,7 +1598,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "f86c48be15a7b9c686562022b297d572390d3b24cb92bb015dcabdeffaa2641c",
+      "sourceDigest": "606ec8bfd0e35c79e7a815ed7d36a3e00e7c83337c219ba8d403574c389839ca",
       "channels": [
         "registered_model",
         "private_file"
@@ -1776,6 +1776,34 @@
       "content": "Pure source-derived place identity and source/freshness evaluation",
       "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
       "targetControl": "Caller-scoped inputs and derived-output protection",
+      "stage": "S3"
+    },
+    {
+      "id": "model-timing",
+      "file": "packages/capabilities/model-timing.ts",
+      "sourceDigest": "0d99621d2804abea43eb300b6538f6fc4424e01fb81015a0f7785d72118fce3d",
+      "channels": [
+        "registered_model",
+        "model",
+        "artifact"
+      ],
+      "content": "Monotonic model startup, first-output, stream and completion metadata",
+      "currentControl": "Client-observed boundaries only; no hidden reasoning or source text; unavailable generation stays null",
+      "targetControl": "Caller-scoped labeled metadata and model-channel eligibility; no new authority",
+      "stage": "S3"
+    },
+    {
+      "id": "model-reasoning",
+      "file": "packages/coordinator/reasoning-loop.ts",
+      "sourceDigest": "cb808b0a0d6118d6f239ac015c1f3308837026d79ef8fc4c8832fa6598fe7613",
+      "channels": [
+        "registered_model",
+        "model",
+        "artifact"
+      ],
+      "content": "Bounded ontology model requests and complete typed decisions",
+      "currentControl": "Fresh read receipts, exact model decision digest and complete constraints; concise optional narrative only",
+      "targetControl": "Caller-scoped labeled metadata and model-channel eligibility; no new authority",
       "stage": "S3"
     }
   ]
