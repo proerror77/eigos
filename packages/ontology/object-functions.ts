@@ -1,3 +1,5 @@
+import { evaluateMeituanRead } from './meituan-read-projection.js';
+import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
 import { evaluateShopCheckoutFunction } from './shopify-checkout-functions.js';
 import { evaluateShopifyPAFunction } from './shopify-pa-payment-functions.js';
@@ -33,7 +35,7 @@ export const functionCallSchema = z.union([
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
-  simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
+  simple('catalogObservationStatus'), simple('paotuiObservationStatus'), simple('meituanReadStatus'), simple('rideEstimateStatus'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -81,6 +83,10 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   if (errandResult) return errandResult;
   const paotuiResult = evaluatePaotuiFunction(store, owner, input, budget);
   if (paotuiResult) return paotuiResult;
+  const meituanResult = evaluateMeituanRead(store, owner, input, budget);
+  if (meituanResult) return meituanResult;
+  const rideResult = evaluateRideEstimate(store, owner, input, budget);
+  if (rideResult) return rideResult;
   const bookingResult = evaluateBookingFunction(store, owner, input, budget);
   if (bookingResult) return bookingResult;
   const stripeResult = evaluateStripePaymentFunction(store, owner, input, budget);

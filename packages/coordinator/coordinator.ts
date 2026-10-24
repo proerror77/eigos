@@ -15,7 +15,7 @@ import { authorizationRequest, requiredEffects } from '../core/policy.js';
 import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
 import { OntologyPlanningSession } from './planning-session.js';
-import { reasonWithOntology } from './reasoning-loop.js';
+import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
 import { agentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
 import { executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, executionBudgetExceeded, MIN_REASONING_TURNS } from '../core/execution-budget.js';
@@ -41,7 +41,7 @@ export interface Reasoner {
   act?(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess): Promise<ModelResult<AgentDecision>>;
 }
 export class CodexReasoner implements Reasoner {
-  constructor(private model: Pick<CodexExecutor, 'runStructured'>) {}
+  constructor(private model: OntologyReasoningModel) {}
   async act(context: AgentPlanningContext, signal: AbortSignal, access: PlanningAccess) {
     if (context.state.composition) {
       const prompt = [

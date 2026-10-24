@@ -214,7 +214,7 @@ test('v15 and v16 remain exact historical models while the current kernel carrie
   const old = createSeedDefinition(), previous = createHistoricalKernelDefinition(old.registry), current = createCurrentKernelDefinition(old.registry);
   assert.equal(old.audit.model.digest, 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776');
   assert.equal(previous.audit.model.digest, '9cc72c92efa54600967979971dc0e568d01d849b683bbe4e7d6d8931150eef57');
-  assert.equal(current.audit.model.version, '19'); assert(current.document.actions.find(action => action.id === 'ComposeDocument')?.composition);
+  assert.equal(current.audit.model.version, '20'); assert(current.document.actions.find(action => action.id === 'ComposeDocument')?.composition);
   assert(previous.document.actions.every(action => !action.composition));
 });
 

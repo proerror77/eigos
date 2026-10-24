@@ -1,0 +1,214 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "shopify.catalog",
+  "version": "1",
+  "completion": {
+    "evaluate": "catalogObservationStatus"
+  },
+  "actions": [
+    {
+      "id": "SearchPublicCatalog",
+      "description": "Search one configured merchant using the model-selected query and limit; returns bounded public observations, with no follow-up actions implied.",
+      "resultType": "CatalogObservation",
+      "mcp": {
+        "server": "shopify-public",
+        "tool": "search_catalog",
+        "encoding": "json",
+        "arguments": {
+          "query": {
+            "from": "input",
+            "path": [
+              "query"
+            ]
+          },
+          "context": {
+            "from": "object",
+            "fields": {
+              "address_country": {
+                "from": "scope",
+                "path": [
+                  "country"
+                ]
+              }
+            }
+          },
+          "pagination": {
+            "from": "object",
+            "fields": {
+              "limit": {
+                "from": "input",
+                "path": [
+                  "limit"
+                ]
+              }
+            }
+          },
+          "filters": {
+            "from": "object",
+            "fields": {
+              "shops": {
+                "from": "array",
+                "items": [
+                  {
+                    "from": "context",
+                    "path": [
+                      "merchant",
+                      "shopId"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "InspectCatalogVariant",
+      "description": "Read one variant selected from an owned observation. Its declared source dependency must be current and match the merchant and variant.",
+      "resultType": "CatalogObservation",
+      "mcp": {
+        "server": "shopify-public",
+        "tool": "get_product",
+        "encoding": "json",
+        "arguments": {
+          "id": {
+            "from": "selection",
+            "name": "variant",
+            "path": [
+              "variantId"
+            ]
+          },
+          "context": {
+            "from": "object",
+            "fields": {
+              "address_country": {
+                "from": "scope",
+                "path": [
+                  "country"
+                ]
+              }
+            }
+          },
+          "filters": {
+            "from": "object",
+            "fields": {
+              "shops": {
+                "from": "array",
+                "items": [
+                  {
+                    "from": "context",
+                    "path": [
+                      "merchant",
+                      "shopId"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "requires": [
+          {
+            "name": "variant",
+            "objectType": "CatalogObservation",
+            "observationInput": "observation",
+            "evaluate": "catalogObservationStatus",
+            "evidence": "accepted",
+            "selectionInput": "variantId"
+          }
+        ],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "DiscoverMerchantCatalog",
+      "description": "Read the configured merchant discovery document and validate its read endpoint. This HTTP discovery primitive does not perform a catalog query.",
+      "resultType": "CatalogEndpoint",
+      "mcp": {
+        "server": "shopify-public",
+        "tool": "discovery",
+        "encoding": "json",
+        "arguments": {},
+        "requires": [],
+        "inputMatchesScope": [],
+        "connection": {
+          "merchantDomain": {
+            "from": "context",
+            "path": [
+              "merchant",
+              "domain"
+            ]
+          }
+        },
+        "transport": "discovery"
+      }
+    },
+    {
+      "id": "ReadMerchantVariants",
+      "description": "Read selected variants at an accepted merchant endpoint. Variant IDs must come from an owned observation or an explicit user message; do not substitute IDs or claim stock quantities, full fees or delivery.",
+      "resultType": "CatalogObservation",
+      "mcp": {
+        "server": "shopify-public",
+        "tool": "lookup_catalog",
+        "encoding": "json",
+        "arguments": {
+          "ids": {
+            "from": "input",
+            "path": [
+              "variantIds"
+            ]
+          },
+          "context": {
+            "from": "object",
+            "fields": {
+              "address_country": {
+                "from": "scope",
+                "path": [
+                  "country"
+                ]
+              }
+            }
+          }
+        },
+        "requires": [
+          {
+            "name": "endpoint",
+            "objectType": "CatalogEndpoint",
+            "observationInput": "endpoint",
+            "evaluate": "catalogObservationStatus",
+            "evidence": "accepted",
+            "action": "DiscoverMerchantCatalog"
+          },
+          {
+            "name": "observedVariants",
+            "objectType": "CatalogObservation",
+            "observationInput": "observation",
+            "evaluate": "catalogObservationStatus",
+            "evidence": "accepted",
+            "optional": true
+          }
+        ],
+        "inputMatchesScope": [],
+        "connection": {
+          "merchantDomain": {
+            "from": "context",
+            "path": [
+              "merchant",
+              "domain"
+            ]
+          },
+          "discoveredProfile": {
+            "from": "selection",
+            "name": "endpoint",
+            "path": [
+              "profile"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

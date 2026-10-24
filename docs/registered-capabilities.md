@@ -1,12 +1,14 @@
 # Ontology + LLM 后端
 
-更新于 2026-10-24。当前通用委托使用 `ontology-execution-v18`，新库业务内核为 `eigos.business@19`，v15/v16/v17/v18 保持原摘要。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)，当前模型覆盖与待完成项见 [架构验证记录](ontology-architecture-completion-2026-10-21.md)。
+更新于 2026-10-24。当前通用委托使用 `ontology-execution-v18`，新库业务内核为 `eigos.business@20`，v15/v16/v17/v18/v19 保持原摘要。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)，当前模型覆盖与待完成项见 [架构验证记录](ontology-architecture-completion-2026-10-21.md)。
 
 新增 `commerce.journey.sandbox@2`：默认关闭，只对显式本机沙箱任务开放。16 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；5 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
 ## 主路径
+
+实际供应商 MCP 已统一为独立本体数据及 Agent 动作循环，见 [完整范围与维护边界](mcp-ontology-unification.md)。其初始化只创建范围，模型读取定义及观察后选动作，连接器不做预先候选准备。下图的 Resolver 分支仍用于其他已登记的非 MCP／模拟能力，不能据此把它当成 MCP 固定流程。
 
 ```mermaid
 flowchart LR
@@ -57,7 +59,8 @@ LLM 通过宿主提供的有界只读工具查询定义、对象、关系及函�
 | `brief.prepare@2` | 本地说明生成与精确验收 | 说明完成，底层 execution=not_started |
 | `data.quality.audit.simulated@2` | 固定本地 CSV 快照、独立字节解析 | 全量五项报告完成；只有模拟授权，无真实付款 |
 | `document.compose@1` | 显式配置的受限文档模型 | 草稿产生且格式/摘要核对；不认证内容真理或文档中的业务完成 |
-| `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | Worker 经 stdio Ontology MCP 调用既有美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `geo.search@1`、`address.book.read@1`、`delivery.quote@2` | 模型读取独立本体并选择 stdio MCP 原子读取，逐次调用美团个人 CLI | 地点/本人地址/运费只读结果；无订单/支付/送达 |
+| `ride.estimate.query@1` | Worker 经官方 MCP 执行两个受控只读工具；默认关闭，仅本机本人 | 地点或估价观察；无完整车费、订单、付款或行程完成，见[说明](didi-readonly-integration.md) |
 | `commerce.catalog.query@2` | Agent 读取本体，选择搜索／详情／商家发现／店铺读取及其参数和组合；逐次观察后由模型提出完成，程序验收 | 有来源的公开商品查询或比较文件；显示单价与可售标记不证明库存、配送或购买权限 |
 | `shopify.checkout.unpaid@1` | 显式配置的本人私有 Shop MCP；模型选择查询、准确授权后的单次草稿创建和原会话回读 | 原未付款结账与链接已独立回读；不证明订单、付款、运费税费或履约。见[接入说明](shopify-unpaid-checkout-2026-10-23.md) |
 | `shopify.checkout.pa-payment.sandbox@1` | 独立本机 Shopify 合约模拟器；PA 自有测试 Vault／账户付款 | 同一测试结账、付款操作与订单分别回读确认；无真实扣款或商家接入。见[说明](shopify-pa-payment-sandbox.md) |

@@ -12,6 +12,8 @@ export function sourceProof(store: OntologyObjectStore, owner: string, ref: Obje
   scopes.EntityIdentityAssertion = 'identity_mapping'; scopes.TransactionPartyRole = 'party_role';
   scopes.BookingOffers = 'reservation'; scopes.BookingObservation = 'reservation'; scopes.BookingPaymentObservation = 'payment';
   scopes.StripePaymentObservation = 'payment';
+  scopes.DidiPlaceObservation = 'domain_ride'; scopes.RideEstimateObservation = 'domain_ride';
+  scopes.MeituanReadObservation = (subject.properties.snapshot as { data?: { kind?: string } } | undefined)?.data?.kind === 'locations' ? 'public_locations' : 'delivery_quote';
   scopes.CatalogRead = 'goods_offer';
   scopes.CatalogObservation = 'goods_offer'; scopes.CatalogEndpoint = 'goods_offer';
   scopes.ShopifyCheckoutProducts = 'goods_offer'; scopes.ShopifyCheckoutObservation = 'checkout_session';

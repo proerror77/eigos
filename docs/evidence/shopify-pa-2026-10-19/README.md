@@ -29,7 +29,7 @@
 - [pa-artifact.json](pa-artifact.json)：PA 自己从最终 GetTask 回执提取并保存的 artifact；其文件 SHA 与验收记录一致。协议内容相同，不等同于不同序列化文件字节相同。
 - [pa-ui-observation.json](pa-ui-observation.json)：原生 Grok Bot 界面可见终态回复的字段抄录，省略无关会话；不是原始截图或聊天导出。
 - [source-files.json](source-files.json)：成功提交前冻结的运行源码摘要；观察器核对构建目录、当前源码及运行 releaseDigest。
-- [tests.txt](tests.txt)、[check.txt](check.txt)、[build.txt](build.txt)：完整 325 项测试、类型检查和构建输出。
+- [历史自动验证输出摘要与文件哈希](../archive-cleanup-2026-10-22.json)：325 项测试、类型检查和构建通过。
 
 ## 失败记录与复现
 
@@ -51,3 +51,5 @@ node --import tsx examples/verify-pa-shopify-e2e.ts --live --session-dir /absolu
 ```
 
 它只读取 PA 已提交任务及已有来源响应，不提交、不调用模型、不访问 Shopify。原始 HTTP 响应、PA 完整收发文件、凭据和恢复备份继续保留在私有忽略目录；公开归档不含认证头或凭据。详细接入与边界见 [运行说明](../../shopify-pa-worker-2026-10-19.md)。
+
+2026-10-22 归档整理：重复的自动检查原始输出已移出 Git 跟踪并保留本地副本；仓库保留摘要、原文件哈希和整理前提交。摘要不是原始逐项日志，也不代表本次重新运行了历史验证。

@@ -2,6 +2,8 @@
 
 后端统一使用 Ontology + LLM，公共业务入口只有 `eigos.delegate`，以及显式沙箱配置下的 `eigos.aftersales`。旧直接服务名被输入 Schema 拒绝；历史任务只读，不作为执行兼容层。
 
+PA 可选择直接调用已有来源，或通过下述现行接口委托明确业务范围。避免重复规划、来源操作与授权询问的分工建议见 [PA／MCP／Ontology 职责边界](agent-mcp-ontology-responsibilities-2026-10-22.md)；其中的交接清单不是新接口 Schema，不能据此假定支持任意 PA 计划导入或客户本机工具回调。
+
 ## 发现与认证
 
 先读取 `/.well-known/agent-card.json`（A2A），或认证后调用 MCP `list_services`。Card 和服务描述来自同一目录。生产使用 OAuth/JWT 与会员资格，权限 scope 为 `services:read`、`tasks:read`、`tasks:write`；任务由受信 `issuer + tenant + sub` 隔离。401 的 `WWW-Authenticate` 指向资源元数据；403 表示资格或 scope 不足。客户端不得从用户输入中指定所有者。
@@ -54,7 +56,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 原始交付要求、更正、执行关系以及默认业务摘要的真实 PA 验证见[2026-10-20 验收记录](evidence/ontology-graph-live-2026-10-20/README.md)。业务验收时的有效报价与之后的历史回读分别记载，不以过期结果承诺当前价格或来源授权。
 
-六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v18`，新建注册库默认内核为 `eigos.business@19`；历史 v15/v16/v17/v18 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
+六类服务扩展复用这些接口和权限。本次代码的运行契约为 `ontology-execution-v18`，新建注册库默认内核为 `eigos.business@20`；历史 v15/v16/v17/v18/v19 定义保持原摘要。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)，当前对象身份、执行图与提交条件见 [原则复审](ontology-principles-review-2026-10-20.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -65,6 +67,8 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 UCP 本地测试接入也使用原 `eigos.delegate`。`commerce.ucp.prepare.sandbox@1` 只完成结账准备；`commerce.ucp.confirm.sandbox@1` 引用本用户的准备任务，并要求准确的 order/payment 双重模拟许可。两项操作分别返回准确终点，不把准备会话当成购买。正式 HTTP、原键查证、跨任务防重、对象回写和未开放项见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。生产配置中没有自动启用这些能力的开关。
 
 Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本人的 `eigos.delegate` 能力目录。PA 仍提交自然语言目标，前端无需知道动作名。解释阶段只创建 `CatalogTask`，没有来源查询。EIGOS Agent 从本体定义选择 `SearchPublicCatalog`、`InspectCatalogVariant`、`DiscoverMerchantCatalog`、`ReadMerchantVariants` 及参数、依赖关系；每个连接器调用只对应一个厂商操作。`CatalogObservation`／`CatalogEndpoint` 写回后，模型读取结果并决定下一步或完成。完成需要所选观察的实际 `catalogObservationStatus` known 结果和独立验收。接口没有固定的三款选择或查询顺序；完整性、库存数量、配送及合作信任仍未知。配置不变，当前实现与真实验收状态见 [Agent 动作说明](catalog-agent-actions-2026-10-19.md)；[@1 预设流程记录](shopify-pa-worker-2026-10-19.md) 与 [前期匿名准入](shopify-readonly-admission-2026-10-18.md) 保留为历史证据。
+
+当前供应商 MCP 路径（滴滴、美团个人通道、Shopify 目录）统一使用独立本体工具定义与模型规划，见 [MCP 统一说明](mcp-ontology-unification.md)。Gateway 不准备候选或读取地址；Worker 按模型选定动作执行一次读取。真实下单和付款继续禁止；非 MCP 的 HTTP／本地模拟程序另行标注，不混作真实业务接入。
 
 ## A2A
 
@@ -132,3 +136,11 @@ PA 提交自然语言需求后，Worker 可在已授权的 `owner` 读取范围�
 ## 本人私有 Shopify 未付款结账
 
 `shopify.checkout.unpaid@1` 默认关闭，显式本机配置后由 Worker 选择三个原子动作：查询选定商品、一次创建未付款结账、回读原会话。MCP 的 `authorize_checkout_draft` 和 A2A 的 `approve_external_draft` 共用准确的非付款许可，不授权正式订单、付款或个人资料提交。`status` 模式只查询本人此前任务的原结账。来源 `requires_escalation` 可与未付款准备任务完成并存，后续资料和费用仍由商家页面处理。配置、输入、回执及恢复限制见[详细说明](shopify-unpaid-checkout-2026-10-23.md)。
+
+## Stripe Treasury 预留
+
+已预留官方 MCP 地址及 `EIGOS_STRIPE_TREASURY_ENABLED=false`。当前版本拒绝启用，没有账户授权、网络连接或可执行 Treasury 能力；MCP/A2A 均不发布资金查询或操作入口。后续按成员账户授权和 Worker 执行边界单独接入，见 [Treasury 接入预留](stripe-treasury-integration.md)。
+
+## 滴滴只读接入
+
+本人本机可显式配置 `ride.estimate.query@1`，支持地点搜索和指定路线车型估价，仍通过 `eigos.delegate` 使用。Key 仅由 Worker 从私密文件读取；Gateway 构造目录不读 Key、不发来源请求。只有 `maps_textsearch`、`taxi_estimate` 可执行，估价不代表完整车费、叫车或行程完成。配置、歧义和证据范围见[滴滴只读说明](didi-readonly-integration.md)。

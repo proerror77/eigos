@@ -1,6 +1,5 @@
 import { SandboxAgentProgram } from './sandbox-agent.js';
 import { UcpAgentProgram } from './ucp/program.js';
-import { GeoAgentProgram } from './geo-agent.js';
 import { LocalArtifactProgram } from './local-artifact-agent.js';
 import { DomainAgentProgram } from './domain-agent.js';
 import { CatalogAgentProgram } from './catalog-agent.js';
@@ -18,10 +17,14 @@ import { CSV_CAPABILITY, CSV_BINDING, CsvAuditAdapter } from './csv-audit.js';
 import { SANDBOX_CAPABILITY, SANDBOX_BINDING, SandboxServiceAdapter } from './sandbox-service.js';
 import { DocumentAgentProgram } from './document-agent.js';
 import type { Executor } from './executor.js';
-import { OntologyMcpPaotuiReader } from './paotui-mcp.js';
-import { PAOTUI_READ_BINDINGS, PAOTUI_READ_CAPABILITIES, PaotuiReadAdapter } from './paotui-read.js';
+import { OntologyMeituanMcpReader } from './meituan-mcp.js';
+import { MeituanReadProgram } from './meituan-agent.js';
+import type { MeituanPrimitiveReader } from './meituan-primitives.js';
+import { DidiAgentProgram } from './didi/program.js';
+import type { DidiBinding } from './didi/contracts.js';
+import type { DidiConnector } from './didi/connector.js';
 import type { JobStore } from '../core/store.js';
-import { PaotuiGeoDiscoverySource, type PublicGeoQuery } from './paotui-geo-discovery.js';
+import type { PublicGeoQuery } from './paotui-contracts.js';
 import { UcpSandboxAdapter, ucpCapabilities, type UcpSandboxOptions } from './ucp/adapter.js';
 import { CommerceAgentProgram } from './commerce-agent.js';
 import type { CommerceSandboxOptions, CommerceSandboxConnector } from './commerce-sandbox/connector.js';
@@ -31,7 +34,8 @@ import type { ShopifyPASandboxOptions } from './shopify/pa-checkout-connector.js
 import { ShopifyCheckoutProgram } from './shopify/checkout-program.js';
 import type { ShopCheckoutConnector } from './shopify/checkout-contracts.js';
 
-export function createExecutionCatalog(options: { store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
+export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveReader; didi?: DidiBinding & { connector?: DidiConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
+  const didi = options.didi ? new DidiAgentProgram({ bindingId: options.didi.bindingId, keyFile: options.didi.keyFile, keySha256: options.didi.keySha256, environment: options.didi.environment, auditDirectory: options.didi.auditDirectory }, { connector: options.didi.connector }) : undefined;
   const brief = new LocalArtifactProgram('brief'), csv = options.csvInputDirectory ? new LocalArtifactProgram('csv', options.csvInputDirectory) : undefined;
   const shopify = options.shopifyCatalog?.merchants.length ? new CatalogAgentProgram(options.shopifyCatalog.merchants, options.shopifyCatalog) : undefined;
   if (options.shopifyCheckout?.merchants.length && !options.store) throw new Error('Unpaid Shopify checkout requires the shared owned task store');
@@ -54,20 +58,15 @@ export function createExecutionCatalog(options: { store?: JobStore; csvInputDire
   if (options.paotuiSkillDirectory && !options.store) throw new Error('Address selection requires the owned task store');
   const vault = options.memberSourceKeyFile ? options.store!.memberSources(options.memberSourceKeyFile, options.paotuiSkillDirectory!) : undefined;
   const access = options.paotuiMemberConnectionFile ? new PersonalSourceAccess(options.paotuiMemberConnectionFile, (c, hash) => options.store!.personalSourceAdmitted(c, hash), options.paotuiSkillDirectory!) : undefined;
-  const paotui = options.paotuiSkillDirectory && !vault ? new OntologyMcpPaotuiReader(options.paotuiSkillDirectory, options.ontologyAuditPath, { access, databasePath: options.store?.databasePath, execute: options.executionHost !== 'gateway' }) : undefined;
   if (access && options.publicGeoDiscoveryQueries?.length) throw new Error('Member delivery connections do not enable public discovery');
-  const paotuiPrograms = options.paotuiSkillDirectory ? (['quote', 'addresses'] as const).map(kind => new PaotuiAgentProgram(kind, { store: options.store!, directory: options.paotuiSkillDirectory!, vault, access, execute: options.executionHost !== 'gateway', auditPath: options.ontologyAuditPath })) : [];
+  const paotuiPrograms = options.paotuiSkillDirectory && (vault || access) ? (['quote', 'addresses'] as const).map(kind => new PaotuiAgentProgram(kind, { store: options.store!, directory: options.paotuiSkillDirectory!, vault, access, execute: options.executionHost !== 'gateway', auditPath: options.ontologyAuditPath })) : [];
+  const meituanReader = !vault && !access ? options.meituan ?? (options.paotuiSkillDirectory ? new OntologyMeituanMcpReader(options.paotuiSkillDirectory, options.ontologyAuditPath) : undefined) : undefined;
+  const meituan = meituanReader ? (['geo', 'addresses', 'delivery'] as const).map(mode => new MeituanReadProgram(mode, meituanReader, options.store!, options.publicGeoDiscoveryQueries)) : [];
   const sandbox = options.sandbox ? new SandboxServiceAdapter(options.sandbox.endpoint, options.sandbox.tokenFile) : undefined;
   const sandboxProgram = sandbox ? new SandboxAgentProgram(sandbox, options.store) : undefined;
-  if (options.publicGeoDiscoveryQueries?.length && !paotui) throw new Error('Public-location discovery requires the existing personal Meituan reader');
-  // Off by default. Trusted configuration must enumerate authorized public queries;
-  // model output and user task content cannot enable or broaden this list.
-  const geoDiscovery = paotui && options.publicGeoDiscoveryQueries?.length
-    ? new PaotuiGeoDiscoverySource(paotui, paotui.configurationDigest, options.publicGeoDiscoveryQueries) : undefined;
-  const reads = PAOTUI_READ_CAPABILITIES.map((c, i) => ({ capability: c, binding: PAOTUI_READ_BINDINGS[i]!, i })).filter(x => x.i === 0 && !access);
-  const geo = paotui && reads.length ? new GeoAgentProgram(geoDiscovery?.adapter ?? new PaotuiReadAdapter(0, paotui, access), geoDiscovery?.configurationDigest ?? paotui.configurationDigest) : undefined;
-  return new ExecutionCatalog([brief.capability(), ...paotuiPrograms.map(p => p.capability()), ...domainCapabilities, ...(sandboxProgram ? [sandboxProgram.capability()] : []), ...ucpPrograms.map(program => program.capability()), ...(shopify ? [shopify.capability()] : []), ...(shopifyCheckout ? [shopifyCheckout.capability()] : []), ...(commerce ? [commerce.capability()] : []), ...(stripe ? [stripe.capability()] : []), ...(booking ? [booking.capability()] : []), ...(shopifyPayment ? [shopifyPayment.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []), ...(csv ? [csv.capability()] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(document ? [document.capability()] : []), ...(geo ? [geo.capability()] : [])],
-    [BRIEF_BINDING, ...domainProviders.map(domainBinding), ...ucp.map(adapter => adapter.binding()), ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : []), ...(paotui ? [...reads.filter(x => !geoDiscovery || x.i !== 0).map(x => x.binding)].map(b => ({ ...b, configurationDigest: paotui.configurationDigest })) : [])],
-    [new BriefAdapter(), ...domainProviders.map(p => new DomainServiceAdapter(p)), ...ucp, ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : []), ...(paotui ? [...reads.map(x => x.i === 0 && geoDiscovery ? geoDiscovery.adapter : new PaotuiReadAdapter(x.i, paotui, access))] : [])],
-    geoDiscovery ? [geoDiscovery] : [], [brief, ...(sandboxProgram ? [sandboxProgram] : []), ...(csv ? [csv] : []), ...(geo ? [geo] : []), ...domainPrograms, ...ucpPrograms, ...paotuiPrograms, ...(shopify ? [shopify] : []), ...(shopifyCheckout ? [shopifyCheckout] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : []), ...(shopifyPayment ? [shopifyPayment] : []), ...(document ? [document] : [])], createDynamicOntologyProgram);
+  if (options.publicGeoDiscoveryQueries?.length && !meituanReader) throw new Error('Public-location discovery requires the existing personal Meituan reader');
+  return new ExecutionCatalog([brief.capability(), ...meituan.map(program => program.capability()), ...(didi ? [didi.capability()] : []), ...paotuiPrograms.map(p => p.capability()), ...domainCapabilities, ...(sandboxProgram ? [sandboxProgram.capability()] : []), ...ucpPrograms.map(program => program.capability()), ...(shopify ? [shopify.capability()] : []), ...(shopifyCheckout ? [shopifyCheckout.capability()] : []), ...(commerce ? [commerce.capability()] : []), ...(stripe ? [stripe.capability()] : []), ...(booking ? [booking.capability()] : []), ...(shopifyPayment ? [shopifyPayment.capability()] : []), ...(options.ucpSandbox ? ucpCapabilities(options.ucpSandbox) : []), ...(csv ? [csv.capability()] : []), ...(options.sandbox ? [SANDBOX_CAPABILITY] : []), ...(document ? [document.capability()] : [])],
+    [BRIEF_BINDING, ...domainProviders.map(domainBinding), ...ucp.map(adapter => adapter.binding()), ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : [])],
+    [new BriefAdapter(), ...domainProviders.map(p => new DomainServiceAdapter(p)), ...ucp, ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : [])],
+    [], [brief, ...meituan, ...(didi ? [didi] : []), ...(sandboxProgram ? [sandboxProgram] : []), ...(csv ? [csv] : []), ...domainPrograms, ...ucpPrograms, ...paotuiPrograms, ...(shopify ? [shopify] : []), ...(shopifyCheckout ? [shopifyCheckout] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : []), ...(shopifyPayment ? [shopifyPayment] : []), ...(document ? [document] : [])], createDynamicOntologyProgram);
 }

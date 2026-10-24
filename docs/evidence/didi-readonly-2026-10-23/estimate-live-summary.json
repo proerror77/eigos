@@ -1,0 +1,95 @@
+{
+  "mode": "estimate",
+  "taskId": "6f6e585f-747f-4054-a6c8-a05e4051bd0d",
+  "requestId": "73b04df7-9358-415c-8606-a7f06e80403d",
+  "state": "completed",
+  "accepted": true,
+  "modelRuns": 9,
+  "sourceObservations": 3,
+  "evidenceKind": "live_readonly",
+  "sourceTool": "taxi_estimate",
+  "result": {
+    "kind": "estimate",
+    "items": [
+      {
+        "productName": "惊喜特价",
+        "productCategory": "191",
+        "priceText": "19",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "1900",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "特惠快车",
+        "productCategory": "201",
+        "priceText": "23",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "2300",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "快车",
+        "productCategory": "1",
+        "priceText": "23",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "2300",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "滴滴轻享",
+        "productCategory": "193",
+        "priceText": "30",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "3000",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "专车",
+        "productCategory": "8",
+        "priceText": "39",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "3900",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "六座专车",
+        "productCategory": "9",
+        "priceText": "56",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "5600",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      },
+      {
+        "productName": "豪华车",
+        "productCategory": "17",
+        "priceText": "108",
+        "priceKind": "estimate",
+        "estimatedMoney": {
+          "minor": "10800",
+          "currency": "CNY"
+        },
+        "feesComplete": "unknown"
+      }
+    ]
+  },
+  "noBusinessWrites": true,
+  "a2aMcpReadbackEqual": true
+}

@@ -1,0 +1,361 @@
+{
+  "reviewedAt": "2026-10-22",
+  "sourceCommitBeforeCleanup": "182150b7130c96726ecca2da4ecd6dd4539e74c0",
+  "scope": "Per-file review of tracked historical automated-check output, CLI captures and the UCP reference lock. This is not a secret scan or a review of every archived payload.",
+  "reviewMethod": [
+    "Read candidate content and adjacent verification summaries.",
+    "Resolve Markdown links and check textual references across tracked files.",
+    "Keep files required for reproducibility or unique runtime evidence.",
+    "Untrack selected redundant output only; keep local bytes and an external recovery copy."
+  ],
+  "notNewTestEvidence": true,
+  "removedFromCurrentTreeCount": 24,
+  "removedFromCurrentTreeBytes": 370861,
+  "entries": [
+    {
+      "path": "docs/evidence/grok-oag-2026-10-15/run1/01-send.cmd",
+      "bytes": 218,
+      "sha256": "ec3242bb9050505b983b76e0b41927de3831d9b41fc9a87a667c17fe1edc5a07",
+      "referencesBeforeCleanup": [],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical CLI command capture; request and result records remain tracked."
+    },
+    {
+      "path": "docs/evidence/grok-oag-2026-10-15/run1/02-poll.cmd",
+      "bytes": 67,
+      "sha256": "0730beff69b58111b3e0d4e7301e31f37f192396f62bdd8ee7351f5ee487f50f",
+      "referencesBeforeCleanup": [],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical CLI command capture; request and result records remain tracked."
+    },
+    {
+      "path": "docs/evidence/grok-oag-2026-10-15/run1/03-reply.cmd",
+      "bytes": 111,
+      "sha256": "422528565f330d594604416ac307573cdfdef741fa891acb02f06341fe1738e1",
+      "referencesBeforeCleanup": [],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical CLI command capture; request and result records remain tracked."
+    },
+    {
+      "path": "docs/evidence/grok-oag-2026-10-15/run1/05-authorize.cmd",
+      "bytes": 90,
+      "sha256": "33902709c0744b01eb06ecd7b0e9005bad7b9ab79909605d8269353aa0f5761e",
+      "referencesBeforeCleanup": [],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical CLI command capture; request and result records remain tracked."
+    },
+    {
+      "path": "docs/evidence/ontology-runtime-2026-10-19/build.txt",
+      "bytes": 45,
+      "sha256": "9d7a4305c9789d1f06875b33d3f7cc1ec4dbec65367b309495a944f830a494e3",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ontology-runtime-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/ontology-runtime-2026-10-19/check.txt",
+      "bytes": 35,
+      "sha256": "cca2713f74fc49d37dedbac9fe4743bb16e794688c6c73919062db1a7556cc12",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ontology-runtime-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/ontology-runtime-2026-10-19/e2e.txt",
+      "bytes": 153,
+      "sha256": "c7b6d56244da818b5d8f0b8a587a7ad6d449647fd2f4e7b89f0b5370935cb551",
+      "referencesBeforeCleanup": [
+        "docs/evidence/agent-catalog-pa-2026-10-19/README.md",
+        "docs/evidence/ontology-runtime-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 7,
+        "suites": 0,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 9037.417792
+      }
+    },
+    {
+      "path": "docs/evidence/ontology-runtime-2026-10-19/tests.txt",
+      "bytes": 160,
+      "sha256": "3817114877504db24b287181c960cc5e72b33e4f184bc318ae64ee5a693143cd",
+      "referencesBeforeCleanup": [
+        "docs/evidence/agent-catalog-pa-2026-10-19/README.md",
+        "docs/evidence/ontology-runtime-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 334,
+        "suites": 0,
+        "pass": 334,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 10383.919708
+      }
+    },
+    {
+      "path": "docs/evidence/service-domain-validation-2026-10-18/build.log",
+      "bytes": 46,
+      "sha256": "6440710f14b3997c2e7db3b90365caee2a4054d100f68ccd1d7e3c4dd2c436d7",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domain-validation-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/service-domain-validation-2026-10-18/process-e2e.tap",
+      "bytes": 2137,
+      "sha256": "d94d396343285e557b937ec9cea25c6b067b57ba9868beab09727a776548a50d",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domain-validation-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 7,
+        "suites": 0,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 10168.447208
+      }
+    },
+    {
+      "path": "docs/evidence/service-domain-validation-2026-10-18/tests.tap",
+      "bytes": 69034,
+      "sha256": "a423ca628df6906a851d68c08195ad57ea05644bf4e213479f6b2f1f68ad8905",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domain-validation-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 288,
+        "suites": 0,
+        "pass": 288,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 9517.698375
+      }
+    },
+    {
+      "path": "docs/evidence/service-domain-validation-2026-10-18/typecheck.log",
+      "bytes": 36,
+      "sha256": "45e2eb223c312e096f8a51b5388b575c457fbe9824abf452ad66a0d409fa3176",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domain-validation-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/service-domains-2026-10-18/process-e2e.tap",
+      "bytes": 2125,
+      "sha256": "498d312e4f10a53dd30e87e9d15cb314f344f3e5135af4f2e41a4c0a84a16a83",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domains-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 7,
+        "suites": 0,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 9065.413
+      }
+    },
+    {
+      "path": "docs/evidence/service-domains-2026-10-18/tests.tap",
+      "bytes": 66403,
+      "sha256": "e826cdbd46128d3bcfd06348735f32e0a4e74c8be52aded57b8f0cd0011a1a8f",
+      "referencesBeforeCleanup": [
+        "docs/evidence/service-domains-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 279,
+        "suites": 0,
+        "pass": 279,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 7008.78575
+      }
+    },
+    {
+      "path": "docs/evidence/shopify-pa-2026-10-19/build.txt",
+      "bytes": 46,
+      "sha256": "6440710f14b3997c2e7db3b90365caee2a4054d100f68ccd1d7e3c4dd2c436d7",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-pa-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/shopify-pa-2026-10-19/check.txt",
+      "bytes": 36,
+      "sha256": "45e2eb223c312e096f8a51b5388b575c457fbe9824abf452ad66a0d409fa3176",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-pa-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/shopify-pa-2026-10-19/tests.txt",
+      "bytes": 78608,
+      "sha256": "cdc4a97ec311f4b43e83ecd755e1976455c9ec2b57f94075495fc92e1207b5e4",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-pa-2026-10-19/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 325,
+        "suites": 0,
+        "pass": 325,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 74533.767083
+      }
+    },
+    {
+      "path": "docs/evidence/shopify-readonly-2026-10-18/build.log",
+      "bytes": 46,
+      "sha256": "6440710f14b3997c2e7db3b90365caee2a4054d100f68ccd1d7e3c4dd2c436d7",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-readonly-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/shopify-readonly-2026-10-18/check.log",
+      "bytes": 36,
+      "sha256": "45e2eb223c312e096f8a51b5388b575c457fbe9824abf452ad66a0d409fa3176",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-readonly-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/shopify-readonly-2026-10-18/tests.log",
+      "bytes": 75910,
+      "sha256": "2e18342f1d68e17aa3f0a642d1b82f495f3ac96a8ee299c7d15148cf6c98c0b6",
+      "referencesBeforeCleanup": [
+        "docs/evidence/shopify-readonly-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 315,
+        "suites": 0,
+        "pass": 315,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 12014.572666
+      }
+    },
+    {
+      "path": "docs/evidence/ucp-local-2026-10-18/build.log",
+      "bytes": 45,
+      "sha256": "9d7a4305c9789d1f06875b33d3f7cc1ec4dbec65367b309495a944f830a494e3",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ucp-local-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    },
+    {
+      "path": "docs/evidence/ucp-local-2026-10-18/process-e2e.tap",
+      "bytes": 2134,
+      "sha256": "04308141fdb5e185290b725b89d3dd7930a7585734ae5b16f8d08385dc833cc0",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ucp-local-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 7,
+        "suites": 0,
+        "pass": 7,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 8952.280167
+      }
+    },
+    {
+      "path": "docs/evidence/ucp-local-2026-10-18/reference-uv.lock",
+      "bytes": 462756,
+      "sha256": "12a6485c744b59ca1f93f56fdc4182006ada2370f5788192f53d4c4a2877813e",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ucp-local-2026-10-18/README.md",
+        "docs/ucp-local-integration-2026-10-18.md"
+      ],
+      "decision": "keep_tracked",
+      "purpose": "Reproduce the official local UCP merchant dependency environment; its digest is recorded in verification.json."
+    },
+    {
+      "path": "docs/evidence/ucp-local-2026-10-18/tests.tap",
+      "bytes": 73305,
+      "sha256": "6cac013babc23b29c59fbacc650941dace68b77edc458a37e9e089f4b305721f",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ucp-local-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests.",
+      "testCountersFromOriginalOutput": {
+        "tests": 304,
+        "suites": 0,
+        "pass": 304,
+        "fail": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "duration_ms": 9904.999541
+      }
+    },
+    {
+      "path": "docs/evidence/ucp-local-2026-10-18/typecheck.log",
+      "bytes": 35,
+      "sha256": "cca2713f74fc49d37dedbac9fe4743bb16e794688c6c73919062db1a7556cc12",
+      "referencesBeforeCleanup": [
+        "docs/evidence/ucp-local-2026-10-18/README.md"
+      ],
+      "decision": "untrack_keep_local",
+      "purpose": "Historical automated-check console output; retain counts, hashes, verification reports and source manifests."
+    }
+  ]
+}

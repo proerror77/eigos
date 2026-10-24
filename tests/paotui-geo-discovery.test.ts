@@ -13,12 +13,11 @@ import { JobStore } from '../packages/core/store.js';
 import { digest } from '../packages/core/delegation.js';
 import { CapabilityResolver } from '../packages/coordinator/resolver.js';
 import { proposePlan, validatePlan } from '../packages/coordinator/plan.js';
-import { PaotuiGeoDiscoverySource } from '../packages/capabilities/paotui-geo-discovery.js';
+import { PaotuiGeoDiscoverySource } from './fixtures/legacy-paotui/paotui-geo-discovery.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
-import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS } from '../packages/capabilities/paotui-ontology.js';
-import { PAOTUI_AGENT_REFS } from '../packages/capabilities/paotui-agent.js';
+import { PAOTUI_READ_CAPABILITIES, PAOTUI_READ_BINDINGS } from './fixtures/legacy-paotui/paotui-ontology.js';
 import type { PaotuiQuery, PaotuiReader } from '../packages/capabilities/paotui-contracts.js';
-import type { OntologyReceipt } from '../packages/capabilities/paotui-mcp-server.js';
+import type { OntologyReceipt } from './fixtures/legacy-paotui/paotui-mcp-server.js';
 import { backend, owner, principal, proposal, reasoner } from './backend-fixture.js';
 
 const capability = PAOTUI_READ_CAPABILITIES[0]!;
@@ -67,20 +66,24 @@ test('public POI discovery is denied by default, including direct adapter prepar
   assert.deepEqual(calls, []);
 });
 
-test('application catalog opts into public discovery without duplicating the static search binding', () => {
+test('application catalog pins the public whitelist in the AgentProgram with no eager discovery or static binding', () => {
   const store = new JobStore(':memory:');
   try {
     // Construction only: the synthetic path is never opened and no reader runs.
     const options = { store, paotuiSkillDirectory: '/tmp/eigos-synthetic-paotui-not-invoked' };
     const defaultCatalog = createExecutionCatalog(options);
     assert.deepEqual(defaultCatalog.discoverySources(capability.ref, owner), []);
-    assert.equal(defaultCatalog.bindings(capability.ref, owner).length, 1);
+    assert.deepEqual(defaultCatalog.bindings(capability.ref, owner), []);
+    assert(defaultCatalog.agentProgram(capability.ref, owner));
     const optedIn = createExecutionCatalog({ ...options, publicGeoDiscoveryQueries: [publicQuery] });
-    assert.equal(optedIn.discoverySources(capability.ref, owner).length, 1);
+    assert.deepEqual(optedIn.discoverySources(capability.ref, owner), []);
+    assert.notEqual(optedIn.agentProgram(capability.ref, owner)!.configurationDigest, defaultCatalog.agentProgram(capability.ref, owner)!.configurationDigest);
+    assert.throws(() => optedIn.agentProgram(capability.ref, 'another-owner'), /unavailable to this identity/);
     assert.deepEqual(optedIn.bindings(capability.ref, owner), []);
     assert.deepEqual(optedIn.discoverySources(capability.ref, 'another-owner'), []);
     assert.equal(optedIn.summaries(owner).filter(summary => summary.ref.id === 'geo.search').length, 1);
-    assert(optedIn.agentProgram(PAOTUI_AGENT_REFS.addresses, owner));
+    assert.deepEqual(optedIn.bindings({ id: 'address.book.read', version: '1' }, owner), []);
+    assert(optedIn.agentProgram({ id: 'address.book.read', version: '1' }, owner));
   } finally { store.close(); }
 });
 

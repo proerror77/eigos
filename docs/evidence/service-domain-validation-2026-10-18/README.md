@@ -18,7 +18,7 @@
 | [model-run-2.json](model-run-2.json) | 修复后 6 类终态、固定要求／计划、验收、交付物、实际本体读取与模型回执 |
 | [第一轮题目](agent-run-1-manifest.json)、[答案](agent-run-1-answers.json)、[查询](agent-run-1-queries.jsonl)、[复核](agent-run-1-review.json)、[源码](agent-run-1-source-inputs.json) | 修复前独立调查；不冒充当前模型验证 |
 | [第二轮题目](agent-run-2-manifest.json)、[答案](agent-run-2-answers.json)、[查询](agent-run-2-queries.jsonl)、[复核](agent-run-2-review.json)、[源码](agent-run-2-source-inputs.json) | 当前模型独立调查及逐题证据引用核对 |
-| [类型检查](typecheck.log)、[测试](tests.tap)、[构建](build.log)、[进程 E2E](process-e2e.tap) | 最终本地自动验证 |
+| [自动验证输出摘要与文件哈希](../archive-cleanup-2026-10-22.json) | 历史类型检查、288 项测试、构建和 7 项进程 E2E 通过 |
 
 模型报告保留结构化输出，不记录模型内部推理。报告从原始本地读回中选取请求、计划、授权请求、验收、交付物和运行／读取回执，省去重复的任务历史和候选私有数据；原始文件 SHA-256 留在报告中。没有导出访问令牌、真实账户数据或合成患者私人字段。两种第二轮验证启动时的 23 个源码摘要均与最终相关实现相符。
 
@@ -27,3 +27,5 @@
 ## 边界
 
 真实的是 Codex 模型调用、本地协议传输及读取过程；六类提供者和业务数据全部为合成来源。没有实际用户 PA、真实供应商请求、下单、付款、挂号或预订，也没有常驻部署。模拟 order／reserve 仅使用精确沙箱许可；行程方案是本地操作。人工非建模者演练和真实接口门槛仍未完成。
+
+2026-10-22 归档整理：重复的自动检查原始输出已移出 Git 跟踪并保留本地副本；仓库保留摘要、原文件哈希和整理前提交。摘要不是原始逐项日志，也不代表本次重新运行了历史验证。

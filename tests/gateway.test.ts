@@ -48,11 +48,13 @@ before(async () => {
   base = `http://127.0.0.1:${address.port}`;
   // The test listener is loopback; the injected verifier still enforces HTTPS issuer/audience.
   const config: Config = { EIGOS_INVITE_BETA: 'false', EIGOS_NETWORK_ENABLED: 'false', EIGOS_NETWORK_MEMBER_IDS: [], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: [], EIGOS_NETWORK_MAX_RESPONDERS: 3, EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: 2,
+    EIGOS_DIDI_ENVIRONMENT: 'production', EIGOS_DIDI_ORDERS_ENABLED: 'false',
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
     EIGOS_COORDINATOR: 'codex', EIGOS_ACTION_SANDBOX: 'false', EIGOS_EXECUTOR: 'disabled', EIGOS_CODEX_BIN: 'codex', EIGOS_EXECUTOR_TIMEOUT_MS: 120000,
     EIGOS_MEMBERSHIP_APPROVAL: 'self-service', EIGOS_PAOTUI_ORDERS_ENABLED: 'false', EIGOS_STRIPE_TEST_ENABLED: 'false',
+    EIGOS_STRIPE_TREASURY_ENABLED: 'false', EIGOS_STRIPE_TREASURY_MCP_URL: 'https://mcp.stripe.com',
   };
   gateway = createApp(config, verify);
   worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();

@@ -49,6 +49,12 @@ const schema = z.object({
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
   EIGOS_SHOPIFY_CHECKOUT_MERCHANTS: merchantList('EIGOS_SHOPIFY_CHECKOUT_MERCHANTS').optional(),
   EIGOS_SHOPIFY_CHECKOUT_AUDIT_DIR: z.string().optional(),
+  EIGOS_DIDI_KEY_FILE: z.string().optional(),
+  EIGOS_DIDI_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  EIGOS_DIDI_BINDING_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
+  EIGOS_DIDI_ENVIRONMENT: z.enum(['production', 'mock']).default('production'),
+  EIGOS_DIDI_AUDIT_DIR: z.string().optional(),
+  EIGOS_DIDI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
@@ -64,6 +70,9 @@ const schema = z.object({
   EIGOS_STRIPE_TEST_SECRET_KEY_FILE: z.string().optional(),
   EIGOS_STRIPE_TEST_ACCOUNT_ID: z.string().regex(/^acct_[A-Za-z0-9]{1,100}$/).optional(),
   EIGOS_STRIPE_TEST_MERCHANT_ID: z.string().trim().min(1).max(200).optional(),
+  // Connection reservation only: no credentials, MCP client or executable capability.
+  EIGOS_STRIPE_TREASURY_ENABLED: z.literal('false', { error: 'Stripe Treasury is reserved and disabled; account authorization and execution are not implemented' }).default('false'),
+  EIGOS_STRIPE_TREASURY_MCP_URL: z.literal('https://mcp.stripe.com', { error: 'Stripe Treasury reservation requires the official MCP endpoint' }).default('https://mcp.stripe.com'),
   EIGOS_TASK_MAX_MS: z.coerce.number().int().min(1000).max(604800000).optional(),
   HOST: z.string().default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
@@ -95,6 +104,10 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   if (c.EIGOS_NETWORK_OPERATOR_MEMBER_IDS.some(id => !c.EIGOS_NETWORK_MEMBER_IDS.includes(id))) throw new Error('Network operators must be explicitly enrolled members');
   const publicUrl = new URL(c.PUBLIC_URL);
+  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
+  if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');
+  if (c.EIGOS_DIDI_KEY_FILE && (!isAbsolute(c.EIGOS_DIDI_KEY_FILE) || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Personal DiDi is restricted to explicitly configured non-production loopback development');
+  if (c.EIGOS_DIDI_AUDIT_DIR && (!c.EIGOS_DIDI_KEY_FILE || !isAbsolute(c.EIGOS_DIDI_AUDIT_DIR))) throw new Error('DiDi audit requires an enabled binding and an absolute private directory');
   if (c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Shopify anonymous catalog requires explicitly configured local development');
   if (c.EIGOS_SHOPIFY_AUDIT_DIR && (!c.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length || !isAbsolute(c.EIGOS_SHOPIFY_AUDIT_DIR))) throw new Error('Shopify audit requires enabled catalog and an absolute private directory');
   if (c.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length && (c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || c.EIGOS_INVITE_BETA === 'true'

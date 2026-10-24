@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { syncOntology } from './ontology.mjs';
 const root = process.cwd();
 // TypeScript does not remove outputs for deleted sources. Prune only orphaned build files.
 function prune(path) {
@@ -12,3 +13,4 @@ function prune(path) {
 }
 if (existsSync('dist')) prune(resolve('dist'));
 execFileSync(resolve('node_modules/.bin/tsc'), [], { stdio: 'inherit' });
+await syncOntology(root);

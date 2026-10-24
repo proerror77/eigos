@@ -11,16 +11,14 @@ import { createApp } from '../apps/gateway/app.js';
 import { createWorker } from '../apps/worker/runtime.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/delegation.js';
-import { validatePlan } from '../packages/coordinator/plan.js';
 import type { Job } from '../packages/core/domain.js';
 import type { Reasoner } from '../packages/coordinator/coordinator.js';
-import { PAOTUI_READ_CAPABILITIES } from '../packages/capabilities/paotui-ontology.js';
-import { owner, principal, proposal, observePlanning, observeTaskContext } from './backend-fixture.js';
+import { readMeituan } from './fixtures/meituan-agent.js';
+import { owner, principal, observeTaskContext, acknowledgeReads } from './backend-fixture.js';
 
 const query = { city: '北京市', keyword: '天安门' };
 const deniedQuery = { city: '北京市', keyword: '故宫博物院' };
-const capability = PAOTUI_READ_CAPABILITIES[0]!;
-const sourceId = 'meituan:public-geo-discovery';
+const capability = { ref: { id: 'geo.search', version: '1' } };
 type Command = { command: string; args: string[] };
 const evidence = () => ({ id: randomUUID(), runtime: 'synthetic-public-geo-runtime-no-model', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'synthetic-fixture' });
 
@@ -33,9 +31,16 @@ function fixedReasoner(input = query): Reasoner {
       requirementsJson: JSON.stringify([{ requirement: { id: 'public-location-scope', strength: 'hard', kind: 'location', expected: { ref: '北京市' } }, messageId: request.messages[0]!.id, quote: '北京市' }]),
       conditionsJson: '[]',
     }, evidence: evidence() }; },
-    plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: context.resolution.candidates.some(candidate => candidate.status === 'ready')
-      ? proposal(context) : { kind: 'no_feasible_plan', requestRevision: context.request.revision, candidateId: '', steps: [],
-        message: 'Synthetic fixed planner received no verified public query result' }, evidence: evidence() }; },
+    plan: async () => { throw new Error('Eager legacy source preparation is forbidden'); },
+    act: async (context, _signal, access) => {
+      observeTaskContext(access);
+      const observations = readMeituan(context, access);
+      const decision = context.state.feedback.length ? { kind: 'no_feasible_plan' as const, requestRevision: context.request.revision, message: 'Synthetic source unavailable; do not retry automatically', steps: [], completionJson: '' }
+        : observations.length ? { kind: 'complete' as const, requestRevision: context.request.revision, message: 'Selected synthetic source result', steps: [], completionJson: JSON.stringify({ observation: observations[0]!.ref, rationale: 'Source status evaluated in this decision' }) }
+        : { kind: 'execute' as const, requestRevision: context.request.revision, message: 'Model selects only the public read', steps: [{ id: 'public', action: 'SearchMeituanLocations', argumentsJson: JSON.stringify({ scope: context.state.scope }), dependsOn: [], inputRefs: [] }], completionJson: '' };
+      acknowledgeReads(access);
+      return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
+    },
   };
 }
 
@@ -63,7 +68,7 @@ const assert = require('node:assert/strict');
 const args = process.argv.slice(2);
 fs.appendFileSync(${JSON.stringify(commands)}, JSON.stringify({ command: args[0], args: args.slice(1) }) + '\\n');
 assert.equal(process.env.MCP_ACCESS_TOKEN, 'synthetic-runtime-token-not-a-credential');
-assert.deepEqual(args, ['search_poi', '--keyword', '天安门', '--city', '北京市']);
+assert.equal(args[0], 'search_poi');assert.deepEqual(Object.fromEntries([[args[1],args[2]],[args[3],args[4]]]),{'--keyword':'天安门','--city':'北京市'});
 ${failure ? "console.error('PRIVATE_SYNTHETIC_PROVIDER_ERROR'); process.exit(2);" : "console.log(JSON.stringify({ status: 'ok', pois: [{ name: 'Synthetic public landmark', address: 'Synthetic public square', city: '北京市', lat: 39904200, lng: 116407400, poiId: 'synthetic-poi' }] }));"}
 `);
   return { bin, skill, calls: (): Command[] => existsSync(commands) ? readFileSync(commands, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as Command) : [],
@@ -84,7 +89,8 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
   let worker: ReturnType<typeof createWorker> | undefined;
   try {
     gateway = createApp(readConfig(env));
-    assert.equal(gateway.catalog.discoverySources(capability.ref, owner).length, 1, 'Gateway must wire the configured discovery source');
+    assert.equal(gateway.catalog.discoverySources(capability.ref, owner).length, 0, 'No eager pre-model provider discovery may remain');
+    assert(gateway.catalog.agentProgram(capability.ref, owner), 'Public lookup must use the ontology AgentProgram');
     assert.deepEqual(gateway.catalog.bindings(capability.ref, owner), [], 'opt-in must replace the unrestricted static search binding');
     const submitted = gateway.tasks.submit(principal, { service: 'eigos.delegate', goal: 'Synthetic public search fixture for 北京市; no model or actual provider', requestId: randomUUID() });
     assert.equal(submitted.state, 'submitted');
@@ -93,43 +99,24 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
     worker = createWorker(readWorkerConfig(env), { reasoner: fixedReasoner(mode === 'denied' ? deniedQuery : query), timing: { pollMs: 25, leaseMs: 10000, timeoutMs: 15000 } });
     const completed = await terminal(() => gateway!.tasks.get(principal, submitted.id));
     assert.equal(completed.id, submitted.id);
-    assert.equal(completed.delegation?.resolution?.scope.realSupply, false);
-    assert.equal(completed.delegation?.resolution?.comparison, undefined);
-    const coverage = completed.delegation!.resolution!.scope.coverage!;
-    assert.equal(coverage.length, 1);
-    assert.equal(coverage[0]!.sourceId, sourceId);
-    assert.equal(coverage[0]!.realSupply, false);
-    assert.equal(completed.runs?.length, 2);
+    assert.equal(completed.delegation?.resolution, undefined, 'No prepared source recipe or product-supply claim');
     assert(completed.runs!.every(run => run.runtime === 'synthetic-public-geo-runtime-no-model'));
     assert(!JSON.stringify(completed).includes('PRIVATE_SYNTHETIC_PROVIDER_ERROR'));
     assert(!JSON.stringify(completed).includes('synthetic-runtime-token-not-a-credential'));
-    assert.equal(fixture.tokenReads(), mode === 'denied' ? 0 : 1, 'denied queries must not attempt even the fake credential lookup');
+    assert.equal(fixture.tokenReads(), mode === 'denied' ? 0 : 1);
     if (mode === 'success') {
-      assert.equal(completed.state, 'completed');
-      assert.equal(coverage[0]!.status, 'returned');
-      const candidate = completed.delegation!.resolution!.candidates[0]!;
-      assert.equal(completed.delegation!.resolution!.candidates.length, 1);
-      assert.equal(candidate.binding.discovery?.sourceId, sourceId, 'Worker must use DiscoverySource, not the legacy static adapter');
-      assert.equal(candidate.binding.discovery?.requestId, submitted.id);
-      assert.equal(candidate.binding.discovery?.requestRevision, 1);
-      assert.equal(candidate.offer, undefined);
-      assert.deepEqual(candidate.facts.searchArea, query);
-      assert.equal(candidate.requirementChecks.find(check => check.requirementId === 'public-location-scope')?.result, 'pass');
-      assert.equal(candidate.binding.configurationDigest, gateway.catalog.discoverySources(capability.ref, owner)[0]!.configurationDigest);
-      assert.equal(completed.delegation!.acceptance!.accepted, true);
-      assert.equal(completed.delegation!.plan!.completionTarget, 'artifact');
-      const result = completed.artifact!.data.result as { places: { name: string; lat: number; lng: number; coordinateUnit: string }[]; ontologyReceipt: { evidenceKind: string; inputDigest: string; sourceCalls: string[] } };
+      assert.equal(completed.state, 'completed'); assert.equal(completed.delegation!.acceptance!.accepted, true);
+      assert.equal(completed.delegation!.acceptance!.checks.find(c => c.requirementId === 'public-location-scope')?.result, 'pass');
+      assert.equal(completed.delegation!.agent!.plans.length, 1); assert.equal(completed.delegation!.agent!.plans[0]!.steps[0]!.action, 'SearchMeituanLocations');
+      const result = completed.artifact!.data.result as { places: {name:string}[]; ontologyModule:{id:string};evidenceKind:string;noBusinessWrites:boolean };
       assert.deepEqual(result.places, [{ name: 'Synthetic public landmark', address: 'Synthetic public square', city: '北京市', lat: 39.9042, lng: 116.4074, coordinateUnit: 'degree', poiId: 'synthetic-poi' }]);
-      assert.equal(result.ontologyReceipt.evidenceKind, 'live_readonly', 'synthetic CLI exercises this receipt shape; it is not live-source proof');
-      assert.equal(result.ontologyReceipt.inputDigest, digest(query));
-      assert.deepEqual(result.ontologyReceipt.sourceCalls, ['search_poi']);
-      assert.deepEqual(fixture.calls(), [{ command: 'search_poi', args: ['--keyword', query.keyword, '--city', query.city] }], 'execution must reuse the discovery read');
+      assert.equal(result.evidenceKind, 'live_readonly', 'Only a synthetic CLI with production-shaped receipts; not live-source proof');
+      assert.equal(gateway.store.ontology.query(owner,{type:'Place'}).items.length,1);
+      assert.equal(result.ontologyModule.id, 'meituan.reads'); assert.equal(result.noBusinessWrites, true);
+      assert.equal(fixture.calls().length,1); assert.equal(fixture.calls()[0]!.command,'search_poi');
     } else {
-      assert.equal(completed.state, 'rejected');
-      assert.equal(completed.artifact, undefined);
-      assert.equal(completed.delegation!.plan, undefined);
-      assert.deepEqual(completed.delegation!.resolution!.candidates, []);
-      assert.equal(coverage[0]!.status, mode === 'denied' ? 'needs_authorization' : 'unavailable');
+      if (mode === 'denied') { assert.equal(completed.state, 'paused'); assert.equal(completed.delegation?.recovery?.code, 'validation_stalled'); }
+      else assert(['failed','rejected'].includes(completed.state)); assert.equal(completed.artifact, undefined);
       assert.equal(fixture.calls().length, mode === 'denied' ? 0 : 1);
     }
     await worker.close(); worker = undefined;
@@ -139,14 +126,8 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
     assert.equal(reopened.id, submitted.id);
     assert.equal(reopened.state, completed.state);
     assert.deepEqual(reopened.artifact, completed.artifact);
-    assert.deepEqual(reopened.delegation!.resolution, completed.delegation!.resolution);
+    assert.deepEqual(reopened.delegation!.agent, completed.delegation!.agent);
     assert.deepEqual(reopened.delegation!.acceptance, completed.delegation!.acceptance);
-    if (mode === 'success') {
-      validatePlan(gateway.catalog, owner, reopened.delegation!.request, reopened.delegation!.plan!, gateway.store.ontologyForJob(owner, reopened).model.ref);
-      assert.equal(reopened.delegation!.actions!.length, 1);
-      assert.equal(reopened.delegation!.actions![0]!.state, 'effect_confirmed');
-      assert.deepEqual(reopened.delegation!.businessFacts, []);
-    }
     assert.equal(fixture.calls().length, mode === 'denied' ? 0 : 1, 'durable readback must never repeat the provider read');
     assert.equal(fixture.tokenReads(), mode === 'denied' ? 0 : 1);
   } finally {

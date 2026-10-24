@@ -58,7 +58,7 @@ export class OntologyMcpPaotuiReader implements PaotuiReader, PaotuiAtomicReader
 
   private transport() {
     const source = import.meta.url.endsWith('.ts');
-    const script = fileURLToPath(new URL(`../../apps/ontology-mcp/main.${source ? 'ts' : 'js'}`, import.meta.url));
+    const script = fileURLToPath(new URL(`../../apps/member-source-mcp/main.${source ? 'ts' : 'js'}`, import.meta.url));
     const env = Object.fromEntries(['PATH', 'HOME', 'USER', 'TMPDIR'].flatMap(k => process.env[k] ? [[k, process.env[k]!]] : []));
     env.EIGOS_PAOTUI_SKILL_DIR = this.skillDirectory;
     if (this.auditPath) env.EIGOS_ONTOLOGY_AUDIT_PATH = this.auditPath;

@@ -42,7 +42,7 @@ function context(value = receipt()): PortReadContext {
 test('composition contracts preserve historical seed fingerprints in a distinct new kernel', () => {
   const seed = createSeedDefinition(), previous = createHistoricalKernelDefinition(seed.registry), current = createCurrentKernelDefinition(seed.registry);
   assert.deepEqual(compileOntologyDocument(seed.document, seed.registry).ref, LEGACY_SEED_MODEL_REF);
-  assert.equal(current.document.version, '19');
+  assert.equal(current.document.version, '20');
   const composition = createCompositionKernelDefinition(seed.registry), oldModel = compileOntologyDocument(composition.document, seed.registry), currentModel = compileOntologyDocument(current.document, seed.registry);
   assert.deepEqual(oldModel.ref, COMPOSITION_KERNEL_MODEL_REF);
   assert.equal(oldModel.properties('BusinessResult').effect!.schema.safeParse('external_draft').success, false);

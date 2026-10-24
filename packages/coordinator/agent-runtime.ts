@@ -163,7 +163,8 @@ export class AgentRuntime {
           selectedContext = componentContext(ctx, component, selectedProgram);
         }
         selectedProgram.validatePause?.(selectedContext, decision, reads);
-        this.pause(claim, decision.kind === 'clarify', decision.message, selectedProgram, { modelRunId: response.evidence.id, decision, ontologyPlanning: reads });
+        const message = decision.kind === 'clarify' ? selectedProgram.clarification?.(selectedContext, decision, reads) ?? decision.message : decision.message;
+        this.pause(claim, decision.kind === 'clarify', message, selectedProgram, { modelRunId: response.evidence.id, decision, ontologyPlanning: reads });
       }
       catch (error) {
         if (error instanceof ConnectionAuthorizationRequired) throw error;
@@ -478,6 +479,7 @@ export class AgentRuntime {
       return true;
     }
     const context: AgentActionContext = { ...this.boundStep(claim, program, step).context, planId: plan.id, intentId: intent.id, attemptId: attempt!.id, ...(plan.modelRunId ? { modelRunId: plan.modelRunId } : {}), ...(plan.callerDecision ? { callerRequestId: plan.callerDecision.requestId } : {}), operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt, execution: { intent: this.store.intent(claim.owner, intent.id), attempt: attempt! } };
+    context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     context.assertDispatchAllowed = () => {
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) failure('Execution lease or task authority ended before the provider write');

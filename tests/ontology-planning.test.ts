@@ -1,3 +1,5 @@
+import { createCurrentKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -22,8 +24,8 @@ import { equivalentQuantities } from '../packages/ontology/quantity.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, interpretation, proposal, evidence, owner, principal, reasoner, fixtureCapability, fixtureBinding, fixtureAdapter } from './backend-fixture.js';
 
-function fixture(id = 'QD-1') {
-  const data = drillCase(id), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now);
+function fixture(id = 'QD-1', model: ConstructorParameters<typeof OntologyObjectStore>[1] = undefined) {
+  const data = drillCase(id), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, model, () => data.now);
   graph.ingest(owner, data.batch, data.source);
   return { ...data, db, graph, session: new OntologyPlanningSession(graph, owner, data.request) };
 }
@@ -48,6 +50,18 @@ test('Planning descriptions expose full action schemas on demand without repeati
     // keep the per-decision context bound intact as the registry grows.
     const conditions = new OntologyPlanningSession(f.graph, owner, f.request).call('describe_ontology', { search: 'ServiceRequest', actions: [], includeConditionSchema: true }) as any;
     assert.deepEqual(conditions.conditionSchema, z.toJSONSchema(businessConditionSchema));
+  } finally { f.db.close(); }
+});
+
+test('Bound reference function navigation comes from ontology metadata and performs no reads or evaluations', () => {
+  const kernel = createCurrentKernelDefinition();
+  const f = fixture('QD-1', compileOntologyDocument(kernel.document, kernel.registry));
+  try {
+    const session = new OntologyPlanningSession(f.graph, owner, f.request, [], () => {}, () => {}, 'request', [{ type: 'DidiPlaceObservation', id: 'navigation-only-not-a-read' }]);
+    const catalog = session.catalog();
+    assert(catalog.functionNavigationOnly); assert.deepEqual(catalog.functions.find(f => f.id === 'rideEstimateStatus'), f.graph.model.function('rideEstimateStatus'));
+    assert.equal(session.receipts().length, 0); assert.deepEqual(session.retrievedRefs(), []);
+    assert.throws(() => session.finish(), /actual definition and object reads/);
   } finally { f.db.close(); }
 });
 const parcelCondition = (request: ServiceRequest): BusinessCondition => ({ id: 'priced-input', predicateRef: { id: 'parcel.quote_matches_request', version: '1' }, subject: { type: 'DeliveryQuote', role: 'parcel_quote' }, phase: 'result', strength: 'hard', operator: 'eq', expected: { weight: { amount: '1', unit: 'kg' }, serviceLevel: 'ordinary' }, source: { messageId: request.messages[0]!.id, quote: request.messages[0]!.text } });
@@ -206,6 +220,55 @@ test('N2 read loop rejects a final answer without reads and honors its model-tur
     await assert.rejects(reasonWithOntology({ runStructured: async () => { calls++; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), /turn limit/);
     assert.equal(calls, 1);
   } finally { f.db.close(); }
+});
+
+test('Conversation reuse sends only new host results and still records every response and actual ontology read', async () => {
+  const f = fixture(), prompts: string[] = []; let opened = 0, closed = 0, records = 0;
+  const model = {
+    runStructured: async () => { throw new Error('A session failure must not silently fall back'); },
+    openStructuredSession: async () => {
+      opened++;
+      return { close: async () => { closed++; }, run: async (prompt: string) => {
+        prompts.push(prompt);
+        return { evidence: evidence(), output: prompts.length === 1 ? { kind: 'read', calls: [
+          { tool: 'describe_ontology', argumentsJson: JSON.stringify({ search: 'DeliveryQuote', limit: 1 }) },
+          { tool: 'query_ontology', argumentsJson: JSON.stringify({ type: 'DeliveryQuote' }) },
+        ], finalJson: '' } : { kind: 'final', calls: [], finalJson: JSON.stringify({ answer: 'Source read' }) } };
+      } };
+    },
+  };
+  try {
+    const done = await reasonWithOntology(model, 'Synthetic stable application context', {}, f.session, new AbortController().signal, () => { records++; });
+    assert.deepEqual(done.output, { answer: 'Source read' }); assert.equal(opened, 1); assert.equal(closed, 1); assert.equal(records, 2);
+    assert(prompts[0]!.includes('Synthetic stable application context')); assert(!prompts[1]!.includes('Synthetic stable application context'));
+    const first = JSON.parse(prompts[0]!.split('\n\n').at(-1)!), next = JSON.parse(prompts[1]!.split('\n\n').at(-1)!);
+    assert(first.interface && first.finalSchema); assert.equal(next.interface, undefined); assert.equal(next.finalSchema, undefined); assert.equal(next.conversation.length, 2);
+    assert.equal(next.budget.modelResponse, 2); assert.equal(f.session.finish().mode, 'model_queries'); assert.equal(f.session.receipts().length, 2);
+  } finally { f.db.close(); }
+});
+
+test('A reused conversation cannot finish without its own reads and is closed at the same model-response limit', async () => {
+  for (const noReads of [true, false]) {
+    const f = fixture(); let closed = false, calls = 0;
+    try {
+      await assert.rejects(reasonWithOntology({ runStructured: async () => { throw new Error('No fallback'); }, openStructuredSession: async () => ({ close: async () => { closed = true; }, run: async () => {
+        calls++; return { evidence: evidence(), output: noReads ? { kind: 'final', calls: [], finalJson: '{}' } : { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' } };
+      } }) }, 'Synthetic', {}, f.session, new AbortController().signal, () => {}, 1), noReads ? /skipped required/ : /turn limit/);
+      assert(closed); assert.equal(calls, 1);
+    } finally { f.db.close(); }
+  }
+});
+
+test('Cancellation closes a reused conversation before its late model output can read ontology', async () => {
+  const f = fixture(), controller = new AbortController(); let entered!: () => void, release!: () => void, closed = false;
+  const ready = new Promise<void>(r => { entered = r; }), hold = new Promise<void>(r => { release = r; });
+  try {
+    const run = reasonWithOntology({ runStructured: async () => { throw new Error('No fallback'); }, openStructuredSession: async () => ({ close: async () => { closed = true; }, run: async () => {
+      entered(); await hold; return { evidence: evidence(), output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' } };
+    } }) }, 'Synthetic canceled decision', {}, f.session, controller.signal, () => {});
+    const rejected = assert.rejects(run, /abort/i); await ready; controller.abort(); release(); await rejected;
+    assert(closed); assert.equal(f.session.receipts().length, 0);
+  } finally { release?.(); f.db.close(); }
 });
 
 test('N2 cancellation fences model responses and prevents the next read or dispatch', async () => {

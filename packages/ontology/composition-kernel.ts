@@ -32,7 +32,7 @@ const objectPort = (type: string, role = type, phase = phases[type] ?? 'fact'): 
 /** The typed schema identifies all reference arguments, including references
  * that old display-only inputs metadata omitted. It never guesses an entity
  * from a name or joins unrelated source identities. */
-function composable(action: ActionDefinition, evidenceTypes: Set<string>): ActionDefinition {
+export function composable(action: ActionDefinition, evidenceTypes: Set<string>): ActionDefinition {
   const operation = action.read ?? action.operation;
   if (!operation || action.composition) return action;
   const properties = (operation.inputSchema as { properties: Record<string, JsonSchema>; required?: string[] }).properties;

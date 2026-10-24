@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JobStore } from '../packages/core/store.js';
 import { ExecutionCatalog } from '../packages/core/catalog.js';
-import { DELIVERY_REQUEST_CAPABILITY as cap, DELIVERY_REQUEST_BINDING as binding, PaotuiRequestAdapter } from '../packages/capabilities/paotui-request.js';
+import { DELIVERY_REQUEST_CAPABILITY as cap, DELIVERY_REQUEST_BINDING as binding, PaotuiRequestAdapter } from './fixtures/legacy-paotui/paotui-request.js';
 import { readConfig } from '../packages/core/config.js';
 import { submitSchema } from '../packages/core/domain.js';
 import { backend, reasoner, interpretation, principal, owner, proposal } from './backend-fixture.js';

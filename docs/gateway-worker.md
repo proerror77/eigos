@@ -38,6 +38,8 @@ npm run dev:worker
 
 构建后分别使用 `npm run start:gateway`、`npm run start:worker`。`npm start` 是同机双进程的便利启动器。
 
+Worker 的本体推理在单次规划内复用临时模型会话，每次真实模型回复仍独立记录；工具和来源读取继续由模型选择。会话隔离、耗时口径及回归范围见 [模型推理耗时](model-reasoning-latency.md)。
+
 两个进程必须使用同一个本机 SQLite 文件（建议设置相同的绝对 `DATABASE_PATH`），并由相同系统用户或明确配置的文件权限访问。独立进程不能使用 `:memory:`。Gateway 和 Worker 的能力开关应保持一致；能力目录表示配置的服务，并不保证当前有健康 Worker 在线。Worker 不在线时，任务会持久等待，协议状态仍为 `working`。
 
 Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或 OAuth/JWKS 配置，不监听 HTTP。只有 Worker 主机需要安装和登录 Codex，或持有业务适配器凭据。`EIGOS_EXECUTOR=codex` 在 Gateway 用于声明能力，在 Worker 用于启用执行器；`EIGOS_CODEX_BIN` 和模型超时只由 Worker 执行时使用。生产应分别注入各角色所需环境变量，不必把完整 `.env` 同时发给两端。
@@ -64,9 +66,11 @@ Gateway 需要访问令牌验证配置；Worker 不要求开发 Bearer 令牌或
 
 ## 部署边界
 
-启用新后端和个人美团读取时，Worker 通过内部 stdio Ontology MCP 调用官方查询程序；Gateway 不启动该进程、模型或业务读取。两端使用相同 `EIGOS_PAOTUI_SKILL_DIR` 以固定能力／绑定配置，只有 Worker 需要实际个人授权。MCP 只提供版本化定义与只读动作，没有公网监听、下单或付款工具；独立进程不构成新的公共服务。详见 [只读接入](meituan-paotui-integration.md)。
+个人美团读取由 Worker 根据独立本体选择原子动作，再通过内部 stdio MCP 调用官方查询程序；Gateway 不启动该进程、模型或业务读取。两端使用相同 `EIGOS_PAOTUI_SKILL_DIR` 以固定能力／绑定配置，只有 Worker 需要实际个人授权。MCP 只提供版本化定义与只读动作，没有公网监听、下单或付款工具；独立进程不构成新的公共服务。详见 [只读接入](meituan-paotui-integration.md)。
 
-本人常驻服务先构建，再用 `npm run setup:pa` 更新。公开地点 DiscoverySource 默认关闭；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可关闭新发现源。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限；真实查询及模型验收仍按本次任务授权范围执行。
+本人常驻服务先构建，再用 `npm run setup:pa` 更新。公开地点查询限制清单默认为空；明确获准后可在这次更新命令中设置 `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES='[{"city":"北京市","keyword":"天安门"}]'`。更新脚本复用运行配置的校验器，在停止服务前拒绝非法清单。之后省略该变量会保留已管理实例的清单；显式设为 `[]` 可恢复本机只读搜索的原有空清单行为。清单同时写入 Gateway／Worker 共用的私有配置，不扩大个人凭据权限，也不会触发模型前查询；真实查询及模型验收仍按本次任务授权范围执行。
+
+现有滴滴、美团、Shopify MCP 的工具绑定与证据依赖统一使用独立的 [`ontology/` 数据包](../ontology/README.md)。两端加载同一不可变定义快照；模型通过本体发现接口读取绑定，Worker 按所选动作解释参数和依赖。纯定义更新可运行 `ontology:check`、`ontology:sync` 后更新实例，沿用既有 Worker 构建。定义进入运行快照摘要和计划校验，凭据及只读授权仍由执行端管理。
 
 Shopify 匿名查询使用 `EIGOS_SHOPIFY_CATALOG_MERCHANTS` 显式列出商家身份（内部 id、名称、Shop GID、canonical myshopify 域名）。默认关闭，最多 8 家，身份不得重复；仅允许本机开发身份、loopback 和非生产环境。Gateway 只构造能力元数据，实际 HTTP 读取及模型由 Worker 执行。`setup:pa` 同样保留既有清单，显式 `[]` 关闭；启用时将原始响应和回执保存到私有 `shopify-reads/`，不读取 Shopify 账号凭据。Agent 自行选择查询、变体、动作组合及完成时机；价格等事实变化作为新的观察交给 Agent，没有固定复查或自动重试流程。当前实现、边界与 PA 验收状态见 [Agent 动作说明](catalog-agent-actions-2026-10-19.md)。
 

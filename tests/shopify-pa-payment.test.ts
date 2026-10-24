@@ -16,7 +16,7 @@ import { createShopifyPASandbox } from '../packages/capabilities/shopify/pa-chec
 test('Checkout payment is explicitly isolated and historical v18 retains its exact model', () => {
   assert(!createExecutionCatalog().summaries(owner).some(value => value.ref.id === SHOPIFY_PA_REF.id));
   assert.deepEqual(createCheckoutKernelDefinition().audit.model, CHECKOUT_KERNEL_MODEL_REF);
-  assert.equal(createCurrentKernelDefinition().audit.model.version, '19');
+  assert.equal(createCurrentKernelDefinition().audit.model.version, '20');
   const base = { EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'isolated-checkout-fixture'.repeat(3), EIGOS_ACTION_SANDBOX: 'true', EIGOS_SHOPIFY_PAYMENT_SANDBOX_TOKEN_FILE: '/private/source-token' };
   for (const url of ['https://mcp.shop.com', 'https://127.0.0.1:3437', 'http://localhost:3437', 'http://127.0.0.1:3437/payment']) assert.throws(() => readConfig({ ...base, EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL: url }), /isolated loopback/);
   assert.throws(() => readConfig({ ...base, EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL: 'http://127.0.0.1:3437', NODE_ENV: 'production' }));

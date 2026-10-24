@@ -3,6 +3,7 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ActionImplementation } from './action-dsl.js';
 import { assertPortCompatible, type CompositionPort } from './composition-contract.js';
+import { mcpReadBindingSchema, type McpReadBinding } from './mcp-read.js';
 
 export const nameSchema = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).refine(v => !['constructor', 'prototype', '__proto__'].includes(v));
 export const objectRefSchema = z.object({ type: nameSchema, id: z.string().min(1).max(200) }).strict();
@@ -73,7 +74,7 @@ export interface ActionDefinition {
   providerOperation?: string;
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
-  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string };
+  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string; mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string } } };
   operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'local' | 'live'; inputSchema: object; resultType: string };
   inputSchema?: Record<string, unknown>;
   implementation?: ActionImplementation;
@@ -195,6 +196,11 @@ export class OntologyModel {
       if (a.read && (a.kind && a.kind !== 'source_read' || a.effects && (a.effects.length !== 1 || a.effects[0] !== 'read') || a.resultTypes && !a.resultTypes.includes(a.read.resultType))) invalid('Read action contract conflicts with its declared semantics');
       if (!a.changes.length || !a.submissionCriteria.length || Object.values(a.inputs).some(t => !this.hasType(t))) invalid('Invalid action definition');
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
+      if (a.read?.mcp) {
+        mcpReadBindingSchema.parse(a.read.mcp);
+        for (const dep of a.read.mcp.requires) if ((dep.action ? this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
+      }
       if (a.operation) {
         const op = a.operation;
         const environmentAllowed = op.environment === 'sandbox' && op.effect !== 'external_draft'
@@ -416,4 +422,5 @@ export class OntologyModel {
     return action ? structuredClone(action) : undefined;
   }
   function(id: string) { const f = this.functions.find(f => f.id === id); return f ? structuredClone(f) : invalid('Unknown ontology function'); }
+  functionsFor(types: string[]) { return structuredClone(this.functions.filter(f => f.inputTypes.some(input => types.some(type => this.implements(type, input))))); }
 }

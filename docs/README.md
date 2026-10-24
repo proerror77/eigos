@@ -1,0 +1,49 @@
+# 文档导航
+
+项目定位与网络协作方式见[项目首页](../README.md)。这里集中提供接入、实现与历史资料的入口。
+
+## 接入与开发
+
+- [Agent 接入指南](integration.md)：现行 MCP／A2A 接口、任务交接与权限。
+- [开发与运行](gateway-worker.md)：环境准备、进程职责和运行配置。
+- [能力实现与验证范围](registered-capabilities.md)：能力登记、执行与验收边界；具体运行版本以接入指南和实际运行回读为准。
+- [会员与认证](membership.md)：成员身份与访问资格。
+
+## 实现与验证
+
+项目采用 TypeScript／Node.js，通过 MCP 和 A2A 接收 Agent 委托，使用 Ontology + LLM 组织任务理解、规划与执行。Gateway／Worker 和共享任务核心负责接入、持久任务、授权校验、恢复与结果核验。技术细节见[开发与运行](gateway-worker.md)及[本体规格](ontology-spec-v0.2-2026-10-18.md)。
+
+当前实现包含文档草稿生成、本地 CSV 模拟审计，以及受限的美团地点／地址／运费和 Shopify 公开商品查询。跨服务业务流程、交易与履约相关机制在本地测试服务和合成数据环境中验证；真实交易与履约仍待接入。可用能力与配置条件见[接入指南](integration.md)，逐项验证边界见[能力说明](registered-capabilities.md)。
+
+自动测试、真实模型、真实来源和本地模拟的证据分别记录。历史测试通过不代表当前部署或真实业务完成；具体记录与限制见对应能力文档及 `docs/evidence/` 中的验证归档。
+
+## 设计与项目方向
+
+- [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
+- [Ontology 规格](ontology-spec-v0.2-2026-10-18.md)。
+- [实施阶段与记录](backend-implementation-goals.md)。
+- [品牌说明](brand-brief.md)。
+
+带日期的设计、研究与验证文档记录相应时间的结论，不自动代表当前能力或部署状态。
+
+## 归档与提交约定
+
+| 内容 | 保存方式 |
+| --- | --- |
+| 源码、测试、示例、依赖锁文件与可复用接入资料 | 纳入 Git |
+| 维护中的规格、设计、研究和必要的演示资产 | 确认内容与归属后纳入 Git |
+| 已检查、与结论相关的验证记录 | 归档到 `docs/evidence/`，说明来源、日期、验证范围和限制 |
+| 凭据、个人配置、数据库、原始含敏感信息截图和临时运行输出 | 保存在忽略的本地目录，如 `data/`、`output/` |
+| 依赖目录、构建产物、缓存、临时日志与本地测试输出 | 由 `.gitignore` 排除 |
+
+`docs/evidence/` 保留可追溯的历史验证资料。JSON、JSONL、日志和截图都可能是必要依据，不按扩展名整体忽略；归档前需要检查内容和引用。原始运行输出先留在本地目录，再挑选需要的资料归档。
+
+[2026-10-22 逐文件整理清单](evidence/archive-cleanup-2026-10-22.json)记录了 25 个候选档案的用途与引用：24 份重复检查输出／临时命令记录移出跟踪并保留本地，1 份复现所需的 UCP 依赖锁继续保留。清单保存原文件哈希、已有测试计数和整理前提交；业务验证报告、来源证据、失败记录与交付物继续保留。这次整理没有重新执行历史业务验证。
+
+`.gitignore` 只控制未跟踪文件。已经提交的文件即使匹配新规则，也不会自动从 GitHub 移除；整理时需先检查引用和用途，必要时保留本地副本后单独移出跟踪。修改忽略规则也不会清除历史提交中的内容。
+
+- [滴滴地点搜索与车型估价](didi-readonly-integration.md)：本机本人私密凭据、两个只读工具、来源观察及验证范围。
+
+- [Shopify 私有未付款结账](shopify-unpaid-checkout-2026-10-23.md)：一次准确授权的草稿创建与原会话回读。
+- [Shopify PA 付款隔离测试](shopify-pa-payment-sandbox.md)：PA 自有测试 Vault／账户付款，EIGOS 独立回读同一结账、付款和订单；真实付款为 0。
+- [动态本体与受管数据动作](dynamic-ontology-implementation-2026-10-21.md)、[跨服务组合](ontology-composition-implementation-2026-10-22.md)与[会员来源授权](member-source-authorization.md)。

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { catalogReadDefinition, catalogReadDefinitionRef } from './catalog-read-definition.js';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 import { catalogReceiptSchema, shopifyMerchantSchema } from '../capabilities/shopify/contracts.js';
 import { productAttributesSchema } from './product-attributes.js';
@@ -77,3 +78,12 @@ export const catalogAgentActions: ActionDefinition[] = catalogActionIds.map(id =
 export const catalogAgentFunctions: FunctionDefinition[] = [
   { id: 'catalogObservationStatus', version: '1', inputTypes: ['CatalogObservation', 'CatalogEndpoint'], description: 'Validate a single observation\'s identity, source, relationships and freshness; return its facts and explicit unknowns. A known empty observation is partial evidence, never proof of complete absence.' },
 ];
+
+/** Current provider mappings extend the immutable historical catalog contracts. */
+export const catalogMcpActions: ActionDefinition[] = catalogAgentActions.map(legacy => {
+  const action = catalogReadDefinition.actions.find(action => action.id === legacy.id);
+  if (!action) throw new Error('Unknown catalog data contract');
+  return { ...legacy, version: catalogReadDefinition.version, description: action.description,
+    read: { ...legacy.read!, version: catalogReadDefinition.version,
+      mcp: action.mcp, module: { ...catalogReadDefinitionRef, completion: catalogReadDefinition.completion } } };
+});

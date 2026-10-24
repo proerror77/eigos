@@ -16,6 +16,8 @@
     "members": "node --env-file-if-exists=.env scripts/members.mjs",
     "dev": "node --env-file=.env scripts/run-local.mjs",
     "build": "node scripts/build.mjs",
+    "ontology:check": "node scripts/ontology.mjs --check",
+    "ontology:sync": "node scripts/ontology.mjs --sync",
     "start": "node --env-file-if-exists=.env scripts/run-local.mjs --built",
     "example": "node --env-file=.env --import tsx examples/round-trip.ts",
     "check": "tsc --noEmit",
