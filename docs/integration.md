@@ -1,5 +1,7 @@
 # PA 接入 EIGOS
 
+完整对象目录、来源接入及工作分支／常驻运行版本见[模型与接入能力总览](ontology-and-integrations.md)。
+
 后端统一使用 Ontology + LLM，公共业务入口只有 `eigos.delegate`，以及显式沙箱配置下的 `eigos.aftersales`。旧直接服务名被输入 Schema 拒绝；历史任务只读，不作为执行兼容层。
 
 PA 可选择直接调用已有来源，或通过下述现行接口委托明确业务范围。避免重复规划、来源操作与授权询问的分工建议见 [PA／MCP／Ontology 职责边界](agent-mcp-ontology-responsibilities-2026-10-22.md)；其中的交接清单不是新接口 Schema，不能据此假定支持任意 PA 计划导入或客户本机工具回调。
@@ -38,7 +40,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
-显式 `executionEnvironment: "sandbox"` 可选择已配置的 `commerce.journey.sandbox@1`。Agent 以原子动作查询上下文和商家事实；需要用户选择时在原 Task 补充，沙箱写入在同一 `/tasks/{id}/authorize` 接口使用 `approve_plan`，绑定 `planDigest`、`allowedEffects`、`maxAmount`、`payeeIds`、`expiresAt` 和 `environment: "sandbox"`。模型的可行性判断不产生许可。PA 的既有 Python 客户端支持这种授权格式，同时保留旧模拟报价确认格式。新程序和业务证据边界见 [交易沙箱说明](commerce-agent-sandbox-2026-10-19.md)。
+显式 `executionEnvironment: "sandbox"` 可选择已配置的 `commerce.journey.sandbox@2`。Agent 以原子动作查询上下文和商家事实；需要用户选择时在原 Task 补充，沙箱写入在同一 `/tasks/{id}/authorize` 接口使用 `approve_plan`，绑定 `planDigest`、`allowedEffects`、`maxAmount`、`payeeIds`、`expiresAt` 和 `environment: "sandbox"`。模型的可行性判断不产生许可。PA 的既有 Python 客户端支持这种授权格式，同时保留旧模拟报价确认格式。新程序和业务证据边界见 [交易沙箱说明](commerce-agent-sandbox-2026-10-19.md)。
 
 同类要求可带所选能力声明的 `role`：例如酒店 `room_count`／`guest_count`、打车 `pickup`／`arrival`、租车 `service_total`／`deposit`。模型保留各自原话与来源；校验只使用相应角色的事实，缺证据保持 unknown。未带 role 的要求保留原有单一语义，不自动匹配其他角色。v6 及更早计划只读，不自动迁移或恢复执行。修复及真实模型证据见 [六类验证](service-domain-validation-2026-10-18.md)。
 

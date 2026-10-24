@@ -1,10 +1,12 @@
 # Ontology + LLM 后端
 
+全部对象、动作、计算及接入状态见[模型与接入能力总览](ontology-and-integrations.md)。工作分支定义与本人常驻运行版本分别核对，不能用本文的源码版本代替运行回读。
+
 2026-10-23 增加 `booking.participant.free@1`：免费活动报名／通用预约模型、可选付款、审核与候补跟踪、独立确认回读。当前真实来源为本机 Luma 参与者浏览器桥接，需要在线操作代理；其配置和证据以[免费报名说明](free-booking-participant-2026-10-23.md)为准。旧预约沙箱升级为 `booking.pa-payment.sandbox@3`，明确免费的预约不再要求付款。下列较早日期的沙箱记录保留其当时边界。
 
-更新于 2026-10-23。当前代码使用 `ontology-execution-v15`，业务模型为 `eigos.business@15`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
+更新于 2026-10-24。本文所在分支代码使用 `ontology-execution-v16`，业务模型为 `eigos.business@16`。Personal Agent、MCP/A2A、身份和会员接入保留；旧版本计划只读，不自动迁移或恢复。三阶段目标与门槛见 [实施记录](backend-implementation-goals.md)。
 
-新增 `commerce.journey.sandbox@1`：默认关闭，只对显式本机沙箱任务开放。16 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；5 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。
+`commerce.journey.sandbox@2`：新安装默认关闭，只对显式本机沙箱任务开放。17 个原子动作由模型选择，覆盖 PA 上下文、商家与商品发现、可供数量、履约选项、清关、完整报价、购物车、结账、模拟订单及付款/交付读取。11 个查询动作不创建交易；6 个业务动作逐个绑定精确沙箱许可。提供方为独立本机模拟器，不能连接真实商家或支付接口。详见 [交易履约沙箱](commerce-agent-sandbox-2026-10-19.md)。
 
 本文描述运行边界与能力登记。对象模型和受控规划见 [N1](ontology-n1.md)、[N2](ontology-n2.md)，领域来源与真实业务执行仍按各适配器单独验证。
 
@@ -104,4 +106,4 @@ CSV 只支持完整五项审计，子集或重复检查明确拒绝。文档、�
 
 显式 `createExecutionCatalog({ store, ucpSandbox })` 可登记 `commerce.ucp.prepare.sandbox@1` 和 `commerce.ucp.confirm.sandbox@1`。连接限定 127.0.0.1 和官方模拟支付处理器；前者完成会话准备，后者需 order/payment 两种准确许可并独立读取原订单。复用现有执行账本和授权预算，默认关闭。协议版本、对象映射、恢复规则、实际模型及官方商家证据见 [UCP 接入说明](ucp-local-integration-2026-10-18.md)。
 
-[六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。该轮未切换常驻服务；2026-10-19 为 [Shopify 只读 PA 验证](shopify-pa-worker-2026-10-19.md) 更新了本机服务。真实交易与预约仍关闭。
+[六类实现、测试与真实接口缺口](service-domains-2026-10-18.md)。该轮未切换常驻服务；2026-10-19 为 [Shopify 只读 PA 验证](shopify-pa-worker-2026-10-19.md) 更新了本机服务。真实交易及六类服务预约仍未接通；后续 Luma 免费报名的单独实现与真实验证见本文开头，当前常驻状态见[总览](ontology-and-integrations.md)。
