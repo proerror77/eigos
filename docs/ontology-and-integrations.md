@@ -1,17 +1,17 @@
 # Ontology 模型与接入能力总览
 
-核对日期：2026-10-24，Asia/Shanghai。本文汇总对象模型、执行契约、来源接入与验证记录。源码与实际运行回读分别保存在[本轮快照](evidence/ontology-capability-inventory-2026-10-24/readback.json)。
+核对日期：2026-10-24，Asia/Shanghai。本文汇总对象模型、执行契约、来源接入与验证记录。整合后的实际运行回读见[常驻免费报名快照](evidence/free-booking-resident-2026-10-24/readback.json)；更新前的分叉状态保留在[早期快照](evidence/ontology-capability-inventory-2026-10-24/readback.json)。
 
-**模型已经统一装配到 `businessModel`。当前工作分支有 103 个对象类型；本人常驻实例有 100 个。真实来源覆盖美团只读、滴滴只读、Shopify 目录，以及需要在线浏览器操作代理的 Luma 免费报名。Luma 尚未装入常驻实例。其他生活服务已有模型与沙箱，仍缺真实连接器。**
+**当前开发实现与本人常驻实例已统一为 `ontology-execution-v19`／`eigos.business@16`，均有 103 个对象类型。真实来源覆盖美团只读、滴滴只读、Shopify 目录，以及需要在线浏览器操作代理的 Luma 免费报名。免费报名与可选支付语义已合入常驻，来源队列在线；其他生活服务已有模型与沙箱，仍缺真实连接器。**
 
 ## 1. 版本与运行状态
 
 | 核对范围 | 实现基线提交 | 执行契约 | 业务模型 | 对象／接口／关系／动作／函数 |
 | --- | --- | --- | --- | --- |
-| 本文工作分支 `codex/free-booking-luma` | `1ecb12f93aa278189c3f7708daec31f09d5377f6` | `ontology-execution-v16` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
-| 本人常驻实例，本次实际回读 | `4b059089584b138f7f20774be258587dc3278e98` | `ontology-execution-v17` | `eigos.business@15` | **100 / 3 / 249 / 47 / 33** |
+| 本文工作分支 `codex/free-booking-luma` | `17f7a9f51e463dddf750d37bae7ca10f31e55a52` | `ontology-execution-v19` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
+| 本人常驻实例，本次实际回读 | 同一实现基线 | `ontology-execution-v19` | `eigos.business@16` | **103 / 3 / 256 / 52 / 34** |
 
-常驻地址为 `http://127.0.0.1:3430`。本次读取健康信息、Agent Card、认证后的本体定义及不可变运行快照，未提交业务任务。常驻代码来自另一条分支；执行契约编号更高，不表示包含免费报名分支的功能。其对象目录缺少 `RegistrationTask`、`RegistrationOffer`、`RegistrationRecord`，以及相关 5 个动作、7 个关系、1 个函数。后续文档提交不会改变上述实现基线或运行实例。
+常驻地址为 `http://127.0.0.1:3430`。本次保留原常驻 `cdc1cd26d91908615c15bf23a2875deb921392e0` 的更新并合入免费报名，回读健康信息、Agent Card、认证本体和不可变发布；原有 29 项配置及 35 个任务保持一致。`RegistrationTask`、`RegistrationOffer`、`RegistrationRecord` 及相关 5 个动作、7 个关系、1 个函数已装入常驻。另有一个没有报名许可的只读队列探针，在浏览器操作前取消并验证拒绝派发；没有新报名或付款。后续文档提交不改变上述实现基线或发布文件内容。
 
 103 个是具体对象类型，另有 3 个接口；256 个是双向关系定义，每条只计一次。52 个动作定义不等于 52 个当前可执行工具。
 
@@ -131,7 +131,7 @@ MCP／A2A 是 PA 的入站协议。下游分别使用 MCP、CLI、HTTP 或浏览
 | 美团：`geo.search@1`、`address.book.read@1`、`delivery.quote@2` | 已登记，仅本人本机；公开地点受配置范围限制 | 地点、本人地址簿及详情、同城跑腿运费预览 | [真实 PA 地址选择和报价](evidence/persistent-pa-2026-10-18/README.md)，无订单／付款／送达 |
 | 滴滴：`ride.estimate.query@1` | 已登记；生产只读来源 | `maps_textsearch` 地点查询、`taxi_estimate` 路线车型估价 | [真实模型和滴滴来源](evidence/didi-readonly-2026-10-23/README.md)；独立开发实例验证，非 Grok PA 叫车 |
 | Shopify：`commerce.catalog.query@2` | 已登记；当前商家为 **Purity Coffee** | 商品搜索、变体详情、商家目录发现与读取、公开价格比较 | [真实 PA 查询与比较](evidence/agent-catalog-pa-2026-10-19/README.md)；库存数量、配送及购买能力未证明 |
-| Luma：`booking.participant.free@1` | **当前分支已实现，常驻未配置** | 本人已登录网页的免费报名、独立确认；需要在线浏览器操作代理及准确零费用预约许可 | [2026-10-23 真实免费报名](evidence/free-booking-luma-2026-10-23/README.md)；不是官方参与者报名 API 或无人值守连接器 |
+| Luma：`booking.participant.free@1` | **常驻已登记，来源队列在线** | 本人已登录网页的免费报名、独立确认；需要在线浏览器操作代理及准确零费用预约许可 | [真实免费报名](evidence/free-booking-luma-2026-10-23/README.md)；[本次常驻连通与取消保护](evidence/free-booking-resident-2026-10-24/README.md)未执行新的 Luma 操作 |
 | 文档：`document.compose@1` | 已登记 | 根据已提供事实生成 Markdown 草稿、议程或方案并核对格式和摘要 | [真实会员与模型生成议程](evidence/auth0-member-2026-10-16/README.md)；不执行文档中描述的业务 |
 | 任务说明：`brief.prepare@2` | 已登记 | 生成任务说明，`execution=not_started` | [登记说明](registered-capabilities.md)；只有说明本身是目标时才完成 |
 | CSV：`data.quality.audit.simulated@2` | 已实现，常驻未启用输入目录 | 对固定本地快照做完整五项审计：缺失必填值、重复 ID、邮箱、人民币金额和事件日期 | [CSV 文件核验](csv-file-verification-2026-10-15.md)；没有在线数据平台或真实收费接入 |
@@ -145,7 +145,7 @@ MCP／A2A 是 PA 的入站协议。下游分别使用 MCP、CLI、HTTP 或浏览
 | `commerce.journey.sandbox@2` | 常驻已配置；显式 sandbox 任务可查询并执行合成购物车、结账、订单和交付流程 | 真实商家、库存、报价、订单、付款与逐包裹交付来源；[真实 PA 沙箱验证](evidence/commerce-agent-pa-2026-10-20/README.md)的业务事实均为 synthetic |
 | 六类 `service.<domain>.sandbox@2` | 打车、挂号、外卖、酒店、行程、用车／租车；受信代码显式注入测试提供者，常驻未配置 | 正式来源、权限、业务操作及独立回读；滴滴估价并未补齐打车执行，见[六类服务说明](service-domains-2026-10-18.md) |
 | UCP prepare／confirm 两项沙箱能力，均为 `@1` | 已实现官方本地参考商家适配；需显式代码注入，常驻未配置 | 真实商家准入与商品／付款／订单来源；[本地 UCP 验证](ucp-local-integration-2026-10-18.md)不是线上商业订单 |
-| `booking.pa-payment.sandbox@3` | 当前分支支持零费用预约，或 PA 的 Link Agent Wallet／用户 Link 结账后双重回读；常驻未配置预约来源 | 真实预约商家及 PA 钱包／结账；[现有验证](pa-booking-payment-flow.md)使用隔离提供方与钱包夹具 |
+| `booking.pa-payment.sandbox@3` | 已合入常驻代码；支持零费用预约，或 PA 的 Link Agent Wallet／用户 Link 结账后双重回读，常驻未配置此沙箱预约提供方 | 真实预约商家及 PA 钱包／结账；[现有验证](pa-booking-payment-flow.md)使用隔离提供方与钱包夹具 |
 | `service.fulfillment.sandbox@1` 与沙箱售后 | 合成接单、模拟付款、交付、取消、退款；常驻未配置该提供方 | 真实服务商、交易及售后来源；相应适配器启用时才发布 `eigos.aftersales` |
 | 商家侧 Stripe 测试适配 | 仅允许注入测试 transport；运行配置拒绝旧商家付款开关 | 正式账户与服务商路径尚未接入，见[历史测试边界](stripe-test-integration.md) |
 | Stripe Treasury | 只有关闭的配置预留，不能启用 | 无账户授权、MCP 客户端、本体动作或执行能力，见[预留说明](stripe-treasury-integration.md) |
@@ -174,6 +174,6 @@ MCP／A2A 是 PA 的入站协议。下游分别使用 MCP、CLI、HTTP 或浏览
 
 已有领域覆盖了大量生活服务语义；新增真实平台通常首先缺正式连接器、授权和结果证据。增加 Shopify 商家仍需受信配置及来源核验；其他平台不能只填 URL 就自动执行。维护已有 MCP 绑定的方法见[独立本体说明](../ontology/README.md)。
 
-本轮动态统计当前模型，比较常驻不可变运行快照，回读常驻健康、Agent Card 和认证后的本体描述，并对照既有真实／合成验证。本轮未查询私人业务对象、提交新业务任务或重新执行历史业务验证。
+本轮动态统计模型并回读常驻健康、Agent Card、认证本体及不可变发布。整合更新的 587 项测试、8 项进程 E2E 及配置／历史任务保留检查通过；另运行并取消一个本地只读来源队列探针，未派发浏览器或提交外部业务，见[整合验收](evidence/free-booking-resident-2026-10-24/README.md)。
 
-交付为文档与脱敏元数据快照。代码验证沿用实现基线的成功 CI，本次文档提交的 CI 与远端同步另行核对。以后更新本文时同时核对源码模型、能力目录和运行实例；带日期的历史设计与验收只说明对应时点的状态。
+代码和常驻更新与本次脱敏快照分别核验；后续文档提交的 CI 与远端同步另行核对。以后更新本文时同时核对源码模型、能力目录和运行实例；带日期的历史设计与验收只说明对应时点的状态。

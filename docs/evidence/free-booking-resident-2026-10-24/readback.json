@@ -1,0 +1,65 @@
+{
+  "observedAt": "2026-10-24T02:42:19Z",
+  "release": "ae9184e8e5ac3b2e2450878115d45867a3e49557881cee27d7732e5226bf53d8",
+  "sourceCommit": "17f7a9f51e463dddf750d37bae7ca10f31e55a52",
+  "sourceTreeDirty": false,
+  "backend": "ontology-execution-v19",
+  "model": {
+    "id": "eigos.business",
+    "version": "16",
+    "digest": "7b258742833342b3f0653c8ca762ebeb36501da8ce861a79d2721fdb9f1efd2e"
+  },
+  "counts": {
+    "objects": 103,
+    "interfaces": 3,
+    "links": 256,
+    "actions": 52,
+    "functions": 34
+  },
+  "capabilities": [
+    "brief.prepare",
+    "ride.estimate.query",
+    "commerce.catalog.query",
+    "commerce.journey.sandbox",
+    "document.compose",
+    "geo.search",
+    "address.book.read",
+    "delivery.quote",
+    "booking.participant.free"
+  ],
+  "browserHealth": {
+    "status": "ok",
+    "backend": "ontology-execution-v19",
+    "releaseDigest": "ae9184e8e5ac3b2e2450878115d45867a3e49557881cee27d7732e5226bf53d8",
+    "operatorRequired": true,
+    "unattended": false
+  },
+  "scope": {
+    "externalBusinessCalls": 0,
+    "submittedRegistrations": 0,
+    "payments": 0,
+    "evidence": "Resident metadata, actual model selection and canceled local read queue probe; no Luma business action"
+  },
+  "probe": {
+    "taskId": "96eac98e-f2e4-45b8-ac34-3a9c958bdd6f",
+    "program": {
+      "id": "booking.participant.free",
+      "version": "1"
+    },
+    "modelReplies": 4,
+    "queuedAction": "InspectRegistrationPage",
+    "operatorDispatches": 0,
+    "businessGrants": 0,
+    "finalState": "canceled",
+    "crossProtocolReadback": true,
+    "canceledDispatchBlocked": true,
+    "effects": [
+      "read"
+    ],
+    "canceledAt": "2026-10-24T02:45:25.752Z"
+  },
+  "preservedHistoricalTasks": 35,
+  "operatorQueueEmpty": true,
+  "preservedResidentCommit": "cdc1cd26d91908615c15bf23a2875deb921392e0",
+  "recordedAt": "2026-10-24T02:48:07.550375+00:00"
+}

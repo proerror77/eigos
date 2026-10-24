@@ -1,0 +1,27 @@
+{
+  "scope": "Local code and process checks; reasoning and provider fixtures remain synthetic",
+  "unitTests": {
+    "tests": 587,
+    "pass": 587,
+    "fail": 0
+  },
+  "targetedRegression": {
+    "tests": 84,
+    "pass": 84,
+    "fail": 0
+  },
+  "processE2E": {
+    "tests": 8,
+    "pass": 8,
+    "fail": 0
+  },
+  "typecheck": "passed",
+  "build": "passed",
+  "diffCheck": "passed",
+  "implementationCommit": "17f7a9f51e463dddf750d37bae7ca10f31e55a52",
+  "preservedResidentCommit": "cdc1cd26d91908615c15bf23a2875deb921392e0",
+  "backend": "ontology-execution-v19",
+  "businessModel": "eigos.business@16",
+  "liveRegistration": "not performed",
+  "livePayment": "not performed"
+}
