@@ -42,7 +42,7 @@ export class TaskService {
   private ontologyContext(p: Principal, input: OntologyReadContext = {}) {
     const context = readContextSchema.parse(input), owner = ownerKey(p);
     if (context.taskId && (context.ontologyId || context.release)) throw new DomainError('INVALID_INPUT', 'Task reads already have an immutable ontology release');
-    const ref = context.taskId ? this.store.ontologyReleaseForJob(owner, context.taskId)
+    const ref = context.taskId ? this.store.ontologyReadReleaseForJob(owner, context.taskId)
       : context.release ?? this.store.definitions.active(context.ontologyId).ref;
     if (context.ontologyId && context.ontologyId !== ref.ontologyId) throw new DomainError('INVALID_INPUT', 'Ontology namespace and release differ');
     this.store.definitions.assertAccess(owner, ref.ontologyId, p.scopes.includes('ontology:admin'));
@@ -128,21 +128,26 @@ export class TaskService {
 
   describeOntology(p: Principal, input: unknown, context?: OntologyReadContext) {
     requireScope(p, 'services:read');
-    if (this.security) { if(context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).describe(input); }
+    if (this.security) {
+      if(context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
+      const taskId=z.object({taskId:taskIdSchema.optional()}).passthrough().parse(input).taskId;
+      if(taskId)this.security.assertTask(p,taskId);
+      return new AuthorizedOntologyView(taskId?this.store.ontologyForTaskRead(ownerKey(p),taskId):this.store.ontology,this.store.security,p).describe(input);
+    }
     const scoped = this.ontologyInput(input, context);
     const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
     return this.ontologyContext(p, scoped.context).model.describe(query);
   }
   queryOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {
     requireScope(p, 'tasks:read');
-    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; return new AuthorizedOntologyView(this.store.ontologyForJob(ownerKey(p),taskId),this.store.security,p).query(input); }
+    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; this.security.assertTask(p,taskId); return new AuthorizedOntologyView(this.store.ontologyForTaskRead(ownerKey(p),taskId),this.store.security,p).query(input); }
     const scoped = this.ontologyInput(input, context), base = this.ontologyContext(p, this.ontologyReadContext(scoped.context, reader));
     const graph = reader ? base.withReadOverlay(reader) : base;
     return graph.query(ownerKey(p), scoped.query as import('../ontology/object-store.js').ObjectQuery);
   }
   evaluateOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {
     requireScope(p, 'tasks:read');
-    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; return new AuthorizedOntologyView(this.store.ontologyForJob(ownerKey(p),taskId),this.store.security,p).evaluate(input); }
+    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; this.security.assertTask(p,taskId); return new AuthorizedOntologyView(this.store.ontologyForTaskRead(ownerKey(p),taskId),this.store.security,p).evaluate(input); }
     const scoped = this.ontologyInput(input, context), base = this.ontologyContext(p, this.ontologyReadContext(scoped.context, reader));
     const graph = reader ? base.withReadOverlay(reader) : base;
     return graph.evaluate(ownerKey(p), scoped.query);

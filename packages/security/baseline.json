@@ -2782,7 +2782,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "ff0a183896eb508cf5354d7210c1e89a18a894c7de47f3daf8b34c05f6752387",
+      "sourceDigest": "8d42a09cf54d72eda5a991b2d3397bb2df3d2452d2fa0be0b8f22dfc089cb0f9",
       "channels": [
         "http",
         "mcp",
@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "1b6a83f57ed294780891795302560326671180b662991fd6a295cc952e508a92",
+      "sourceDigest": "11f39fa896a72f35888184b26b68a4c2ce79aff20003e8ac7e1956c596995dc5",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "39b059860425a9fbec2892a183125ec06c62f712fe0710057af095b6242af5ee",
+      "sourceDigest": "cb7d2357291d32a067b5bb1d57b2c9f6f1eb9b29257ddd0ea58bb3337c0728c1",
       "channels": [
         "http-mcp-a2a"
       ],

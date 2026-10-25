@@ -87,7 +87,7 @@ export class TaskSecurity {
     const canRead=p.scopes.includes('tasks:read') && grant.operations.includes('task.result.read');
     if (!canRead) { if (requireRead) throw new SecurityError('AUTHORIZATION_REQUIRED'); return base; }
     return security.withAgent(p,job.id,'task.result.read',scope=>{
-      const graph=this.store.ontologyForJob(actor.ownerKey,job);
+      const graph=this.store.ontologyForTaskRead(actor.ownerKey,job);
       if (!grant.channels.includes('agent_response')) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       const root=security.policies.binding(scope,{type:'ServiceRequest',id:job.id});
       if (!root) throw new SecurityError('AUTHORIZATION_REQUIRED');

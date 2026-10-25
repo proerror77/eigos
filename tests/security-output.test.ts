@@ -67,6 +67,37 @@ test('write-only submissions and blocking waits return minimal receipts',async()
   }finally{f.close();}
 });
 
+test('pinned historical task readback survives an engine upgrade without execution or authority fallback',()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);
+  try {
+    const task=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:'historical-readback',goal:'Retained scoped report'});
+    f.publish(task.id);
+    const query={version:2,taskId:task.id,query:{object:{type:'ServiceRequest',id:task.id}}};
+    const before=f.tasks.get(f.pa,task.id),beforeQuery=f.tasks.queryOntology(f.pa,query);
+    const original=f.jobs.get(f.owner,task.id),pin=structuredClone(original.delegation!.ontologyRelease!);
+    const job={...original,delegation:{...original.delegation!,backendVersion:'retired-ontology-backend'}};
+    const persist=()=>db.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(job),f.owner,task.id);
+    persist();
+    assert.deepEqual(f.tasks.get(f.pa,task.id),before);
+    assert.deepEqual(f.tasks.queryOntology(f.pa,query),beforeQuery);
+    assert.deepEqual(f.jobs.ontologyForTaskRead(f.owner,task.id).releaseRef,pin);
+    assert.throws(()=>f.jobs.ontologyForJob(f.owner,task.id),/Historical backend/);
+    assert.throws(()=>f.tasks.queryOntology(f.pb,query),/AUTHORIZATION_REQUIRED/);
+    job.delegation!.recoveryPending=true;persist();
+    assert.equal(f.jobs.claim(['eigos.delegate'],30000),undefined,'Read permission cannot reactivate an old execution or recovery');
+    job.delegation!.ontologyRelease={...pin,digest:'0'.repeat(64)};persist();
+    assert.throws(()=>f.tasks.get(f.pa,task.id),/ontology release|Ontology release/);
+    delete job.delegation!.ontologyRelease;persist();
+    assert.throws(()=>f.tasks.queryOntology(f.pa,query),/Historical backend/);
+    job.delegation!.ontologyRelease=pin;persist();
+    const grant=f.jobs.security.taskGrant(f.pa.access as Extract<NonNullable<typeof f.pa.access>,{actorKind:'agent'}>,task.id);
+    f.jobs.security.revokeGrant(f.owner,grant.id,grant.revision);
+    assert.throws(()=>f.tasks.get(f.pa,task.id),/AUTHORIZATION_REQUIRED/);
+    assert.throws(()=>f.tasks.queryOntology(f.pa,query),/AUTHORIZATION_REQUIRED/);
+    assert.equal(f.jobs.get(f.owner,task.id).delegation!.backendVersion,'retired-ontology-backend');
+  }finally{db.close();f.close();}
+});
+
 test('controlled file bytes, metadata and old links recheck labels and revocation',()=>{
   const f=fixture();try {
     const x=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:'file',goal:'Private report'}),work=f.claim(x.id);

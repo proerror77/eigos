@@ -177,6 +177,16 @@ export class JobStore {
   ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
     return this.ontologyForRelease(this.ontologyReleaseForJob(owner, jobOrId));
   }
+  /** Historical readback may resolve an explicit immutable release without
+   * making the task executable by the current Worker. Unpinned historical
+   * tasks retain the existing refusal instead of following the active model. */
+  ontologyReadReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
+    const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
+    return job.delegation?.ontologyRelease ? structuredClone(job.delegation.ontologyRelease) : this.ontologyReleaseForJob(owner, job);
+  }
+  ontologyForTaskRead(owner: string, jobOrId: Job | string): OntologyObjectStore {
+    return this.ontologyForRelease(this.ontologyReadReleaseForJob(owner, jobOrId));
+  }
   private projectionForJob(owner: string, job: Job): OntologyObjectStore {
     if (!this.security.enabled) return this.ontologyForJob(owner, job);
     const ref = this.ontologyReleaseForJob(owner, job), release = this.definitions.resolve(ref);
