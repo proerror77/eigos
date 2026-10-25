@@ -77,14 +77,14 @@ test('Queue lookup and queued-state persistence cannot consume the newly granted
 
 test('A delayed renewal cannot revive a lease that expired while its task state was read', t => {
   const store = new JobStore(':memory:'), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
-  let clock = 100000;
-  t.mock.method(Date, 'now', () => clock);
+  let clock = 100000, renewing = false;
+  t.mock.method(Date, 'now', () => { const now = clock; if (renewing) clock += 20000; return now; });
   try {
     tasks.submit(principal, { service: 'eigos.delegate', goal: 'fixture', requestId: 'delayed-renewal' });
     const claim = store.claim(['eigos.delegate'], 15000)!;
     // Time passes after renewal starts, independently of whether task state is
     // read as a full Job or a scalar fence. The write must use a fresh deadline.
-    t.mock.method(Date, 'now', () => { const now = clock; clock += 20000; return now; });
+    renewing = true;
     assert.equal(store.renew(claim, 15000), false);
   } finally { store.close(); }
 });
