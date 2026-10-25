@@ -40,6 +40,8 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  readonly initialReadFrontier?: true;
+  readonly preparePlanningContext?: true;
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   readonly ref: Ref;
@@ -64,6 +66,7 @@ export interface AgentProgram {
   /** Render an owner-private question only after the model chooses clarification. */
   clarification?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): string | undefined;
   authority?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): AgentActionAuthority;
+  authorizationSummary?(ctx: AgentProgramContext, plan: import('../ontology/agent-actions.js').AgentActionPlan): string;
   invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult>;
   /** Read the original operation only. It must never replay a business write. */
   recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;

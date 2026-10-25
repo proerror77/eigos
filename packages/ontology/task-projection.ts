@@ -47,7 +47,7 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   if (coverage && coverageRef) {
     const object = upsert(graph, owner, coverageRef.type, coverageRef.id, {
       requestRevision: coverage.requestRevision, requestDigest: coverage.requestDigest, capabilityRef: coverage.capabilityRef, capabilityDigest: coverage.capabilityDigest,
-      input: coverage.input, inputDigest: coverage.inputDigest, review: coverage.review, modelRunId: coverage.modelRunId, assessedAt: coverage.assessedAt, digest: coverage.digest,
+      reviewOrigin: coverage.reviewOrigin, modelDecisionDigest: coverage.modelDecisionDigest, input: coverage.input, inputDigest: coverage.inputDigest, review: coverage.review, modelRunId: coverage.modelRunId, assessedAt: coverage.assessedAt, digest: coverage.digest,
     });
     if (!unchanged(object)) graph.ingest(owner, { objects: [object], links: [{ type: 'GoalCoverageRequest', from: coverageRef, to: root }] }, { ...source, observedAt: coverage.assessedAt });
   }

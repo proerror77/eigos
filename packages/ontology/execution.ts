@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v22' as const;
+export const BACKEND_VERSION = 'ontology-execution-v23' as const;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -22,6 +22,7 @@ export const requirementsSchema = z.array(requirementSchema).max(40).refine(item
 export type RequirementInput = z.infer<typeof requirementSchema>;
 export type Requirement = RequirementInput & { provenance: { source: 'pa'; interpretation: 'structured' | 'quoted_text'; messageId: string; receivedAt: string; quote?: string } };
 export interface ServiceRequest {
+  capabilityRef?: Ref;
   id: string;
   revision: number;
   originalGoal: string;
@@ -36,6 +37,7 @@ export interface ServiceRequest {
 }
 export interface ActionType { ref: Ref; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[] }
 export interface ServiceCapability {
+  scopeReviewMode?: 'registered_fixed_input';
   ref: Ref;
   ontologyRef: Ref;
   name: string;

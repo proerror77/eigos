@@ -1,7 +1,7 @@
 import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
-import { requirementsSchema } from '../ontology/execution.js';
+import { requirementsSchema, refSchema } from '../ontology/execution.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -39,6 +39,7 @@ export const submitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
+  capabilityRef: refSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,

@@ -1,3 +1,4 @@
+import { evaluateOrderTest } from './didi-order-test-functions.js';
 import { evaluateRegistrationFunction } from './free-booking-functions.js';
 import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
@@ -21,6 +22,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'),
   simple('taskOutcomeStatus'),
   simple('registrationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
@@ -63,6 +65,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const orderTestResult = evaluateOrderTest(store, owner, input, budget);
+  if (orderTestResult) return orderTestResult;
   const meituanResult = evaluateMeituanRead(store, owner, input, budget);
   if (meituanResult) return meituanResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);

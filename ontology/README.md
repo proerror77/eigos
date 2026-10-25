@@ -4,6 +4,7 @@
 
 | 定义文件 | 已授权的读取 |
 | --- | --- |
+| `didi-order-test.json` | 固定官方 Mock 下单测试的地点、估价、原订单回查依赖；创建动作另需精确测试许可 |
 | `didi-readonly.json` | 滴滴地点搜索、车型估价 |
 | `meituan-readonly.json` | 公开地点、本人地址簿、已选地址详情、费用预览 |
 | `shopify-catalog.json` | 公共／商家商品目录；HTTP 发现为单独声明的前置原语 |
@@ -27,3 +28,6 @@ v20 的可选只读数据流允许依赖声明 `derive={function,path}`。模型
 ## 可观测性
 
 发现结果的 `action.read.mcp` 展示实际绑定和依赖，`action.read.module` 展示版本、摘要和完成评估函数。模型决策、模型实际本体读取回执、计划、Intent、Attempt、供应商回执和本体观察继续绑定同一任务 revision。只有读取并评估所需来源后，才能发送估价；最终结果仍由独立验收核对。
+
+
+v23 增加 `externalResults` 声明已注册沙箱操作的输出依赖；它本身不定义或授权操作。仅明确声明 `completion.afterAuthorizedOperation=true` 的回查可在模型选择的图中跟随一个沙箱写动作，绑定其实际返回对象后执行条件验收。没有许可不能写，没有独立回查不能完成；生产写操作不适用。见[滴滴测试说明](../docs/didi-order-test.md)。

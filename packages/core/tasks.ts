@@ -61,6 +61,7 @@ export class TaskService {
         job.executionMode = 'worker';
         job.delegation = { backendVersion: BACKEND_VERSION, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
           executionEnvironment: args.executionEnvironment ?? 'live',
+          ...(args.capabilityRef ? { capabilityRef: args.capabilityRef } : {}),
           requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };

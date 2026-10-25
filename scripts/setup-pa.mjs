@@ -64,6 +64,7 @@ const didi = readWorkerConfig({
   EIGOS_DIDI_KEY_SHA256: didiDisabled ? undefined : process.env.EIGOS_DIDI_KEY_SHA256 ?? field(oldSettings, 'EIGOS_DIDI_KEY_SHA256'),
   EIGOS_DIDI_ENVIRONMENT: process.env.EIGOS_DIDI_ENVIRONMENT ?? field(oldSettings, 'EIGOS_DIDI_ENVIRONMENT'),
   EIGOS_DIDI_ORDERS_ENABLED: process.env.EIGOS_DIDI_ORDERS_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDERS_ENABLED'),
+  EIGOS_DIDI_ORDER_TEST_ENABLED: didiDisabled ? 'false' : process.env.EIGOS_DIDI_ORDER_TEST_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDER_TEST_ENABLED'),
 });
 if (didi.EIGOS_DIDI_KEY_FILE && /[\r\n'"#]/.test(didi.EIGOS_DIDI_KEY_FILE)) throw new Error('DiDi credential path cannot be represented in managed settings');
 if (didi.EIGOS_DIDI_KEY_FILE) await new DidiMcpConnector({ keyFile: didi.EIGOS_DIDI_KEY_FILE, keySha256: didi.EIGOS_DIDI_KEY_SHA256, bindingId: didi.EIGOS_DIDI_BINDING_ID, environment: didi.EIGOS_DIDI_ENVIRONMENT }).verifyCredential();
@@ -104,7 +105,8 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
-  ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, 'EIGOS_DIDI_ORDERS_ENABLED=false', `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
+  ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, 'EIGOS_DIDI_ORDERS_ENABLED=false', `EIGOS_DIDI_ORDER_TEST_ENABLED=${didi.EIGOS_DIDI_ORDER_TEST_ENABLED ?? 'false'}`, `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
+  ...(didi.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true' && !commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true'] : []),
   ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
   ...Object.entries(participant).map(([key, value]) => `${key}=${value}`),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');

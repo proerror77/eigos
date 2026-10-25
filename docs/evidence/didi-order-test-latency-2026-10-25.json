@@ -1,0 +1,280 @@
+{
+  "date": "2026-10-25",
+  "scope": "Official Mock only; production read-only maps; real model; isolated Gateway/Worker task stores; independent A2A/MCP readback",
+  "approval": "Exact sandbox test-driver permit; excludes human confirmation time; never real dispatch approval",
+  "results": [
+    {
+      "series": "initial",
+      "sample": 1,
+      "state": "failed",
+      "modelCalls": 1,
+      "modelMs": 21484,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 21601,
+      "sourceCalls": []
+    },
+    {
+      "series": "measured-v1",
+      "sample": 1,
+      "state": "completed",
+      "modelCalls": 3,
+      "modelMs": 42186,
+      "quoteAndPlanMs": 43407,
+      "approvalToVerifiedMs": 871,
+      "activeTotalMs": 44278,
+      "clientTotalMs": 44395,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 313
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 337
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 60
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 55
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 84
+        }
+      ]
+    },
+    {
+      "series": "measured-v1",
+      "sample": 2,
+      "state": "completed",
+      "modelCalls": 3,
+      "modelMs": 41123,
+      "quoteAndPlanMs": 42484,
+      "approvalToVerifiedMs": 912,
+      "activeTotalMs": 43396,
+      "clientTotalMs": 43419,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 299
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 348
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 58
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 57
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 81
+        }
+      ]
+    },
+    {
+      "series": "measured-v1",
+      "sample": 3,
+      "state": "completed",
+      "modelCalls": 3,
+      "modelMs": 42191,
+      "quoteAndPlanMs": 43377,
+      "approvalToVerifiedMs": 831,
+      "activeTotalMs": 44208,
+      "clientTotalMs": 44327,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 302
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 361
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 55
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 50
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 82
+        }
+      ]
+    },
+    {
+      "series": "optimized-v1",
+      "sample": 1,
+      "state": "completed",
+      "modelCalls": 3,
+      "modelMs": 30245,
+      "quoteAndPlanMs": 31944,
+      "approvalToVerifiedMs": 1154,
+      "activeTotalMs": 33098,
+      "clientTotalMs": 33163,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 348
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 392
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 119
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 94
+        }
+      ]
+    },
+    {
+      "series": "optimized-v1",
+      "sample": 2,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 21532,
+      "quoteAndPlanMs": 22671,
+      "approvalToVerifiedMs": 824,
+      "activeTotalMs": 23495,
+      "clientTotalMs": 23537,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 349
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 336
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 53
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 57
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 79
+        }
+      ]
+    },
+    {
+      "series": "optimized-v1",
+      "sample": 3,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 24269,
+      "quoteAndPlanMs": 25419,
+      "approvalToVerifiedMs": 893,
+      "activeTotalMs": 26312,
+      "clientTotalMs": 26387,
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 326
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "ms": 321
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "ms": 55
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "ms": 64
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "ms": 88
+        }
+      ]
+    },
+    {
+      "series": "optimized-v2",
+      "sample": 1,
+      "state": "rejected",
+      "modelCalls": 3,
+      "modelMs": 21707,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 22775,
+      "sourceCalls": []
+    },
+    {
+      "series": "optimized-v3",
+      "sample": 1,
+      "state": "input-required",
+      "modelCalls": 3,
+      "modelMs": 32067,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 34282,
+      "sourceCalls": []
+    }
+  ],
+  "limitations": [
+    "Only fixed Beijing official test route; Mock reuses an order ID and status may omit ID echo",
+    "Baseline measured-v1 used 3 model replies; optimized-v1 retained semantic coverage with PA-pinned registered literal scope",
+    "optimized-v2/v3 used stronger initial-graph guidance but failed before creation due production maps quota; do not infer successful latency",
+    "Provider returned JSON-RPC -32001: Rate limit exceeded: user maps_textsearch quota exceeded",
+    "No under-20-second or stable-under-30-second guarantee; no production ride timing evidence"
+  ],
+  "realOrder": false,
+  "realPayment": false
+}

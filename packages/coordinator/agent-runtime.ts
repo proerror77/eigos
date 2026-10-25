@@ -142,7 +142,7 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;
@@ -299,7 +299,7 @@ export class AgentRuntime {
     try {
       const current = this.context(claim);
       assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
-      if (step.inputRefs.some(ref => ref.compute)) {
+      if (step.inputRefs.length) {
         validateReadBindings(this.store.ontology, program, step, program.definition(this.store.ontology, step.action), step.input, new Map(plan.steps.filter(item => item.id !== step.id).map(item => [item.id, item])));
         const access = this.access(claim, signal);
         access.session.prepareContext({ actions: [step.action], refs: [plan.scope, ...dependencies.map(intent => objectRefSchema.parse(intent.acceptedOutput?.object))] });
@@ -319,7 +319,7 @@ export class AgentRuntime {
       if (!['read', 'local'].includes(step.effect)) {
         if (!this.options.allowSandbox && !isLiveFreeOperation(program, current, agentOperation(program.definition(current.graph, step.action)))) failure('Business operations are disabled');
         if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
-          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = plan.environment === 'live_free' ? '已选定免费报名或预约，需要提交绑定本计划的零费用预约许可；没有付款权限。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
+          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = program.authorizationSummary?.(current, plan) ?? (plan.environment === 'live_free' ? '已选定免费报名或预约，需要提交绑定本计划的零费用预约许可；没有付款权限。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'); job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
           return false;
         }
       }
@@ -397,6 +397,7 @@ export class AgentRuntime {
     let attempt!: ExecutionAttempt;
     if (!this.store.checkpoint(claim, () => { attempt = this.store.startAttempt(claim, intent.id, 'reconcile', digest({ operationKey: intent.businessOperationKey })); })) return false;
     const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, recovery: true, originalDispatchAt: this.store.attempts(claim.owner, intent.id).find(a => a.kind === 'dispatch')?.startedAt };
+    context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     let response: AgentActionResult | undefined, rejected: AgentOperationRejected | undefined, message = 'Original operation has no confirmed readback';
     try { response = await program.recover(context, step.action, step.input, signal); } catch (error) { message = errorMessage(error); if (error instanceof AgentOperationRejected) rejected = error; }
     const record = (confirmed: boolean) => this.store.recordObservation(claim.owner, intent.id, attempt.id, { kind: rejected ? 'rejected' : response?.pending ? 'pending' : confirmed ? 'confirmed' : 'unknown', eventId: attempt.id, sourceVersion: attempt.ordinal, ...(response ? { output: { source: response.value } } : {}), evidenceRefs: response?.evidenceRefs ?? rejected?.evidenceRefs ?? [], message, ...(response?.pending ? { retryAfterMs: response.pending.retryAfterMs } : {}) }, confirmed, { claim, apply: (job, accepted) => {

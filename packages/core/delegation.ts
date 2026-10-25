@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { BACKEND_VERSION, refSchema, type ExecutionPlan, type ServiceRequest, type RequirementCheck, type ResolvedCandidate, type ResolutionScope } from '../ontology/execution.js';
 import { inputReferenceSchema, plannedCompletionSchema } from '../ontology/dataflow-contract.js';
+import { goalReviewSchema } from '../ontology/goal-review-contract.js';
 
 export const DELEGATE = 'eigos.delegate' as const;
 // Canonical JSON for new plans only. No historical-plan fallback or digest migration.
@@ -22,6 +23,7 @@ export const groundingSchema = z.object({
   capabilityRef: refSchema, message: z.string().trim().min(1).max(4000), inputJson: z.string().max(16000),
   requirementsJson: z.string().max(16000),
   conditionsJson: z.string().max(24000),
+  scopeReview: goalReviewSchema.optional(),
   initialSteps: z.array(z.strictObject({
     id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/), action: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/),
     argumentsJson: z.string().max(16000), scopeInputs: z.array(z.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/)).min(1).max(4),

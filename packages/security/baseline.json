@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "19",
-    "digest": "d3602c1a7de7de56d3f18d60ee3710e7e07a19a0694ee0f49c935b4e9a86b258"
+    "version": "20",
+    "digest": "09b5dcdd059c79e10ff37db8e0badf0604eb9631d4220f5d36ea10523bd4c113"
   },
   "types": {
     "ServiceRequest": {
@@ -1351,7 +1351,7 @@
       }
     },
     "GoalCoverage": {
-      "fingerprint": "58542b827f126563b82353b7526cdeb2a3ce1b03105a7e7821e0bb6eefc089d2",
+      "fingerprint": "830ec63ad927e81ed284d1422a08119fa923b8c9183c1bfe37bc6401356b4c13",
       "fields": {
         "coverageId": "task_private",
         "displayTitle": "task_private",
@@ -1364,7 +1364,9 @@
         "review": "task_sensitive",
         "modelRunId": "task_private",
         "assessedAt": "task_private",
-        "digest": "task_private"
+        "digest": "task_private",
+        "reviewOrigin": "task_private",
+        "modelDecisionDigest": "task_private"
       }
     },
     "ExecutionFeedback": {
@@ -1416,13 +1418,50 @@
         "evidenceRefs": "task_sensitive",
         "evidenceLevel": "task_private"
       }
+    },
+    "DidiOrderTestTask": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "input": "internal_only",
+        "configurationDigest": "internal_only"
+      },
+      "fingerprint": "e2ce69bd0d67596589bb1b7deff3b8ade4e793921faa4be79897b72d4fb00431"
+    },
+    "DidiOrderTestPlaceObservation": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "14868ee38730d5c8603700efac0395a9b997251f2c596b0c641e7d5cd247b5cf"
+    },
+    "DidiOrderTestQuote": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "e51612eb3ecef105d992cbc3b06436f45024ee23ed1adb58c9e6564c3c190188"
+    },
+    "DidiTestOrderObservation": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "dd159059284be45a65aa331e89b8dc86c84e625a40bd7dce8058d052eb6aee36"
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "ba6042ea0988093338bab0b50a896cf71a355db2003ec1cb0194a0b7efa6d4db",
+      "sourceDigest": "2b5168da03c95e31d2aec755875fa7c8fcb9ecc972445c7979a0f745788113be",
       "channels": [
         "http"
       ],
@@ -1458,7 +1497,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "b22ffea784baa61bf8f95797f0509cd2ab9b5d0fe9eb992a0945522c8b534952",
+      "sourceDigest": "ad6a07f9d9c028090cbb3b7f85ab553aded695e7859256ce63bc5c2fa916da9a",
       "channels": [
         "http",
         "mcp",
@@ -1595,7 +1634,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "c888437e42c913ef458f560f0e7f35b756904eeab002d90f8f6111d55264cea6",
+      "sourceDigest": "f1c39b5cc6d7d7887f8b6672e115a34270c5bfed207bbc513edbf2ca09acbe99",
       "channels": [
         "model",
         "dispatch"
@@ -1608,7 +1647,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "efdbac5eb72f312340bc7bf96c71ca7eba577c8760322f71c9f5fa8d2dcfb370",
+      "sourceDigest": "209d274ba7b4174d28502aa8e411ea5a56674896d108b67e08fa4faca910e9d4",
       "channels": [
         "model",
         "dispatch",
@@ -1683,7 +1722,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "99b4f8b2f25d59a8db81c54bd9f09f72c2b1c4c1f8c687f92b85db00f52bb7ab",
+      "sourceDigest": "5000484bb65851340542b4eefdbffb6c7f3ff310cce6a2193e4ab19e8012fabe",
       "channels": [
         "source",
         "dispatch"
@@ -1721,7 +1760,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "9d1543516aa5319c5dfa796abdf52414ed1e5f0b2b0ec7c1098c0997f06d5bf1",
+      "sourceDigest": "3a2674303d043bc42d5deba6365c8c77f3d96be1017797694af44960cacf71f9",
       "channels": [
         "source",
         "private_file"
@@ -1773,7 +1812,7 @@
     {
       "id": "task-projection",
       "file": "packages/ontology/task-projection.ts",
-      "sourceDigest": "2b673d457cd09bb1981633e6c1de56a67885da1128133bd684cd50bf6a98ff5d",
+      "sourceDigest": "2b0f8eff4780a92881b9a51ff0a82be26cd4f0458c824a7fc4eb0c07af2f9e8e",
       "channels": [
         "ontology_write"
       ],
@@ -1785,7 +1824,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "0664035e60d741143dcdcbda56a1bb048a4afb77bc3ed6c92bdc49582ac07be0",
+      "sourceDigest": "fcc4818be5588263b9a9a772f30896df65d26a4580f965c4b0affa635454eb82",
       "channels": [
         "definition"
       ],
@@ -1797,7 +1836,7 @@
     {
       "id": "read-dataflow",
       "file": "packages/coordinator/read-dataflow.ts",
-      "sourceDigest": "719e26fbc535daf61d31fae317004f1cf3af0559deca6b230a2d87a47e5c6e82",
+      "sourceDigest": "c62083ec3deb8460b6afd8cb05490d898896806611d5f1d117b4416dc86f9066",
       "channels": [
         "model",
         "dispatch",
@@ -1825,7 +1864,7 @@
     {
       "id": "initial-selection",
       "file": "packages/coordinator/initial-selection.ts",
-      "sourceDigest": "9d41a6abb5260730d39d3becac35278a5f086b0a72c3bebd250dcfeea15f5365",
+      "sourceDigest": "c064ecf3bd3adc9d401a549b76e7a394e27f49ddec877d7a9caf521189baa300",
       "channels": [
         "model",
         "dispatch",
@@ -1881,7 +1920,7 @@
     {
       "id": "goal-coverage",
       "file": "packages/ontology/goal-coverage.ts",
-      "sourceDigest": "02cb39ccc5b05c5b30a597f23991146e53bbaf3464cf799ad257b7b76a1c0935",
+      "sourceDigest": "9c9fd23ed712d2cb70eb24dde0ecf104ab986e311cac43c613f9cdeff1a1bd7b",
       "channels": [
         "model",
         "artifact"
@@ -1920,7 +1959,7 @@
     {
       "id": "composition-program",
       "file": "packages/coordinator/composition-program.ts",
-      "sourceDigest": "96291618dee362f74dc24ec08e881a022eae1250e9580a7def44bad84500beac",
+      "sourceDigest": "897147b3fb95634ace86ebff9a193e78697340875c4221e815be375444c5c3b1",
       "channels": [
         "model",
         "dispatch",
@@ -1957,6 +1996,59 @@
       "content": "Read-only active task and uncertain-effect preflight before resident upgrades",
       "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
       "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-mock-source",
+      "file": "packages/capabilities/didi/order-test-connector.ts",
+      "sourceDigest": "d8fb47339204b7b912c050b8e2065a459ce4d659ca51dad40402f98d979e2948",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Official Mock quote/create/original-ID status and raw private receipts",
+      "currentControl": "Fixed sandbox endpoint, one create dispatch, no phone override or latest-order lookup",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-program",
+      "file": "packages/capabilities/didi/order-test-program.ts",
+      "sourceDigest": "278dc7684bc50bdcd54b63e4baec63d4366124ed753ac93de8659ed4acfa3f45",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Fixed Mock scope, private quote trace, owned order ID and independent outcome",
+      "currentControl": "Exact sandbox permit; fenced private state; sanitized projections; unknown creation never replayed",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-evidence",
+      "file": "packages/ontology/didi-order-test-functions.ts",
+      "sourceDigest": "e2a09e7e6e008dde708d05ae736e8986af2cd04aae6249f518d23a2317507cd3",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Source-bound Mock observations and public-map evidence",
+      "currentControl": "Task, revision, configuration, receipt and freshness validation; provider_test only for Mock",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "goal-review-contract",
+      "file": "packages/ontology/goal-review-contract.ts",
+      "sourceDigest": "5b5f1704df393b581cee3c2bf8ec024e561ff9706d97d2f5c6e0f006a73373ff",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Bounded exact message partitions and criterion mappings",
+      "currentControl": "Strict schema; semantic judgment still requires actual model response",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
       "stage": "S3"
     }
   ]

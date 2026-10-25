@@ -230,6 +230,11 @@ export class CompositionProgram implements AgentProgram {
     if (!r.program.authority) fail('No component write authority');
     return r.program.authority!(r.ctx, action, args);
   }
+  authorizationSummary(ctx: AgentProgramContext, plan: import('../ontology/agent-actions.js').AgentActionPlan) {
+    const step = plan.steps.find(s => !['read', 'local'].includes(s.effect)) ?? fail('No business action needs authority');
+    const r = this.route(ctx, step.action, step.input);
+    return r.program.authorizationSummary?.(r.ctx, plan) ?? `请确认组件“${r.node.goal}”的准确计划；该许可不授权其他组件或付款。`;
+  }
   async invoke(ctx: AgentActionContext, action: string, args: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, args);
     if (local(action)) return { value: { componentId: args.componentId, ...(action === 'CompleteServiceComponent' ? { proposal: JSON.parse(String(args.completionJson)) } : {}) }, evidenceRefs: [] };

@@ -1,10 +1,11 @@
+import { orderTestObjects, orderTestLinks, orderTestActions, orderTestFunctions } from './didi-order-test.js';
 import { compositionObjects, compositionLinks, compositionActions } from './composition.js';
 import { registrationObjects, registrationLinks, registrationActions, registrationFunctions } from './free-booking.js';
 import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
 import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
-import { goalReviewSchema } from './goal-coverage.js';
+import { goalReviewSchema } from './goal-review-contract.js';
 import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } from './commerce.js';
 import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './catalog-read.js';
@@ -83,8 +84,9 @@ const objects: ObjectTypeDefinition[] = [
   type('GoalCoverage', '目标覆盖核查', 'coverageId', {
     requestRevision: integer('Reviewed request revision'), requestDigest: str('Exact reviewed request digest'), capabilityRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Selected capability'),
     capabilityDigest: str('Reviewed capability definition digest'), input: p('struct', z.record(z.string(), z.unknown()), 'Reviewed normalized business input; never connector credentials'), inputDigest: str('Reviewed input digest'),
+    reviewOrigin: choice(['independent_turn', 'registered_fixed_input'], 'Actual review path; fixed scope requires an explicit PA capability pin'), modelDecisionDigest: str('Exact complete model response digest'),
     review: p('struct', goalReviewSchema, 'Independent semantic coverage review with exact message partitions; not business evidence'), modelRunId: str('Actual independent model response'), assessedAt: time('Coverage review time'), digest: str('Pinned coverage record digest'),
-  }),
+  }, { version: '2' }),
   type('ExecutionFeedback', '任务执行反馈', 'feedbackId', {
     requestRevision: integer('Current request revision'), bindingRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Program or provider binding'), bindingDigest: str('Exact execution configuration'),
     taskState: str('Protocol task state'), judgment: choice(['satisfied', 'unsatisfied', 'unknown', 'needs_human'], 'Current independent outcome'), evidenceLevel: str('Actual verification scope; never automatically promoted'),
@@ -190,13 +192,13 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '19', objects: [...objects, ...compositionObjects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...compositionLinks, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '20', objects: [...objects, ...orderTestObjects, ...compositionObjects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...orderTestLinks, ...compositionLinks, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
-  actions: [...compositionActions,
+  actions: [...orderTestActions, ...compositionActions,
     ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions, ...registrationActions,
     ...catalogAgentActions,
     ...rideEstimateActions, ...meituanReadActions,
@@ -205,7 +207,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'RequestDeliveryQuote', description: 'Record the decision to request a quote; does not create a price or order', inputs: { request: 'ServiceRequest', parcel: 'Parcel', route: 'DeliveryRoute' }, changes: ['ServiceRequest.progress', 'ServiceRequest.selectedRoute'], submissionCriteria: ['same_owner', 'current_request_revision', 'explicit_read_scope', 'complete_route_and_parcel'], providerOperation: 'delivery_preview' },
     { id: 'SelectOffer', description: 'Record a version-bound choice; grants no payment or order authority', inputs: { request: 'ServiceRequest', offer: 'Offer' }, changes: ['Proposal', 'Proposal.selectedOffer', 'ServiceRequest.selectedProposal'], submissionCriteria: ['same_owner', 'same_request', 'current_request_revision', 'fresh_offer', 'hard_preconditions_pass'] },
   ],
-  functions: [
+  functions: [...orderTestFunctions,
     { id: 'taskOutcomeStatus', version: '1', inputTypes: ['ServiceRequest'], description: 'Read the current request-version assessment, goal coverage and original source receipt references; historical task acceptance never refreshes provider facts or grants authority' },
     ...customsPolicyFunctions,
     ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions, ...registrationFunctions,

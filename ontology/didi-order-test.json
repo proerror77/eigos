@@ -1,0 +1,180 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "didi.order-test",
+  "version": "1",
+  "completion": {
+    "evaluate": "didiOrderTestStatus",
+    "planned": true,
+    "afterAuthorizedOperation": true
+  },
+  "externalResults": [
+    {
+      "id": "CreateDidiTestOrder",
+      "resultType": "DidiTestOrderObservation",
+      "tool": "taxi_create_order"
+    }
+  ],
+  "actions": [
+    {
+      "id": "SearchDidiTestPlaces",
+      "description": "Read public production map POIs for the explicit fixed test route. Choose origin or destination. No mock coordinates or first-candidate assumptions. Only the later order is Mock.",
+      "resultType": "DidiOrderTestPlaceObservation",
+      "mcp": {
+        "server": "didi",
+        "tool": "maps_textsearch",
+        "arguments": {
+          "keywords": {
+            "from": "lookup",
+            "key": {
+              "from": "input",
+              "path": [
+                "role"
+              ]
+            },
+            "values": {
+              "origin": {
+                "from": "scope",
+                "path": [
+                  "origin"
+                ]
+              },
+              "destination": {
+                "from": "scope",
+                "path": [
+                  "destination"
+                ]
+              }
+            }
+          },
+          "city": {
+            "from": "scope",
+            "path": [
+              "city"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    },
+    {
+      "id": "EstimateDidiTestOrder",
+      "description": "Request the official Mock estimate using source-selected endpoint coordinates. The private trace is retained outside model and ontology output. This quote is not an order.",
+      "resultType": "DidiOrderTestQuote",
+      "mcp": {
+        "server": "didi",
+        "tool": "taxi_estimate",
+        "arguments": {
+          "from_lng": {
+            "from": "selection",
+            "name": "origin",
+            "path": [
+              "lng"
+            ]
+          },
+          "from_lat": {
+            "from": "selection",
+            "name": "origin",
+            "path": [
+              "lat"
+            ]
+          },
+          "from_name": {
+            "from": "selection",
+            "name": "origin",
+            "path": [
+              "name"
+            ]
+          },
+          "to_lng": {
+            "from": "selection",
+            "name": "destination",
+            "path": [
+              "lng"
+            ]
+          },
+          "to_lat": {
+            "from": "selection",
+            "name": "destination",
+            "path": [
+              "lat"
+            ]
+          },
+          "to_name": {
+            "from": "selection",
+            "name": "destination",
+            "path": [
+              "name"
+            ]
+          }
+        },
+        "requires": [
+          {
+            "name": "origin",
+            "action": "SearchDidiTestPlaces",
+            "objectType": "DidiOrderTestPlaceObservation",
+            "observationInput": "origin",
+            "selectionInput": "originPlaceId",
+            "role": "origin",
+            "evaluate": "didiOrderTestStatus",
+            "derive": {
+              "function": "selectDidiOrderTestPlace",
+              "path": [
+                "placeId"
+              ]
+            }
+          },
+          {
+            "name": "destination",
+            "action": "SearchDidiTestPlaces",
+            "objectType": "DidiOrderTestPlaceObservation",
+            "observationInput": "destination",
+            "selectionInput": "destinationPlaceId",
+            "role": "destination",
+            "evaluate": "didiOrderTestStatus",
+            "derive": {
+              "function": "selectDidiOrderTestPlace",
+              "path": [
+                "placeId"
+              ]
+            }
+          }
+        ],
+        "inputMatchesScope": [],
+        "route": {
+          "origin": "origin",
+          "destination": "destination"
+        }
+      }
+    },
+    {
+      "id": "QueryDidiTestOrder",
+      "description": "Read only the explicit order ID returned by this task’s authorized Mock creation. Never query the account latest order or infer an ID after an unknown write. May consume the actual CreateDidiTestOrder result in the same model-selected plan.",
+      "resultType": "DidiTestOrderObservation",
+      "mcp": {
+        "server": "didi",
+        "tool": "taxi_query_order",
+        "arguments": {
+          "order_id": {
+            "from": "selection",
+            "name": "order",
+            "path": [
+              "orderId"
+            ]
+          }
+        },
+        "requires": [
+          {
+            "name": "order",
+            "action": "CreateDidiTestOrder",
+            "objectType": "DidiTestOrderObservation",
+            "observationInput": "order",
+            "evaluate": "didiOrderTestIdentity",
+            "evidence": "accepted"
+          }
+        ],
+        "inputMatchesScope": []
+      }
+    }
+  ]
+}

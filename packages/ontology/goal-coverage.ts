@@ -1,26 +1,15 @@
-import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { Job } from '../core/domain.js';
 import type { ServiceCapability, ServiceRequest } from './execution.js';
 import type { RunEvidence } from '../capabilities/executor.js';
+import type { Grounding } from '../core/delegation.js';
 
-export const goalReviewSchema = z.strictObject({
-  requestRevision: z.number().int().positive(),
-  verdict: z.enum(['covered', 'clarify', 'unsupported']),
-  message: z.string().min(1).max(2000),
-  clauses: z.array(z.strictObject({
-    messageId: z.string().min(1).max(200), quote: z.string().min(1).max(10000),
-    disposition: z.enum(['covered', 'context', 'superseded', 'uncovered', 'conflict']),
-    inputKeys: z.array(z.string().min(1).max(100)).max(80),
-    requirementIds: z.array(z.string().min(1).max(100)).max(40),
-    conditionIds: z.array(z.string().min(1).max(100)).max(40),
-    reason: z.string().min(1).max(1000),
-  })).min(1).max(160),
-});
-export type GoalReview = z.infer<typeof goalReviewSchema>;
+import { goalReviewSchema, type GoalReview } from './goal-review-contract.js';
+export { goalReviewSchema, type GoalReview } from './goal-review-contract.js';
 export interface GoalReviewContext { request: ServiceRequest; capability: ServiceCapability; input: Record<string, unknown> }
 export interface GoalCoverage {
+  reviewOrigin: 'independent_turn' | 'registered_fixed_input'; modelDecisionDigest: string;
   version: '1'; requestRevision: number; requestDigest: string; capabilityRef: ServiceCapability['ref'];
   capabilityDigest: string; input: Record<string, unknown>; inputDigest: string;
   review: GoalReview; modelRunId: string; assessedAt: string; digest: string;
@@ -49,9 +38,29 @@ export function validateGoalReview(ctx: GoalReviewContext, raw: unknown): GoalRe
 export function createGoalCoverage(ctx: GoalReviewContext, raw: unknown, evidence: RunEvidence): GoalCoverage {
   const review = validateGoalReview(ctx, raw);
   if (evidence.decisionDigest !== digest(review)) fail('Goal review differs from its model receipt');
-  const body = { version: '1' as const, requestRevision: ctx.request.revision, requestDigest: digest(ctx.request), capabilityRef: ctx.capability.ref,
+  const body = { version: '1' as const, reviewOrigin: 'independent_turn' as const, modelDecisionDigest: evidence.decisionDigest!, requestRevision: ctx.request.revision, requestDigest: digest(ctx.request), capabilityRef: ctx.capability.ref,
     capabilityDigest: digest(ctx.capability), input: structuredClone(ctx.input), inputDigest: digest(ctx.input), review, modelRunId: evidence.id, assessedAt: evidence.completedAt };
   if (Buffer.byteLength(JSON.stringify(body)) > 40000) fail('Goal coverage exceeds the bounded record size; narrow the request before execution');
+  return { ...body, digest: digest(body) };
+}
+/** This path is available only when the PA pins a capability whose registered
+ * schema admits exactly one input. The model reviews that existing scope; it
+ * does not generate a scope and approve its own interpretation. */
+export function registeredFixedInput(capability: Pick<ServiceCapability, 'scopeReviewMode' | 'inputSchema'>): Record<string, unknown> | undefined {
+  if (capability.scopeReviewMode !== 'registered_fixed_input') return;
+  const schema = capability.inputSchema as { type?: string; additionalProperties?: unknown; properties?: Record<string, { const?: unknown }>; required?: string[] };
+  const keys = Object.keys(schema.properties ?? {});
+  if (schema.type !== 'object' || schema.additionalProperties !== false || !keys.length || schema.required?.length !== keys.length || keys.some(k => !schema.required!.includes(k) || !Object.hasOwn(schema.properties![k]!, 'const'))) fail('Fixed-input review requires a fully literal closed schema');
+  return Object.fromEntries(keys.map(k => [k, schema.properties![k]!.const]));
+}
+export function createFixedInputCoverage(ctx: GoalReviewContext, decision: Grounding, evidence: RunEvidence): GoalCoverage {
+  const input = registeredFixedInput(ctx.capability);
+  if (!input || decision.kind !== 'resolve' || digest(decision.capabilityRef) !== digest(ctx.capability.ref) || !ctx.request.capabilityRef || digest(ctx.request.capabilityRef) !== digest(ctx.capability.ref) || digest(input) !== digest(ctx.input) || digest(JSON.parse(decision.inputJson)) !== digest(input)
+    || decision.requirementsJson !== '[]' || decision.conditionsJson !== '[]' || !decision.scopeReview || evidence.decisionDigest !== digest(decision)) fail('Fixed-input review must retain the exact PA-pinned registered scope and original criteria');
+  const review = validateGoalReview(ctx, decision.scopeReview);
+  const body = { version: '1' as const, reviewOrigin: 'registered_fixed_input' as const, modelDecisionDigest: evidence.decisionDigest!,
+    requestRevision: ctx.request.revision, requestDigest: digest(ctx.request), capabilityRef: ctx.capability.ref, capabilityDigest: digest(ctx.capability), input: structuredClone(input!), inputDigest: digest(input), review, modelRunId: evidence.id, assessedAt: evidence.completedAt };
+  if (Buffer.byteLength(JSON.stringify(body)) > 40000) fail('Goal coverage exceeds the bounded record size');
   return { ...body, digest: digest(body) };
 }
 export function assertGoalCoverage(job: Job, capability: ServiceCapability): GoalCoverage {
@@ -60,7 +69,11 @@ export function assertGoalCoverage(job: Job, capability: ServiceCapability): Goa
   if (expected !== digest(body) || proof.requestDigest !== digest(d.request) || proof.capabilityDigest !== digest(capability) || proof.inputDigest !== digest(proof.input) || proof.review.verdict !== 'covered') fail('Goal coverage is unresolved or changed; review the current request before continuing');
   if (d.agent && proof.inputDigest !== digest(d.agent.input)) fail('Agent input differs from the reviewed goal');
   const run = job.runs?.find(r => r.id === proof.modelRunId);
-  if (run?.purpose !== 'goal_coverage' || run.decisionDigest !== digest(proof.review)) fail('Goal coverage has no independent model receipt');
+  if (proof.reviewOrigin === 'registered_fixed_input') {
+    const decision = d.groundingDecisions?.find(item => item.modelRunId === proof.modelRunId)?.decision;
+    if (!run || run.purpose !== 'grounding' || !decision || digest(decision) !== proof.modelDecisionDigest || run.decisionDigest !== proof.modelDecisionDigest || digest(decision.scopeReview) !== digest(proof.review)) fail('Fixed-input coverage has no actual scope-review response');
+    createFixedInputCoverage({ request: d.request, capability, input: proof.input }, decision!, run!);
+  } else if (proof.reviewOrigin !== 'independent_turn' || run?.purpose !== 'goal_coverage' || run.decisionDigest !== digest(proof.review) || proof.modelDecisionDigest !== run.decisionDigest) fail('Goal coverage has no independent model receipt');
   validateGoalReview({ request: d.request, capability, input: proof.input }, proof.review);
   return proof;
 }
