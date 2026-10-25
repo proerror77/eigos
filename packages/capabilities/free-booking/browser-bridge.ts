@@ -43,9 +43,19 @@ export async function createParticipantBrowserBridge(options: {
     const row = taskDb.prepare('SELECT body,owner FROM jobs WHERE id=?').get(command.context.requestId);
     if (!row || row.owner !== localOwner || command.context.ownerDigest !== digest(localOwner)) reject('The original participant task is unavailable', 403);
     const job = JSON.parse(String(row.body)) as Job, d = job.delegation, state = d?.agent;
-    if (d?.backendVersion !== BACKEND_VERSION || !['working', 'submitted'].includes(job.state) || d.request.revision !== command.context.requestRevision || state?.programDigest !== command.configurationDigest || state.programRef.id !== 'booking.participant.free' || state.pendingPlanId !== command.context.planId) reject('Participant task was canceled, changed or stopped', 403);
+    if (d?.backendVersion !== BACKEND_VERSION || !['working', 'submitted'].includes(job.state) || d.request.revision !== command.context.requestRevision || !state || state.pendingPlanId !== command.context.planId) reject('Participant task was canceled, changed or stopped', 403);
     const plan = state.plans.find(p => p.id === command.context.planId), step = plan?.steps.find(s => s.intentId === command.context.intentId);
     if (!plan || plan.digest !== command.planDigest || !step || step.action !== command.action || step.operationKey !== command.context.operationKey) reject('The original participant plan changed', 403);
+    const { digest: planDigest, ...planBody } = plan;
+    if (digest(planBody) !== planDigest || plan.requestId !== job.id || plan.requestRevision !== d.request.revision || digest(plan.programRef) !== digest(state.programRef) || plan.programDigest !== state.programDigest) reject('The participant execution binding changed', 403);
+    const components = state.programRef.id === 'services.compose.live' && state.programRef.version === '1'
+      ? Object.entries(state.components ?? {}).filter(([, c]) => c.programRef.id === 'booking.participant.free' && c.programRef.version === '1' && c.scope && digest(c.scope) === digest(step.input.scope) && !c.result) : [];
+    const participant = state.programRef.id === 'booking.participant.free' && state.programRef.version === '1' ? state : components.length === 1 ? components[0]![1] : undefined;
+    if (!participant || participant.programDigest !== command.configurationDigest || digest(registrationInputSchema.parse(participant.input)) !== digest(registrationInputSchema.parse(command.input.scope))) reject('The original participant component or service scope changed', 403);
+    if (components.length) {
+      const nodes = (state.input as { components?: { id: string; capabilityRef: { id: string; version: string } }[] }).components;
+      if (!nodes?.some(n => n.id === components[0]![0] && digest(n.capabilityRef) === digest(participant.programRef))) reject('Participant component was not selected in the original graph', 403);
+    }
     if (writing) {
       if (plan.environment !== 'live_free' || step.effect !== 'reserve' || step.additionalEffects?.length || step.cost?.minor !== '0') reject('Only an exact zero-charge participant reservation may be dispatched', 403);
       const grants = taskDb.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(localOwner, job.id).map(r => JSON.parse(String(r.body)) as PlanGrant);

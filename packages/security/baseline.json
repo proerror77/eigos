@@ -1747,7 +1747,7 @@
     {
       "id": "booking-bridge",
       "file": "packages/capabilities/free-booking/browser-bridge.ts",
-      "sourceDigest": "54dba39dcd654931d85884edca031c2bb87eabec0ad3a560d2c510f32b850837",
+      "sourceDigest": "5d80d7b727ac00abce951da9af7e2b604572a2ff6c4ab8f7cb3c2dd0d2ebf878",
       "channels": [
         "source",
         "private_file"
