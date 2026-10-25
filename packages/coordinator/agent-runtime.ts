@@ -142,7 +142,7 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;

@@ -304,3 +304,12 @@ test('One grounding model response can choose a dynamic read graph and a conditi
     assert.equal(f.store.get(owner, job.id).delegation!.acceptance!.accepted, true);
   } finally { f.close(); }
 });
+
+test('A rejected model reference decoding still retains the actual response receipt before stopping', async () => {
+ const f = sessionFixture(), records: any[] = [], raw = { messageId: 'unknown' }, receipt = evidence();
+ try {
+  const model = {ontologyContextPreparation:'worker_snapshot' as const,runStructured:async()=>({output:{kind:'final',calls:[],finalJson:JSON.stringify(raw)},evidence:receipt})};
+  await assert.rejects(reasonWithOntology(model,'Synthetic malformed reference',{},f.session,new AbortController().signal,r=>records.push(r),8,{decodeFinal:{encoding:'fixed_scope_message_refs_v1',apply:()=>{throw new Error('Unknown message reference');}}}),/Unknown message/);
+  assert.equal(records.length,1);assert.equal(records[0].id,receipt.id);assert.equal(records[0].decisionDigest,digest(raw));assert.equal(records[0].outputSha256,receipt.outputSha256);
+ }finally{f.db.close();}
+});

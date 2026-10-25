@@ -1634,7 +1634,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "f1c39b5cc6d7d7887f8b6672e115a34270c5bfed207bbc513edbf2ca09acbe99",
+      "sourceDigest": "29e1e998b78f056b9067f4ab146c17fd5cbf82c26ff1982218a7d46e1828aeb5",
       "channels": [
         "model",
         "dispatch"
@@ -1647,7 +1647,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "209d274ba7b4174d28502aa8e411ea5a56674896d108b67e08fa4faca910e9d4",
+      "sourceDigest": "ce2e60b96a274d779a82e049ba0562cfd0b935232fc1993ba9f35f0a548a629b",
       "channels": [
         "model",
         "dispatch",
@@ -1709,7 +1709,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "7f0f8415457154c338f455f770cef188b196a78804e34d6ab3bc8793af341a85",
+      "sourceDigest": "cfc3a38832a0e3bcdb8b262649ec442bb9aed3d1469ee7f74433f16e29f0417f",
       "channels": [
         "registered_model",
         "private_file"
@@ -1722,7 +1722,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "5000484bb65851340542b4eefdbffb6c7f3ff310cce6a2193e4ab19e8012fabe",
+      "sourceDigest": "c33d298a95fc40f9a7fbca101540209c42d1cde074a21a1c115f5081419ce6eb",
       "channels": [
         "source",
         "dispatch"
@@ -1906,7 +1906,7 @@
     {
       "id": "model-reasoning",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "cb808b0a0d6118d6f239ac015c1f3308837026d79ef8fc4c8832fa6598fe7613",
+      "sourceDigest": "c3668f286fc4b9ee365d7fe209aec8f23a672919d9ce58eb15911b30b423c426",
       "channels": [
         "registered_model",
         "model",
@@ -1920,7 +1920,7 @@
     {
       "id": "goal-coverage",
       "file": "packages/ontology/goal-coverage.ts",
-      "sourceDigest": "9c9fd23ed712d2cb70eb24dde0ecf104ab986e311cac43c613f9cdeff1a1bd7b",
+      "sourceDigest": "686b9dbb53be8d4704e240fe7e9d5b1250aba75d5578d1212fb07f0a2dbc0219",
       "channels": [
         "model",
         "artifact"
@@ -2014,7 +2014,7 @@
     {
       "id": "didi-order-test-program",
       "file": "packages/capabilities/didi/order-test-program.ts",
-      "sourceDigest": "278dc7684bc50bdcd54b63e4baec63d4366124ed753ac93de8659ed4acfa3f45",
+      "sourceDigest": "9476eb493204ca2cd7cbb68be7d009a57ffb945486d48112f2c7151668d60fd5",
       "channels": [
         "model",
         "dispatch",
@@ -2049,6 +2049,19 @@
       "content": "Bounded exact message partitions and criterion mappings",
       "currentControl": "Strict schema; semantic judgment still requires actual model response",
       "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "fixed-scope-message-references",
+      "file": "packages/core/delegation.ts",
+      "sourceDigest": "0a159790192638d5f4f5b8623e1519fe572211be79d6017563501a8d68d54373",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Fixed-scope model wire schema and exact authenticated message reference expansion",
+      "currentControl": "One whole-message reference per original message; strict schema; raw and decoded decision digests; semantic coverage remains model-owned",
+      "targetControl": "Task-scoped instruction provenance and no automatic historical grants",
       "stage": "S3"
     }
   ]

@@ -27,6 +27,7 @@ export interface RunEvidence {
   completedAt: string;
   outputSha256: string;
   decisionDigest?: string;
+  decisionDecoding?: { encoding: 'fixed_scope_message_refs_v1'; rawDecisionDigest: string };
   model?: string;
   reasoningEffort?: string;
   serviceTier?: string;
