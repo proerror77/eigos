@@ -17,8 +17,11 @@ import {BookingAgentProgram} from '../packages/capabilities/booking/program.js';
 import {securityFixture} from './fixtures/security.js';
 import {createBookingSandboxProvider} from '../packages/capabilities/booking/sandbox.js';
 import {createCommerceSandboxProvider} from '../packages/capabilities/commerce-sandbox/provider.js';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync,mkdtempSync,rmSync,existsSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
+import {createApp} from '../apps/gateway/app.js';
+import {OntologyPlanningSession} from '../packages/coordinator/planning-session.js';
 import {digest} from '../packages/core/delegation.js';
 import {setupPABooking} from './fixtures/pa-booking.js';
 import {CommerceAgentProgram} from '../packages/capabilities/commerce-agent.js';
@@ -82,6 +85,50 @@ test('personal source configuration stays closed without exact foundation owner 
   const env={EIGOS_SECURITY_MODE:'foundation',EIGOS_AUTH_MODE:'jwt',HOST:'127.0.0.1',PUBLIC_URL:'https://private.example',DATABASE_PATH:'/tmp/isolated.sqlite',OAUTH_ISSUER:'https://identity.example',OAUTH_JWKS_URL:'https://identity.example/jwks',OAUTH_AUDIENCE:'https://private.example',OIDC_AGENT_CLIENT_ID:'registered-agent',EIGOS_PAOTUI_SKILL_DIR:'/private/known-skill'};
   assert.throws(()=>readConfig(env),/Personal Paotui/);
   const configured={...env,EIGOS_PERSONAL_SOURCE_OWNER:'["https://identity.example","tenant","member"]'};assert.equal(readConfig(configured).EIGOS_AUTH_MODE,'jwt');assert.throws(()=>readConfig({...configured,HOST:'0.0.0.0'}),/loopback listener/);assert.throws(()=>readConfig({...configured,NODE_ENV:'production'}),/loopback listener/);
+});
+
+test('the real Gateway starts bound personal sources without invoking them or granting access',async()=>{
+  const directory=mkdtempSync(join(tmpdir(),'eigos-bound-source-start-')),owner='["https://identity.example","tenant","member"]';
+  try {
+    const audit=join(directory,'source-reads.jsonl');
+    const config=readConfig({EIGOS_SECURITY_MODE:'foundation',EIGOS_AUTH_MODE:'jwt',HOST:'127.0.0.1',PUBLIC_URL:'https://private.example',
+      DATABASE_PATH:join(directory,'tasks.sqlite'),OAUTH_ISSUER:'https://identity.example',OAUTH_JWKS_URL:'https://identity.example/jwks',
+      OAUTH_AUDIENCE:'https://private.example',OIDC_AGENT_CLIENT_ID:'registered-agent',EIGOS_PERSONAL_SOURCE_OWNER:owner,
+      EIGOS_PAOTUI_SKILL_DIR:join(directory,'unconnected-source'),EIGOS_ONTOLOGY_AUDIT_PATH:audit});
+    for(const rejected of [{...config,EIGOS_PERSONAL_SOURCE_OWNER:undefined},{...config,EIGOS_PERSONAL_SOURCE_OWNER:'unverified'},
+      {...config,HOST:'0.0.0.0'},{...config,PUBLIC_URL:'http://private.example'},{...config,EIGOS_SECURITY_MODE:'legacy' as const}]) {
+      assert.throws(()=>createApp(rejected),/Paotui requires/);
+    }
+    const gateway=createApp(config);
+    try {
+      assert.equal(gateway.catalog.securityProfiles(owner).length,3);
+      assert.equal(gateway.catalog.securityProfiles('["https://identity.example","tenant","other"]').length,0);
+      assert.equal(gateway.store.security.listGrants(owner).length,0);
+      assert.equal(existsSync(audit),false);
+    }finally{await gateway.close();}
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('foundation native definitions fit the bounded prepared context without full property schemas',async()=>{
+  const source=catalogFixture(),f=securedProgramFixture(()=>new CatalogAgentProgram([merchant],{connector:source.connector}),catalogInput,()=>{
+    assert.fail('Preparing definitions must not make an action decision');
+  });
+  try {
+    const job=f.tasks.submit(f.p,{service:'eigos.delegate',requestId:randomUUID(),goal:'Read a configured public catalog'});
+    await f.tick();
+    const current=f.jobs.get(f.owner,job.id),request=current.delegation!.request,scope=current.delegation!.agent!.scope;
+    const prepared=f.jobs.security.withAgent(f.p,job.id,'task.query',()=>{
+      const session=new OntologyPlanningSession(f.jobs.ontology,f.owner,request,[],()=>{},()=>{},'request',[scope]);
+      const context=session.prepareContext({actions:[...f.program.actionIds],refs:[scope]});
+      return {context,receipts:session.receipts()};
+    });
+    const definitions=prepared.context.entries[0]!.result as {error?:string;types:{properties:Record<string,{schema?:unknown}>}[];actions:{read?:{inputSchema:unknown}}[]};
+    assert.equal(prepared.receipts[0]!.status,'ok',JSON.stringify(definitions));
+    assert.ok(prepared.receipts[0]!.outputBytes!<=30000);
+    assert.ok(definitions.types.every(t=>Object.values(t.properties).every(p=>!Object.hasOwn(p,'schema'))));
+    assert.ok(definitions.actions.length>0 && definitions.actions.every(a=>a.read?.inputSchema));
+    assert.equal(source.calls.length,0);
+  }finally{f.close();}
 });
 
 test('native participant read delivers an independent registration without private account references',async()=>{

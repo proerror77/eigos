@@ -154,7 +154,18 @@ export class OntologyPlanningSession {
         if (this.graph.security) {
           const visible=describeAuthorized(this.graph.security.security,authorizationScope()!,args);
           if (actions?.some(id=>!visible.actions.some(a=>a.id===id)) || functions?.some(id=>!visible.functions.some(f=>f.id===id))) throw new DomainError('FORBIDDEN','Definition is not available');
-          output={...visible,actions:actions?visible.actions.filter(a=>actions.includes(a.id)):visible.actions,functions:functions?visible.functions.filter(f=>functions.includes(f.id)):visible.functions,
+          const selected=actions?visible.actions.filter(a=>actions.includes(a.id)):visible.actions;
+          output={...visible,schemaDetail:includeSchemas?'full':'summary',types:visible.types.map(({properties,links,...definition})=>({
+            ...definition,...(includeLinks?{links}:{linksAvailable:true}),properties:includeSchemas?properties:Object.fromEntries(Object.entries(properties).map(([name,{schema:_schema,...metadata}])=>[name,metadata])),
+          })),actions:selected.map(action=>{
+            if(includeSchemas || actions)return action;
+            const {read,operation,...summary}=action;
+            const compact=(metadata:NonNullable<typeof read|typeof operation>)=>{const {inputSchema,...rest}=metadata;return {...rest,inputKeys:Object.keys((inputSchema as {properties?:object}).properties??{}),schemaAvailable:true};};
+            return {...summary,...(read?{read:compact(read)}:{}),...(operation?{operation:compact(operation)}:{})};
+          }),functions:(functions?visible.functions.filter(f=>functions.includes(f.id)):visible.functions).map(fn=>{
+            if(includeSchemas || functions)return fn;
+            const {inputSchema,...summary}=fn;return {...summary,...(inputSchema?{schemaAvailable:true}:{})};
+          }),
             ...(includeConditionSchema?{conditionSchema:z.toJSONSchema(businessConditionSchema)}:{})};
         } else {
         const selected = actions ? actions.map(id => ({ ...this.graph.model.action(id), execution: 'definition_only' })) : result.actions;

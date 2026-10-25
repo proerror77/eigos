@@ -114,6 +114,7 @@ export class AgentRuntime {
     const access = this.access(claim, signal);
     const initialSelection = ctx.state.initialSelectionPending;
     let response: { decision: AgentDecision; evidence: NonNullable<Job['runs']>[number] };
+    let preparedReads: PlanningSnapshot | undefined;
     if (initialSelection) {
       try {
         if (ctx.state.plans.length || ctx.state.observations.length) failure('Initial actions only apply before the first source frontier');
@@ -121,6 +122,7 @@ export class AgentRuntime {
         validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, initialSelection.groundingPlanning, true);
         const decision = bindInitialSelection(this.store.ontology, program, ctx.state.scope, source);
         access.session.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
+        preparedReads = access.session.finish();
         response = { decision, evidence: job.runs!.find(run => run.id === initialSelection.modelRunId)! };
       } catch (error) {
         signal.throwIfAborted();
@@ -142,7 +144,7 @@ export class AgentRuntime {
     validatePlannedCompletion(this.store.ontology, program, decision);
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
-    const reads = access.session.finish();
+    const reads = preparedReads ?? access.session.finish();
     if (decision.kind === 'clarify' || decision.kind === 'no_feasible_plan') {
       if (decision.steps.length || decision.completionJson) failure('A paused decision cannot include executable actions');
       let message = decision.message;

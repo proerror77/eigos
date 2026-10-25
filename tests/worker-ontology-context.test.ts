@@ -225,6 +225,28 @@ for (const invalid of ['bad_binding', 'dependent'] as const) test(`Invalid initi
   } finally { f.close(); }
 });
 
+test('An omitted bounded initial definition returns to a fresh model decision before any dispatch',async()=>{
+  const f=syntheticContextDidi('valid'),original=OntologyPlanningSession.prototype.call;
+  let omitted=false;
+  OntologyPlanningSession.prototype.call=function(tool,input,options){
+    const initial=this.graph===f.store.ontology && f.store.get(owner,this.request.id).delegation?.agent?.initialSelectionPending;
+    if(!omitted && initial && tool==='describe_ontology' && options?.origin==='worker_context') {
+      omitted=true;return original.call(this,tool,input,{...options,maxOutputBytes:10});
+    }
+    return original.call(this,tool,input,options);
+  };
+  try {
+    f.b.submit();const waiting=await f.b.run();
+    assert(omitted);assert.equal(waiting.state,'working');
+    assert.equal(waiting.delegation!.agent!.initialSelectionPending,undefined);
+    assert.equal(waiting.delegation!.agent!.feedback[0]!.kind,'validation');
+    assert.equal(f.store.intents(owner,waiting.id).length,0);
+    assert.equal(f.calls.filter(call=>call.method==='tools/call').length,0);
+    assert.equal((await f.b.run()).delegation!.agent!.plans.length,1);
+    assert.equal(f.requests.length,2);
+  }finally{OntologyPlanningSession.prototype.call=original;f.close();}
+});
+
 for (const stop of ['handoff', 'cancel'] as const) test(`Initial selection survives a clean ${stop} boundary without another model call or a late source dispatch`, async () => {
   const f = syntheticContextDidi('valid'), checkpoint = f.store.checkpoint.bind(f.store); let stopped = false;
   f.store.checkpoint = (claim, write) => {

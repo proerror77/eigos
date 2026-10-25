@@ -10,7 +10,7 @@ import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
 import { z } from 'zod';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Config } from '../../packages/core/config.js';
+import { allowsBoundPersonalSource, type Config } from '../../packages/core/config.js';
 import { createVerifier, protectedResourceMetadata, type VerifyToken } from './auth.js';
 import { A2AGateway, AgentUser, agentCard } from './a2a.js';
 import { DomainError, SCOPES, type Principal, type Scope } from '../../packages/core/domain.js';
@@ -31,7 +31,7 @@ import {digest} from '../../packages/core/delegation.js';
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 
 export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
-  if (config.EIGOS_PAOTUI_SKILL_DIR && (config.EIGOS_AUTH_MODE !== 'development' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires loopback development mode');
+  if (config.EIGOS_PAOTUI_SKILL_DIR && !allowsBoundPersonalSource(config, process.env.NODE_ENV) && (config.EIGOS_AUTH_MODE !== 'development' || process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('Paotui requires a bound foundation owner or loopback development mode');
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   const hostname = new URL(config.PUBLIC_URL).hostname;
   const allowedOrigins = new Set([config.PUBLIC_URL, ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);

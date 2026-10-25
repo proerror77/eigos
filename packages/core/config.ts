@@ -86,6 +86,13 @@ const schema = z.object({
 });
 export type Config = z.infer<typeof schema>;
 
+export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
+  return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
+    && ownerIdentitySchema.safeParse(config.EIGOS_PERSONAL_SOURCE_OWNER).success
+    && ['127.0.0.1', 'localhost', '::1'].includes(config.HOST)
+    && new URL(config.PUBLIC_URL).protocol === 'https:' && nodeEnv !== 'production';
+}
+
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
   const c = schema.parse(env);
   if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_AGENT_CLIENT_ID)) throw new Error('Security foundation requires JWT and an explicit registered Agent client');
@@ -93,7 +100,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   const publicUrl = new URL(c.PUBLIC_URL);
-  const memberSource=c.EIGOS_SECURITY_MODE==='foundation' && c.EIGOS_AUTH_MODE==='jwt' && !!c.EIGOS_PERSONAL_SOURCE_OWNER && ['127.0.0.1','localhost','::1'].includes(c.HOST) && publicUrl.protocol==='https:' && env.NODE_ENV!=='production';
+  const memberSource = allowsBoundPersonalSource(c, env.NODE_ENV);
   if(c.EIGOS_PERSONAL_SOURCE_OWNER && !memberSource)throw new Error('Personal source owner requires isolated foundation JWT with a loopback listener and HTTPS origin');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');

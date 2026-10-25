@@ -1350,7 +1350,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "da4a5f1b271ba1c75590ded220a696040040f8a5a12f613a68ec6c43c4978afb",
+      "sourceDigest": "e0ff6d855821dd7ceb67848cfd2aca230135bca6a0417977a5da42edab7ebf72",
       "channels": [
         "http"
       ],
@@ -1498,7 +1498,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "37daf02050520628dabd04491483a874aa1432fafadce489731bf321aa471e40",
+      "sourceDigest": "3e6af8fa092959756d628734381c59d688c4674b5ee588be5b133b2a302011b9",
       "channels": [
         "model",
         "query"
@@ -1536,7 +1536,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "e3aa29631b2f03e6ed76f52f67eaf5b8a5ffad99fc272484dc8df9442f7c890c",
+      "sourceDigest": "7199c9bac284c7ab087c31adf8a77481f8a7b8a442083a329b5f7f4b16a5054a",
       "channels": [
         "model",
         "dispatch",
@@ -1829,7 +1829,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "2979498200a8153c5b9e324b26f092882bdc608973c7363a08169c5f33dc7f21",
+      "sourceDigest": "8b93775ab6191a017458501978e428a2045bf8a148a3313ff0f48a3a99c2c704",
       "channels": [
         "authorization_control"
       ],
@@ -2227,7 +2227,7 @@
     {
       "id": "s5-packages-capabilities-free-booking-program",
       "file": "packages/capabilities/free-booking/program.ts",
-      "sourceDigest": "5586220562e70aa5c46ddceacccc0c9f90f5f57ac897ed5d4e52bb0a284df8b0",
+      "sourceDigest": "beea02caa4bade49744b628c3194bf90bfa419f344627076e48a2c609c9b9bc2",
       "channels": [
         "runtime"
       ],
