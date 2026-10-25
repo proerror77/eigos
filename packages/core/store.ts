@@ -1,4 +1,5 @@
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
+import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
 import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
@@ -109,6 +110,7 @@ export class JobStore {
         CREATE TABLE IF NOT EXISTS capability_verifications (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS capability_change_proposals (id TEXT PRIMARY KEY, owner TEXT NOT NULL, binding_key TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS personal_source_binding (slot TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, configuration_digest TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS member_didi_source_admissions (configuration_digest TEXT PRIMARY KEY, connection_id TEXT NOT NULL, owner TEXT NOT NULL, member_id TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','revoked')));
         CREATE TABLE IF NOT EXISTS preparation_contexts (owner TEXT NOT NULL, job_id TEXT NOT NULL, key TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(owner,job_id,key));
       `);
       const budgetColumns = new Set(this.db.prepare('PRAGMA table_info(budget_reservations)').all().map(row => String(row.name)));
@@ -175,6 +177,20 @@ export class JobStore {
     });
   }
   personalSourceAdmitted(c: PersonalSource, configurationDigest: string): boolean { return personalSourceAdmitted(this.db, c, configurationDigest); }
+  admitMemberDidiSource(record?: DidiMemberConnection, configurationDigest?: string): void {
+    this.transaction(() => {
+      this.db.prepare("UPDATE member_didi_source_admissions SET state='revoked' WHERE configuration_digest<>?").run(configurationDigest ?? '');
+      if (record && configurationDigest) this.db.prepare("INSERT OR IGNORE INTO member_didi_source_admissions VALUES(?,?,?,?,'active')")
+        .run(configurationDigest, record.connectionId, didiSourceOwner(record), record.memberId);
+    });
+  }
+  memberDidiSourceAdmitted(record: DidiMemberConnection, configurationDigest: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM member_didi_source_admissions WHERE configuration_digest=? AND connection_id=? AND owner=? AND member_id=? AND state='active'")
+      .get(configurationDigest, record.connectionId, didiSourceOwner(record), record.memberId);
+  }
+  revokeMemberDidiSource(memberId: string): void {
+    this.db.prepare("UPDATE member_didi_source_admissions SET state='revoked' WHERE member_id=?").run(memberId);
+  }
   close(): void { this.db.close(); }
   memberUsage(owner: string) { return memberUsage(this.db, owner); }
   beginModelUsage(claim: WorkClaim, id: string, runtime: string, startedAt: string) {

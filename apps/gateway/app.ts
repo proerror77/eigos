@@ -17,6 +17,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { assertPersonalSourceConfig, type Config } from '../../packages/core/config.js';
 import { PersonalSourceAccess, sourceOwner } from '../../packages/core/personal-source.js';
+import { DidiMemberAccess, didiSourceOwner } from '../../packages/core/didi-source.js';
 import { createVerifier, protectedResourceMetadata, type VerifyToken } from './auth.js';
 import { A2AGateway, AgentUser, agentCard } from './a2a.js';
 import { DomainError, ownerKey, SCOPES, type Principal, type Scope } from '../../packages/core/domain.js';
@@ -60,6 +61,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
       paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
+      didiMember: config.EIGOS_DIDI_MEMBER_CONNECTION_FILE ? { connectionFile: config.EIGOS_DIDI_MEMBER_CONNECTION_FILE } : undefined,
       didi: config.EIGOS_DIDI_KEY_FILE ? { keyFile: config.EIGOS_DIDI_KEY_FILE, keySha256: config.EIGOS_DIDI_KEY_SHA256!, bindingId: config.EIGOS_DIDI_BINDING_ID!, bookingEnabled: config.EIGOS_DIDI_ORDERS_ENABLED === 'mock', environment: config.EIGOS_DIDI_ENVIRONMENT, auditDirectory: config.EIGOS_DIDI_AUDIT_DIR } : undefined,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
       shopifyCatalog: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS?.length ? { merchants: config.EIGOS_SHOPIFY_CATALOG_MERCHANTS } : undefined,
@@ -78,6 +80,14 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
         || ownerKey({ ...member, clientId: '', scopes: [] }) !== sourceOwner(access.record)) throw new Error('Personal source must identify its exact active enrolled member');
       store.admitPersonalSource(access.record, access.configurationDigest);
     } else store.admitPersonalSource();
+    if (config.EIGOS_DIDI_MEMBER_CONNECTION_FILE) {
+      const access = new DidiMemberAccess(config.EIGOS_DIDI_MEMBER_CONNECTION_FILE, (record, hash) => store.memberDidiSourceAdmitted(record, hash));
+      const member = members.get(access.record.memberId);
+      if (network || config.EIGOS_INVITE_BETA !== 'true' || member.status !== 'active' || member.issuer !== config.OAUTH_ISSUER
+        || ownerKey({ ...member, clientId: '', scopes: [] }) !== didiSourceOwner(access.record)) throw new Error('Member DiDi must identify its exact active invited member');
+      store.admitMemberDidiSource(access.record, access.configurationDigest);
+      members.setRevocationObserver(change => store.revokeMemberDidiSource(change.memberId));
+    } else store.admitMemberDidiSource();
   } catch (error) { network?.close(); store.close(); members.close(); throw error; }
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {

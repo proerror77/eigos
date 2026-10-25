@@ -44,13 +44,13 @@ export class DidiAgentProgram implements AgentProgram {
   readonly configurationDigest: string;
   private connector: DidiConnector;
   readonly binding: DidiBinding;
-  constructor(binding: DidiBinding, options: { connector?: DidiConnector; ref?: { id: string; version: string } } = {}) {
+  constructor(binding: DidiBinding, private options: { connector?: DidiConnector; ref?: { id: string; version: string }; memberAccess?: import('../../core/didi-source.js').DidiMemberAccess } = {}) {
     this.ref = options.ref ?? DIDI_PROGRAM_REF;
     this.binding = didiBindingSchema.parse(binding);
     this.connector = options.connector ?? new DidiMcpConnector(this.binding);
-    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1' });
+    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1', ...(options.memberAccess ? { memberConnection: options.memberAccess.configurationDigest } : {}) });
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return this.options.memberAccess ? this.options.memberAccess.permitted(owner) : owner === JSON.stringify(['local-development', 'local', 'developer']); }
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: 'ride.estimate.actions', version: didiReadDefinition.version }, name: '滴滴地点搜索与打车估价', description: '仅查询滴滴地点或指定路线的车型预估价。输入 mode=places 时只需 city、keywords；mode=estimate 时只需 city、origin、destination，可保留 serviceClass 偏好。路线地点要求分别使用 location 的 origin 和 destination 角色，不能合成两个无角色的 location 要求；它们约束所查询路线，不代表实际接送。不强迫补人数、预算、上下车期限。动作与依赖通过本体定义发现；地点歧义需要确认。估价不证明完整费用、可叫到车、接驾或到达承诺。无法接受真实叫车、订单或付款目标。', tags: ['didi', 'ride', 'places', 'estimate', 'read-only'], environment: this.binding.environment === 'mock' ? 'sandbox' : 'live', completion: 'artifact', inputSchema: z.toJSONSchema(rideEstimateInputSchema), ontology: { objects: ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'RideRoute', 'Provider', 'SourceReceipt'], planning: 'Agent-selected read actions and source place selections; no automatic call sequence or business writes' }, actions: this.actionIds.map(id => ({ ref: { id, version: didiReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'ride.estimate.source-readback', version: '1' },
       requirementRoles: [{ kind: 'location', role: 'origin', description: 'Source-matched origin of the queried route; no actual pickup is claimed' }, { kind: 'location', role: 'destination', description: 'Source-matched destination of the queried route; no actual arrival is claimed' }],
@@ -131,7 +131,9 @@ export class DidiAgentProgram implements AgentProgram {
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input); const call = this.call(ctx, action, input);
     if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
-    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision') }, call.tool, call.args, signal);
+    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision') }, call.tool, call.args, signal, () => { this.scope(ctx); });
+    // Revocation or rotation during the provider read must also reject its late result.
+    this.scope(ctx);
     const data = didiDataSchema.parse(result.data), receipt = didiReceiptSchema.parse(result.receipt);
     if (receipt.tool !== call.tool || receipt.inputDigest !== digest(call.args) || receipt.resultDigest !== digest(data) || receipt.endpoint !== didiEndpoint(this.binding.environment) || receipt.bindingId !== this.binding.bindingId || receipt.environment !== this.binding.environment) invalid('DiDi source receipt differs from the selected action');
     const body = { id: receipt.id, requestId: ctx.request.id, requestRevision: ctx.request.revision, configurationDigest: this.configurationDigest, scope: ctx.state.scope, action, actionInput: input, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId, receipt, data, evidenceKind: this.connector.evidenceKind, ...(call.route ? { route: call.route } : {}), observedAt: receipt.receivedAt, expiresAt: new Date(Date.parse(receipt.startedAt) + 300000).toISOString(), validityBasis: 'local_refresh_limit', noBusinessWrites: true };

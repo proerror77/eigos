@@ -48,6 +48,7 @@ const schema = z.object({
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
   EIGOS_DIDI_KEY_FILE: z.string().optional(),
+  EIGOS_DIDI_MEMBER_CONNECTION_FILE: z.string().optional(),
   EIGOS_DIDI_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_DIDI_BINDING_ID: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/).optional(),
   EIGOS_DIDI_ENVIRONMENT: z.enum(['production', 'mock']).default('production'),
@@ -112,6 +113,11 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   if (c.EIGOS_NETWORK_OPERATOR_MEMBER_IDS.some(id => !c.EIGOS_NETWORK_MEMBER_IDS.includes(id))) throw new Error('Network operators must be explicitly enrolled members');
   const publicUrl = new URL(c.PUBLIC_URL);
+  if (c.EIGOS_DIDI_MEMBER_CONNECTION_FILE && (!isAbsolute(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) || c.EIGOS_INVITE_BETA !== 'true'
+    || c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.HOST !== '127.0.0.1'
+    || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
+    || c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_KEY_SHA256 || c.EIGOS_DIDI_BINDING_ID || c.EIGOS_DIDI_AUDIT_DIR
+    || c.EIGOS_DIDI_ENVIRONMENT !== 'production' || c.EIGOS_DIDI_ORDERS_ENABLED !== 'false')) throw new Error('Member DiDi requires an explicit private connection in the HTTPS/JWT invite beta, persistent stores and estimate-only production access; shared personal credentials and mock orders are forbidden');
   if (c.EIGOS_DIDI_ORDERS_ENABLED === 'mock' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'mock' || !c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_ACTION_SANDBOX !== 'true')) throw new Error('DiDi orders require explicit official mock configuration, durable audit and sandbox action authorization');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');

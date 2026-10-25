@@ -16,7 +16,7 @@ export interface DidiCallContext { requestId: string; requestRevision: number; a
 export interface DidiReadResult { data: DidiData; receipt: DidiReceipt }
 export interface DidiConnector {
   readonly evidenceKind: DidiEvidenceKind;
-  invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal): Promise<DidiReadResult>;
+  invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: () => void): Promise<DidiReadResult>;
 }
 
 /** Official SDK handles MCP handshake, sessions and SSE. The network guard is
@@ -43,7 +43,7 @@ export class DidiMcpConnector implements DidiConnector {
     finally { await file?.close(); }
   }
   async verifyCredential(): Promise<void> { await this.key(); }
-  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }): Promise<T> {
+  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }, beforeCall?: () => void): Promise<T> {
     if (mock && this.binding.environment !== 'mock') throw new DidiReadError('MOCK_OPERATIONS_ONLY');
     const allowed = mock?.tools ?? didiToolInputs;
     signal.throwIfAborted();
@@ -62,6 +62,7 @@ export class DidiMcpConnector implements DidiConnector {
         if (request.method === 'tools/call') {
           if (!Object.hasOwn(allowed, request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
           if (!allowed[request.params.name as keyof typeof allowed]!.safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
+          beforeCall?.();
           mock?.beforeCall?.();
         }
       }
@@ -106,10 +107,11 @@ export class DidiMcpConnector implements DidiConnector {
   async discover(signal: AbortSignal) {
     return this.session(signal, async client => ({ endpoint: didiEndpoint(this.binding.environment), environment: this.binding.environment, bindingId: this.binding.bindingId, enabledTools: await this.directory(client, signal), evidenceKind: this.evidenceKind }));
   }
-  async invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal): Promise<DidiReadResult> {
+  async invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: () => void): Promise<DidiReadResult> {
     if (!DIDI_TOOLS.includes(tool)) throw new DidiReadError('TOOL_NOT_ALLOWED');
     const parsed = didiToolInputs[tool].safeParse(input);
     if (!parsed.success) throw new DidiReadError('INVALID_TOOL_INPUT');
+    beforeCall?.();
     return this.session(signal, async (client, secret) => {
       const directory = await this.directory(client, signal), startedAt = new Date().toISOString();
       signal.throwIfAborted();
@@ -127,6 +129,6 @@ export class DidiMcpConnector implements DidiConnector {
         await appendFile(join(this.binding.auditDirectory, 'reads.jsonl'), JSON.stringify({ ...context, receipt, input: parsed.data, evidenceKind: this.evidenceKind }) + '\n', { mode: 0o600 });
       }
       return { data, receipt };
-    });
+    }, undefined, beforeCall);
   }
 }
