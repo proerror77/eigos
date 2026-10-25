@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-25",
+  "codeCommit": "a0137bec29d2891a625c311a0f2fb7bd65318c1e",
+  "environment": "isolated foundation copy; resident not switched",
+  "identity": {
+    "provider": "existing Auth0",
+    "boundInstallations": 2,
+    "sameSignedMember": true,
+    "distinctInstallationsAndTokens": true,
+    "activeMembership": true,
+    "credentialFileMode": "0600",
+    "providerSettingsChanged": false
+  },
+  "protocol": {
+    "independentPythonPa": true,
+    "ownOntologyRead": true,
+    "sameRequestReplay": true,
+    "crossInstallationAccessDeniedBothDirections": true
+  },
+  "revocation": {
+    "independentWorkerProcess": true,
+    "unrevokedLeaseRenewed": true,
+    "revokedLeaseRenewed": false,
+    "revokedPaRequestDenied": true,
+    "businessCalls": 0,
+    "installationBGrantRemainsRevoked": true
+  },
+  "sources": [
+    {
+      "source": "shopify-catalog",
+      "state": "completed",
+      "independentPaAccepted": true,
+      "observedAt": "2026-10-25T03:16:13.211Z",
+      "sourceReadsOnly": true
+    },
+    {
+      "source": "meituan-geo",
+      "state": "completed",
+      "independentPaAccepted": true,
+      "observedAt": "2026-10-25T03:20:31.366Z",
+      "sourceReadsOnly": true
+    },
+    {
+      "source": "meituan-addresses",
+      "state": "completed",
+      "independentPaAccepted": true,
+      "observedAt": "2026-10-25T03:28:27.376Z",
+      "sourceReadsOnly": true
+    },
+    {
+      "source": "luma-existing-registration",
+      "independentPaRead": true,
+      "observedState": "canceled",
+      "independentBrowserRead": true,
+      "registrationConfirmed": false,
+      "feesComplete": false,
+      "newRegistrationPerformed": false,
+      "operatorRequired": true
+    },
+    {
+      "source": "didi-places",
+      "state": "blocked",
+      "reason": "upstream user maps_textsearch quota exceeded",
+      "errorCode": -32001,
+      "positiveAcceptancePassed": false
+    }
+  ],
+  "privacy": {
+    "phoneFieldsReturned": false,
+    "modelAddressBookFieldRead": false,
+    "rawSourceSnapshotsPublished": false
+  },
+  "externalBusinessWrites": 0,
+  "orders": 0,
+  "payments": 0,
+  "privateEvidenceSha256": {
+    "dual-installation-proof": "9fce4b77acb750f0aed16b974bb46cee6988142eab310bb4ba15c3b907fcb45e",
+    "protocol-proof": "c8f2a6bfde2abca07eeac3ebdd24b6be2108e5b48f79b39ea90173bcd7491906",
+    "revocation-proof": "ad46c2e809270971b9f0c98065aa22ec6e30b4a5496c0fc57944ceb1a8c9249f",
+    "shopify-independent-pa": "fea429a3dadcf46906102cc8ecf8496c6dde3687062275524faefda84a75732b",
+    "meituan-independent-pa": "2edb6b9a47d46d1e41d452aa7ad19cb4f6d5ed005dc85e2aec97ac3f3c517bf5",
+    "address-independent-pa": "92dddb2378c3c4a207ebee8e59d0b9650db8a0eb5d539e72f552a9c01f9654ac",
+    "address-privacy-proof": "e660febc2fbdcc3e11fcb26b71a79ac8425ec752368521532deac233137c75c5",
+    "participant-independent-pa-query": "d995fd73a256736dccf72aaf8a70ed7b9c9aa2407296d5dcae30cf6606314025",
+    "didi-read-diagnostic": "b349217a7532da9b049f772b2cfce010e0c4e7b24a8285189ea9c9c37d243c44",
+    "read-only-ledger-proof": "70ef20a61c4be884450aface7145eb424b177ec82f77bcefa97090e4a508d2ce"
+  },
+  "ledgerReadback": {
+    "newFoundationJobs": 12,
+    "intentEffects": {
+      "read": 13
+    },
+    "activeClaims": 0,
+    "externalWriteIntentCount": 0
+  }
+}

@@ -24,8 +24,8 @@
 
 - [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；保留最初合同和离线检查清单，运行策略实现见后续阶段。
 - [S1 身份与撤销控制面](security-s1.md)：身份／安装授权存储、跨库拒绝协调及 Worker 复核的阶段记录。
-- [S2–S4 资源、任务数据与输出保护](security-s2-s4.md)：foundation v2 协议、安全视图、来源／模型资格、会员审阅、附件和原操作查证；S5 的真实会员运行验收与常驻切换仍待完成。
-- [S5 迁移、PA 与来源适配](security-s5.md)：离线复制工具、常驻副本核对、v2 客户端、原生来源投影及待登录的切换包。
+- [S2–S4 资源、任务数据与输出保护](security-s2-s4.md)：foundation v2 协议、安全视图、来源／模型资格、会员审阅、附件和原操作查证；S5 已有真实双安装与部分只读来源验收，常驻切换仍待完成。
+- [S5 迁移、PA 与来源适配](security-s5.md)：离线复制工具、常驻副本核对、v2 客户端、原生来源投影、真实双安装／来源读回及待切换的配置包。
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
 - [模型选择的只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)：滴滴首轮依赖图、纯函数绑定、证据归属与动态决策边界。
 - [模型耗时分段与输出简述对照](evidence/model-phase-latency-2026-10-24/README.md)：启动、首输出等待、可见输出及真实对照边界。

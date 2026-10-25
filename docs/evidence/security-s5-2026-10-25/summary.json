@@ -21,7 +21,9 @@
     "archivedUnmappedOrHistoricalObjects": 542,
     "activeBindings": 0,
     "permissionsGranted": 0,
-    "sourceSnapshotsUnchanged": true
+    "sourceSnapshotsUnchanged": true,
+    "verifiedWithRealMemberInstallations": true,
+    "realMemberSnapshotSourceDigest": "c18a79bf3b0b02b980e4857f11af6bc592bf8a97f64f64be3ce7f6c9ef2be078"
   },
   "sourceCoverage": [
     "didi-readonly",
@@ -36,13 +38,16 @@
   ],
   "identityAcceptance": {
     "provider": "existing Auth0",
-    "pendingInstallations": 2,
-    "boundInstallations": 0,
-    "realDualInstallationPassed": false,
-    "reason": "User cannot complete device login at this time",
+    "pendingInstallations": 0,
+    "boundInstallations": 2,
+    "realDualInstallationPassed": true,
+    "sameSignedMember": true,
+    "independentProtocolReadback": true,
+    "independentWorkerRevocation": true,
     "providerSettingsChanged": false,
-    "isolationServerStopped": true,
-    "pollersStopped": true
+    "pollersStopped": true,
+    "installationBTrialGrant": "revoked as tested",
+    "isolationServerStopped": true
   },
   "cutover": {
     "privateProposalPrepared": true,
@@ -50,15 +55,17 @@
     "readyForActivation": false,
     "residentSwitched": false,
     "postCutoverReadbackPassed": false,
-    "realBusinessWritesPerformed": false
+    "realBusinessWritesPerformed": false,
+    "pendingReason": "Didi upstream quota exhausted; user source-scope decision pending",
+    "candidateWithoutDidiPrepared": true
   },
   "verification": {
     "fullSuite": {
       "command": "npm test",
-      "passed": 682,
+      "passed": 687,
       "failed": 0,
-      "durationMs": 399653.187334,
-      "note": "A final synchronous-scope lifetime regression was added afterward; the 25 affected checks and 11 compiled E2E checks passed again."
+      "durationMs": 466565.0,
+      "codeCommit": "a0137bec29d2891a625c311a0f2fb7bd65318c1e"
     },
     "compiledFocused": {
       "passed": 4,
@@ -69,7 +76,13 @@
       "properties": 823,
       "surfaces": 83
     },
-    "ci": "Recorded separately by the exact commit workflow and final delivery readback",
+    "ci": {
+      "codeCommit": "a0137bec29d2891a625c311a0f2fb7bd65318c1e",
+      "runId": 40158415123,
+      "conclusion": "success",
+      "independentGitHubJobReadback": "success",
+      "url": "https://github.com/proerror77/eigos/actions/runs/40158415123"
+    },
     "typecheck": "passed",
     "sourceDiffCheck": "passed",
     "finalReviewRegressions": {
@@ -81,7 +94,7 @@
       "command": "npm run test:e2e:run",
       "passed": 11,
       "failed": 0,
-      "durationMs": 16461.820709
+      "durationMs": 15137.0
     },
     "build": "passed",
     "migrationAndInventoryFinal": {
@@ -89,5 +102,6 @@
       "failed": 0
     },
     "pristineMigrationReadback": "passed"
-  }
+  },
+  "realSourceAcceptance": "live-readonly.json"
 }
