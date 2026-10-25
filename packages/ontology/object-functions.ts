@@ -21,6 +21,7 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  simple('taskOutcomeStatus'),
   simple('registrationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
@@ -85,6 +86,20 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   const domainResult = evaluateDomainFunction(store, owner, input, budget);
   if (domainResult) return domainResult;
   const object = store.read(owner, input.object, budget), p = object.properties;
+  if (input.function === 'taskOutcomeStatus') {
+    requireType(object, 'ServiceRequest');
+    const ref = objectRefSchema.safeParse(p.currentAssessment);
+    if (!ref.success || ref.data.type !== 'OutcomeAssessment') return unknown('No current task assessment', [object.ref]);
+    const assessment = store.read(owner, ref.data, budget), request = one(store, owner, assessment.ref, 'request', budget);
+    if (!request || !same(request.ref, object.ref) || assessment.properties.requestRevision !== p.revision) return unknown('Assessment does not match the current request revision', [object.ref]);
+    const coverage = one(store, owner, assessment.ref, 'goalCoverage', budget);
+    const review = coverage?.properties.review as { verdict?: string } | undefined;
+    if (assessment.properties.judgment === 'satisfied' && (p.progress !== 'accepted' || !coverage || coverage.properties.requestRevision !== p.revision || review?.verdict !== 'covered')) return unknown('Completed outcome lacks its current covered goal', [object.ref, assessment.ref]);
+    return known({ status: assessment.properties.judgment, taskState: assessment.properties.taskState, requestedOutcome: p.requestedOutcome,
+      criterionResults: assessment.properties.criterionResults, sourceReceiptRefs: assessment.properties.evidenceRefs,
+      goalCoverage: review?.verdict ?? 'unreviewed', assessedAt: assessment.properties.assessedAt, meaning: 'Historical task acceptance, not a fresh provider observation or new authority' },
+    [object.ref, assessment.ref, ...(coverage ? [coverage.ref] : [])], [String(assessment.properties.evidenceLevel ?? 'unverified')]);
+  }
   if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
   if (input.function === 'remainingQuantity') {
     requireType(object, 'OrderLine'); const ordered = quantity(p.quantityOrdered);

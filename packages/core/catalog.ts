@@ -15,7 +15,7 @@ export type Preparation = { kind: 'needs_input'; question: string; details?: Rec
   privateData?: unknown;
   recipe?: PreparedStep[];
 };
-export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[] }
+export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[]; evidenceLevel?: string }
 export interface ProviderAdapter {
   readonly id: string;
   permitted(owner: string): boolean;

@@ -6,6 +6,7 @@ import type { AgentActionPlan } from '../ontology/agent-actions.js';
 import type { ActionDefinition } from '../ontology/model.js';
 import type { AgentProgram, AgentProgramContext } from './agent-program.js';
 import type { EffectClass, PlanGrant } from '../ontology/actions.js';
+import { boundAgentAction } from './agent-action-binding.js';
 
 export function agentOperation(definition: ActionDefinition) {
   const operation = definition.read ?? definition.operation;
@@ -26,7 +27,7 @@ export function agentPlanAuthorization(plan: AgentActionPlan) {
 export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramContext, plan: AgentActionPlan, step: AgentActionPlan['steps'][number]) {
   const { digest: expected, ...body } = plan;
   if (digest(body) !== expected || plan.requestId !== ctx.request.id || plan.requestRevision !== ctx.request.revision || plan.programDigest !== program.configurationDigest || digest(plan.programRef) !== digest(program.ref)) throw new DomainError('CONFLICT', 'Pinned agent plan or request changed');
-  const op = agentOperation(program.definition(ctx.graph, step.action));
+  const op = agentOperation(boundAgentAction(ctx.graph, program, step.action));
   if (op.effect !== step.effect || digest('additionalEffects' in op ? op.additionalEffects ?? [] : []) !== digest(step.additionalEffects ?? [])) throw new DomainError('CONFLICT', 'Declared business effects changed');
   if (step.effect === 'read' || step.effect === 'local') return;
   const liveFree = isLiveFreeOperation(program, ctx, op);

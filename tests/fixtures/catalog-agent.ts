@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 // Synthetic model choices and source responses. Actual LLM + PA proof is separate.
 import assert from 'node:assert/strict';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
@@ -59,7 +60,7 @@ export const knownChoice: Choice = (ctx, access) => {
   return decision(ctx, [step('endpoint', 'DiscoverMerchantCatalog', { scope: ctx.state.scope, merchantId: 'coffee' }), step('known', 'ReadMerchantVariants', { scope: ctx.state.scope, merchantId: 'coffee', variantIds: [ids[1]] }, ['endpoint'], [{ stepId: 'endpoint', targetKey: 'endpoint' }])]);
 };
 export function model(choice: Choice = searchChoice): Reasoner {
-  return { ground: async request => ({ decision: interpretation(request, CATALOG_AGENT_REF.id, input), evidence: evidence() }), plan: async () => { throw new Error('Legacy candidate planner must never run for this program'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+  return { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: interpretation(request, CATALOG_AGENT_REF.id, input), evidence: evidence() }), plan: async () => { throw new Error('Legacy candidate planner must never run for this program'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
 }
 export function setup(choice: Choice = searchChoice) {
   const f = fixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, shopifyCatalog: { merchants: [merchant], connector: f.connector } }), b = backend(catalog, model(choice), store);

@@ -3,12 +3,12 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "17",
-    "digest": "549d0b3aa4a33c0223615629fd79fcbd843a361747e2013948184567f02fdbad"
+    "version": "18",
+    "digest": "4a5c6adf3e489c584271c5a6b86d64cbe67b0c0222494ff55239d50a07909610"
   },
   "types": {
     "ServiceRequest": {
-      "fingerprint": "f316a7705aedeae1916494f5fce192ccee10a4b1591e0f431a96f82483cbe33a",
+      "fingerprint": "c16f5b0d12bc9b41005ce2674789cb12f8e095d3d2e6887b6d345cd83e8dec0e",
       "fields": {
         "requestId": "task_private",
         "displayTitle": "task_private",
@@ -18,7 +18,8 @@
         "conditions": "task_sensitive",
         "progress": "task_private",
         "projectionState": "task_private",
-        "createdAt": "task_private"
+        "createdAt": "task_private",
+        "currentAssessment": "task_private"
       }
     },
     "Proposal": {
@@ -46,14 +47,18 @@
       }
     },
     "OutcomeAssessment": {
-      "fingerprint": "afeae8e1b0c5c80c34056a1d7f97a092023828be0f263a394f29fff1b7d9331b",
+      "fingerprint": "37b8d940d5bde7bd20a6470e68812cecad09d4464238804b8abd78bff236edeb",
       "fields": {
         "assessmentId": "task_private",
         "displayTitle": "task_private",
         "requestRevision": "task_private",
         "judgment": "task_private",
         "assessedAt": "task_private",
-        "criterionResults": "task_sensitive"
+        "criterionResults": "task_sensitive",
+        "reason": "task_sensitive",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private",
+        "taskState": "task_private"
       }
     },
     "Provider": {
@@ -1344,6 +1349,38 @@
         "data": "internal_only",
         "snapshot": "internal_only"
       }
+    },
+    "GoalCoverage": {
+      "fingerprint": "58542b827f126563b82353b7526cdeb2a3ce1b03105a7e7821e0bb6eefc089d2",
+      "fields": {
+        "coverageId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "requestDigest": "task_private",
+        "capabilityRef": "task_private",
+        "capabilityDigest": "task_private",
+        "input": "internal_only",
+        "inputDigest": "task_private",
+        "review": "task_sensitive",
+        "modelRunId": "task_private",
+        "assessedAt": "task_private",
+        "digest": "task_private"
+      }
+    },
+    "ExecutionFeedback": {
+      "fingerprint": "2f0e736395e4b4b8f9e55e73358ed1eba8949912c45403dc866ab5a9824ebb04",
+      "fields": {
+        "feedbackId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "bindingRef": "task_private",
+        "bindingDigest": "task_private",
+        "taskState": "task_private",
+        "judgment": "task_private",
+        "evidenceLevel": "task_private",
+        "evidenceRefs": "task_sensitive",
+        "observedAt": "task_private"
+      }
     }
   },
   "surfaces": [
@@ -1400,7 +1437,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "6a3579fb783b43226048c59ebf38f7fac0e29d4d7d1d112c25f643fe6fe8c9ab",
+      "sourceDigest": "24c712efda69127d1506a8ef6b0479faaec9e0f0255af1fe69f29629fa31b41f",
       "channels": [
         "sqlite",
         "idempotency"
@@ -1498,7 +1535,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "6e5762bbd3f8957ccfcafe22b769ce367830474f20733c145237595c0a1e9de5",
+      "sourceDigest": "c259405a0ec795ae5ea7c14be0a9bfcb69d3787ff5b1ba251a06e461f69e7207",
       "channels": [
         "model",
         "query"
@@ -1523,7 +1560,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "a1bf2bb9ee8817d04b4079796f8c7683fe9e089a5915d47c38ef6d21a9e02ef0",
+      "sourceDigest": "7711cf6f3853ffd9659a22ea323873f29efda330ffea166d4cc6e014f2859857",
       "channels": [
         "model",
         "dispatch"
@@ -1536,7 +1573,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "6afd6a3ad7516737d4e6b33106256139f2f3a1c88bbd4f83107281aea717ae65",
+      "sourceDigest": "7c205a4aad733160a330ff0476172b1ce99817d5b3cbcbd41c372b1d0385d037",
       "channels": [
         "model",
         "dispatch",
@@ -1598,7 +1635,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "606ec8bfd0e35c79e7a815ed7d36a3e00e7c83337c219ba8d403574c389839ca",
+      "sourceDigest": "7f0f8415457154c338f455f770cef188b196a78804e34d6ab3bc8793af341a85",
       "channels": [
         "registered_model",
         "private_file"
@@ -1701,7 +1738,7 @@
     {
       "id": "task-projection",
       "file": "packages/ontology/task-projection.ts",
-      "sourceDigest": "7101bef9789c5ef7b4593c1c81503e0c1580d9baacf98f3ec9e00dab04bb790c",
+      "sourceDigest": "2b673d457cd09bb1981633e6c1de56a67885da1128133bd684cd50bf6a98ff5d",
       "channels": [
         "ontology_write"
       ],
@@ -1725,7 +1762,7 @@
     {
       "id": "read-dataflow",
       "file": "packages/coordinator/read-dataflow.ts",
-      "sourceDigest": "4d5a74eb98e220ebe2d25469cdb2447d7e362a6ee323395284a8dcf734e792eb",
+      "sourceDigest": "719e26fbc535daf61d31fae317004f1cf3af0559deca6b230a2d87a47e5c6e82",
       "channels": [
         "model",
         "dispatch",
@@ -1753,7 +1790,7 @@
     {
       "id": "initial-selection",
       "file": "packages/coordinator/initial-selection.ts",
-      "sourceDigest": "0c65b436b4f6f00c1934ec88d99ff17dd79e9ec805db1e3fa20b1dcf6231536b",
+      "sourceDigest": "9d41a6abb5260730d39d3becac35278a5f086b0a72c3bebd250dcfeea15f5365",
       "channels": [
         "model",
         "dispatch",
@@ -1804,6 +1841,45 @@
       "content": "Bounded ontology model requests and complete typed decisions",
       "currentControl": "Fresh read receipts, exact model decision digest and complete constraints; concise optional narrative only",
       "targetControl": "Caller-scoped labeled metadata and model-channel eligibility; no new authority",
+      "stage": "S3"
+    },
+    {
+      "id": "goal-coverage",
+      "file": "packages/ontology/goal-coverage.ts",
+      "sourceDigest": "02cb39ccc5b05c5b30a597f23991146e53bbaf3464cf799ad257b7b76a1c0935",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Versioned request text coverage and semantic review records",
+      "currentControl": "Exact message partition and criterion mappings, pinned request/input/definition digests; fail closed",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-action-binding",
+      "file": "packages/core/agent-action-binding.ts",
+      "sourceDigest": "e8ba67bc272bce1d61d9d8c9e3ccd5e778ca66ded7b4707861102214bf84c18e",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Configured program bindings to registered Ontology Actions",
+      "currentControl": "Exact version, effect and schema agreement; no additional connector authority",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "task-outcome",
+      "file": "packages/core/task-outcome.ts",
+      "sourceDigest": "fe02b3befa69777c0373d74ace78f67e6082dbe6b93e7899261b7a6e554c684d",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Current task state to independent outcome synchronization",
+      "currentControl": "Unknown, canceled and waiting tasks never become satisfied",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
       "stage": "S3"
     }
   ]

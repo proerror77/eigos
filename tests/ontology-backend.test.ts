@@ -74,7 +74,7 @@ test('planner cannot invent candidates/actions, weaken prepared inputs, change b
       if (mode === 'extra') p.steps.push({ ...p.steps[0]!, id: 'payment' });
       return p;
     }));
-    try { const j = b.submit(); await assert.rejects(b.run()); const failed = b.store.get(owner, j.id); assert.equal(failed.artifact, undefined); assert.equal(failed.runs!.length, 2); }
+    try { const j = b.submit(); await assert.rejects(b.run()); const failed = b.store.get(owner, j.id); assert.equal(failed.artifact, undefined); assert.equal(failed.runs!.filter(r => r.purpose !== 'goal_coverage').length, 2); }
     finally { b.store.close(); }
   }
 });
@@ -99,7 +99,7 @@ test('requirements, original text, sources and request revision survive clarific
     const first = b.submit(); const asked = await b.run(); assert.equal(asked.state, 'input-required');
     b.tasks.reply(principal, { taskId: first.id, answer: 'Record acceptance requirements', requestId: 'reply' });
     const done = await b.run(); assert.equal(done.state, 'completed'); assert.equal(done.delegation!.request.revision, 2); assert.equal(done.delegation!.request.originalGoal, first.goal);
-    assert.equal(done.delegation!.request.messages.length, 2); assert.equal(done.runs!.length, 3); assert(verifyBrief(done.artifact!, { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }));
+    assert.equal(done.delegation!.request.messages.length, 2); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 3); assert(verifyBrief(done.artifact!, { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }));
   } finally { b.store.close(); }
 });
 
@@ -251,6 +251,6 @@ test('Worker distinguishes dispatched failures from rejected plans and retains m
     const job = b.submit(); worker.start();
     for (let i = 0; i < 100 && b.store.get(owner, job.id).state !== 'failed'; i++) await new Promise(r => setTimeout(r, 10));
     const failed = b.store.get(owner, job.id); assert.equal(failed.state, 'failed'); assert.match(failed.error!, /recorded observations/);
-    assert.equal(failed.runs!.length, 2); assert.equal(failed.artifact, undefined); assert.equal(b.store.observations(owner, failed.delegation!.intentId!).length, 1);
+    assert.equal(failed.runs!.filter(r => r.purpose !== 'goal_coverage').length, 2); assert.equal(failed.artifact, undefined); assert.equal(b.store.observations(owner, failed.delegation!.intentId!).length, 1);
   } finally { await worker.close(); b.store.close(); }
 });

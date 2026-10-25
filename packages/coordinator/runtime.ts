@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { assertGoalCoverage } from '../ontology/goal-coverage.js';
 import { DomainError, ReplanRequired, type Job } from '../core/domain.js';
 import type { JobStore, WorkClaim } from '../core/store.js';
 import { isActionAdapter, type ExecutionCatalog, type Delivery } from '../core/catalog.js';
@@ -93,6 +94,7 @@ export class ActionRuntime {
     if (claim.recovery && kind === 'dispatch') return false;
     const freshPermit = kind === 'dispatch' || kind === 'resume' && !['local', 'read'].includes(intent.effect);
     if (freshPermit) {
+      if (!current.delegation!.afterSalesCaseId) assertGoalCoverage(current, this.catalog.capability(plan.capabilityRef));
       validatePlan(this.catalog, claim.owner, ctx.request, plan, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
       validatePlanningSnapshot(this.store.ontology, claim.owner, ctx.request, plan.ontologyPlanning, true);
       const approval = current.delegation!.approval;
@@ -149,6 +151,7 @@ export class ActionRuntime {
   }
   private assess(claim: WorkClaim, plan: ExecutionPlan, intents: ActionIntent[]): void {
     const job = this.store.get(claim.owner, claim.job.id); const final = plan.steps.at(-1)!; const intent = intents.find(i => i.stepId === final.id)!;
+    if (!job.delegation!.afterSalesCaseId) assertGoalCoverage(job, this.catalog.capability(plan.capabilityRef));
     if (!intent.delivery) { this.pause(claim, 'input-required', '操作已确认，但没有用户目标的交付和独立验收证据；订单号不等于送达。'); return; }
     const { adapter, binding } = this.catalog.binding(plan.bindingRef, claim.owner, plan.requestId);
     const ctx = { owner: claim.owner, request: job.delegation!.request }; const delivery = intent.delivery;
@@ -178,6 +181,7 @@ export class ActionRuntime {
       current.delegation!.recoveryPending = false; delete current.delegation!.actionReply; delete current.delegation!.pendingActionInput; delete current.question;
       if (accepted) current.artifact = delivery.artifact; else current.error = outcome.status === 'unknown' ? 'Required business evidence remains unknown; inspect the original task before retrying' : 'Independent goal verification failed or hard criteria were unmet';
       const level = isActionAdapter(adapter) ? adapter.environment === 'sandbox' ? 'sandbox' : final.effect === 'local' ? 'model_generated' : target === 'delivery' && accepted ? 'live_fulfillment' : 'live_operation' : binding.verification.level === 'live_fulfillment' && target === 'artifact' ? 'read_only_probe' : binding.verification.level;
+      outcome.evidenceLevel = level;
       this.project(current, intents); this.store.recordFeedback(claim.owner, current, level);
       if (current.delegation!.afterSalesCaseId) this.store.updateAfterSales(claim.owner, current.delegation!.afterSalesCaseId, accepted ? 'resolved' : 'rejected');
       current.messages.push({ id: randomUUID(), role: 'agent', text: accepted ? delivery.artifact.data.deliverable : current.error!, at: current.updatedAt });

@@ -1,5 +1,7 @@
 // Synthetic model decisions. Live reasoning is a separate verification step.
 import { randomUUID } from 'node:crypto';
+import { digest } from '../packages/core/delegation.js';
+import type { GoalReview, GoalReviewContext } from '../packages/ontology/goal-coverage.js';
 import { Coordinator, type Reasoner, type PlanningContext, type PlanningAccess } from '../packages/coordinator/coordinator.js';
 import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalog.js';
 import { JobStore } from '../packages/core/store.js';
@@ -11,6 +13,15 @@ import type { ServiceRequest, CandidateFacts, ProviderBinding, ServiceCapability
 export const principal = { issuer: 'local-development', tenant: 'local', subject: 'developer', clientId: 'test', scopes: [...SCOPES] };
 export const owner = ownerKey(principal);
 export const evidence = () => ({ id: randomUUID(), runtime: 'ontology-v2-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'fixture' });
+// Explicit synthetic semantic review for tests whose goals/interpretations are
+// fixtures. Production has no permissive reviewer fallback.
+export async function syntheticGoalReview(ctx: GoalReviewContext) {
+  const decision: GoalReview = { requestRevision: ctx.request.revision, verdict: 'covered', message: 'Synthetic coverage fixture, not a natural-language correctness claim', clauses: ctx.request.messages.map((m, i) => ({
+    messageId: m.id, quote: m.text, disposition: 'covered', inputKeys: i === 0 ? Object.keys(ctx.input) : [],
+    requirementIds: i === 0 ? [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].map(r => r.id) : [], conditionIds: i === 0 ? (ctx.request.conditions ?? []).map(c => c.id) : [], reason: 'Explicit synthetic mapping',
+  })) };
+  return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
+}
 export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): Grounding {
   return { kind: 'resolve', requestRevision: request.revision, capabilityRef: { id, version: '2' }, message: 'Fixture interpretation', inputJson: JSON.stringify(input), requirementsJson: '[]', conditionsJson: '[]' };
 }
@@ -20,7 +31,7 @@ export function proposal(context: PlanningContext, index = 0): PlanProposal {
     steps: candidate.recipe ? candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) : [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
 }
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
-  return { ground: async request => ({ decision: ground(request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
+  return { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: ground(request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
 }
 export function observePlanning(context: PlanningContext, access: PlanningAccess) {
   access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 });

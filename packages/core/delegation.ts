@@ -39,6 +39,8 @@ export const proposalSchema = z.object({
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
+  goalCoverage?: import('../ontology/goal-coverage.js').GoalCoverage;
+  goalCoverageHistory?: import('../ontology/goal-coverage.js').GoalCoverage[];
   groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;

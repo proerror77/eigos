@@ -227,6 +227,6 @@ export class MeituanReadProgram implements AgentProgram {
       }
       if (Object.keys(locations).length) facts.locations = locations;
     }
-    return { artifact: { id: randomUUID(), name: 'meituan-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: s.data.kind === 'quote' ? `本次预估费用 ${BigInt(s.data.total.minor) / 100n}.${(BigInt(s.data.total.minor) % 100n).toString().padStart(2, '0')} 元；未下单、未付款，配送与最终费用未承诺。` : '本次只读查询完成；未下单、未付款。', execution: 'completed', result: { ...result, ontologyModule: meituanReadDefinitionRef, observation: proposal.observation, observedAt: s.observedAt, noBusinessWrites: true, evidenceKind: s.receipt.evidenceKind } } }, facts, evidenceRefs: [s.id] };
+    return { evidenceLevel: s.receipt.evidenceKind === 'fixture' ? 'synthetic' : s.receipt.evidenceKind, artifact: { id: randomUUID(), name: 'meituan-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: s.data.kind === 'quote' ? `本次预估费用 ${BigInt(s.data.total.minor) / 100n}.${(BigInt(s.data.total.minor) % 100n).toString().padStart(2, '0')} 元；未下单、未付款，配送与最终费用未承诺。` : '本次只读查询完成；未下单、未付款。', execution: 'completed', result: { ...result, ontologyModule: meituanReadDefinitionRef, observation: proposal.observation, observedAt: s.observedAt, noBusinessWrites: true, evidenceKind: s.receipt.evidenceKind } } }, facts, evidenceRefs: [s.id] };
   }
 }

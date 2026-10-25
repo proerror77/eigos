@@ -3,6 +3,7 @@ import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFu
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
 import { stripePaymentObjects, stripePaymentLinks, stripePaymentActions, stripePaymentFunctions } from './stripe-payment.js';
 import { z } from 'zod';
+import { goalReviewSchema } from './goal-coverage.js';
 import { domainActions, domainConditionSchemas, domainFunctions, domainLinks, domainObjects, domainNames } from './service-domains.js';
 import { commerceActions, commerceFunctions, commerceLinks, commerceObjects } from './commerce.js';
 import { catalogReadFunctions, catalogReadLinks, catalogReadObjects } from './catalog-read.js';
@@ -78,6 +79,16 @@ const offer = (idName: string, name: string, primaryKey: string, properties: Rec
     { interfaces: [{ id: 'Offer', propertyMap: { offerId: primaryKey } }] });
 };
 const objects: ObjectTypeDefinition[] = [
+  type('GoalCoverage', '目标覆盖核查', 'coverageId', {
+    requestRevision: integer('Reviewed request revision'), requestDigest: str('Exact reviewed request digest'), capabilityRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Selected capability'),
+    capabilityDigest: str('Reviewed capability definition digest'), input: p('struct', z.record(z.string(), z.unknown()), 'Reviewed normalized business input; never connector credentials'), inputDigest: str('Reviewed input digest'),
+    review: p('struct', goalReviewSchema, 'Independent semantic coverage review with exact message partitions; not business evidence'), modelRunId: str('Actual independent model response'), assessedAt: time('Coverage review time'), digest: str('Pinned coverage record digest'),
+  }),
+  type('ExecutionFeedback', '任务执行反馈', 'feedbackId', {
+    requestRevision: integer('Current request revision'), bindingRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Program or provider binding'), bindingDigest: str('Exact execution configuration'),
+    taskState: str('Protocol task state'), judgment: choice(['satisfied', 'unsatisfied', 'unknown', 'needs_human'], 'Current independent outcome'), evidenceLevel: str('Actual verification scope; never automatically promoted'),
+    evidenceRefs: p('array', z.array(z.string().max(1000)).max(200), 'Source receipt references'), observedAt: time('Outcome observation time'),
+  }),
   type('ServiceRequest', '服务委托', 'requestId', { originalGoal: str('Original PA goal', 10000, { required: true, source: 'Authenticated user or PA message' }), revision: integer('Business request revision'), requestedOutcome: str('Requested business outcome', 100), conditions: p('array', z.array(businessConditionSchema).max(40), 'Versioned conditions with subject, role, phase, typed value, unit and quoted instruction; no inferred authority'), progress: choice(['received', 'clarifying', 'planning', 'awaiting_authorization', 'executing', 'accepted', 'unmet', 'needs_review', 'canceled'], 'Request progress, not provider state'), projectionState: choice(['request_only', 'typed_result', 'invalid_source'], 'Coverage of this read projection; never business completion'), createdAt: time('Received time') }, { titleKey: 'originalGoal' }),
   type('Proposal', '选择方案', 'proposalId', { requestRevision: integer('Fixed request revision'), selectedAt: time('Decision time'), termsVersion: str('Fixed terms version'), decisionReason: str('Decision rationale', 2000) }),
   type('Authorization', '业务许可记录', 'authorizationId', { actor: str('Authenticated approving actor'), allowedActions: textArray('Allowed actions'), dataScope: textArray('Permitted data scope'), limits: money('Maximum permitted amount'), expiresAt: time('Grant expiry'), revoked: p('boolean', z.boolean(), 'Revocation state') }),
@@ -108,7 +119,15 @@ const objects: ObjectTypeDefinition[] = [
   type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
 // Only changed definitions advance. Historical object fingerprints are never rewritten.
-objects.find(o => o.id === 'ServiceRequest')!.version = '4';
+objects.find(o => o.id === 'ServiceRequest')!.version = '5';
+objects.find(o => o.id === 'ServiceRequest')!.properties.currentAssessment = p('struct', objectRefSchema, 'Current result assessment; historical assessments remain linked');
+const assessment = objects.find(o => o.id === 'OutcomeAssessment')!;
+assessment.version = '2';
+assessment.properties.criterionResults = p('array', z.array(z.strictObject({ criterion: z.string().max(100), result: z.enum(['pass', 'fail', 'unknown', 'needs_human']), evidenceIds: z.array(z.string().max(1000)).max(200) })).max(100), 'Per-criterion evidence-backed checks');
+assessment.properties.reason = str('Independent assessment explanation', 4000);
+assessment.properties.evidenceRefs = p('array', z.array(z.string().max(1000)).max(200), 'Original source receipt references');
+assessment.properties.evidenceLevel = str('Source evidence level; semantic coverage is not provider evidence');
+assessment.properties.taskState = str('Task state when assessed');
 objects.find(o => o.id === 'Order')!.version = '2';
 const receiptType = objects.find(o => o.id === 'SourceReceipt')!;
 receiptType.version = '4';
@@ -142,6 +161,11 @@ link('ProposalOffer', 'Proposal', 'selectedOffer', false, 'Offer', 'proposals', 
 link('SelectedProposal', 'ServiceRequest', 'selectedProposal', false, 'Proposal', 'selectedForRequest', false);
 link('AuthorizationProposal', 'Authorization', 'proposal', false, 'Proposal', 'authorizations', true, true);
 link('AssessmentRequest', 'OutcomeAssessment', 'request', false, 'ServiceRequest', 'assessments', true, true);
+link('GoalCoverageRequest', 'GoalCoverage', 'request', false, 'ServiceRequest', 'goalCoverage', true, true);
+link('AssessmentCoverage', 'OutcomeAssessment', 'goalCoverage', false, 'GoalCoverage', 'assessments', true);
+link('AssessmentEvidence', 'OutcomeAssessment', 'sourceReceipts', true, 'SourceReceipt', 'assessments', true);
+link('ExecutionFeedbackRequest', 'ExecutionFeedback', 'request', false, 'ServiceRequest', 'executionFeedback', true, true);
+link('ExecutionFeedbackAssessment', 'ExecutionFeedback', 'assessment', false, 'OutcomeAssessment', 'feedback', true, true);
 link('ProductOfferVariant', 'ProductOffer', 'productVariant', false, 'ProductVariant', 'offers', true, true);
 link('OrderRequest', 'Order', 'request', false, 'ServiceRequest', 'orders', true, true);
 link('OrderLineOrder', 'OrderLine', 'order', false, 'Order', 'lines', true, true, true);
@@ -165,7 +189,7 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '17', objects: [...objects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '18', objects: [...objects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
@@ -181,6 +205,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
     { id: 'SelectOffer', description: 'Record a version-bound choice; grants no payment or order authority', inputs: { request: 'ServiceRequest', offer: 'Offer' }, changes: ['Proposal', 'Proposal.selectedOffer', 'ServiceRequest.selectedProposal'], submissionCriteria: ['same_owner', 'same_request', 'current_request_revision', 'fresh_offer', 'hard_preconditions_pass'] },
   ],
   functions: [
+    { id: 'taskOutcomeStatus', version: '1', inputTypes: ['ServiceRequest'], description: 'Read the current request-version assessment, goal coverage and original source receipt references; historical task acceptance never refreshes provider facts or grants authority' },
     ...customsPolicyFunctions,
     ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions, ...registrationFunctions,
     ...catalogAgentFunctions,

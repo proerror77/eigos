@@ -1,0 +1,48 @@
+{
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "source": "real Codex model; synthetic interpretation and input; no live provider calls",
+  "cases": [
+    {
+      "case": "wrong_city",
+      "verdict": "clarify",
+      "validated": true,
+      "clauseCount": 4,
+      "model": "gpt-6.1-sol",
+      "durationMs": 16031,
+      "providerCalls": 0
+    },
+    {
+      "case": "matching_query",
+      "verdict": "covered",
+      "validated": true,
+      "clauseCount": 2,
+      "model": "gpt-6.1-sol",
+      "durationMs": 12805,
+      "providerCalls": 0
+    },
+    {
+      "case": "partial_goal",
+      "verdict": "unsupported",
+      "validated": true,
+      "clauseCount": 2,
+      "model": "gpt-6.1-sol",
+      "durationMs": 12345,
+      "providerCalls": 0
+    }
+  ],
+  "diagnosticRuns": [
+    {
+      "case": "wrong_city",
+      "result": "Rejected by host for invented input/criterion references before reference instructions were clarified",
+      "realModelResponses": 1
+    }
+  ],
+  "finalRealModelResponses": 3,
+  "providerCalls": 0,
+  "limitations": [
+    "Three bounded semantic examples; not a model accuracy benchmark",
+    "Separate model review may share interpretation errors; no mathematical correctness claim",
+    "No deployment, order, payment or registration"
+  ]
+}

@@ -1,3 +1,4 @@
+import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
 import { DomainError } from '../core/domain.js';
 import { digest, type Grounding } from '../core/delegation.js';
 import type { AgentProgram } from '../core/agent-program.js';
@@ -10,8 +11,8 @@ import { contextDefinitionInput } from './planning-session.js';
 const fail = (message: string): never => { throw new DomainError('CONFLICT', message); };
 /** Eligibility comes from current definitions, never provider names or a recipe. */
 export function initialActionIds(graph: OntologyObjectStore, program: AgentProgram): string[] {
-  if (!program.actionIds.every(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; })) return [];
-  return program.actionIds.filter(id => {
+  if (!boundAgentActionIds(graph, program).every(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; })) return [];
+  return boundAgentActionIds(graph, program).filter(id => {
     const definition = graph.model.action(id);
     return definition.read!.mcp!.requires.every(dependency => dependency.derive || dependency.evidence === 'accepted') && Object.keys(definition.inputs).length > 0;
   });

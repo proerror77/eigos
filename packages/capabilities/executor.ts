@@ -45,7 +45,7 @@ export interface RunEvidence {
   promptData?: PromptDataMetrics;
   ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
   usage?: Record<string, number>;
-  purpose?: 'grounding' | 'planning' | 'document';
+  purpose?: 'grounding' | 'planning' | 'document' | 'goal_coverage';
 }
 export interface ExecutionResult {
   output: z.infer<typeof decisionSchema>;

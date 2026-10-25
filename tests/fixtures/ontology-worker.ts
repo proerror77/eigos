@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 // Deterministic reasoning fixture, with the actual production Worker composition and runtime.
 import { createWorker } from '../../apps/worker/runtime.js';
 import { readWorkerConfig } from '../../packages/core/config.js';
@@ -7,6 +8,7 @@ import { SANDBOX_CAPABILITY } from '../../packages/capabilities/sandbox-service.
 import { observePlanning } from '../backend-fixture.js';
 const evidence = () => ({ id: randomUUID(), runtime: 'e2e-model-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'synthetic-decision' });
 const reasoner: Reasoner = {
+  reviewGoal: syntheticGoalReview,
   ground: async (request, capabilities) => {
     const value = JSON.parse(request.originalGoal) as { sandbox: boolean; quantity: number; unit: string; deadline?: string };
     const supported = value.sandbox === true && capabilities.some(c => c.ref.id === SANDBOX_CAPABILITY.ref.id);
