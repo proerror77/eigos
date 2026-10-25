@@ -20,6 +20,22 @@ import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
 import type { ObjectView } from '../../packages/ontology/object-store.js';
 
+/** A held-source test must fail if execution ends before the expected callback,
+ * rather than waiting forever for an event that can no longer occur. */
+export async function awaitSourceBarrier(reached: Promise<void>, running: Promise<unknown>, label: string, inspect: () => unknown, timeoutMs = 5000): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const failure = (reason: string) => new Error(`${label}: ${reason}; ${JSON.stringify(inspect()).replace(/PRIVATE_[A-Z0-9_]+/g, '[redacted-fixture]').slice(0,3000)}`);
+  try {
+    await Promise.race([reached, running.then(() => { throw failure('flow settled before callback'); }, () => { throw failure('flow failed before callback'); }),
+      new Promise<never>((_resolve,reject) => { timer = setTimeout(() => reject(failure('callback deadline exceeded')), timeoutMs); })]);
+  } finally { clearTimeout(timer); }
+}
+export function sourceBarrierSnapshot(store: JobStore, id: string) {
+  const job=store.get(owner,id);
+  return {state:job.state,phase:job.delegation?.phase,recovery:job.delegation?.recovery?.code,
+    feedback:job.delegation?.agent?.feedback.slice(-3).map(({kind,message})=>({kind,message})),
+    actions:store.intents(owner,id).map(({effect,state})=>({effect,state}))};
+}
 export const commerceStep = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const commerceDecision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], result?: unknown): AgentDecision => ({ kind: result ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic decision from currently observed commerce facts', steps, completionJson: result ? JSON.stringify(result) : '' });
 type ObservedCommerceFact = { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } };

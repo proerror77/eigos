@@ -25,12 +25,20 @@ test('six domain sandbox tasks retain identical A2A/MCP identity, artifacts and 
   server.on('request', gateway.app);
   t.after(async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); });
   const model = reasoner(request => { const fixture = sources.find(s => request.originalGoal === `合成验证 ${s.provider.domain}`)!; const capability = domainCapability(fixture.provider.domain); return { ...interpretation(request, capability.ref.id, fixture.parameters), capabilityRef: capability.ref }; });
-  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, model, gateway.catalog, { allowSandbox: true }), pollMs: 10 }); worker.start();
+  const coordinator = new Coordinator(gateway.store, model, gateway.catalog, { allowSandbox: true });
+  const failures: { name: string; message: string; stack?: string }[] = [], run = coordinator.run.bind(coordinator);
+  coordinator.run = async (...args) => { try { await run(...args); } catch (error) {
+    const value = error instanceof Error ? error : new Error(String(error));
+    const safe = (text: string) => text.replaceAll(token, '[redacted]').replace(/PRIVATE_[A-Z0-9_]+/g, '[redacted-fixture]');
+    failures.push({ name: value.name, message: safe(value.message).slice(0,2000), stack: safe(value.stack?.split('\n').slice(0,5).join('\n') ?? '') }); throw error;
+  } };
+  const worker = new Worker(gateway.store, { coordinator, pollMs: 10 }); worker.start();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'A2A-Version': '1.0' };
   const rpc = async (method: string, params: object) => { const response = await fetch(base + '/a2a', { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method, params }) }); assert.equal(response.status, 200); return response.json(); };
   const wait = async (id: string, states: Job['state'][]) => {
     for (let i = 0; i < 300; i++) { const job = gateway.tasks.get(principal, id); if (states.includes(job.state)) return job; if (job.state === 'failed' || job.state === 'rejected') assert.fail(job.error); await new Promise(r => setTimeout(r, 10)); }
-    assert.fail('Synthetic task exceeded its bounded wait');
+    const job = gateway.tasks.get(principal, id);
+    assert.fail('Synthetic task exceeded its bounded wait: ' + JSON.stringify({ state: job.state, goal: job.goal, phase: job.delegation?.phase, error: job.error, question: job.question, recovery: job.delegation?.recovery, feedback: job.delegation?.agent?.feedback, modelRuns: job.runs?.length, events: job.delegation?.events.slice(-6), failures: failures.slice(-2) }));
   };
   const client = new Client({ name: 'domain-protocol-test', version: '1' });
   try {

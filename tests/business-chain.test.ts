@@ -1,3 +1,4 @@
+import { objectRefSchema } from '../packages/ontology/model.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
@@ -93,7 +94,8 @@ test('agent-owned read goal connects requester, scope proposal, exact observed r
     assert.equal(results[0]!.properties.evidenceLevel, 'synthetic');
     assert.equal(related(results[0]!.ref, 'subjects')[0]!.ref.type, 'PaotuiObservation');
     assert.equal(related(results[0]!.ref, 'sourceReceipts').length, 1);
-    const assessment = related(proposal.ref, 'assessments')[0]!;
+    const currentAssessment = objectRefSchema.parse(graph.read(owner, request).properties.currentAssessment);
+    const assessment = related(proposal.ref, 'assessments').find(value => value.ref.type === currentAssessment.type && value.ref.id === currentAssessment.id); assert(assessment, 'Current assessment must belong to the original proposal');
     assert.equal(assessment.properties.judgment, 'satisfied'); assert(related(assessment.ref, 'findings').length > 0);
     assert.equal(related(assessment.ref, 'acceptedArtifact').length, 1);
     assert.throws(() => graph.query('different-owner', { from: proposal.ref, link: 'businessResults' }), /not found/);

@@ -233,7 +233,7 @@ export class JobStore {
   finishModelUsage(claim: WorkClaim, id: string, evidence: RunEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
     this.transaction(() => finishModelUsage(this.db, claim.owner, claim.job.id, id, evidence, outcome));
   }
-  recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.get(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }
+  recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.assertOwnedJob(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }
 
   /** The execution graph and durable ledger share this transaction; neither is
    * a second executor. Fenced Agent reads keep late receipts audit-only; fixed
@@ -275,12 +275,12 @@ export class JobStore {
   }
 
   preparationContext<T>(owner: string, jobId: string, key: string): T | undefined {
-    this.get(owner, jobId);
+    this.assertOwnedJob(owner, jobId);
     const row = this.db.prepare('SELECT body FROM preparation_contexts WHERE owner=? AND job_id=? AND key=?').get(owner, jobId, key);
     return row ? JSON.parse(String(row.body)) as T : undefined;
   }
   hasPreparationContext(owner: string, jobId: string, prefix: string): boolean {
-    this.get(owner, jobId);
+    this.assertOwnedJob(owner, jobId);
     return !!this.db.prepare('SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND substr(key,1,length(?))=? LIMIT 1').get(owner, jobId, prefix, prefix);
   }
   savePreparationContext(owner: string, jobId: string, key: string, value: unknown): void {
@@ -294,7 +294,7 @@ export class JobStore {
   // Called inside the same fenced checkpoint that saves the fixed plan.
   createIntent(owner: string, intent: ActionIntent): string {
     return this.executionMutation(() => {
-    this.get(owner, intent.jobId);
+    this.assertOwnedJob(owner, intent.jobId);
     if (intent.owner !== owner) throw new DomainError('FORBIDDEN', 'Action owner mismatch');
     const previous = this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND business_key=?').get(owner, intent.businessOperationKey);
     if (previous) {
@@ -322,7 +322,7 @@ export class JobStore {
     return row ? this.intent(owner, String(row.id)) : undefined;
   }
   intents(owner: string, jobId: string): ActionIntent[] {
-    this.get(owner, jobId);
+    this.assertOwnedJob(owner, jobId);
     return this.db.prepare('SELECT id FROM action_intents WHERE owner=? AND job_id=? ORDER BY id').all(owner, jobId).map(r => this.intent(owner, String(r.id)));
   }
   saveIntent(owner: string, intent: ActionIntent): void {
@@ -452,13 +452,13 @@ export class JobStore {
     return this.db.prepare('SELECT body FROM action_observations WHERE owner=? AND intent_id=? ORDER BY received_at,id').all(owner, intentId).map(r => JSON.parse(String(r.body)));
   }
   grant(owner: string, grant: PlanGrant): void {
-    if (grant.owner !== owner) throw new DomainError('FORBIDDEN', 'Grant owner mismatch'); this.get(owner, grant.jobId);
+    if (grant.owner !== owner) throw new DomainError('FORBIDDEN', 'Grant owner mismatch'); this.assertOwnedJob(owner, grant.jobId);
     this.executionMutation(() => {
       this.db.prepare('INSERT INTO plan_grants VALUES(?,?,?,?)').run(grant.id, owner, grant.jobId, JSON.stringify(grant));
       this.projectExecution(owner, this.get(owner, grant.jobId));
     });
   }
-  grants(owner: string, jobId: string): PlanGrant[] { this.get(owner, jobId); return this.db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner, jobId).map(r => JSON.parse(String(r.body))); }
+  grants(owner: string, jobId: string): PlanGrant[] { this.assertOwnedJob(owner, jobId); return this.db.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(owner, jobId).map(r => JSON.parse(String(r.body))); }
   revokeGrants(owner: string, jobId: string): void {
     this.executionMutation(() => {
     for (const grant of this.grants(owner, jobId)) this.db.prepare('UPDATE plan_grants SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...grant, revoked: true, revokedAt: grant.revokedAt ?? new Date().toISOString() }), owner, grant.id);
@@ -509,7 +509,7 @@ export class JobStore {
     });
   }
   budget(owner: string, jobId: string) {
-    this.get(owner, jobId);
+    this.assertOwnedJob(owner, jobId);
     return this.db.prepare('SELECT b.minor,b.currency,b.state,b.intent_id,b.role,b.additional_impacts FROM budget_reservations b JOIN action_intents i ON i.id=b.intent_id WHERE b.owner=? AND i.job_id=?').all(owner, jobId).map(row => ({ minor: row.minor, currency: row.currency, state: row.state, intent_id: row.intent_id, ...(row.role ? { role: String(row.role) } : {}), ...(row.additional_impacts ? { additionalImpacts: JSON.parse(String(row.additional_impacts)) as { key: string; minor: string; currency: string; role: string }[] } : {}) }));
   }
   cancelActions(owner: string, jobId: string): boolean {
@@ -524,10 +524,10 @@ export class JobStore {
     return pending;
   }
   createAfterSales(owner: string, value: AfterSalesCase): void {
-    this.get(owner, value.originalJobId); this.get(owner, value.remedyJobId);
+    this.assertOwnedJob(owner, value.originalJobId); this.assertOwnedJob(owner, value.remedyJobId);
     this.db.prepare('INSERT INTO aftersales_cases VALUES(?,?,?,?,?)').run(value.id, owner, value.originalJobId, value.remedyJobId, JSON.stringify(value));
   }
-  afterSales(owner: string, originalJobId: string): AfterSalesCase[] { this.get(owner, originalJobId); return this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND original_job_id=?').all(owner, originalJobId).map(r => JSON.parse(String(r.body))); }
+  afterSales(owner: string, originalJobId: string): AfterSalesCase[] { this.assertOwnedJob(owner, originalJobId); return this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND original_job_id=?').all(owner, originalJobId).map(r => JSON.parse(String(r.body))); }
   afterSalesCase(owner: string, caseId: string): AfterSalesCase {
     const row = this.db.prepare('SELECT body FROM aftersales_cases WHERE owner=? AND id=?').get(owner, caseId);
     if (!row) throw new DomainError('NOT_FOUND', 'After-sales case not found');
@@ -609,7 +609,7 @@ export class JobStore {
     }
   }
   resultFeedback(owner: string, jobId: string): unknown {
-    this.get(owner, jobId);
+    this.assertOwnedJob(owner, jobId);
     const row = this.db.prepare('SELECT body FROM outcome_feedback WHERE owner=? AND job_id=?').get(owner, jobId);
     return row ? JSON.parse(String(row.body)) : undefined;
   }
@@ -714,12 +714,13 @@ export class JobStore {
   }
   private active(claim: WorkClaim, now: number): boolean {
     if (!this.leaseOwned(claim, now)) return false;
-    const current = this.get(claim.owner, claim.job.id);
+    const current = this.taskFence(claim.owner, claim.job.id);
     if (this.security.enabled) {
       const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
       if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
     }
-    return (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
+    return (claim.recovery ? current.state === claim.job.state && current.recoveryPending === true : current.state === 'working')
+      && (current.requestRevision ?? 0) === (claim.job.delegation?.request?.revision ?? 0)
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
@@ -753,9 +754,33 @@ export class JobStore {
     this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(claim.job.id, claim.token);
   }
 
+  private ownedTaskRow(owner: string, id: string, columns: string, fence = false) {
+    const sql=fence ? `WITH source AS MATERIALIZED (SELECT body,typeof(body) body_type,json_valid(body) valid FROM jobs WHERE owner=? AND id=?), owned AS MATERIALIZED (SELECT body_type,valid,CASE WHEN body_type='text' AND valid THEN jsonb(body) END parsed FROM source) SELECT ${columns} FROM owned` : `SELECT ${columns} FROM jobs WHERE owner=? AND id=?`;
+    const row=this.db.prepare(sql).get(owner,id);
+    if(!row)throw new DomainError('NOT_FOUND','Task not found');
+    return row;
+  }
+  /** Fresh ownership check without materializing an unrelated multi-megabyte
+   * execution history. Corrupt stored JSON still fails closed. */
+  private assertOwnedJob(owner: string, id: string): void {
+    const row=this.ownedTaskRow(owner,id,"typeof(body) AS body_type,json_valid(body) AS valid");
+    if(row.body_type!=='text' || row.valid!==1)throw new SyntaxError('Stored task JSON is invalid');
+  }
+  private taskFence(owner: string, id: string): Pick<Job,'state'|'revision'> & {requestRevision:unknown;recoveryPending:unknown} {
+    const row=this.ownedTaskRow(owner,id,`body_type,valid,
+      json_extract(parsed,'$.state','$.revision','$.delegation.request.revision','$.delegation.recoveryPending') AS fence,
+      (SELECT count(*)>count(DISTINCT key) FROM json_each(parsed) WHERE key IN ('state','revision','delegation'))
+      OR CASE WHEN json_type(parsed,'$.delegation')='object' THEN (SELECT count(*)>count(DISTINCT key) FROM json_each(jsonb_extract(parsed,'$.delegation')) WHERE key IN ('request','recoveryPending')) ELSE 0 END
+      OR CASE WHEN json_type(parsed,'$.delegation.request')='object' THEN (SELECT count(*)>count(DISTINCT key) FROM json_each(jsonb_extract(parsed,'$.delegation.request')) WHERE key='revision') ELSE 0 END AS ambiguous`,true);
+    if(row.body_type!=='text' || row.valid!==1)throw new SyntaxError('Stored task JSON is invalid');
+    // SQLite paths choose the first duplicate key; JSON.parse chooses the last.
+    // Preserve the original full-reader semantics for noncanonical legacy rows.
+    if(row.ambiguous){const job=this.get(owner,id);return {state:job.state,revision:job.revision,requestRevision:job.delegation?.request?.revision,recoveryPending:job.delegation?.recoveryPending};}
+    const [state,revision,requestRevision,recoveryPending]=JSON.parse(String(row.fence));
+    return {state,revision,requestRevision,recoveryPending};
+  }
   get(owner: string, id: string): Job {
-    const row = this.db.prepare('SELECT body FROM jobs WHERE owner = ? AND id = ?').get(owner, id);
-    if (!row) throw new DomainError('NOT_FOUND', 'Task not found');
+    const row = this.ownedTaskRow(owner,id,'body');
     return JSON.parse(String(row.body)) as Job;
   }
 
@@ -831,10 +856,10 @@ export class JobStore {
   }
   sharesNetworkStore(store: NetworkStore): boolean { return store.usesConnection(this.db); }
   hasClaim(owner: string, jobId: string): boolean {
-    this.get(owner, jobId); return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=?').get(jobId);
+    this.assertOwnedJob(owner, jobId); return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=?').get(jobId);
   }
   bindInquiryContext(owner: string, jobId: string, value: unknown): void {
-    this.assertTransaction(); this.get(owner, jobId);
+    this.assertTransaction(); this.assertOwnedJob(owner, jobId);
     this.db.prepare('INSERT INTO preparation_contexts VALUES(?,?,?,?)').run(owner, jobId, 'network-inquiry-source@1', JSON.stringify(value));
   }
 

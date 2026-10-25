@@ -150,7 +150,7 @@ test('a same-name action cannot dispatch under another component context', async
     return selected;
   } }); try {
     const done = await t.finish(t.submit().id); assert.equal(done.state, 'paused'); assert.equal(t.calls.length, 0); assert.equal(t.documents.length, 0);
-    assert(done.delegation!.agent!.feedback.some(feedback => feedback.message.includes('context')));
+    assert(done.delegation!.agent!.feedback.some(feedback => (/Component (context|program reference) changed|component context/i).test(feedback.message)));
   } finally { t.store.close(); }
 });
 

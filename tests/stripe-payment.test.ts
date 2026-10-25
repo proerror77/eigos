@@ -7,7 +7,7 @@ import { owner, principal } from './backend-fixture.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { StripeTestClient } from '../packages/capabilities/stripe/client.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
-import { commerceDecision, commerceReads } from './fixtures/commerce-agent.js';
+import { commerceDecision, commerceReads, awaitSourceBarrier, sourceBarrierSnapshot } from './fixtures/commerce-agent.js';
 import { stripeChoice } from './fixtures/stripe.js';
 
 const ref = { id: 'commerce.journey.stripe-test', version: '1' };
@@ -178,34 +178,34 @@ test('Stripe writes require actual current Ontology evaluation and cannot use a 
 });
 
 for (const end of ['cancel', 'revoke', 'lease'] as const) test(`A ${end} between token preparation and confirmation stops the charge`, async () => {
-  const t = await setupStripe(); let release = () => {}; try {
+  const t = await setupStripe(); let release = () => {}, running: Promise<void> | undefined; const controller = new AbortController(); try {
     const id = t.submit().id, waiting = await pendingStripeAction(t, id); t.approve(waiting);
     let entered!: () => void; const reached = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
     t.stripe.flags.beforeReturn = async path => { if (path.startsWith('/v1/shared_payment/granted_tokens/')) { entered(); await gate; } };
     const claim = t.store.claim(['eigos.delegate'], 15000)!;
-    const running = t.b.coordinator.run(claim, new AbortController().signal).finally(() => t.store.release(claim));
-    await reached;
+    running = t.b.coordinator.run(claim, controller.signal).finally(() => t.store.release(claim));
+    await awaitSourceBarrier(reached,running,'Stripe token before confirmation',()=>sourceBarrierSnapshot(t.store,id));
     if (end === 'cancel') t.b.tasks.cancel(principal, id);
     else if (end === 'revoke') t.b.tasks.revokeAuthorization(principal, id, randomUUID());
     else { const replacement = t.store.claim(['eigos.delegate'], 15000, Date.now() + 20000)!; assert(replacement); t.store.release(replacement); }
     release(); await running; delete t.stripe.flags.beforeReturn;
     assert.equal(t.stripe.calls.filter(c => c.path.endsWith('/confirm')).length, 0); assert.equal(t.store.get(owner, id).artifact, undefined);
     assert.equal(t.store.ontology.query(owner, { type: 'StripePaymentObservation' }).items.length, 1);
-  } finally { release(); await t.close(); }
+  } finally { release(); controller.abort(); await running?.catch(()=>{}); await t.close(); }
 });
 
 test('A late successful payment after cancellation is recovered without completing or projecting a paid task', async () => {
-  const t = await setupStripe(); let release = () => {}; try {
+  const t = await setupStripe(); let release = () => {}, running: Promise<void> | undefined; const controller = new AbortController(); try {
     const id = t.submit().id, waiting = await pendingStripeAction(t, id); t.approve(waiting);
     let entered!: () => void; const reached = new Promise<void>(r => { entered = r; }), gate = new Promise<void>(r => { release = r; });
     t.stripe.flags.beforeReturn = async path => { if (path.endsWith('/confirm')) { entered(); await gate; } };
-    const claim = t.store.claim(['eigos.delegate'], 15000)!, running = t.b.coordinator.run(claim, new AbortController().signal).finally(() => t.store.release(claim));
-    await reached; t.b.tasks.cancel(principal, id); release(); await running; delete t.stripe.flags.beforeReturn;
+    const claim = t.store.claim(['eigos.delegate'], 15000)!; running = t.b.coordinator.run(claim, controller.signal).finally(() => t.store.release(claim));
+    await awaitSourceBarrier(reached,running,'Accepted Stripe confirmation',()=>sourceBarrierSnapshot(t.store,id)); t.b.tasks.cancel(principal, id); release(); await running; delete t.stripe.flags.beforeReturn;
     await t.b.run();
     const canceled = t.store.get(owner, id); assert.equal(canceled.state, 'canceled'); assert.equal(canceled.artifact, undefined);
     assert.equal(canceled.delegation!.recoveryPending, false); assert.equal(t.store.intents(owner, id).find(i => i.effect === 'payment')!.state, 'effect_confirmed');
     assert.equal(t.store.ontology.query(owner, { type: 'StripePaymentObservation' }).items.length, 1); assert.equal(t.stripe.calls.filter(c => c.path.endsWith('/confirm')).length, 1);
-  } finally { release(); await t.close(); }
+  } finally { release(); controller.abort(); await running?.catch(()=>{}); await t.close(); }
 });
 
 test('Successful confirmation alone cannot close the task without independent Stripe readback', async () => {
