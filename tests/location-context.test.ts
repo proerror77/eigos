@@ -45,6 +45,9 @@ test('PA address context is a current, owner-scoped Ontology fact before any mod
     }
     assert.equal(f.calls.length, 0); assert.equal(job.runs!.length, 0);
     assert.throws(() => new DidiAgentProgram(f.binding).initialize(store.ontology, owner, request, { mode: 'estimate', city: '天津市', origin: '家', destination: '拳馆' }), /already provided task city/);
+    const cityAddress = context.city + context.origin.address;
+    const prepared = new DidiAgentProgram(f.binding).initialize(store.ontology, owner, request, { mode: 'estimate', origin: cityAddress, destination: '拳馆' }).input;
+    assert(prepared.mode === 'estimate'); assert.equal(prepared.origin, cityAddress);
     assert.throws(() => b.tasks.get({ ...principal, subject: 'other' }, job.id));
     const amended = b.tasks.amend(principal, { taskId: job.id, expectedRevision: job.revision!, requestId: randomUUID(), answer: '只展示快车和专车。' });
     assert.deepEqual(requestLocations(readOntologyRequest(store.ontology, owner, amended.id)), context, 'An unrelated continuation does not discard addresses or ask for them again');
@@ -127,6 +130,38 @@ test('known address aliases enter the ordinary ontology action loop and pass sou
     addLocationContext(request, wrong, 'mismatch', new Date().toISOString());
     const artifact = done.artifact!.data.result as { didiAnswer: { route: Parameters<typeof routeLocationFacts>[1] } };
     assert.notEqual(routeLocationFacts(request, artifact.didiAnswer.route, context.city).origin, '家', 'A label cannot override a conflicting provider address');
+  } finally { store.close(); f.close(); }
+});
+
+test('a confirmed full address remains the prepared search query and reaches the source within the same task', async () => {
+  const f = didiFixture(), store = new JobStore(':memory:');
+  f.flags.ambiguous = true;
+  f.flags.transform = (body, request) => {
+    if (request.params?.name === 'maps_textsearch' && request.params.arguments.keywords === context.origin.address) {
+      const places = JSON.parse(body.result.content[0].text);
+      places[1] = sourcePlace(input.origin, 2); places[2] = sourcePlace(input.origin, 3);
+      body.result.content[0].text = JSON.stringify(places);
+    }
+    return body;
+  };
+  const model = didiModel((ctx, access) => {
+    const decision = chooseDidi(ctx, access);
+    return { ...decision, steps: decision.steps.map(step => {
+      if (step.action !== 'SearchDidiPlaces') return step;
+      const args = JSON.parse(step.argumentsJson), prepared = ctx.state.input as { origin: string; destination: string };
+      return { ...step, argumentsJson: JSON.stringify({ ...args, keywords: args.role === 'origin' ? prepared.origin : prepared.destination }) };
+    }) };
+  }, { mode: 'estimate', origin: context.origin.address, destination: '拳馆' });
+  const b = backend(createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector } }), model, store);
+  try {
+    let done = b.submit({ goal, locationContext: context, requirements });
+    for (let i = 0; i < 10 && ['submitted', 'working'].includes(done.state); i++) done = await b.run();
+    assert.equal(done.state, 'completed', JSON.stringify({ error: done.error, feedback: done.delegation?.agent?.feedback }));
+    assert.equal(done.delegation!.agent!.input.origin, context.origin.address);
+    assert(f.calls.some(call => call.name === 'maps_textsearch' && call.args?.keywords === context.origin.address));
+    assert.equal(done.delegation!.acceptance!.accepted, true);
+    assert.equal(done.delegation!.request.revision, 1);
+    assert.equal(done.messages.filter(message => message.role === 'user').length, 1);
   } finally { store.close(); f.close(); }
 });
 

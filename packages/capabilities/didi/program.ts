@@ -70,7 +70,12 @@ export class DidiAgentProgram implements AgentProgram {
         if (request.confirmedInputs?.location?.fields[role]?.status === 'cleared') invalid('This task address was explicitly cleared; the PA must obtain its replacement instead of reusing history');
         const place = supplied[role]; if (!place) continue;
         if (raw[role] !== undefined && (typeof raw[role] !== 'string' || !locationAliases(place, supplied.city).includes(normalizedLocation(raw[role] as string)))) invalid('Route differs from the current PA-provided address context');
-        raw[role] = place.name;
+        // Keep an explicitly selected, confirmed street address as the query.
+        // Replacing it with the POI name makes the address search fail the scope guard.
+        const query = raw[role];
+        const explicit = typeof query === 'string' && [place.address, place.name].some(value => value
+          && locationAliases({ name: value, source: place.source }, supplied.city!).includes(normalizedLocation(query)));
+        raw[role] = explicit ? query : place.name;
       }
     }
     const input = rideEstimateInputSchema.parse(raw), root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'RideEstimateTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { context: component.scopeKey } : {}) }) };
