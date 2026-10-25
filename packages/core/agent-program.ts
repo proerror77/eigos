@@ -9,6 +9,7 @@ import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentDecision } from '../ontology/agent-actions.js';
 
 export interface AgentProgramContext {
+  executionConfigurationDigest?: string;
   graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
 }
 export interface AgentActionContext extends AgentProgramContext {
@@ -46,10 +47,15 @@ export interface AgentProgram {
   readonly actionIds: readonly string[];
   readonly guidance: string;
   readonly completionSchema: object;
+  /** Public typed result fields explicitly available for cross-service inputs.
+   * '*' denotes an array index, never arbitrary object-key traversal. */
+  readonly handoffFields?: readonly { path: readonly string[]; kind: 'string' | 'number' | 'boolean' }[];
   readonly limits?: { modelTurns: number; plans: number; actions: number };
   permitted(owner: string): boolean;
   capability(): ServiceCapability;
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown>; components?: AgentExecutionState['components'] };
+  describeComponents?(ctx: AgentProgramContext): { actionIds: readonly string[]; [key: string]: unknown }[];
+  sourceConfigurationForScope?(state: AgentExecutionState, scope: ObjectRef): string;
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;

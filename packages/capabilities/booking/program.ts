@@ -22,6 +22,7 @@ export class BookingAgentProgram implements AgentProgram {
   readonly actionIds = Object.keys(bookingActionSchemas);
   readonly limits = { modelTurns: 48, plans: 20, actions: 36 };
   readonly completionSchema = z.toJSONSchema(completion);
+  readonly handoffFields = ['venue', 'startsAt', 'endsAt', 'title'].map(key => ({ path: ['booking', 'offer', key], kind: 'string' as const }));
   readonly connector: BookingSandboxConnector;
   readonly configurationDigest: string;
   readonly guidance = [
@@ -59,7 +60,7 @@ export class BookingAgentProgram implements AgentProgram {
     if (ctx.state.paPayment) {
       const { digest: expected, ...request } = paPaymentRequestSchema.parse(ctx.state.paPayment.request);
       const stored = ctx.graph.read(ctx.owner, { type: 'PAPaymentRequest', id: request.id });
-      if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== this.configurationDigest || !same(stored.properties.terms, request.terms)) fail('Original PA payment handoff integrity changed');
+      if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== (ctx.executionConfigurationDigest ?? this.configurationDigest) || !same(stored.properties.terms, request.terms) || stored.properties.configurationDigest !== this.configurationDigest) fail('Original PA payment handoff integrity changed');
       verifyPAPaymentSelection(ctx.state.paPayment);
     }
     return bookingInputSchema.parse(scope.properties.input);

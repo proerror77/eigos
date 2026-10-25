@@ -266,6 +266,16 @@ export class JobStore {
         criterionResults: outcome?.criterionResults ?? [], observedAt: outcome?.assessedAt ?? job.updatedAt };
       const key = digest(agent.programRef);
       this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, key, JSON.stringify(row));
+      for (const [componentId, component] of Object.entries(agent.components ?? {})) {
+        const endpoint = component.input?.target ?? component.input?.completionTarget ?? component.input?.mode;
+        const item = { capabilityRef: component.programRef, bindingRef: component.programRef, bindingDefinitionDigest: component.programDigest,
+          rootTaskId: job.id, requestRevision: d.request.revision, componentId, scope: 'component_only', parentState: job.state,
+          goalKind: typeof endpoint === 'string' ? `${component.programRef.id}:${endpoint}` : component.programRef.id,
+          outcome: component.result ? 'satisfied' : 'unknown', taskState: component.result ? 'completed' : job.state,
+          evidenceLevel: component.result?.delivery.evidenceLevel ?? 'unverified', criterionResults: [], observedAt: component.result?.at ?? row.observedAt };
+        this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner')
+          .run(`${job.id}:${d.request.revision}:${componentId}`, owner, digest(component.programRef), JSON.stringify(item));
+      }
       if (!verification || !['completed', 'failed', 'rejected', 'canceled'].includes(job.state)) return;
       const claim = { id: digest({ owner, program: agent.programRef, configuration: agent.programDigest }), capabilityRef: agent.programRef, bindingRef: agent.programRef, publisherId: 'configured-agent-program', sourceRevision: agent.programDigest, sourceRef: 'configured-versioned-definition', observedAt: row.observedAt };
       const verified = { id: digest({ owner, jobId: job.id, revision: d.request.revision, state: job.state, outcome }), claimId: claim.id, sourceRevision: agent.programDigest,

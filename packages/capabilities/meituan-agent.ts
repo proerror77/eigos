@@ -38,6 +38,7 @@ export class MeituanReadProgram implements AgentProgram {
   readonly actionIds: string[];
   readonly guidance = ONTOLOGY_READ_GUIDANCE;
   readonly completionSchema = z.toJSONSchema(completionSchema);
+  get handoffFields() { return this.mode === 'geo' ? ['name', 'address', 'city'].map(key => ({ path: ['places', '*', key], kind: 'string' as const })) : []; }
   constructor(private mode: Mode, private reader: MeituanPrimitiveReader, private store: JobStore, private publicQueries: readonly z.infer<typeof publicGeoQuerySchema>[] = []) {
     this.ref = { id: modes[mode].id, version: modes[mode].version };
     this.actionIds = meituanReadDefinition.actions.filter(a => permittedTools[mode].includes(a.mcp.tool)).map(a => a.id);

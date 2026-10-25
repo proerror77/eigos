@@ -11,7 +11,7 @@ export type ObjectSource = z.infer<typeof sourceSchema>;
 const filterSchema = z.object({ property: nameSchema, op: z.enum(['eq', 'lt', 'lte', 'gt', 'gte', 'in']), value: z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.array(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).min(1).max(20)]) }).strict();
 const queryFields = { select: z.array(nameSchema).min(1).max(20).optional(), where: z.array(filterSchema).max(8).default([]), limit: z.number().int().min(1).max(50).default(20), cursor: z.string().max(4096).optional() };
 export const objectQuerySchema = z.union([
-  z.object({ type: nameSchema, ...queryFields }).strict(),
+  z.object({ type: nameSchema, currentDefinitionsOnly: z.boolean().optional(), ...queryFields }).strict(),
   z.object({ from: objectRefSchema, link: nameSchema, ...queryFields }).strict(),
   z.object({ object: objectRefSchema, ...queryFields }).strict(),
 ]);
@@ -179,6 +179,10 @@ export class OntologyObjectStore {
       const types = this.model.concreteTypes(target);
       sql = `SELECT o.* FROM ontology_objects o WHERE o.owner=? AND o.type IN (${types.map(() => '?').join(',')})`;
       params = [owner, ...types];
+      if (args.currentDefinitionsOnly) {
+        sql += ` AND (${types.map(() => '(o.type=? AND o.definition_digest=?)').join(' OR ')})`;
+        params.push(...types.flatMap(type => [type, this.model.fingerprint(type)]));
+      }
     }
     const properties = this.model.properties(target);
     for (const name of args.select ?? []) {
@@ -225,7 +229,8 @@ export class OntologyObjectStore {
     }
     const cursor = hasMore && last ? Buffer.from(JSON.stringify({ owner: digest(owner), query: queryDigest, model: this.model.ref.digest, revision, last })).toString('base64url') : undefined;
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during query; retry against the current revision');
-    return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision };
+    return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision,
+      ...('type' in args && args.currentDefinitionsOnly ? { definitionScope: 'current_definitions_only' } : {}) };
   }
   /** Single bounded relationship read for registered functions; never follows unlimited pages. */
   related(owner: string, from: ObjectRef, link: string, budget: ReadBudget): ObjectView[] | undefined {

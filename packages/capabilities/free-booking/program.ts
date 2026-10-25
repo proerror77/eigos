@@ -24,6 +24,7 @@ export class ParticipantBookingProgram implements AgentProgram {
   readonly configurationDigest: string;
   readonly actionIds: string[];
   readonly completionSchema = z.toJSONSchema(completion);
+  readonly handoffFields = ['serviceUrl', 'title', 'startsAt', 'endsAt', 'timeZone'].map(key => ({ path: ['registration', key], kind: 'string' as const }));
   readonly limits = { modelTurns: 80, plans: 24, actions: 64 };
   readonly guidance = [
     'Fulfill the participant goal using the published registration Ontology. Select InspectRegistrationPage, the bound SubmitFreeRegistration action, ReadParticipantRegistration, WaitForRegistration and completion based on independently evaluated source facts. There is no fixed recipe.',

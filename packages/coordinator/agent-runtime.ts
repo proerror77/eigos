@@ -86,7 +86,8 @@ export class AgentRuntime {
       const delivery = program.complete(fresh, selection.proposal, reads), capability = program.capability();
       if (!delivery.evidenceRefs.length) failure('Completion requires independent source evidence');
       const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
-      const checks = checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
+      const checks = delivery.requirementChecks ?? checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
+      if (new Set(checks.map(c => c.requirementId)).size !== checks.length || checks.some(c => !requirements.some(r => r.id === c.requirementId))) failure('Aggregate checks must match original criteria exactly');
       if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
       const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, undefined, 'result');
       if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
@@ -141,7 +142,7 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;

@@ -39,6 +39,7 @@ export class DidiAgentProgram implements AgentProgram {
   readonly ref = DIDI_PROGRAM_REF;
   readonly actionIds = rideEstimateActionIds;
   readonly completionSchema = z.toJSONSchema(rideEstimateCompletionSchema);
+  readonly handoffFields = ['name', 'address', 'addressAll', 'city'].map(key => ({ path: ['didiAnswer', 'places', '*', key], kind: 'string' as const }));
   readonly guidance = ONTOLOGY_READ_GUIDANCE;
   readonly configurationDigest: string;
   private connector: DidiConnector;

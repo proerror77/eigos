@@ -1,3 +1,4 @@
+import { compositionObjects, compositionLinks, compositionActions } from './composition.js';
 import { registrationObjects, registrationLinks, registrationActions, registrationFunctions } from './free-booking.js';
 import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
@@ -189,13 +190,13 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '18', objects: [...objects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '19', objects: [...objects, ...compositionObjects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...compositionLinks, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
-  actions: [
+  actions: [...compositionActions,
     ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions, ...registrationActions,
     ...catalogAgentActions,
     ...rideEstimateActions, ...meituanReadActions,

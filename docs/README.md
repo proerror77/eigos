@@ -49,3 +49,5 @@
 `.gitignore` 只控制未跟踪文件。已经提交的文件即使匹配新规则，也不会自动从 GitHub 移除；整理时需先检查引用和用途，必要时保留本地副本后单独移出跟踪。修改忽略规则也不会清除历史提交中的内容。
 
 - [单任务 Ontology 闭环](single-task-ontology-closure.md)：目标覆盖核查、Action 边界、统一验收与反馈。
+
+- [跨服务任务编排](cross-service-composition.md)：模型选图、类型化结果传递、共享预算和常驻升级。

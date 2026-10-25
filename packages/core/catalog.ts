@@ -5,6 +5,7 @@ import type { DiscoveredBinding, DiscoveryCoverage, ProductOfferSnapshot } from 
 import type { ActionContext, ActionResult, PreparedStep } from '../ontology/actions.js';
 import { digest } from './delegation.js';
 import type { AgentProgram } from './agent-program.js';
+import { CompositionProgram } from '../coordinator/composition-program.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 export type Preparation = { kind: 'needs_input'; question: string; details?: Record<string, unknown> } | { kind: 'unavailable'; reason: string; details?: Record<string, unknown> } | {
@@ -15,7 +16,7 @@ export type Preparation = { kind: 'needs_input'; question: string; details?: Rec
   privateData?: unknown;
   recipe?: PreparedStep[];
 };
-export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[]; evidenceLevel?: string }
+export interface Delivery { artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[]; evidenceLevel?: string; requirementChecks?: import('../ontology/execution.js').RequirementCheck[] }
 export interface ProviderAdapter {
   readonly id: string;
   permitted(owner: string): boolean;
@@ -63,6 +64,11 @@ export class ExecutionCatalog {
   private sources: DiscoverySource[];
   private programs = new Map<string, AgentProgram>();
   constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = []) {
+    const composites = (['live', 'sandbox'] as const).flatMap(environment => {
+      const available = programs.filter(p => ['local', environment].includes(p.capability().environment ?? 'local'));
+      return available.length >= 2 ? [new CompositionProgram(available, environment)] : [];
+    });
+    services = [...services, ...composites.map(p => p.capability())]; programs = [...programs, ...composites];
     for (const adapter of adapters) {
       if (this.adapters.has(adapter.id)) throw new Error('Duplicate adapter');
       this.adapters.set(adapter.id, adapter);
@@ -119,7 +125,7 @@ export class ExecutionCatalog {
     const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || this.programs.get(key(s.ref))?.permitted(owner)));
     // Do not silently truncate an unsearched catalogue; add domain retrieval before scaling it.
     if (permitted.length > limit) throw new DomainError('CONFLICT', 'Capability retrieval limit exceeded; a narrower discovery scope is required');
-    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation }));
+    return permitted.map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, ...(this.programs.get(key(s.ref)) instanceof CompositionProgram ? { composition: structuredClone(s.ontology) } : {}) }));
   }
   delegationService(): ServiceDefinition {
     const definitions = [...this.services.values()];

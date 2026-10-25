@@ -10,6 +10,7 @@ import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.j
 import { BACKEND_VERSION } from '../dist/packages/ontology/execution.js';
 import { participantDeploymentSettings } from '../dist/packages/capabilities/free-booking/runtime-config.js';
 import { resolvePaOwner } from './pa-source.mjs';
+import { assertUpgradeIdle } from './pa-upgrade.mjs';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
@@ -132,12 +133,15 @@ const ready = async () => {
   } throw new Error('New ontology runtime did not become ready; inspect the private log');
 };
 const needsRestart = !loaded() || previousPlist !== plist || oldSettings !== settings || process.argv.includes('--restart');
+const previousHealth = needsRestart ? await fetch('http://127.0.0.1:3430/health', { signal: AbortSignal.timeout(1000) }).then(r => r.json()).catch(() => undefined) : undefined;
+if (needsRestart && previousHealth?.backend !== BACKEND_VERSION) assertUpgradeIdle(join(runtime, 'tasks.sqlite'), previousHealth?.backend);
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
 const managed = [envPath, runtimeEnv, plistPath, join(directory,'profile.json'), join(runtime,'profile.json'), join(runtime,'skill-install.md')];
 for (const [i,path] of managed.entries()) if (existsSync(path)) cpSync(path, join(backup, String(i)));
 try {
   if (needsRestart) {
     await stop();
+    if (previousHealth?.backend !== BACKEND_VERSION) assertUpgradeIdle(join(runtime, 'tasks.sqlite'), previousHealth?.backend);
     if (existsSync(join(runtime,'tasks.sqlite'))) execFileSync('python3', ['-c', 'import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()', join(runtime,'tasks.sqlite'), join(backup,'tasks.sqlite')], { stdio: 'pipe' });
     privateWrite(envPath, settings); privateWrite(runtimeEnv, settings); privateWrite(plistPath, plist);
     execFileSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { stdio: 'pipe' });

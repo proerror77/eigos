@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "18",
-    "digest": "4a5c6adf3e489c584271c5a6b86d64cbe67b0c0222494ff55239d50a07909610"
+    "version": "19",
+    "digest": "d3602c1a7de7de56d3f18d60ee3710e7e07a19a0694ee0f49c935b4e9a86b258"
   },
   "types": {
     "ServiceRequest": {
@@ -1381,6 +1381,41 @@
         "evidenceRefs": "task_sensitive",
         "observedAt": "task_private"
       }
+    },
+    "ServiceComposition": {
+      "fingerprint": "ae1f1aeeaa59eb748f1adab5d9e1cd850071eeb26a8ddb764b28d3508dff0899",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "definition": "internal_only",
+        "configurationDigest": "task_private"
+      }
+    },
+    "ServiceComponent": {
+      "fingerprint": "37776daf088231b751073d8d370941fa518cdbe66aca16aebcbe23d455759af1",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "scope": "task_private",
+        "inputDigest": "task_private",
+        "dependencies": "task_sensitive"
+      }
+    },
+    "ServiceComponentResult": {
+      "fingerprint": "3191bde983042eaf798a8f374f770a9a93ee43eed8c00bd4bed47d130d9e7c1f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "artifactDigest": "task_private",
+        "output": "internal_only",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private"
+      }
     }
   },
   "surfaces": [
@@ -1423,7 +1458,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "8a45d8b22e1248d209285dbed1bbb1a5e478b9d4ebc91f037838dcacbdcf34dc",
+      "sourceDigest": "b22ffea784baa61bf8f95797f0509cd2ab9b5d0fe9eb992a0945522c8b534952",
       "channels": [
         "http",
         "mcp",
@@ -1437,7 +1472,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "24c712efda69127d1506a8ef6b0479faaec9e0f0255af1fe69f29629fa31b41f",
+      "sourceDigest": "609a084691b1cdaed69bfd4e9e5c27bb8b874c0a67209a4da0dde9f7f5e51664",
       "channels": [
         "sqlite",
         "idempotency"
@@ -1450,7 +1485,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "f5a83fb39b8911eb7d2b0d42cf4b24ae79188e5d470c5b953e91baf8b37effbd",
+      "sourceDigest": "1761972182b77956037499ccd16485191d7f71d4d7ee3835fe7d23663e5225ed",
       "channels": [
         "query",
         "function"
@@ -1535,7 +1570,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "c259405a0ec795ae5ea7c14be0a9bfcb69d3787ff5b1ba251a06e461f69e7207",
+      "sourceDigest": "79f900ccb42b419f48a40f9d24eef19998d22594dd20a5e7c616e52e7a19ac54",
       "channels": [
         "model",
         "query"
@@ -1560,7 +1595,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "7711cf6f3853ffd9659a22ea323873f29efda330ffea166d4cc6e014f2859857",
+      "sourceDigest": "c888437e42c913ef458f560f0e7f35b756904eeab002d90f8f6111d55264cea6",
       "channels": [
         "model",
         "dispatch"
@@ -1573,7 +1608,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "7c205a4aad733160a330ff0476172b1ce99817d5b3cbcbd41c372b1d0385d037",
+      "sourceDigest": "efdbac5eb72f312340bc7bf96c71ca7eba577c8760322f71c9f5fa8d2dcfb370",
       "channels": [
         "model",
         "dispatch",
@@ -1880,6 +1915,48 @@
       "content": "Current task state to independent outcome synchronization",
       "currentControl": "Unknown, canceled and waiting tasks never become satisfied",
       "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-program",
+      "file": "packages/coordinator/composition-program.ts",
+      "sourceDigest": "96291618dee362f74dc24ec08e881a022eae1250e9580a7def44bad84500beac",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Bound service graphs, explicit typed handoffs, aggregate verification and exact component authority",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-contract",
+      "file": "packages/ontology/composition.ts",
+      "sourceDigest": "7cb2c54cb0895c80bc5968a9946e7a337437dee61c7db451b4009c06fb1ea0dc",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Versioned composition objects, links and local activation/verification Actions",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "pa-upgrade",
+      "file": "scripts/pa-upgrade.mjs",
+      "sourceDigest": "e0d4e185597a110b121e475762d6343faa31a30acea070c17ef731e1115a150b",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Read-only active task and uncertain-effect preflight before resident upgrades",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
       "stage": "S3"
     }
   ]
