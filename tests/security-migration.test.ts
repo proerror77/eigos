@@ -48,6 +48,9 @@ test('migration rejects an unreviewed changed snapshot, active claims, reused de
     const active=new DatabaseSync(f.input.databaseSnapshot);active.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(f.job.id,'private-lease',1,Date.now()+60000);active.close();
     assert.throws(()=>planSecurityMigration(f.input),/Stop the source/);
     const stop=new DatabaseSync(f.input.databaseSnapshot);stop.exec('DELETE FROM work_claims');stop.close();
+    const fenced=new DatabaseSync(f.input.databaseSnapshot);fenced.prepare('INSERT INTO security_fences VALUES(?,?,?,?,?,?)').run(randomUUID(),f.owner,'member',randomUUID(),1,'pending');fenced.close();
+    assert.throws(()=>planSecurityMigration(f.input),/pending authorization fence/);
+    const resolved=new DatabaseSync(f.input.databaseSnapshot);resolved.exec('DELETE FROM security_fences');resolved.close();
     const reviewed=planSecurityMigration(f.input);migrateSecuritySnapshots({...f.input,outputDirectory,expectedSourceDigest:reviewed.sourceDigest});
     assert.throws(()=>migrateSecuritySnapshots({...f.input,outputDirectory,expectedSourceDigest:reviewed.sourceDigest}),/must not exist/);
     const tamper=new DatabaseSync(join(outputDirectory,'tasks.sqlite'));tamper.prepare('UPDATE jobs SET state=?').run('completed');tamper.close();

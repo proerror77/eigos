@@ -2311,7 +2311,7 @@
     {
       "id": "s5-packages-security-migration",
       "file": "packages/security/migration.ts",
-      "sourceDigest": "ba88e41bb4f7823fde92b5415f7671907d7459f83319efae334402e6d7f83173",
+      "sourceDigest": "6f1984978f6080b2c7403af71dab0241566afeafec4b1603c0f6245f0473128a",
       "channels": [
         "offline migration"
       ],

@@ -74,6 +74,7 @@ function inspect(input:MigrationInput) {
     const header=byName.get('security_settings')?.rows;
     if(header && (header.length!==1 || ![1,2].includes(Number(header[0]!.version)) || !['legacy','foundation'].includes(String(header[0]!.mode))) || byName.has('security_migration_receipt'))throw new Error('Only unmarked legacy or earlier security snapshots need this migration');
     if(!header && records.some(t=>['security_grants','security_subjects','security_task_authorities'].includes(t.name)))throw new Error('Snapshot has orphaned security authority');
+    if((byName.get('security_fences')?.rows??[]).some(r=>!['applied','cleared'].includes(String(r.state))))throw new Error('Resolve the pending authorization fence in the original authority before migration');
     if((byName.get('work_claims')?.rows??[]).some(r=>Number(r.expires_at)>Date.now()) || (byName.get('security_manager')?.rows??[]).some(r=>Number(r.expires_at)>Date.now()))throw new Error('Stop the source Gateway/Worker before capturing the offline snapshot');
     const source={taskDatabase:fileHash(input.databaseSnapshot),memberDatabase:fileHash(input.membershipSnapshot),tables:records.map(t=>({name:t.name,count:t.rows.length,digest:t.fingerprint,columns:t.columns,definitionDigest:digest(t.definition)})),memberTables:memberTables.map(t=>({name:t.name,count:t.rows.length,digest:t.fingerprint}))};
     const assetFiles=assets(input),assetSummary=assetFiles.map(({label,digest,files})=>({label,digest,files:files.length,bytes:files.reduce((n,f)=>n+f.size,0)}));

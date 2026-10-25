@@ -23,7 +23,7 @@ npm run security:migrate -- apply --input /private/migration-input.json --output
 npm run security:migrate -- verify --output /private/new-foundation
 ```
 
-`apply` 必须使用 plan 的准确摘要和不存在的目标目录。输入检查包括数据库完整性、活跃领取／资格发布者、文件与行数上限、产物符号链接及复制期间的变化。新目录为 0700，数据库／产物为 0600；先完成私有临时目录，再验证并重命名。
+`apply` 必须使用 plan 的准确摘要和不存在的目标目录。输入检查包括数据库完整性、活跃领取／资格发布者、未完成的撤销协调 fence、文件与行数上限、产物符号链接及复制期间的变化。新目录为 0700，数据库／产物为 0600；先完成私有临时目录，再验证并重命名。
 
 迁移复制任务、幂等回执、对象／关系、执行意图／尝试／观察、业务许可和预算账本。原始行及未知扩展表另外保存在 `security_migration_archive`。任务唯一变换为 `executionMode=worker-security-archive`，新旧常规领取器均不领取这些任务。所有者、对象键、来源证据、原操作键和账本事实保留；会员数据库按字节复制。
 
