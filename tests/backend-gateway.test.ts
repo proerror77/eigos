@@ -51,7 +51,7 @@ test('new backend uses existing A2A/MCP intake, clarification, exact approval an
     assert(!(await f.rpc('SendMessage', reply)).error); assert((await f.send('yes', id)).error);
     assert.equal((await f.approve(ready, { quoteDigest: '0'.repeat(64) })).status, 409);
     assert.equal((await f.approve(ready)).status, 200); assert.equal((await f.approve(ready)).status, 200);
-    const done = await f.wait(id, 'completed'); assert.equal(done.runs!.length, 3); assert.equal(done.delegation!.request.revision, 2);
+    const done = await f.wait(id, 'completed'); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 3); assert.equal(done.delegation!.request.revision, 2);
     assert.equal(done.delegation!.phase, 'accepted');  assert(done.delegation!.acceptance!.accepted);
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${f.token}` } } }));
     const response = await mcp.callTool({ name: 'get_task', arguments: { taskId: id } }); assert(!response.isError);

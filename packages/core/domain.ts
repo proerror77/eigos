@@ -1,7 +1,9 @@
 import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
-import { requirementsSchema } from '../ontology/execution.js';
+import { requirementsSchema, refSchema } from '../ontology/execution.js';
+import type { AccessContext } from '../security/contracts.js';
+import { locationContextSchema } from './location-context.js';
 import { executionBudgetProfileSchema } from './execution-budget.js';
 
 /** Existing PA onboarding requests task access only. Modeling and administration
@@ -15,6 +17,8 @@ export interface Principal {
   tenant: string;
   clientId: string;
   scopes: string[];
+  /** Server-derived only; never accepted in task/tool arguments. */
+  access?: AccessContext;
 }
 
 export class DomainError extends Error {
@@ -47,9 +51,11 @@ const afterSalesSubmitSchema = remediationSchema.extend({ service: z.literal('ei
 export const submitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
+  locationContext: locationContextSchema.optional(),
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
   executionBudget: executionBudgetProfileSchema.optional(),
   ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
+  capabilityRef: refSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,
@@ -57,6 +63,7 @@ const answerReplySchema = z.object({
   requestId: requestIdSchema,
   expectedRevision: z.number().int().positive().optional(),
   requirements: requirementsSchema.optional(),
+  locationContext: locationContextSchema.optional(),
   executionBudget: z.literal('extended').optional(),
 }).strict();
 export const replySchema = answerReplySchema;
@@ -80,7 +87,7 @@ export interface Job {
   service: string;
   delegation?: Delegation;
   afterSales?: Omit<import('../ontology/actions.js').AfterSalesCase, 'owner'>[];
-  executionMode?: 'worker';
+  executionMode?: 'worker' | 'worker-security-foundation' | 'worker-security-v2' | 'worker-security-archive';
   goal: string;
   deliverable?: string;
   state: JobState;

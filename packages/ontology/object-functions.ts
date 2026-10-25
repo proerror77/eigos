@@ -1,3 +1,5 @@
+import { validateCallerOutcomeProof } from './caller-outcome-proof.js';
+import { evaluateOrderTest } from './didi-order-test-functions.js';
 import { evaluateRegistrationFunction } from './free-booking-functions.js';
 import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
@@ -36,12 +38,14 @@ export const functionCallSchema = z.union([
   simple('registrationStatus'),
   simple('shopifyCheckoutObservationStatus'),
   simple('shopifyPAPaymentStatus'),
+  simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'), simple('taskOutcomeStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
   simple('catalogReadStatus'),
   simple('didiOrderStatus'), simple('rideEstimateStatus'), simple('catalogObservationStatus'), simple('paotuiObservationStatus'),
   simple('meituanReadStatus'),
+  simple('selectDidiPlace'),
   ...domainFunctionCallSchemas,
   simple('offerFreshness'), simple('remainingQuantity'), simple('actualArrival'), simple('reservationStatus'),
   z.object({ function: z.literal('deliveryQuoteMatches'), object: objectRefSchema, request: objectRefSchema, serviceLevel: z.enum(['ordinary', 'express']) }).strict(),
@@ -77,6 +81,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const orderTestResult = evaluateOrderTest(store, owner, input, budget);
+  if (orderTestResult) return orderTestResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
   if (rideResult) return rideResult;
   const orderResult = evaluateRideOrder(store, owner, input, budget);
@@ -118,6 +124,24 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
     requireType(object, 'Authorization');
     if (!p.kind || !p.ledgerDigest || !p.approvedAt || !p.expiresAt || p.revoked === undefined) return known('unknown', [object.ref]);
     return known(p.revoked ? 'revoked' : Date.parse(String(p.expiresAt)) <= store.now() ? 'expired' : 'active', [object.ref]);
+  }
+  if (input.function === 'taskOutcomeStatus') {
+    requireType(object, 'ServiceRequest');
+    const ref = objectRefSchema.safeParse(p.currentAssessment);
+    if (!ref.success || ref.data.type !== 'OutcomeAssessment') return unknown('No current task assessment', [object.ref]);
+    const assessment = store.read(owner, ref.data, budget), request = one(store, owner, assessment.ref, 'request', budget);
+    if (!request || !same(request.ref, object.ref) || assessment.properties.requestRevision !== p.revision) return unknown('Assessment does not match the current request revision', [object.ref]);
+    const coverage = one(store, owner, assessment.ref, 'goalCoverage', budget);
+    const review = coverage?.properties.review as { verdict?: string } | undefined;
+    const callerProof = assessment.properties.callerProof === undefined ? undefined : validateCallerOutcomeProof(store,owner,object,assessment,budget);
+    const covered = assessment.properties.callerProof !== undefined ? !coverage && !!callerProof
+      : !!coverage && coverage.properties.requestRevision === p.revision && review?.verdict === 'covered';
+    if (assessment.properties.judgment === 'satisfied' && (p.progress !== 'accepted' || !covered)) return unknown('Completed outcome lacks its current covered goal or verified caller contract', [object.ref, assessment.ref]);
+    return known({ status: assessment.properties.judgment, taskState: assessment.properties.taskState, requestedOutcome: p.requestedOutcome,
+      criterionResults: assessment.properties.criterionResults, sourceReceiptRefs: callerProof ? [] : assessment.properties.evidenceRefs,
+      goalCoverage: callerProof ? 'caller_contract' : review?.verdict ?? 'unreviewed', ...(callerProof ? {callerExecutionRefs:callerProof} : {}),
+      assessedAt: assessment.properties.assessedAt, meaning: 'Historical task acceptance, not a fresh provider observation or new authority' },
+    [object.ref, assessment.ref, ...(coverage ? [coverage.ref] : []), ...(callerProof ?? [])], [String(assessment.properties.evidenceLevel ?? 'unverified')]);
   }
   if (input.function === 'offerFreshness') return freshness(store, owner, object, budget);
   if (input.function === 'remainingQuantity') {

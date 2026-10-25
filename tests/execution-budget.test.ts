@@ -26,12 +26,12 @@ test('accepted input opens bounded windows in the SAME task beyond 32 cumulative
       f.b.tasks.reply(principal, { taskId: job.id, requestId: randomUUID(), answer: `补充信息${n}` });
       paused = await f.finish(job.id);
     }
-    assert.equal(paused.runs!.length, 54);
+    assert.equal(paused.runs!.length, 72); assert.equal(paused.runs!.filter(run => run.purpose === 'goal_coverage').length, 18);
     assert.deepEqual(paused.runs!.slice(0, firstRuns.length).map(r => r.id), firstRuns);
-    assert.equal(executionBudgetStatus(paused).windowUsed.modelTurns, 3);
+    assert.equal(executionBudgetStatus(paused).windowUsed.modelTurns, 4);
     f.b.tasks.reply(principal, { taskId: job.id, requestId: randomUUID(), answer: '完成' });
     const done = await f.finish(job.id);
-    assert.equal(done.state, 'completed'); assert.equal(done.id, job.id); assert.equal(done.runs!.length, 57);
+    assert.equal(done.state, 'completed'); assert.equal(done.id, job.id); assert.equal(done.runs!.length, 76);
     assert.equal(f.b.tasks.list(principal, { limit: 10, offset: 0 }).total, 1);
     assert(f.store.intents(owner, job.id).every(i => i.state === 'effect_confirmed'), 'Replies retain verified historical read receipts');
   } finally { f.store.close(); }

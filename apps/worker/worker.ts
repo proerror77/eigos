@@ -6,10 +6,12 @@ import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.j
 import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource } from '../../packages/core/task-recovery.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
 import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
+import { withAuthorization, type AuthorizationScope } from '../../packages/security/context.js';
+import type { RecoveryWork } from '../../packages/security/recovery.js';
 import { partialGoalArtifact } from '../../packages/coordinator/goal-program.js';
 
 export interface WorkerOptions {
-  coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts'>>;
+  coordinator: Pick<Coordinator, 'run'> & Partial<Pick<Coordinator, 'releaseModelContext' | 'closeModelContexts' | 'claimRecovery' | 'recover'>>;
   pollMs?: number;
   leaseMs?: number;
   timeoutMs?: number;
@@ -41,30 +43,49 @@ export class Worker {
     const services = ['eigos.delegate'];
     while (this.running.size < 2) {
       const claim = this.store.claim(services, this.leaseMs);
-      if (!claim) break;
+      if (!claim) {
+        const recovery=this.options.coordinator.recover && this.options.coordinator.claimRecovery?.();
+        if(recovery){this.executeRecovery(recovery);continue;}
+        break;
+      }
       this.execute(claim);
     }
+  }
+  private executeRecovery(work:RecoveryWork) {
+    const key=`recovery:${work.permit.id}`,controller=new AbortController(),run={controller,done:Promise.resolve()};this.running.set(key,run);
+    const heartbeat=setInterval(()=>{if(!this.store.security.recoveries.renew(work))controller.abort();},Math.min(this.pollMs,5000));
+    const timeout=setTimeout(()=>controller.abort(),this.options.timeoutMs??300000);
+    run.done=Promise.resolve().then(()=>this.options.coordinator.recover!(work,controller.signal)).catch(()=>this.store.security.recoveries.finish(work)).finally(()=>{
+      clearInterval(heartbeat);clearTimeout(timeout);this.running.delete(key);
+    });
+    void run.done.catch(()=>console.error('Original-operation audit writeback failed; no business replay'));
   }
 
   private execute(claim: WorkClaim): void {
     const { job, owner } = claim;
     const controller = new AbortController();
+    let scope:AuthorizationScope|undefined;
     const run = { controller, done: Promise.resolve() };
+    const inScope = <T>(action: () => T): T => scope ? withAuthorization(scope, action) : action();
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
-      try { if (!this.store.renew(claim, this.leaseMs)) controller.abort(); }
+      try { scope?.assertCurrent(); if (!this.store.renew(claim, this.leaseMs)) controller.abort(); }
       catch { controller.abort(); }
     }, Math.min(this.pollMs, Math.floor(this.leaseMs / 3)));
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 300000);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
+      scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
+      const execute = async () => {
       if (claim.job.delegation?.recovery?.state === 'scheduled') {
         if (!this.store.checkpoint(claim, current => resumeScheduledRecovery(current))) return;
         claim.job = this.store.get(owner, job.id);
       }
       await withModelUsage({ begin: (id, runtime, startedAt) => this.store.beginModelUsage(claim, id, runtime, startedAt),
         finish: (id, evidence, outcome) => this.store.finishModelUsage(claim, id, evidence, outcome) }, () => this.options.coordinator.run(claim, controller.signal));
-    }).catch(error => {
+      };
+      if(scope) await withAuthorization(scope,execute); else await execute();
+    }).catch(error => inScope(() => {
       this.store.finish(claim, current => {
         if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
           request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
@@ -100,12 +121,12 @@ export class Worker {
           : 'Ontology backend could not validate a supported plan. No business action was dispatched.';
         current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
       });
-    }).finally(async () => {
+    })).finally(() => inScope(async () => {
       clearInterval(heartbeat); clearTimeout(timeout);
       // Keep an unresolved working claim until expiry if writeback failed.
       try { if (this.store.get(owner, job.id).state !== 'working') this.store.release(claim); }
       finally { this.running.delete(job.id); await this.options.coordinator.releaseModelContext?.(claim); }
-    });
+    }));
     // A storage failure must not cause an unhandled rejection or silently replay this attempt.
     void run.done.catch(() => console.error('Worker writeback failed; lease recovery required'));
   }

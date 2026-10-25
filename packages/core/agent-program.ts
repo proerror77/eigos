@@ -9,6 +9,7 @@ import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentDecision } from '../ontology/agent-actions.js';
 
 export interface AgentProgramContext {
+  executionConfigurationDigest?: string;
   graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
   /** Original task ledger, for explicit cross-component evidence checks only. */
   taskIntents?: readonly ActionIntent[];
@@ -22,6 +23,8 @@ export interface AgentActionContext extends AgentProgramContext {
   /** Actual durable records, never reconstructed as a different program's plan. */
   persistPrivate?: (write: () => void) => boolean;
   execution?: { intent: ActionIntent; attempt: import('../ontology/actions.js').ExecutionAttempt };
+  /** Actual post-source host reads for an explicitly model-selected dataflow. */
+  inputPlanning?: PlanningSnapshot;
 }
 export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];
@@ -53,6 +56,14 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  /** Optional minimal observer for an explicitly approved original-operation
+   * recovery. It must not call invoke or receive a graph/model/dispatch context. */
+  observeOriginal?(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal):Promise<import('../security/recovery.js').RecoveryObservation|undefined>;
+  readonly initialReadFrontier?: true;
+  readonly preparePlanningContext?: true;
+  /** Presentation preference only; all accepted references remain discoverable.
+   * When none match, retain the available observations for failure recovery. */
+  readonly planningObservationTypes?: readonly string[];
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   /** Trusted host marker for the generic declarative engine only. Metadata
@@ -61,8 +72,14 @@ export interface AgentProgram {
   readonly ref: Ref;
   readonly configurationDigest: string;
   readonly actionIds: readonly string[];
+  /** Complete registered write inventory, including supporting receipts and
+   * canonical business objects. Each type still needs an explicit data grant. */
+  readonly projectionTypes?: readonly string[];
   readonly guidance: string;
   readonly completionSchema: object;
+  /** Public typed result fields explicitly available for cross-service inputs.
+   * '*' denotes an array index, never arbitrary object-key traversal. */
+  readonly handoffFields?: readonly { path: readonly string[]; kind: 'string' | 'number' | 'boolean' }[];
   readonly limits?: { modelTurns: number; plans: number; actions: number };
   readonly modelCallsPerAction?: number;
   permitted(owner: string): boolean;
@@ -78,7 +95,9 @@ export interface AgentProgram {
   prepareRequest?(request: ServiceRequest): ServiceRequest;
   validateRequest?(request: ServiceRequest): void;
   clarify?(ctx: AgentProgramContext, message: string): string;
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown, component?: { id: string; scopeKey: string }): { scope: ObjectRef; input: Record<string, unknown>; managedActionIds?: string[] };
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown, component?: { id: string; scopeKey: string }): { scope: ObjectRef; input: Record<string, unknown>; managedActionIds?: string[]; components?: AgentExecutionState['components'] };
+  describeComponents?(ctx: AgentProgramContext): import('../ontology/composition.js').ComponentDescription[];
+  sourceConfigurationForScope?(state: AgentExecutionState, scope: ObjectRef): string;
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;
@@ -92,6 +111,7 @@ export interface AgentProgram {
   privateInput?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): unknown;
   /** Existing local simulation approval, never a payment or provider grant. */
   simulatedApproval?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): { amount: { minor: string; currency: string }; expiresAt: string } | undefined;
+  authorizationSummary?(ctx: AgentProgramContext, plan: import('../ontology/agent-actions.js').AgentActionPlan): string;
   invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult>;
   /** Read the original operation only. It must never replay a business write. */
   recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;
@@ -105,6 +125,7 @@ export interface AgentProgram {
   remediationTarget?(ctx: AgentProgramContext, action: 'cancel' | 'refund'): { originalIntentId: string; remoteRef: string; predicate: string; constraintPredicate: string } | undefined;
   /** Source-specific unpaid readback, independent of PA capability availability. */
   validatePaymentRoute?(ctx: AgentProgramContext, payment: import('./pa-payment.js').PAPaymentState): void;
+  reconcilePAPayment?(ctx: AgentProgramContext, signal: AbortSignal): Promise<NonNullable<import('./pa-payment.js').PAPaymentState['recovery']>>;
   terminalHandoff?(ctx: AgentProgramContext): AgentTerminalHandoff | undefined;
   /** Named outputs are projected by trusted code and sealed with the accepted
    * observation. A model cannot supply this mapping or upgrade evidence origin. */

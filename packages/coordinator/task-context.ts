@@ -1,3 +1,5 @@
+import { authorizationScope } from '../security/context.js';
+import { describeAuthorized } from '../security/view.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -22,6 +24,7 @@ export const taskInstructionsSchema = z.strictObject({
 const instructionCursorSchema = z.strictObject({ owner: z.string(), requestId: z.string(), requestRevision: z.number().int().positive(), requestDigest: z.string(), modelDigest: z.string(), after: z.number().int().min(-1) });
 export const MAX_INSTRUCTION_READ_BYTES = 600000;
 const INSTRUCTION_PAGE_BYTES = 60000;
+const INITIAL_TYPE_DEFINITION_BYTES = 50000;
 export type TaskRequestView = ServiceRequest & { messageView: 'complete' | 'partial' };
 export interface TaskContextBinding {
   purpose: 'grounding' | 'planning' | 'agent';
@@ -171,13 +174,25 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     if (graph.model.isInterface(type)) continue;
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
+  if (graph.security) {
+    const visible = describeAuthorized(graph.security.security, authorizationScope()!, {limit: graph.model.typeIds().length}, graph.model);
+    const actionIds = new Set(actions.map(action => action.id));
+    const types: object[] = [], deferredTypes: string[] = []; let bytes = 0;
+    for (const type of visible.types.filter(type => names.has(type.id))) {
+      const size = Buffer.byteLength(JSON.stringify(type));
+      if (bytes + size > INITIAL_TYPE_DEFINITION_BYTES) deferredTypes.push(type.id); else {types.push(type); bytes += size;}
+    }
+    return {model: visible.model, types, ...(deferredTypes.length ? {deferredTypes, definitionRetrieval:'describe_ontology'} : {}),
+      actions: visible.actions.filter(action => actionIds.has(action.id)),
+      functions: visible.functions.filter(fn => fn.inputTypes.some(type => names.has(type)))};
+  }
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));
   const types: object[] = [], deferredTypes: string[] = [];
   let typeBytes = 0;
   for (const name of [...names].sort((a, b) => a === 'ServiceRequest' ? -1 : b === 'ServiceRequest' ? 1 : a.localeCompare(b))) {
     const type = safeDefinition(graph.model.describeType(name), names), bytes = Buffer.byteLength(JSON.stringify(type));
-    if (composed && typeBytes + bytes > 50000) deferredTypes.push(name);
+    if (typeBytes + bytes > INITIAL_TYPE_DEFINITION_BYTES) deferredTypes.push(name);
     else { types.push(type); typeBytes += bytes; }
   }
   // Definition availability is not a requirement to transport every schema in

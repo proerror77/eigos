@@ -24,7 +24,7 @@ export interface ExecutionContextView {
   tombstonedRefs?: { ref: ObjectRef; revision: number; deletedAt: string }[];
   plans: { ref: ObjectRef; planId: string; planDigest: string; state: string; steps: {
     ref: ObjectRef; stepId: string; action: string; state: string; dependsOn: string[];
-    inputRefs: { stepId: string; targetKey: string; port?: string }[]; acceptedInputs?: { intentId: string; port: string; targetKey: string }[]; inputDigest: string; output?: ObjectRef;
+    inputRefs: { stepId: string; targetKey: string; port?: string; compute?: { function: string; path: string[] } }[]; acceptedInputs?: { intentId: string; port: string; targetKey: string }[]; inputDigest: string; output?: ObjectRef;
   }[] }[];
   objects: ObjectView[]; links: LinkWrite[];
 }
@@ -103,6 +103,7 @@ function safeRequest(request: ServiceRequest): ServiceRequest {
   return { id: request.id, revision: request.revision, originalGoal: request.originalGoal,
     ...(request.requestedDeliverable !== undefined ? { requestedDeliverable: request.requestedDeliverable } : {}),
     ...(request.executionEnvironment ? { executionEnvironment: request.executionEnvironment } : {}),
+    ...(request.capabilityRef ? { capabilityRef: request.capabilityRef } : {}),
     ...(request.outcome ? { outcome: request.outcome } : {}), ...(request.businessScopeId ? { businessScopeId: request.businessScopeId } : {}),
     requirements: structuredClone(request.requirements), successCriteria: structuredClone(request.successCriteria ?? []), conditions: structuredClone(request.conditions ?? []),
     confirmedInputs: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([name, value]) => [name, { version: value.version, revision: value.revision, messageDigest: value.messageDigest, fields: structuredClone(value.fields), history: [] }])),
@@ -114,7 +115,7 @@ function projectRequest(graph: OntologyObjectStore, owner: string, request: Serv
     assertionSnapshotVersion: '1', factCount: Object.values(request.confirmedInputs ?? {}).reduce((n, family) => n + Object.keys(family.fields).length, 0), conditionCount: request.conditions?.length ?? 0,
     factFamilies: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([namespace, {version, revision, messageDigest}]) => [namespace, {version, revision, messageDigest}])),
     constraintCount: request.requirements.length + (request.successCriteria?.length ?? 0), confirmedInputDigests: Object.fromEntries(Object.entries(request.confirmedInputs ?? {}).map(([name, value]) => [name, value.messageDigest])),
-    ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId'].filter(name => view[name as keyof ServiceRequest] !== undefined).map(name => [name, view[name as keyof ServiceRequest]])),
+    ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId', 'capabilityRef'].filter(name => view[name as keyof ServiceRequest] !== undefined).map(name => [name, view[name as keyof ServiceRequest]])),
   };
   const specificationLinks = [requestEdge(specification, request.id)];
   const previousSpecification = readOptional(graph, owner, specification);
@@ -188,7 +189,7 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
     conditions = assertions.map(item => item.properties.condition) as ServiceRequest['conditions'];
   }
   const view: ServiceRequest = { id: requestId, revision, originalGoal: String(request.properties.originalGoal),
-    ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId'].filter(name => specification[name] !== undefined).map(name => [name, specification[name]])),
+    ...Object.fromEntries(['requestedDeliverable', 'executionEnvironment', 'outcome', 'businessScopeId', 'capabilityRef'].filter(name => specification[name] !== undefined).map(name => [name, specification[name]])),
     requirements: readConstraints('requirement'), successCriteria: readConstraints('success_criterion'),
     conditions,
     confirmedInputs: Object.fromEntries(Object.entries(confirmed ?? {}).map(([name, value]) => [name, { ...structuredClone(value), messageDigest: inputDigests[name] ?? fail('Confirmed input provenance is missing'), history: [] }])),
@@ -199,7 +200,7 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
 
 interface StepShape {
   id: string; action: string; definitionDigest?: string; input: Record<string, unknown>;
-  inputRefs: { stepId: string; targetKey: string; path?: string; port?: string }[]; dependsOn: string[]; intentId?: string; effect: string;
+  inputRefs: { stepId: string; targetKey: string; path?: string; port?: string; compute?: { function: string; path: string[] } }[]; dependsOn: string[]; intentId?: string; effect: string;
   acceptedInputs?: AgentActionPlan['steps'][number]['acceptedInputs']; acceptedInputSources?: AgentActionPlan['steps'][number]['acceptedInputSources'];
   binding?: ObjectRef; contract?: { ref: ObjectRef; properties: Record<string, unknown> };
   candidateBinding?: FixedCandidateBinding;
@@ -220,7 +221,7 @@ function inputValues(step: StepShape) {
     return { parameter, sourceKind: parsed.success ? 'object' : 'literal', valueDigest: digest(value),
       valueType: parsed.success ? parsed.data.type : value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value, ...(parsed.success ? { object: parsed.data } : {}) };
   }), ...step.inputRefs.map(input => ({ parameter: input.targetKey, sourceKind: 'step_output', valueDigest: digest(input), valueType: 'output_reference',
-    sourceStepId: input.stepId, ...(input.path ? { sourcePath: input.path } : {}), ...(input.port ? { sourcePort: input.port } : {}) })),
+    sourceStepId: input.stepId, ...(input.compute ? { sourceComputation: input.compute } : {}), ...(input.path ? { sourcePath: input.path } : {}), ...(input.port ? { sourcePort: input.port } : {}) })),
   ...(step.acceptedInputs ?? []).map(input => ({ parameter: input.targetKey, sourceKind: 'accepted_output', valueDigest: digest(input), valueType: 'accepted_named_output', sourceIntentId: input.intentId, sourcePort: input.port })),
   ...(step.candidateBinding ? [{ parameter: FIXED_CANDIDATE_CONTEXT_PARAMETER, sourceKind: 'candidate_context', valueDigest: digest(step.candidateBinding), valueType: step.candidateBinding.subject.ref.type,
     object: step.candidateBinding.subject.ref, candidateId: step.candidateBinding.candidateId, requestRevision: step.candidateBinding.requestRevision,
@@ -633,7 +634,7 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
       }
       return { ref: step.ref, stepId: String(step.properties.stepId), action: String(step.properties.actionId), state: String(step.properties.state),
         dependsOn: dependencies.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map(d => String(d.properties.stepId)),
-        inputRefs: inputs.filter(i => i.properties.sourceKind === 'step_output').map(i => ({ stepId: String(i.properties.sourceStepId), targetKey: String(i.properties.parameter), ...(i.properties.sourcePort ? { port: String(i.properties.sourcePort) } : {}) })),
+        inputRefs: inputs.filter(i => i.properties.sourceKind === 'step_output').map(i => ({ stepId: String(i.properties.sourceStepId), targetKey: String(i.properties.parameter), ...(i.properties.sourcePort ? { port: String(i.properties.sourcePort) } : {}), ...(i.properties.sourceComputation ? { compute: i.properties.sourceComputation as { function: string; path: string[] } } : {}) })),
         ...(inputs.some(i => i.properties.sourceKind === 'accepted_output') ? { acceptedInputs: inputs.filter(i => i.properties.sourceKind === 'accepted_output').map(i => ({ intentId: String(i.properties.sourceIntentId), port: String(i.properties.sourcePort), targetKey: String(i.properties.parameter) })) } : {}),
         inputDigest: String(step.properties.inputDigest), ...(step.properties.acceptedOutput ? { output: step.properties.acceptedOutput as ObjectRef } : {}) };
     });

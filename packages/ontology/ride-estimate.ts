@@ -51,4 +51,7 @@ export const rideEstimateActions: ActionDefinition[] = didiReadDefinition.action
     read: { version: didiReadDefinition.version, effect: 'read', inputSchema: z.toJSONSchema(rideEstimateActionSchemas[action.id as RideEstimateAction]), resultType: action.resultType,
       mcp: action.mcp, module: { ...didiReadDefinitionRef, completion: didiReadDefinition.completion } } };
 });
-export const rideEstimateFunctions: FunctionDefinition[] = [{ id: 'rideEstimateStatus', version: '1', inputTypes: ['DidiPlaceObservation', 'RideEstimateObservation'], description: 'Check source, route, request revision and local freshness. A known estimate is only a read result; fees, availability, pickup and arrival commitments remain unknown.' }];
+export const rideEstimateFunctions: FunctionDefinition[] = [
+  { id: 'rideEstimateStatus', version: '1', inputTypes: ['DidiPlaceObservation', 'RideEstimateObservation'], description: 'Check source, route, request revision and local freshness. A known estimate is only a read result; fees, availability, pickup and arrival commitments remain unknown.' },
+  { id: 'selectDidiPlace', version: '1', inputTypes: ['DidiPlaceObservation'], description: 'Pure source selection: return value.placeId only for a unique exact requested name or explicit unique full address in the requested city. Ambiguous, missing, stale or wrong-city evidence returns unknown; no first-candidate default. Can be explicitly selected as a deferred input binding; never schedules an action.' },
+];

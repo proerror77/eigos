@@ -1,3 +1,4 @@
+import { securityGatewayFixture } from './fixtures/security-gateway.js';
 import { Worker } from '../apps/worker/worker.js';
 import { Coordinator } from '../packages/coordinator/coordinator.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
@@ -47,7 +48,7 @@ before(async () => {
   assert(address && typeof address !== 'string');
   base = `http://127.0.0.1:${address.port}`;
   // The test listener is loopback; the injected verifier still enforces HTTPS issuer/audience.
-  const config: Config = { EIGOS_CODEX_MODEL: 'gpt-6-luna', EIGOS_CODEX_REASONING_EFFORT: 'medium', EIGOS_CODEX_SERVICE_TIER: 'priority', EIGOS_DIDI_ENVIRONMENT: 'production', EIGOS_DIDI_ORDERS_ENABLED: 'false', EIGOS_INVITE_BETA: 'false', EIGOS_NETWORK_ENABLED: 'false', EIGOS_NETWORK_MEMBER_IDS: [], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: [], EIGOS_NETWORK_MAX_RESPONDERS: 3, EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: 2,
+  const config: Config = { EIGOS_SECURITY_MODE: 'legacy', EIGOS_CODEX_MODEL: 'gpt-6-luna', EIGOS_CODEX_REASONING_EFFORT: 'medium', EIGOS_CODEX_SERVICE_TIER: 'priority', EIGOS_DIDI_ENVIRONMENT: 'production', EIGOS_DIDI_ORDERS_ENABLED: 'false', EIGOS_INVITE_BETA: 'false', EIGOS_NETWORK_ENABLED: 'false', EIGOS_NETWORK_MEMBER_IDS: [], EIGOS_NETWORK_OPERATOR_MEMBER_IDS: [], EIGOS_NETWORK_MAX_RESPONDERS: 3, EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: 2,
     HOST: '127.0.0.1', PORT: address.port, PUBLIC_URL: base,
     DATABASE_PATH: join(directory, 'gateway.sqlite'), EIGOS_AUTH_MODE: 'jwt',
     OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: audience, OAUTH_JWKS_URL: `${issuer}/jwks`, ALLOWED_ORIGINS: '',
@@ -305,4 +306,21 @@ test('configuration fails closed and development mode cannot bind publicly', () 
   assert.throws(() => readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), NODE_ENV: 'production' }));
   assert.throws(() => readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'short' }));
   assert.equal(readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32) }).HOST, '127.0.0.1');
+});
+
+
+test('foundation discovery excludes unreviewed native registry, network, source and usage surfaces', async () => {
+  const f = await securityGatewayFixture(), actor = f.install(), client = new Client({ name: 'foundation-boundary-test', version: '1' });
+  try {
+    const grant = await f.post('/members/security/grants', f.control(f.grantInput(actor.id)), f.memberHeaders);
+    assert.equal(grant.status, 200);
+    await client.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${actor.token}` } } }));
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    for (const name of ['query_ontology_definitions', 'manage_ontology_definitions', 'prepare_ontology_action', 'approve_ontology_action', 'network_query', 'network_command', 'list_source_connections', 'begin_source_connection', 'get_member_usage', 'amend_task', 'resume_task', 'authorize_checkout_draft']) assert(!names.includes(name), name);
+    assert(names.includes('check_access')); assert(names.includes('submit_task')); assert(names.includes('reply_to_task'));
+    for (const path of ['/ontology/v1/query', '/ontology/v1/commands', '/network/v1/query', '/sources/meituan-paotui/begin']) {
+      const response = await f.post(path, {}, { authorization: `Bearer ${actor.token}` });
+      assert.equal(response.status, 404, path);
+    }
+  } finally { await client.close(); await f.close(); }
 });

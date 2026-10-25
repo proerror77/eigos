@@ -3,7 +3,7 @@ import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { DomainError, type Principal } from '../core/domain.js';
+import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { AgentRegistrations, type RevocationObserver } from './agents.js';
 
 export const profileSchema = z.object({
@@ -144,6 +144,13 @@ export class MemberStore {
   connections(memberId: string): Connection[] {
     return this.db.prepare('SELECT * FROM member_connections WHERE member_id=? ORDER BY last_seen_at DESC,id').all(memberId)
       .map(row => ({ id: String(row.id), clientId: String(row.client_id), scopes: JSON.parse(String(row.scopes)), blocked: !!row.blocked, lastSeenAt: String(row.last_seen_at) }));
+  }
+  authorizationFacts(memberId: string, installationId: string) {
+    const m = this.get(memberId), r = this.agents.lookup(installationId);
+    if (!r || r.memberId !== memberId || !r.clientId) throw new DomainError('FORBIDDEN', 'Installation is not bound to this member');
+    const connection = this.db.prepare('SELECT blocked FROM member_connections WHERE member_id=? AND client_id=?').get(memberId, r.clientId);
+    return { ownerKey: ownerKey({ ...m, clientId: r.clientId, scopes: [] }), memberId, installationId, clientId: r.clientId,
+      active: m.status === 'active' && !!m.acceptedAt && !r.revoked && connection?.blocked !== 1 };
   }
   block(memberId: string, connectionId: string, blocked: boolean): void {
     const connection = this.connections(memberId).find(c => c.id === connectionId);

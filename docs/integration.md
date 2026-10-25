@@ -29,6 +29,25 @@ MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实�
 
 当前通用委托入口为 `eigos.delegate`。任务说明能力只交付说明文档；不能把它描述为购物、预约或出行已经完成。
 
+需要地点的任务，PA 先从用户已保存地址或本次设备定位取得地址并确定城市，再通过同一个 `submit_task` 或 A2A data part 传入可选 `locationContext`。原始 `goal` 保持用户原话；“家”等别名通过上下文绑定，不要求用户重述完整地址：
+
+```json
+{
+  "service": "eigos.delegate",
+  "goal": "从家到前滩太古里，只查估价，不下单、不付款",
+  "locationContext": {
+    "city": "上海市",
+    "origin": { "name": "PA 已取得的准确地点名", "address": "PA 已取得的完整住址", "label": "家", "source": "saved_address" },
+    "destination": { "name": "前滩太古里", "source": "user_provided" }
+  },
+  "requestId": "stable-location-delegation-id"
+}
+```
+
+`source=current_location` 时必须携带实际 `observedAt`。地址上下文先写入当前 `ServiceRequest.confirmedInputs.location`、`RequestSpecification` 与有原始指令依据的 `RequestFact`，Worker 从同一任务发布读取这些事实，继续统一的 Ontology 目标、动作和验收流程。它们属于 PA／用户提供的事实，不是供应商坐标、履约证明或业务许可。供应商地点必须与当前城市、名称及已提供的完整地址相符，才能把“家”等别名计入路线验收。
+
+已确认信息在原任务内沿用；补充车型等信息不清空地址。确需更正时，在正常 `reply_to_task`／`amend_task` 中传入 `locationContext`，未出现的端点保持，`null` 明确清除对应端点。已有固定业务操作不能靠改地址绕过原操作查证。普通约束直接保留在 `goal`，不要让 PA 把中文原话填成内部 predicate 编号。`get_task` 摘要中的 `delegation.knownLocations` 供 PA 在补问前核对，只有真正缺失或有歧义的事实才交给用户。
+
 A2A 使用 `SendMessage` 提交或续接，使用 `GetTask` 回读。长任务可以设置 `configuration.returnImmediately=true`。保存原 `taskId`、`contextId`、请求标识及版本；补问、授权和恢复沿用原任务，不能为了清除未知状态创建替代任务。
 
 ```json
@@ -64,3 +83,7 @@ A2A 使用 `SendMessage` 提交或续接，使用 `GetTask` 回读。长任务�
 会员登记见[Agent 接入流程](guides/agent-onboarding.md)，账号来源见[会员来源连接](guides/member-sources.md)。协作网络通过 `network_query`、`network_command`、`network_updates` 和命令回执接口工作；内容可见性不授予执行或付款权限。
 
 可复用客户端位于 `packages/agent-client/` 和 `integrations/`。示例位于 `examples/`。实际启用范围见[能力目录](architecture/capabilities.md)。
+
+## 受保护模式
+
+上述完整主线接口对应 legacy。显式 `EIGOS_SECURITY_MODE=foundation` 使用共同 TaskView、任务范围查询和独立来源／输出许可；未审查的 legacy 管理与网络入口不自动开放。接入合同及限制见[本体权限指南](guides/ontology-security.md)。目标覆盖与统一结果回写见[任务闭环](architecture/task-closure.md)，测试下单见[滴滴 Mock](integrations/didi-order-test.md)。

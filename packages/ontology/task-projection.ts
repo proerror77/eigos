@@ -1,3 +1,5 @@
+import { createCallerOutcomeProof } from './caller-outcome-proof.js';
+import { outcomeAssessmentValues, outcomeAssessmentRef, hasTaskClosureProjection } from './outcome-assessment-values.js';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { DomainError } from '../core/domain.js';
@@ -24,8 +26,13 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   const request = job.delegation.request;
   const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', paused: 'needs_review', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
   if (job.delegation.outcome?.status === 'unknown' || job.delegation.outcome?.status === 'needs_human') progress.failed = 'needs_review';
+  const d = job.delegation, outcome = d.outcome;
+  // Frozen pre-closure releases keep their original projection contract.
+  // Missing definitions never cause implicit release promotion.
+  const closure = hasTaskClosureProjection(graph);
+  const assessmentRef = outcome && closure ? outcomeAssessmentRef(job, outcome) : undefined;
   const confirmedInputs = request.confirmedInputs ? Object.fromEntries(Object.entries(request.confirmedInputs).map(([key, value]) => [key, { version: value.version, revision: value.revision, fields: value.fields }])) : undefined;
-  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), ...(confirmedInputs ? { confirmedInputs } : {}), revision: request.revision, requestedOutcome: job.delegation.agent?.programRef.id ?? job.delegation.plan?.capabilityRef.id ?? job.delegation.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt };
+  const values = { ...(confirmedInputs ? { confirmedInputs } : {}), originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: d.agent?.programRef.id ?? d.plan?.capabilityRef.id ?? (d.goalCoverage?.requestRevision === request.revision ? d.goalCoverage.capabilityRef.id : undefined) ?? d.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt, ...(assessmentRef ? { currentAssessment: assessmentRef } : {}) };
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
   const saveRequest = (projectionState: string) => {
     const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });
@@ -34,8 +41,43 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
     graph.ingest(owner, { objects: [object] }, source);
   };
   let previousProjection = 'request_only';
-  try { previousProjection = String(graph.read(owner, { type: 'ServiceRequest', id: request.id }).properties.projectionState ?? 'request_only'); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+  try {
+    const previous = graph.read(owner, { type: 'ServiceRequest', id: request.id }).properties;
+    if (previous.revision === request.revision) previousProjection = String(previous.projectionState ?? 'request_only');
+  } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   saveRequest(previousProjection);
+  const root = { type: 'ServiceRequest', id: request.id };
+  const coverage = d.goalCoverage;
+  const coverageRef = coverage && closure ? { type: 'GoalCoverage', id: coverage.digest } : undefined;
+  const unchanged = (object: ObjectWrite) => !!object.expectedRevision && digest(graph.read(owner, object.ref).properties) === digest(object.properties);
+  if (coverage && coverageRef) {
+    const object = upsert(graph, owner, coverageRef.type, coverageRef.id, {
+      requestRevision: coverage.requestRevision, requestDigest: coverage.requestDigest, capabilityRef: coverage.capabilityRef, capabilityDigest: coverage.capabilityDigest,
+      reviewOrigin: coverage.reviewOrigin, modelDecisionDigest: coverage.modelDecisionDigest, input: coverage.input, inputDigest: coverage.inputDigest, review: coverage.review, modelRunId: coverage.modelRunId, assessedAt: coverage.assessedAt, digest: coverage.digest,
+    });
+    if (!unchanged(object)) graph.ingest(owner, { objects: [object], links: [{ type: 'GoalCoverageRequest', from: coverageRef, to: root }] }, { ...source, observedAt: coverage.assessedAt });
+  }
+  if (outcome && assessmentRef) {
+    const callerProof = Object.hasOwn(graph.model.properties('OutcomeAssessment'),'callerProof') ? createCallerOutcomeProof(graph,owner,job) : undefined;
+    const assessment = upsert(graph, owner, assessmentRef.type, assessmentRef.id, outcomeAssessmentValues(outcome, job.state, callerProof));
+    const bindingRef = d.agent?.programRef ?? d.plan?.bindingRef;
+    const feedback = bindingRef ? upsert(graph, owner, 'ExecutionFeedback', digest({ request: request.id, revision: request.revision, bindingRef }), {
+      requestRevision: request.revision, bindingRef, bindingDigest: d.agent?.programDigest ?? digest(d.plan!.bindingDigests), taskState: job.state,
+      judgment: outcome.status, evidenceLevel: outcome.evidenceLevel ?? 'unverified', evidenceRefs: outcome.evidenceRefs, observedAt: outcome.assessedAt,
+    }) : undefined;
+    // Reading/recording another model receipt does not change the assessment.
+    // Avoid revalidating the entire relationship graph on every such checkpoint.
+    if (!unchanged(assessment) || feedback && !unchanged(feedback)) {
+      const sourceReceipts = outcome.evidenceRefs.length ? (graph.related(owner, root, 'sourceReceipts', { remaining: 5000 }) ?? []).filter(receipt => outcome.evidenceRefs.includes(receipt.ref.id) || outcome.evidenceRefs.includes(String(receipt.properties.sourceEventId))) : [];
+      const links = [{ type: 'AssessmentRequest', from: assessmentRef, to: root }, ...(callerProof ? [{type:'AssessmentCallerPlan',from:assessmentRef,to:callerProof.execution.plan}] : []), ...(coverageRef && coverage?.requestRevision === request.revision ? [{ type: 'AssessmentCoverage', from: assessmentRef, to: coverageRef }] : []), ...sourceReceipts.map(receipt => ({ type: 'AssessmentEvidence', from: assessmentRef, to: receipt.ref }))];
+      const old = feedback?.expectedRevision ? graph.related(owner, feedback.ref, 'assessment', { remaining: 1000 }) ?? [] : [];
+      graph.ingest(owner, { objects: [assessment, ...(feedback ? [feedback] : [])],
+        links: [...links, ...(feedback ? [{ type: 'ExecutionFeedbackRequest', from: feedback.ref, to: root }, { type: 'ExecutionFeedbackAssessment', from: feedback.ref, to: assessmentRef }] : [])],
+        removeLinks: feedback ? old.filter(o => o.ref.id !== assessmentRef.id).map(o => ({ type: 'ExecutionFeedbackAssessment', from: feedback.ref, to: o.ref })) : [],
+      }, { ...source, observedAt: outcome.assessedAt });
+    }
+  }
+  if (d.agent?.observations.length) saveRequest('typed_result');
   if (job.state !== 'completed' || !job.artifact?.data.result) return;
   if (job.delegation.agent?.completion && (job.artifact.data.result as Record<string, unknown>).paotuiAnswer) { saveRequest('typed_result'); return; }
   const plan = job.delegation.plan;

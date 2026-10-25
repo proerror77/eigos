@@ -9,6 +9,7 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
 import { createCurrentKernelDefinition, createSeedDefinition } from './seed-definition.js';
 import type { OntologyModel } from './model.js';
+import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
 
 export type DefinitionResource = SerializableObjectType | SerializableInterface | SerializableLink | SerializableAction;
 export interface DefinitionEntry { kind: DefinitionKind; definition: DefinitionResource }
@@ -69,6 +70,9 @@ function trustedTemplates() {
   return templates;
 }
 
+/** Canonical reviewed kernel, independent of owner-authored active releases. */
+export function currentKernelImplementation(): OntologyModel { const value = trustedTemplates(); return compiledModel(value.kernel, value.registry); }
+
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
 export class DefinitionStore {
@@ -120,6 +124,31 @@ export class DefinitionStore {
     const row = this.db.prepare('SELECT legacy_ref FROM ontology_definition_bootstrap WHERE id=1').get();
     if (!row) return conflict('Ontology definitions have not been initialized');
     return this.resolve(JSON.parse(String(row.legacy_ref)));
+  }
+  /** Explicit operator installation; never called by startup or a model. Keeps
+   * every existing definition and fixed task release, adding only DiDi reads. */
+  installDidiReadonly(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the DiDi installation');
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const types = new Set(rideEstimateObjects.map(value => value.id));
+      const availableTypes = new Set([...document.objects, ...document.interfaces, ...rideEstimateObjects].map(value => value.id));
+      const actions = new Set(rideEstimateActions.map(value => value.id)), functions = new Set(rideEstimateFunctions.map(value => value.id));
+      const additions = { objects: kernel.objects.filter(value => types.has(value.id)),
+        links: kernel.links.filter(value => (types.has(value.from.type) || types.has(value.to.type)) && availableTypes.has(value.from.type) && availableTypes.has(value.to.type)),
+        actions: kernel.actions.filter(value => actions.has(value.id)), functions: kernel.functions.filter(value => functions.has(value.id)) };
+      let changed = false;
+      for (const key of ['objects', 'links', 'actions', 'functions'] as const) for (const value of additions[key]) {
+        const current = document[key].find(item => item.id === value.id);
+        if (current && digest(current) !== digest(value)) return conflict('DiDi installation would replace an existing definition');
+        if (!current) { (document[key] as unknown[]).push(structuredClone(value)); changed = true; }
+      }
+      if (!changed) return namespace;
+      document.version = `didi-readonly-${namespace.generation + 1}`;
+      const release = this.insertRelease(document, 'system:install-didi-readonly', namespace.active);
+      return this.activate('system:install-didi-readonly', release.ref, expectedGeneration, true);
+    });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {
     ontologyIdSchema.parse(id);

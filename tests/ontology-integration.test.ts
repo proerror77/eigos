@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { digest } from '../packages/core/delegation.js';
-import { businessModel } from '../packages/ontology/business-model.js';
+import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
+import { createSeedDefinition, CURRENT_KERNEL_VERSION } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+const businessModel=currentKernelImplementation(), seed=createSeedDefinition(), migrationModel=compileOntologyDocument(seed.document,seed.registry);
+const migrationGraph=(db:DatabaseSync)=>new OntologyObjectStore(db,migrationModel);
 import { INTEGRATION_PREDECESSORS } from '../packages/ontology/integration-migration.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { FROZEN_V14, integrationPredecessor, parseHistoricalProperties } from '../packages/ontology/history-schema.js';
@@ -11,7 +15,7 @@ import pins from './fixtures/ontology-v14-fingerprints.json' with { type: 'json'
 const at = '2026-10-20T15:00:00.000Z';
 const source = { kind: 'synthetic' as const, id: 'integration-fixture', observedAt: at };
 function seedPredecessors(db: DatabaseSync) {
-  new OntologyObjectStore(db);
+  migrationGraph(db);
   for (const [type, hashes] of Object.entries(INTEGRATION_PREDECESSORS)) {
     assert.equal(FROZEN_V14.objects[type]!.fingerprint, (pins.objects as Record<string, string>)[type]);
     for (const fingerprint of hashes) assert.equal(digest(integrationPredecessor(type, fingerprint).definition), fingerprint, `${type} must match the actual committed predecessor`);
@@ -45,7 +49,7 @@ test('integrated model preserves member, execution, booking, commerce and domain
   assert.equal(businessModel.action('RequestPAPayment').operation?.effect, 'local');
   assert.equal(businessModel.action('CreateCommerceCart').operation?.effect, 'change');
   assert.equal(businessModel.action('AuthorizeProposal').kind, 'decision');
-  assert.equal(businessModel.ref.version, '15');
+  assert.equal(businessModel.ref.version, CURRENT_KERNEL_VERSION);
 });
 
 test('exact additive predecessors retain their original facts, revisions and provenance after integration', () => {
@@ -53,11 +57,11 @@ test('exact additive predecessors retain their original facts, revisions and pro
   try {
     seedPredecessors(db);
     const before = db.prepare('SELECT * FROM ontology_objects ORDER BY type').all();
-    const graph = new OntologyObjectStore(db);
+    const graph = migrationGraph(db);
     for (const row of rows) assert.deepEqual(graph.read('owner', row.ref).properties, row.properties);
     const after = db.prepare('SELECT * FROM ontology_objects ORDER BY type').all();
     assert.deepEqual(after.map(({ definition_digest: _digest, ...row }) => row), before.map(({ definition_digest: _digest, ...row }) => row));
-    new OntologyObjectStore(db);
+    migrationGraph(db);
     assert.deepEqual(db.prepare('SELECT * FROM ontology_objects ORDER BY type').all(), after);
     assert.throws(() => graph.read('other-owner', rows[0]!.ref), /not found/);
   } finally { db.close(); }
@@ -69,7 +73,7 @@ test('unknown definitions roll back both integration and business-chain migratio
     seedPredecessors(db);
     db.prepare("UPDATE ontology_objects SET definition_digest=? WHERE type='RegisteredCapability'").run(digest('unknown'));
     const before = db.prepare('SELECT * FROM ontology_objects ORDER BY type').all();
-    assert.throws(() => new OntologyObjectStore(db), /Unknown predecessor/);
+    assert.throws(() => migrationGraph(db), /Unknown predecessor/);
     assert.deepEqual(db.prepare('SELECT * FROM ontology_objects ORDER BY type').all(), before);
   } finally { db.close(); }
 });
@@ -81,18 +85,18 @@ test('old schema fingerprints cannot be used to add new facts during migration',
     const row = db.prepare("SELECT body FROM ontology_objects WHERE type='SourceReceipt'").get()!;
     const body = JSON.parse(String(row.body)); body.properties.evidenceLevel = 'provider_test';
     db.prepare("UPDATE ontology_objects SET body=? WHERE type='SourceReceipt'").run(JSON.stringify(body));
-    assert.throws(() => new OntologyObjectStore(db), /pinned predecessor/);
+    assert.throws(() => migrationGraph(db), /pinned predecessor/);
   } finally { db.close(); }
 });
 
 test('legacy checkout without mandatory cost evidence is never relabeled as a current checkout', () => {
   const db = new DatabaseSync(':memory:');
   try {
-    new OntologyObjectStore(db);
+    migrationGraph(db);
     const definition = 'bc609fb81fe874bebab53a641e6e191964d4783d664219f7cfadbac2a791e77e';
     const body = JSON.stringify({ properties: { id: 'legacy', displayTitle: 'Historical checkout' }, source, createdAt: at });
     db.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run('owner', 'CheckoutSession', 'legacy', 1, definition, body);
-    const graph = new OntologyObjectStore(db);
+    const graph = migrationGraph(db);
     assert.throws(() => graph.read('owner', { type: 'CheckoutSession', id: 'legacy' }), /historical data cannot be reinterpreted/);
     assert.equal(db.prepare("SELECT definition_digest FROM ontology_objects WHERE type='CheckoutSession'").get()!.definition_digest, definition);
   } finally { db.close(); }

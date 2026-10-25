@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, copyFileSync } from 'node:fs';
 import { resolve, join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { syncOntology } from './ontology.mjs';
@@ -13,4 +13,5 @@ function prune(path) {
 }
 if (existsSync('dist')) prune(resolve('dist'));
 execFileSync(resolve('node_modules/.bin/tsc'), [], { stdio: 'inherit' });
+copyFileSync(resolve('packages/security/baseline.json'), resolve('dist/packages/security/baseline.json'));
 await syncOntology(root);

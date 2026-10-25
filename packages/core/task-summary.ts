@@ -1,5 +1,6 @@
 import type { Job } from './domain.js';
 import { executionBudgetStatus } from './execution-budget.js';
+import { requestLocations } from './location-context.js';
 
 /** Public business readback. Internal plans, definition/read receipts and model
  * histories stay in the task ledger; the completed artifact is returned intact. */
@@ -16,6 +17,7 @@ export function taskSummary(job: Job) {
     ...(d ? { delegation: {
       backendVersion: d.backendVersion, phase: d.phase,
       request: { id: d.request.id, revision: d.request.revision, executionEnvironment: d.request.executionEnvironment },
+      ...(d.request.confirmedInputs?.location ? { knownLocations: requestLocations(d.request) } : {}),
       acceptance: d.acceptance, outcome: d.outcome,
       ...(d.agent?.composition ? { goalProgress: { version: '1', accepted: d.agent.composition.assessment?.accepted ?? false,
         criteria: d.agent.composition.goal.criteria.map(criterion => {

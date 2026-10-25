@@ -8,6 +8,27 @@ import type { ObjectRef } from './model.js';
 import type { OntologyObjectStore, ReadBudget } from './object-store.js';
 
 export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
+  if (input.function === 'selectDidiPlace') {
+    const status = evaluateRideEstimate(graph, owner, { ...input, function: 'rideEstimateStatus' }, budget)!;
+    if (status.status !== 'known') return status;
+    const s = checkedRideEstimate(graph.read(owner, input.object, budget).properties.snapshot);
+    const unknown = (reason: string): Computation => ({ ...status, status: 'unknown', value: undefined, reason });
+    if (s.data.kind !== 'places') return unknown('A place selection needs a place-search observation');
+    const scopes = graph.related(owner, input.object, 'scope', budget), roots = graph.related(owner, input.object, 'request', budget);
+    const task = rideEstimateInputSchema.parse(scopes?.[0]?.properties.input), role = s.actionInput.role;
+    if (task.mode !== 'estimate' || role !== 'origin' && role !== 'destination') return unknown('A route endpoint role is required');
+    const normalize = (value: string) => value.replace(/\s+/g, '').toLowerCase();
+    const city = (value: string) => normalize(value).replace(/市$/, '');
+    const places = s.data.places.filter(place => city(place.city) === city(task.city));
+    const target = task[role], original = String(roots?.[0]?.properties.originalGoal ?? '');
+    const addressed = places.filter(place => place.addressAll.length > place.name.length
+      && places.filter(other => other.addressAll === place.addressAll).length === 1
+      && (normalize(target) === normalize(place.addressAll) || normalize(place.name) === normalize(target) && original.includes(place.addressAll)));
+    const exact = places.filter(place => normalize(place.name) === normalize(target));
+    const matches = addressed.length ? addressed : exact;
+    if (matches.length !== 1) return unknown('Ambiguous place selection needs a new decision or an explicit full address; no first-candidate default');
+    return { ...status, value: { placeId: matches[0]!.id, observation: input.object, selectionRule: addressed.length ? 'explicit_unique_address' : 'unique_exact_name' } };
+  }
   if (input.function !== 'rideEstimateStatus') return;
   if (!['DidiPlaceObservation', 'RideEstimateObservation'].includes(input.object.type)) throw new DomainError('INVALID_INPUT', 'Ride estimate status needs a DiDi observation');
   const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [input.object], evidenceLevels: [] });

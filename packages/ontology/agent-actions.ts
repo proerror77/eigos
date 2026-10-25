@@ -3,12 +3,13 @@ import { objectRefSchema, type ObjectRef } from './model.js';
 import type { PlanningSnapshot } from './planning-contract.js';
 import type { Ref } from './execution.js';
 import type { ActionBindingPin } from '../core/action-bindings.js';
+import { inputReferenceSchema, plannedCompletionSchema } from './dataflow-contract.js';
 
 const stepId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
 export const agentStepSchema = z.strictObject({
   id: stepId, action: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/),
   argumentsJson: z.string().max(16000), dependsOn: z.array(stepId).max(4),
-  inputRefs: z.array(z.strictObject({ stepId, targetKey: z.string().regex(/^[a-zA-Z][a-zA-Z0-9]{0,63}$/), port: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional() })).max(4),
+  inputRefs: z.array(inputReferenceSchema.extend({ port: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional() })).max(8),
   bindingDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), contextId: stepId.optional(),
   acceptedInputs: z.array(z.strictObject({ intentId: z.string().min(1).max(200), port: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/), targetKey: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/) })).max(8).optional(),
   contributesTo: z.array(stepId).max(20).optional(),
@@ -18,9 +19,11 @@ export const agentDecisionSchema = z.strictObject({
   kind: z.enum(['prepare', 'execute', 'complete', 'clarify', 'no_feasible_plan']),
   requestRevision: z.number().int().positive(), message: z.string().min(1).max(4000),
   steps: z.array(agentStepSchema).max(4), completionJson: z.string().max(16000),
+  plannedCompletion: plannedCompletionSchema.optional(),
   informationRequest: z.strictObject({ fact: z.string().min(1).max(80), evidenceRefs: z.array(objectRefSchema).max(8) }).optional(),
   clarificationContextId: stepId.optional(),
   contexts: z.array(z.strictObject({ id: stepId, bindingDigest: z.string().regex(/^[a-f0-9]{64}$/), inputJson: z.string().max(16000) })).max(4).optional(),
+  componentId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/).optional(),
 });
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 export type AgentStep = z.infer<typeof agentStepSchema>;
@@ -56,16 +59,18 @@ export interface AgentActionPlan {
 export interface AgentExecutionState {
   version: '1' | '2'; programRef: Ref; programDigest: string; scope: ObjectRef;
   composition?: AgentCompositionState;
+  components?: Record<string, import('./composition.js').ComponentState>;
   input: Record<string, unknown>; requestRevision: number;
   /** Explicit action subset initialized by the trusted declarative program. */
   managedActionIds?: string[];
   plans: AgentActionPlan[]; pendingPlanId?: string;
   observations: ObjectRef[];
+  inputResolutions?: { planId: string; stepId: string; intentId: string; inputDigest: string; ontologyPlanning: PlanningSnapshot }[];
   initialSelectionPending?: { modelRunId: string; definitionActions: string[]; groundingPlanning: PlanningSnapshot };
   paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion' | 'runtime'; message: string; inputDigest: string }[];
   informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
-  completion?: { modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
+  completion?: { mode?: 'model' | 'planned'; planId?: string; modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
   callerCompletion?: { requestId: string; planDigest: string; intentIds: string[]; ontologyPlanning: PlanningSnapshot };
 }
 export const agentObjectRefSchema = objectRefSchema;

@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { NetworkStore } from '../dist/packages/network/store.js';
 import { MemberStore } from '../dist/packages/members/store.js';
+import { openMembershipAdministration } from '../dist/packages/security/admin.js';
 import { parseArgs } from 'node:util';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
@@ -11,18 +12,22 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
   console.error('Usage: npm run members -- list | approve <member-id> | suspend <member-id> | invite <member-id> --output data/private/invitation.json [--expires-hours 24] | revoke-invite <invitation-id>');
   process.exitCode = 1;
 } else {
-  const path = process.env.MEMBERSHIP_DATABASE_PATH ?? `${process.env.DATABASE_PATH ?? './data/eigos.sqlite'}.members`;
-  const store = new MemberStore(path);
-  const businessPath = process.env.DATABASE_PATH ?? './data/eigos.sqlite';
-  const business = existsSync(businessPath) ? new DatabaseSync(businessPath) : undefined;
-  if (business) {
-    business.exec('PRAGMA busy_timeout=5000;');
-    if (business.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='network_auth_fences'").get()) {
-      const network = new NetworkStore(business);
-      store.setRevocationObserver(change => network.fence(change.memberId, change.kind, change.target));
-    }
-  }
+  const database = process.env.DATABASE_PATH ?? './data/eigos.sqlite';
+  const path = process.env.MEMBERSHIP_DATABASE_PATH ?? `${database}.members`;
+  let admin, business;
   try {
+    if ((!existsSync(database) && !existsSync(path)) && process.env.EIGOS_SECURITY_MODE !== 'foundation') {
+      const members = new MemberStore(path);
+      admin = { members, mode: 'legacy', setStatus: (id, status) => members.setStatus(id, status), close: () => members.close() };
+    } else admin = openMembershipAdministration(database, path, process.env.EIGOS_SECURITY_MODE);
+    if (admin.mode === 'legacy' && existsSync(database)) {
+      business = new DatabaseSync(database); business.exec('PRAGMA busy_timeout=5000;');
+      if (business.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='network_auth_fences'").get()) {
+        const network = new NetworkStore(business);
+        admin.members.setRevocationObserver(change => network.fence(change.memberId, change.kind, change.target));
+      }
+    }
+    const store = admin.members;
     if (action === 'list') console.table(store.list().map(({ id, displayName, status, createdAt }) => ({ id, displayName, status, createdAt })));
     else if (action === 'invite') {
       if (!values.output) throw new Error('Invitation credentials require a private --output file under ignored data/');
@@ -34,9 +39,9 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
       console.log(JSON.stringify({ invitationId: invitation.id, expiresAt: invitation.expiresAt, privateFile: output }));
     } else if (action === 'revoke-invite') { store.agents.revokeInvitation(id); console.log('Invitation revoked'); }
     else {
-      const member = store.setStatus(id, action === 'approve' ? 'active' : 'suspended');
+      const member = admin.setStatus(id, action === 'approve' ? 'active' : 'suspended');
       console.log(JSON.stringify({ id: member.id, status: member.status }));
     }
   } catch (error) { console.error(error instanceof Error ? error.message : 'Member operation failed'); process.exitCode = 1; }
-  finally { store.close(); business?.close(); }
+  finally { admin?.close(); business?.close(); }
 }

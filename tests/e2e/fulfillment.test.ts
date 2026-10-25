@@ -84,22 +84,28 @@ async function fixture(t: TestContext, fault: object = {}) {
       assert((await related(value.ref, 'sourceReceipts')).length >= 1);
       assert((await related(value.ref, 'subjects')).length > 0);
     }
-    const assessments = await related(proposal.ref, 'assessments'); assert.equal(assessments.length, 1);
-    assert.equal(assessments[0]!.properties.judgment, judgment);
-    const findings = await related(assessments[0]!.ref, 'findings');
-    assert.equal(findings.length, (assessments[0]!.properties.criterionResults as unknown[]).length);
+    const assessments = await related(proposal.ref, 'assessments'); assert(assessments.length > 0);
+    const current = (await query({ object: request }))[0]!.properties.currentAssessment as ObjectRef;
+    assert(current, 'The request must identify its current independently assessed outcome');
+    const assessment = assessments.find(value => value.ref.type === current.type && value.ref.id === current.id);
+    assert(assessment, 'Current outcome must belong to the proposal; historical assessments remain linked');
+    assert.equal(assessment.properties.judgment, judgment);
+    const findings = await related(assessment.ref, 'findings');
+    assert.equal(findings.length, (assessment.properties.criterionResults as unknown[]).length);
     assert(findings.some(value => value.properties.origin === 'independent_verifier'));
     assert(findings.some(value => value.properties.origin === 'completion_target'));
-    assert.equal((await related(assessments[0]!.ref, 'specification')).length, 1);
-    assert((await related(assessments[0]!.ref, 'businessResults')).length > 0);
+    assert.equal((await related(assessment.ref, 'specification')).length, 1);
+    assert((await related(assessment.ref, 'businessResults')).length > 0);
     const decisions = await related(request, 'businessDecisions');
     for (const action of ['SubmitServiceRequest', 'ProposeServiceExecution', 'AuthorizeProposal', 'AssessServiceOutcome']) assert(decisions.some(value => value.properties.actionId === action));
-    return { request, proposal, engagement: engagements[0]!, grants, results, assessment: assessments[0]! };
+    return { request, proposal, engagement: engagements[0]!, grants, results, assessment };
   };
   return { dir, base, workers, task, get, approve, api, rpc, alternate, appPost, startWorker, mcp, query, related, chain, processes };
 }
 
-for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${crashAfter} success + Worker crash recovers by original key; two Workers never replay effects`, { timeout: 45000 }, async t => {
+// This scenario starts five independent cold processes before completing the
+// original operation; its aggregate bound must exceed individual startup bounds.
+for (const crashAfter of ['order', 'payment'] as const) test(`E2E: remote ${crashAfter} success + Worker crash recovers by original key; two Workers never replay effects`, { timeout: 120000 }, async t => {
   const f = await fixture(t, crashAfter === 'order' ? { holdOrder: true } : { holdPayment: true });
   const offered = await f.task(); await f.approve(offered);
   const paid = await waitFor(() => f.api('ledger'), x => crashAfter === 'order' ? x.counters.ordersCreated === 1 : x.counters.charges === 1, 'remote business effect accepted');
@@ -168,7 +174,8 @@ test('E2E: partial delivery fails, refund application is pending, receipt resolv
   const cases = await f.related(originalChain.request, 'afterSalesCases'); assert.equal(cases.length, 1);
   assert.equal(cases[0]!.properties.progress, 'resolved');
   assert.deepEqual((await f.related(cases[0]!.ref, 'originalAssessment'))[0]!.ref, originalChain.assessment.ref);
-  assert.deepEqual((await f.related(cases[0]!.ref, 'remedyAssessments'))[0]!.ref, remedyChain.assessment.ref);
+  const remedyAssessments = await f.related(cases[0]!.ref, 'remedyAssessments');
+  assert(remedyAssessments.some(value => value.ref.type === remedyChain.assessment.ref.type && value.ref.id === remedyChain.assessment.ref.id), 'After-sales history must include the current independently verified remedy outcome');
   assert.deepEqual((await f.related(cases[0]!.ref, 'remedyRequest'))[0]!.ref, remedyChain.request);
   assert((await f.related(cases[0]!.ref, 'originalResults')).length > 0);
   assert((await f.related(cases[0]!.ref, 'remedyResults')).length > 0);

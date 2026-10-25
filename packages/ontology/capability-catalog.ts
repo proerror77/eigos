@@ -1,3 +1,5 @@
+import { authorizationScope } from '../security/context.js';
+import { capabilityVerificationHistorySchema, sanitizeCapabilityVerificationHistory, type CapabilityVerificationHistory } from './capability-feedback.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -8,6 +10,9 @@ import { moneySchema, type ProviderBinding, type ResolvedCandidate, type Service
 import type { Resolution } from '../coordinator/resolver.js';
 
 type CapabilitySummary = ReturnType<ExecutionCatalog['summaries']>[number];
+export type CapabilityContextSummary = CapabilitySummary & { verificationHistory?: CapabilityVerificationHistory };
+type CapabilityProjectionSummary = CapabilitySummary & { verificationHistory?: unknown };
+const contextualCapabilityId = (definitionDigest: string, requestId: string, verificationHistory: CapabilityVerificationHistory) => `capability-context:${digest({definitionDigest, requestId, verificationHistory})}`;
 const ref = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 const jsonObject = z.record(z.string(), z.unknown());
 const p = (kind: PropertyDefinition['kind'], schema: z.ZodType, description: string, required = true): PropertyDefinition => ({ kind, schema, description, required, source: 'Configured capability registry filtered for this authenticated task' });
@@ -30,20 +35,24 @@ const canonical = (s: CapabilitySummary): CapabilitySummary => ({ ref: s.ref, na
   predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
   ...(s.goalOutcomes ? { goalOutcomes: s.goalOutcomes } : {}),
   // Source readiness is mutable owner state, never part of a definition's identity.
-  locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, sourceAuthorization: undefined });
+  locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, scopeReviewMode: s.scopeReviewMode, sourceAuthorization: undefined });
 
 /** Called under the same fenced transaction as interpretation, never by a model. */
-export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string, summaries: ReturnType<ExecutionCatalog['summaries']>) {
+export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string, summaries: CapabilityProjectionSummary[]) {
   if (summaries.length > 16) throw new DomainError('CONFLICT', 'Narrow the capability discovery scope');
+  if (summaries.some(item => item.verificationHistory !== undefined) && (graph.security || authorizationScope())) throw new DomainError('FORBIDDEN', 'Task-scoped authority does not grant cross-task feedback history');
+  const supportsHistory = Object.hasOwn(graph.model.properties('RegisteredCapability'), 'verificationHistory') && Object.hasOwn(graph.model.properties('RegisteredCapability'), 'contextRequestId');
   const request = { type: 'ServiceRequest', id: requestId }, objects: ObjectWrite[] = [], links: LinkWrite[] = [];
   graph.read(owner, request);
   for (const item of summaries) {
-    const s = canonical(item), hash = digest(s), object = { type: 'RegisteredCapability', id: `capability:${hash}` };
+    const history = item.verificationHistory === undefined || !supportsHistory ? undefined : sanitizeCapabilityVerificationHistory(item.verificationHistory);
+    const s = canonical(item), hash = digest(s), object = { type: 'RegisteredCapability', id: history ? contextualCapabilityId(hash, requestId, history) : `capability:${hash}` };
     const properties = { id: object.id, capabilityRef: s.ref, name: s.name, description: s.description, tags: s.tags, inputSchema: s.inputSchema,
       predicates: s.predicates, outcomePredicates: s.outcomePredicates, requirementRoles: s.requirementRoles,
       ...(s.goalOutcomes ? { goalOutcomes: s.goalOutcomes } : {}),
       ...(s.constraintEvaluation ? { constraintEvaluation: s.constraintEvaluation } : {}),
-      ...(s.locationSemantics ? { locationSemantics: s.locationSemantics } : {}), definitionDigest: hash };
+      ...(s.scopeReviewMode ? { scopeReviewMode: s.scopeReviewMode } : {}),
+      ...(s.locationSemantics ? { locationSemantics: s.locationSemantics } : {}), definitionDigest: hash, ...(history ? {contextRequestId:requestId, verificationHistory:history} : {}) };
     try { if (digest(graph.read(owner, object).properties) !== digest(properties)) throw new DomainError('CONFLICT', 'Registered capability snapshot changed'); }
     catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; objects.push({ ref: object, properties }); }
     links.push({ type: 'CapabilityRequest', from: object, to: request });
@@ -52,15 +61,20 @@ export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: stri
   graph.ingest(owner, { objects, links, removeLinks }, { kind: 'task', id: requestId, observedAt: new Date().toISOString() });
 }
 
-export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string): ReturnType<ExecutionCatalog['summaries']> {
+export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string): CapabilityContextSummary[] {
   const objects = graph.related(owner, { type: 'ServiceRequest', id: requestId }, 'capabilities', { remaining: 1000 }) ?? [];
   if (objects.length > 16) throw new DomainError('CONFLICT', 'Capability context exceeds its retrieval bound');
   return objects.map(object => {
     const p = object.properties;
     const value = canonical({ ref: p.capabilityRef, name: p.name, description: p.description, tags: p.tags, inputSchema: p.inputSchema, predicates: p.predicates,
-      outcomePredicates: p.outcomePredicates, ...(p.goalOutcomes ? { goalOutcomes: p.goalOutcomes } : {}), requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, constraintEvaluation: p.constraintEvaluation, sourceAuthorization: undefined } as CapabilitySummary);
-    if (digest(value) !== p.definitionDigest || object.ref.id !== `capability:${p.definitionDigest}`) throw new DomainError('CONFLICT', 'Registered capability evidence changed');
-    return value;
+      outcomePredicates: p.outcomePredicates, ...(p.goalOutcomes ? { goalOutcomes: p.goalOutcomes } : {}), requirementRoles: p.requirementRoles, locationSemantics: p.locationSemantics, constraintEvaluation: p.constraintEvaluation, scopeReviewMode: p.scopeReviewMode, sourceAuthorization: undefined } as CapabilitySummary);
+    const contextual = p.contextRequestId !== undefined || p.verificationHistory !== undefined;
+    if (contextual && (graph.security || authorizationScope())) throw new DomainError('FORBIDDEN', 'Task-scoped authority does not grant cross-task feedback history');
+    if (contextual && (p.contextRequestId !== requestId || p.verificationHistory === undefined)) throw new DomainError('CONFLICT', 'Capability feedback belongs to another request');
+    const history = contextual ? capabilityVerificationHistorySchema.parse(p.verificationHistory) : undefined;
+    const expectedId = history ? contextualCapabilityId(String(p.definitionDigest), requestId, history) : `capability:${p.definitionDigest}`;
+    if (digest(value) !== p.definitionDigest || object.ref.id !== expectedId || history && digest(history) !== digest(p.verificationHistory)) throw new DomainError('CONFLICT', 'Registered capability evidence changed');
+    return {...value, ...(history ? {verificationHistory:history} : {})};
   });
 }
 

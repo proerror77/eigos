@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 import time
 import urllib.error
@@ -87,12 +88,24 @@ class Client:
             raise ClientError('Credential unavailable or malformed; refresh the configured credential source')
         return token
 
-    def request(self, url, body=None):
+    def request(self, url, body=None, authenticated=False):
         if address(url, self.config.get('allowLoopbackHttp', False)) != self.origin:
             raise ClientError('Cross-origin endpoint refused; reconfigure explicitly before sharing credentials or task content')
         headers = {'Accept': 'application/json'}
+        if (body is not None or authenticated) and self.config.get('agentCredentialFile'):
+            origin = urllib.parse.urlunsplit((*urllib.parse.urlsplit(url)[:2], '', '', ''))
+            try:
+                response = subprocess.run([self.config['nodeBin'], *(['--use-env-proxy'] if self.config.get('nodeUseEnvProxy') else []), self.config['agentRequestHelper'], self.config['agentCredentialFile'], origin], input=json.dumps({'path': urllib.parse.urlsplit(url).path, 'method': 'POST' if body is not None else 'GET', 'body': body}), capture_output=True, text=True, timeout=45)
+                value = json.loads(response.stdout) if response.returncode == 0 else None
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                raise ClientError('Registered Agent transport unavailable; preserve the request identity') from None
+            if not isinstance(value, dict) or not isinstance(value.get('status'), int) or not 200 <= value['status'] < 300:
+                raise ClientError('Registered Agent request denied or interrupted; inspect admission and exact task permissions')
+            return value.get('body')
         if body is not None:
             headers.update({'Content-Type': 'application/json', 'A2A-Version': '1.0', 'Authorization': 'Bearer ' + self.token()})
+        elif authenticated:
+            headers['Authorization'] = 'Bearer ' + self.token()
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode('utf-8')
         request = urllib.request.Request(url, data=data, headers=headers)
         try:
@@ -139,7 +152,29 @@ class Client:
         task = result.get('task', result) if isinstance(result, dict) else None
         if not isinstance(task, dict) or not isinstance(task.get('id'), str) or not task.get('status', {}).get('state'):
             raise ClientError('Expected an A2A task response')
+        if self.config.get('securityMode') == 'foundation':
+            metadata = task.get('metadata', {})
+            if metadata.get('view') != 'eigos.task.v2' or any(k in metadata for k in ('delegation', 'runs', 'afterSales')):
+                raise ClientError('Expected the protected TaskView contract; no legacy fallback performed')
         return task
+
+    def ontology(self, operation, task_id, data):
+        if self.config.get('securityMode') != 'foundation' or operation not in ('query', 'evaluate', 'check-access'):
+            raise ClientError('Configure foundation for task-scoped ontology calls')
+        try:
+            uuid.UUID(task_id)
+        except (ValueError, TypeError):
+            raise ClientError('Use an explicitly granted task ID') from None
+        if not isinstance(data, dict):
+            raise ClientError('Ontology input must be a JSON object')
+        if operation == 'check-access':
+            if 'taskId' in data:
+                raise ClientError('Task identity comes from task-id')
+            payload = {'taskId': task_id, **data}
+        else:
+            payload = {'version': 2, 'taskId': task_id, 'query' if operation == 'query' else 'call': data}
+        base = urllib.parse.urlsplit(self.config['cardUrl'])
+        return self.request(urllib.parse.urlunsplit((base.scheme, base.netloc, '/ontology/' + operation, '', '')), payload)
 
     def write(self, operation, request_id, params, endpoint):
         if not request_id or len(request_id) > 128:
@@ -223,7 +258,8 @@ class Client:
         current = self.rpc('GetTask', {'id': task_id})
         if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
             raise ClientError('Task service is outside the configured delegation allowlist')
-        request = current.get('metadata', {}).get('delegation', {}).get('agent', {}).get('paPayment', {}).get('request', {})
+        metadata = current.get('metadata', {})
+        request = metadata.get('payment', {}).get('request', {}) if metadata.get('view') == 'eigos.task.v2' else metadata.get('delegation', {}).get('agent', {}).get('paPayment', {}).get('request', {})
         if request.get('id') != data['handoffId'] or request.get('digest') != data['handoffDigest']:
             raise ClientError('Payment notification does not match the owned task handoff')
         _, endpoint = self.discover()
@@ -387,7 +423,7 @@ class Client:
                    if isinstance(part.get('data'), dict)]
         output = {'taskId': task['id'], 'contextId': task.get('contextId'), 'state': task['status']['state'],
                   'resumeRequired': polled['resumeRequired'], 'receivedAtUtc': received,
-                  'accepted': task.get('metadata', {}).get('delegation', {}).get('acceptance', {}).get('accepted'),
+                  'accepted': (task.get('metadata', {}).get('accepted') if self.config.get('securityMode') == 'foundation' else task.get('metadata', {}).get('delegation', {}).get('acceptance', {}).get('accepted')),
                   'artifacts': [{'deliverable': value.get('deliverable')} for value in content],
                   'receiptDirectory': str(directory)}
         timing.update({'finishedAtUtc': datetime.now(timezone.utc).isoformat(),
@@ -441,10 +477,19 @@ def main():
     credentials = configure.add_mutually_exclusive_group(required=True)
     credentials.add_argument('--token-file')
     credentials.add_argument('--token-env')
+    credentials.add_argument('--agent-credential-file')
+    configure.add_argument('--node-bin')
+    configure.add_argument('--agent-request-helper')
+    configure.add_argument('--node-use-env-proxy', action='store_true')
+    configure.add_argument('--security-mode', choices=['legacy', 'foundation'], default='legacy')
     configure.add_argument('--allow-loopback-http', action='store_true')
     configure.add_argument('--allow-service', action='append')
     configure.add_argument('--default-service')
     commands.add_parser('discover')
+    for name in ('query', 'evaluate', 'check-access'):
+        command = commands.add_parser(name)
+        command.add_argument('--task-id', required=True)
+        command.add_argument('--input-file', required=True)
     send = commands.add_parser('send')
     send.add_argument('--text-file', required=True)
     send.add_argument('--request-id', required=True)
@@ -499,13 +544,17 @@ def main():
             raise ClientError('Run timing must use numeric seconds and interval')
     if args.command == 'configure':
         address(args.card_url, args.allow_loopback_http)
-        config = {'cardUrl': args.card_url, 'allowedServices': args.allow_service or DEFAULT_SERVICES,
+        config = {'cardUrl': args.card_url, 'allowedServices': args.allow_service or DEFAULT_SERVICES, 'securityMode': args.security_mode,
                   'allowLoopbackHttp': args.allow_loopback_http}
         if args.default_service:
             if args.default_service not in config['allowedServices']:
                 raise ClientError('Default service must be in the configured delegation allowlist')
             config['defaultService'] = args.default_service
-        if args.token_file:
+        if args.agent_credential_file:
+            if args.security_mode != 'foundation' or not args.node_bin or not args.agent_request_helper:
+                raise ClientError('Registered Agent mode requires foundation, node-bin and the reviewed request helper')
+            config.update({'agentCredentialFile': str(Path(args.agent_credential_file).expanduser().resolve()), 'nodeBin': str(Path(args.node_bin).expanduser().resolve()), 'agentRequestHelper': str(Path(args.agent_request_helper).expanduser().resolve()), 'nodeUseEnvProxy': args.node_use_env_proxy})
+        elif args.token_file:
             config['tokenFile'] = str(Path(args.token_file).expanduser().resolve())
         else:
             if not args.token_env or not args.token_env.replace('_', 'a').isalnum() or args.token_env[0].isdigit():
@@ -519,6 +568,11 @@ def main():
         card, _ = client.discover()
         if args.default_service and not any(s.get('id') == args.default_service for s in card['skills']):
             raise ClientError('Default service is not enabled in the current Agent Card')
+        if args.security_mode == 'foundation':
+            base = urllib.parse.urlsplit(args.card_url)
+            context = client.request(urllib.parse.urlunsplit((base.scheme, base.netloc, '/security/context', '', '')), {}, authenticated=True)
+            if context.get('stage') not in ('S4', 'S5') or context.get('actorKind') != 'agent':
+                raise ClientError('Foundation installation authorization is not ready')
         write_private(Path(args.config).expanduser().resolve(), config)
         output = {'configured': True, 'cardUrl': args.card_url, 'allowedServices': config['allowedServices']}
     else:
@@ -549,6 +603,8 @@ def main():
             output = client.reconcile(args.task_id, args.request_id)
         elif args.command == 'submit':
             output = client.submit(read_json(args.input_file), args.request_id)
+        elif args.command in ('query', 'evaluate', 'check-access'):
+            output = client.ontology(args.command, args.task_id, read_json(args.input_file))
         elif args.command in ('reply', 'amend', 'resume'):
             output = client.reply(args.task_id, read_json(args.input_file), args.request_id, args.command)
         elif args.command == 'poll':

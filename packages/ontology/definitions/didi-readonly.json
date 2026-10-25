@@ -1,8 +1,8 @@
 {
   "format": "eigos.ontology.mcp-reads.v1",
   "id": "didi.ride-estimate",
-  "version": "1",
-  "completion": { "evaluate": "rideEstimateStatus" },
+  "version": "2",
+  "completion": { "evaluate": "rideEstimateStatus", "planned": true },
   "actions": [
     {
       "id": "SearchDidiPlaces",
@@ -23,7 +23,7 @@
     },
     {
       "id": "EstimateDidiRide",
-      "description": "Estimate a route from selected place IDs in the two owned source observations declared in mcp.requires. Read each observation and evaluate its declared function before selecting this action. All coordinates come from those selections. Prices are estimates; fees, provider expiry, availability and pickup/arrival commitments remain unknown. No order or payment.",
+      "description": "Estimate a route from selected place IDs in the two owned source observations declared in mcp.requires. Choose source IDs from read and evaluated observations, or explicitly select the declared derive bindings in a read graph; those bindings are evaluated only after real source outputs exist. Unknown or ambiguous selections need a new decision. All coordinates come from those selections. Prices are estimates; fees, provider expiry, availability and pickup/arrival commitments remain unknown. No order or payment.",
       "resultType": "RideEstimateObservation",
       "mcp": {
         "server": "didi",
@@ -37,8 +37,8 @@
           "to_name": { "from": "selection", "name": "destination", "path": ["name"] }
         },
         "requires": [
-          { "name": "origin", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "originObservation", "selectionInput": "originPlaceId", "role": "origin", "evaluate": "rideEstimateStatus" },
-          { "name": "destination", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "destinationObservation", "selectionInput": "destinationPlaceId", "role": "destination", "evaluate": "rideEstimateStatus" }
+          { "name": "origin", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "originObservation", "selectionInput": "originPlaceId", "role": "origin", "evaluate": "rideEstimateStatus", "derive": { "function": "selectDidiPlace", "path": ["placeId"] } },
+          { "name": "destination", "action": "SearchDidiPlaces", "objectType": "DidiPlaceObservation", "observationInput": "destinationObservation", "selectionInput": "destinationPlaceId", "role": "destination", "evaluate": "rideEstimateStatus", "derive": { "function": "selectDidiPlace", "path": ["placeId"] } }
         ],
         "inputMatchesScope": [],
         "route": { "origin": "origin", "destination": "destination" }

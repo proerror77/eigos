@@ -1,5 +1,6 @@
 import { createCurrentKernelDefinition } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+import { syntheticGoalReview } from './backend-fixture.js';
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -219,14 +220,14 @@ test('N2 Codex reasoning transport drives host queries for whole-goal interpreta
     }
     return { output, evidence: evidence() };
   } };
-  const b = backend(createExecutionCatalog(), new CodexReasoner(scriptedMcpModel(model)));
+  const b = backend(createExecutionCatalog(), Object.assign(new CodexReasoner(scriptedMcpModel(model)), {reviewGoal: syntheticGoalReview}));
   try {
     const submitted = b.submit({ deliverable: 'Record acceptance requirements' });
     for (let i = 0; i < 6 && ['working', 'submitted'].includes(b.store.get(owner, submitted.id).state); i++) await b.run();
     const done = b.store.get(owner, submitted.id);
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
     assert(done.runs!.length < prompts.length); assert(prompts.length >= 8);
-    assert(done.runs!.every(run => run.ontologyMcp?.decisionSubmitted && run.nativeMcpCalls?.some(call => call.tool === 'submit_decision')));
+    assert(done.runs!.filter(r => r.purpose !== 'goal_coverage').every(run => run.ontologyMcp?.decisionSubmitted && run.nativeMcpCalls?.some(call => call.tool === 'submit_decision')));
     assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
     assert.equal(done.delegation!.groundingDecisions!.length, 1); assert.equal(done.delegation!.plan, undefined);
     const plan = done.delegation!.agent!.plans[0]!; assert.equal(plan.version, '3');
@@ -301,7 +302,7 @@ test('N2 cancellation fences model responses and prevents the next read or dispa
   let started!: () => void, release!: () => void;
   const entered = new Promise<void>(r => { started = r; }), waiting = new Promise<void>(r => { release = r; });
   const model = { runStructured: async () => { started(); await waiting; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(scriptedMcpModel(model)));
+  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), Object.assign(new CodexReasoner(scriptedMcpModel(model)), {reviewGoal: syntheticGoalReview}));
   try {
     const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss|claim is no longer active/);
     await entered; b.tasks.cancel(principal, job.id); release(); await rejected;

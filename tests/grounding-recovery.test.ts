@@ -28,7 +28,7 @@ test('rejected item-count interpretation returns feedback and corrects mass in t
     const b = backend(f.catalog, model, f.store), job = b.submit({ goal, executionEnvironment: 'sandbox' });
     const rejected = await b.run(); assert.equal(rejected.id, job.id); assert.equal(rejected.state, 'working'); assert.equal(rejected.delegation!.phase, 'grounding'); assert.equal(rejected.delegation!.groundingFeedback!.length, 1);
     assert.equal(rejected.delegation!.request.requirements.length, 0); assert.equal(f.calls.length, 0); assert.equal(f.store.intents(owner, job.id).length, 0);
-    const scoped = await b.run(); assert.equal(scoped.id, job.id); assert(scoped.delegation!.agent); assert.equal(scoped.runs!.length, 2); assert.equal(f.calls.length, 0);
+    const scoped = await b.run(); assert.equal(scoped.id, job.id); assert(scoped.delegation!.agent); assert.equal(scoped.runs!.length, 3); assert.equal(f.calls.length, 0);
     const mass = scoped.delegation!.request.requirements[0]!; assert.equal(mass.kind, 'quantity'); assert.deepEqual(mass.expected, { amount: '500', unit: 'g' });
     assert(scoped.delegation!.request.messages[0]!.text.includes('一个文件'), 'Declared contents were retained');
   } finally { f.store.close(); }
@@ -84,7 +84,7 @@ test('an unlisted model capability version gets bounded feedback before the exac
     assert.equal(f.calls.length, 0); assert.equal(f.store.intents(owner, job.id).length, 0);
     const selected = await b.run();
     assert.equal(selected.id, job.id); assert.deepEqual(selected.delegation!.agent!.programRef, PAOTUI_AGENT_REFS.quote);
-    assert.equal(selected.delegation!.request.messages.length, 1); assert.equal(selected.runs!.length, 2);
+    assert.equal(selected.delegation!.request.messages.length, 1); assert.equal(selected.runs!.length, 3);
     assert.equal(selected.delegation!.ontologyReads!.filter(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok').length, 2);
     assert.equal(f.calls.length, 0, 'Scope preparation does not invoke a provider');
   } finally { f.store.close(); }

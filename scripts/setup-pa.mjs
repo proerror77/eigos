@@ -11,6 +11,7 @@ import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.j
 import { BACKEND_VERSION } from '../dist/packages/ontology/execution.js';
 import { participantDeploymentSettings } from '../dist/packages/capabilities/free-booking/runtime-config.js';
 import { resolvePaOwner } from './pa-source.mjs';
+import { assertUpgradeIdle } from './pa-upgrade.mjs';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
@@ -39,6 +40,7 @@ if (takeOverFrom && (!isAbsolute(takeOverFrom) || takeOverFrom !== previousOwner
 const previousPlist = read(plistPath);
 if (previousPlist && !previousPlist.includes(xml(envPath)) && !previousPlist.includes(xml(runtimeEnv))) throw new Error('LaunchAgent belongs to another runtime');
 const oldSettings = read(runtimeEnv) || read(envPath);
+if(field(oldSettings,'EIGOS_SECURITY_MODE')==='foundation')throw new Error('Use the reviewed foundation rollout; legacy setup cannot replace foundation authentication or data');
 if (oldSettings && !oldSettings.startsWith(marker) && !oldSettings.startsWith(oldMarker)) throw new Error('Existing settings are not owned by this setup');
 const token = field(oldSettings, 'EIGOS_DEV_TOKEN') ?? randomBytes(32).toString('hex');
 if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Existing runtime credential is invalid');
@@ -67,6 +69,7 @@ const didi = readWorkerConfig({
   EIGOS_DIDI_KEY_SHA256: didiDisabled ? undefined : process.env.EIGOS_DIDI_KEY_SHA256 ?? field(oldSettings, 'EIGOS_DIDI_KEY_SHA256'),
   EIGOS_DIDI_ENVIRONMENT: process.env.EIGOS_DIDI_ENVIRONMENT ?? field(oldSettings, 'EIGOS_DIDI_ENVIRONMENT'),
   EIGOS_DIDI_ORDERS_ENABLED: process.env.EIGOS_DIDI_ORDERS_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDERS_ENABLED'),
+  EIGOS_DIDI_ORDER_TEST_ENABLED: didiDisabled ? 'false' : process.env.EIGOS_DIDI_ORDER_TEST_ENABLED ?? field(oldSettings, 'EIGOS_DIDI_ORDER_TEST_ENABLED'),
 });
 if (didi.EIGOS_DIDI_KEY_FILE && /[\r\n'"#]/.test(didi.EIGOS_DIDI_KEY_FILE)) throw new Error('DiDi credential path cannot be represented in managed settings');
 if (didi.EIGOS_DIDI_KEY_FILE) await new DidiMcpConnector({ keyFile: didi.EIGOS_DIDI_KEY_FILE, keySha256: didi.EIGOS_DIDI_KEY_SHA256, bindingId: didi.EIGOS_DIDI_BINDING_ID, environment: didi.EIGOS_DIDI_ENVIRONMENT }).verifyCredential();
@@ -101,7 +104,8 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   `EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES=${publicGeoSetting}`,
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
-  ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, 'EIGOS_DIDI_ORDERS_ENABLED=false', `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
+  ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, `EIGOS_DIDI_ORDERS_ENABLED=${didi.EIGOS_DIDI_ORDERS_ENABLED}`, `EIGOS_DIDI_ORDER_TEST_ENABLED=${didi.EIGOS_DIDI_ORDER_TEST_ENABLED ?? 'false'}`, `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
+  ...((didi.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true' || didi.EIGOS_DIDI_ORDERS_ENABLED === 'mock') && !commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true'] : []),
   ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
   ...Object.entries(participant).map(([key, value]) => `${key}=${value}`),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
@@ -132,12 +136,15 @@ const ready = async () => {
   throw new Error('New ontology runtime did not become ready; inspect the private log');
 };
 const needsRestart = !loaded() || previousPlist !== plist || oldSettings !== settings || process.argv.includes('--restart');
+const previousHealth = needsRestart ? await fetch('http://127.0.0.1:3430/health', { signal: AbortSignal.timeout(1000) }).then(r => r.json()).catch(() => undefined) : undefined;
+if (needsRestart && previousHealth?.backend !== BACKEND_VERSION) assertUpgradeIdle(join(runtime, 'tasks.sqlite'), previousHealth?.backend);
 const backup = join(runtime, 'backups', new Date().toISOString().replaceAll(':', '-')); mkdirSync(backup, { recursive: true, mode: 0o700 });
 const managed = [envPath, runtimeEnv, plistPath, join(directory,'profile.json'), join(runtime,'profile.json'), join(runtime,'skill-install.md')];
 for (const [i,path] of managed.entries()) if (existsSync(path)) cpSync(path, join(backup, String(i)));
 try {
   if (needsRestart) {
     await stop();
+    if (previousHealth?.backend !== BACKEND_VERSION) assertUpgradeIdle(join(runtime, 'tasks.sqlite'), previousHealth?.backend);
     if (existsSync(join(runtime,'tasks.sqlite'))) execFileSync('python3', ['-c', 'import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()', join(runtime,'tasks.sqlite'), join(backup,'tasks.sqlite')], { stdio: 'pipe' });
     privateWrite(envPath, settings); privateWrite(runtimeEnv, settings); privateWrite(plistPath, plist);
     execFileSync('launchctl', ['bootstrap', `gui/${process.getuid()}`, plistPath], { stdio: 'pipe' });

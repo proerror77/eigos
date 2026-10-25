@@ -150,7 +150,7 @@ export class AgentConnector {
   }
   async accessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
     const admission = await this.status();
-    if (admission.status !== 'active') throw new AgentConnectorError(admission.status, admission);
+    if (!['active','foundation_ready'].includes(admission.status)) throw new AgentConnectorError(admission.status, admission);
     return this.rawToken(options.forceRefresh);
   }
   async registerMembership(profile: Profile, consent: true): Promise<AgentAdmission> {
@@ -186,4 +186,21 @@ export class AgentConnector {
     // No automatic replay of task-creating POSTs after errors or token races.
     return this.fetcher(url, { ...init, headers, redirect: 'error' });
   }
+  private async json(path:string,body?:unknown) {
+    const response=await this.fetch(path,{method:body===undefined?'GET':'POST',...(body===undefined?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});
+    if(!response.ok)throw new AgentConnectorError(response.status===403?'task_permission_required':`gateway_http_${response.status}`);
+    return response.json();
+  }
+  async authorizationContext() {
+    const value=z.object({stage:z.enum(['S4','S5']),installationId:z.uuid(),actorKind:z.literal('agent'),grant:z.object({id:z.uuid(),revision:z.number().int().positive()}),authEpoch:z.number().int().positive()}).parse(await this.json('/security/context',{}));
+    if(value.installationId!==this.registrationId)throw new AgentConnectorError('installation_context_mismatch');return value;
+  }
+  /** Explicit v2 calls have no owner-wide fallback after a denial or old server. */
+  async queryOntology(taskId:string,query:unknown,expectedRequestRevision?:number) {
+    return this.json('/ontology/query',{version:2,taskId:z.uuid().parse(taskId),...(expectedRequestRevision===undefined?{}:{expectedRequestRevision:z.number().int().positive().parse(expectedRequestRevision)}),query});
+  }
+  async evaluateOntology(taskId:string,call:unknown,expectedRequestRevision?:number) {
+    return this.json('/ontology/evaluate',{version:2,taskId:z.uuid().parse(taskId),...(expectedRequestRevision===undefined?{}:{expectedRequestRevision:z.number().int().positive().parse(expectedRequestRevision)}),call});
+  }
+  async checkAccess(input:{taskId:string;operation:string;[key:string]:unknown}) {return this.json('/ontology/check-access',input);}
 }

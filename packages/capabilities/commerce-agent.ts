@@ -1,3 +1,5 @@
+import {commerceEntitySchemas} from '../ontology/commerce-journey.js';
+import {permitsPersonalSource} from '../core/source-owner.js';
 import { z } from 'zod';
 import { objectResultProjection } from '../core/composed-actions.js';
 import { digest } from '../core/delegation.js';
@@ -26,6 +28,7 @@ const fail = (message: string): never => { throw new DomainError('CONFLICT', mes
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const supportedPredicates = ['commerce.sandbox_only', 'commerce.stock_confirmed', 'commerce.customs_checked', 'commerce.all_buyer_fees', 'commerce.delivery_promised', 'commerce.cart_created', 'commerce.checkout_prepared', 'commerce.order_confirmed', 'commerce.payment_settled', 'commerce.delivery_verified'];
 export class CommerceAgentProgram implements AgentProgram {
+  get projectionTypes(){return ['CommerceTask',...Object.keys(commerceEntitySchemas),'CustomsRuleSet','RegulatoryReference','SourceReceipt','Order','OrderLine','ProductVariant','Payment','Shipment','DeliveryEvent','DeliveryAllocation',...(this.stripe?['StripePaymentObservation']:[])];}
   readonly ref: { id: string; version: string };
   readonly actionIds: string[];
   readonly configurationDigest: string;
@@ -61,7 +64,7 @@ export class CommerceAgentProgram implements AgentProgram {
     }
     this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v3', customsPolicyDigest: CUSTOMS_POLICY_DIGEST, ...(this.stripe ? { stripe: this.stripe.client.configurationDigest } : {}) });
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     const predicates = this.stripe ? [...supportedPredicates.filter(p => !['commerce.payment_settled', 'commerce.delivery_verified'].includes(p)), 'commerce.payment_confirmed'] : supportedPredicates;
     return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '2' }, name: this.stripe ? 'Agent 沙箱订单与 Stripe 测试支付' : 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],
@@ -311,6 +314,8 @@ export class CommerceAgentProgram implements AgentProgram {
       data.delivery = delivery; evidenceRefs.push(d.receipt.id); conditions.push('commerce.delivery_verified');
     }
     data.provenance = { sourceRefs: [proposal.selected, proposal.cart, proposal.order, proposal.payment, proposal.delivery].filter(Boolean), receiptIds: [...new Set(evidenceRefs)], modelSelected: true, noRealTransaction: true };
-    return { artifact: { id: digest({ request: ctx.request.id, revision: ctx.request.revision, data }), name: this.stripe ? 'commerce-stripe-test-result.json' : 'commerce-sandbox-result.json', data: { goal: ctx.request.originalGoal, deliverable: this.stripe ? `Agent 已核验 ${scope.target} 测试结果；商品和订单属于隔离沙箱，Stripe 支付证据单独标记来源层级，未发生真实交易。` : `Agent 已核验沙箱 ${scope.target} 结果；商家、地址、库存、跨境费用及履约事实均按来源证据记录，未发生真实交易。`, execution: 'completed', result: data } }, facts, evidenceRefs };
+    // The overall commerce outcome still depends on synthetic orders; payment
+    // keeps its separate source level in data.paymentEvidenceLevel.
+    return { evidenceLevel: 'synthetic', artifact: { id: digest({ request: ctx.request.id, revision: ctx.request.revision, data }), name: this.stripe ? 'commerce-stripe-test-result.json' : 'commerce-sandbox-result.json', data: { goal: ctx.request.originalGoal, deliverable: this.stripe ? `Agent 已核验 ${scope.target} 测试结果；商品和订单属于隔离沙箱，Stripe 支付证据单独标记来源层级，未发生真实交易。` : `Agent 已核验沙箱 ${scope.target} 结果；商家、地址、库存、跨境费用及履约事实均按来源证据记录，未发生真实交易。`, execution: 'completed', result: data } }, facts, evidenceRefs };
   }
 }

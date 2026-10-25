@@ -1,3 +1,5 @@
+import { createCallerOutcomeProof } from './caller-outcome-proof.js';
+import { outcomeAssessmentValues, outcomeAssessmentRef, hasTaskClosureProjection } from './outcome-assessment-values.js';
 import { digest } from '../core/delegation.js';
 import { DomainError, type Job } from '../core/domain.js';
 import type { AfterSalesCase, PlanGrant } from './actions.js';
@@ -196,19 +198,21 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
       { requirementId: 'independent_verifier', status: acceptance.accepted ? 'satisfied' : 'unsatisfied', evidenceRefs: acceptance.evidenceRefs },
       { requirementId: 'goal.artifact', status: acceptance.accepted && job.artifact ? 'satisfied' : 'unknown', evidenceRefs: acceptance.evidenceRefs }] } : undefined);
   if (assessment && currentProposal) {
-    const ref = node('OutcomeAssessment', { requestId: job.id, assessment });
+    const closure = hasTaskClosureProjection(graph);
+    const ref = closure ? outcomeAssessmentRef(job, assessment) : node('OutcomeAssessment', { requestId: job.id, assessment });
+    const callerProof = closure && Object.hasOwn(graph.model.properties('OutcomeAssessment'),'callerProof') ? createCallerOutcomeProof(graph,owner,job) : undefined;
     const specification = specificationRef(job.id, assessment.requestRevision);
     const proposals = d.agent?.composition ? [...new Map([currentProposal, ...d.agent.plans.flatMap(plan => planProposals.get(plan.digest) ? [planProposals.get(plan.digest)!] : [])].map(ref => [ref.id, ref])).values()] : [currentProposal];
     const results = [...new Map(proposals.flatMap(proposal => related(graph, owner, proposal, 'businessResults')).map(item => [item.ref.id, item])).values()]
       .filter(item => item.properties.requestRevision === assessment.requestRevision && String(item.properties.observedAt) <= assessment.assessedAt);
-    const links = [edge('AssessmentRequest', ref, request), edge('AssessmentProposal', ref, currentProposal), edge('AssessmentSpecification', ref, specification), ...results.map(result => edge('AssessmentResult', ref, result.ref))];
+    const links = [edge('AssessmentRequest', ref, request), ...(callerProof ? [edge('AssessmentCallerPlan',ref,callerProof.execution.plan)] : []), edge('AssessmentProposal', ref, currentProposal), edge('AssessmentSpecification', ref, specification), ...results.map(result => edge('AssessmentResult', ref, result.ref))];
     if (job.state === 'completed' && job.artifact && assessment.status === 'satisfied') {
       const artifact = node('ServiceArtifact', { requestId: job.id, artifactDigest: digest(job.artifact), publication: 'task' });
       write(graph, owner, artifact, { name: job.artifact.name, contentDigest: digest(job.artifact), contentReference: `task:${job.id}:artifact:${job.artifact.id}` },
         [edge('ServiceArtifactRequest', artifact, request)], source, true);
       links.push(edge('AssessmentArtifact', ref, artifact));
     }
-    write(graph, owner, ref, { requestRevision: assessment.requestRevision, judgment: assessment.status, assessedAt: assessment.assessedAt, reason: assessment.reason,
+    write(graph, owner, ref, d.outcome && closure ? outcomeAssessmentValues(d.outcome, job.state, callerProof) : { requestRevision: assessment.requestRevision, judgment: assessment.status, assessedAt: assessment.assessedAt, reason: assessment.reason,
       accepted: assessment.status === 'satisfied', basisDigest: digest(assessment),
       criterionResults: assessment.criterionResults.map(check => ({ criterion: check.requirementId, result: checkResult(check.status), evidenceIds: check.evidenceRefs })) }, links, source, true);
     const constraints = related(graph, owner, specification, 'constraints'), conditions = related(graph, owner, specification, 'conditions');

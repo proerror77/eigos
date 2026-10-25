@@ -1,3 +1,6 @@
+import { orderTestObjects, orderTestLinks, orderTestActions, orderTestFunctions } from './didi-order-test.js';
+import { compositionObjects, compositionLinks, compositionActions } from './composition.js';
+import { goalReviewSchema } from './goal-review-contract.js';
 import { registrationObjects, registrationLinks, registrationActions, registrationFunctions } from './free-booking.js';
 import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
 import { rideEstimateActions, rideEstimateFunctions, rideEstimateLinks, rideEstimateObjects } from './ride-estimate.js';
@@ -232,4 +235,44 @@ BUSINESS_MODEL_DEFINITION.objects.push(...registrationObjects, ...meituanReadObj
 BUSINESS_MODEL_DEFINITION.links.push(...registrationLinks, ...meituanReadLinks);
 BUSINESS_MODEL_DEFINITION.actions.push(...registrationActions, ...meituanReadActions);
 BUSINESS_MODEL_DEFINITION.functions.push(...registrationFunctions, ...meituanReadFunctions);
+
+// New closure definitions extend only the current model; frozen predecessors
+// above retain their original fields and fingerprints.
+const closureObjects = [
+  type('GoalCoverage', '目标覆盖核查', 'coverageId', {
+    requestRevision: integer('Reviewed request revision'), requestDigest: str('Exact reviewed request digest'), capabilityRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Selected capability'),
+    capabilityDigest: str('Reviewed capability definition digest'), input: p('struct', z.record(z.string(), z.unknown()), 'Reviewed normalized business input; never connector credentials'), inputDigest: str('Reviewed input digest'),
+    reviewOrigin: choice(['independent_turn', 'registered_fixed_input'], 'Actual review path; fixed scope requires an explicit PA capability pin'), modelDecisionDigest: str('Exact complete model response digest'),
+    review: p('struct', goalReviewSchema, 'Independent semantic coverage review with exact message partitions; not business evidence'), modelRunId: str('Actual independent model response'), assessedAt: time('Coverage review time'), digest: str('Pinned coverage record digest'),
+  }, { version: '2' }),
+  type('ExecutionFeedback', '任务执行反馈', 'feedbackId', {
+    requestRevision: integer('Current request revision'), bindingRef: p('struct', z.strictObject({ id: z.string(), version: z.string() }), 'Program or provider binding'), bindingDigest: str('Exact execution configuration'),
+    taskState: str('Protocol task state'), judgment: choice(['satisfied', 'unsatisfied', 'unknown', 'needs_human'], 'Current independent outcome'), evidenceLevel: str('Actual verification scope; never automatically promoted'),
+    evidenceRefs: p('array', z.array(z.string().max(1000)).max(200), 'Source receipt references'), observedAt: time('Outcome observation time'),
+  }),
+
+];
+BUSINESS_MODEL_DEFINITION.version = '21';
+BUSINESS_MODEL_DEFINITION.objects.push(...closureObjects, ...orderTestObjects, ...compositionObjects);
+BUSINESS_MODEL_DEFINITION.links.push(...orderTestLinks, ...compositionLinks);
+BUSINESS_MODEL_DEFINITION.actions.push(...orderTestActions, ...compositionActions);
+BUSINESS_MODEL_DEFINITION.functions.push(...orderTestFunctions, { id: 'taskOutcomeStatus', version: '1', inputTypes: ['ServiceRequest'], description: 'Read the current request-version assessment, goal coverage and original source receipt references; historical task acceptance never refreshes provider facts or grants authority' });
+const requestType = BUSINESS_MODEL_DEFINITION.objects.find(o => o.id === 'ServiceRequest')!;
+requestType.version = '6';
+requestType.properties = { ...requestType.properties, currentAssessment: p('struct', objectRefSchema, 'Current result assessment; historical assessments remain linked') };
+const assessment = BUSINESS_MODEL_DEFINITION.objects.find(o => o.id === 'OutcomeAssessment')!;
+assessment.version = '3';
+assessment.properties = { ...assessment.properties,
+  evidenceRefs: p('array', z.array(z.string().max(2000)).max(200), 'Original source receipt references'),
+  evidenceLevel: str('Actual source evidence level; semantic coverage is not provider evidence'),
+  taskState: str('Task state when assessed'),
+};
+for (const [id, from, name, to, reverse, many, reverseMany, required] of [
+  ['GoalCoverageRequest', 'GoalCoverage', 'request', 'ServiceRequest', 'goalCoverage', false, true, true],
+  ['AssessmentCoverage', 'OutcomeAssessment', 'goalCoverage', 'GoalCoverage', 'assessments', false, true, false],
+  ['AssessmentEvidence', 'OutcomeAssessment', 'sourceReceipts', 'SourceReceipt', 'assessments', true, true, false],
+  ['ExecutionFeedbackRequest', 'ExecutionFeedback', 'request', 'ServiceRequest', 'executionFeedback', false, true, true],
+  ['ExecutionFeedbackAssessment', 'ExecutionFeedback', 'assessment', 'OutcomeAssessment', 'feedback', false, true, true],
+] as const) BUSINESS_MODEL_DEFINITION.links.push({ id, description: `${from}.${name} → ${to}`, from: { type: from, name, many, required }, to: { type: to, name: reverse, many: reverseMany } });
+
 export const businessModel = new OntologyModel(BUSINESS_MODEL_DEFINITION);

@@ -1,3 +1,4 @@
+import { predecessorRideActions, predecessorRideFunctions } from './provider-read-predecessor.js';
 import { z } from 'zod';
 import type { OntologyDocument, SerializableProperty } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
@@ -31,7 +32,7 @@ export function extendProviderReadKernel(original: OntologyDocument, registry: T
   });
   document.links.push(...[...meituanReadLinks, ...rideEstimateLinks].map(link => ({ ...link, resourceId: `builtin:eigos.business:link:${link.id}`, writePolicy: 'source' as const })));
   const evidenceTypes = new Set(document.objects.filter(type => type.interfaces?.some(value => value.id === 'EvidenceBacked')).map(type => type.id));
-  for (const value of [...meituanReadActions, ...rideEstimateActions, ...catalogMcpActions]) {
+  for (const value of [...meituanReadActions, ...predecessorRideActions, ...catalogMcpActions]) {
     const action = composable(value, evidenceTypes);
     for (const port of Object.values(action.composition!.inputs)) if (port.kind === 'object' && ['MeituanReadTask', 'RideEstimateTask'].includes(port.type)) {
       port.semantics.phase = 'fact';
@@ -43,7 +44,7 @@ export function extendProviderReadKernel(original: OntologyDocument, registry: T
     const index = document.actions.findIndex(current => current.id === action.id);
     if (index < 0) document.actions.push(definition); else document.actions[index] = definition;
   }
-  document.functions.push(...[...meituanReadFunctions, ...rideEstimateFunctions].map(fn => ({ ...fn, handlerRef: registry.registerFunction(fn) })));
+  document.functions.push(...[...meituanReadFunctions, ...predecessorRideFunctions].map(fn => ({ ...fn, handlerRef: registry.registerFunction(fn) })));
   const known = new Set(document.links.map(link => link.id));
   for (const link of executionReferenceLinks(document.objects, document.actions, document.interfaces)) if (!known.has(link.id)) {
     document.links.push({ ...link, resourceId: `builtin:eigos.business:link:${link.id}`, writePolicy: 'source' });

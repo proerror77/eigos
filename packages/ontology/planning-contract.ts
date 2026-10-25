@@ -37,6 +37,8 @@ export interface PlanningReadReceipt {
   context?: PlanningContextReceipt;
   definitions?: PlanningDefinitionReceipt;
   actionBindings?: { snapshotDigest: string; pins: import('../core/action-bindings.js').ActionBindingPin[] };
+  accessDigest?: string;
+  securityEnvelope?: import('../security/envelope.js').SecurityEnvelope;
 }
 export interface DecisionActionProposal {
   action: string; definitionDigest: string; inputs: Record<string, { object: ObjectRef; revision: number }>;
@@ -53,6 +55,7 @@ export interface PlanningSnapshot {
   context?: PlanningContextReceipt & { receiptId: string };
   conditionChecks: ConditionCheck[]; actionProposals: DecisionActionProposal[];
   digest: string;
+  accessDigest?: string;
 }
 export function planningSnapshot(body: Omit<PlanningSnapshot, 'digest'>): PlanningSnapshot { return { ...body, digest: digest(body) }; }
 

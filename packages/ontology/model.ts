@@ -74,7 +74,7 @@ export interface ActionDefinition {
   providerOperation?: string;
   // A definition is not an executable grant. A configured AgentProgram must bind
   // it, validate its schema and scope, and enforce read-only dispatch separately.
-  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string; mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string } } };
+  read?: { version: string; effect: 'read'; inputSchema: object; resultType: string; mcp?: McpReadBinding; module?: { id: string; version: string; digest: string; completion: { evaluate: string; planned?: boolean; afterAuthorizedOperation?: boolean } } };
   operation?: { version: string; effect: Exclude<import('./actions.js').EffectClass, 'read'>; additionalEffects?: import('./actions.js').EffectClass[]; environment: 'sandbox' | 'local' | 'live_free' | 'live'; inputSchema: object; resultType: string };
   inputSchema?: Record<string, unknown>;
   implementation?: ActionImplementation;
@@ -197,7 +197,11 @@ export class OntologyModel {
       if (a.read && (a.read.effect !== 'read' || !a.read.version || !this.objects.has(a.read.resultType) || !a.read.inputSchema || typeof a.read.inputSchema !== 'object')) invalid('Invalid read action definition');
       if (a.read?.mcp) {
         mcpReadBindingSchema.parse(a.read.mcp);
-        for (const dep of a.read.mcp.requires) if ((dep.action ? this.actions.find(action => action.id === dep.action)?.read?.resultType !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        for (const dep of a.read.mcp.requires) {
+          const source = this.actions.find(action => action.id === dep.action);
+          if ((dep.action ? (source?.read?.resultType ?? source?.operation?.resultType) !== dep.objectType : !this.hasType(dep.objectType)) || !this.functions.some(f => f.id === dep.evaluate && f.inputTypes.some(t => this.implements(dep.objectType, t)))) invalid('Unresolved ontology MCP evidence dependency');
+        }
+        for (const dep of a.read.mcp.requires) if (dep.derive && (!dep.selectionInput || !this.functions.some(f => f.id === dep.derive!.function && f.inputTypes.some(type => this.implements(dep.objectType, type))))) invalid('Unresolved ontology source derivation');
         if (!a.read.module || !this.functions.some(f => f.id === a.read!.module!.completion.evaluate && f.inputTypes.some(t => this.implements(a.read!.resultType, t)))) invalid('Unresolved ontology MCP completion function');
       }
       if (a.operation) {
@@ -328,6 +332,10 @@ export class OntologyModel {
     if (new Set(mappings).size > 1) invalid('Ambiguous interface property mapping');
     return mappings[0]!;
   }
+  definitionSnapshot(): ModelDefinition { return { id: this.ref.id, version: this.ref.version, objects: [...this.objects.values()], interfaces: [...this.interfaces.values()], links: [...this.links], actions: [...this.actions], functions: [...this.functions] }; }
+  typeIds(): string[] { return [...this.objects.keys(), ...this.interfaces.keys()]; }
+  actionIds(): string[] { return this.actions.map(action => action.id); }
+  functionIds(): string[] { return this.functions.map(fn => fn.id); }
   private interfaceAncestors(id: string): string[] { return (this.interfaces.get(id)?.parents ?? []).flatMap(p => [p, ...this.interfaceAncestors(p)]); }
   properties(target: string) { return this.isInterface(target) ? this.interfaceProperties(target) : this.object(target).properties; }
   parseProperties(type: string, value: unknown): Record<string, unknown> {

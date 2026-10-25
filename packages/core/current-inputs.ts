@@ -5,11 +5,11 @@ export type InputUpdate = { field: string; status: ConfirmedInput['status']; val
 
 /** Domain parsers identify explicit owner facts. The common reducer preserves
  * their history while exposing only the newest value of each field as current. */
-export function currentInputs(request: ServiceRequest, parse: (text: string) => InputUpdate[]): ConfirmedInputs {
+export function currentInputs(request: ServiceRequest, parse: (text: string, message: ServiceRequest['messages'][number]) => InputUpdate[]): ConfirmedInputs {
   const fields: Record<string, ConfirmedInput> = {}, history: ConfirmedInput[] = [];
   let revision = 0;
   for (const [messageIndex, message] of request.messages.entries()) {
-    for (const update of parse(message.text)) {
+    for (const update of parse(message.text, message)) {
       const fact: ConfirmedInput = { ...update, revision: ++revision, source: { messageId: message.id, messageIndex, receivedAt: message.receivedAt } };
       if (fields[update.field]) history.push(fields[update.field]!);
       fields[update.field] = fact;

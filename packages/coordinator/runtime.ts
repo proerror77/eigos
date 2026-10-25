@@ -1,3 +1,4 @@
+import { assertGoalCoverage } from '../ontology/goal-coverage.js';
 import { randomUUID } from 'node:crypto';
 import { DomainError, ReplanRequired, type Job } from '../core/domain.js';
 import type { JobStore, WorkClaim } from '../core/store.js';
@@ -96,6 +97,7 @@ export class ActionRuntime {
     if (claim.recovery && kind === 'dispatch') return false;
     const freshPermit = kind === 'dispatch' || kind === 'resume' && !['local', 'read'].includes(intent.effect);
     if (freshPermit) {
+      if (!current.delegation!.afterSalesCaseId) assertGoalCoverage(current, this.catalog.capability(plan.capabilityRef));
       validatePlan(this.catalog, claim.owner, ctx.request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref, Date.now(), queriesOnly && step.effect === 'read' ? 'observe' : 'dispatch');
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, plan.ontologyPlanning, true);
       const approval = current.delegation!.approval;
@@ -128,6 +130,7 @@ export class ActionRuntime {
     // lease itself remains valid. Recheck without reserving the budget twice.
     try {
       if (freshPermit) {
+      if (!current.delegation!.afterSalesCaseId) assertGoalCoverage(current, this.catalog.capability(plan.capabilityRef));
         validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, plan.ontologyPlanning, true);
         const subject = selectedCandidateSubject(plan, current.delegation!.resolution?.candidates.find(candidate => candidate.id === plan.candidateId));
         assertSemanticSubmission(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, ctx.request, step, subject);

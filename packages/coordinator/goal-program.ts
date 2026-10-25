@@ -64,7 +64,7 @@ export class GoalProgram implements AgentProgram {
   permitted() { return true; }
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: this.goal.ontologyRelease.ontologyId, version: this.goal.ontologyRelease.digest },
-      name: 'Whole-goal evidence verification', description: this.guidance, tags: [], inputSchema: {}, ontology: {}, actions: [],
+      name: 'Whole-goal evidence verification', description: this.guidance, tags: [], inputSchema: {}, ontology: { goal: structuredClone(this.goal) }, actions: [],
       predicates: this.goal.criteria.map(criterion => ({ id: criterion.predicate, description: criterion.description })), outcomePredicates: this.goal.criteria.map(criterion => criterion.predicate),
       verifierRef: { id: 'eigos.goal.independent', version: '1' }, completion: 'domain', environment: 'local' };
   }

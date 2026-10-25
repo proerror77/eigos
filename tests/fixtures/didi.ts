@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 // Synthetic source data and model decisions; never a live account or ride.
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -75,7 +76,7 @@ export const chooseDidi: DidiChoice = (ctx, access) => {
   return decision(ctx, [step('price', 'EstimateDidiRide', { scope, originObservation: from.ref, originPlaceId: from.snapshot.data.places[1]!.id, destinationObservation: to.ref, destinationPlaceId: to.snapshot.data.places[1]!.id })]);
 };
 export function didiModel(choice: DidiChoice = chooseDidi, taskInput: object = input): Reasoner {
-  return { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, DIDI_PROGRAM_REF.id, taskInput), capabilityRef: DIDI_PROGRAM_REF }, evidence: evidence() }), plan: async () => { throw new Error('No legacy route workflow'); }, act: async (ctx, _signal, access) => { const chosen = choice(ctx, access); acknowledgeReads(access); return { decision: chosen, evidence: { ...evidence(), decisionDigest: digest(chosen) } }; } };
+  return { reviewGoal: syntheticGoalReview, ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, DIDI_PROGRAM_REF.id, taskInput), capabilityRef: DIDI_PROGRAM_REF }, evidence: evidence() }), plan: async () => { throw new Error('No legacy route workflow'); }, act: async (ctx, _signal, access) => { const chosen = choice(ctx, access); acknowledgeReads(access); return { decision: chosen, evidence: { ...evidence(), decisionDigest: digest(chosen) } }; } };
 }
 export function setupDidi(choice: DidiChoice = chooseDidi, taskInput: object = input) {
   const fixture = didiFixture(), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, didi: { ...fixture.binding, connector: fixture.connector } }), b = backend(catalog, didiModel(choice, taskInput), store);

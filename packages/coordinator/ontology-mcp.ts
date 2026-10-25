@@ -1,3 +1,4 @@
+import { authorizationScope, withAuthorization } from '../security/context.js';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
@@ -58,18 +59,21 @@ function nativeArguments(name: string, raw: unknown): unknown {
 }
 
 /** A native MCP endpoint owned by one Worker model session, never a public gateway. */
-export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object) {
+export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object, modelChannelId?: string) {
   signal.throwIfAborted();
+  const authority = authorizationScope();
+  const authorized = <T>(action: () => T): T => authority ? withAuthorization(authority, action) : action();
   const finalDecision = finalSchema ? z.fromJSONSchema(finalSchema as Parameters<typeof z.fromJSONSchema>[0]) : undefined;
   const sessionId = randomUUID(), token = randomBytes(32).toString('base64url');
-  const offered = session.catalog().tools.map(tool => tool.name as keyof typeof planningToolSchemas);
+  const authorizedFunctions = session.graph.security ? session.catalog().functions.map(fn => fn.id) : undefined;
+  const offered = session.catalog().tools.map(tool => tool.name as keyof typeof planningToolSchemas).filter(name => name !== 'evaluate_ontology' || !authorizedFunctions || authorizedFunctions.length > 0);
   let decision: { output: unknown; digest: string; receiptIds: string[] } | undefined;
   let closed = false;
   let toolAttempts = 0, readAttempts = 0;
   const active = () => { signal.throwIfAborted(); if (closed) throw new Error('Ontology MCP session closed'); };
   const respond = (action: () => unknown): CallToolResult => {
     try {
-      active(); const result = action();
+      active(); const result = authorized(() => { authority?.assertCurrent(); const value = action(); session.authorizeModel(modelChannelId); return value; });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
     } catch (error) {
       return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error instanceof DomainError ? error.code : 'REJECTED', message: error instanceof Error ? error.message : 'Ontology request rejected' }) }] };
@@ -78,7 +82,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   const makeServer = () => {
     const server = new McpServer({ name: 'eigos-ontology', version: '1.0.0' });
     for (const name of offered) server.registerTool(name, {
-      description: descriptions[name], inputSchema: nativeSchemas[name]!,
+      description: descriptions[name], inputSchema: name === 'evaluate_ontology' && authorizedFunctions ? (nativeSchemas[name] as z.ZodObject).extend({ function: z.enum(authorizedFunctions as [string,...string[]]) }) : nativeSchemas[name]!,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     }, (args: unknown) => respond(() => {
       if (decision) throw new Error('This decision has already been submitted');
@@ -111,6 +115,8 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   app.all('/mcp', async (req, res) => {
     const provided = Buffer.from(req.headers.authorization ?? ''), expected = Buffer.from(`Bearer ${token}`);
     if (closed || signal.aborted || provided.length !== expected.length || !timingSafeEqual(provided, expected)) { res.status(401).json({ error: 'invalid_session' }); return; }
+    try { authorized(() => { authority?.assertCurrent(); session.authorizeModel(modelChannelId); }); }
+    catch { res.status(403).json({error:'session_authority_ended'}); return; }
     if (req.body?.method === 'tools/call') {
       toolAttempts++;
       if (req.body.params?.name !== 'submit_decision') readAttempts++;

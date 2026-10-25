@@ -1,5 +1,6 @@
+import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
 import { DomainError } from '../core/domain.js';
-import { digest, type Grounding } from '../core/delegation.js';
+import { digest, type Grounding, type LegacyGrounding } from '../core/delegation.js';
 import type { AgentProgram } from '../core/agent-program.js';
 import type { Job } from '../core/domain.js';
 import type { AgentDecision, AgentActionPlan } from '../ontology/agent-actions.js';
@@ -10,21 +11,23 @@ import { contextDefinitionInput } from './planning-session.js';
 const fail = (message: string): never => { throw new DomainError('CONFLICT', message); };
 /** Eligibility comes from current definitions, never provider names or a recipe. */
 export function initialActionIds(graph: OntologyObjectStore, program: AgentProgram): string[] {
-  if (!program.actionIds.every(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; })) return [];
-  return program.actionIds.filter(id => {
+  if (!program.initialReadFrontier && program.capability().actions.some(action => action.effect !== 'read')) return [];
+  const all = boundAgentActionIds(graph, program), reads = all.filter(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; });
+  if (reads.length !== all.length && !program.initialReadFrontier) return [];
+  return reads.filter(id => {
     const definition = graph.model.action(id);
-    return !definition.read!.mcp!.requires.length && Object.keys(definition.inputs).length > 0;
+    return definition.read!.mcp!.requires.every(dependency => (!dependency.action || reads.includes(dependency.action)) && (dependency.derive || dependency.evidence === 'accepted')) && Object.keys(definition.inputs).length > 0;
   });
 }
 
 /** Only bind explicitly declared scope slots to an actually initialized scope.
  * All business arguments and action choices remain exactly the model's output. */
 export function bindInitialSelection(graph: OntologyObjectStore, program: AgentProgram, scope: ObjectRef, grounding: Grounding): AgentDecision {
-  const initialSteps = 'initialSteps' in grounding ? grounding.initialSteps : undefined;
-  if (grounding.kind !== 'resolve' || !initialSteps?.length || digest(grounding.capabilityRef) !== digest(program.ref)) fail('Initial selection requires an exact resolved program');
+  if (grounding.kind !== 'resolve' || !('initialSteps' in grounding) || !grounding.initialSteps?.length || digest(grounding.capabilityRef) !== digest(program.ref)) fail('Initial selection requires an exact resolved program');
+  const selected = grounding as LegacyGrounding;
   const available = initialActionIds(graph, program);
-  const steps = initialSteps!.map(step => {
-    if (!available.includes(step.action)) fail('Initial actions must be source-independent, read-only MCP actions');
+  const steps = selected.initialSteps!.map(step => {
+    if (!available.includes(step.action)) fail('Initial actions require permitted read-only MCP actions with declared source bindings');
     const definition = graph.model.action(step.action), input: unknown = JSON.parse(step.argumentsJson);
     if (!input || typeof input !== 'object' || Array.isArray(input)) fail('Initial arguments must be an object');
     const bound = { ...input as Record<string, unknown> };
@@ -33,9 +36,9 @@ export function bindInitialSelection(graph: OntologyObjectStore, program: AgentP
       if (Object.hasOwn(bound, key) || !Object.hasOwn(definition.inputs, key) || !graph.model.implements(scope.type, definition.inputs[key]!)) fail('Initial scope binding does not match the registered input');
       bound[key] = scope;
     }
-    return { id: step.id, action: step.action, argumentsJson: JSON.stringify(bound), dependsOn: [], inputRefs: [] };
+    return { id: step.id, action: step.action, argumentsJson: JSON.stringify(bound), dependsOn: step.dependsOn ?? [], inputRefs: step.inputRefs ?? [] };
   });
-  return { kind: 'execute', requestRevision: grounding.requestRevision, message: grounding.message, steps, completionJson: '' };
+  return { kind: 'execute', requestRevision: grounding.requestRevision, message: grounding.message, steps, completionJson: '', ...(selected.plannedCompletion ? { plannedCompletion: selected.plannedCompletion } : {}) };
 }
 
 export function recordedInitialSelection(job: Job, modelRunId: string): Grounding {
@@ -49,9 +52,9 @@ export function verifyInitialPlan(job: Job, graph: OntologyObjectStore, program:
   const source = plan.initialSelection ?? fail('Missing initial selection provenance');
   if (plan.sequence !== 1 || source.modelRunId !== plan.modelRunId) fail('Invalid initial selection provenance');
   const grounding = recordedInitialSelection(job, source.modelRunId);
+  if (grounding.kind !== 'resolve') return fail('Initial selection requires a program decision');
   const { digest: sourceDigest, ...sourceBody } = source.groundingPlanning;
-  const initialSteps = 'initialSteps' in grounding ? grounding.initialSteps : undefined;
-  if (!initialSteps?.length || sourceBody.requestRevision !== job.delegation?.request.revision || source.definitionActions.length > 8 || sourceDigest !== digest(sourceBody) || digest(sourceBody.model) !== digest(graph.model.ref) || initialSteps.some(step => !source.definitionActions.includes(step.action)) || !sourceBody.reads.some(read => read.tool === 'describe_ontology' && read.status === 'ok' && read.inputDigest === digest(contextDefinitionInput(graph, source.definitionActions)))) fail('Initial actions require their actual pre-model definitions');
+  if (!grounding.initialSteps?.length || source.definitionActions.length > 8 || sourceDigest !== digest(sourceBody) || digest(sourceBody.model) !== digest(graph.model.ref) || grounding.initialSteps.some(step => !source.definitionActions.includes(step.action)) || !sourceBody.reads.some(read => read.tool === 'describe_ontology' && read.status === 'ok' && read.inputDigest === digest(contextDefinitionInput(graph, source.definitionActions)))) fail('Initial actions require their actual pre-model definitions');
   if (digest(plan.modelDecision) !== digest(bindInitialSelection(graph, program, plan.scope, grounding))) fail('Initial executable choice differs from its model-selected draft');
   const run = job.runs!.find(item => item.id === source.modelRunId)!;
   if (!run.ontologyContext || !run.ontologyContext.receiptIds.every(id => source.groundingPlanning.reads.some(read => read.id === id)) || source.groundingPlanning.reads.some(read => read.at > (run.requestSentAt ?? run.startedAt))) fail('Initial definitions and request must actually be read before the model');

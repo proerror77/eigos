@@ -1,0 +1,4081 @@
+{
+  "version": "eigos.security-baseline.v1",
+  "enforcement": "not_installed",
+  "model": {
+    "id": "eigos.business",
+    "version": "22",
+    "digest": "b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4"
+  },
+  "types": {
+    "ServiceRequest": {
+      "fingerprint": "613373917d7315530c99995af2c782148ff28ef2a0a24b13c453892ef3e55eb4",
+      "fields": {
+        "requestId": "task_private",
+        "displayTitle": "task_private",
+        "originalGoal": "task_sensitive",
+        "revision": "task_private",
+        "confirmedInputs": "internal_only",
+        "requestedOutcome": "task_sensitive",
+        "conditions": "task_sensitive",
+        "progress": "task_private",
+        "projectionState": "task_private",
+        "createdAt": "task_private",
+        "currentAssessment": "task_private"
+      }
+    },
+    "Proposal": {
+      "fingerprint": "5f96565baf169a59f9d85160dd3f0bb19e59d94f836abcdef12a7e3d26dd858f",
+      "fields": {
+        "proposalId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "selectedAt": "task_private",
+        "termsVersion": "task_private",
+        "decisionReason": "task_sensitive",
+        "kind": "task_private",
+        "capabilityRef": "task_sensitive",
+        "scopeDigest": "task_private",
+        "completionTarget": "task_sensitive",
+        "authorizationMode": "task_private"
+      }
+    },
+    "Authorization": {
+      "fingerprint": "8b2745dfd6918eb8e195f967236ded1f373e349bbc6a39d21972ea8d8912989a",
+      "fields": {
+        "authorizationId": "task_private",
+        "displayTitle": "task_private",
+        "actor": "internal_only",
+        "allowedActions": "internal_only",
+        "dataScope": "internal_only",
+        "limits": "internal_only",
+        "expiresAt": "task_private",
+        "revoked": "task_private",
+        "kind": "task_private",
+        "ledgerDigest": "task_private",
+        "planDigest": "task_private",
+        "approvedAt": "task_private",
+        "revokedAt": "task_private",
+        "environment": "task_private",
+        "allowedEffects": "task_sensitive",
+        "bindingRefs": "task_sensitive",
+        "payeeIds": "task_sensitive",
+        "objectWriteScope": "task_sensitive",
+        "effectiveStatus": "derived_from_inputs",
+        "budgetImpact": "internal_only",
+        "externalDraftScope": "task_sensitive"
+      }
+    },
+    "OutcomeAssessment": {
+      "fingerprint": "d1a8c77ea25db620e96073133b0c6a30e6a7eb8fcf32f83743135642143454b0",
+      "fields": {
+        "assessmentId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "judgment": "task_private",
+        "assessedAt": "task_private",
+        "criterionResults": "task_sensitive",
+        "reason": "task_sensitive",
+        "accepted": "task_private",
+        "basisDigest": "task_private",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private",
+        "taskState": "task_private",
+        "callerProof": "task_sensitive"
+      }
+    },
+    "Provider": {
+      "fingerprint": "497723518300d2f1d602060a9ef2e5a02a34f929abe5163f9449128574566887",
+      "fields": {
+        "providerId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "verifiedIdentityRefs": "internal_only"
+      }
+    },
+    "Channel": {
+      "fingerprint": "d3eb84d4c858f11c66e3bb6b23d62a6bc484637e771064de819c2eef7edb0ac2",
+      "fields": {
+        "channelId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "accessScope": "task_sensitive",
+        "supportedOperationRefs": "task_sensitive"
+      }
+    },
+    "ChannelParticipation": {
+      "fingerprint": "564cf3600e425a7181c15debb6ea0e49023d2c690c0e4bb7afe67f7c1d6e0b6a",
+      "fields": {
+        "participationId": "task_private",
+        "displayTitle": "task_private",
+        "role": "task_private",
+        "validFrom": "task_private",
+        "validUntil": "task_private",
+        "verificationRef": "task_private"
+      }
+    },
+    "ServiceEngagement": {
+      "fingerprint": "029ca1d2e606db492d01141f89a20ad7fc625406d306d49878d8205987362e80",
+      "fields": {
+        "engagementId": "task_private",
+        "displayTitle": "task_private",
+        "progress": "task_private",
+        "startedAt": "task_private",
+        "waitingQuestion": "task_sensitive",
+        "remoteReference": "task_sensitive"
+      }
+    },
+    "Place": {
+      "fingerprint": "4cf8a3c8dcdda363c20d184b5e4a9de8a4aaf5b27c98c2860ecfc5a2f56539ac",
+      "fields": {
+        "placeId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "address": "task_sensitive",
+        "coordinates": "task_sensitive",
+        "coordinateUnit": "task_private",
+        "coordinateSystem": "task_sensitive"
+      }
+    },
+    "SavedAddress": {
+      "fingerprint": "104e90f80953fe128682e4c0f411013e08cfd621b70120f20591d2fa5dd7de07",
+      "fields": {
+        "savedAddressId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "label": "task_sensitive",
+        "address": "task_sensitive",
+        "contactInstructions": "internal_only",
+        "sourceReference": "internal_only"
+      }
+    },
+    "Parcel": {
+      "fingerprint": "d338c9741aa62a643402194a14a57667c1c9d5f6a618be6e93e0d13bbae2dafe",
+      "fields": {
+        "parcelId": "task_private",
+        "displayTitle": "task_private",
+        "contentsCategory": "task_private",
+        "declaredWeight": "task_sensitive",
+        "declaredContents": "task_private",
+        "parcelDetails": "task_sensitive",
+        "handlingRequirements": "task_sensitive"
+      }
+    },
+    "DeliveryRoute": {
+      "fingerprint": "5ebe48b7bd14a09d8d3187c87d54fc9b040763d14d9ff4d9cc8a1446b46ae8af",
+      "fields": {
+        "routeId": "task_private",
+        "displayTitle": "task_private",
+        "originSnapshot": "task_sensitive",
+        "destinationSnapshot": "task_sensitive",
+        "selectedAt": "task_private",
+        "errandRequirements": "task_sensitive"
+      }
+    },
+    "DeliveryQuote": {
+      "fingerprint": "d4f6964389132b2395e2d8e8da3e4c88827cee4bdf4de04acddc2d015c03e301",
+      "fields": {
+        "quoteId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "serviceLevel": "task_private",
+        "quotedWeight": "task_sensitive",
+        "requestRevision": "task_private",
+        "parcelRevision": "task_private",
+        "routeRevision": "task_private",
+        "estimatedArrival": "task_private",
+        "pricingTerms": "task_sensitive",
+        "errandCommitments": "task_sensitive"
+      }
+    },
+    "ProductVariant": {
+      "fingerprint": "b4514d50f05d1c32c2393427579f7785662108ed916ee7ec23faf2e56924a188",
+      "fields": {
+        "variantId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "sourceProductRef": "task_sensitive",
+        "specification": "task_sensitive",
+        "specificationRevision": "task_private",
+        "typedAttributes": "task_sensitive"
+      }
+    },
+    "ProductOffer": {
+      "fingerprint": "17b109a4e55e7fed762505d33d5a5e8ba0dce66fdda249689617551f6c73d201",
+      "fields": {
+        "offerId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "offeredQuantity": "task_sensitive",
+        "pricingTerms": "task_sensitive",
+        "capacityObservationRef": "task_private",
+        "capacity": "task_private",
+        "deliveryDestination": "task_sensitive",
+        "estimatedArrival": "task_private",
+        "deliveryCommitment": "task_private",
+        "variantRevision": "task_private"
+      }
+    },
+    "Order": {
+      "fingerprint": "57f4596d1fe6bdbe4957221d75dee7e6dbbc77ae45425574806bb0cce1763ff4",
+      "fields": {
+        "orderId": "task_private",
+        "displayTitle": "task_private",
+        "providerOrderReference": "task_sensitive",
+        "orderState": "task_private",
+        "createdAt": "task_private",
+        "total": "task_sensitive",
+        "fulfillmentState": "task_private",
+        "sourceStartedAt": "task_private"
+      }
+    },
+    "OrderLine": {
+      "fingerprint": "a1b8ffff5b61f1b836149a3eefe9a2f46c2810cea1bb6bfc12de118389c78cba",
+      "fields": {
+        "orderLineId": "task_private",
+        "displayTitle": "task_private",
+        "quantityOrdered": "task_sensitive",
+        "agreedSpecificationRef": "task_private",
+        "agreedPriceRef": "task_private",
+        "remainingQuantity": "derived_from_inputs",
+        "sourceAgreement": "task_sensitive"
+      }
+    },
+    "Shipment": {
+      "fingerprint": "745de2343140a84f58aad4200f8171e6fad18be5536329a4a61f3c710487cd8b",
+      "fields": {
+        "shipmentId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "shipmentState": "task_private",
+        "actualArrivalAt": "derived_from_inputs",
+        "expectedAllocation": "task_sensitive"
+      }
+    },
+    "DeliveryEvent": {
+      "fingerprint": "7272b52d501d6dc42b71cb1feaa39cc1d0f18dace796fad8b8d1db2f5bcdfdde",
+      "fields": {
+        "eventId": "task_private",
+        "displayTitle": "task_private",
+        "occurredAt": "task_private",
+        "observedAt": "task_private",
+        "sourceVersion": "task_private",
+        "eventKind": "task_private",
+        "sourceEventKey": "task_private"
+      }
+    },
+    "DeliveryAllocation": {
+      "fingerprint": "2dc4aed885089a8b0de0b7b982423589245707914a0c0c39178be8ddb5fa4a64",
+      "fields": {
+        "allocationId": "task_private",
+        "displayTitle": "task_private",
+        "deliveredQuantity": "task_sensitive",
+        "acceptedSpecificationRef": "task_private",
+        "verificationState": "task_private",
+        "evidenceRef": "task_private",
+        "verificationBasis": "task_sensitive"
+      }
+    },
+    "Venue": {
+      "fingerprint": "54aa57ae144c073d16f33651ee2d99890ff1ae90bcef5e1051e299985de58985",
+      "fields": {
+        "venueId": "task_private",
+        "displayTitle": "task_private",
+        "name": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private"
+      }
+    },
+    "ReservationSlot": {
+      "fingerprint": "3c6267f44c469225867a7db1d08a48783b614c36293401be6dedf899a8f53478",
+      "fields": {
+        "slotId": "task_private",
+        "displayTitle": "task_private",
+        "startsAt": "task_private",
+        "timeZone": "task_private",
+        "partySizeEligibility": "task_private",
+        "availabilityObservedAt": "task_private",
+        "expiresAt": "task_private"
+      }
+    },
+    "ReservationOffer": {
+      "fingerprint": "aa275be3ead6ee461ca7861c29e8e6ac921ad4e3068337bc92582f03cbfd8186",
+      "fields": {
+        "offerId": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs",
+        "depositTerms": "task_sensitive",
+        "cancellationTerms": "task_private",
+        "holdTerms": "task_private"
+      }
+    },
+    "Reservation": {
+      "fingerprint": "21c2399c673ba9356fbaeb5e6f6ed9994cbc67706a49ecc9d91308c678804137",
+      "fields": {
+        "reservationId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "reservationState": "task_private",
+        "partySize": "task_private",
+        "confirmedSlotRevision": "task_private",
+        "confirmedAt": "task_private",
+        "holdExpiresAt": "task_private",
+        "depositRequired": "task_private",
+        "requiredDeposit": "task_sensitive",
+        "effectiveStatus": "derived_from_inputs"
+      }
+    },
+    "Payment": {
+      "fingerprint": "40e4a1058c7da0b4c483999abe6026ff1e5fbdefbd4d327895e4fe61d85bc935",
+      "fields": {
+        "paymentId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "purpose": "task_sensitive",
+        "amount": "task_sensitive",
+        "paymentState": "task_sensitive",
+        "observedAt": "task_sensitive"
+      }
+    },
+    "Refund": {
+      "fingerprint": "b8077b492a3fc8a8dca954368b10d1cbd1893bf97a3d3ea307f1d1f572e698b4",
+      "fields": {
+        "refundId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "amount": "task_sensitive",
+        "refundState": "task_sensitive",
+        "observedAt": "task_sensitive"
+      }
+    },
+    "AfterSalesCase": {
+      "fingerprint": "df0ae188fb548fd390a22bdbd1ff0d460dccd11c7119a10ac08badfda659ab11",
+      "fields": {
+        "caseId": "task_private",
+        "displayTitle": "task_private",
+        "requestedRemedy": "task_private",
+        "progress": "task_private",
+        "originalBusinessReference": "task_sensitive"
+      }
+    },
+    "SourceReceipt": {
+      "fingerprint": "5ce19bd57bc01d678559bbc20c50f3350db1191aebf3e31b3779d8467505996e",
+      "fields": {
+        "receiptId": "task_private",
+        "displayTitle": "task_private",
+        "sourceIdentity": "internal_only",
+        "sourceEventId": "internal_only",
+        "scope": "task_private",
+        "observedAt": "task_private",
+        "evidenceLevel": "task_private",
+        "contentDigest": "internal_only",
+        "subjects": "internal_only",
+        "safeSummary": "task_private",
+        "privatePayload": "internal_only",
+        "queryScope": "task_sensitive"
+      }
+    },
+    "MeituanReadTask": {
+      "fingerprint": "637a8621b24ea4d377c495f9f83a064b8ddb2eeaa196ea12e042a7fd2493950f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "internal_only",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "MeituanReadObservation": {
+      "fingerprint": "73462fac1b37c72dbe6cc5d565202df99d53f28f505079058b45284fa52c31ff",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideEstimateTask": {
+      "fingerprint": "0a3d62f463527e53d59f6ccebed067eb080bf313da8612c91b50741470873423",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "DidiPlaceObservation": {
+      "fingerprint": "6af9dbde04074d1b49302385c2df20664f89c073c60ce61af1de9866dd51ad89",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideEstimateObservation": {
+      "fingerprint": "c425b75fc0c96b411dda0e4a52b6c121b33d99846debd25c8527f4d32b163a30",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideRequest": {
+      "fingerprint": "dac77f1ca912387aef05937cf3971d887d19f7124c6d332c288e432a3978356f",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "passengers": "task_private",
+        "serviceClass": "task_private",
+        "pickupBy": "task_sensitive",
+        "arriveBy": "task_private",
+        "budget": "task_sensitive",
+        "mode": "task_private",
+        "timeZone": "task_sensitive",
+        "originLocation": "task_sensitive",
+        "destinationLocation": "task_sensitive",
+        "luggageCount": "task_private",
+        "luggageSize": "task_private",
+        "wheelchairRequired": "task_private",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "RideOption": {
+      "fingerprint": "516eaab84768f0763f12e000d39552669f6fd178dfc3da6e29a54324ec0bd0d8",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "RideTrip": {
+      "fingerprint": "7df5bda43248f67edfe66400a347a50ce11f147424f32d467167548f05ea791b",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "passengers": "task_private",
+        "serviceClass": "task_private",
+        "pickedUpAt": "task_private",
+        "arrivedAt": "task_private",
+        "finalFare": "task_sensitive",
+        "fareComplete": "task_private",
+        "mode": "task_private",
+        "timeZone": "task_sensitive",
+        "originLocation": "task_sensitive",
+        "destinationLocation": "task_sensitive",
+        "luggageCount": "task_private",
+        "luggageSize": "task_private",
+        "wheelchairRequired": "task_private",
+        "assignmentId": "task_sensitive",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "RideRoute": {
+      "fingerprint": "f25b06c4034ea2a6ef4aaab1ad8f83f07a6265788199df63a1ed7564a6d6c20f",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "originLocation": "task_sensitive",
+        "destinationLocation": "task_sensitive",
+        "timeZone": "task_sensitive"
+      }
+    },
+    "TransportVehicle": {
+      "fingerprint": "f30dae1507ce5fffdc0ca9e4e7f5aea0f57a8406392983a9190c91e6edb7a3ed",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "vehicleClass": "task_private",
+        "passengerCapacity": "task_private",
+        "vehicleReference": "task_private",
+        "luggageCapacity": "task_sensitive",
+        "wheelchairAccessible": "task_private",
+        "transmission": "task_private"
+      }
+    },
+    "AppointmentRequest": {
+      "fingerprint": "850b9ae352079f41215dd7a9d74b646da62d2e57d10a52d95bf48b4255313b5d",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "hospitalId": "task_sensitive",
+        "departmentId": "task_sensitive",
+        "practitionerId": "task_sensitive",
+        "patientKey": "task_sensitive",
+        "startsAt": "task_sensitive",
+        "timeZone": "task_sensitive",
+        "registerBy": "task_sensitive",
+        "budget": "task_sensitive",
+        "visitType": "task_private",
+        "category": "task_private",
+        "patientAge": "task_private",
+        "referralKey": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "capturedAt": "task_sensitive"
+      }
+    },
+    "AppointmentOption": {
+      "fingerprint": "654a9d6ad92ac0a17cb17f8be0612ba2e44fc22859858637cd0b976d1956f7b7",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "MedicalAppointment": {
+      "fingerprint": "1f234b699ef762d09d205febb754f61cb543d6c4dfefaef652be776ccadcb489",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_sensitive",
+        "requestDigest": "task_sensitive",
+        "state": "task_sensitive",
+        "hospitalId": "task_sensitive",
+        "departmentId": "task_sensitive",
+        "practitionerId": "task_sensitive",
+        "patientKey": "task_sensitive",
+        "startsAt": "task_sensitive",
+        "timeZone": "task_sensitive",
+        "confirmedAt": "task_sensitive",
+        "holdExpiresAt": "task_sensitive",
+        "fee": "task_sensitive",
+        "paymentState": "task_sensitive",
+        "eligibilityVerified": "task_sensitive",
+        "visitType": "task_private",
+        "category": "task_private",
+        "patientAge": "task_private",
+        "referralKey": "task_sensitive",
+        "referralVerified": "task_private",
+        "requestRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive"
+      }
+    },
+    "Hospital": {
+      "fingerprint": "0ceee2a067e311d963a89b9fed29243922ade35f5dacf2c5fcd71b5bf77368ba",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "campusName": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private"
+      }
+    },
+    "MedicalDepartment": {
+      "fingerprint": "8a3d82935b114e707baaf4e0dcfb124962f940fe3928a34820944b061b160f0f",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentName": "task_private"
+      }
+    },
+    "Practitioner": {
+      "fingerprint": "1c2ab4fdb6a02f3affa60e97feedfb63f07203c1d906921a18c515a48d3a9f0b",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentId": "task_private",
+        "practitionerName": "task_private"
+      }
+    },
+    "PatientProfile": {
+      "fingerprint": "09e5e1f523972bcea789a9cdfdc49437e45c6bce8ad19e200013e1465d10f026",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "patientAlias": "task_sensitive",
+        "eligibility": "task_sensitive",
+        "age": "task_private",
+        "referralKey": "task_sensitive",
+        "referralVerified": "task_private",
+        "identityDocument": "internal_only",
+        "contact": "internal_only"
+      }
+    },
+    "AppointmentSlot": {
+      "fingerprint": "474b589b1c9bd7503140d9572312505a54b92cac393b7ae6f67098887426812f",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hospitalId": "task_private",
+        "departmentId": "task_private",
+        "practitionerId": "task_private",
+        "startsAt": "task_private",
+        "timeZone": "task_private",
+        "availableCount": "task_private",
+        "expiresAt": "task_private",
+        "administration": "task_sensitive"
+      }
+    },
+    "FoodRequest": {
+      "fingerprint": "fc052c59917b958d6b47f6f3ce5f8919c0b834f06f6703ad9167a1afcedd0dfa",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "merchantId": "task_private",
+        "items": "task_sensitive",
+        "destination": "task_sensitive",
+        "deliverBy": "task_private",
+        "excludedIngredients": "task_sensitive",
+        "budget": "task_sensitive",
+        "avoidCrossContact": "task_private",
+        "destinationLocation": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "FoodOption": {
+      "fingerprint": "524e349f09408ca38cf2fb280792a6181d7d49ff72ff4557c61715db76cea9f6",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "FoodDelivery": {
+      "fingerprint": "43d26eccd132dc4a127c46b38dff4fe0c1829e4af006fed21aea49964246ba88",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "merchantId": "task_private",
+        "deliveredItems": "task_sensitive",
+        "destination": "task_sensitive",
+        "deliveredAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "ingredientCheck": "task_private",
+        "finalDelivery": "task_private",
+        "crossContactCheck": "task_private",
+        "destinationLocation": "task_sensitive",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "FoodMerchant": {
+      "fingerprint": "0e75f56f3008f1520d7063d047ee68cc2eaae556fbce1cfb681fed0d4d412fcb",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "merchantName": "task_private",
+        "address": "task_sensitive",
+        "deliveryLocation": "task_sensitive"
+      }
+    },
+    "MenuItem": {
+      "fingerprint": "ad4d694225e09feaf058c522e216bf99b149bae881d09d9cd3d03bbca0227ed5",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "sku": "task_private",
+        "specification": "task_private",
+        "ingredients": "task_sensitive",
+        "ingredientsKnown": "task_private",
+        "merchantId": "task_sensitive",
+        "optionGroups": "task_sensitive",
+        "crossContactIngredients": "task_sensitive",
+        "crossContactKnown": "task_private"
+      }
+    },
+    "HotelRequest": {
+      "fingerprint": "c95806a5b9bbbc16ecc1eae5ffce6a5d42c74af605a161f7087a3eaa5165a34b",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "hotelId": "task_private",
+        "roomTypeId": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "timeZone": "task_private",
+        "rooms": "task_private",
+        "guests": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "ratePlanId": "task_sensitive",
+        "occupancy": "task_sensitive",
+        "breakfast": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "paymentTiming": "task_private",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "HotelOption": {
+      "fingerprint": "b3d69d1a8af4a24dd47652fb92c15a56659b74fc40c9436f1b27eab936da7b5e",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "HotelReservation": {
+      "fingerprint": "6684fc14b1bc3083dea35871b4d811411fdff434602353640407c5f162992197",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "hotelId": "task_private",
+        "roomTypeId": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "timeZone": "task_private",
+        "rooms": "task_private",
+        "guests": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "confirmationCode": "task_sensitive",
+        "confirmedAt": "task_private",
+        "paymentState": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "checkedInAt": "task_private",
+        "checkedOutAt": "task_private",
+        "ratePlanId": "task_sensitive",
+        "occupancy": "task_sensitive",
+        "breakfast": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "paymentTiming": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "HotelProperty": {
+      "fingerprint": "9111340cdd3f582f7e7bc274a1607bac128da32cfb49fac9168071ddba3772bb",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "hotelName": "task_private",
+        "address": "task_sensitive",
+        "timeZone": "task_private",
+        "childPolicy": "task_sensitive"
+      }
+    },
+    "RoomType": {
+      "fingerprint": "7c2cb99b64d80cd577bfda4222b1d3742c73defaf2839c8a656fe7fadce23fef",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "roomTypeName": "task_private",
+        "guestCapacity": "task_private",
+        "bedDescription": "task_private",
+        "hotelId": "task_sensitive",
+        "maximumAdults": "task_private",
+        "maximumChildren": "task_private"
+      }
+    },
+    "RoomInventory": {
+      "fingerprint": "f7808469a64db0eccb87434a111b7d1093f303b5f683baa80236d192893a54e9",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "checkIn": "task_private",
+        "checkOut": "task_private",
+        "roomsAvailable": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "hotelId": "task_sensitive",
+        "roomTypeId": "task_sensitive",
+        "ratePlanId": "task_sensitive"
+      }
+    },
+    "ItineraryRequest": {
+      "fingerprint": "4e96a204769c66c88a9d775967df79c3e2ebd8b5dc600cda9d73f627801909a8",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "travelers": "task_private",
+        "legs": "task_sensitive",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "ItineraryOption": {
+      "fingerprint": "07dc92789c9fdb870427c38ddd42c104fef89fb17f8440ce9d17f245ef76e75d",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "Itinerary": {
+      "fingerprint": "9a7af5cded0d3d7f043739fabaca90f29ef25b4a7a3e1af69508a45665951ebb",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "validatedAt": "task_private",
+        "legs": "task_sensitive",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "unbookedDisclosed": "task_private",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "ItineraryItem": {
+      "fingerprint": "1eec52c80852eb89615e99cf5849706de718de38297c3dfada92a984981da011",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "location": "task_private",
+        "bookingRequired": "task_private",
+        "bookingReference": "task_private"
+      }
+    },
+    "TravelLeg": {
+      "fingerprint": "aaaf0ec1cb42c16236b3e1e743c6ea96e65cba481cd270325be2d9f505d6a1cd",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "id": "task_private",
+        "origin": "task_sensitive",
+        "destination": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "mode": "task_private",
+        "transferMinutes": "task_private",
+        "bookingRequired": "task_private",
+        "dependsOn": "task_sensitive",
+        "feasibility": "task_private"
+      }
+    },
+    "VehicleRequest": {
+      "fingerprint": "ca76364b7f5cde703a423141519ab53765dfb16de045b74b8991e15dba389c49",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "mode": "task_private",
+        "pickup": "task_sensitive",
+        "returnLocation": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "vehicleClass": "task_private",
+        "passengers": "task_private",
+        "driverKey": "task_sensitive",
+        "endpoint": "task_private",
+        "budget": "task_sensitive",
+        "depositLimit": "task_sensitive",
+        "luggageCount": "task_private",
+        "luggageSize": "task_private",
+        "wheelchairRequired": "task_private",
+        "pickupLocation": "task_sensitive",
+        "returnLocationDetails": "task_sensitive",
+        "driverQualification": "task_sensitive",
+        "insurance": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "inspectionRequired": "task_private",
+        "transmission": "task_private",
+        "requestRevision": "task_private",
+        "capturedAt": "task_private"
+      }
+    },
+    "VehicleOption": {
+      "fingerprint": "ec4f3110f670a2c1a06dd72d3a7fa38be2f711aedbf8065679bb80c01ae838f7",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "parametersDigest": "task_private",
+        "offeredParameters": "task_sensitive",
+        "commitments": "task_sensitive",
+        "deposit": "task_sensitive",
+        "requestRevision": "task_private",
+        "availability": "task_private",
+        "eligibility": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "commitmentBy": "task_private",
+        "termsMatch": "task_private",
+        "preparedReceipt": "internal_only"
+      }
+    },
+    "VehicleBooking": {
+      "fingerprint": "2510cbec3596c928d067a23f7162920fea41d7bd5e048203dc3260704b607b72",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "providerReference": "task_sensitive",
+        "observedAt": "task_private",
+        "requestDigest": "task_private",
+        "state": "task_private",
+        "mode": "task_private",
+        "pickup": "task_sensitive",
+        "returnLocation": "task_sensitive",
+        "startsAt": "task_private",
+        "endsAt": "task_private",
+        "timeZone": "task_private",
+        "vehicleClass": "task_private",
+        "passengers": "task_private",
+        "driverKey": "task_sensitive",
+        "eligibilityVerified": "task_private",
+        "confirmationCode": "task_sensitive",
+        "confirmedAt": "task_private",
+        "total": "task_sensitive",
+        "feesComplete": "task_private",
+        "deposit": "task_sensitive",
+        "pickedUpAt": "task_private",
+        "returnedAt": "task_private",
+        "returnAccepted": "task_private",
+        "depositState": "task_private",
+        "luggageCount": "task_private",
+        "luggageSize": "task_private",
+        "wheelchairRequired": "task_private",
+        "pickupLocation": "task_sensitive",
+        "returnLocationDetails": "task_sensitive",
+        "driverQualification": "task_sensitive",
+        "driverEligibility": "task_sensitive",
+        "insurance": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "transmission": "task_private",
+        "assignmentId": "task_sensitive",
+        "pickupInspectionId": "task_sensitive",
+        "returnInspectionId": "task_sensitive",
+        "requestRevision": "task_private",
+        "sourceVersion": "task_private"
+      }
+    },
+    "VehicleClass": {
+      "fingerprint": "d30c0d006da676e2d61944fd7f2caf89702924358bafccb8bd679c40e1528ee4",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "className": "task_private",
+        "passengerCapacity": "task_private",
+        "transmission": "task_private",
+        "luggageCapacity": "task_sensitive",
+        "wheelchairAccessible": "task_private"
+      }
+    },
+    "RentalPolicy": {
+      "fingerprint": "1762f82f3f51aed799f7408f2a063da767ba4ffd661bd18ff4cffdbfa61fffe4",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "driverEligibilityRule": "task_private",
+        "cancellationPolicyRef": "task_private",
+        "insuranceTerms": "task_private",
+        "depositLimit": "task_sensitive",
+        "vehicleClassId": "task_sensitive",
+        "driverEligibility": "task_sensitive",
+        "insurance": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "pickupLocation": "task_sensitive",
+        "returnLocationDetails": "task_sensitive"
+      }
+    },
+    "VehicleInspection": {
+      "fingerprint": "c48d9b9f240f0aa4b44e8f4f3099b383935d17fa84ea107a78a2ba570a8cf8b7",
+      "fields": {
+        "objectId": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_private",
+        "sourceRevision": "task_private",
+        "stage": "task_private",
+        "occurredAt": "task_private",
+        "accepted": "task_private",
+        "damageReportRef": "task_private",
+        "providerReference": "task_sensitive",
+        "vehicleId": "task_sensitive",
+        "details": "task_sensitive"
+      }
+    },
+    "CheckoutRequest": {
+      "fingerprint": "065cd6a5490ad3cefc5154f026f632a1ac35302eb8b807d7fdf48cdf6f3f0106",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "operation": "task_private",
+        "expectedItems": "task_sensitive",
+        "preparationTaskId": "task_private",
+        "budget": "task_sensitive"
+      }
+    },
+    "CheckoutSession": {
+      "fingerprint": "e6f1b1f24ac9704b5e149675d9883dad3dd1003967e24bc60a11000eda9c59ad",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "merchantId": "task_private",
+        "merchantOrigin": "task_sensitive",
+        "providerCheckoutId": "task_private",
+        "protocolVersion": "task_private",
+        "state": "task_private",
+        "items": "task_sensitive",
+        "total": "task_sensitive",
+        "quoteDigest": "task_private",
+        "sourceStartedAt": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogRead": {
+      "fingerprint": "e81ca9e529e3261ac3350370a6d1a457615970dda51b8f59182739c68c4f568c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "query": "task_sensitive",
+        "phase": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogTask": {
+      "fingerprint": "7d8ef0e5f94b36ba43e611c3a29ea4b2acab525b35f1be0a0fe373272fa7f435",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "merchants": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "CatalogObservation": {
+      "fingerprint": "6f3d63999d19ffaedb1150d76c58272b3547d901559c8b7b82b3178f9f68af1a",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CatalogEndpoint": {
+      "fingerprint": "e471e1ccb40076fad79c4244df16ae0cee16d9005d3f759e86d691c0f0a45212",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceTask": {
+      "fingerprint": "234cdfc945f692a005b36b40ff96aede80156c5519faeb07381704fe19b9e011",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "requirements": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only",
+        "environment": "task_private"
+      }
+    },
+    "FulfillmentContext": {
+      "fingerprint": "386e28b9f7907d55323cb1942d8d2962c037f2d52cb2fba2637c6a93e8bd04dc",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceMerchantSearch": {
+      "fingerprint": "f5cf226d3accd193f8c2ac3c1e99bbca28aeb912fcbc25bd502468f01d3b4b5b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceProduct": {
+      "fingerprint": "e9e6ee730e1fd71eeb87174339f12aed12a011fda8eb423dc190ac5b4810e486",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "InventoryObservation": {
+      "fingerprint": "e837c10c1da30670a19dfaf32a56f4083ba6d71a7fffa0cfbca0cb8b50ec3b0a",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "InventoryReservation": {
+      "fingerprint": "516497ef4d364ec953df0be64855354b3332b0c83bdc68492f69487e3bc54501",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FulfillmentPlan": {
+      "fingerprint": "b66e1c7abf887f85d5894a46186efd2345d4a8f7e787e928c05d5bc1bea4a643",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CustomsAssessment": {
+      "fingerprint": "73ace1af84534ca2aba385e1d978ac86ae0f6a44f9a23645dd2be2850ef0c425",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "LandedCostQuote": {
+      "fingerprint": "110a092353d806cae1941efd52e8f6e28747b3382adaac4451e375c81223d834",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "Cart": {
+      "fingerprint": "f13fa67a6517738e22e6ab03af5bebcb7363ddf99b8d68c89d873fd0496b45cb",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CartLine": {
+      "fingerprint": "931c96a74c1a476bff86dfaa807271b5f71e50530068c1040a924f93f19e8c85",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceCheckout": {
+      "fingerprint": "4bd630170d40356fa5efc1c512ee87e62ef57753fd3afce24bac20f4f3dfc67f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceOrderObservation": {
+      "fingerprint": "73744eba518b7c73829ebfe53505fab5a99c96d0ec02d1a4b1f02fb34dd703df",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommercePaymentObservation": {
+      "fingerprint": "4f958f93c96786ad0fa3c13f5be7338855a6ef8c7a2fd3cdc228e6b8045d58bc",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "CommerceDeliveryObservation": {
+      "fingerprint": "e4a02cee09386ca6d19f3f6d44ce5ce3cb3f403917cecce6c67e45ac4ca67eba",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "DeliveryPromise": {
+      "fingerprint": "7b86cd064961986eb9fa9e0cf2036e673a1988e4ddac697c82870b884c4df735",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FulfillmentGroup": {
+      "fingerprint": "c67da40e8363510e069068abc5aed94ba0a9763e883d42e15d331459392fbbc0",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "FactRequirement": {
+      "fingerprint": "dd623d3376740e21d609c52ad177f516f7932bc71a336c41dba5e9f1588f4d47",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "RegulatoryReference": {
+      "fingerprint": "993aa08dae0fd03013f03f7a984ac3135716ce894fc6dd873b53297626616b58",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "CustomsRuleSet": {
+      "fingerprint": "4a6aaa44e9e266b1cfe6068b6321f1f5ab74bc13f569483c7f13fafb69f837e3",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "policyDigest": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "StripePaymentObservation": {
+      "fingerprint": "fa627056412775782083c835d2cea85882857818486f762cfed511b036c1f8bb",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingTask": {
+      "fingerprint": "e6c9f7a73cbd7e0f3669043660a43366b6c553f794075bd86d9178cc67ed3e3e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "internal_only",
+        "allowedActions": "internal_only"
+      }
+    },
+    "BookingOffers": {
+      "fingerprint": "99182504b00a61c7ca5413c982d2afc55484e859779cd64ee4ae4073b8267e51",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingObservation": {
+      "fingerprint": "d3c8d1c304b20450b3a013b55621df0a1af0fbb3b0b3d5a11dee60f3ee3763a3",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "BookingPaymentObservation": {
+      "fingerprint": "f0a5113df90f9683ccc183335d6648b10cfda1606266c5ea4ec1f052fa3269ea",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "PAPaymentRequest": {
+      "fingerprint": "baf36214b9dbbee1f0604575978b57ea18bebc664bdfcf5cd268b88cefb2f0ba",
+      "fields": {
+        "id": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "terms": "task_sensitive",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RegistrationTask": {
+      "fingerprint": "7afc2babbc83d6351ee887346f63ee9774e0e4a32c26ce617611073800735e58",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "bindingDigest": "internal_only",
+        "allowedActions": "task_sensitive"
+      }
+    },
+    "RegistrationOffer": {
+      "fingerprint": "13c62a10ae5d6837794763bdcdff054616d4873eaaf1a0628251352a05aa45e1",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "RegistrationRecord": {
+      "fingerprint": "6c78633ef00b7cc600d271d91bb4ff38cf58ce5d0b8b7f2caff7248c8bbef50d",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "GoalCoverage": {
+      "fingerprint": "830ec63ad927e81ed284d1422a08119fa923b8c9183c1bfe37bc6401356b4c13",
+      "fields": {
+        "coverageId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "requestDigest": "task_private",
+        "capabilityRef": "task_private",
+        "capabilityDigest": "task_private",
+        "input": "internal_only",
+        "inputDigest": "task_private",
+        "reviewOrigin": "task_private",
+        "modelDecisionDigest": "task_private",
+        "review": "task_sensitive",
+        "modelRunId": "task_private",
+        "assessedAt": "task_private",
+        "digest": "task_private"
+      }
+    },
+    "ExecutionFeedback": {
+      "fingerprint": "2f0e736395e4b4b8f9e55e73358ed1eba8949912c45403dc866ab5a9824ebb04",
+      "fields": {
+        "feedbackId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "bindingRef": "task_private",
+        "bindingDigest": "task_private",
+        "taskState": "task_private",
+        "judgment": "task_private",
+        "evidenceLevel": "task_private",
+        "evidenceRefs": "task_sensitive",
+        "observedAt": "task_private"
+      }
+    },
+    "ServiceComposition": {
+      "fingerprint": "ae1f1aeeaa59eb748f1adab5d9e1cd850071eeb26a8ddb764b28d3508dff0899",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "definition": "internal_only",
+        "configurationDigest": "task_private"
+      }
+    },
+    "ServiceComponent": {
+      "fingerprint": "37776daf088231b751073d8d370941fa518cdbe66aca16aebcbe23d455759af1",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "scope": "task_private",
+        "inputDigest": "task_private",
+        "dependencies": "task_sensitive"
+      }
+    },
+    "ServiceComponentResult": {
+      "fingerprint": "3191bde983042eaf798a8f374f770a9a93ee43eed8c00bd4bed47d130d9e7c1f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "artifactDigest": "task_private",
+        "output": "internal_only",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private"
+      }
+    },
+    "DidiOrderTestTask": {
+      "fingerprint": "e2ce69bd0d67596589bb1b7deff3b8ade4e793921faa4be79897b72d4fb00431",
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "input": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "DidiOrderTestPlaceObservation": {
+      "fingerprint": "14868ee38730d5c8603700efac0395a9b997251f2c596b0c641e7d5cd247b5cf",
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "DidiOrderTestQuote": {
+      "fingerprint": "e51612eb3ecef105d992cbc3b06436f45024ee23ed1adb58c9e6564c3c190188",
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "DidiTestOrderObservation": {
+      "fingerprint": "dd159059284be45a65aa331e89b8dc86c84e625a40bd7dce8058d052eb6aee36",
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "RideRouteObservation": {
+      "fingerprint": "cf4f3f1db52921867f56c43b8024a458149145c2747443c1d4244aa65e033a88",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "TransportVehicleObservation": {
+      "fingerprint": "59c67a47f4fb62c74c5a450f330d256dc0356cb1e8effa56d6116aad3d361ffb",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "TransportDriver": {
+      "fingerprint": "556944181a0c3bd1ef0afdfe1ce811347115211e17c0557793bca5df891bce2b",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "driverAlias": "task_sensitive",
+        "eligibility": "task_private",
+        "operatorId": "task_sensitive",
+        "contact": "internal_only",
+        "licenseReference": "internal_only"
+      }
+    },
+    "TransportDriverObservation": {
+      "fingerprint": "2c74c83320a48ceeddbc2317817f8ae725be3783564082d975ee3f65bfff9315",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "TransportAssignment": {
+      "fingerprint": "e590cb10fc8d985a3210d47516a117b6ea0c990431dac8338a4efe46c49c9ad0",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "providerReference": "task_sensitive",
+        "vehicleId": "task_sensitive",
+        "driverId": "task_sensitive",
+        "mode": "task_private",
+        "state": "task_private",
+        "assignedAt": "task_private",
+        "atPickupAt": "task_private",
+        "boardedAt": "task_private",
+        "completedAt": "task_private"
+      }
+    },
+    "TransportAssignmentObservation": {
+      "fingerprint": "a0795d936eadd370a14f5d195b01b34e0bcc5560ae46d37b64ed90066f8a1295",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "HospitalObservation": {
+      "fingerprint": "948991f665ea15f3c454bd28317eb1ba35bb7550321452456ea0ef9b9fb880c0",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "MedicalDepartmentObservation": {
+      "fingerprint": "e5e121c6797d4d583d364bc11936dd4dfcc5568fd35af4b372955329f4f559ef",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "PractitionerObservation": {
+      "fingerprint": "615b57c94bd5af6b195f77f0449d8f8445807fe06ff8bfdbb337b5fc499cb3ce",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "PatientProfileObservation": {
+      "fingerprint": "01fadf7e27e70592135d8ea4aacaf0f895a09d044f995235dba743cb2ad6ab78",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "AppointmentSlotObservation": {
+      "fingerprint": "7efdc7e3b5f0a941d4eb28b5ecf651c6b1f55f593bc08230b2117588afbae9bd",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "FoodMerchantObservation": {
+      "fingerprint": "98ae2e122e571a235cad3e8f8af48d3ae8888401896e910116167eedabe7cf4c",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "MenuItemObservation": {
+      "fingerprint": "0dba2ffd4f5fb56fd295bddf92b6f31794921be92629f38acae1bfc2dc01646f",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "HotelPropertyObservation": {
+      "fingerprint": "dcb9743e21108bec0127779a3ee363ddd6d86309d42d49489a534ce1d859f787",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "RoomTypeObservation": {
+      "fingerprint": "1c2eb5093e786ad930b987ed3ed85c75bb8dca63fb3168a6546b6be6de57ecb1",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "RoomInventoryObservation": {
+      "fingerprint": "d9a6c096e499a35f737276d7a23c116fa453f5411d1544a353b0d8dee5f977b5",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "HotelRatePlan": {
+      "fingerprint": "d6b067aba3b3ecd37ad5a844af8bc5ddd4b3f0ecd866bb7c70f76587862559c9",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "hotelId": "task_sensitive",
+        "roomTypeId": "task_sensitive",
+        "ratePlanName": "task_sensitive",
+        "breakfast": "task_sensitive",
+        "cancellation": "task_sensitive",
+        "paymentTiming": "task_private",
+        "childPolicy": "task_sensitive"
+      }
+    },
+    "HotelRatePlanObservation": {
+      "fingerprint": "e846fe3878d36d2adcb7c512186257a46af5e53e053e86dd1e135e96030b4c54",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "ItineraryItemObservation": {
+      "fingerprint": "f94446ec21b5705a24100c7a6d62930025f6ab61b672e1c2a29c9f1340d1af9d",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "TravelLegObservation": {
+      "fingerprint": "3f98afa1c6c5be18dc395bf81662d6e594e344284be2bfe5aa44a228c7643073",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "VehicleClassObservation": {
+      "fingerprint": "012a5e4bd2813cd38385d3634f61cd7d1b4ced127ba33479cc56b5ea270ecc20",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "RentalPolicyObservation": {
+      "fingerprint": "ef8ad8c0975a8d166902a49a6df62d7089b7f6c57696aca203ccdeecc2f093b8",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "VehicleInspectionObservation": {
+      "fingerprint": "0bccaffc4818a18cf3197c5d822668f418109f10ba786f4987dada57a7bfb2b0",
+      "fields": {
+        "objectId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sourceIdentity": "task_sensitive",
+        "providerIdentity": "task_sensitive",
+        "nativeIdentity": "task_sensitive",
+        "sourceRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "sourceEventId": "task_sensitive",
+        "observedAt": "task_private",
+        "contentDigest": "task_private",
+        "valuesDigest": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "PaotuiTask": {
+      "fingerprint": "da5fd42481e03710d221018708bdb539d9ef395b45300b56ada2f3ae2d0413fa",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "configurationDigest": "task_private",
+        "connectionDigest": "task_private",
+        "outcome": "task_private",
+        "allowedActions": "task_sensitive",
+        "privateContext": "internal_only"
+      }
+    },
+    "PaotuiObservation": {
+      "fingerprint": "743a600a8502c6f3ba18a9ac842e149abd00e55e5e6ea250481020bef655074c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "summary": "task_sensitive",
+        "privateSnapshot": "internal_only"
+      }
+    },
+    "RequestSpecification": {
+      "fingerprint": "980f020548b7628b74e96e279e14003bfe78fb8cf58175d0f2b36da6a7ae75e2",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "requestDigest": "task_private",
+        "instructionCount": "task_private",
+        "constraintCount": "task_sensitive",
+        "requestedDeliverable": "task_sensitive",
+        "executionEnvironment": "task_private",
+        "outcome": "task_private",
+        "businessScopeId": "task_sensitive",
+        "confirmedInputDigests": "internal_only",
+        "assertionSnapshotVersion": "task_private",
+        "factCount": "task_private",
+        "conditionCount": "task_sensitive",
+        "factFamilies": "internal_only",
+        "capabilityRef": "task_sensitive"
+      }
+    },
+    "RequestInstruction": {
+      "fingerprint": "c519bd9821ed09d92feabebecc9e50a2b73900aa9203188606075e245e771255",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "introducedRevision": "task_private",
+        "messageId": "task_sensitive",
+        "sequence": "task_private",
+        "text": "task_sensitive",
+        "receivedAt": "task_private"
+      }
+    },
+    "RequestConstraint": {
+      "fingerprint": "fbeb2990ad76b212321975592b6b846694fa6c2747612df441af3e56a644512b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "introducedRevision": "task_private",
+        "requirementId": "task_sensitive",
+        "sequence": "task_private",
+        "group": "task_private",
+        "kind": "task_private",
+        "role": "task_sensitive",
+        "strength": "task_private",
+        "expected": "internal_only",
+        "provenance": "task_sensitive"
+      }
+    },
+    "RegisteredActionType": {
+      "fingerprint": "499471762a04152e53d97c35497906574f8881469726844b8ea2b8c0c08967bd",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "contractKind": "task_private",
+        "actionId": "task_sensitive",
+        "actionVersion": "task_private",
+        "capabilityRef": "task_sensitive",
+        "definitionDigest": "task_private",
+        "description": "task_sensitive",
+        "inputs": "internal_only",
+        "inputSchema": "internal_only",
+        "resultType": "task_sensitive",
+        "effect": "task_private",
+        "kind": "task_private",
+        "effects": "task_sensitive",
+        "resultTypes": "task_sensitive",
+        "changes": "task_sensitive",
+        "submissionCriteria": "task_sensitive",
+        "execution": "task_private",
+        "composition": "internal_only"
+      }
+    },
+    "ActionBinding": {
+      "fingerprint": "494db7a364745d078614cd80241841b706c0f3ad1fbd918670745631fcda52a8",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "bindingRef": "task_sensitive",
+        "configurationDigest": "task_private",
+        "bindingDigest": "task_private",
+        "providerContract": "task_sensitive",
+        "kind": "task_private",
+        "actionIds": "task_sensitive",
+        "active": "task_private",
+        "authorization": "task_private",
+        "programRef": "task_sensitive",
+        "contextId": "task_sensitive",
+        "contextDigest": "task_sensitive",
+        "scope": "task_sensitive",
+        "definitionDigest": "task_private"
+      }
+    },
+    "ExecutionContext": {
+      "fingerprint": "a8edbafd2d88992bba528075cfdbcb42cae4b58b23a1e78e61921257b2e4014f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "phase": "task_sensitive",
+        "state": "task_sensitive",
+        "programRef": "task_sensitive",
+        "programDigest": "task_private",
+        "scope": "task_sensitive",
+        "activeBinding": "task_sensitive",
+        "pendingPlanId": "task_sensitive",
+        "observationOrder": "task_sensitive",
+        "feedback": "task_sensitive",
+        "goal": "task_sensitive",
+        "components": "task_sensitive",
+        "goalAssessment": "internal_only"
+      }
+    },
+    "ExecutionPlan": {
+      "fingerprint": "0b9924ad85e338834c0d5ea81eb229e7b92d2e93b81aeb1c71c76e1a174c018b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "planId": "task_sensitive",
+        "planDigest": "task_private",
+        "requestRevision": "task_private",
+        "kind": "task_private",
+        "sequence": "task_private",
+        "state": "task_sensitive",
+        "structureDigest": "task_private",
+        "createdAt": "task_private",
+        "modelRunId": "task_sensitive"
+      }
+    },
+    "ExecutionStep": {
+      "fingerprint": "d3bbb37b121005e8845ef6bd746c89365615dee686f554be14297f8b681e8bef",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "stepId": "task_sensitive",
+        "sequence": "task_private",
+        "actionId": "task_sensitive",
+        "definitionDigest": "task_private",
+        "inputDigest": "task_sensitive",
+        "intentId": "task_sensitive",
+        "planDigest": "task_private",
+        "effect": "task_sensitive",
+        "state": "task_private",
+        "structureDigest": "task_private",
+        "acceptedOutput": "task_sensitive"
+      }
+    },
+    "ExecutionInput": {
+      "fingerprint": "b42a18734b02f5ef5710c58cb75af0f3f8da4b3fb798ce00c968a9784b42c10a",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "parameter": "task_sensitive",
+        "sourceKind": "task_sensitive",
+        "valueDigest": "task_sensitive",
+        "valueType": "task_sensitive",
+        "sourceStepId": "task_sensitive",
+        "sourcePath": "task_sensitive",
+        "object": "task_sensitive",
+        "candidateId": "task_sensitive",
+        "requestRevision": "task_private",
+        "objectRevision": "task_private",
+        "objectPropertiesDigest": "task_private",
+        "objectLinksDigest": "task_private",
+        "sourcePort": "task_sensitive",
+        "sourceIntentId": "task_sensitive",
+        "sourceComputation": "task_sensitive"
+      }
+    },
+    "ExecutionAttempt": {
+      "fingerprint": "842745e7f0636a0be99798cab81a46f8dee66fe70918caefb34a96d13cbdc903",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "attemptId": "task_sensitive",
+        "intentId": "task_sensitive",
+        "planDigest": "task_private",
+        "ordinal": "task_private",
+        "requestRevision": "task_private",
+        "taskRevision": "task_private",
+        "kind": "task_private",
+        "inputDigest": "task_sensitive",
+        "startedAt": "task_private",
+        "state": "task_private",
+        "submission": "task_sensitive"
+      }
+    },
+    "ExecutionResult": {
+      "fingerprint": "b584bb3238b3469ddcce4074438805d91fb2e0fcc578f068079724e06cdca30c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "resultId": "task_sensitive",
+        "resultDigest": "task_private",
+        "receivedAt": "task_private",
+        "kind": "task_private",
+        "sourceVersion": "task_sensitive",
+        "applied": "task_private",
+        "verification": "task_private",
+        "output": "task_sensitive"
+      }
+    },
+    "RegisteredCapability": {
+      "fingerprint": "0aa1d5452d2174374e35539f09f0b1f405081bfcd62e9d3c40309655c6fe2cf1",
+      "fields": {
+        "id": "task_private",
+        "name": "task_sensitive",
+        "capabilityRef": "task_sensitive",
+        "description": "task_sensitive",
+        "tags": "task_sensitive",
+        "inputSchema": "internal_only",
+        "predicates": "internal_only",
+        "outcomePredicates": "task_sensitive",
+        "requirementRoles": "internal_only",
+        "constraintEvaluation": "task_sensitive",
+        "locationSemantics": "task_sensitive",
+        "definitionDigest": "task_private",
+        "goalOutcomes": "task_sensitive",
+        "contextRequestId": "task_sensitive",
+        "verificationHistory": "internal_only",
+        "scopeReviewMode": "task_private"
+      }
+    },
+    "ResolutionContext": {
+      "fingerprint": "59d25dc7940c7c16511a8118a44faf50dba63b5c0d16a0c6092188f466baf527",
+      "fields": {
+        "id": "task_private",
+        "name": "task_sensitive",
+        "requestRevision": "task_private",
+        "capabilityRef": "task_sensitive",
+        "searchedBindingRefs": "task_sensitive",
+        "observedAt": "task_private",
+        "realSupply": "task_private",
+        "coverage": "task_sensitive",
+        "comparison": "internal_only",
+        "capabilityActions": "task_sensitive",
+        "capabilityOntologyRef": "task_sensitive",
+        "capabilityVerifierRef": "task_sensitive",
+        "capabilityCompletion": "task_private",
+        "capabilityEnvironment": "task_private",
+        "capabilityDefinitionDigest": "task_private",
+        "candidateCount": "task_private",
+        "resolutionDigest": "task_private"
+      }
+    },
+    "PreparedCandidate": {
+      "fingerprint": "c11f8e7c360b15b7cecb796d07b0c2f52bc104e80fe007e65ace9cc9ee004c4c",
+      "fields": {
+        "id": "task_private",
+        "name": "task_sensitive",
+        "requestRevision": "task_private",
+        "candidateId": "task_sensitive",
+        "sequence": "task_private",
+        "candidateDigest": "task_private",
+        "binding": "task_sensitive",
+        "status": "task_private",
+        "question": "task_sensitive",
+        "input": "internal_only",
+        "details": "internal_only",
+        "facts": "internal_only",
+        "evidenceRefs": "task_sensitive",
+        "requirementChecks": "task_sensitive",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "quote": "task_sensitive",
+        "offer": "internal_only",
+        "ontologySubject": "task_sensitive",
+        "recipe": "internal_only"
+      }
+    },
+    "ExecutionAgent": {
+      "fingerprint": "268aa7c20fb74204b9b392aa44b6a93636fbc690ceb2e91ff96bd011b47ec085",
+      "fields": {
+        "agentId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "name": "task_sensitive"
+      }
+    },
+    "RequestingParty": {
+      "fingerprint": "61793871b8c8c77fa7b32e378b7e0d60c49f82085788d1bdc00d8b80a4e034fa",
+      "fields": {
+        "partyId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "ownerDigest": "task_private",
+        "identityBasis": "task_private"
+      }
+    },
+    "RequestFact": {
+      "fingerprint": "aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace",
+      "fields": {
+        "factId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "namespace": "task_sensitive",
+        "field": "task_sensitive",
+        "status": "task_private",
+        "value": "internal_only",
+        "quote": "task_sensitive",
+        "source": "task_sensitive",
+        "factRevision": "task_private"
+      }
+    },
+    "RequestCondition": {
+      "fingerprint": "1bdfa1c9fcbe65fc1a926a0a047cf7144ec041352a7fd4af22914ad2a21507b7",
+      "fields": {
+        "conditionId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "sequence": "task_private",
+        "condition": "task_sensitive"
+      }
+    },
+    "BusinessResult": {
+      "fingerprint": "9a5c9f38c935a6d8d4dea3df1a2d9a995489171902451e5e7338bd94a2fe2686",
+      "fields": {
+        "resultId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "planDigest": "task_private",
+        "intentId": "task_sensitive",
+        "observationId": "task_sensitive",
+        "kind": "task_private",
+        "effect": "task_private",
+        "sourceVersion": "task_sensitive",
+        "observedAt": "task_private",
+        "evidenceLevel": "task_private",
+        "evidenceIds": "task_sensitive",
+        "states": "internal_only",
+        "deliveredQuantity": "task_sensitive"
+      }
+    },
+    "ServiceArtifact": {
+      "fingerprint": "15dbc8a19116f7292b5f2e05d6f777d43a85cfaacf2914b923dbca20b49530f6",
+      "fields": {
+        "artifactId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "name": "task_sensitive",
+        "contentDigest": "task_private",
+        "contentReference": "task_sensitive"
+      }
+    },
+    "AssessmentFinding": {
+      "fingerprint": "83d2215ddde5b92c47d3c9dd42137861a62feb0deb26bacfa7737dd4e1dc5696",
+      "fields": {
+        "findingId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "criterionId": "task_sensitive",
+        "result": "task_private",
+        "origin": "task_private",
+        "reason": "task_sensitive",
+        "evidenceIds": "task_sensitive"
+      }
+    },
+    "BusinessDecision": {
+      "fingerprint": "aed3d896adb4feb88374afeff565362712a23bc3f4852566e06c4ccea509a353",
+      "fields": {
+        "decisionId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "actionId": "task_sensitive",
+        "actionVersion": "task_private",
+        "definitionDigest": "task_private",
+        "requestRevision": "task_private",
+        "sourceKind": "task_sensitive",
+        "sourceId": "task_sensitive",
+        "occurredAt": "task_private",
+        "termsDigest": "task_private",
+        "actorKind": "task_private"
+      }
+    },
+    "FulfillmentOffer": {
+      "fingerprint": "7d90c36e2772b7bc8a232cdef7959a51a6dedb317fe4685fcb229c6fd970a890",
+      "fields": {
+        "offerId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "requestedQuantity": "task_sensitive",
+        "capacity": "task_sensitive",
+        "pricingTerms": "task_sensitive",
+        "deliveryCommitment": "task_private",
+        "sourceQuoteReference": "task_sensitive",
+        "environment": "task_private",
+        "observedAt": "task_private",
+        "expiresAt": "task_private",
+        "validityBasis": "task_private",
+        "priceKind": "task_private",
+        "pricingCompleteness": "task_private",
+        "isFresh": "derived_from_inputs"
+      }
+    },
+    "EntityIdentityAssertion": {
+      "fingerprint": "abcd4b0172c0c2ed55e80022c22e4b011ae47effbdcc37473df2d6e43422880f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "assertion": "task_sensitive"
+      }
+    },
+    "TransactionPartyRole": {
+      "fingerprint": "9550f1e1c2e37c762a82c1f23099ce964d930010f4309f908584537f92c08377",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "assignment": "task_sensitive"
+      }
+    },
+    "NetworkInquiry": {
+      "fingerprint": "a179ad51bfd27af035d4ba5f9e26c8bbc92bdae859ae191ed46e857860036696",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "taskId": "task_sensitive",
+        "postId": "task_sensitive",
+        "originalPostPublicationId": "task_sensitive",
+        "originalPostContentRevision": "task_private",
+        "originalListingPublicationId": "task_sensitive",
+        "originalMessagePublicationId": "task_sensitive",
+        "selectedAtRequestRevision": "task_private",
+        "createdAt": "task_private",
+        "mode": "task_private",
+        "businessExecution": "task_private",
+        "readAdmission": "task_private"
+      }
+    },
+    "NetworkNeed": {
+      "fingerprint": "d09f14201039bf3e3d97d4a0bb15ea37a7e770b3161d083719b772ce5df0370c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "revision": "task_private",
+        "contentRevision": "task_private",
+        "state": "task_private"
+      }
+    },
+    "NetworkPublication": {
+      "fingerprint": "4ad9296c88bf002c5a04f781ed9f748e25f3d783808ff464099598021a919d44",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "kind": "task_private",
+        "revision": "task_private",
+        "content": "internal_only",
+        "visibleUntil": "task_private"
+      }
+    },
+    "NetworkProfile": {
+      "fingerprint": "551493abe4c893e755ec7c5ac36521eaf16a9a46e84c3114137acdd8bb97961c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "displayName": "task_sensitive",
+        "memberId": "task_sensitive",
+        "identityBasis": "task_private"
+      }
+    },
+    "NetworkListing": {
+      "fingerprint": "a69ceb48ea948b67777eb155bbdcbe5429c0fa9e54393bd0625ff35e367a9706",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "revision": "task_private",
+        "providerId": "task_sensitive",
+        "role": "task_private",
+        "capabilityRef": "task_sensitive",
+        "description": "task_sensitive",
+        "coarseAreas": "task_sensitive",
+        "candidateType": "task_private",
+        "readPolicyStatus": "task_private",
+        "readPolicyReason": "task_sensitive",
+        "sourceAdmission": "task_sensitive"
+      }
+    },
+    "NetworkRepresentation": {
+      "fingerprint": "c4f3c3f73547ce32c97070ae4a499bb2ea2ecf0428832d59104b19dea84ecec4",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "providerId": "task_sensitive",
+        "role": "task_private",
+        "state": "task_private",
+        "capabilityRef": "task_sensitive"
+      }
+    },
+    "NetworkVisibility": {
+      "fingerprint": "db2f4e60dc689d396fa11592d00379930495df70626e7a4f3ca90e8d261e4a0f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "spaceId": "task_sensitive",
+        "spaceName": "task_sensitive",
+        "audienceKind": "task_private",
+        "viewerIncluded": "task_private",
+        "recipientMemberIds": "task_sensitive",
+        "visibleUntil": "task_private",
+        "executionAuthority": "task_private"
+      }
+    },
+    "NetworkSelection": {
+      "fingerprint": "d15b68bf4a8cc57fc964dfa7307efae17ad970bd6a9c61030279c39d5dd8b492",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "taskId": "task_sensitive",
+        "candidateType": "task_private",
+        "candidateRevision": "task_private",
+        "requestRevision": "task_private",
+        "kind": "task_private",
+        "snapshotDigest": "task_private",
+        "snapshot": "internal_only",
+        "createdAt": "task_private",
+        "execution": "task_private"
+      }
+    },
+    "DocumentTask": {
+      "fingerprint": "e5568286fc2e6f73c0bf172d7aaeee73a3ffc91f9bb35999f20bcb16eff49be8",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private",
+        "allowedActions": "task_sensitive"
+      }
+    },
+    "DocumentDraft": {
+      "fingerprint": "09c67d1f1b99661ef0c7b45d62745e9df6ce5e18810e92bc16c983e4c37a6e02",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "snapshot": "task_sensitive"
+      }
+    },
+    "BriefTask": {
+      "fingerprint": "c066439cc5698e10447bbb8a88eba210bc07d8c7379c365b1954f3c1d807340c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private"
+      }
+    },
+    "CsvAuditTask": {
+      "fingerprint": "f1a7372e25256e9c5d20fd3e466bf714ca0fb6c1d784e6ea6a8c03764738ddb0",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private"
+      }
+    },
+    "TaskBrief": {
+      "fingerprint": "93063cf22819e45a225538d5f825f75217b6f4f701e580d8a771949c3a34804b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "receipt": "task_sensitive"
+      }
+    },
+    "CsvSnapshot": {
+      "fingerprint": "3b32d6068d60cc233b04b52f3f51a9c971f8d5920f1550c502b509413ad1076c",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "snapshot": "task_sensitive"
+      }
+    },
+    "CsvAuditReport": {
+      "fingerprint": "e12fea62a88dc0e6c86830d47fcb3e53334316c9d03eb5397d14ce960661faf2",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "receipt": "task_sensitive"
+      }
+    },
+    "GeoQueryTask": {
+      "fingerprint": "d0ac72f7c7c091292da7f0d9c3bf7b16bfab47e912d2f3bf281372e1faa5f88e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private"
+      }
+    },
+    "GeoObservation": {
+      "fingerprint": "257c4df233235ab1707c032d5cb6f451ecea889675c724448d43161958104951",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "snapshot": "task_sensitive"
+      }
+    },
+    "UcpTask": {
+      "fingerprint": "26bb54808db7fc02b0c318f218f7677c063132d6d2ea5db14950acb27c296325",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "mode": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private"
+      }
+    },
+    "UcpOperationTerms": {
+      "fingerprint": "4181972a7b50b01c94fa118ec7b299aded654f0327c69d8ad0c8ef6502f81695",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "receipt": "task_sensitive"
+      }
+    },
+    "UcpCheckoutObservation": {
+      "fingerprint": "6765051a5a5f3ffd5f540520983a71c27207312e8aa2c657484ea6294bd3bdfe",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "snapshot": "task_sensitive",
+        "intentId": "task_sensitive",
+        "scope": "task_sensitive"
+      }
+    },
+    "SandboxTask": {
+      "fingerprint": "c73a8ba3814731ff15f2924da8278e4eff27ee22f408cd2686ed533c71377995",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private"
+      }
+    },
+    "SandboxQuoteObservation": {
+      "fingerprint": "86caeb940dae529a760e4c3d2b011df116ec5c0de36932966dc78c4dc9632ac8",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "quote": "task_sensitive",
+        "receipt": "task_sensitive"
+      }
+    },
+    "SandboxOrderObservation": {
+      "fingerprint": "ec2482276563adc96286b5de4221d925cad837e015ccafd05d77e468a6ebab90",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "record": "task_sensitive",
+        "intentId": "task_sensitive",
+        "action": "task_sensitive",
+        "scope": "task_sensitive"
+      }
+    },
+    "DidiOrderObservation": {
+      "fingerprint": "b21da6f318e5b98cf5822d3a0d64c88bb08499102948b56fb3d08fac5934313b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "ShopifyCheckoutTask": {
+      "fingerprint": "748ad1569e000081cbcd2df8b40caebb62acba4e23309e52e14211188623dc20",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "merchant": "task_sensitive",
+        "selection": "task_sensitive",
+        "configurationDigest": "task_private",
+        "allowedActions": "task_sensitive",
+        "sourceCheckout": "task_sensitive"
+      }
+    },
+    "ShopifyCheckoutProducts": {
+      "fingerprint": "e0eeeb2fd3f50efebbafcfd9be7767a8963be892ae7e4b3c554eb5cab3cde209",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "items": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "ShopifyCheckoutObservation": {
+      "fingerprint": "1e8af2c5fc12a0c1d0ecc08a1e83638d80dc9b6394993a664b758968ad716886",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "data": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "ShopifyPaymentTask": {
+      "fingerprint": "dbff6a4c81dc268ccda5f6191055432fa597aa8019dc052e10aaa15167fc3350",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "configurationDigest": "task_private",
+        "allowedActions": "task_sensitive"
+      }
+    },
+    "ShopifyPaymentProducts": {
+      "fingerprint": "50da4e2ff82b73112a5df1758953a56c9320136012f7bab24320eae524fc15fc",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "data": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    },
+    "ShopifyPaymentCheckoutObservation": {
+      "fingerprint": "f6d2538d192eb84ffbf896f32b4e2f6f158d004f93371d08a8682523a9567ce7",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "data": "internal_only",
+        "snapshot": "internal_only"
+      }
+    },
+    "ShopifyCheckoutPaymentObservation": {
+      "fingerprint": "4022bfcfdf1dd39e220297436f30c6a970800f4e3e8db8030f306d814c164517",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "data": "task_sensitive",
+        "snapshot": "internal_only"
+      }
+    }
+  },
+  "surfaces": [
+    {
+      "id": "ontology-http",
+      "file": "apps/gateway/app.ts",
+      "sourceDigest": "6fddda277d549cbfa57853b046ebda1484d252dc801767ac87ebd587af8b4000",
+      "channels": [
+        "http"
+      ],
+      "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
+      "currentControl": "Foundation v2 authenticated TaskView, controlled downloads, v2 ontology reads and sanitized audit; legacy remains explicit",
+      "targetControl": "AccessContext plus resource/data policies and TaskView",
+      "stage": "S2"
+    },
+    {
+      "id": "mcp",
+      "file": "apps/gateway/mcp.ts",
+      "sourceDigest": "ce39fcf1387e66827312047b90e98db47e66b10b4eaae1b646512f8c0b6e88bc",
+      "channels": [
+        "mcp"
+      ],
+      "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
+      "currentControl": "Foundation v2 task-bound ontology schemas and shared TaskView on all task responses",
+      "targetControl": "Shared policy and response projection on every tool",
+      "stage": "S4"
+    },
+    {
+      "id": "a2a",
+      "file": "apps/gateway/a2a.ts",
+      "sourceDigest": "cd0c8599a57f8409011e32a77416ded51448864e2fb6517c71788b551301afce",
+      "channels": [
+        "a2a"
+      ],
+      "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
+      "currentControl": "Foundation v2 safe metadata and current read/replay checks; no raw Job delegation",
+      "targetControl": "Actor-aware TaskView before protocol serialization",
+      "stage": "S4"
+    },
+    {
+      "id": "task-service",
+      "file": "packages/core/tasks.ts",
+      "sourceDigest": "ff0a183896eb508cf5354d7210c1e89a18a894c7de47f3daf8b34c05f6752387",
+      "channels": [
+        "http",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Queries, mutations, blocking wait and internal Job response",
+      "currentControl": "Foundation v2 installation/task guards wrap all public mutations and reads",
+      "targetControl": "TaskDataGrant, current projection and operation-specific scope",
+      "stage": "S2"
+    },
+    {
+      "id": "job-store",
+      "file": "packages/core/store.ts",
+      "sourceDigest": "1b6a83f57ed294780891795302560326671180b662991fd6a295cc952e508a92",
+      "channels": [
+        "sqlite",
+        "idempotency"
+      ],
+      "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
+      "currentControl": "Foundation v2 durable claim, current policy/permit/budget checks, atomic projection and reference-only retry records",
+      "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
+      "stage": "S3"
+    },
+    {
+      "id": "ontology-store",
+      "file": "packages/ontology/object-store.ts",
+      "sourceDigest": "c6ba76299f859d52ef7ea2e3c0f0499a049f4b2379b394689e465d5e7f8ce2c0",
+      "channels": [
+        "query",
+        "function"
+      ],
+      "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
+      "currentControl": "Foundation v2 checked rows/fields/relationships/functions and pre-pagination filtering; trusted registered writes bind atomically",
+      "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
+      "stage": "S2"
+    },
+    {
+      "id": "member-ui",
+      "file": "apps/gateway/members/routes.ts",
+      "sourceDigest": "d53d29e35d4efb3ea65a046b978a0e5bab953428965af71e9d5e94ba0cfa1d82",
+      "channels": [
+        "member_ui"
+      ],
+      "content": "Member profile, connections, installation revoke and invitation flows",
+      "currentControl": "Controller session plus Origin/CSRF; immutable five-minute review and atomic policy-version check",
+      "targetControl": "Reuse identity and coordinate all revocation with business fence",
+      "stage": "S1"
+    },
+    {
+      "id": "member-page",
+      "file": "apps/gateway/members/page.ts",
+      "sourceDigest": "23382e81dca9ed0b4b9b89848697a563c70b19304d40ab5bd6d5284f3cfcbfbf",
+      "channels": [
+        "member_ui"
+      ],
+      "content": "Rendered member and connection/installation information",
+      "currentControl": "Foundation links to explicit installation, source and task permission review",
+      "targetControl": "Installation and task authorization review UI",
+      "stage": "S1"
+    },
+    {
+      "id": "member-store",
+      "file": "packages/members/store.ts",
+      "sourceDigest": "defcb705cdccaceeb6d0d87d4af05ef4455bfbe8e6eaa7a585d7fddba52dd5f7",
+      "channels": [
+        "membership_db"
+      ],
+      "content": "Member identity, session and connection status",
+      "currentControl": "Gateway-only separate member DB",
+      "targetControl": "Minimal subject projection; no Worker access to profile or session credentials",
+      "stage": "S1"
+    },
+    {
+      "id": "agent-registration",
+      "file": "packages/members/agents.ts",
+      "sourceDigest": "761a2ca10ed1aef520fd22493c77366ce55f2262cb262841bd2a6e2ea1149f46",
+      "channels": [
+        "membership_db"
+      ],
+      "content": "Installation/token binding and revocation",
+      "currentControl": "Token hash plus member/client match",
+      "targetControl": "Retain validated registration ID in AccessContext; coordinated revoke",
+      "stage": "S1"
+    },
+    {
+      "id": "agent-routes",
+      "file": "apps/gateway/members/agent-routes.ts",
+      "sourceDigest": "5ed10322b979c6ba329480da0801adab5ac1a7dedfd90973cdc50b58da0ea23d",
+      "channels": [
+        "http"
+      ],
+      "content": "Registration status, binding and revoke",
+      "currentControl": "Existing installation binding and revocation; S4 task-grant readiness metadata",
+      "targetControl": "No self-issued data grant; coordinate revoke",
+      "stage": "S1"
+    },
+    {
+      "id": "member-cli",
+      "file": "scripts/members.mjs",
+      "sourceDigest": "ca9cab6ec6be05eeebb232c2245819d871d51971f604480ffdc0b8ccb8b9a35d",
+      "channels": [
+        "cli"
+      ],
+      "content": "Approve/suspend/invitation management directly in member DB",
+      "currentControl": "Persisted mode detection and same deny-first coordinator; omitted CLI mode cannot bypass foundation",
+      "targetControl": "Use coordinated management or explicit offline maintenance",
+      "stage": "S1"
+    },
+    {
+      "id": "model-planning",
+      "file": "packages/coordinator/planning-session.ts",
+      "sourceDigest": "fa63c867c161f533b4e2f6d143617890bca4619729baec05454d2e75ccf9bab4",
+      "channels": [
+        "model",
+        "query"
+      ],
+      "content": "Planning tools, reads, seen references, functions, receipts and session key",
+      "currentControl": "Foundation v2 authorized definitions/data and access-qualified receipts/session keys",
+      "targetControl": "Uniform task view; grants and policy epoch in snapshots/session key",
+      "stage": "S3"
+    },
+    {
+      "id": "model-context",
+      "file": "packages/coordinator/model-context.ts",
+      "sourceDigest": "fa68121b483647f9f84948d5492394f4cf32998beeb8e0b1e02bfddae5f9d0de",
+      "channels": [
+        "model"
+      ],
+      "content": "State inputs, plans, observations, feedback and payment/information-request history",
+      "currentControl": "Handwritten compact context",
+      "targetControl": "Field/label projection across non-tool context paths",
+      "stage": "S3"
+    },
+    {
+      "id": "coordinator",
+      "file": "packages/coordinator/coordinator.ts",
+      "sourceDigest": "8c955c90635c62acd44318e92b1bd5a6e114f2de4b56fd9b117f663b76ea600e",
+      "channels": [
+        "model",
+        "dispatch"
+      ],
+      "content": "Task interpretation, initial context, selection and execution orchestration",
+      "currentControl": "Foundation v2 source/role/channel gates; raw legacy preparation path fails closed",
+      "targetControl": "Persisted task authority with source/input/output checks",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-runtime",
+      "file": "packages/coordinator/agent-runtime.ts",
+      "sourceDigest": "7edbdbe8596c1ca26db4d3c6ac7fc0b514b1fa4797877d9cfaf38099714360d9",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Action plans, dispatch, observations, result acceptance and recovery",
+      "currentControl": "Foundation v2 approved context before model invocation and exact dispatch/late-result checks",
+      "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-session",
+      "file": "packages/capabilities/model-session.ts",
+      "sourceDigest": "32646f48cfe32992c2ad7d4f9a10f735ae9f61d8b9e5167065330d539f07cda6",
+      "channels": [
+        "registered_model"
+      ],
+      "content": "Model subprocess messages, data and returned structured output",
+      "currentControl": "Process transport and schema validation",
+      "targetControl": "Registered channel data eligibility and labeled context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-cache",
+      "file": "packages/capabilities/model-session-pool.ts",
+      "sourceDigest": "6f9edbb561c77f6945529259da4389a745c363313cf011cb7b221ea0621d248b",
+      "channels": [
+        "model_cache"
+      ],
+      "content": "Retained conversation and prompt-data cache",
+      "currentControl": "Owner/request/revision/model keyed sessions",
+      "targetControl": "Invalidate on installation/grant/policy change",
+      "stage": "S3"
+    },
+    {
+      "id": "prompt-data",
+      "file": "packages/coordinator/prompt-data.ts",
+      "sourceDigest": "02436ed7f4d4c738da7519beafbac727a53675a958756e96c3a60eb34872c1a4",
+      "channels": [
+        "model_cache"
+      ],
+      "content": "Incremental task data and prior prompt block references",
+      "currentControl": "Session-local context packing",
+      "targetControl": "No stale restricted payload reuse after auth epoch changes",
+      "stage": "S3"
+    },
+    {
+      "id": "document",
+      "file": "packages/capabilities/document.ts",
+      "sourceDigest": "9a6e22b411d0e21723c04f8b5455a6a8f4707cc19edd84bace45278d88d0a76b",
+      "channels": [
+        "artifact"
+      ],
+      "content": "Markdown document result and content digest",
+      "currentControl": "Format/hash verification and task ownership",
+      "targetControl": "Artifact envelope and output-channel/recipient policy",
+      "stage": "S4"
+    },
+    {
+      "id": "executor",
+      "file": "packages/capabilities/executor.ts",
+      "sourceDigest": "fc370d8fa9f1a24383633a270bd79d0e85faaeec8b83d7f218614fce9dc8a186",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Goal/messages to model process; temporary schema/output files",
+      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
+      "targetControl": "Model channel approval and label propagation; files stay private",
+      "stage": "S3"
+    },
+    {
+      "id": "source-catalog",
+      "file": "packages/capabilities/catalog.ts",
+      "sourceDigest": "6d178fe4e320d4fe3a5e5709575b135ef8a319b31e861f03fd8481f20654bd06",
+      "channels": [
+        "source",
+        "dispatch"
+      ],
+      "content": "Configured provider/program identities and adapters",
+      "currentControl": "permitted(owner), environment and explicit configuration",
+      "targetControl": "Per-member/installation/task source authorization",
+      "stage": "S3"
+    },
+    {
+      "id": "csv-report",
+      "file": "packages/capabilities/csv/file-report.ts",
+      "sourceDigest": "894519131c63e49a22670a29d0aa4e4fc404a5f67115798750194da241add534",
+      "channels": [
+        "artifact"
+      ],
+      "content": "CSV findings and local report output",
+      "currentControl": "Private input snapshot and independent report checks",
+      "targetControl": "Input sensitivity propagates into report/attachment",
+      "stage": "S4"
+    },
+    {
+      "id": "shopify-source",
+      "file": "packages/capabilities/shopify/connector.ts",
+      "sourceDigest": "03a4d13ffe73699e99439e192b7e3f00a0a75f1048950999c0378e390124ec4d",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Catalog data, request/response receipts and private audits",
+      "currentControl": "Registered merchants and existing read-only bounds",
+      "targetControl": "Task-scoped source access and safe receipt projection",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-source",
+      "file": "packages/capabilities/didi/connector.ts",
+      "sourceDigest": "38c897c1f047092ea869e384694022ec92f43537aab8c48645b34e2203c0d4bc",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Place/route/price source responses and audit files",
+      "currentControl": "Explicit private credential binding and read-only tool list",
+      "targetControl": "Location-sensitive output and task/source grant",
+      "stage": "S3"
+    },
+    {
+      "id": "meituan-source",
+      "file": "packages/capabilities/meituan-primitives.ts",
+      "sourceDigest": "0dbdd1fb18781b5a9154ad462925aefbbd5ef568bb8c400b173aaf00d6ae6e8b",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Address book/details, locations and delivery quotes",
+      "currentControl": "Private local source and bounded primitives",
+      "targetControl": "Explicit per-task selected address/field permissions",
+      "stage": "S3"
+    },
+    {
+      "id": "booking-bridge",
+      "file": "packages/capabilities/free-booking/browser-bridge.ts",
+      "sourceDigest": "7e8d5627a1fdca7e8751832ce591f3130005f611634e9d55b0ba944e59d3536a",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Participant browser queue commands, responses and receipt storage",
+      "currentControl": "Private bridge context and operation/readback checks",
+      "targetControl": "Source/recipient policy and restricted raw browser evidence",
+      "stage": "S3"
+    },
+    {
+      "id": "participant-app",
+      "file": "apps/participant-browser/main.ts",
+      "sourceDigest": "444c03948079540e48c22b3f6e71368b32872726ee884ecc1648c36a863d4b5b",
+      "channels": [
+        "http",
+        "private_file"
+      ],
+      "content": "Local participant queue API and worker response payloads",
+      "currentControl": "Bridge bearer and operation binding",
+      "targetControl": "Independent source-resource controls; no public attachment URLs",
+      "stage": "S3"
+    },
+    {
+      "id": "task-projection",
+      "file": "packages/ontology/task-projection.ts",
+      "sourceDigest": "ba452895ad59887b05c59c3a2bfd48ac5b859e1a145d452d9c0cd11ae090f3ba",
+      "channels": [
+        "ontology_write"
+      ],
+      "content": "Task goal, conditions, artifacts and read results into objects",
+      "currentControl": "Owner, schemas and source evidence",
+      "targetControl": "Create security metadata/task bindings atomically",
+      "stage": "S2"
+    },
+    {
+      "id": "ontology-definitions",
+      "file": "packages/ontology/model.ts",
+      "sourceDigest": "3b1106497d28016d927b4c5ceb322a0cd69226be4b0438dd2e667389f43ff35b",
+      "channels": [
+        "definition"
+      ],
+      "content": "Types, interfaces, links, action/function schemas and binding metadata",
+      "currentControl": "Authenticated describe call; no per-type policy",
+      "targetControl": "Resource policy filtering including all action/function dependencies",
+      "stage": "S2"
+    },
+    {
+      "id": "read-dataflow",
+      "file": "packages/coordinator/read-dataflow.ts",
+      "sourceDigest": "c62083ec3deb8460b6afd8cb05490d898896806611d5f1d117b4416dc86f9066",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Model-selected function bindings and future evidence selection",
+      "currentControl": "Declared read-only source functions; accepted own-task outputs; no host-generated steps",
+      "targetControl": "Intersect task/source grants and preserve derived labels",
+      "stage": "S3"
+    },
+    {
+      "id": "read-dataflow-contract",
+      "file": "packages/ontology/dataflow-contract.ts",
+      "sourceDigest": "8694a950dc5c5246f623217655b40896f38e0bb12c1fe0c22b7cf552d6c9675c",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Typed deferred bindings and conditional completion contract",
+      "currentControl": "Strict bounded schemas; no executable expressions or prototype paths",
+      "targetControl": "Versioned model channel contract and labeled evidence references",
+      "stage": "S3"
+    },
+    {
+      "id": "initial-selection",
+      "file": "packages/coordinator/initial-selection.ts",
+      "sourceDigest": "814521188bee5d3802af07c60a8eb59eca69d4c45aa97ccfc2233915dd71133c",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Grounding graph binding to the actual initialized task scope",
+      "currentControl": "Exact model response and fresh reads; scope-only binding; read-only eligibility",
+      "targetControl": "Current task authority and source policy before every dispatch",
+      "stage": "S3"
+    },
+    {
+      "id": "source-selection",
+      "file": "packages/ontology/ride-estimate-functions.ts",
+      "sourceDigest": "b3a1fb5e3b46ea3f38834ee01cef35bc247e8b960d8cc549324b81632f416524",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Pure source-derived place identity and source/freshness evaluation",
+      "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
+      "targetControl": "Caller-scoped inputs and derived-output protection",
+      "stage": "S3"
+    },
+    {
+      "id": "security-contracts",
+      "file": "packages/security/contracts.ts",
+      "sourceDigest": "b7f5c9a5dca5d72be0c746001a4599381d4c6b9707b25e2b3e0b91859826f351",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Validated context and grant structures",
+      "currentControl": "Strict shape; parsing is not authorization",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-coordinator",
+      "file": "packages/security/coordinator.ts",
+      "sourceDigest": "2e2ec5c0e3a4351de6983d333700b5eba2dc6b1a1cd056d2ed4d86c0a7db8c39",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Signed installation resolution and cross-database eligibility coordination",
+      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-store",
+      "file": "packages/security/store.ts",
+      "sourceDigest": "863f069a237a85d03bd19c32b7018cef432ed653c13277557e129fd26b1b3a1f",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
+      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-admin",
+      "file": "packages/security/admin.ts",
+      "sourceDigest": "9d8ec225a142aadd72e42b379df23020e91c753cdcc71064fff704cc2eb87c07",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Existing membership CLI coordination",
+      "currentControl": "Persisted mode detection; same deny-first coordinator; no privilege publisher",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-config",
+      "file": "packages/core/config.ts",
+      "sourceDigest": "a3f72e904efcf14555717c785dab8051381b35f38a595b124e9efe595dc9d2d7",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Explicit security foundation activation",
+      "currentControl": "JWT, registered client and persistent new task database; legacy default",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-worker-runtime",
+      "file": "apps/worker/runtime.ts",
+      "sourceDigest": "0085ab2923d7fbacf95d105781422ec5eddc607b32a73756f6e3710a3ed87988",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Worker security mode binding",
+      "currentControl": "Persisted mode must match Gateway; no membership credentials",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-worker-loop",
+      "file": "apps/worker/worker.ts",
+      "sourceDigest": "ab547070765e9312e9f1a21b2c5e4c38e0821d96c59f6cfa0386c0963a3315c6",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Lease renewal, cancellation and completion lifecycle",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "security-principal",
+      "file": "packages/core/domain.ts",
+      "sourceDigest": "5d060316317eb4d266715183a7cce60e5300bdd40ca586df9af0304a4c80c564",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Identity facts and distinct secure execution mode",
+      "currentControl": "Server-derived AccessContext; ownerKey remains issuer/tenant/subject",
+      "targetControl": "Complete resource/data/output enforcement in S2-S4",
+      "stage": "S1"
+    },
+    {
+      "id": "permission-review-page",
+      "file": "apps/gateway/members/permissions-page.ts",
+      "sourceDigest": "000d15cdf9b9b29f6ede3d788b48febe8e3b907edb9e980751f2763fb3ec220f",
+      "channels": [
+        "member-ui"
+      ],
+      "content": "Exact immutable controller review, source readback and revocation",
+      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-context",
+      "file": "packages/security/context.ts",
+      "sourceDigest": "de41a7e31615235d7b69111c274de41690322fe9208c7b4c4113ca7ddf595802",
+      "channels": [
+        "internal"
+      ],
+      "content": "Server-only actor, projection and integrity scopes",
+      "currentControl": "Foundation v2: Server-only actor, projection and integrity scopes",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-envelope",
+      "file": "packages/security/envelope.ts",
+      "sourceDigest": "6f7c198c5580299ec5f7775dbdddde9bae994cde094121dd7b5ec29f1976db7f",
+      "channels": [
+        "all-outputs"
+      ],
+      "content": "Monotonic classification, mandatory markings, channels and lineage",
+      "currentControl": "Foundation v2: Monotonic classification, mandatory markings, channels and lineage",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-execution",
+      "file": "packages/security/execution.ts",
+      "sourceDigest": "85cc00bb711b14eff465a7b23439e6ade16de067b3be69f9136540a4f0eed90e",
+      "channels": [
+        "worker"
+      ],
+      "content": "Current source and action guards around registered programs/adapters",
+      "currentControl": "Foundation v2: Current source and action guards around registered programs/adapters",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-model",
+      "file": "packages/security/model.ts",
+      "sourceDigest": "7277ec84d7b61177cd8214823503ee7094f265579088abcb83a78a3375b36b8b",
+      "channels": [
+        "model"
+      ],
+      "content": "Current task inputs, model clearance and input-lineage checks",
+      "currentControl": "Foundation v2: Current task inputs, model clearance and input-lineage checks",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-data-policy",
+      "file": "packages/security/policy-store.ts",
+      "sourceDigest": "2877c73925a14c02fed360514aa1b714b95754fc3e62b84b4c3351ce19d0c24c",
+      "channels": [
+        "all-reads"
+      ],
+      "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
+      "currentControl": "Foundation v2: Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-safe-projections",
+      "file": "packages/security/projections.ts",
+      "sourceDigest": "9a6dff872e51dfacf01b846e9de43d102be9973b1ce4e04c018a9203c69cdc1b",
+      "channels": [
+        "model-and-agent"
+      ],
+      "content": "Explicit typed DiDi observedData projections; raw snapshots remain internal",
+      "currentControl": "Foundation v2: Explicit typed DiDi observedData projections; raw snapshots remain internal",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-original-recovery",
+      "file": "packages/security/recovery.ts",
+      "sourceDigest": "bc223f887cb656b22ccaac8b36011579de4135ad510bb1513a290fa0185d8fc0",
+      "channels": [
+        "audit"
+      ],
+      "content": "Separate approved observer for the exact original operation, audit only",
+      "currentControl": "Foundation v2: Separate approved observer for the exact original operation, audit only",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-task-view",
+      "file": "packages/security/task-service.ts",
+      "sourceDigest": "39b059860425a9fbec2892a183125ec06c62f712fe0710057af095b6242af5ee",
+      "channels": [
+        "http-mcp-a2a"
+      ],
+      "content": "Common safe views for mutations, reads, waits, replay and downloads",
+      "currentControl": "Foundation v2: Common safe views for mutations, reads, waits, replay and downloads",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "security-ontology-view",
+      "file": "packages/security/view.ts",
+      "sourceDigest": "d684e4de4c3dce1dd1f53bf77385fa45335a175057da70da5fa33973682f66bc",
+      "channels": [
+        "http-mcp-model"
+      ],
+      "content": "Version 2 task-bound reads, authorized definitions and check_access",
+      "currentControl": "Foundation v2: Version 2 task-bound reads, authorized definitions and check_access",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "security-policy-cli",
+      "file": "scripts/security-admin.mjs",
+      "sourceDigest": "9e07659ce37674e6f22a35623b2bb48784330cf57c564543022026eaf7533d69",
+      "channels": [
+        "local-admin"
+      ],
+      "content": "Trusted local role, recipient and model qualification; non-publishing definition review",
+      "currentControl": "Foundation v2: Trusted local role, recipient and model qualification; non-publishing definition review",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S2"
+    },
+    {
+      "id": "execution-catalog",
+      "file": "packages/core/catalog.ts",
+      "sourceDigest": "c5df88a31e6335400cf21dacfbd3bf5dcec7003b00111af9fd9971327ee3c84e",
+      "channels": [
+        "worker"
+      ],
+      "content": "Bind executable catalog to this SecurityStore and isolate original-operation observer",
+      "currentControl": "Foundation v2: Bind executable catalog to this SecurityStore and isolate original-operation observer",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-program-contract",
+      "file": "packages/core/agent-program.ts",
+      "sourceDigest": "c12488f47bf9932a31ac8609d0f955b1e238b34d29e64fc8ac2b6d4018c4c982",
+      "channels": [
+        "worker"
+      ],
+      "content": "Narrow optional original-operation observer contract",
+      "currentControl": "Foundation v2: Narrow optional original-operation observer contract",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-business-authorization",
+      "file": "packages/core/agent-authorization.ts",
+      "sourceDigest": "6f9f0dffa8b58665056657cf9ecd5922eed6e3d44895885fec80e4ff38678209",
+      "channels": [
+        "worker"
+      ],
+      "content": "Independent exact plan/effect/cost/payee grant matching",
+      "currentControl": "Foundation v2: Independent exact plan/effect/cost/payee grant matching",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "source-evidence-validation",
+      "file": "packages/ontology/object-evidence.ts",
+      "sourceDigest": "d92b0aaf670b2b6f77bb8cbde8302a60b44bf312ca4229ec4d84f061947b5d1c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Bounded private integrity checks with no raw evidence body output",
+      "currentControl": "Foundation v2: Bounded private integrity checks with no raw evidence body output",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "planning-authority-contract",
+      "file": "packages/ontology/planning-contract.ts",
+      "sourceDigest": "7435f7169d62b0659a1113c1ca1687000f0034e67a8222ad1848d05f2a08d060",
+      "channels": [
+        "internal"
+      ],
+      "content": "Authority-qualified read receipt and planning snapshot",
+      "currentControl": "Foundation v2: Authority-qualified read receipt and planning snapshot",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "model-turn-channel",
+      "file": "packages/coordinator/reasoning-loop.ts",
+      "sourceDigest": "d703de194d9126f574c8c85d4481b9c4d34e9142dda4104471afe1619de7853a",
+      "channels": [
+        "model"
+      ],
+      "content": "Recheck channel before every model invocation and output acceptance",
+      "currentControl": "Foundation v2: Recheck channel before every model invocation and output acceptance",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S3"
+    },
+    {
+      "id": "security-build",
+      "file": "scripts/build.mjs",
+      "sourceDigest": "b1188c412af6c74ccbc9983a00f76bb5abd12b886ceee4e97e81fdcc1fca30a4",
+      "channels": [
+        "build"
+      ],
+      "content": "Compile all runtime surfaces and copy the reviewed field baseline",
+      "currentControl": "Foundation v2: Compile all runtime surfaces and copy the reviewed field baseline",
+      "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
+      "stage": "S4"
+    },
+    {
+      "id": "model-timing",
+      "file": "packages/capabilities/model-timing.ts",
+      "sourceDigest": "0d99621d2804abea43eb300b6538f6fc4424e01fb81015a0f7785d72118fce3d",
+      "channels": [
+        "registered_model",
+        "model",
+        "artifact"
+      ],
+      "content": "Monotonic model startup, first-output, stream and completion metadata",
+      "currentControl": "Client-observed boundaries only; no hidden reasoning or source text; unavailable generation stays null",
+      "targetControl": "Caller-scoped labeled metadata and model-channel eligibility; no new authority",
+      "stage": "S3"
+    },
+    {
+      "id": "s5-apps-booking-sandbox-main",
+      "file": "apps/booking-sandbox/main.ts",
+      "sourceDigest": "57e40f1e6cfd83d617b15e0ae52e5e5c341c3953704724e6947e750d3dcac030",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-apps-commerce-sandbox-main",
+      "file": "apps/commerce-sandbox/main.ts",
+      "sourceDigest": "c353bf4b1fd13ffa2c00c45dc831fb997f08efc3072f0efcd9c4231b46b07983",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-integrations-grok-eigos-delegate-scripts-eigos-a2a",
+      "file": "integrations/grok/eigos-delegate/scripts/eigos_a2a.py",
+      "sourceDigest": "b85f9c74301e4ca40c6368a3eb644c2b8eb2010b04ec8c85d84a3d8b93e0a09c",
+      "channels": [
+        "PA client"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-agent-client-client",
+      "file": "packages/agent-client/client.ts",
+      "sourceDigest": "58a16bf57af069bd212203c97dc40a1f804ae0d5d6bd6086dda756f22e8a1de3",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-booking-program",
+      "file": "packages/capabilities/booking/program.ts",
+      "sourceDigest": "1e9224dc31e1ffbb2c978c3c6aafe963a86bec025822c7ed297016989ae50ce6",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-booking-sandbox",
+      "file": "packages/capabilities/booking/sandbox.ts",
+      "sourceDigest": "ff07a7334d438aafdd6e49e253fba5de45a2f1ed9fbdd73e8a98faa9c03a8936",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-catalog-agent",
+      "file": "packages/capabilities/catalog-agent.ts",
+      "sourceDigest": "b8c1d7b8e24ef4a6a683c2d938b362629839c10f41dfc6219c675a74791aa716",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-commerce-agent",
+      "file": "packages/capabilities/commerce-agent.ts",
+      "sourceDigest": "94ea504b05954370ba476099fef6bfdc01ed45a534a734bc5d86af282cfeda51",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-didi-program",
+      "file": "packages/capabilities/didi/program.ts",
+      "sourceDigest": "eea909e182ed51dee0ace6309d082b3d30b5de46b9e26aeec8f7886db065ce46",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-free-booking-connector",
+      "file": "packages/capabilities/free-booking/connector.ts",
+      "sourceDigest": "225055a354fe9e9c182852e50e82be868eee0c394d344b0890405d57241efae0",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-free-booking-program",
+      "file": "packages/capabilities/free-booking/program.ts",
+      "sourceDigest": "b4d6639112d911824248eba64a85275ca3c1fcc45bb2b789cac428681ac5eba6",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-meituan-agent",
+      "file": "packages/capabilities/meituan-agent.ts",
+      "sourceDigest": "3e5fd8c274a3a68b6e7458fff2f950932e8bd6db890f5209deabcbb3ebfbfcf3",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-ontology-customs-policy",
+      "file": "packages/ontology/customs-policy.ts",
+      "sourceDigest": "f6167846d964f639bfc676c3f249d0058eef6078439fef9b42f1a8936989164b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-inventory",
+      "file": "packages/security/inventory.ts",
+      "sourceDigest": "1d8f9b57bd267cf147b945a705f06b919cc02242edd7e31a58eebc3acc598f41",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-run-local",
+      "file": "scripts/run-local.mjs",
+      "sourceDigest": "9bcb1cf1a111627420881fa3720070c263d40313b7987c083586472fe52809a0",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-setup-pa",
+      "file": "scripts/setup-pa.mjs",
+      "sourceDigest": "fa46db486dfe3f1b74e4ad2364eb84145818700fdda7456e68bc36db7cde13b8",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-core-source-owner",
+      "file": "packages/core/source-owner.ts",
+      "sourceDigest": "bd140057d3cf794e58ddd03653f7aced0cb61abda3c243fd94728655c186248f",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-migration",
+      "file": "packages/security/migration.ts",
+      "sourceDigest": "64dc1cd19ec452327bf371a54978447edf248ec048eb3e6506b536e35dff9fcc",
+      "channels": [
+        "offline migration"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-source-authority",
+      "file": "packages/security/source-authority.ts",
+      "sourceDigest": "a7d54b01180687937cbe44e342e60dbf4f59570f6b87bb852a45ce63667f0b9f",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-agent-enroll",
+      "file": "scripts/agent-enroll.mjs",
+      "sourceDigest": "c8616ba9b477acdc147033f38d698f1834045b46bca62b0c14ab6a0818dffe24",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-agent-request",
+      "file": "scripts/agent-request.mjs",
+      "sourceDigest": "686f50b31e8e2099e94933c4d92a71cbae9af7f698e99ddaad062d4a6ec6755b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-security-migrate",
+      "file": "scripts/security-migrate.mjs",
+      "sourceDigest": "7a2c3b5f756ba8120adbd31a99cbe04f60a511e6c230efa8e752b4e9a12bf22d",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "goal-coverage",
+      "file": "packages/ontology/goal-coverage.ts",
+      "sourceDigest": "b1ca85c1726dcdf760ebfc5d419fa62342ee9a08820842f39a8351af76a2be32",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Versioned request text coverage and semantic review records",
+      "currentControl": "Exact message partition and criterion mappings, pinned request/input/definition digests; fail closed",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-action-binding",
+      "file": "packages/core/agent-action-binding.ts",
+      "sourceDigest": "ed7bbb482f8894d9568c9c15deae2d3883598c5cecc611b39baece8a1d057c43",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Configured program bindings to registered Ontology Actions",
+      "currentControl": "Exact version, effect and schema agreement; no additional connector authority",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "task-outcome",
+      "file": "packages/core/task-outcome.ts",
+      "sourceDigest": "fe02b3befa69777c0373d74ace78f67e6082dbe6b93e7899261b7a6e554c684d",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Current task state to independent outcome synchronization",
+      "currentControl": "Unknown, canceled and waiting tasks never become satisfied",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-program",
+      "file": "packages/coordinator/composition-program.ts",
+      "sourceDigest": "bce27af45a11b6ab3e914c51814aac4017aa00f4e307bfde0d432ab33b38e80a",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Bound service graphs, explicit typed handoffs, aggregate verification and exact component authority",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-contract",
+      "file": "packages/ontology/composition.ts",
+      "sourceDigest": "beda27c612088c959e600afd6e248a734a44285a4da6d8f50d1634e373234812",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Versioned composition objects, links and local activation/verification Actions",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "pa-upgrade",
+      "file": "scripts/pa-upgrade.mjs",
+      "sourceDigest": "e0d4e185597a110b121e475762d6343faa31a30acea070c17ef731e1115a150b",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Read-only active task and uncertain-effect preflight before resident upgrades",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-mock-source",
+      "file": "packages/capabilities/didi/order-test-connector.ts",
+      "sourceDigest": "d8fb47339204b7b912c050b8e2065a459ce4d659ca51dad40402f98d979e2948",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Official Mock quote/create/original-ID status and raw private receipts",
+      "currentControl": "Fixed sandbox endpoint, one create dispatch, no phone override or latest-order lookup",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-program",
+      "file": "packages/capabilities/didi/order-test-program.ts",
+      "sourceDigest": "5dc40708b26171bbab0a293cde6aa48b6f58e068092d0255478498c55c11cacb",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Fixed Mock scope, private quote trace, owned order ID and independent outcome",
+      "currentControl": "Exact sandbox permit; fenced private state; sanitized projections; unknown creation never replayed",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-evidence",
+      "file": "packages/ontology/didi-order-test-functions.ts",
+      "sourceDigest": "e2a09e7e6e008dde708d05ae736e8986af2cd04aae6249f518d23a2317507cd3",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Source-bound Mock observations and public-map evidence",
+      "currentControl": "Task, revision, configuration, receipt and freshness validation; provider_test only for Mock",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "goal-review-contract",
+      "file": "packages/ontology/goal-review-contract.ts",
+      "sourceDigest": "5b5f1704df393b581cee3c2bf8ec024e561ff9706d97d2f5c6e0f006a73373ff",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Bounded exact message partitions and criterion mappings",
+      "currentControl": "Strict schema; semantic judgment still requires actual model response",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "s5-component-source-authority",
+      "file": "packages/security/component-authority.ts",
+      "sourceDigest": "1aed074efe175d8635d6ed458da1401cfc2229fa60f0592bda8c13971ea86dfb",
+      "channels": [
+        "runtime"
+      ],
+      "content": "Selected component source and configuration at every durable dispatch",
+      "currentControl": "Parent orchestration and exact selected child source both required",
+      "targetControl": "No authority borrowed across components or installations",
+      "stage": "S5"
+    },
+    {
+      "id": "fixed-scope-message-references",
+      "file": "packages/core/delegation.ts",
+      "sourceDigest": "3a24e8a04ae96ebd06a864a22d1c9bffe973cd0ad16f7ff937fb6f9cf29c69b1",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Fixed-scope model wire schema and exact authenticated message reference expansion",
+      "currentControl": "One whole-message reference per original message; strict schema; raw and decoded decision digests; semantic coverage remains model-owned",
+      "targetControl": "Task-scoped instruction provenance and no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "gateway-task-view",
+      "file": "apps/gateway/task-view.ts",
+      "sourceDigest": "15e721a71d00605edd929015efaffe9f40dd938e181e027c377534c030431285",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Legacy bounded summary and sealed foundation TaskView",
+      "currentControl": "Immutable definitions, task/owner scopes and explicit output projection",
+      "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
+      "stage": "S5"
+    },
+    {
+      "id": "definition-registry",
+      "file": "packages/ontology/definition-store.ts",
+      "sourceDigest": "b41f29d1fcd3f40fd115dc30d458ed3285327a4f75648ad5c23e50e0cc94eb98",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Canonical immutable releases, reviewed kernel and per-task release views",
+      "currentControl": "Immutable definitions, task/owner scopes and explicit output projection",
+      "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
+      "stage": "S5"
+    },
+    {
+      "id": "task-closure-kernel",
+      "file": "packages/ontology/task-closure-kernel.ts",
+      "sourceDigest": "3424b588bd609eeeb500d9e4299a718ee8dae870b00a9a454b60b7e40fb82f53",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Version22 goal coverage, source readback and feedback contracts",
+      "currentControl": "Immutable definitions, task/owner scopes and explicit output projection",
+      "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
+      "stage": "S5"
+    },
+    {
+      "id": "outcome-shared-projection",
+      "file": "packages/ontology/outcome-assessment-values.ts",
+      "sourceDigest": "64ac0f205089251fb043dfb8501eea3dcd24cdec96fabbb8b3166dc8bddef8fa",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Unified task and business-chain assessment identity and values",
+      "currentControl": "Immutable definitions, task/owner scopes and explicit output projection",
+      "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
+      "stage": "S5"
+    },
+    {
+      "id": "capability-context",
+      "file": "packages/ontology/capability-catalog.ts",
+      "sourceDigest": "3ed64a1e0822fb091ac9a94bc29b1e51a2dec2d428eb24047291609575bed9ef",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Task-bound capability metadata and fixed-scope review provenance",
+      "currentControl": "Immutable definitions, task/owner scopes and explicit output projection",
+      "targetControl": "Reviewed resource/field/channel grants; no automatic historical grants",
+      "stage": "S5"
+    },
+    {
+      "id": "caller-outcome-proof",
+      "file": "packages/ontology/caller-outcome-proof.ts",
+      "sourceDigest": "39d983810d858f44979c6d877ebb32592ad3efa5ba96c2bcefc02138578bc2c6",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Authenticated caller contract and historical exact authorization / verified mutation readback",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "targetControl": "No fresh execution authority or cross-task data grant from metadata",
+      "stage": "S5"
+    },
+    {
+      "id": "capability-feedback",
+      "file": "packages/ontology/capability-feedback.ts",
+      "sourceDigest": "dd2390953c23f0477735405eb86330a00e97e210fecc5be5427d6741f1393623",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Strict owner-authorized aggregate feedback; no task IDs, source receipts or automatic capability promotion",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "targetControl": "No fresh execution authority or cross-task data grant from metadata",
+      "stage": "S5"
+    },
+    {
+      "id": "native-task-metadata-policy",
+      "file": "packages/security/task-context.ts",
+      "sourceDigest": "2849b0c1612abdedad1d7db74c6874c40ed0726732f00996fbab0f0e7dd2f03e",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Reviewed task-context row/field binding with inherited source read envelopes",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "targetControl": "No fresh execution authority or cross-task data grant from metadata",
+      "stage": "S5"
+    },
+    {
+      "id": "execution-projection",
+      "file": "packages/ontology/execution-projection.ts",
+      "sourceDigest": "603c7fc0819b002da88accf1d3e6eb5cacd2ca710e5942a2395b0be62c3fa4b7",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Typed source computation, immutable execution graph and named provenance",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "targetControl": "No fresh execution authority or cross-task data grant from metadata",
+      "stage": "S5"
+    },
+    {
+      "id": "native-task-context",
+      "file": "packages/coordinator/task-context.ts",
+      "sourceDigest": "f67a9ed4c58d698715a71f19577b00f70c18b64030b0493061b425ce83870bde",
+      "channels": [
+        "model"
+      ],
+      "content": "Bounded native task context and current instruction / capability / execution navigation",
+      "currentControl": "Pinned owner/task/revision/release and bounded acknowledged read receipts",
+      "targetControl": "Current field/source/channel authorization on every model export",
+      "stage": "S5"
+    },
+    {
+      "id": "native-model-mcp",
+      "file": "packages/coordinator/ontology-mcp.ts",
+      "sourceDigest": "fbfb0f7c4e124e452da454a075b366668e838fd1b788ecd3316449cffac3c7a0",
+      "channels": [
+        "model"
+      ],
+      "content": "Task-scoped native model MCP with authority and disclosure rechecks",
+      "currentControl": "Pinned owner/task/revision/release and bounded acknowledged read receipts",
+      "targetControl": "Current field/source/channel authorization on every model export",
+      "stage": "S5"
+    },
+    {
+      "id": "task-context-binding-contract",
+      "file": "packages/security/task-context-contract.ts",
+      "sourceDigest": "4507c1d787b01dd6af35913e7cbe6a77a74a4a5ebc129ecb75ed25e16f4a8ea2",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Versioned explicit task-metadata binding allowlist",
+      "currentControl": "Content and version included in the policy definition digest; current grants still mandatory",
+      "targetControl": "No silent policy drift or inferred source permission",
+      "stage": "S5"
+    }
+  ]
+}

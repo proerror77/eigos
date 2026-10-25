@@ -15,6 +15,18 @@ Use the host's native EIGOS MCP connection by default. Native discovery or calls
 
 Submit the user's original goal through native `submit_task`, using a stable requestId. Retain the taskId, contextId and request ID. Network retries preserve the original content and ID; never create a replacement task to escape an uncertain result or execution budget.
 
+### Obtain task addresses before delegating
+
+For a location-dependent task, first obtain the addresses needed for this user's actual goal. For “from home”, read the user's saved home address; for “from here”, obtain the current device location and its address/city. An explicitly named origin takes precedence over the device location. Reuse facts already supplied or saved; do not ask the user to repeat them. If a device connection is unavailable, identify that prerequisite instead of substituting home or guessing a city from an IP address.
+
+Keep the original user goal unchanged and provide the acquired facts in `submit_task.locationContext`: `city`, and the applicable `origin`/`destination`. Each endpoint has a canonical `name`, optional full `address`, optional user-facing `label` such as “家”, and `source` (`saved_address`, `current_location`, or `user_provided`). A `current_location` requires its actual `observedAt` timestamp. Do not invent a timestamp or treat an old position as current.
+
+EIGOS records this context as current Ontology `RequestFact` inputs before model planning. Let EIGOS discover and execute the source actions, validate provider coordinates and independently verify the result. Obtaining user address context does not mean calling the supplier's quote/order tools directly. Do not bypass EIGOS or send credentials in this context.
+
+Use natural-language constraints in `goal` for ordinary delegation. Do not turn a sentence such as “只估价，不下单、不付款” into a structured `expected.predicate`; those fields accept discovered registered IDs only. You do not need to create those internal requirements yourself.
+
+On `input-required`, first inspect `delegation.knownLocations`, the question and the returned source choices. Resolve a unique match against the already obtained address within the same task; ask the user only for a genuinely new choice. Keep unchanged city/address facts. To correct a location, send the corresponding `locationContext` in the normal versioned `reply_to_task`/`amend_task`; a null endpoint explicitly clears it. Do not clear other known locations. A reply or address fact grants no order, cancellation or payment authority.
+
 Read the same task with `get_task`, normally using `waitMs: 30000` while submitted or working. A wait deadline is not a failure. For input-required, use only information supplied by the user; ask for actual missing facts. Reply on the same task using the current expectedRevision and a new stable request ID. Do not repeat questions already answered.
 
 Technical recovering or paused states are not missing business input. Preserve the task and confirmed facts, identify the runtime prerequisite, then use `resume_task` only after it changes. Do not repeatedly retry the same unchanged failure. Cancellation requires the user's intent and does not prove that an external order was canceled.
@@ -52,7 +64,7 @@ After an attempt, use the existing `payment-result` command with only the origin
 
 Apply this section only when `paPayment.request.version == "2"`. Inspect the original booking, full price, payee and expiry. The PA observes its own current Link Agent Wallet test availability; unknown availability does not authorize a fallback or a new payment.
 
-Save `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","wallet":{"status":"unavailable","reason":"region_unsupported","observedAt":"<current ISO time>"}}` to a file and run `payment-route --task-id <id> --input-file <file> --request-id <stable-UUID>`. EIGOS checks the original unpaid booking and selects the preferred usable route. Preserve `metadata.delegation.agent.paPayment.selection`; retries reuse the exact UUID and input. If a selection already exists, use it rather than selecting again. This observation and selection grant no new payment authority.
+Save `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","wallet":{"status":"unavailable","reason":"region_unsupported","observedAt":"<current ISO time>"}}` to a file and run `payment-route --task-id <id> --input-file <file> --request-id <stable-UUID>`. EIGOS checks the original unpaid booking and selects the preferred usable route. Preserve the payment handoff's `selection`; retries reuse the exact UUID and input. If a selection already exists, use it rather than selecting again. This observation and selection grant no new payment authority.
 
 If provider facts have expired before a route is selected, use `reconcile --task-id <id> --request-id <stable-UUID>` (the existing EIGOS readback endpoint) or MCP `reconcile_task`, then poll the original task. This refreshes source facts without pretending that a payment was attempted. Do not replace the booking or submit a false payment notification merely to refresh it.
 
@@ -76,6 +88,17 @@ For a newly authorized request, `run --text-file <goal> --request-id <stable-id>
 
 ## Persistent connection
 
-Setup is performed once with `configure --card-url <url> --token-file <private-file>` (or `--token-env <secret-variable-name>`). Explicit `--allow-loopback-http` is for authorized local development only. The profile stores a credential reference, not a token. Production needs HTTPS and a separately managed authentication/refresh flow; this client does not implement OAuth sign-in or token refresh. Never print, upload or place the token in a prompt. Do not alter the server, source code, credentials or delegation allowlist while fulfilling a task.
+Foundation setup uses `configure --card-url <https-url> --security-mode foundation --agent-credential-file <private-installation-file> --node-bin <absolute-node-path> --agent-request-helper <absolute-reviewed-agent-request.mjs>`. Each installation has its own Node AgentConnector credential file; `scripts/agent-enroll.mjs begin/finish` performs provider device enrollment, with the human completing the provider page. The member then approves the installation's task/data ceiling and sources. The Python process delegates authenticated requests to AgentConnector, which handles rotating refresh credentials without returning bearer values to Python. On hosts that require an existing environment proxy, add `--node-use-env-proxy` with a Node version supporting that flag. Configure verifies the installation context before replacing the profile.
+
+Legacy setup remains `configure --card-url <url> --token-file <private-file>` (or `--token-env <secret-variable-name>`). Explicit `--allow-loopback-http` is for authorized local development only. The profile stores a credential reference, not a token. A legacy token-file profile does not perform OAuth refresh. Never print, upload or place the token in a prompt. Do not alter the server, source code, credentials or delegation allowlist while fulfilling a task.
 
 The client's `submit` with structured `service` fields and the authorization endpoint are EIGOS application conventions, not universal A2A methods. The current EIGOS server always returns Tasks; this client is not a general client for every A2A agent. Its same-origin and no-redirect rules are local connection policies.
+
+
+## Foundation protected task contract
+
+When the saved profile or runtime declares foundation, require `metadata.view=eigos.task.v2` for A2A or `view=eigos.task.v2` for MCP task results. Use current `revision` as expectedRevision for replies. Read the plan permission from `metadata.authorization`, booking payment v2 from `metadata.payment`, and protected files from attachments. Completion requires completed state, accepted=true and an available actual artifact. Never request raw delegation/model history or fall back to an owner-wide API after denial.
+
+Foundation query/evaluate use version 2, the explicitly granted taskId and the published secured schema; check_access only diagnoses permission. The compatible Python client provides query/evaluate/check-access with task-id and a private input file when that transport/profile is explicitly selected. Keep the native MCP default otherwise. Cursors stay with the original installation, task and query. Unreviewed registry/network/source-management, usage, amend/resume, external drafts and Shopify payment v3 remain unavailable in foundation; legacy retains its existing contracts.
+
+A sandbox plan permit binds the exact planDigest, effects, maxAmount, payees, expiry and environment. A changed plan needs its own permit. Zero real cost for Mock does not authorize a real order or payment. Model judgment and an accepted task never create authority.

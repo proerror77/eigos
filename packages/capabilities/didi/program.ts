@@ -1,4 +1,5 @@
 import { objectResultProjection } from '../../core/composed-actions.js';
+import {permitsPersonalSource} from '../../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
@@ -15,6 +16,7 @@ import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchem
 import { checkedRideEstimate, projectRideEstimate } from '../../ontology/ride-estimate-projection.js';
 import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, didiPlaceSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiPlace } from './contracts.js';
 import { DidiMcpConnector, type DidiConnector } from './connector.js';
+import { requestLocations, sameCity, locationMatchesSource, locationAliases, normalizedLocation } from '../../core/location-context.js';
 
 export const DIDI_PROGRAM_REF = { id: 'ride.estimate.query', version: '1' } as const;
 const equal = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : digest(a) === digest(b);
@@ -24,14 +26,17 @@ const normalized = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 /** Query endpoint facts, never actual pickup/arrival facts. An expected spelling
  * is reported only after matching a source name/address or its city prefix. */
 export function routeLocationFacts(request: ServiceRequest, route: { origin: DidiPlace; destination: DidiPlace }, city: string): NonNullable<CandidateFacts['locations']> {
-  const locations = { origin: route.origin.name, destination: route.destination.name };
+  const locations = { origin: route.origin.name, destination: route.destination.name }, context = requestLocations(request);
   const cityPrefixes = [...new Set([city, route.origin.city, route.destination.city].flatMap(value => [normalized(value), normalized(value).replace(/市$/, '')]))];
   for (const r of request.requirements) {
     if (r.kind !== 'location' || r.role !== 'origin' && r.role !== 'destination') continue;
     const place = route[r.role], aliases = [place.name, place.addressAll].filter(Boolean).flatMap(value => {
       const name = normalized(value); return [name, ...cityPrefixes.map(prefix => prefix + name)];
     });
-    if (aliases.includes(normalized(r.expected.ref))) locations[r.role] = r.expected.ref;
+    const supplied = context[r.role];
+    const knownAlias = supplied && context.city && locationMatchesSource(supplied, context.city, place)
+      && locationAliases(supplied, context.city).includes(normalizedLocation(r.expected.ref));
+    if (aliases.includes(normalized(r.expected.ref)) || knownAlias) locations[r.role] = r.expected.ref;
   }
   return locations;
 }
@@ -40,17 +45,18 @@ export class DidiAgentProgram implements AgentProgram {
   readonly ref: { id: string; version: string };
   readonly actionIds: readonly string[] = rideEstimateActionIds;
   readonly completionSchema: object = z.toJSONSchema(rideEstimateCompletionSchema);
+  readonly handoffFields = ['name', 'address', 'addressAll', 'city'].map(key => ({ path: ['didiAnswer', 'places', '*', key], kind: 'string' as const }));
   readonly guidance: string = ONTOLOGY_READ_GUIDANCE;
   readonly configurationDigest: string;
   private connector: DidiConnector;
   readonly binding: DidiBinding;
-  constructor(binding: DidiBinding, options: { connector?: DidiConnector; ref?: { id: string; version: string } } = {}) {
+  constructor(binding: DidiBinding, private options: { connector?: DidiConnector; ref?: { id: string; version: string }; memberAccess?: import('../../core/didi-source.js').DidiMemberAccess } = {}) {
     this.ref = options.ref ?? DIDI_PROGRAM_REF;
     this.binding = didiBindingSchema.parse(binding);
     this.connector = options.connector ?? new DidiMcpConnector(this.binding);
-    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1' });
+    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1', ...(options.memberAccess ? { memberConnection: options.memberAccess.configurationDigest } : {}) });
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return this.options.memberAccess ? this.options.memberAccess.permitted(owner) : permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: 'ride.estimate.actions', version: didiReadDefinition.version }, name: '滴滴地点搜索与打车估价', description: '仅查询滴滴地点或指定路线的车型预估价。输入 mode=places 时只需 city、keywords；mode=estimate 时只需 city、origin、destination，可保留 serviceClass 偏好。路线地点要求分别使用 location 的 origin 和 destination 角色，不能合成两个无角色的 location 要求；它们约束所查询路线，不代表实际接送。不强迫补人数、预算、上下车期限。动作与依赖通过本体定义发现；地点歧义需要确认。估价不证明完整费用、可叫到车、接驾或到达承诺。无法接受真实叫车、订单或付款目标。', tags: ['didi', 'ride', 'places', 'estimate', 'read-only'], environment: this.binding.environment === 'mock' ? 'sandbox' : 'live', completion: 'artifact', inputSchema: z.toJSONSchema(rideEstimateInputSchema), ontology: { objects: ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'RideRoute', 'Provider', 'SourceReceipt'], planning: 'Agent-selected read actions and source place selections; no automatic call sequence or business writes' }, actions: this.actionIds.map(id => ({ ref: { id, version: didiReadDefinition.version }, effect: 'read' as const })), verifierRef: { id: 'ride.estimate.source-readback', version: '1' },
       requirementRoles: [{ kind: 'location', role: 'origin', description: 'Source-matched origin of the queried route; no actual pickup is claimed' }, { kind: 'location', role: 'destination', description: 'Source-matched destination of the queried route; no actual arrival is claimed' }],
@@ -58,7 +64,23 @@ export class DidiAgentProgram implements AgentProgram {
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Personal DiDi binding is unavailable to this identity');
-    const input = rideEstimateInputSchema.parse(value), root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'RideEstimateTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { context: component.scopeKey } : {}) }) };
+    const supplied = requestLocations(request), raw = z.record(z.string(), z.unknown()).parse(value);
+    if (supplied.city) {
+      if (raw.city !== undefined && (typeof raw.city !== 'string' || !sameCity(raw.city, supplied.city))) invalid('Use the already provided task city from confirmedInputs.location; do not ask the user to repeat it');
+      raw.city = supplied.city;
+      if (raw.mode === 'estimate') for (const role of ['origin', 'destination'] as const) {
+        if (request.confirmedInputs?.location?.fields[role]?.status === 'cleared') invalid('This task address was explicitly cleared; the PA must obtain its replacement instead of reusing history');
+        const place = supplied[role]; if (!place) continue;
+        if (raw[role] !== undefined && (typeof raw[role] !== 'string' || !locationAliases(place, supplied.city).includes(normalizedLocation(raw[role] as string)))) invalid('Route differs from the current PA-provided address context');
+        // Keep an explicitly selected, confirmed street address as the query.
+        // Replacing it with the POI name makes the address search fail the scope guard.
+        const query = raw[role];
+        const explicit = typeof query === 'string' && [place.address, place.name].some(value => value
+          && locationAliases({ name: value, source: place.source }, supplied.city!).includes(normalizedLocation(query)));
+        raw[role] = explicit ? query : place.name;
+      }
+    }
+    const input = rideEstimateInputSchema.parse(raw), root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'RideEstimateTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { context: component.scopeKey } : {}) }) };
     if (graph.read(owner, root).properties.revision !== request.revision) invalid('Request changed before DiDi scope creation');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: '滴滴只读查询任务', requestRevision: request.revision, input, configurationDigest: this.configurationDigest, allowedActions: [...this.actionIds] } }], links: [{ type: 'RideEstimateTaskRequest', from: scope, to: root }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
@@ -93,8 +115,11 @@ export class DidiAgentProgram implements AgentProgram {
     const place = s.data.places.find(p => p.id === id) ?? invalid('Place was not returned by the cited search');
     if (normalized(place.city).replace(/市$/, '') !== normalized(scope.city).replace(/市$/, '')) invalid('The selected place is outside the requested city');
     const target = scope[role], exact = s.data.places.filter(p => normalized(p.name) === normalized(target));
+    const context = requestLocations(ctx.request), provided = context[role];
+    if (provided && context.city && !locationMatchesSource(provided, context.city, place)) invalid('Selected source place differs from the PA-provided address context');
+    const providedMatch = provided && context.city && s.data.places.filter(p => locationMatchesSource(provided, context.city!, p)).length === 1;
     const explicitlyAddressed = place.addressAll.length > place.name.length && s.data.places.filter(p => p.addressAll === place.addressAll).length === 1 && ctx.request.messages.some(m => m.text.includes(place.addressAll));
-    if (s.data.places.length !== 1 && !(exact.length === 1 && exact[0]!.id === id) && !explicitlyAddressed) invalid('Ambiguous place needs an explicit full-address choice; the first candidate is not a default');
+    if (s.data.places.length !== 1 && !(exact.length === 1 && exact[0]!.id === id) && !explicitlyAddressed && !providedMatch) invalid('Ambiguous place needs an explicit full-address choice; the first candidate is not a default');
     return place;
   }
   private call(ctx: AgentProgramContext, action: string, value: Record<string, unknown>) {
@@ -130,8 +155,10 @@ export class DidiAgentProgram implements AgentProgram {
   }
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input); const call = this.call(ctx, action, input);
-    if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
-    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision') }, call.tool, call.args, signal);
+    if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.inputPlanning ?? ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
+    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision') }, call.tool, call.args, signal, () => { this.scope(ctx); });
+    // Revocation or rotation during the provider read must also reject its late result.
+    this.scope(ctx);
     const data = didiDataSchema.parse(result.data), receipt = didiReceiptSchema.parse(result.receipt);
     if (receipt.tool !== call.tool || receipt.inputDigest !== digest(call.args) || receipt.resultDigest !== digest(data) || receipt.endpoint !== didiEndpoint(this.binding.environment) || receipt.bindingId !== this.binding.bindingId || receipt.environment !== this.binding.environment) invalid('DiDi source receipt differs from the selected action');
     const body = { id: receipt.id, requestId: ctx.request.id, requestRevision: ctx.request.revision, configurationDigest: this.configurationDigest, scope: ctx.state.scope, action, actionInput: input, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId, receipt, data, evidenceKind: this.connector.evidenceKind, ...(call.route ? { route: call.route } : {}), observedAt: receipt.receivedAt, expiresAt: new Date(Date.parse(receipt.startedAt) + 300000).toISOString(), validityBasis: 'local_refresh_limit', noBusinessWrites: true };
@@ -161,6 +188,6 @@ export class DidiAgentProgram implements AgentProgram {
     const prefix = s.evidenceKind === 'provider_mock' ? '【滴滴 Mock 数据】' : s.evidenceKind === 'fixture' ? '【合成测试数据】' : '';
     const answer = s.data.kind === 'places' ? s.data.places.map(p => `${p.name}：${p.addressAll || p.address}`).join('\n') || '本次地点搜索未返回结果。'
       : `${s.route!.origin.name} → ${s.route!.destination.name}\n${requestedItems.map(item => `${item.productName}：${item.priceText}（预估）`).join('\n') || '本次未返回符合指定车型的估价。'}\n估价不代表最终完整车费或接驾承诺。`;
-    return { artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { ontologyModule: didiReadDefinitionRef, observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only', 'ride.query_readback', ...(s.data.kind === 'estimate' ? ['ride.estimate_observed'] : [])], ...(s.route ? { locations: routeLocationFacts(ctx.request, s.route, scope.city) } : {}) }, evidenceRefs: [s.receipt.id] };
+    return { evidenceLevel: s.evidenceKind === 'fixture' ? 'synthetic' : s.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly', artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { ontologyModule: didiReadDefinitionRef, observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only', 'ride.query_readback', ...(s.data.kind === 'estimate' ? ['ride.estimate_observed'] : [])], ...(s.route ? { locations: routeLocationFacts(ctx.request, s.route, scope.city) } : {}) }, evidenceRefs: [s.receipt.id] };
   }
 }

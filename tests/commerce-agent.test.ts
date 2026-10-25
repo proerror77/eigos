@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
-import { setupCommerce, commerceReads, commerceDecision, commerceStep, commerceChoice } from './fixtures/commerce-agent.js';
+import { setupCommerce, commerceReads, commerceDecision, commerceStep, commerceChoice, awaitSourceBarrier, sourceBarrierSnapshot } from './fixtures/commerce-agent.js';
 import { owner, principal } from './backend-fixture.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { CommerceAgentProgram } from '../packages/capabilities/commerce-agent.js';
@@ -9,7 +9,6 @@ import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/delegation.js';
 import { assessLandedCost, checkedCommerceObservation } from '../packages/ontology/commerce-journey-functions.js';
 import { parseCommerceEntity } from '../packages/ontology/commerce-journey.js';
-import { setTimeout as pause } from 'node:timers/promises';
 import { JobStore } from '../packages/core/store.js';
 import { backend } from './backend-fixture.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -134,18 +133,18 @@ test('Unconfirmed transport failure preserves the original pending intent and bu
 });
 
 test('A canceled in-flight order retains source evidence and only reads recovery, without projecting completion', async () => {
-  const t=await setupCommerce();let release=()=>{};try{
+  const t=await setupCommerce();let release=()=>{},running:Promise<void>|undefined;const controller=new AbortController();try{
     const id=t.submit().id,waiting=await pendingOrder(t,id);t.approve(waiting);
     let entered!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),held=new Promise<void>(r=>{release=r;});
     t.provider.flags.beforeResponse=async action=>{if(action==='SubmitCommerceOrder'){entered();await held;}};
     const claim=t.store.claim(['eigos.delegate'],15000)!;
-    const running=t.b.coordinator.run(claim,new AbortController().signal).finally(()=>t.store.release(claim));await Promise.race([reached,pause(3000).then(()=>{throw new Error('Expected committed sandbox effect');})]);
+    running=t.b.coordinator.run(claim,controller.signal).finally(()=>t.store.release(claim));await awaitSourceBarrier(reached,running,'Committed sandbox order',()=>sourceBarrierSnapshot(t.store,id),3000);
     t.b.tasks.cancel(principal,id);release();await running;delete t.provider.flags.beforeResponse;
     const canceled=t.store.get(owner,id);assert.equal(canceled.state,'canceled');assert.equal(canceled.artifact,undefined);assert.equal(t.store.ontology.query(owner,{type:'Order'}).items.length,0);
     assert.equal(t.provider.counts().SubmitCommerceOrder,1);
     await t.b.run();assert.equal(t.store.get(owner,id).state,'canceled');assert.equal(t.store.get(owner,id).delegation!.recoveryPending,false);
     assert.equal(t.store.intents(owner,id).find(i=>i.effect==='order')!.state,'effect_confirmed');assert.equal(t.store.ontology.query(owner,{type:'Order'}).items.length,0);
-  }finally{release();await t.close();}
+  }finally{release();controller.abort();await running?.catch(()=>{});await t.close();}
 });
 
 test('Revocation before order dispatch prevents the write, and cancellation never grants it', async () => {
@@ -165,17 +164,17 @@ test('Revoking a consumed permit does not strand independent readback of the alr
 });
 
 test('Lease replacement accepts only original-operation recovery and rejects the old late response',async()=>{
-  const t=await setupCommerce();let release=()=>{};try{
+  const t=await setupCommerce();let release=()=>{},running:Promise<void>|undefined;const controller=new AbortController();try{
     const id=t.submit().id,waiting=await pendingOrder(t,id);t.approve(waiting);
     let entered!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});
     t.provider.flags.beforeResponse=async action=>{if(action==='SubmitCommerceOrder'){entered();await gate;}};
-    const first=t.store.claim(['eigos.delegate'],15000)!,running=t.b.coordinator.run(first,new AbortController().signal);
-    await reached;const replacement=t.store.claim(['eigos.delegate'],15000,Date.now()+20000)!;assert(replacement);
+    const first=t.store.claim(['eigos.delegate'],15000)!;running=t.b.coordinator.run(first,controller.signal);
+    await awaitSourceBarrier(reached,running,'Order before lease replacement',()=>sourceBarrierSnapshot(t.store,id));const replacement=t.store.claim(['eigos.delegate'],15000,Date.now()+20000)!;assert(replacement);
     const intent=t.store.intents(owner,id).find(i=>i.effect==='order')!;assert.equal(intent.state,'effect_unknown');intent.nextAt=0;t.store.saveIntent(owner,intent);
     release();await running;delete t.provider.flags.beforeResponse;assert.equal(t.store.ontology.query(owner,{type:'Order'}).items.length,0);
     await t.b.coordinator.run(replacement,new AbortController().signal);const done=await t.finish(id);
     assert.equal(done.state,'completed');assert.equal(t.provider.counts().SubmitCommerceOrder,1);assert.equal(t.store.attempts(owner,intent.id).filter(a=>a.kind==='dispatch').length,1);
-  }finally{release();await t.close();}
+  }finally{release();controller.abort();await running?.catch(()=>{});await t.close();}
 });
 
 test('A source stock change after approval rejects the old order without reserving a new payment',async()=>{
@@ -226,4 +225,11 @@ test('Changing normalized fees and rehashing the snapshot cannot forge its origi
     const quote=parseCommerceEntity('LandedCostQuote',original.data);quote.components.find(c=>c.category==='duty')!.payer='buyer';
     assert.equal(assessLandedCost(quote,[]).status,'unknown');
   }finally{await t.close();}
+});
+
+test('Held-source barrier reports a finished or failed flow and never invents the callback', async () => {
+  const absent=new Promise<void>(()=>{}),state=()=>({state:'paused',phase:'planning'});
+  await assert.rejects(awaitSourceBarrier(absent,Promise.resolve(),'Synthetic source',state),/flow settled before callback.*paused/);
+  await assert.rejects(awaitSourceBarrier(absent,Promise.reject(new Error('Synthetic internal failure')),'Synthetic source',state),/flow failed before callback.*paused/);
+  await assert.rejects(awaitSourceBarrier(absent,new Promise(()=>{}),'Synthetic source',state,10),/callback deadline exceeded.*paused/);
 });

@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 // Synthetic model decisions against a separate signed HTTP business simulator.
 // Actual PA and LLM execution is verified by a separate end-to-end observer.
 import type { StripeTestOptions } from '../../packages/capabilities/stripe/client.js';
@@ -19,6 +20,22 @@ import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
 import type { ObjectView } from '../../packages/ontology/object-store.js';
 
+/** A held-source test must fail if execution ends before the expected callback,
+ * rather than waiting forever for an event that can no longer occur. */
+export async function awaitSourceBarrier(reached: Promise<void>, running: Promise<unknown>, label: string, inspect: () => unknown, timeoutMs = 5000): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const failure = (reason: string) => new Error(`${label}: ${reason}; ${JSON.stringify(inspect()).replace(/PRIVATE_[A-Z0-9_]+/g, '[redacted-fixture]').slice(0,3000)}`);
+  try {
+    await Promise.race([reached, running.then(() => { throw failure('flow settled before callback'); }, () => { throw failure('flow failed before callback'); }),
+      new Promise<never>((_resolve,reject) => { timer = setTimeout(() => reject(failure('callback deadline exceeded')), timeoutMs); })]);
+  } finally { clearTimeout(timer); }
+}
+export function sourceBarrierSnapshot(store: JobStore, id: string) {
+  const job=store.get(owner,id);
+  return {state:job.state,phase:job.delegation?.phase,recovery:job.delegation?.recovery?.code,
+    feedback:job.delegation?.agent?.feedback.slice(-3).map(({kind,message})=>({kind,message})),
+    actions:store.intents(owner,id).map(({effect,state})=>({effect,state}))};
+}
 export const commerceStep = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const commerceDecision = (ctx: AgentPlanningContext, steps: AgentStep[] = [], result?: unknown): AgentDecision => ({ kind: result ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic decision from currently observed commerce facts', steps, completionJson: result ? JSON.stringify(result) : '' });
 type ObservedCommerceFact = { ref: ObjectRef; snapshot: CommerceObservation; assessment?: { status: string; gaps: { fact: string }[] } };
@@ -72,6 +89,22 @@ export function commerceChoice(options: { target?: 'quote' | 'cart' | 'checkout'
     if (preparedCheckout) {
       if (target === 'checkout') return commerceDecision(ctx, [], { selected: preparedCheckout.ref, rationale: 'Exact sandbox checkout prepared' });
       return commerceDecision(ctx, [commerceStep('submit', 'SubmitCommerceOrder', { scope, checkout: preparedCheckout.ref })]);
+    }
+    // A verified quote already carries its exact source ancestry. Read the
+    // current quote plus gate evidence instead of replaying the full upstream
+    // search in a later decision and exhausting the bounded context budget.
+    const preparedQuote = target === 'cart' ? undefined : last('LandedCostQuote', true);
+    if (preparedQuote) {
+      if (preparedQuote.assessment?.status !== 'satisfied') return { ...commerceDecision(ctx), kind: 'no_feasible_plan', message: 'The current source quote does not establish the requested terms.' };
+      if (target === 'quote') return commerceDecision(ctx, [], { selected: preparedQuote.ref, rationale: 'Complete source quote evaluated' });
+      const cart = options.cart === false ? undefined : last('Cart');
+      if (!cart && options.cart !== false) {
+        const product = preparedQuote.snapshot.dependencies.find(d => d.ref.type === 'CommerceProduct')?.ref;
+        if (!product) throw new Error('The observed quote must retain its exact product dependency');
+        commerceReads(ctx, access).read(product);
+        return commerceDecision(ctx, [commerceStep('cart', 'CreateCommerceCart', { scope, product, quantity: 2 })]);
+      }
+      return commerceDecision(ctx, [commerceStep('checkout', 'PrepareCommerceCheckout', { scope, quote: preparedQuote.ref, ...(cart ? { cart: cart.ref } : {}) })]);
     }
     const context = target === 'cart' ? undefined : last('FulfillmentContext', true), directory = last('CommerceMerchantSearch');
     if ((!context && target !== 'cart') || !directory) return commerceDecision(ctx, [...(!context && target !== 'cart' ? [commerceStep('context', 'ReadCommerceContext', { scope })] : []), ...(!directory ? [commerceStep('directory', 'SearchCommerceMerchants', { scope, query: 'coffee' })] : [])]);
@@ -127,7 +160,7 @@ export async function setupCommerce(options: { scenario?: CommerceSandboxScenari
   program.project=(...args)=>{try{return project(...args);}catch(error){diagnostic('project',args[1],error);throw error;}};
   program.recover=async(...args)=>{try{return await recover(...args);}catch(error){diagnostic('recover',args[1],error);throw error;}};
   const choice = options.choice ?? commerceChoice(options);
-  const model: Reasoner = { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, programRef.id, { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: programRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, programRef.id, { query: 'coffee', quantity: 2, contextKey: null, target: options.target ?? 'delivery' }), capabilityRef: programRef }, evidence: evidence() }), plan: async () => { throw new Error('Legacy preparation must not run'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); if (options.includeCustomsPlanning !== false) commercePolicyReads(access, decision); acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '在沙箱选择能供两袋整豆咖啡的商家并完成所需交易阶段；先查询保存的地址和跨境信息。', executionEnvironment: 'sandbox', requirements: [{ id: 'quantity', kind: 'quantity', role: 'item_quantity', strength: 'hard', expected: { amount: '2', unit: 'piece' } }, ...(options.target === 'cart' ? [] : [{ id: 'budget', kind: 'budget', role: 'service_total', strength: 'hard', expected: { minor: '50000', currency: 'CNY' } }, { id: 'arrival', kind: 'deadline', role: 'arrival', strength: 'hard', expected: { at: new Date(Date.now() + 7 * 86400000).toISOString(), timezone: 'UTC', original: 'within seven days' } }]), { id: 'sandbox', kind: 'condition', strength: 'hard', expected: { predicate: 'commerce.sandbox_only' } }] });
   const approve = (job: Job, effects = job.delegation!.authorizationRequest!.effects) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { requestId: randomUUID(), action: 'approve_plan', planDigest: a.planDigest, allowedEffects: effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };

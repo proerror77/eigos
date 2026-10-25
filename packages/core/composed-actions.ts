@@ -183,9 +183,11 @@ export function objectResultProjection(object: ObjectRef, evidence: AcceptedPort
 export function componentContext(ctx: AgentProgramContext, component: AgentComponentContext, program: AgentProgram): AgentProgramContext {
   if (ctx.state.composition?.retiredContexts?.some(value => value.id === component.id)) fail('Source authorization renewed; prepare a new explicit context instead of reusing the retired one');
   const { digest: expected, ...body } = component;
-  if (!ctx.state.composition?.contexts.some(value => value.id === component.id && value.digest === expected)
-    || digest(body) !== expected || component.requestRevision !== ctx.request.revision
-    || !same(component.programRef, program.ref) || component.programDigest !== program.configurationDigest) fail('Component context, request or configuration changed');
+  if (!ctx.state.composition?.contexts.some(value => value.id === component.id && value.digest === expected)) fail('Component context is not a member of this task');
+  if (digest(body) !== expected) fail('Component setup body digest changed');
+  if (component.requestRevision !== ctx.request.revision) fail('Component request revision changed');
+  if (!same(component.programRef, program.ref)) fail(`Component program reference changed (${component.programRef.id} to ${program.ref.id})`);
+  if (component.programDigest !== program.configurationDigest) fail('Component program configuration changed');
   if (!ctx.modelRuns?.some(run => run.id === component.initializedBy.modelRunId && run.decisionDigest === digest(component.initializedBy.decision))) fail('Component setup has no original authenticated model decision');
   const steps = ctx.state.plans.flatMap(plan => plan.steps).filter(step => step.contextId === component.id && step.contextDigest === component.digest);
   const intents = (ctx.intents ?? []).filter(intent => steps.some(step => step.intentId === intent.id && step.binding && same(intent.bindingRef, step.binding.ref)));

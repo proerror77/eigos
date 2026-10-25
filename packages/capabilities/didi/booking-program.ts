@@ -12,6 +12,7 @@ import type { ServiceRequest } from '../../ontology/execution.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
 import type { AgentDecision } from '../../ontology/agent-actions.js';
 import type { ObjectRef } from '../../ontology/model.js';
+import { didiReadDefinition } from '../../ontology/didi-read-definition.js';
 import { rideEstimateActionIds } from '../../ontology/ride-estimate.js';
 import { rideBookingActionSchemas, rideBookingCompletionSchema, checkedRideOrder, type RideOrderSnapshot } from '../../ontology/ride-booking.js';
 import { DidiAgentProgram, routeLocationFacts } from './program.js';
@@ -35,7 +36,7 @@ export class DidiBookingProgram extends DidiAgentProgram {
   override capability() {
     return { ...super.capability(), name: '滴滴模拟叫车与原订单回读', description: '在滴滴官方 Mock 环境完成路线搜索、估价、明确车型及预估费用确认、创建模拟订单和原订单司机状态回读。只接受 executionEnvironment=sandbox。用户确认绑定当次路线、车型和预估价；不承诺最终车费。未启用真实叫车或付款。', environment: 'sandbox' as const,
       inputSchema: z.toJSONSchema(z.strictObject({ mode: z.literal('estimate'), city: z.string().min(1).max(500), origin: z.string().min(1).max(500), destination: z.string().min(1).max(500), serviceClass: z.string().min(1).max(500) })),
-      tags: ['ride', 'didi', 'order', 'sandbox'], actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: id === 'CreateDidiRide' ? 'order' as const : 'read' as const })),
+      tags: ['ride', 'didi', 'order', 'sandbox'], actions: this.actionIds.map(id => ({ ref: { id, version: (rideEstimateActionIds as readonly string[]).includes(id) ? didiReadDefinition.version : '1' }, effect: id === 'CreateDidiRide' ? 'order' as const : 'read' as const })),
       predicates: [{ id: 'ride.estimate_observed', description: 'The exact route and vehicle estimate used in authorization' }, { id: 'ride.mock_order_readback', description: 'Official mock order independently read; no real ride or payment' }],
       outcomePredicates: ['ride.estimate_observed', 'ride.mock_order_readback'], goalOutcomes: [{ predicate: 'ride.estimate_observed', phase: 'quote' as const, description: 'The exact route and vehicle estimate used in authorization, not a guaranteed final fare' }, { predicate: 'ride.mock_order_readback', phase: 'commitment' as const, description: 'Mock order identity and driver status independently read' }],
       ontology: { objects: ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'DidiOrderObservation'], functions: ['rideEstimateStatus', 'didiOrderStatus'], realOperationsAllowed: false },
