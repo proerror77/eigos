@@ -44,7 +44,8 @@ export type McpReadBinding = z.infer<typeof mcpReadBindingSchema>;
 const readModuleSchema = z.strictObject({
   format: z.literal('eigos.ontology.mcp-reads.v1'),
   id: z.string().regex(/^[a-z][a-z0-9.-]{0,99}$/), version: z.string().regex(/^[1-9][0-9]*$/),
-  completion: z.strictObject({ evaluate: field, planned: z.boolean().optional() }),
+  completion: z.strictObject({ evaluate: field, planned: z.boolean().optional(), afterAuthorizedOperation: z.boolean().optional() }),
+  externalResults: z.array(z.strictObject({ id: field, resultType: field, tool: field.optional() })).max(8).optional(),
   actions: z.array(z.strictObject({ id: field, description: z.string().min(1).max(3000), resultType: field, mcp: mcpReadBindingSchema })).min(1).max(32),
 });
 export type McpReadModule = z.infer<typeof readModuleSchema>;
@@ -63,8 +64,9 @@ export function parseMcpReadModule(value: unknown): McpReadModule {
     if (active.has(id)) invalid('Cyclic ontology MCP dependencies');
     if (visited.has(id)) return;
     for (const dep of actions.get(id)!.mcp.requires) {
-      if (!module.actions.some(a => a.resultType === dep.objectType) || dep.action && actions.get(dep.action)?.resultType !== dep.objectType) invalid('Unresolved ontology MCP dependency action or result type');
-      if (dep.action) visit(dep.action, new Set(active).add(id));
+      const external = module.externalResults?.find(a => a.id === dep.action && a.resultType === dep.objectType);
+      if (!external && (!module.actions.some(a => a.resultType === dep.objectType) || dep.action && actions.get(dep.action)?.resultType !== dep.objectType)) invalid('Unresolved ontology MCP dependency action or result type');
+      if (dep.action && actions.has(dep.action)) visit(dep.action, new Set(active).add(id));
     }
     visited.add(id);
   };

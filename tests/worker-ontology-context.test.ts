@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from './backend-fixture.js';
 // Synthetic model and provider fixtures. Real native PA timing is a separate check.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -162,7 +163,7 @@ function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'depend
     keys.push(key);
     return { packData: (data: unknown) => encoder.pack(data), run: (prompt: string) => model.runStructured(prompt), close: async () => {} };
   } });
-  const b = backend(catalog, new CodexReasoner(model), store);
+  const b = backend(catalog, Object.assign(new CodexReasoner(model), { reviewGoal: syntheticGoalReview }), store);
   return { ...source, store, catalog, b, requests, keys, close: () => { store.close(); source.close(); } };
 }
 
@@ -173,11 +174,11 @@ test('Same-task conversation reuse still obtains fresh reads for every autonomou
     assert.equal(done.state, 'completed'); assert(done.delegation!.acceptance!.accepted);
     assert.equal(f.keys.length, 3); assert(f.keys[0]); assert.equal(new Set(f.keys).size, 1);
     assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
-    const contexts = done.runs!.map(run => run.ontologyContext!);
+    const contexts = done.runs!.filter(r => r.purpose !== 'goal_coverage').map(run => run.ontologyContext!);
     assert.equal(new Set(contexts.map(context => context.digest)).size, 3);
     assert.equal(new Set(contexts.flatMap(context => context.receiptIds)).size, contexts.flatMap(context => context.receiptIds).length);
-    assert(done.runs!.every(run => run.promptData?.encoding === 'session-json-v1'));
-    assert(done.runs![2]!.promptData!.encodedBytes < done.runs![2]!.promptData!.sourceBytes * 0.6);
+    assert(done.runs!.filter(r => r.purpose !== 'goal_coverage').every(run => run.promptData?.encoding === 'session-json-v1'));
+    assert(done.runs!.filter(r => r.purpose !== 'goal_coverage')[2]!.promptData!.encodedBytes < done.runs!.filter(r => r.purpose !== 'goal_coverage')[2]!.promptData!.sourceBytes * 0.6);
     const base = new OntologyPlanningSession(f.store.ontology, owner, done.delegation!.request).modelSessionKey();
     assert.notEqual(new OntologyPlanningSession(f.store.ontology, 'different-owner', done.delegation!.request).modelSessionKey(), base);
     assert.notEqual(new OntologyPlanningSession(f.store.ontology, owner, { ...done.delegation!.request, revision: done.delegation!.request.revision + 1 }).modelSessionKey(), base);
@@ -189,7 +190,7 @@ test('A real initial model choice merges interpretation and independent tool sel
   try {
     const task = f.b.submit({ goal: 'Synthetic exact route only; no order or payment' });
     const first = await f.b.run();
-    assert.equal(f.requests.length, 1); assert.equal(first.runs!.length, 1);
+    assert.equal(f.requests.length, 1); assert.equal(first.runs!.filter(r => r.purpose !== 'goal_coverage').length, 1);
     assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 2);
     const plan = first.delegation!.agent!.plans[0]!;
     assert(plan.initialSelection); assert.equal(plan.modelRunId, first.runs![0]!.id);
@@ -200,7 +201,7 @@ test('A real initial model choice merges interpretation and independent tool sel
     assert(!first.runs![0]!.ontologyContext!.receiptIds.some(id => plan.ontologyPlanning.reads.some(read => read.id === id)));
     let done = await f.b.run(); done = await f.b.run();
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation!.agent!.feedback));
-    assert.equal(done.runs!.length, 3); assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
+    assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 3); assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
     assert(done.delegation!.acceptance!.accepted); assert.equal(done.delegation!.agent!.completion!.modelDecision.kind, 'complete');
     assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read' && intent.state === 'effect_confirmed'));
     const program = f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!;
@@ -278,7 +279,7 @@ test('Four synthetic decisions independently choose tools and only complete afte
     let job = task; for (let i = 0; i < 4; i++) job = await f.b.run();
     assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback)); assert(job.delegation!.acceptance!.accepted);
     assert.equal(f.requests.length, 4); assert.deepEqual(f.requests.map(request => request.calls), [0, 0, 2, 3]);
-    assert.equal(job.runs!.length, 4); assert(job.runs!.every(run => run.ontologyContext));
+    assert.equal(job.runs!.filter(r => r.purpose !== 'goal_coverage').length, 4); assert(job.runs!.filter(r => r.purpose !== 'goal_coverage').every(run => run.ontologyContext));
     assert.equal(job.delegation!.agent!.plans.length, 2); assert.equal(job.delegation!.agent!.completion!.modelDecision.kind, 'complete');
     assert(job.delegation!.agent!.plans.every(plan => plan.ontologyPlanning.mode === 'worker_context'));
     assert(job.delegation!.ontologyReads!.every(read => read.origin === 'worker_context'));
@@ -310,7 +311,7 @@ test('One grounding model response can choose a dynamic read graph and a conditi
   try {
     const job = f.b.submit(); const done = await f.b.run();
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
-    assert.equal(f.requests.length, 1); assert.equal(done.runs!.length, 1);
+    assert.equal(f.requests.length, 1); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 1);
     assert.equal(f.requests[0]!.calls, 0, 'The model has no future provider facts');
     assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 3);
     const state = done.delegation!.agent!, plan = state.plans[0]!;

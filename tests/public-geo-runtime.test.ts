@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from './backend-fixture.js';
 // Every CLI response is synthetic, including the resulting live-shaped receipt.
 // This exercises local runtime wiring; it proves no live provider or PA/model result.
 import assert from 'node:assert/strict';
@@ -24,6 +25,7 @@ const evidence = () => ({ id: randomUUID(), runtime: 'synthetic-public-geo-runti
 
 function fixedReasoner(input = query): Reasoner {
   return {
+    reviewGoal: async ctx => { const result = await syntheticGoalReview(ctx); result.evidence.runtime = evidence().runtime; return result; },
     ground: async request => ({ decision: {
       kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
       message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input),

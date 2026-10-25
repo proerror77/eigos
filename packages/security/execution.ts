@@ -40,10 +40,13 @@ export function secureProgram(program: AgentProgram,authority?:SecurityStore): A
     if(key==='complete')return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>{
       const delivery=Reflect.apply(value,target,args) as Delivery,refs=new Map<string,ObjectRef>();
       const collect=(input:unknown)=>{if(!input || typeof input!=='object')return;const ref=objectRefSchema.safeParse(input);if(ref.success){refs.set(JSON.stringify(ref.data),ref.data);return;}for(const value of Object.values(input))collect(value);};
-      collect(args[1]);if(refs.size>20)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      collect(args[1]);
+      const collectComponentEvidence=(input:unknown)=>{if(!input || typeof input!=='object')return;for(const [key,value] of Object.entries(input))if(key==='securityEvidenceRefs')collect(value);else collectComponentEvidence(value);};
+      collectComponentEvidence(delivery.artifact.data.result);
+      if(refs.size>20)throw new SecurityError('OUTPUT_NOT_ALLOWED');
       delivery.artifact.data.result={...delivery.artifact.data.result,securityEvidenceRefs:[...refs.values()]};return delivery;
     }));
-    if(['validate','validatePlanning','validatePause','authority','clarification'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
+    if(['validate','validatePlanning','validatePause','authority','clarification','describeComponents'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
     return value.bind(target);
   }});
 }

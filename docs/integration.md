@@ -1,6 +1,7 @@
 # PA 接入 EIGOS
 
-以下既有示例对应默认 `EIGOS_SECURITY_MODE=legacy`。foundation v2 的[资源／任务／输出合同](security-s2-s4.md)由 [S5 客户端及来源适配](security-s5.md)补齐；查询要求 version 2 和显式 taskId，任务响应为 TaskView。`POST /security/context` 返回 S5 与当前安装／授权引用。S5 已有离线迁移工具及常驻数据副本演练；真实会员双安装、隔离／撤销与部分来源只读验收已通过；滴滴配额阻断，用户已选择保留原常驻，待额度恢复并通过真实只读验收后整体切换。新模式需要独立的来源、角色、模型与接收资格，不直接复用旧库授权。
+以下既有示例对应默认 `EIGOS_SECURITY_MODE=legacy`。foundation v2 的[资源／任务／输出合同](security-s2-s4.md)由 [S5 客户端及来源适配](security-s5.md)补齐；查询要求 version 2 和显式 taskId，任务响应为 TaskView。`POST /security/context` 返回 S5 与当前安装／授权引用。S5 已有离线迁移工具及常驻数据副本演练；真实会员双安装、隔离／撤销与部分来源只读验收已通过；滴滴于 18:30 完成新的受保护真实只读验收，最终常驻切换与读回正在完成。新模式需要独立的来源、角色、模型与接收资格，不直接复用旧库授权。
+单任务目标覆盖、统一结果和反馈的当前合同见[单任务闭环](single-task-ontology-closure.md)。
 
 完整对象目录、来源接入及工作分支／常驻运行版本见[模型与接入能力总览](ontology-and-integrations.md)。
 
@@ -38,7 +39,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-当前代码运行契约为 `ontology-execution-v20`，业务模型为 `eigos.business@17`，整合了免费报名、可选支付与原常驻版本的规划及 PA 客户端更新，并增加模型可选的[只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+当前代码运行契约为 `ontology-execution-v23`，业务模型为 `eigos.business@20`，整合了免费报名、可选支付与原常驻版本的规划及 PA 客户端更新，并增加模型可选的[只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -86,7 +87,7 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 
 已预留官方 MCP 地址及 `EIGOS_STRIPE_TREASURY_ENABLED=false`。当前版本拒绝启用，没有账户授权、网络连接或可执行 Treasury 能力；MCP/A2A 均不发布资金查询或操作入口。后续按成员账户授权和 Worker 执行边界单独接入，见 [Treasury 接入预留](stripe-treasury-integration.md)。
 
-## 滴滴只读接入
+## 滴滴接入
 
 本人本机可显式配置 `ride.estimate.query@1`，支持地点搜索和指定路线车型估价，仍通过 `eigos.delegate` 使用。Key 仅由 Worker 从私密文件读取；Gateway 构造目录不读 Key、不发来源请求。只有 `maps_textsearch`、`taxi_estimate` 可执行，估价不代表完整车费、叫车或行程完成。配置、歧义和证据范围见[滴滴只读说明](didi-readonly-integration.md)。
 
@@ -99,3 +100,9 @@ Agent Card 的 `/.well-known/eigos-pa-payment` 版本 2 扩展公布付款请求
 真实免费提交仍需原 `/tasks/{id}/authorize` 的 `approve_plan`，`environment: "live_free"`，绑定原计划摘要、`allowedEffects: ["reserve"]`、`maxAmount.minor: "0"`、准确服务主体与有效期。这项许可不授予下单、付款、变更或取消权限。金额为零但费用或付款要求未知时不能提交。
 
 已确认后的结果可通过 `query_ontology` 精确读取 `RegistrationRecord`，并用 `evaluate_ontology` 的 `registrationStatus` 独立核验。浏览器回读为 `live_readonly`，实际提交观察为 `live_operation`；它们不证明实际到场，也不等同于 Luma 签名的 API 回执。配置、操作代理、状态和验证记录见[免费报名说明](free-booking-participant-2026-10-23.md)。
+
+跨服务目标使用同一 Task 的[服务组件图](cross-service-composition.md)，分别保留来源和精确授权，全部组件通过后才验收主目标。
+
+### 官方 Mock 下单测试
+
+显式启用 `EIGOS_DIDI_ORDER_TEST_ENABLED=true` 后，本机开发身份可使用 `ride.order.test@1`，必须提交 `executionEnvironment="sandbox"`。`EIGOS_DIDI_ORDERS_ENABLED=false` 保持不变。两种协议共享相同任务、精确计划许可与独立验收；可选 `capabilityRef` 只缩小当前身份可用目录，不产生授权。固定测试路线、操作边界、计时与故障恢复见[下单测试说明](didi-order-test.md)。

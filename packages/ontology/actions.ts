@@ -58,7 +58,7 @@ export interface PlanGrant {
 export interface OutcomeAssessment {
   requestId: string; requestRevision: number; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human';
   criterionResults: { requirementId: string; status: 'satisfied' | 'unsatisfied' | 'unknown' | 'needs_human'; evidenceRefs: string[] }[];
-  reason: string; evidenceRefs: string[]; assessedAt: string;
+  reason: string; evidenceRefs: string[]; assessedAt: string; evidenceLevel?: string;
 }
 export interface AfterSalesCase {
   id: string; owner: string; originalJobId: string; remedyJobId: string; action: 'cancel' | 'refund';

@@ -16,6 +16,7 @@ function sourceProofInternal(store:OntologyObjectStore,owner:string,ref:ObjectRe
   scopes.BookingOffers = 'reservation'; scopes.BookingObservation = 'reservation'; scopes.BookingPaymentObservation = 'payment';
   scopes.StripePaymentObservation = 'payment';
   scopes.DidiPlaceObservation = 'domain_ride'; scopes.RideEstimateObservation = 'domain_ride';
+  scopes.DidiOrderTestPlaceObservation = 'domain_ride'; scopes.DidiOrderTestQuote = 'domain_ride'; scopes.DidiTestOrderObservation = 'domain_ride';
   scopes.MeituanReadObservation = (subject.properties.snapshot as { data?: { kind?: string } } | undefined)?.data?.kind === 'locations' ? 'public_locations' : 'delivery_quote';
   scopes.CatalogRead = 'goods_offer';
   scopes.CatalogObservation = 'goods_offer'; scopes.CatalogEndpoint = 'goods_offer';

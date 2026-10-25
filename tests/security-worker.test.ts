@@ -9,7 +9,7 @@ import {TaskService} from '../packages/core/tasks.js';
 import {Coordinator,type Reasoner} from '../packages/coordinator/coordinator.js';
 import {Worker} from '../apps/worker/worker.js';
 import {digest} from '../packages/core/delegation.js';
-import {evidence,interpretation} from './backend-fixture.js';
+import {evidence,interpretation,syntheticGoalReview} from './backend-fixture.js';
 import type {AgentDecision,AgentStep} from '../packages/ontology/agent-actions.js';
 import type {ObjectRef} from '../packages/ontology/model.js';
 import type {DidiData} from '../packages/capabilities/didi/contracts.js';
@@ -31,7 +31,7 @@ test('foundation Worker completes the existing source-selected read loop using s
   policy.setSource(f.owner,{installationId:install.id,bindingId:profile.bindingId,programId:program.ref.id,programDigest:program.configurationDigest,operations:program.actionIds,outputTypes:profile.outputTypes,expiresAt:until},policy.revision());
   const p={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)},tasks=new TaskService(f.jobs,{catalog});
   const modelInputs:string[]=[];let closed=0;
-  const reasoner:Reasoner={securityChannelId:'synthetic-didi',closeTask:async()=>{closed++;},ground:async(request,capabilities,_signal,access)=>{
+  const reasoner:Reasoner={securityChannelId:'synthetic-didi',reviewGoal:syntheticGoalReview,closeTask:async()=>{closed++;},ground:async(request,capabilities,_signal,access)=>{
     modelInputs.push(JSON.stringify({request,capabilities}));
     access.session.call('describe_ontology',{search:'ServiceRequest'});access.session.call('query_ontology',{object:{type:'ServiceRequest',id:request.id}});
     return {decision:{...interpretation(request,program.ref.id,rideInput),capabilityRef:program.ref},evidence:evidence()};

@@ -28,6 +28,7 @@ export class ParticipantBookingProgram implements AgentProgram {
   readonly observeOriginal?:AgentProgram['observeOriginal'];
   readonly actionIds: string[];
   readonly completionSchema = z.toJSONSchema(completion);
+  readonly handoffFields = ['serviceUrl', 'title', 'startsAt', 'endsAt', 'timeZone'].map(key => ({ path: ['registration', key], kind: 'string' as const }));
   readonly limits = { modelTurns: 80, plans: 24, actions: 64 };
   readonly guidance = [
     'Fulfill the participant goal using the published registration Ontology. Select InspectRegistrationPage, the bound SubmitFreeRegistration action, ReadParticipantRegistration, WaitForRegistration and completion based on independently evaluated source facts. There is no fixed recipe.',
@@ -152,6 +153,6 @@ export class ParticipantBookingProgram implements AgentProgram {
     if (!isFreeRegistration(data) || !data.independentRead || s.receipt.action !== 'ReadParticipantRegistration' || !('submitted' in result) || (input.completionTarget === 'confirmed' ? !result.confirmed : !result.submitted)) fail('The requested participant endpoint is not independently confirmed');
     const verifiedAt = new Date().toISOString(), predicates = ['registration.free', ...(result.submitted ? ['registration.submitted'] : []), ...(result.confirmed ? ['registration.confirmed'] : [])];
     const resultData = { environment: this.source.environment, evidenceLevel: s.evidenceLevel, source: 'operator_assisted_browser', paymentRequired: false, realPayment: false, completionTarget: input.completionTarget, registration: data, browserEvidence: s.browserEvidence, verifiedAt };
-    return { artifact: { id: digest(resultData), name: 'participant-registration.json', data: { goal: ctx.request.originalGoal, deliverable: input.completionTarget === 'confirmed' ? '已独立回读并确认免费报名或预约资格；这不证明实际到场。' : `已独立回读报名或预约提交回执；当前状态：${data.state}。`, execution: 'completed', result: resultData } }, facts: { conditions: predicates, totalPrice: data.payment.total, amounts: { service_total: data.payment.total }, quantity: { amount: '1', unit: 'person' }, quantities: { participant_count: { amount: '1', unit: 'person' } }, deliveryBy: verifiedAt, deadlines: { completion: verifiedAt } }, evidenceRefs: [s.receipt.id] };
+    return { evidenceLevel: s.evidenceLevel, artifact: { id: digest(resultData), name: 'participant-registration.json', data: { goal: ctx.request.originalGoal, deliverable: input.completionTarget === 'confirmed' ? '已独立回读并确认免费报名或预约资格；这不证明实际到场。' : `已独立回读报名或预约提交回执；当前状态：${data.state}。`, execution: 'completed', result: resultData } }, facts: { conditions: predicates, totalPrice: data.payment.total, amounts: { service_total: data.payment.total }, quantity: { amount: '1', unit: 'person' }, quantities: { participant_count: { amount: '1', unit: 'person' } }, deliveryBy: verifiedAt, deadlines: { completion: verifiedAt } }, evidenceRefs: [s.receipt.id] };
   }
 }

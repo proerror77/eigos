@@ -8,6 +8,7 @@ import { SecurityError, SecurityStore, type Fence } from './store.js';
 import type { JobStore } from '../core/store.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import { taskDataGrantSchema,grantRefSchema } from './contracts.js';
+import {TASK_PROJECTION_TYPES} from './policy-store.js';
 
 const grantFields = agentAccessGrantSchema.shape;
 export const agentGrantRequestSchema = z.strictObject({ installationId: grantFields.installationId, capabilityIds: grantFields.capabilityIds,
@@ -77,7 +78,7 @@ export class AuthorizationCoordinator {
   sourceProfiles(memberId:string) {return {revision:this.store.policies.revision(),profiles:this.catalog?.securityProfiles(this.owned(memberId)) ?? []};}
   managementView(memberId:string) {
     const owner=this.owned(memberId),installations=this.members.agents.list(memberId).map(a=>({id:a.id,name:a.displayName,revoked:a.revoked})),profiles=this.sourceProfiles(memberId).profiles;
-    const types=[...new Set(['ServiceRequest',...profiles.flatMap(p=>p.outputTypes)])];
+    const types=[...new Set(['ServiceRequest',...TASK_PROJECTION_TYPES,...profiles.flatMap(p=>p.outputTypes)])];
     const jobs=this.jobs?.list(owner,{limit:50,offset:0}).jobs??[];
     return {installations,grants:this.grants(memberId),profiles,policyRevision:this.store.policies.revision(),recoveries:this.recoveries(memberId),recoveryCandidates:jobs.flatMap(job=>this.recoveryPreview(memberId,job.id).map(op=>({...op,taskId:job.id}))),
       sources:installations.flatMap(a=>this.store.policies.sources(owner,a.id)),objects:this.store.policies.memberCandidates(owner,memberId),

@@ -34,7 +34,7 @@ export function contextDefinitionInput(graph: OntologyObjectStore, actions: stri
 
 function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
   if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
-  const { progress: _progress, projectionState: _coverage, ...business } = properties;
+  const { progress: _progress, projectionState: _coverage, requestedOutcome: _selectedCapability, currentAssessment: _assessment, ...business } = properties;
   return business;
 }
 export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: ObjectRef, request: ServiceRequest): ObjectSnapshot {
@@ -187,10 +187,11 @@ export class OntologyPlanningSession {
       }
       else if (tool === 'query_ontology') {
         let query = objectQuerySchema.parse(input);
+        if ('type' in query) query = { ...query, currentDefinitionsOnly: true };
         if (this.readScope === 'request' && !this.graph.security) {
           if ('type' in query) {
             if (query.type !== 'ServiceRequest') throw new DomainError('FORBIDDEN', 'This delegation lacks tasks:read for owner-wide object search');
-            const { type: _type, ...fields } = query;
+            const { type: _type, currentDefinitionsOnly: _definitions, ...fields } = query;
             query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
           } else if ('object' in query) this.retrieved(query.object, true);
           else if (query.from.type !== 'ServiceRequest' || query.from.id !== this.request.id) throw new DomainError('FORBIDDEN', 'This delegation permits only relationships of the current request');

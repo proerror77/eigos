@@ -18,7 +18,7 @@ test('Selected pure derivations bind non-first real sources, and planned complet
   try {
     const job = t.b.submit(), done = await t.finish(job.id);
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
-    assert.equal(done.runs!.length, 2, 'Grounding plus one selected graph; no extra result-interpretation model');
+    assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 2, 'Grounding plus one selected graph; no extra result-interpretation model');
     assert.equal(done.delegation!.agent!.plans.length, 1);
     assert.deepEqual(t.calls.filter(c => c.method === 'tools/call').map(c => c.name), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
     assert.equal(t.calls.find(c => c.name === 'taxi_estimate')!.args!.from_name, input.origin);
@@ -52,7 +52,7 @@ test('Ambiguous deferred selection stops before an estimate and returns observat
     assert.equal(t.calls.filter(call => call.name === 'maps_textsearch').length, 2);
     assert(!t.calls.some(call => call.name === 'taxi_estimate'));
     await t.b.run(); assert.equal(t.store.get(owner, job.id).state, 'input-required');
-    assert.equal(t.store.get(owner, job.id).runs!.length, 3, 'New judgment remains a model decision');
+    assert.equal(t.store.get(owner, job.id).runs!.filter(r => r.purpose !== 'goal_coverage').length, 3, 'New judgment remains a model decision');
   } finally { t.close(); }
 });
 
@@ -124,7 +124,7 @@ test('A persisted selected graph resumes after claim handoff without another mod
     assert.equal(t.calls.filter(call => call.method === 'tools/call').length, 0);
     const done = await t.b.run();
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation!.agent!.feedback));
-    assert.equal(done.runs!.length, 2);
+    assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 2);
     assert.equal(done.delegation!.agent!.plans[0]!.digest, pinned.digest);
     assert.equal(t.calls.filter(call => call.method === 'tools/call').length, 3);
   } finally { t.close(); }
@@ -132,7 +132,7 @@ test('A persisted selected graph resumes after claim handoff without another mod
 
 test('The model may retain its staged choices and explicit completion instead of selecting a dataflow', async () => {
   const t = setupDidi(chooseDidi);
-  try { const job = t.b.submit(), done = await t.finish(job.id); assert.equal(done.state, 'completed'); assert.equal(done.runs!.length, 4); assert.equal(done.delegation!.agent!.completion!.mode, undefined); }
+  try { const job = t.b.submit(), done = await t.finish(job.id); assert.equal(done.state, 'completed'); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 4); assert.equal(done.delegation!.agent!.completion!.mode, undefined); }
   finally { t.close(); }
 });
 

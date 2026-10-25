@@ -16,6 +16,7 @@ import type { ActionIntent, ExecutionAttempt } from '../ontology/actions.js';
 import {projectionFields,projectedValue,integrityField,integrityFunctions,projectionContract,projectionInputs,projectionMarkings,responseOnlyProjection} from './projections.js';
 import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
+import {actionSources} from './component-authority.js';
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
@@ -30,6 +31,7 @@ const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
+export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback'];
 export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope }
 
 /** Policy records share the task transaction. Only trusted administration calls
@@ -174,7 +176,7 @@ export class SecurityPolicies {
     const plan=agent?.plans.find((p:{digest:string})=>p.digest===intent.planDigest),step=plan?.steps.find((s:{intentId:string})=>s.intentId===intent.id);
     if (!agent || !plan || !step || plan.programDigest!==agent.programDigest || step.effect!==intent.effect) throw new SecurityError('AUTHORIZATION_REQUIRED');
     this.requireResource(scope,'actionType',step.action); this.requireResource(scope,'actionType',step.action,'action.execute');
-    this.requireSource(scope,agent.programRef.id,agent.programDigest,step.action);
+    for(const source of actionSources(agent,step.action,step.input))this.requireSource(scope,source.programRef.id,source.programDigest,step.action);
     if (!['dispatch','observe','reconcile','resume'].includes(kind)) throw new SecurityError('AUTHORIZATION_REQUIRED');
     return {plan,step};
   }
@@ -190,7 +192,7 @@ export class SecurityPolicies {
     if(plan.ontologyPlanning.accessDigest!==accessDigest())return 'POLICY_CHANGED';
     const intent=this.db.prepare('SELECT state FROM action_intents WHERE owner=? AND id=?').get(scope.actor.ownerKey,step.intentId);
     if(intent?.state!=='ready')return 'ORIGINAL_OPERATION_ONLY';
-    try{this.requireSource(scope,agent!.programRef.id,agent!.programDigest,action);}catch{return 'SOURCE_NOT_AUTHORIZED';}
+    try{for(const source of actionSources(agent!,action,step.input))this.requireSource(scope,source.programRef.id,source.programDigest,action);}catch{return 'SOURCE_NOT_AUTHORIZED';}
     const inspect=(value:unknown):boolean=>{
       if(!value || typeof value!=='object')return true;
       const ref=objectRefSchema.safeParse(value);return ref.success?!!this.binding(scope,ref.data):Object.values(value).every(inspect);
@@ -236,7 +238,7 @@ export class SecurityPolicies {
   integrityAllowed(type:string,field:string,allowed:string[]) {return integrityField(type,field,allowed);}
   envelope(owner: string, ref: ObjectRef, revision: number, fields: string[], properties: Record<string, unknown>, channels: Channel[]): SecurityEnvelope {
     const policies = fields.map(f => this.fieldPolicy(ref.type, f));
-    const dependencies=fields.filter(f=>(ref.type!=='ServiceRequest' || !['progress','projectionState'].includes(f)) && this.fieldPolicy(ref.type,f)!=='derived_from_inputs').sort();
+    const dependencies=fields.filter(f=>(ref.type!=='ServiceRequest' || !['progress','projectionState','currentAssessment','requestedOutcome'].includes(f)) && this.fieldPolicy(ref.type,f)!=='derived_from_inputs').sort();
     const result:SecurityEnvelope={ version: SECURITY_CONTRACT, ownerKey: owner, policyVersion: POLICY_VERSION, requiredMarkings: policies.includes('task_sensitive') ? ['member_private', 'personal_data'] : ['member_private'],
       classification: policies.includes('internal_only') ? 'internal' : policies.includes('task_sensitive') ? 'sensitive' : 'private', channels,
       lineage: [{ object: ref, revision, fields: dependencies, contentDigest: digest(Object.fromEntries(dependencies.map(f => [f, this.value(ref.type,f,properties)]))) }], lineageComplete: true };
@@ -280,8 +282,26 @@ export class SecurityPolicies {
     for (const g of this.security.listGrants(owner)) if (g.kind === 'task_data' && g.taskId === taskId && g.status === 'active') {
       const row = this.db.prepare('SELECT body FROM jobs WHERE id=? AND owner=?').get(taskId, owner);
       if (row && JSON.parse(String(row.body)).delegation?.request.revision === g.requestRevision) {
-        const fields = this.security.agentGrant(g.installationId).resources.find(r => r.type === 'ServiceRequest')?.fields ?? [];
+        const job=JSON.parse(String(row.body)) as Job,parent=this.security.agentGrant(g.installationId);
+        const fields = parent.resources.find(r => r.type === 'ServiceRequest')?.fields ?? [];
         this.bind(g, { type: 'ServiceRequest', id: taskId }, fields, 'task_submission');
+        const root=this.db.prepare("SELECT body,revision FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(owner,taskId)!;
+        const properties=JSON.parse(String(root.body)).properties;
+        const bindingRef=job.delegation?.agent?.programRef??job.delegation?.plan?.bindingRef;
+        const refs:ObjectRef[]=[...(job.delegation?.goalCoverage?[{type:'GoalCoverage',id:job.delegation.goalCoverage.digest}]:[]),
+          ...(properties.currentAssessment?[objectRefSchema.parse(properties.currentAssessment)]:[]),
+          ...(bindingRef?[{type:'ExecutionFeedback',id:digest({request:taskId,revision:g.requestRevision,bindingRef})}]:[])];
+        const inherited=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
+          ...this.db.prepare('SELECT body FROM security_reads WHERE grant_id=?').all(g.id).map(row=>securityEnvelopeSchema.parse(JSON.parse(String(row.body))))]);
+        for(const ref of refs) {
+          const resource=parent.resources.find(r=>r.type===ref.type);
+          if(!resource || !TASK_PROJECTION_TYPES.includes(ref.type))continue;
+          const object=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,ref.type,ref.id);
+          if(!object)continue;
+          const body=JSON.parse(String(object.body));
+          if(body.source.kind!=='task' || body.source.id!==taskId || body.properties.requestRevision!==g.requestRevision)throw new SecurityError('POLICY_CHANGED');
+          this.bind(g,ref,resource.fields,'task_projection',inherited);
+        }
       }
     }
   }
@@ -330,7 +350,11 @@ export class SecurityPolicies {
       });
       const definition=businessModel.object(ref.type);
       if(!binding.fields.includes(definition.primaryKey) || !binding.fields.includes(definition.titleKey))return;
-      if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
+      if(binding.sourceBindingId==='task_projection') {
+        const row=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,ref.type,ref.id);
+        const body=row?JSON.parse(String(row.body)):undefined;
+        if(!TASK_PROJECTION_TYPES.includes(ref.type) || body?.source.kind!=='task' || body.source.id!==scope.grant!.taskId || body.properties.requestRevision!==scope.grant!.requestRevision)return;
+      } else if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
         const row=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(scope.actor.ownerKey,ref.type,ref.id,binding.revision);
         const origin=row?JSON.parse(String(row.body)) as {programId:string;programDigest:string;sourceBindingId:string}:undefined;
         if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.bindingId===origin.sourceBindingId && s.programId===origin.programId && s.programDigest===origin.programDigest && s.outputTypes.includes(ref.type)))return;
@@ -372,7 +396,13 @@ export class SecurityPolicies {
         const ref = objectRefSchema.safeParse(v); if (ref.success) return !!this.binding(scope, ref.data);
         return Object.values(v).every(inspect);
       };
-      if (!inspect(content)) { if (selected?.includes(field) || scope.inference) throw new SecurityError('INSUFFICIENT_ACCESS'); continue; }
+      if (!inspect(content)) {
+        // The current assessment is optional derived task metadata. A source
+        // verifier only reading the request must not gain access to it or need
+        // a broader grant. taskOutcomeStatus returns unknown when it is absent.
+        if(value.ref.type==='ServiceRequest' && field==='currentAssessment' && !selected?.includes(field))continue;
+        if (selected?.includes(field) || scope.inference) throw new SecurityError('INSUFFICIENT_ACCESS'); continue;
+      }
       properties[field] = content;
     }
     const envelope = combineEnvelopes([this.envelope(owner, value.ref, value.revision, Object.keys(properties), properties, scope.grant!.channels),...(binding.inputEnvelope?[binding.inputEnvelope]:[])]);

@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from './backend-fixture.js';
 // Contract and runtime tests use explicit synthetic model/source decisions.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -189,10 +190,10 @@ test('N2 Codex reasoning transport drives real host queries in both interpretati
       : JSON.stringify(proposal(parts.find(p => p?.resolution && p?.capability) as PlanningContext)) };
     return { output, evidence: evidence() };
   } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), Object.assign(new CodexReasoner(model), { reviewGoal: syntheticGoalReview }));
   try {
     b.submit(); const done = await b.run(); assert.equal(done.state, 'completed');
-    assert.equal(prompts.length, 4); assert.equal(done.runs!.length, 4);
+    assert.equal(prompts.length, 4); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 4);
     assert(!prompts[0]!.includes(JSON.stringify(z.toJSONSchema(businessConditionSchema))));
     assert.equal(done.delegation!.groundingDecisions!.length, 1);
     assert.equal(done.delegation!.ontologyReads!.length, 4); assert.equal(done.delegation!.plan!.ontologyPlanning.reads.length, 2);
@@ -264,7 +265,7 @@ test('N2 cancellation fences model responses and prevents the next read or dispa
   let started!: () => void, release!: () => void;
   const entered = new Promise<void>(r => { started = r; }), waiting = new Promise<void>(r => { release = r; });
   const model = { runStructured: async () => { started(); await waiting; return { output: { kind: 'read', calls: [{ tool: 'describe_ontology', argumentsJson: '{}' }], finalJson: '' }, evidence: evidence() }; } };
-  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), new CodexReasoner(model));
+  const b = backend(new ExecutionCatalog([BRIEF_CAPABILITY], [BRIEF_BINDING], [new BriefAdapter()]), Object.assign(new CodexReasoner(model), { reviewGoal: syntheticGoalReview }));
   try {
     const job = b.submit(), pending = b.run(); const rejected = assert.rejects(pending, /cancellation|lease loss/);
     await entered; b.tasks.cancel(principal, job.id); release(); await rejected;

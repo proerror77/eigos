@@ -1,0 +1,33 @@
+{
+  "observedAt": "2026-10-25T10:30:58.796Z",
+  "passed": true,
+  "accepted": true,
+  "independentPaReadback": true,
+  "evidenceKind": "live_readonly",
+  "placeCount": 7,
+  "readActions": 1,
+  "nonReadActions": 0,
+  "sourceActions": [
+    "SearchDidiPlaces"
+  ],
+  "goalReviewVerdict": "covered",
+  "buildDigest": "f102e33a25d95934c696a75af3f80e25accd2c6b207e07ee96a536c253fddcc2",
+  "readbackSha256": "a865483e24f27ae83e05f2362c8d2acd4c6fe5705f9e051cdf3797fb3503b7ec",
+  "backend": "ontology-execution-v23",
+  "residentChangedAtThisCheckpoint": false,
+  "legacyResidentCommit": "c4809d91172a025d1bd26c0ed919e5f438245e51",
+  "otherWorkingChangesPreserved": true,
+  "meaning": "Real protected source acceptance before final migration and resident activation",
+  "mergedCandidateValidation": {
+    "typecheck": true,
+    "unitAndIntegrationTests": 732,
+    "compiledE2eTests": 11,
+    "build": true,
+    "securityInventory": {
+      "types": 112,
+      "properties": 889,
+      "paths": 94
+    },
+    "diffCheck": true
+  }
+}

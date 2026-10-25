@@ -24,6 +24,7 @@ export class BookingAgentProgram implements AgentProgram {
   readonly actionIds = Object.keys(bookingActionSchemas);
   readonly limits = { modelTurns: 48, plans: 20, actions: 36 };
   readonly completionSchema = z.toJSONSchema(completion);
+  readonly handoffFields = ['venue', 'startsAt', 'endsAt', 'title'].map(key => ({ path: ['booking', 'offer', key], kind: 'string' as const }));
   readonly connector: BookingSandboxConnector;
   readonly configurationDigest: string;
   readonly guidance = [
@@ -61,7 +62,7 @@ export class BookingAgentProgram implements AgentProgram {
     if (ctx.state.paPayment) {
       const { digest: expected, ...request } = paPaymentRequestSchema.parse(ctx.state.paPayment.request);
       const stored = ctx.graph.read(ctx.owner, { type: 'PAPaymentRequest', id: request.id });
-      if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== this.configurationDigest || !same(stored.properties.terms, request.terms)) fail('Original PA payment handoff integrity changed');
+      if (digest(request) !== expected || request.ownerDigest !== digest(ctx.owner) || request.taskId !== ctx.request.id || request.requestRevision !== ctx.request.revision || request.configurationDigest !== (ctx.executionConfigurationDigest ?? this.configurationDigest) || !same(stored.properties.terms, request.terms) || stored.properties.configurationDigest !== this.configurationDigest) fail('Original PA payment handoff integrity changed');
       verifyPAPaymentSelection(ctx.state.paPayment);
     }
     return bookingInputSchema.parse(scope.properties.input);
@@ -180,7 +181,7 @@ export class BookingAgentProgram implements AgentProgram {
       if (selected.payment || ctx.state.paPayment || b.offer.total.minor !== '0' || !b.offer.feesComplete || b.state !== 'confirmed' || !b.confirmedAt || Date.parse(b.confirmedAt) > Date.now() || !b.independentRead || booking.s.receipt.action !== 'ReadProviderBooking') fail('Free booking completion requires a separately read, confirmed zero-price booking without a payment handoff');
       this.checkOffer(ctx, b.offer, false);
       const result = { environment: 'sandbox', evidenceLevel: 'synthetic', realPayment: false, paymentRequired: false, booking: b, sourceRefs: [selected.booking], receiptIds: [booking.s.receipt.id] };
-      return { artifact: { id: digest(result), name: 'free-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验无需付款的沙箱预约确认；这不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_not_required'], totalPrice: b.offer.total, amounts: { service_total: b.offer.total }, quantity: { amount: String(b.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(b.offer.participants), unit: 'person' } }, deliveryBy: b.confirmedAt, deadlines: { completion: b.confirmedAt }, locationRef: b.offer.venue, locations: { venue: b.offer.venue } }, evidenceRefs: [booking.s.receipt.id] };
+      return { evidenceLevel: 'synthetic', artifact: { id: digest(result), name: 'free-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验无需付款的沙箱预约确认；这不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_not_required'], totalPrice: b.offer.total, amounts: { service_total: b.offer.total }, quantity: { amount: String(b.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(b.offer.participants), unit: 'person' } }, deliveryBy: b.confirmedAt, deadlines: { completion: b.confirmedAt }, locationRef: b.offer.venue, locations: { venue: b.offer.venue } }, evidenceRefs: [booking.s.receipt.id] };
     }
     if (!selected.payment) fail('A required payment must be independently confirmed');
     this.evaluation(ctx, selected.payment, reads);
@@ -190,7 +191,7 @@ export class BookingAgentProgram implements AgentProgram {
     if (handoff.readbackSequence < 1 || booking.s.receipt.readbackSequence !== handoff.readbackSequence || payment.receipt.readbackSequence !== handoff.readbackSequence || booking.s.receipt.action !== 'ReadProviderBooking' || !booking.data.independentRead || payment.receipt.action !== 'ReadProviderPayment' || Date.parse(booking.s.receipt.startedAt) < after || Date.parse(payment.receipt.startedAt) < after || !this.matchPayment(ctx, booking.data, paid)) fail('Independent fresh provider payment AND booking confirmation must match the original handoff; PA claims are insufficient');
     this.checkOffer(ctx, booking.data.offer, false);
     const evidenceRefs = [booking.s.receipt.id, payment.receipt.id], result = { environment: 'sandbox', evidenceLevel: 'synthetic', realPayment: false, paymentAuthority: 'pa_owned', paymentRoute: handoff.selection?.route ?? 'unreported', handoffId: handoff.request.id, booking: booking.data, payment: paid, sourceRefs: selected, receiptIds: evidenceRefs };
-    return { artifact: { id: digest(result), name: 'pa-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验原预约与 PA 模拟付款均获服务商确认；这是沙箱预约确认，不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed'], totalPrice: booking.data.offer.total, amounts: { service_total: booking.data.offer.total }, quantity: { amount: String(booking.data.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(booking.data.offer.participants), unit: 'person' } }, deliveryBy: booking.data.confirmedAt, deadlines: { completion: booking.data.confirmedAt }, locationRef: booking.data.offer.venue, locations: { venue: booking.data.offer.venue } }, evidenceRefs };
+    return { evidenceLevel: 'synthetic', artifact: { id: digest(result), name: 'pa-booking-result.json', data: { goal: ctx.request.originalGoal, deliverable: '已独立核验原预约与 PA 模拟付款均获服务商确认；这是沙箱预约确认，不是实际服务履约。', execution: 'completed', result } }, facts: { conditions: ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed'], totalPrice: booking.data.offer.total, amounts: { service_total: booking.data.offer.total }, quantity: { amount: String(booking.data.offer.participants), unit: 'person' }, quantities: { participant_count: { amount: String(booking.data.offer.participants), unit: 'person' } }, deliveryBy: booking.data.confirmedAt, deadlines: { completion: booking.data.confirmedAt }, locationRef: booking.data.offer.venue, locations: { venue: booking.data.offer.venue } }, evidenceRefs };
   }
   async reconcilePAPayment(ctx: AgentProgramContext, signal: AbortSignal) {
     this.scope(ctx); const payment = ctx.state.paPayment ?? fail('Original PA handoff is missing');

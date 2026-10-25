@@ -9,6 +9,7 @@ import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentDecision } from '../ontology/agent-actions.js';
 
 export interface AgentProgramContext {
+  executionConfigurationDigest?: string;
   graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
 }
 export interface AgentActionContext extends AgentProgramContext {
@@ -42,6 +43,8 @@ export interface AgentProgram {
   /** Optional minimal observer for an explicitly approved original-operation
    * recovery. It must not call invoke or receive a graph/model/dispatch context. */
   observeOriginal?(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal):Promise<import('../security/recovery.js').RecoveryObservation|undefined>;
+  readonly initialReadFrontier?: true;
+  readonly preparePlanningContext?: true;
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   readonly ref: Ref;
@@ -52,10 +55,15 @@ export interface AgentProgram {
   readonly projectionTypes?: readonly string[];
   readonly guidance: string;
   readonly completionSchema: object;
+  /** Public typed result fields explicitly available for cross-service inputs.
+   * '*' denotes an array index, never arbitrary object-key traversal. */
+  readonly handoffFields?: readonly { path: readonly string[]; kind: 'string' | 'number' | 'boolean' }[];
   readonly limits?: { modelTurns: number; plans: number; actions: number };
   permitted(owner: string): boolean;
   capability(): ServiceCapability;
-  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown> };
+  initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown>; components?: AgentExecutionState['components'] };
+  describeComponents?(ctx: AgentProgramContext): import('../ontology/composition.js').ComponentDescription[];
+  sourceConfigurationForScope?(state: AgentExecutionState, scope: ObjectRef): string;
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;
@@ -64,6 +72,7 @@ export interface AgentProgram {
   /** Render an owner-private question only after the model chooses clarification. */
   clarification?(ctx: AgentProgramContext, decision: AgentDecision, reads: PlanningSnapshot): string | undefined;
   authority?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): AgentActionAuthority;
+  authorizationSummary?(ctx: AgentProgramContext, plan: import('../ontology/agent-actions.js').AgentActionPlan): string;
   invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult>;
   /** Read the original operation only. It must never replay a business write. */
   recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;

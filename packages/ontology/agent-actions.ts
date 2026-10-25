@@ -17,6 +17,7 @@ export const agentDecisionSchema = z.strictObject({
   steps: z.array(agentStepSchema).max(4), completionJson: z.string().max(16000),
   plannedCompletion: plannedCompletionSchema.optional(),
   informationRequest: z.strictObject({ fact: z.string().min(1).max(80), evidenceRefs: z.array(objectRefSchema).max(8) }).optional(),
+  componentId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/).optional(),
 });
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 export type AgentStep = z.infer<typeof agentStepSchema>;
@@ -30,6 +31,7 @@ export interface AgentActionPlan {
   initialSelection?: { modelRunId: string; definitionActions: string[]; groundingPlanning: PlanningSnapshot };
 }
 export interface AgentExecutionState {
+  components?: Record<string, import('./composition.js').ComponentState>;
   version: '1'; programRef: Ref; programDigest: string; scope: ObjectRef;
   input: Record<string, unknown>; requestRevision: number;
   plans: AgentActionPlan[]; pendingPlanId?: string;

@@ -1,0 +1,98 @@
+{
+  "date": "2026-10-25",
+  "timezone": "Asia/Shanghai",
+  "source": "Real model, synthetic providers; no live provider writes",
+  "records": [
+    {
+      "label": "initial",
+      "state": "completed",
+      "program": {
+        "id": "services.compose.live",
+        "version": "1"
+      },
+      "components": [
+        {
+          "id": "mt",
+          "program": {
+            "id": "geo.search",
+            "version": "1"
+          },
+          "result": true,
+          "observations": 1
+        },
+        {
+          "id": "dd",
+          "program": {
+            "id": "ride.estimate.query",
+            "version": "1"
+          },
+          "result": true,
+          "observations": 1
+        }
+      ],
+      "modelCalls": 16,
+      "validationFeedback": [
+        "Read the task scope before selecting actions",
+        "Local handoff actions require their own frontier",
+        "Local handoff actions require their own frontier"
+      ],
+      "providerCalls": {
+        "meituan": [
+          "search_poi"
+        ],
+        "didi": [
+          "maps_textsearch"
+        ]
+      },
+      "accepted": true,
+      "originalCriteriaPassed": true,
+      "evidenceReceipts": 2
+    },
+    {
+      "label": "scoped_context",
+      "state": "completed",
+      "program": {
+        "id": "services.compose.live",
+        "version": "1"
+      },
+      "components": [
+        {
+          "id": "meituan",
+          "program": {
+            "id": "geo.search",
+            "version": "1"
+          },
+          "result": true,
+          "observations": 1
+        },
+        {
+          "id": "didi",
+          "program": {
+            "id": "ride.estimate.query",
+            "version": "1"
+          },
+          "result": true,
+          "observations": 1
+        }
+      ],
+      "modelCalls": 7,
+      "validationFeedback": [],
+      "providerCalls": {
+        "meituan": [
+          "search_poi"
+        ],
+        "didi": [
+          "maps_textsearch"
+        ]
+      },
+      "accepted": true,
+      "originalCriteriaPassed": true,
+      "evidenceReceipts": 2
+    }
+  ],
+  "limitations": [
+    "Different bounded runs, not a latency benchmark",
+    "Each run used one Meituan read and one DiDi read",
+    "No order, payment, registration, source account or permission changes"
+  ]
+}

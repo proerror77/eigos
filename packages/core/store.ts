@@ -11,6 +11,7 @@ import { projectTask } from '../ontology/task-projection.js';
 import { SecurityStore, type SecurityMode } from '../security/store.js';
 import { authorizationScope } from '../security/context.js';
 import {agentDispatchGrant} from './agent-authorization.js';
+import { synchronizeTaskOutcome } from './task-outcome.js';
 
 export interface ListFilter {
   limit: number;
@@ -291,10 +292,40 @@ export class JobStore {
     this.db.prepare('UPDATE aftersales_cases SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...value, state, updatedAt: new Date().toISOString() }), owner, caseId);
   }
   recordFeedback(owner: string, job: Job, evidenceLevel: string, verification = true): void {
-    const d = job.delegation; if (!d?.plan) return;
+    const d = job.delegation;
+    if (d?.agent) {
+      const agent = d.agent, outcome = d.outcome;
+      const endpoint = agent.input.target ?? agent.input.completionTarget ?? agent.input.mode;
+      const row = { capabilityRef: agent.programRef, bindingRef: agent.programRef, bindingDefinitionDigest: agent.programDigest,
+        goalKind: typeof endpoint === 'string' ? `${agent.programRef.id}:${endpoint}` : agent.programRef.id, outcome: outcome?.status ?? 'unknown', taskState: job.state, evidenceLevel: outcome?.evidenceLevel ?? 'unverified',
+        criterionResults: outcome?.criterionResults ?? [], observedAt: outcome?.assessedAt ?? job.updatedAt };
+      const key = digest(agent.programRef);
+      this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, key, JSON.stringify(row));
+      for (const [componentId, component] of Object.entries(agent.components ?? {})) {
+        const endpoint = component.input?.target ?? component.input?.completionTarget ?? component.input?.mode;
+        const item = { capabilityRef: component.programRef, bindingRef: component.programRef, bindingDefinitionDigest: component.programDigest,
+          rootTaskId: job.id, requestRevision: d.request.revision, componentId, scope: 'component_only', parentState: job.state,
+          goalKind: typeof endpoint === 'string' ? `${component.programRef.id}:${endpoint}` : component.programRef.id,
+          outcome: component.result ? 'satisfied' : 'unknown', taskState: component.result ? 'completed' : job.state,
+          evidenceLevel: component.result?.delivery.evidenceLevel ?? 'unverified', criterionResults: [], observedAt: component.result?.at ?? row.observedAt };
+        this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner')
+          .run(`${job.id}:${d.request.revision}:${componentId}`, owner, digest(component.programRef), JSON.stringify(item));
+      }
+      if (!verification || !['completed', 'failed', 'rejected', 'canceled'].includes(job.state)) return;
+      const claim = { id: digest({ owner, program: agent.programRef, configuration: agent.programDigest }), capabilityRef: agent.programRef, bindingRef: agent.programRef, publisherId: 'configured-agent-program', sourceRevision: agent.programDigest, sourceRef: 'configured-versioned-definition', observedAt: row.observedAt };
+      const verified = { id: digest({ owner, jobId: job.id, revision: d.request.revision, state: job.state, outcome }), claimId: claim.id, sourceRevision: agent.programDigest,
+        actionTypeRefs: [...new Map(agent.plans.flatMap(p => p.steps.map(s => [s.action, { id: s.action, definitionDigest: s.definitionDigest }] as const))).values()],
+        level: row.evidenceLevel, result: job.state === 'completed' && outcome?.status === 'satisfied' ? 'passed' : outcome?.status === 'unsatisfied' ? 'failed' : 'inconclusive',
+        scope: { capabilityRef: agent.programRef, requestId: job.id, requestRevision: d.request.revision, configurationDigest: agent.programDigest, executionEnvironment: d.request.executionEnvironment ?? 'live', observedAt: row.observedAt },
+        evidenceRefs: outcome?.evidenceRefs ?? [], verifiedAt: row.observedAt, availabilityProof: false };
+      this.db.prepare('INSERT OR IGNORE INTO capability_claims VALUES(?,?,?,?)').run(claim.id, owner, key, JSON.stringify(claim));
+      this.db.prepare('INSERT OR IGNORE INTO capability_verifications VALUES(?,?,?,?)').run(verified.id, owner, key, JSON.stringify(verified));
+      return;
+    }
+    if (!d?.plan) return;
     const row = { capabilityRef: d.plan.capabilityRef, bindingRef: d.plan.bindingRef, bindingDefinitionDigest: d.plan.bindingDigests.find(p => p.ref.id === d.plan!.bindingRef.id && p.ref.version === d.plan!.bindingRef.version)?.digest,
       goalKind: d.request.outcome ?? d.plan.completionTarget, outcome: ['working', 'submitted', 'auth-required', 'input-required', 'canceled'].includes(job.state) ? 'unknown' : d.outcome?.status ?? 'unknown', taskState: job.state, evidenceLevel, criterionResults: d.outcome?.criterionResults ?? [], observedAt: new Date().toISOString() };
-    this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, digest(d.plan.bindingRef), JSON.stringify(row));
+    this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, digest(d.plan.bindingRef), JSON.stringify(row));
     if (!verification) return;
     const selected = d.resolution?.candidates.find(c => c.id === d.plan!.candidateId);
     const sourceRevision = selected?.offer?.sourceRevision ?? d.plan.digest;
@@ -456,6 +487,7 @@ export class JobStore {
     if (this.security.enabled) job.executionMode = 'worker-security-v2';
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
+      synchronizeTaskOutcome(job);
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
@@ -473,6 +505,7 @@ export class JobStore {
         if(job.delegation?.authorizationRequest) this.security.policies.recordOutput(owner,job.id,'authorization',job.delegation.authorizationRequest,envelope);
         if(job.delegation?.agent?.paPayment) this.security.policies.recordOutput(owner,job.id,'payment',job.delegation.agent.paPayment.request,envelope);
       }
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) this.recordFeedback(owner, job, job.delegation.outcome?.evidenceLevel ?? 'unverified');
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }

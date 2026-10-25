@@ -40,6 +40,7 @@ export class MeituanReadProgram implements AgentProgram {
   readonly actionIds: string[];
   readonly guidance = ONTOLOGY_READ_GUIDANCE;
   readonly completionSchema = z.toJSONSchema(completionSchema);
+  get handoffFields() { return this.mode === 'geo' ? ['name', 'address', 'city'].map(key => ({ path: ['places', '*', key], kind: 'string' as const })) : []; }
   constructor(private mode: Mode, private reader: MeituanPrimitiveReader, private store: JobStore, private publicQueries: readonly z.infer<typeof publicGeoQuerySchema>[] = []) {
     this.ref = { id: modes[mode].id, version: modes[mode].version };
     this.actionIds = meituanReadDefinition.actions.filter(a => permittedTools[mode].includes(a.mcp.tool)).map(a => a.id);
@@ -232,6 +233,6 @@ export class MeituanReadProgram implements AgentProgram {
       }
       if (Object.keys(locations).length) facts.locations = locations;
     }
-    return { artifact: { id: randomUUID(), name: 'meituan-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: s.data.kind === 'quote' ? `本次预估费用 ${BigInt(s.data.total.minor) / 100n}.${(BigInt(s.data.total.minor) % 100n).toString().padStart(2, '0')} 元；未下单、未付款，配送与最终费用未承诺。` : '本次只读查询完成；未下单、未付款。', execution: 'completed', result: { ...result, ontologyModule: meituanReadDefinitionRef, observation: proposal.observation, observedAt: s.observedAt, noBusinessWrites: true, evidenceKind: s.receipt.evidenceKind } } }, facts, evidenceRefs: [s.id] };
+    return { evidenceLevel: s.receipt.evidenceKind === 'fixture' ? 'synthetic' : s.receipt.evidenceKind, artifact: { id: randomUUID(), name: 'meituan-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: s.data.kind === 'quote' ? `本次预估费用 ${BigInt(s.data.total.minor) / 100n}.${(BigInt(s.data.total.minor) % 100n).toString().padStart(2, '0')} 元；未下单、未付款，配送与最终费用未承诺。` : '本次只读查询完成；未下单、未付款。', execution: 'completed', result: { ...result, ontologyModule: meituanReadDefinitionRef, observation: proposal.observation, observedAt: s.observedAt, noBusinessWrites: true, evidenceKind: s.receipt.evidenceKind } } }, facts, evidenceRefs: [s.id] };
   }
 }

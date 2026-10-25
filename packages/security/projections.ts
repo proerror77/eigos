@@ -10,6 +10,7 @@ import {bookingEntitySchemas,bookingDataSchema} from '../ontology/booking.js';
 import {registrationEntities,registrationOfferSchema,registrationRecordSchema} from '../ontology/free-booking.js';
 import {ruleSetSchema,regulatoryReferenceSchema} from '../ontology/customs-policy.js';
 import type {SecurityEnvelope} from './envelope.js';
+import {compositionInputSchema} from '../ontology/composition.js';
 
 type Projection={schema:z.ZodType;inputs:string[];markings:SecurityEnvelope['requiredMarkings'];responseOnly?:boolean;value:(properties:Record<string,unknown>)=>unknown};
 const registry:Record<string,Record<string,Projection>>={};
@@ -17,6 +18,17 @@ const time=z.iso.datetime({offset:true});
 export const didiBusinessViewSchema=z.strictObject({data:didiDataSchema,route:z.strictObject({origin:didiPlaceSchema,destination:didiPlaceSchema}).optional(),observedAt:time,expiresAt:time,evidenceKind:z.enum(['live_readonly','provider_mock','fixture']),noBusinessWrites:z.literal(true)});
 const pick=(value:unknown,keys:readonly string[])=>Object.fromEntries(keys.filter(k=>value && typeof value==='object' && Object.hasOwn(value,k)).map(k=>[k,(value as Record<string,unknown>)[k]]));
 const add=(types:string[],field:string,projection:Projection)=>{for(const type of types)(registry[type]??={})[field]=projection;};
+add(['ServiceComposition'],'authorizedInput',{schema:compositionInputSchema,inputs:['definition'],markings:['account_private','precise_location'],value:p=>compositionInputSchema.parse(p.definition)});
+// Only the registered primitive handoff fields are exposed. The full component
+// artifact, completion proposal and provider receipts remain private.
+const handoffText=z.string().max(2000);
+const handoffPlace=z.strictObject({name:handoffText.optional(),address:handoffText.optional(),addressAll:handoffText.optional(),city:handoffText.optional()});
+const handoffView=z.strictObject({
+  places:z.array(handoffPlace).max(100).optional(),didiAnswer:z.strictObject({places:z.array(handoffPlace).max(100)}).optional(),
+  booking:z.strictObject({offer:z.strictObject({venue:handoffText.optional(),startsAt:handoffText.optional(),endsAt:handoffText.optional(),title:handoffText.optional()})}).optional(),
+  registration:z.strictObject({serviceUrl:handoffText.optional(),title:handoffText.optional(),startsAt:handoffText.optional(),endsAt:handoffText.optional(),timeZone:handoffText.optional()}).optional(),
+});
+add(['ServiceComponentResult'],'observedData',{schema:handoffView,inputs:['output'],markings:['account_private','precise_location'],value:p=>handoffView.parse(p.output)});
 const snapshotPaths=['data','route','observedAt','expiresAt','evidenceKind','noBusinessWrites'];
 add(['DidiPlaceObservation','RideEstimateObservation'],'observedData',{schema:didiBusinessViewSchema,inputs:['snapshot'],markings:['precise_location','financial'],value:p=>didiBusinessViewSchema.parse(pick(p.snapshot,snapshotPaths))});
 const catalogView=catalogObservationSchema.pick({action:true,merchant:true,country:true,items:true,observedAt:true,expiresAt:true,evidenceKind:true,completeness:true,stockQuantity:true,deliveryCommitment:true,partnerTrust:true,noBusinessWrites:true});
@@ -69,6 +81,8 @@ export function projectedValue(type:string,field:string,properties:Record<string
 export function integrityField(type:string,field:string,allowed:string[]):boolean {
   if(['configurationDigest','allowedActions','bindingDigest'].includes(field))return true;
   if(type==='SourceReceipt')return ['sourceIdentity','sourceEventId','contentDigest','subjects'].includes(field);
+  if(type==='ServiceComposition' && field==='definition')return allowed.includes('authorizedInput');
+  if(type==='ServiceComponentResult' && field==='output')return allowed.includes('observedData');
   return allowed.includes('observedData') && !!registry[type]?.observedData && ['snapshot','data'].includes(field) || type==='MeituanReadTask' && field==='input' && allowed.includes('authorizedInput');
 }
 export const integrityFunctions=new Set(['rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);

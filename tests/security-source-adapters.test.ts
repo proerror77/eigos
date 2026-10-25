@@ -101,7 +101,7 @@ test('the real Gateway starts bound personal sources without invoking them or gr
     }
     const gateway=createApp(config);
     try {
-      assert.equal(gateway.catalog.securityProfiles(owner).length,3);
+      assert.equal(gateway.catalog.securityProfiles(owner).length,4);
       assert.equal(gateway.catalog.securityProfiles('["https://identity.example","tenant","other"]').length,0);
       assert.equal(gateway.store.security.listGrants(owner).length,0);
       assert.equal(existsSync(audit),false);

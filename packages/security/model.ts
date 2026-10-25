@@ -5,6 +5,9 @@ import type { AgentPlanningContext } from '../coordinator/coordinator.js';
 import { authorizationScope } from './context.js';
 import { SecurityError } from './store.js';
 import { combineEnvelopes,requireChannel } from './envelope.js';
+import type {ObjectRef} from '../ontology/model.js';
+import type {GoalReviewContext} from '../ontology/goal-coverage.js';
+import {compositionInputSchema} from '../ontology/composition.js';
 
 // User-submitted text and structured constraints belong to the accepted task
 // contract. Derived interpretations do not silently create new submitted data.
@@ -33,15 +36,37 @@ export function secureRequest(graph:OntologyObjectStore,owner:string,request:Ser
 export function secureAgentContext(context:AgentPlanningContext,graph:OntologyObjectStore):AgentPlanningContext {
   if (!graph.security) return context;
   const scope=authorizationScope()!,policy=graph.security;
-  const object=graph.read(scope.actor.ownerKey,context.state.scope);
-  const input=object.properties.authorizedInput??object.properties.input;
-  if (!input || typeof input!=='object' || Array.isArray(input)) throw new SecurityError('INSUFFICIENT_ACCESS');
+  const input=authorizedInput(graph,scope.actor.ownerKey,context.state.scope);
   const refs=context.state.observations.filter(ref=>!!policy.binding(scope,ref));
+  const definitions=context.components?compositionInputSchema.parse(input):undefined;
+  const components=context.components?.map(component=>{
+    const node=definitions!.components.find(n=>n.id===component.id);
+    if(!node || digest(node.capabilityRef)!==digest(component.state.programRef))throw new SecurityError('POLICY_CHANGED');
+    const state=component.state,componentInput=state.scope?authorizedInput(graph,scope.actor.ownerKey,state.scope):undefined;
+    const resultFields=state.result?graph.read(scope.actor.ownerKey,state.result.ref).properties:undefined;
+    const result=state.result?{ref:state.result.ref,at:state.result.at,
+      evidenceRefs:Array.isArray(resultFields?.evidenceRefs)?resultFields.evidenceRefs.filter((v):v is string=>typeof v==='string'):[],
+      ...(typeof resultFields?.evidenceLevel==='string'?{evidenceLevel:resultFields.evidenceLevel}:{})}:undefined;
+    return {...component,...node,state:{...state,input:componentInput,observations:state.observations.filter(ref=>!!policy.binding(scope,ref)),result},
+      actionIds:component.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute'))};
+  });
   return {...context,request:secureRequest(graph,scope.actor.ownerKey,context.request),actionIds:context.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute')),
     state:{...context.state,input:structuredClone(input as Record<string,unknown>),observations:refs,
-      plans:[],feedback:[],informationRequests:[],paPayment:undefined},
+      plans:[],feedback:[],informationRequests:[],paPayment:undefined,components:undefined,inputResolutions:undefined,initialSelectionPending:undefined,completion:undefined},components,
     actionOutcomes:context.actionOutcomes?.map(({stepId,state})=>({stepId,intentId:'',state})),
   };
+}
+function authorizedInput(graph:OntologyObjectStore,owner:string,ref:ObjectRef):Record<string,unknown> {
+  const object=graph.read(owner,ref),input=object.properties.authorizedInput??object.properties.input;
+  if(!input || typeof input!=='object' || Array.isArray(input))throw new SecurityError('INSUFFICIENT_ACCESS');
+  return structuredClone(input as Record<string,unknown>);
+}
+export function secureGoalContext(context:GoalReviewContext,graph:OntologyObjectStore,scope?:ObjectRef):GoalReviewContext {
+  if(!graph.security)return context;
+  if(!scope)throw new SecurityError('INSUFFICIENT_ACCESS');
+  const owner=authorizationScope()!.actor.ownerKey,input=authorizedInput(graph,owner,scope);
+  if(digest(input)!==digest(context.input))throw new SecurityError('INSUFFICIENT_ACCESS');
+  return {...context,input,request:secureRequest(graph,owner,context.request)};
 }
 export function assertModelChannel(graph:OntologyObjectStore,channel?:string) {
   if (!graph.security) return;

@@ -35,13 +35,23 @@ for (const planned of [false, true]) test(`DiDi shares one task across MCP and A
   for (let i = 0; i < 300; i++) { const current = gateway.tasks.get(principal, id); if (!['submitted', 'working'].includes(current.state)) { done = current; break; } await new Promise(r => setTimeout(r, 10)); }
   assert(done); assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
   assert.equal(done.delegation!.agent!.completion!.mode, planned ? 'planned' : undefined);
-  assert.equal(done.runs!.length, planned ? 2 : 4);
+  assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, planned ? 2 : 4);
   const client = new Client({ name: 'didi-protocol-test', version: '1' });
   try {
     await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));
     const mcp = await client.callTool({ name: 'get_task', arguments: { taskId: id } }); assert(!mcp.isError);
     assert.deepEqual((mcp.structuredContent as { result: Job }).result.artifact, done.artifact);
     const a2a = (await rpc('GetTask', { id })).result; assert.equal(a2a.status.state, 'TASK_STATE_COMPLETED'); assert.deepEqual(a2a.artifacts[0].parts[0].data, done.artifact!.data);
+    const requestObject = await client.callTool({ name: 'query_ontology', arguments: { object: { type: 'ServiceRequest', id } } });
+    assert(!requestObject.isError);
+    const properties = (requestObject.structuredContent as { result: { items: { properties: Record<string, unknown> }[] } }).result.items[0]!.properties;
+    assert.equal(properties.requestedOutcome, 'ride.estimate.query');
+    const outcome = await client.callTool({ name: 'evaluate_ontology', arguments: { function: 'taskOutcomeStatus', object: { type: 'ServiceRequest', id } } });
+    assert(!outcome.isError);
+    const result = (outcome.structuredContent as { result: { status: string; value: { status: string; sourceReceiptRefs: string[] } } }).result;
+    assert.equal(result.status, 'known'); assert.equal(result.value.status, 'satisfied');
+    assert.deepEqual(result.value.sourceReceiptRefs, done.delegation!.acceptance!.evidenceRefs);
+    assert.equal(a2a.metadata.delegation.outcome.status, 'satisfied');
     const ref = done.delegation!.agent!.observations.find(ref => ref.type === 'RideEstimateObservation')!;
     const evaluation = await client.callTool({ name: 'evaluate_ontology', arguments: { function: 'rideEstimateStatus', object: ref } }); assert(!evaluation.isError);
     assert.equal((evaluation.structuredContent as { result: { status: string } }).result.status, 'known');

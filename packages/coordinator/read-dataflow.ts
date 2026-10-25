@@ -1,3 +1,4 @@
+import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -34,8 +35,9 @@ export function validateReadBindings(graph: OntologyObjectStore, program: AgentP
     const source = preceding.get(ref.stepId);
     if (!source || !step.dependsOn.includes(ref.stepId) || Object.hasOwn(input, ref.targetKey) || targets.has(ref.targetKey) || !Object.hasOwn(objectSchema.shape, ref.targetKey)) invalid('Invalid or ambiguous action output reference');
     targets.add(ref.targetKey); omitted[ref.targetKey] = true;
-    const sourceType = program.definition(graph, source!.action).read?.resultType;
-    if (!sourceType) invalid('Deferred input must come from an explicitly selected read');
+    const sourceDefinition = boundAgentAction(graph, program, source!.action);
+    const sourceType = sourceDefinition.read?.resultType ?? (sourceDefinition.operation?.environment === 'sandbox' && sourceDefinition.operation.effect !== 'local' ? sourceDefinition.operation.resultType : undefined);
+    if (!sourceType) invalid('Deferred input must come from an explicitly selected read or sandbox operation');
     if (ref.compute) {
       const dependency = definition.read!.mcp?.requires.find(dep => dep.selectionInput === ref.targetKey);
       const objectBinding = dependency && step.inputRefs.find(item => item.targetKey === dependency.observationInput && !item.compute);
@@ -56,13 +58,16 @@ export function validateReadBindings(graph: OntologyObjectStore, program: AgentP
 export function validatePlannedCompletion(graph: OntologyObjectStore, program: AgentProgram, decision: AgentDecision) {
   const completion = decision.plannedCompletion;
   if (!completion) return;
-  if (decision.kind !== 'execute' || !decision.steps.length || decision.steps.some(step => !program.definition(graph, step.action).read)) invalid('Planned completion is limited to selected read graphs');
+  if (decision.kind !== 'execute' || !decision.steps.length) invalid('Planned completion requires a selected graph');
+  const operations = decision.steps.flatMap(step => { const definition = boundAgentAction(graph, program, step.action); return definition.read ? [] : [definition.operation]; });
+  if (operations.length && (operations.length !== 1 || !operations[0] || operations[0].environment !== 'sandbox' || operations[0].effect === 'local')) invalid('Planned completion requires reads or one exactly authorized sandbox operation');
   const input = dataflowArguments(completion.argumentsJson), targets = new Set<string>();
   const properties = (program.completionSchema as { properties?: Record<string, unknown> }).properties ?? {};
   for (const ref of completion.inputRefs) {
     const step = decision.steps.find(step => step.id === ref.stepId);
     if (!step || ref.compute || Object.hasOwn(input, ref.targetKey) || targets.has(ref.targetKey) || !Object.hasOwn(properties, ref.targetKey)
-      || program.definition(graph, step.action).read?.module?.completion.planned !== true) invalid('Completion needs an explicitly permitted accepted-output binding');
+      || boundAgentAction(graph, program, step.action).read?.module?.completion.planned !== true
+      || operations.length && boundAgentAction(graph, program, step.action).read?.module?.completion.afterAuthorizedOperation !== true) invalid('Completion needs an explicitly permitted accepted-output binding');
     targets.add(ref.targetKey);
   }
 }

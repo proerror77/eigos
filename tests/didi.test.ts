@@ -230,3 +230,12 @@ test('Canceling while a source read is in flight preserves audit without project
     assert(!t.calls.some(c => c.name === 'taxi_estimate'));
   } finally { t.close(); }
 });
+
+test('Provider RPC quota errors stay distinguishable without leaking provider text or retrying', async () => {
+ const f = didiFixture();
+ try {
+  f.flags.transform = (body, request) => request.method === 'tools/call' ? { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'PRIVATE_PROVIDER_QUOTA_TEXT' } } : body;
+  await assert.rejects(f.connector.invoke(context, 'maps_textsearch', { city: '北京市', keywords: '北京西站' }, signal()), e => e instanceof DidiReadError && e.code === 'RATE_LIMITED' && !e.message.includes('PRIVATE_PROVIDER'));
+  assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 1);
+ } finally { f.close(); }
+});

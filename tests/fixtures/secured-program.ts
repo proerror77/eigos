@@ -9,7 +9,7 @@ import {businessModel,BUSINESS_MODEL_DEFINITION} from '../../packages/ontology/b
 import {bindPersonalSourceOwner} from '../../packages/core/source-owner.js';
 import {withAuthorization} from '../../packages/security/context.js';
 import {digest} from '../../packages/core/delegation.js';
-import {evidence,interpretation} from '../backend-fixture.js';
+import {evidence,interpretation,syntheticGoalReview} from '../backend-fixture.js';
 
 export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>) {
   const f=base??securityFixture(),program=factory(f);bindPersonalSourceOwner(program,f.owner);
@@ -22,7 +22,7 @@ export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixtu
   policy.setModelChannel('s5-synthetic',{classification:'sensitive',markings,expiresAt:until},policy.revision());
   policy.setSource(f.owner,{installationId:a.id,bindingId:profile.bindingId,programId:program.ref.id,programDigest:program.configurationDigest,operations:program.actionIds,outputTypes:profile.outputTypes,expiresAt:until},policy.revision());
   const p={...f.principal,access:f.coordinator.authenticate(f.principal,a.token)},tasks=new TaskService(f.jobs,{catalog,allowSandboxActions:true}),modelInputs:string[]=[];
-  const reasoner:Reasoner={securityChannelId:'s5-synthetic',ground:async request=>({decision:{...interpretation(request,program.ref.id,input),capabilityRef:program.ref},evidence:evidence()}),plan:async()=>{throw new Error('Native program must not enter legacy planning');},act:async(ctx,_signal,access)=>{
+  const reasoner:Reasoner={securityChannelId:'s5-synthetic',reviewGoal:async ctx=>{modelInputs.push(JSON.stringify(ctx));return syntheticGoalReview(ctx);},ground:async request=>({decision:{...interpretation(request,program.ref.id,input),capabilityRef:program.ref},evidence:evidence()}),plan:async()=>{throw new Error('Native program must not enter legacy planning');},act:async(ctx,_signal,access)=>{
     modelInputs.push(JSON.stringify(ctx));const call=access.session.call.bind(access.session);
     access.session.call=(...args)=>{const result=call(...args);modelInputs.push(JSON.stringify(result));return result;};
     const decision=choice(ctx,access);return {decision,evidence:{...evidence(),decisionDigest:digest(decision)}};
@@ -42,5 +42,5 @@ export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixtu
     }
     assert.fail('Native program exceeded its bounded decision count');
   }
-  return {...f,a,p,tasks,program,policy,catalog,modelInputs,advance,tick};
+  return {...f,a,p,tasks,program,policy,catalog,modelInputs,reasoner,advance,tick};
 }

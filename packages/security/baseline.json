@@ -3,12 +3,12 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "17",
-    "digest": "549d0b3aa4a33c0223615629fd79fcbd843a361747e2013948184567f02fdbad"
+    "version": "20",
+    "digest": "09b5dcdd059c79e10ff37db8e0badf0604eb9631d4220f5d36ea10523bd4c113"
   },
   "types": {
     "ServiceRequest": {
-      "fingerprint": "f316a7705aedeae1916494f5fce192ccee10a4b1591e0f431a96f82483cbe33a",
+      "fingerprint": "c16f5b0d12bc9b41005ce2674789cb12f8e095d3d2e6887b6d345cd83e8dec0e",
       "fields": {
         "requestId": "task_private",
         "displayTitle": "task_private",
@@ -18,7 +18,8 @@
         "conditions": "task_sensitive",
         "progress": "task_private",
         "projectionState": "task_private",
-        "createdAt": "task_private"
+        "createdAt": "task_private",
+        "currentAssessment": "task_private"
       }
     },
     "Proposal": {
@@ -46,14 +47,18 @@
       }
     },
     "OutcomeAssessment": {
-      "fingerprint": "afeae8e1b0c5c80c34056a1d7f97a092023828be0f263a394f29fff1b7d9331b",
+      "fingerprint": "37b8d940d5bde7bd20a6470e68812cecad09d4464238804b8abd78bff236edeb",
       "fields": {
         "assessmentId": "task_private",
         "displayTitle": "task_private",
         "requestRevision": "task_private",
         "judgment": "task_private",
         "assessedAt": "task_private",
-        "criterionResults": "task_sensitive"
+        "criterionResults": "task_sensitive",
+        "reason": "task_sensitive",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private",
+        "taskState": "task_private"
       }
     },
     "Provider": {
@@ -1344,13 +1349,119 @@
         "data": "internal_only",
         "snapshot": "internal_only"
       }
+    },
+    "GoalCoverage": {
+      "fingerprint": "830ec63ad927e81ed284d1422a08119fa923b8c9183c1bfe37bc6401356b4c13",
+      "fields": {
+        "coverageId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "requestDigest": "task_private",
+        "capabilityRef": "task_private",
+        "capabilityDigest": "task_private",
+        "input": "internal_only",
+        "inputDigest": "task_private",
+        "review": "task_sensitive",
+        "modelRunId": "task_private",
+        "assessedAt": "task_private",
+        "digest": "task_private",
+        "reviewOrigin": "task_private",
+        "modelDecisionDigest": "task_private"
+      }
+    },
+    "ExecutionFeedback": {
+      "fingerprint": "2f0e736395e4b4b8f9e55e73358ed1eba8949912c45403dc866ab5a9824ebb04",
+      "fields": {
+        "feedbackId": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "bindingRef": "task_private",
+        "bindingDigest": "task_private",
+        "taskState": "task_private",
+        "judgment": "task_private",
+        "evidenceLevel": "task_private",
+        "evidenceRefs": "task_sensitive",
+        "observedAt": "task_private"
+      }
+    },
+    "ServiceComposition": {
+      "fingerprint": "ae1f1aeeaa59eb748f1adab5d9e1cd850071eeb26a8ddb764b28d3508dff0899",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "definition": "internal_only",
+        "configurationDigest": "task_private"
+      }
+    },
+    "ServiceComponent": {
+      "fingerprint": "37776daf088231b751073d8d370941fa518cdbe66aca16aebcbe23d455759af1",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "scope": "task_private",
+        "inputDigest": "task_private",
+        "dependencies": "task_sensitive"
+      }
+    },
+    "ServiceComponentResult": {
+      "fingerprint": "3191bde983042eaf798a8f374f770a9a93ee43eed8c00bd4bed47d130d9e7c1f",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "componentId": "task_private",
+        "artifactDigest": "task_private",
+        "output": "internal_only",
+        "evidenceRefs": "task_sensitive",
+        "evidenceLevel": "task_private"
+      }
+    },
+    "DidiOrderTestTask": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "input": "internal_only",
+        "configurationDigest": "internal_only"
+      },
+      "fingerprint": "e2ce69bd0d67596589bb1b7deff3b8ade4e793921faa4be79897b72d4fb00431"
+    },
+    "DidiOrderTestPlaceObservation": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "14868ee38730d5c8603700efac0395a9b997251f2c596b0c641e7d5cd247b5cf"
+    },
+    "DidiOrderTestQuote": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "e51612eb3ecef105d992cbc3b06436f45024ee23ed1adb58c9e6564c3c190188"
+    },
+    "DidiTestOrderObservation": {
+      "fields": {
+        "id": "internal_only",
+        "displayTitle": "internal_only",
+        "requestRevision": "internal_only",
+        "snapshot": "internal_only"
+      },
+      "fingerprint": "dd159059284be45a65aa331e89b8dc86c84e625a40bd7dce8058d052eb6aee36"
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "e0ff6d855821dd7ceb67848cfd2aca230135bca6a0417977a5da42edab7ebf72",
+      "sourceDigest": "f91f182faef86deadf88c240fa7339044f8cdfcd2a756b456d9357e69525d129",
       "channels": [
         "http"
       ],
@@ -1386,7 +1497,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "d88237e5a37519613d1020b7ddee10e3c1ec19d725c89a9152ca16b79c0194ae",
+      "sourceDigest": "95c8af06923d556c7228d8f577bb2adc7731e7abf200d481d5f35658450de582",
       "channels": [
         "http",
         "mcp",
@@ -1400,7 +1511,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "f2d64ef1f93f61eef8579b3ef003561f3548d5a8e1f89662038fd3a662700d60",
+      "sourceDigest": "07aa51989905c1daeda70b755ef268a14e84751c57913feb82d7f29512be330a",
       "channels": [
         "sqlite",
         "idempotency"
@@ -1413,7 +1524,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "51410185e3417f786312f478502cddc8c4939d4feb5e9f4a8ca930d132a58c95",
+      "sourceDigest": "767b8a93893e3a93871ea268a3663f0d4fad01cab33b9c98eea3430da14fd129",
       "channels": [
         "query",
         "function"
@@ -1498,7 +1609,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "3e6af8fa092959756d628734381c59d688c4674b5ee588be5b133b2a302011b9",
+      "sourceDigest": "05baf72b20c7fc362e4dad4b968c7c6c9e1e3b7dd313a0b73fcf9d0b20ada15d",
       "channels": [
         "model",
         "query"
@@ -1523,7 +1634,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "92b43a694cd05990ba602b251229496e39e603b08b172416faef4830649a93a7",
+      "sourceDigest": "26b373afa8a735b8df0ce4b77b8df1d1b964452f79573d7d8157e3e4fb5164a3",
       "channels": [
         "model",
         "dispatch"
@@ -1536,7 +1647,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "7199c9bac284c7ab087c31adf8a77481f8a7b8a442083a329b5f7f4b16a5054a",
+      "sourceDigest": "7ffb7638175e874afe83e9f4ccfa5a5e46376bdc5010cd172c91be7743febd74",
       "channels": [
         "model",
         "dispatch",
@@ -1598,7 +1709,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "c374ad7af22f87ea56966310e4e2bc3de5f6566b4e07ed72628053854ae8fad5",
+      "sourceDigest": "24cb2d5891d095a70416916517a73527bb394a77b5960ad77d503b9c13be6b8e",
       "channels": [
         "registered_model",
         "private_file"
@@ -1611,7 +1722,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "1e14ea5ffd880a390b5dc3715d5f87d940fdb9367f1bb5e27425128ad9017f5c",
+      "sourceDigest": "1bb742e59a23f6a58d49c437138ced0862dceb930f66e558bb16fe29ce3b1a88",
       "channels": [
         "source",
         "dispatch"
@@ -1649,7 +1760,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "9d1543516aa5319c5dfa796abdf52414ed1e5f0b2b0ec7c1098c0997f06d5bf1",
+      "sourceDigest": "3a2674303d043bc42d5deba6365c8c77f3d96be1017797694af44960cacf71f9",
       "channels": [
         "source",
         "private_file"
@@ -1675,7 +1786,7 @@
     {
       "id": "booking-bridge",
       "file": "packages/capabilities/free-booking/browser-bridge.ts",
-      "sourceDigest": "70b832fd08949b51f17bacecf9147f220feee3277635040e25b6cb64ab4dbfda",
+      "sourceDigest": "a7a33d0cd0ba9e3598381cf126379187ce0fec5c0ed36cd0877f5f1ea1ccbb5f",
       "channels": [
         "source",
         "private_file"
@@ -1701,7 +1812,7 @@
     {
       "id": "task-projection",
       "file": "packages/ontology/task-projection.ts",
-      "sourceDigest": "7101bef9789c5ef7b4593c1c81503e0c1580d9baacf98f3ec9e00dab04bb790c",
+      "sourceDigest": "2b0f8eff4780a92881b9a51ff0a82be26cd4f0458c824a7fc4eb0c07af2f9e8e",
       "channels": [
         "ontology_write"
       ],
@@ -1713,7 +1824,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "0664035e60d741143dcdcbda56a1bb048a4afb77bc3ed6c92bdc49582ac07be0",
+      "sourceDigest": "fcc4818be5588263b9a9a772f30896df65d26a4580f965c4b0affa635454eb82",
       "channels": [
         "definition"
       ],
@@ -1725,7 +1836,7 @@
     {
       "id": "read-dataflow",
       "file": "packages/coordinator/read-dataflow.ts",
-      "sourceDigest": "4d5a74eb98e220ebe2d25469cdb2447d7e362a6ee323395284a8dcf734e792eb",
+      "sourceDigest": "c62083ec3deb8460b6afd8cb05490d898896806611d5f1d117b4416dc86f9066",
       "channels": [
         "model",
         "dispatch",
@@ -1753,7 +1864,7 @@
     {
       "id": "initial-selection",
       "file": "packages/coordinator/initial-selection.ts",
-      "sourceDigest": "0c65b436b4f6f00c1934ec88d99ff17dd79e9ec805db1e3fa20b1dcf6231536b",
+      "sourceDigest": "c064ecf3bd3adc9d401a549b76e7a394e27f49ddec877d7a9caf521189baa300",
       "channels": [
         "model",
         "dispatch",
@@ -1793,7 +1904,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "ac2a989c72c97dc629f49bd3fae238fc7d941e18ac35bcf2998bfb8e8b96ba61",
+      "sourceDigest": "0def7928e7d6e8c3d27b0986605a536de39a2e623ce74029e306c80014880e30",
       "channels": [
         "authorization_control"
       ],
@@ -1829,7 +1940,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "8b93775ab6191a017458501978e428a2045bf8a148a3313ff0f48a3a99c2c704",
+      "sourceDigest": "5cb51b962741e49af2c1a9788c9a2a43c08aa5e9718cd4004bf6d36471e3ebfd",
       "channels": [
         "authorization_control"
       ],
@@ -1841,7 +1952,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "be77cda8ffe13902e5f4cd3ee62bd4a64c13893336a08d824a63e7467634ef6a",
+      "sourceDigest": "f20d5539be6fdd013a152785f213cd64e48d2b75935679f2bc7e7e77f036e242",
       "channels": [
         "authorization_control"
       ],
@@ -1865,7 +1976,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "b17f8cd7c809cf098db121de8774e082f598bba6663aac73a7538bdbd88d35ec",
+      "sourceDigest": "671d1680071076a475c3f8e6bc65861f24d2cb3999ca35cb6a438e8500da3167",
       "channels": [
         "authorization_control"
       ],
@@ -1913,7 +2024,7 @@
     {
       "id": "security-execution",
       "file": "packages/security/execution.ts",
-      "sourceDigest": "42bd12455ab394e469904e72b101e4f6c46350d3b807722ec02bda953d95cce5",
+      "sourceDigest": "e5d81e1a85ae9a722c504ac3f65dc4b3f86b45f70f6ba29faa25fd33fceef2e1",
       "channels": [
         "worker"
       ],
@@ -1925,7 +2036,7 @@
     {
       "id": "security-model",
       "file": "packages/security/model.ts",
-      "sourceDigest": "2cd67c68284339c92d87f7624315ff1d84ab5eb0c56d20c1d1b8ba13cc6fc7dd",
+      "sourceDigest": "b1428701778e73235d3aeaed23c5df49985b9b52d09f84897576e65b76525696",
       "channels": [
         "model"
       ],
@@ -1937,7 +2048,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "fa1497bf9fe5ff28b7ce1bc05f724029f6a6de2a068e9bbc57b65f6ab52b66e5",
+      "sourceDigest": "3df6f0fc2c42560b8b2fad66c310f2dbdd9ff41c5d9b81e1ee1c10c65849ffc8",
       "channels": [
         "all-reads"
       ],
@@ -1949,7 +2060,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "3b075b591e2871f0139e86d65b4e0a8dc483d27b9144cf43e765f88d3dd441f7",
+      "sourceDigest": "fa46c0ca3bed1339b3e410c0292de72c855cccfbec94754833fe0f7342b3127e",
       "channels": [
         "model-and-agent"
       ],
@@ -2009,7 +2120,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "d05af7624b5b1eef3aee5d6676043e88c159c5071829f730efa281986cd44d6e",
+      "sourceDigest": "d1a615ac5a6d845bd6ce41db3411e7125db3e9d744bde7f8d39190548cd19bbf",
       "channels": [
         "worker"
       ],
@@ -2021,7 +2132,7 @@
     {
       "id": "agent-program-contract",
       "file": "packages/core/agent-program.ts",
-      "sourceDigest": "121d111d938c19e119e0e192e5f8302b366dd6913ff85173760a063ffa6c3548",
+      "sourceDigest": "838e4c4df9e831194ab65b201694ca6748e53bd97586459d000ebff779a62d1e",
       "channels": [
         "worker"
       ],
@@ -2033,7 +2144,7 @@
     {
       "id": "agent-business-authorization",
       "file": "packages/core/agent-authorization.ts",
-      "sourceDigest": "507bd390bbc5a32d36db60fb57d066bb597c06cac9bd1c7e7e9c669ad8a799a4",
+      "sourceDigest": "e688cc86cac5ae508cbf7326368428b31a93130946478170adec6d9318705835",
       "channels": [
         "worker"
       ],
@@ -2045,7 +2156,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "773e1f78d717e47f1952623f0fb37b68515db563dac8796381d46cd3d5ee2002",
+      "sourceDigest": "9a6758bec42f368477c212d5a1b852fb84d7b146d60c566f0cf43a9739da03d1",
       "channels": [
         "internal"
       ],
@@ -2155,7 +2266,7 @@
     {
       "id": "s5-packages-capabilities-booking-program",
       "file": "packages/capabilities/booking/program.ts",
-      "sourceDigest": "a835d638bdac5a679b7db0a235622b6c0e2a9d98bb716af2e073c244a401a7f8",
+      "sourceDigest": "c42bfb4a796ab1c16e4ca081519d4603b33dd9d09f1def49a8159ac8bcef6e06",
       "channels": [
         "runtime"
       ],
@@ -2179,7 +2290,7 @@
     {
       "id": "s5-packages-capabilities-catalog-agent",
       "file": "packages/capabilities/catalog-agent.ts",
-      "sourceDigest": "a29fe347f86cba0ecb37e60072f8a2ede77b31fe519459d2d14c37fc54716d5b",
+      "sourceDigest": "9d96bee34c6c7f4c2721ae8f645b7deb186fe70b58dcddcd913d564d36a0058d",
       "channels": [
         "runtime"
       ],
@@ -2191,7 +2302,7 @@
     {
       "id": "s5-packages-capabilities-commerce-agent",
       "file": "packages/capabilities/commerce-agent.ts",
-      "sourceDigest": "d6c51202a47e6cc3be4564d67d6472e8623af1962c417bc12db9eb1c47eaceba",
+      "sourceDigest": "53aa1f7f6c65088f84eb4d523ea8a67e78be44f4f7bb6352b478dafa38b27301",
       "channels": [
         "runtime"
       ],
@@ -2203,7 +2314,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "62eddb946f02e957cc08ee8911a2d5e997d00806da1704c41bba7bf0b140ff5a",
+      "sourceDigest": "aadc1c849cf7f1d751fbe3262098df278f486ea4593671b2d3d793394642f1e0",
       "channels": [
         "runtime"
       ],
@@ -2227,7 +2338,7 @@
     {
       "id": "s5-packages-capabilities-free-booking-program",
       "file": "packages/capabilities/free-booking/program.ts",
-      "sourceDigest": "beea02caa4bade49744b628c3194bf90bfa419f344627076e48a2c609c9b9bc2",
+      "sourceDigest": "b82bcccef00a12320fd0fb06b81bb09bf5b626d4a314b30b113d821e15b756e8",
       "channels": [
         "runtime"
       ],
@@ -2239,7 +2350,7 @@
     {
       "id": "s5-packages-capabilities-meituan-agent",
       "file": "packages/capabilities/meituan-agent.ts",
-      "sourceDigest": "6aec3ce2829f418e7d08c4f517677eb3735944824caeda5a67cb603eea1f302b",
+      "sourceDigest": "e80bf2e3ea0ff4b74e609719e50bbac4d45415b1e6684028061ab2caee6cad32",
       "channels": [
         "runtime"
       ],
@@ -2287,7 +2398,7 @@
     {
       "id": "s5-scripts-setup-pa",
       "file": "scripts/setup-pa.mjs",
-      "sourceDigest": "8a1e159598d99b70eba3e897cd388732146fd886cc1e1a0dccb46af5e23ddf61",
+      "sourceDigest": "8c85a324a517b711cf5fb040445d26dccf4937da36d39470bb8e19dd96d2427b",
       "channels": [
         "runtime"
       ],
@@ -2323,7 +2434,7 @@
     {
       "id": "s5-packages-security-source-authority",
       "file": "packages/security/source-authority.ts",
-      "sourceDigest": "f3204ecaa8119471d0ff1490a231f3cba24571e4c7bf3e8b8d7899aaf47051e7",
+      "sourceDigest": "a7d54b01180687937cbe44e342e60dbf4f59570f6b87bb852a45ce63667f0b9f",
       "channels": [
         "runtime"
       ],
@@ -2366,6 +2477,152 @@
       "content": "S5 source, client, migration or runtime integration contract",
       "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "goal-coverage",
+      "file": "packages/ontology/goal-coverage.ts",
+      "sourceDigest": "9c9fd23ed712d2cb70eb24dde0ecf104ab986e311cac43c613f9cdeff1a1bd7b",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Versioned request text coverage and semantic review records",
+      "currentControl": "Exact message partition and criterion mappings, pinned request/input/definition digests; fail closed",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "agent-action-binding",
+      "file": "packages/core/agent-action-binding.ts",
+      "sourceDigest": "e8ba67bc272bce1d61d9d8c9e3ccd5e778ca66ded7b4707861102214bf84c18e",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Configured program bindings to registered Ontology Actions",
+      "currentControl": "Exact version, effect and schema agreement; no additional connector authority",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "task-outcome",
+      "file": "packages/core/task-outcome.ts",
+      "sourceDigest": "fe02b3befa69777c0373d74ace78f67e6082dbe6b93e7899261b7a6e554c684d",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Current task state to independent outcome synchronization",
+      "currentControl": "Unknown, canceled and waiting tasks never become satisfied",
+      "targetControl": "Owner and task-scoped fields; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-program",
+      "file": "packages/coordinator/composition-program.ts",
+      "sourceDigest": "53f6621e0589ce7a037a41f0bff59a7c94a62939cbfe15d849f61df6e47e97a3",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Bound service graphs, explicit typed handoffs, aggregate verification and exact component authority",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "composition-contract",
+      "file": "packages/ontology/composition.ts",
+      "sourceDigest": "beda27c612088c959e600afd6e248a734a44285a4da6d8f50d1634e373234812",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Versioned composition objects, links and local activation/verification Actions",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "pa-upgrade",
+      "file": "scripts/pa-upgrade.mjs",
+      "sourceDigest": "e0d4e185597a110b121e475762d6343faa31a30acea070c17ef731e1115a150b",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Read-only active task and uncertain-effect preflight before resident upgrades",
+      "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
+      "targetControl": "Intersect existing task and source grants; preserve historical records",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-mock-source",
+      "file": "packages/capabilities/didi/order-test-connector.ts",
+      "sourceDigest": "d8fb47339204b7b912c050b8e2065a459ce4d659ca51dad40402f98d979e2948",
+      "channels": [
+        "source",
+        "private_file"
+      ],
+      "content": "Official Mock quote/create/original-ID status and raw private receipts",
+      "currentControl": "Fixed sandbox endpoint, one create dispatch, no phone override or latest-order lookup",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-program",
+      "file": "packages/capabilities/didi/order-test-program.ts",
+      "sourceDigest": "278dc7684bc50bdcd54b63e4baec63d4366124ed753ac93de8659ed4acfa3f45",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Fixed Mock scope, private quote trace, owned order ID and independent outcome",
+      "currentControl": "Exact sandbox permit; fenced private state; sanitized projections; unknown creation never replayed",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "didi-order-test-evidence",
+      "file": "packages/ontology/didi-order-test-functions.ts",
+      "sourceDigest": "e2a09e7e6e008dde708d05ae736e8986af2cd04aae6249f518d23a2317507cd3",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Source-bound Mock observations and public-map evidence",
+      "currentControl": "Task, revision, configuration, receipt and freshness validation; provider_test only for Mock",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "goal-review-contract",
+      "file": "packages/ontology/goal-review-contract.ts",
+      "sourceDigest": "5b5f1704df393b581cee3c2bf8ec024e561ff9706d97d2f5c6e0f006a73373ff",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Bounded exact message partitions and criterion mappings",
+      "currentControl": "Strict schema; semantic judgment still requires actual model response",
+      "targetControl": "Explicit task/source grants; no automatic historical grants",
+      "stage": "S3"
+    },
+    {
+      "id": "s5-component-source-authority",
+      "file": "packages/security/component-authority.ts",
+      "sourceDigest": "121bc01170dfff84b6d2944d3a1e52eb7fdc7946314cfe3bf813aed320bcb16b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "Selected component source and configuration at every durable dispatch",
+      "currentControl": "Parent orchestration and exact selected child source both required",
+      "targetControl": "No authority borrowed across components or installations",
       "stage": "S5"
     }
   ]
