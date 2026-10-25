@@ -61,7 +61,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit a goal to a discovered service. eigos.delegate uses Ontology + LLM, provider facts, validated plans and independent acceptance; optional structured requirements preserve explicit hard constraints. Use executionBudget=extended when longer work is requested. Discover the current scope first. Reuse requestId for identical retries; never create a replacement to escape a task budget.',
+    description: 'Submit the original goal to a discovered service. Before a location-dependent delegation, the PA obtains the actual task addresses and city from the user saved address or current location as appropriate, then supplies locationContext. EIGOS records it as Ontology RequestFact inputs before planning; the user should not repeat known addresses or city. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate still uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => taskSummary(tasks.submit(principal, args))));

@@ -15,6 +15,18 @@ Use the host's native EIGOS MCP connection by default. Native discovery or calls
 
 Submit the user's original goal through native `submit_task`, using a stable requestId. Retain the taskId, contextId and request ID. Network retries preserve the original content and ID; never create a replacement task to escape an uncertain result or execution budget.
 
+### Obtain task addresses before delegating
+
+For a location-dependent task, first obtain the addresses needed for this user's actual goal. For “from home”, read the user's saved home address; for “from here”, obtain the current device location and its address/city. An explicitly named origin takes precedence over the device location. Reuse facts already supplied or saved; do not ask the user to repeat them. If a device connection is unavailable, identify that prerequisite instead of substituting home or guessing a city from an IP address.
+
+Keep the original user goal unchanged and provide the acquired facts in `submit_task.locationContext`: `city`, and the applicable `origin`/`destination`. Each endpoint has a canonical `name`, optional full `address`, optional user-facing `label` such as “家”, and `source` (`saved_address`, `current_location`, or `user_provided`). A `current_location` requires its actual `observedAt` timestamp. Do not invent a timestamp or treat an old position as current.
+
+EIGOS records this context as current Ontology `RequestFact` inputs before model planning. Let EIGOS discover and execute the source actions, validate provider coordinates and independently verify the result. Obtaining user address context does not mean calling the supplier's quote/order tools directly. Do not bypass EIGOS or send credentials in this context.
+
+Use natural-language constraints in `goal` for ordinary delegation. Do not turn a sentence such as “只估价，不下单、不付款” into a structured `expected.predicate`; those fields accept discovered registered IDs only. You do not need to create those internal requirements yourself.
+
+On `input-required`, first inspect `delegation.knownLocations`, the question and the returned source choices. Resolve a unique match against the already obtained address within the same task; ask the user only for a genuinely new choice. Keep unchanged city/address facts. To correct a location, send the corresponding `locationContext` in the normal versioned `reply_to_task`/`amend_task`; a null endpoint explicitly clears it. Do not clear other known locations. A reply or address fact grants no order, cancellation or payment authority.
+
 Read the same task with `get_task`, normally using `waitMs: 30000` while submitted or working. A wait deadline is not a failure. For input-required, use only information supplied by the user; ask for actual missing facts. Reply on the same task using the current expectedRevision and a new stable request ID. Do not repeat questions already answered.
 
 Technical recovering or paused states are not missing business input. Preserve the task and confirmed facts, identify the runtime prerequisite, then use `resume_task` only after it changes. Do not repeatedly retry the same unchanged failure. Cancellation requires the user's intent and does not prove that an external order was canceled.

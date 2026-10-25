@@ -25,6 +25,7 @@ import { objectRefSchema } from '../ontology/model.js';
 import type { AgentActionPlan, AgentDecision, AgentExecutionState } from '../ontology/agent-actions.js';
 import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.js';
 import { GoalProgram } from '../coordinator/goal-program.js';
+import { addLocationContext, prepareLocationContext } from './location-context.js';
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
@@ -214,6 +215,10 @@ export class TaskService {
           requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
+      if (args.locationContext) {
+        addLocationContext(job.delegation.request, args.locationContext, args.requestId, now);
+        job.delegation.events.push({ at: now, event: 'location_context_recorded' });
+      }
       this.store.save(owner, job);
       return job;
     });
@@ -258,6 +263,7 @@ export class TaskService {
       if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
       if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
       if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
+      if (args.locationContext && (job.delegation?.plan || this.store.intents(owner, job.id).some(intent => !['read', 'local'].includes(intent.effect)))) throw new DomainError('CONFLICT', 'An address correction cannot change a fixed business operation; reconcile its original operation first');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
       if (amendment) {
@@ -301,6 +307,8 @@ export class TaskService {
           delete job.delegation!.agent;
         }
         request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+        if (args.locationContext) addLocationContext(request, args.locationContext, args.requestId, job.updatedAt);
+        else prepareLocationContext(request);
         for (const r of args.requirements ?? []) {
           const previous = request.requirements.findIndex(x => x.id === r.id);
           const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };

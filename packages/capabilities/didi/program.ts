@@ -15,6 +15,7 @@ import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchem
 import { checkedRideEstimate, projectRideEstimate } from '../../ontology/ride-estimate-projection.js';
 import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, didiPlaceSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiPlace } from './contracts.js';
 import { DidiMcpConnector, type DidiConnector } from './connector.js';
+import { requestLocations, sameCity, locationMatchesSource, locationAliases, normalizedLocation } from '../../core/location-context.js';
 
 export const DIDI_PROGRAM_REF = { id: 'ride.estimate.query', version: '1' } as const;
 const equal = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : digest(a) === digest(b);
@@ -24,14 +25,17 @@ const normalized = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 /** Query endpoint facts, never actual pickup/arrival facts. An expected spelling
  * is reported only after matching a source name/address or its city prefix. */
 export function routeLocationFacts(request: ServiceRequest, route: { origin: DidiPlace; destination: DidiPlace }, city: string): NonNullable<CandidateFacts['locations']> {
-  const locations = { origin: route.origin.name, destination: route.destination.name };
+  const locations = { origin: route.origin.name, destination: route.destination.name }, context = requestLocations(request);
   const cityPrefixes = [...new Set([city, route.origin.city, route.destination.city].flatMap(value => [normalized(value), normalized(value).replace(/市$/, '')]))];
   for (const r of request.requirements) {
     if (r.kind !== 'location' || r.role !== 'origin' && r.role !== 'destination') continue;
     const place = route[r.role], aliases = [place.name, place.addressAll].filter(Boolean).flatMap(value => {
       const name = normalized(value); return [name, ...cityPrefixes.map(prefix => prefix + name)];
     });
-    if (aliases.includes(normalized(r.expected.ref))) locations[r.role] = r.expected.ref;
+    const supplied = context[r.role];
+    const knownAlias = supplied && context.city && locationMatchesSource(supplied, context.city, place)
+      && locationAliases(supplied, context.city).includes(normalizedLocation(r.expected.ref));
+    if (aliases.includes(normalized(r.expected.ref)) || knownAlias) locations[r.role] = r.expected.ref;
   }
   return locations;
 }
@@ -58,7 +62,18 @@ export class DidiAgentProgram implements AgentProgram {
   }
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, value: unknown, component?: { id: string; scopeKey: string }) {
     if (!this.permitted(owner)) throw new DomainError('FORBIDDEN', 'Personal DiDi binding is unavailable to this identity');
-    const input = rideEstimateInputSchema.parse(value), root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'RideEstimateTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { context: component.scopeKey } : {}) }) };
+    const supplied = requestLocations(request), raw = z.record(z.string(), z.unknown()).parse(value);
+    if (supplied.city) {
+      if (raw.city !== undefined && (typeof raw.city !== 'string' || !sameCity(raw.city, supplied.city))) invalid('Use the already provided task city from confirmedInputs.location; do not ask the user to repeat it');
+      raw.city = supplied.city;
+      if (raw.mode === 'estimate') for (const role of ['origin', 'destination'] as const) {
+        if (request.confirmedInputs?.location?.fields[role]?.status === 'cleared') invalid('This task address was explicitly cleared; the PA must obtain its replacement instead of reusing history');
+        const place = supplied[role]; if (!place) continue;
+        if (raw[role] !== undefined && (typeof raw[role] !== 'string' || !locationAliases(place, supplied.city).includes(normalizedLocation(raw[role] as string)))) invalid('Route differs from the current PA-provided address context');
+        raw[role] = place.name;
+      }
+    }
+    const input = rideEstimateInputSchema.parse(raw), root = { type: 'ServiceRequest', id: request.id }, scope = { type: 'RideEstimateTask', id: digest({ request: request.id, revision: request.revision, input, binding: this.configurationDigest, ...(component ? { context: component.scopeKey } : {}) }) };
     if (graph.read(owner, root).properties.revision !== request.revision) invalid('Request changed before DiDi scope creation');
     graph.ingest(owner, { objects: [{ ref: scope, properties: { id: scope.id, displayTitle: '滴滴只读查询任务', requestRevision: request.revision, input, configurationDigest: this.configurationDigest, allowedActions: [...this.actionIds] } }], links: [{ type: 'RideEstimateTaskRequest', from: scope, to: root }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     return { scope, input };
@@ -93,8 +108,11 @@ export class DidiAgentProgram implements AgentProgram {
     const place = s.data.places.find(p => p.id === id) ?? invalid('Place was not returned by the cited search');
     if (normalized(place.city).replace(/市$/, '') !== normalized(scope.city).replace(/市$/, '')) invalid('The selected place is outside the requested city');
     const target = scope[role], exact = s.data.places.filter(p => normalized(p.name) === normalized(target));
+    const context = requestLocations(ctx.request), provided = context[role];
+    if (provided && context.city && !locationMatchesSource(provided, context.city, place)) invalid('Selected source place differs from the PA-provided address context');
+    const providedMatch = provided && context.city && s.data.places.filter(p => locationMatchesSource(provided, context.city!, p)).length === 1;
     const explicitlyAddressed = place.addressAll.length > place.name.length && s.data.places.filter(p => p.addressAll === place.addressAll).length === 1 && ctx.request.messages.some(m => m.text.includes(place.addressAll));
-    if (s.data.places.length !== 1 && !(exact.length === 1 && exact[0]!.id === id) && !explicitlyAddressed) invalid('Ambiguous place needs an explicit full-address choice; the first candidate is not a default');
+    if (s.data.places.length !== 1 && !(exact.length === 1 && exact[0]!.id === id) && !explicitlyAddressed && !providedMatch) invalid('Ambiguous place needs an explicit full-address choice; the first candidate is not a default');
     return place;
   }
   private call(ctx: AgentProgramContext, action: string, value: Record<string, unknown>) {
