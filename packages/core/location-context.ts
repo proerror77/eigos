@@ -51,7 +51,32 @@ export function locationMatchesSource(location: TaskLocation, city: string, plac
   if (!sameCity(city, place.city)) return false;
   const cityPrefixes = [...new Set([city, place.city].flatMap(value => [normalize(value), normalize(value).replace(/市$/, '')]))];
   const matches = (value: string, candidates: string[]) => candidates.filter(Boolean).flatMap(item => [normalize(item), ...cityPrefixes.map(prefix => prefix + normalize(item))]).includes(normalize(value));
-  return matches(location.name, [place.name, place.addressAll]) && (!location.address || matches(location.address, [place.address, place.addressAll]));
+  if (matches(location.name, [place.name, place.addressAll]) && (!location.address || matches(location.address, [place.address, place.addressAll]))) return true;
+  if (!location.address) return false;
+  // A saved address may omit administrative prefixes or repeat the compound
+  // after the street. Keep the compound, street and every numbered unit exact.
+  const compact = (value: string) => normalize(value).replace(/[·•・‧]/g, '');
+  const compound = (value: string) => compact(value).replace(/(?:\d+(?:号|弄))+$/, '');
+  const name = compound(location.name);
+  if (!name || name !== compound(place.name)) return false;
+  const units = (value: string) => [...new Set(compact(value).match(/\d+(?:号|弄)/g) ?? [])].sort();
+  const suppliedUnits = units(location.name + location.address);
+  if (!suppliedUnits.length || JSON.stringify(suppliedUnits) !== JSON.stringify(units(place.name + place.address))) return false;
+  const street = (value: string) => {
+    let address = compact(value);
+    if (address.startsWith(name)) address = address.slice(name.length);
+    if (address.endsWith(name)) address = address.slice(0, -name.length);
+    const cityPrefix = cityPrefixes.find(prefix => prefix.endsWith('市') && address.startsWith(prefix));
+    if (cityPrefix) address = address.slice(cityPrefix.length);
+    return address.replace(/^[,，;；、]+|[,，;；、]+$/g, '');
+  };
+  const supplied = street(location.address), observed = street(place.address);
+  if (!supplied || !observed) return false;
+  if (supplied === observed) return true;
+  const [shorter, longer] = supplied.length < observed.length ? [supplied, observed] : [observed, supplied];
+  if (!longer.endsWith(shorter)) return false;
+  const administrativePrefix = longer.slice(0, -shorter.length);
+  return /^[\p{Script=Han}]{1,40}(?:区|县|镇|乡|街道)$/u.test(administrativePrefix) && !/[\d路弄号省市]/.test(administrativePrefix);
 }
 export function locationAliases(location: TaskLocation, city: string): string[] {
   const groups = [['家', '家里', '我家', '我的家', '家中', 'home', 'my home'], ['这里', '我这里', '当前位置', '我现在的位置', '我当前的位置', 'current location']];

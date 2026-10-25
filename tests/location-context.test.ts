@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { addLocationContext, locationContextSchema, locationAliases, prepareLocationContext, requestLocations } from '../packages/core/location-context.js';
+import { addLocationContext, locationContextSchema, locationAliases, locationMatchesSource, prepareLocationContext, requestLocations } from '../packages/core/location-context.js';
 import { readOntologyRequest } from '../packages/ontology/execution-projection.js';
 import { DidiAgentProgram, routeLocationFacts } from '../packages/capabilities/didi/program.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
@@ -156,4 +156,18 @@ test('MCP and A2A carry the same address context through the existing delegate i
   const result = await a2a.json(); assert(!result.error, JSON.stringify(result));
   const otherId = result.result.task.id;
   assert.deepEqual(requestLocations(readOntologyRequest(app.store.ontology, owner, otherId)), context);
+});
+
+test('saved street addresses match the primary provider place without requiring the user to repeat administrative prefixes', () => {
+  const supplied = { name: '合成云林小区', address: '合成路257弄 合成云林小区', label: '家', source: 'saved_address' as const };
+  const place = { name: '合成云林小区257弄', address: '测试区测试镇合成路257弄', addressAll: '测试区测试镇合成路257弄合成云林小区257弄', city: '合成市' };
+  assert(locationMatchesSource(supplied, '合成市', place));
+  assert(locationMatchesSource({ ...supplied, name: '合成·云林小区', address: '合成市合成路257弄，合成·云林小区' }, '合成市', place));
+  assert(!locationMatchesSource(supplied, '另一市', place));
+  assert(!locationMatchesSource({ ...supplied, name: '另一个小区' }, '合成市', place));
+  assert(!locationMatchesSource(supplied, '合成市', { ...place, name: '合成云林小区258弄', address: '测试区测试镇合成路258弄' }));
+  assert(!locationMatchesSource(supplied, '合成市', { ...place, name: '合成云林小区257弄3号', address: place.address + '3号' }));
+  assert(!locationMatchesSource(supplied, '合成市', { ...place, name: '合成云林小区', address: place.address + '、258弄' }));
+  assert(!locationMatchesSource(supplied, '合成市', { ...place, address: '测试区测试镇新合成路257弄' }));
+  assert(!locationMatchesSource({ ...supplied, address: '另一市合成路257弄' }, '合成市', { ...place, address: '合成路257弄' }));
 });
