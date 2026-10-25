@@ -91,3 +91,5 @@ Docker 镜像默认启动 Gateway，也包含构建后的 Worker 代码。Worker
 后续不传配置会保留原绑定；显式 `EIGOS_FREE_BOOKING_BRIDGE_URL=''` 关闭来源。其他已配置的外部本机桥接仍可使用四项 `EIGOS_FREE_BOOKING_*` 设置。旧的临时会话库和已完成报名不复制到常驻任务库，也不重新提交。部署只改变代码及受控配置，不生成新的报名许可。
 
 跨服务目标使用同一 Task 的[服务组件图](cross-service-composition.md)，分别保留来源和精确授权，全部组件通过后才验收主目标。
+
+外部变化的独立接收、有期限的持续观察和组件局部修复见[态势感知设计补充](situation-awareness-design-2026-10-25.md)。该方案计划复用现有 Worker、持久存储和授权账本，尚未加入运行合同；现有 `nextAt` 等待及原操作恢复不代表已启用持续履约守护。
