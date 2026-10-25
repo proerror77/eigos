@@ -11,10 +11,11 @@ import { contextDefinitionInput } from './planning-session.js';
 const fail = (message: string): never => { throw new DomainError('CONFLICT', message); };
 /** Eligibility comes from current definitions, never provider names or a recipe. */
 export function initialActionIds(graph: OntologyObjectStore, program: AgentProgram): string[] {
-  if (!boundAgentActionIds(graph, program).every(id => { const read = graph.model.action(id).read; return read?.effect === 'read' && read.mcp; })) return [];
-  return boundAgentActionIds(graph, program).filter(id => {
+  const ids = boundAgentActionIds(graph, program);
+  if (!ids.every(id => { const action = graph.model.action(id); return action.read?.effect === 'read' && action.read.mcp || action.operation?.effect === 'local' && action.operation.resultType === 'ObservationWatch'; })) return [];
+  return ids.filter(id => {
     const definition = graph.model.action(id);
-    return definition.read!.mcp!.requires.every(dependency => dependency.derive || dependency.evidence === 'accepted') && Object.keys(definition.inputs).length > 0;
+    return !!definition.read?.mcp && definition.read.mcp.requires.every(dependency => dependency.derive || dependency.evidence === 'accepted') && Object.keys(definition.inputs).length > 0;
   });
 }
 

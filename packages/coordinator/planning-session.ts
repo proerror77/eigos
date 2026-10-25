@@ -31,7 +31,7 @@ export function contextDefinitionInput(graph: OntologyObjectStore, actions: stri
 
 function relevantProperties(ref: ObjectRef, properties: Record<string, unknown>, request: ServiceRequest) {
   if (ref.type !== 'ServiceRequest' || ref.id !== request.id) return properties;
-  const { progress: _progress, projectionState: _coverage, requestedOutcome: _selectedCapability, currentAssessment: _assessment, ...business } = properties;
+  const { progress: _progress, projectionState: _coverage, requestedOutcome: _selectedCapability, currentAssessment: _assessment, currentSituation: _situation, ...business } = properties;
   return business;
 }
 export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: ObjectRef, request: ServiceRequest): ObjectSnapshot {

@@ -1,7 +1,7 @@
 import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
-import { requirementsSchema } from '../ontology/execution.js';
+import { requirementsSchema, monitoringSchema } from '../ontology/execution.js';
 
 export const SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export type Scope = (typeof SCOPES)[number];
@@ -33,12 +33,17 @@ export function ownerKey(p: Principal): string {
 
 export const requestIdSchema = z.string().trim().min(1).max(128);
 export const taskIdSchema = z.uuid();
+export const observationReportSchema = z.strictObject({ action: z.literal('report_source_change'), taskId: taskIdSchema, watchId: z.string().regex(/^[a-f0-9]{64}$/),
+  eventId: z.string().min(1).max(500), note: z.string().min(1).max(2000), requestId: requestIdSchema });
+export const observationRevokeSchema = z.strictObject({ action: z.literal('revoke_observation'), taskId: taskIdSchema, watchId: z.string().regex(/^[a-f0-9]{64}$/), requestId: requestIdSchema });
+export const observationResumeSchema = z.strictObject({ action: z.literal('resume_observation'), taskId: taskIdSchema, watchId: z.string().regex(/^[a-f0-9]{64}$/), requestId: requestIdSchema });
 export const remediationSchema = z.object({ originalTaskId: taskIdSchema, action: z.enum(['cancel', 'refund']), reason: z.string().trim().min(1).max(1000), requestId: requestIdSchema }).strict();
 const afterSalesSubmitSchema = remediationSchema.extend({ service: z.literal('eigos.aftersales') });
 export const submitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
+  monitoring: monitoringSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,

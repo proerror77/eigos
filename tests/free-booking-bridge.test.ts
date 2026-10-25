@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import { JobStore } from '../packages/core/store.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { createParticipantBrowserBridge } from '../packages/capabilities/free-booking/browser-bridge.js';
-import { participantFixture } from './fixtures/free-booking.js';
+import { participantFixture, participantChoice } from './fixtures/free-booking.js';
 import { backend, owner, principal } from './backend-fixture.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 
@@ -55,7 +55,7 @@ test('browser bridge accepts the exact selected composition component and rechec
       { id: 'registration', capabilityRef: { id: 'booking.participant.free', version: '1' }, goal: 'Synthetic free registration', input: f.input, dependsOn: [], bindings: [], requirementIds: [], conditionIds: [] },
       { id: 'geo', capabilityRef: { id: 'geo.search', version: '1' }, goal: 'Synthetic public query', input: { city: '北京市', keyword: '天安门' }, dependsOn: [], bindings: [], requirementIds: [], conditionIds: [] },
     ] };
-    const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.live', input), capabilityRef: { id: 'services.compose.live', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('No legacy recipe'); }, act: async (ctx, _signal, access) => {
+    const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.live', input), capabilityRef: { id: 'services.compose.live', version: '2' } }, evidence: evidence() }), plan: async () => { throw new Error('No legacy recipe'); }, act: async (ctx, _signal, access) => {
       const c = ctx.state.components!.registration!;
       access.session.call('describe_ontology', { actions: ['InspectRegistrationPage', 'SubmitFreeRegistration'] });
       access.session.call('query_ontology', { object: ctx.state.scope }); access.session.call('query_ontology', { object: c.scope });
@@ -85,4 +85,54 @@ test('browser bridge accepts the exact selected composition component and rechec
     const denied = await fetch(`${bridge.endpoint}/operator/dispatch/${submit.businessOperationKey}`, { method: 'POST', headers: operatorHeaders }); assert.equal(denied.status, 403); assert.match((await denied.json()).error, /expired|revoked/);
     assert.equal(geo.calls.length, 0); assert.equal(store.get(owner, job.id).artifact, undefined);
   } finally { await bridge.close(); store.close(); f.store.close(); rmSync(directory, { recursive: true }); }
+});
+
+test('A selected standing browser read requires its persisted watch and becomes unavailable when operator work or permission is missing', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const directory = mkdtempSync(join(tmpdir(), 'eigos-watched-browser-')), taskPath = join(directory, 'tasks.sqlite'), store = new JobStore(taskPath);
+  const f = participantFixture({ choice: (ctx, access) => {
+    const selected = participantChoice(ctx, access);
+    if (selected.kind === 'complete' && !ctx.situation?.watches.some(w => w.status === 'active')) {
+      const completion = JSON.parse(selected.completionJson);
+      return { ...selected, kind: 'execute', completionJson: '', steps: [{ id: 'watch', action: 'StartTaskObservationWatch', dependsOn: [], inputRefs: [], argumentsJson: JSON.stringify({
+        scope: ctx.state.scope, observation: completion.registration, action: 'ReadParticipantRegistration', argumentsJson: JSON.stringify({ scope: ctx.state.scope, previous: completion.registration }), policy: { intervalMs: 60000, maxAgeMs: 300000 }, refreshCompletion: true, completionJson: selected.completionJson,
+      }) }] };
+    }
+    return selected;
+  } });
+  const workerToken = randomBytes(32).toString('hex'), operatorToken = randomBytes(32).toString('hex'), tokenFile = join(directory, 'worker-token'), evidenceDirectory = join(directory, 'evidence');
+  writeFileSync(tokenFile, workerToken, { mode: 0o600 });
+  const bridge = await createParticipantBrowserBridge({ databasePath: join(directory, 'bridge.sqlite'), taskDatabasePath: taskPath, evidenceDirectory, bindingId: 'watched-protocol', attendeeRef: f.source.attendeeRef, workerToken, operatorToken });
+  const headers = { authorization: `Bearer ${operatorToken}`, 'content-type': 'application/json' };
+  const at = new Date().toISOString(), startsAt = new Date(Date.now() + 86400000).toISOString(), title = 'Synthetic watched event';
+  const common = { serviceUrl: f.input.serviceUrl, title, kind: 'event_registration', startsAt, endsAt: new Date(Date.parse(startsAt) + 3600000).toISOString(), timeZone: 'Asia/Shanghai', participants: 1,
+    attendeeRef: f.source.attendeeRef, payment: { requirement: 'not_required', total: { minor: '0', currency: 'CNY' }, feesComplete: true }, termsRef: 'synthetic-watch-terms' };
+  const next = async () => (await fetch(bridge.endpoint + '/operator/next', { headers }).then(r => r.json())).operations[0];
+  const resolve = async (row: { key: string; command: { action: string } }) => {
+    const dispatch = await fetch(`${bridge.endpoint}/operator/dispatch/${row.key}`, { method: 'POST', headers }); assert.equal(dispatch.status, 200, JSON.stringify(await dispatch.json()));
+    const data = row.command.action === 'InspectRegistrationPage' ? { ...common, availability: 'available', alreadyRegistered: true, requiresApproval: false, requiresAdditionalConsent: false, observedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 300000).toISOString() }
+      : { ...common, registrationId: 'existing-participant-registration', state: 'confirmed', submittedAt: at, confirmedAt: at, confirmationReference: 'synthetic-confirmation', independentRead: true, observedAt: new Date().toISOString() };
+    const snapshotPath = join(evidenceDirectory, `${row.key}.txt`), screenshotPath = join(evidenceDirectory, `${row.key}.image`);
+    writeFileSync(snapshotPath, `eigos-synthetic-free ${title} You're In`); writeFileSync(screenshotPath, 'synthetic protocol evidence, no live browser');
+    const response = await fetch(`${bridge.endpoint}/operator/resolve/${row.key}`, { method: 'POST', headers, body: JSON.stringify({ data, pageUrl: f.input.serviceUrl, snapshotPath, screenshotPath }) }); assert.equal(response.status, 200);
+  };
+  try {
+    const catalog = createExecutionCatalog({ participantBooking: { endpoint: bridge.endpoint, tokenFile, bindingId: 'watched-protocol', attendeeRef: f.source.attendeeRef } });
+    const b = backend(catalog, f.model, store), job = b.submit({ executionEnvironment: 'live', monitoring: { until: new Date(Date.now() + 60000).toISOString(), maxQueries: 5 } });
+    await b.run(); await b.run(); await resolve(await next()); t.mock.timers.tick(2001); await b.run();
+    await b.run(); await resolve(await next()); t.mock.timers.tick(2001); await b.run();
+    await b.run(); await b.run(); assert.equal(store.get(owner, job.id).delegation!.phase, 'watching');
+    const watch = store.situations.watches(owner, job.id)[0]!;
+    store.situations.receive(owner, watch.selection.source, { eventId: 'current-read', contentDigest: 'a'.repeat(64), kind: 'provider_hint' });
+    await b.run();
+    const pending = await next(); assert.equal(pending.command.observation.watchId, watch.id);
+    assert.equal(store.situations.summary(owner, job.id)!.effective, false);
+    assert.equal(store.situations.watch(owner, watch.id).health, 'operator_required');
+    await resolve(pending); t.mock.timers.tick(2001); await b.run();
+    assert.equal(store.get(owner, job.id).delegation!.phase, 'watching');
+    store.situations.receive(owner, watch.selection.source, { eventId: 'revoked-read', contentDigest: 'b'.repeat(64), kind: 'provider_hint' }); await b.run();
+    const queued = await next(); b.tasks.revokeObservation(principal, { action: 'revoke_observation', taskId: job.id, watchId: watch.id, requestId: randomUUID() });
+    const denied = await fetch(`${bridge.endpoint}/operator/dispatch/${queued.key}`, { method: 'POST', headers }); assert.equal(denied.status, 403);
+    assert.equal(store.intents(owner, job.id).filter(intent => intent.effect === 'reserve').length, 0);
+  } finally { await bridge.close(); store.close(); f.store.close(); rmSync(directory, { recursive: true, force: true }); t.mock.timers.reset(); }
 });

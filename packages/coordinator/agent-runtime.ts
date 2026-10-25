@@ -20,12 +20,14 @@ import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBind
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { assertGoalCoverage } from '../ontology/goal-coverage.js';
 import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
+import { ObservationRuntime, executionContext, nextObservationAt } from './observation-runtime.js';
+import { performance } from 'node:perf_hooks';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
-export function agentLimits(program?: AgentProgram) {
+export function agentLimits(program?: AgentProgram, monitoring = false) {
   const limits = program?.limits ?? AGENT_LIMITS;
   if (!Number.isInteger(limits.modelTurns) || limits.modelTurns < 1 || limits.modelTurns > 80 || !Number.isInteger(limits.plans) || limits.plans < 1 || limits.plans > 24 || !Number.isInteger(limits.actions) || limits.actions < 1 || limits.actions > 64) throw new DomainError('CONFLICT', 'Agent execution limits are outside the bounded host policy');
-  return limits;
+  return monitoring ? { modelTurns: 80, plans: 64, actions: 128 } : limits;
 }
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const failure = (message: string): never => { throw new DomainError('CONFLICT', message); };
@@ -34,11 +36,14 @@ const errorMessage = (error: unknown) => error instanceof DomainError || error i
 /** Durable model-decide / bound-action / ontology-observe loop. No domain name,
  * vendor operation, product selection or step recipe is encoded here. */
 export class AgentRuntime {
+  private observations: ObservationRuntime;
   constructor(private store: JobStore, private catalog: ExecutionCatalog, private reasoner: Reasoner,
-    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number; allowSandbox?: boolean } = {}) {}
+    private access: (claim: WorkClaim, signal: AbortSignal) => PlanningAccess, private options: { maxTaskMs?: number; allowSandbox?: boolean } = {}) { this.observations = new ObservationRuntime(store); }
   private withinTaskBudget(claim: WorkClaim) {
     const job = this.store.get(claim.owner, claim.job.id);
-    if (Date.now() <= Date.parse(job.createdAt) + (this.options.maxTaskMs ?? 86400000)) return true;
+    const monitoring = job.delegation!.request.monitoring;
+    if (monitoring ? (this.store.situations.summary(claim.owner, job.id)?.activeMs ?? 0) + (claim.activeStartedAt === undefined ? 0 : performance.now() - claim.activeStartedAt) <= (this.options.maxTaskMs ?? 86400000)
+      && Date.now() <= Date.parse(monitoring.until) + 1_800_000 : Date.now() <= Date.parse(job.createdAt) + (this.options.maxTaskMs ?? 86400000)) return true;
     this.store.finish(claim, current => {
       current.delegation!.recoveryPending = this.store.cancelActions(claim.owner, current.id);
       if (current.delegation!.agent?.paPayment) { current.delegation!.agent.paPayment.status = 'withdrawn'; current.delegation!.agent.paPayment.recoveryAttempts = 0; current.delegation!.recoveryPending = true; }
@@ -49,10 +54,7 @@ export class AgentRuntime {
     return false;
   }
   private context(claim: WorkClaim): AgentProgramContext {
-    const d = this.store.get(claim.owner, claim.job.id).delegation!;
-    const state = d.agent ?? failure('Agent state is missing');
-    if (state.requestRevision !== d.request.revision) failure('Agent state belongs to an old request revision');
-    return { graph: this.store.ontology, owner: claim.owner, request: d.request, state, intents: this.store.intents(claim.owner, claim.job.id) };
+    return executionContext(this.store, claim);
   }
   private program(claim: WorkClaim) {
     const ctx = this.context(claim), program = this.catalog.agentProgram(ctx.state.programRef, claim.owner);
@@ -81,6 +83,8 @@ export class AgentRuntime {
   private accept(claim: WorkClaim, program: AgentProgram, selection: NonNullable<AgentExecutionState['completion']>) {
     this.store.finish(claim, current => {
       const fresh = this.context(claim), reads = selection.ontologyPlanning;
+      this.store.situations.assertCurrent(claim.owner, current.id, selection.situationRevision ?? 0);
+      if (fresh.intents?.some(intent => !['read', 'local'].includes(intent.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(intent.state))) failure('Resolve the original unknown business operations before accepting the goal');
       assertGoalCoverage(current, program.capability());
       validatePlanningSnapshot(this.store.ontology, claim.owner, fresh.request, reads, true);
       const delivery = program.complete(fresh, selection.proposal, reads), capability = program.capability();
@@ -92,6 +96,20 @@ export class AgentRuntime {
       const conditions = assessConditions(this.store.ontology, claim.owner, fresh.request, undefined, 'result');
       if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
       const at = new Date().toISOString();
+      if (fresh.request.monitoring) {
+        const watches = this.store.situations.watches(claim.owner, current.id).filter(watch => !watch.superseded);
+        if (!watches.length) failure('An ongoing goal requires explicitly selected source observation watches');
+        if (Date.now() < Date.parse(fresh.request.monitoring.until)) {
+          if (!watches.some(watch => watch.status === 'active')) failure('Select current observation bindings before waiting for the goal horizon');
+          current.delegation!.agent!.monitoringSelection = { modelRunId: selection.modelRunId, at };
+          current.delegation!.agent!.monitoringResult = { proposal: selection.proposal, delivery, at };
+          current.delegation!.phase = 'watching'; current.delegation!.nextAt = nextObservationAt(this.store, claim.owner, current);
+          delete current.delegation!.agent!.pendingPlanId; current.updatedAt = at;
+          current.delegation!.events.push({ at, event: 'current_goal_verified_observing', evidence: selection.modelRunId });
+          return;
+        }
+        if (watches.some(watch => watch.status === 'active' || watch.status === 'paused')) failure('Final source observation is still unresolved at the monitoring horizon');
+      }
       current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
       if (current.delegation!.agent!.paPayment) current.delegation!.agent!.paPayment!.status = 'verified';
       delete current.delegation!.agent!.pendingPlanId;
@@ -111,14 +129,19 @@ export class AgentRuntime {
     });
   }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
+    await this.runActive(claim, signal);
+  }
+  private async runActive(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     if (claim.recovery) { await this.recoverTerminal(claim, this.program(claim), signal); return; }
     if (!this.withinTaskBudget(claim)) return;
-    const program = this.program(claim), ctx = this.context(claim);
+    const program = this.program(claim);
+    if (await this.observations.run(claim, program, signal)) return;
+    const ctx = this.context(claim), situationRevision = this.store.situations.revision(claim.owner, claim.job.id);
     if (ctx.state.pendingPlanId) { await this.execute(claim, program, signal); return; }
     if (!this.reasoner.act) throw new DomainError('CONFLICT', 'This Worker has no agent action reasoner');
     const job = this.store.get(claim.owner, claim.job.id), histories = job.delegation!.agentHistory ?? [];
     const plans = [ctx.state, ...histories].flatMap(s => s.plans);
-    const limits = agentLimits(program);
+    const limits = agentLimits(program, !!ctx.request.monitoring);
     if (!ctx.state.initialSelectionPending && (job.runs?.length ?? 0) >= limits.modelTurns) {
       this.pause(claim, true, '本次查询已达到有限执行预算，请缩小查询范围后继续。已有观察记录已保留。'); return;
     }
@@ -142,10 +165,14 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
+      response = await this.reasoner.act({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), situation: this.store.situations.summary(claim.owner, claim.job.id), components: program.describeComponents?.(ctx), actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) }, signal, access);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;
+    if (this.store.situations.revision(claim.owner, claim.job.id) !== situationRevision || this.store.situations.pending(claim.owner, claim.job.id)) {
+      this.store.finish(claim, current => { current.delegation!.nextAt = 0; current.delegation!.events.push({ at: new Date().toISOString(), event: 'agent_decision_superseded_by_source_change' }); });
+      return;
+    }
     const decision = agentDecisionSchema.parse(response.decision);
     validatePlannedCompletion(this.store.ontology, program, decision);
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
@@ -162,7 +189,7 @@ export class AgentRuntime {
       try {
         if (decision.steps.length || !decision.completionJson) failure('A completion decision must contain only its evidence selection');
         const proposal: unknown = JSON.parse(decision.completionJson);
-        this.accept(claim, program, { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads });
+        this.accept(claim, program, { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads, situationRevision });
       } catch (error) {
         if (!this.store.claimActive(claim)) return;
         this.store.finish(claim, current => { this.feedback(current, 'completion', errorMessage(error), digest(decision.completionJson)); current.delegation!.nextAt = 0; });
@@ -191,7 +218,7 @@ export class AgentRuntime {
         if (!step.inputRefs.length) program.validate(ctx, step.action, input);
         if (!step.inputRefs.length) program.validatePlanning?.(ctx, step.action, input, reads);
         const authority = ['read', 'local'].includes(operation.effect) ? undefined : program.authority!(ctx, step.action, input);
-        if (isLiveFreeOperation(program, ctx, operation) && authority?.cost.minor !== '0') failure('Only zero-charge participant reservations are enabled for live execution');
+        if (isLiveFreeOperation(program, ctx, operation) && authority?.cost.minor !== '0') failure('Only exact zero-charge participant reservations are enabled for live execution');
         const operationKey = actionOperationKey(claim.owner, authority?.operationScope ?? ctx.request.id, authority?.operationScope ? step.action : `${planId}:${step.id}`);
         if (this.store.intentByBusinessKey(claim.owner, operationKey)) failure('This business operation already has an intent; inspect its original result instead of submitting it again');
         const saved = { ...step, input, definitionDigest: digest(definition), intentId: randomUUID(), effect: operation.effect, ...('additionalEffects' in operation && operation.additionalEffects ? { additionalEffects: operation.additionalEffects } : {}), ...(authority ? { cost: authority.cost, ...(authority.operationScope ? { operationScope: authority.operationScope } : {}) } : {}), operationKey };
@@ -200,8 +227,11 @@ export class AgentRuntime {
       if (!reads.objects.some(o => equal(o.ref, ctx.state.scope))) failure('Read the task scope before selecting actions');
       if (ctx.state.paPayment && steps.some(s => !['read', 'local'].includes(s.effect))) failure('A PA payment handoff freezes the original booking; only provider readback may continue');
       if (steps.some(s => s.effect === 'local') && steps.length !== 1) failure('Local handoff actions require their own frontier');
+      if (steps.length !== 1 && steps.some(step => program.interactiveActions?.includes(step.action))) failure('A question awaiting a PA answer requires its own frontier');
       if (steps.filter(s => s.effect !== 'read').length > 1) failure('Use a separate frontier for each sandbox business operation so its exact terms can be authorized');
-      const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', environment: program.liveFreeReservation ? 'live_free' : 'sandbox', sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads, ...(initialSelection ? { initialSelection } : {}) };
+      const write = steps.find(step => !['read', 'local'].includes(step.effect));
+      const environment = write ? (isLiveFreeOperation(program, ctx, agentOperation(boundAgentAction(this.store.ontology, program, write.action))) ? 'live_free' : 'sandbox') : 'sandbox';
+      const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', environment, sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: digest(this.store.ontology.read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads, situationRevision, ...(initialSelection ? { initialSelection } : {}) };
       const plan = { ...body, digest: digest(body) };
       if (initialSelection) verifyInitialPlan(this.store.get(claim.owner, claim.job.id), this.store.ontology, program, plan);
       const saved = this.store.checkpoint(claim, current => {
@@ -260,7 +290,7 @@ export class AgentRuntime {
         const proposal = bindAcceptedObjects(dataflowArguments(selected.argumentsJson), selected.inputRefs, accepted);
         const access = this.access(claim, signal);
         access.session.prepareContext({ actions: selected.inputRefs.map(ref => plan.steps.find(step => step.id === ref.stepId)!.action), refs: [plan.scope, ...selected.inputRefs.map(ref => objectRefSchema.parse(accepted(ref.stepId)))] });
-        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId, modelDecision: plan.modelDecision, proposal, ontologyPlanning: access.session.finish() });
+        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId, modelDecision: plan.modelDecision, proposal, ontologyPlanning: access.session.finish(), situationRevision: plan.situationRevision });
         return;
       } catch (error) {
         signal.throwIfAborted();
@@ -298,6 +328,7 @@ export class AgentRuntime {
     let attempt: ExecutionAttempt | undefined;
     try {
       const current = this.context(claim);
+      if (this.store.situations.revision(claim.owner, claim.job.id) !== (plan.situationRevision ?? 0) || this.store.situations.pending(claim.owner, claim.job.id)) failure('The source situation changed after this plan was selected');
       assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
       if (step.inputRefs.some(ref => ref.compute)) {
         validateReadBindings(this.store.ontology, program, step, program.definition(this.store.ontology, step.action), step.input, new Map(plan.steps.filter(item => item.id !== step.id).map(item => [item.id, item])));
@@ -317,6 +348,8 @@ export class AgentRuntime {
       program.validatePlanning?.(current, step.action, input, inputPlanning ?? plan.ontologyPlanning);
       validateAgentAuthority(program, current, plan, step);
       if (!['read', 'local'].includes(step.effect)) {
+        this.store.situations.assertCurrent(claim.owner, claim.job.id, plan.situationRevision ?? 0);
+        if (current.request.monitoring && Date.now() >= Date.parse(current.request.monitoring.until)) failure('The delegated monitoring horizon ended before this new business action');
         if (!this.options.allowSandbox && !isLiveFreeOperation(program, current, agentOperation(program.definition(current.graph, step.action)))) failure('Business operations are disabled');
         if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
           this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = plan.environment === 'live_free' ? '已选定免费报名或预约，需要提交绑定本计划的零费用预约许可；没有付款权限。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
@@ -344,6 +377,7 @@ export class AgentRuntime {
       validateAgentAuthority(program, current, plan, step);
       assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
       if (!['read', 'local'].includes(step.effect) && !agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) failure('Exact plan authority expired or was revoked before the provider write');
+      if (!['read', 'local'].includes(step.effect)) this.store.situations.assertCurrent(claim.owner, claim.job.id, plan.situationRevision ?? 0);
     };
     let response: AgentActionResult | undefined, result: ActionResult;
     try {
@@ -354,6 +388,10 @@ export class AgentRuntime {
     }
     const record = (value: ActionResult) => this.store.recordObservation(claim.owner, intent.id, attempt!.id, value, value.kind !== 'unknown', { claim, apply: (job, accepted) => {
       if (value.kind === 'confirmed') {
+        if (this.store.situations.revision(claim.owner, job.id) !== (plan.situationRevision ?? 0) || this.store.situations.pending(claim.owner, job.id)) {
+          job.delegation!.events.push({ at: new Date().toISOString(), event: 'source_changed_late_result_audit_only', evidence: attempt!.id });
+          return;
+        }
         const object = program.project({ ...context, state: job.delegation!.agent! }, step.action, input, response!);
         const resultType = agentOperation(boundAgentAction(this.store.ontology, program, step.action)).resultType;
         if (!this.store.ontology.model.implements(object.type, resultType)) failure('Projected result differs from the Ontology Action result type');
@@ -364,6 +402,10 @@ export class AgentRuntime {
         }
         job.delegation!.events.push({ at: new Date().toISOString(), event: 'agent_observation_projected', evidence: digest(object) });
       } else if (value.kind !== 'pending') this.feedback(job, 'action', value.message ?? 'No validated source observation', digest({ action: step.action, input }));
+      if (response?.paQuestion) {
+        if (!response.pending || response.paPayment) failure('A PA question requires its own pending information query');
+        this.store.paQuestions.publish(claim.owner, job, response.paQuestion.questionId);
+      }
     } });
     try { record(result); }
     catch (error) {
@@ -381,7 +423,7 @@ export class AgentRuntime {
     if (response?.pending && this.store.claimActive(claim)) {
       this.store.finish(claim, job => { job.delegation!.nextAt = this.store.intent(claim.owner, intent.id).nextAt; job.updatedAt = new Date().toISOString(); }); return false;
     }
-    if (response?.paPayment && !this.store.claimActive(claim)) { this.store.release(claim); return false; }
+    if ((response?.paPayment || response?.paQuestion) && !this.store.claimActive(claim)) { this.store.release(claim); return false; }
     if (step.effect !== 'read' && this.store.claimActive(claim) && this.store.intent(claim.owner, intent.id).state === 'effect_unknown') {
       this.store.finish(claim, job => { job.delegation!.nextAt = Date.now() + 1000; job.updatedAt = new Date().toISOString(); }); return false;
     }
@@ -397,15 +439,17 @@ export class AgentRuntime {
     let attempt!: ExecutionAttempt;
     if (!this.store.checkpoint(claim, () => { attempt = this.store.startAttempt(claim, intent.id, 'reconcile', digest({ operationKey: intent.businessOperationKey })); })) return false;
     const context: AgentActionContext = { ...this.context(claim), planId: plan.id, intentId: intent.id, attemptId: attempt.id, modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, recovery: true, originalDispatchAt: this.store.attempts(claim.owner, intent.id).find(a => a.kind === 'dispatch')?.startedAt };
+    context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     let response: AgentActionResult | undefined, rejected: AgentOperationRejected | undefined, message = 'Original operation has no confirmed readback';
     try { response = await program.recover(context, step.action, step.input, signal); } catch (error) { message = errorMessage(error); if (error instanceof AgentOperationRejected) rejected = error; }
     const record = (confirmed: boolean) => this.store.recordObservation(claim.owner, intent.id, attempt.id, { kind: rejected ? 'rejected' : response?.pending ? 'pending' : confirmed ? 'confirmed' : 'unknown', eventId: attempt.id, sourceVersion: attempt.ordinal, ...(response ? { output: { source: response.value } } : {}), evidenceRefs: response?.evidenceRefs ?? rejected?.evidenceRefs ?? [], message, ...(response?.pending ? { retryAfterMs: response.pending.retryAfterMs } : {}) }, confirmed, { claim, apply: (job, accepted) => {
-      if (confirmed && response && !response.pending && !claim.recovery) {
+      if (confirmed && response && !response.pending && !claim.recovery && this.store.situations.revision(claim.owner, job.id) === (plan.situationRevision ?? 0) && !this.store.situations.pending(claim.owner, job.id)) {
         const object = program.project({ ...context, state: job.delegation!.agent! }, step.action, step.input, response);
         if (!this.store.ontology.model.implements(object.type, agentOperation(boundAgentAction(this.store.ontology, program, step.action)).resultType)) failure('Recovered result differs from the Ontology Action result type');
         accepted.acceptedOutput = { object }; job.delegation!.agent!.observations.push(object);
       }
       if (rejected && !claim.recovery) this.feedback(job, 'action', message, digest({ action: step.action, input: step.input }));
+      if (response?.paQuestion) this.store.paQuestions.publish(claim.owner, job, response.paQuestion.questionId);
       job.delegation!.events.push({ at: new Date().toISOString(), event: confirmed ? 'agent_original_operation_recovered' : 'agent_original_operation_unknown', evidence: attempt.id });
     } });
     try { record(!!response || !!rejected); } catch (error) { message = errorMessage(error); rejected = undefined; record(false); response = undefined; }

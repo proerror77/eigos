@@ -187,6 +187,40 @@ class Client:
             'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': data}],
         }}, endpoint)
 
+    def answer_pa_question(self, task_id, data, request_id):
+        if not isinstance(data, dict) or set(data) != {'questionId', 'questionDigest', 'expectedAnswerRevision', 'answer'}:
+            raise ClientError('Answer only the scoped factual question; do not include connections, capabilities or credentials')
+        if any(not isinstance(data.get(k), str) or not re.fullmatch(r'[a-f0-9]{64}', data[k]) for k in ('questionId', 'questionDigest')):
+            raise ClientError('Use the exact question identity and digest')
+        if type(data['expectedAnswerRevision']) is not int or data['expectedAnswerRevision'] < 0:
+            raise ClientError('Use the current answer revision')
+        answer = data['answer']
+        if not isinstance(answer, dict) or not isinstance(answer.get('observedAt'), str):
+            raise ClientError('Factual answers require their actual observation time')
+        if answer.get('status') == 'known':
+            if set(answer) - {'status', 'basis', 'observedAt', 'facts', 'evidenceRef'} or answer.get('basis') not in ('checked', 'user_confirmed', 'inferred'):
+                raise ClientError('Identify whether the facts were checked, user confirmed or inferred')
+            facts = answer.get('facts')
+            if not isinstance(facts, dict) or type(facts.get('exists')) is not bool or not isinstance(facts.get('subjectKey'), str):
+                raise ClientError('Answer about the event named in the question')
+            allowed = {'exists', 'subjectKey', 'reference', 'arrangement'} if facts['exists'] else {'exists', 'subjectKey'}
+            if set(facts) - allowed:
+                raise ClientError('Calendar connections and credentials stay with the PA')
+            if facts['exists'] and (not isinstance(facts.get('arrangement'), dict) or set(facts['arrangement']) != {'title', 'startsAt', 'endsAt', 'timeZone', 'location'}):
+                raise ClientError('Provide only the requested arrangement facts')
+        elif answer.get('status') not in ('unknown', 'needs_user') or set(answer) != {'status', 'reason', 'observedAt'}:
+            raise ClientError('If facts are unknown or need a user decision, state that with a reason')
+        current = self.rpc('GetTask', {'id': task_id})
+        if current.get('metadata', {}).get('service') not in self.config['allowedServices']:
+            raise ClientError('Task service is outside the configured delegation allowlist')
+        question = current.get('metadata', {}).get('delegation', {}).get('paQuestion', {}).get('question', {})
+        if question.get('id') != data['questionId'] or question.get('digest') != data['questionDigest']:
+            raise ClientError('The answer does not match the owned task question')
+        _, endpoint = self.discover()
+        return self.write('pa-answer:' + task_id, request_id, {'configuration': {'returnImmediately': True}, 'message': {
+            'messageId': request_id, 'taskId': task_id, 'role': 'ROLE_USER', 'parts': [{'data': {'action': 'answer_pa_question', **data}}],
+        }}, endpoint)
+
     def payment_route(self, task_id, data, request_id):
         allowed = {'handoffId', 'handoffDigest', 'wallet'}
         if not isinstance(data, dict) or set(data) != allowed:
@@ -439,6 +473,10 @@ def main():
     payment.add_argument('--task-id', required=True)
     payment.add_argument('--input-file', required=True)
     payment.add_argument('--request-id', required=True)
+    factual = commands.add_parser('answer-pa-question')
+    factual.add_argument('--task-id', required=True)
+    factual.add_argument('--input-file', required=True)
+    factual.add_argument('--request-id', required=True)
     route = commands.add_parser('payment-route')
     route.add_argument('--task-id', required=True)
     route.add_argument('--input-file', required=True)
@@ -518,6 +556,8 @@ def main():
             output = client.authorize(args.task_id, read_json(args.input_file))
         elif args.command == 'payment-result':
             output = client.payment_result(args.task_id, read_json(args.input_file), args.request_id)
+        elif args.command == 'answer-pa-question':
+            output = client.answer_pa_question(args.task_id, read_json(args.input_file), args.request_id)
         elif args.command == 'payment-route':
             output = client.payment_route(args.task_id, read_json(args.input_file), args.request_id)
         elif args.command == 'reconcile':

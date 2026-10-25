@@ -41,6 +41,7 @@ const schema = z.object({
   EIGOS_DIDI_ORDERS_ENABLED: z.literal('false').default('false'),
   EIGOS_ONTOLOGY_AUDIT_PATH: z.string().optional(),
   EIGOS_ACTION_SANDBOX: z.enum(['false', 'true']).default('false'),
+  EIGOS_CALENDAR_SANDBOX_DATABASE_PATH: z.string().optional(),
   EIGOS_SANDBOX_PROVIDER_URL: z.url().optional(),
   EIGOS_SANDBOX_TOKEN_FILE: z.string().optional(),
   EIGOS_COMMERCE_SANDBOX_URL: z.url().optional(),
@@ -88,6 +89,9 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (c.EIGOS_CSV_INPUT_DIR && (c.EIGOS_CSV_PILOT !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || !isAbsolute(c.EIGOS_CSV_INPUT_DIR))) throw new Error('Local CSV import requires an absolute directory and loopback development pilot');
   const publicUrl = new URL(c.PUBLIC_URL);
+  if (c.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH && (!isAbsolute(c.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH) || resolve(c.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH) === resolve(c.DATABASE_PATH)
+    || c.EIGOS_ACTION_SANDBOX !== 'true' || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production'
+    || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Synthetic calendar requires an explicit separate database, sandbox mode and local development');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');
   if (c.EIGOS_DIDI_KEY_FILE && (!isAbsolute(c.EIGOS_DIDI_KEY_FILE) || c.EIGOS_AUTH_MODE !== 'development' || env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(publicUrl.hostname))) throw new Error('Personal DiDi is restricted to explicitly configured non-production loopback development');

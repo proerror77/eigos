@@ -16,7 +16,7 @@ PA 可选择直接调用已有来源，或通过下述现行接口委托明确�
 
 ## MCP
 
-远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`select_payment_route`、`report_payment_result`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
+远程无状态 HTTP 地址为 `/mcp`。支持工具：`list_services`、`submit_task`、`get_task`、`list_tasks`、`reply_to_task`、`answer_pa_question`、`select_payment_route`、`report_payment_result`、`report_source_change`、`revoke_observation`、`resume_observation`、`cancel_task`、`reconcile_task`、`revoke_task_authorization`；配置沙箱售后时另有 `request_remediation`。实际能力以发现结果为准。
 
 N1 增加三个只读工具：`describe_ontology`（services:read）、`query_ontology`、`evaluate_ontology`（tasks:read）。对应认证 HTTP POST 为 `/ontology/describe`、`/ontology/query`、`/ontology/evaluate`；均按同一 owner 隔离。支持类型／接口发现、分页对象集、单跳关系和登记计算，不开放对象写入或业务 Action。输入、边界和来源投影见 [N1 使用说明](ontology-n1.md)。现有 PA 的任务提交、补问及读回方式保持。
 
@@ -38,7 +38,7 @@ N2 在 Worker 内让模型实际调用有界查询，并由程序核对条件和
 
 `get_task` 读取交付物及 `delegation.acceptance`。只有完成状态、独立验收和实际交付物一致才报告服务完成。报价仅表示查价完成，订单、支付与配送均未发生。
 
-当前代码运行契约为 `ontology-execution-v22`，业务模型为 `eigos.business@19`，整合了免费报名、可选支付与原常驻版本的规划及 PA 客户端更新，并增加模型可选的[只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
+当前代码运行契约为 `ontology-execution-v23`，业务模型为 `eigos.business@20`。本次增加有期限的持续观察、组件失效与修复、活动场次和 PA 事实问答，保留模型可选的[只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)。六类服务默认没有真实来源绑定，显式注入的提供者只用于本机沙箱。Action 定义／模型提案不产生真实业务许可。新类型、状态、运行方式和接口缺口见 [六类服务说明](service-domains-2026-10-18.md)。
 
 交易程序 `commerce.journey.sandbox@2` 的海关关卡同时约束 MCP／A2A 任务，因为核验发生在共用 Worker 中。请求范围内的模型通过当前 `ServiceRequest` 的 `customsRuleSets` 和 `regulatoryReferences` 关系读取依据；不扩大为整个所有者的数据访问权。对实际清关评估、报价或结账对象调用 `evaluate_ontology` 的 `customsGateStatus`，只有 `pass_sandbox` 可以继续对应模拟动作。`blocked` 和 `unknown` 均阻止执行，`legalApproval` 始终为 false。准确计划授权保持原接口，不能覆盖关卡。见[海关规则说明](customs-policy-2026-10-20.md)。
 
@@ -75,6 +75,36 @@ Shopify 的 `commerce.catalog.query@2` 在显式配置商家后加入本机本�
 `npm run build` 后运行 `npm run setup:pa` 更新本人 macOS 常驻服务。现有 profile 和凭据引用沿用，默认服务改为 `eigos.delegate`。PA 应读取更新后的 `~/.local/share/eigos/grok-life/skill-install.md` 并保存到其技能库。Python 客户端只负责协议收发；实际 PA 必须自己发现、提交、处理问题和读回，固定脚本探针不能替代 PA 验收。
 
 默认新协调器启用。文档能力通过 `EIGOS_EXECUTOR=codex` 配置；个人美团读取通过绝对路径 `EIGOS_PAOTUI_SKILL_DIR` 配置，仅允许本机本人。`EIGOS_PAOTUI_ORDERS_ENABLED` 只能为 false。Gateway 与 Worker 共享持久任务库，模型及 Ontology MCP 查询只在 Worker 执行。见 [运行说明](gateway-worker.md)。
+
+## 向 PA 询问信息
+
+`pa.context.calendar@1` 只询问发起任务的 PA：这个活动当前是否有对应日程、时间和地点是什么、何时核实。Google Calendar 等连接始终留在 PA。EIGOS 没有连接登记、账户授权、日历创建或修改接口；请求和回答均明确 `informationOnly=true`、`authorizationTransferred=false`。PA 根据已有上下文、自己的获准来源或用户答复提供事实，也可回答不知道。
+
+任务以 `input-required / awaiting_pa_answer` 返回 `delegation.paQuestion`，包含精确问题、活动上下文、`question.id`、`question.digest` 和当前 `answerRevision`。原 PA 通过 MCP `answer_pa_question` 或原任务 A2A data part 回答：
+
+```json
+{
+  "action": "answer_pa_question",
+  "taskId": "原任务UUID",
+  "questionId": "返回的问题ID",
+  "questionDigest": "返回的问题摘要",
+  "expectedAnswerRevision": 0,
+  "requestId": "stable-answer-id",
+  "answer": {"status": "unknown", "reason": "尚无已核实的日程信息", "observedAt": "2026-10-25T10:00:00Z"}
+}
+```
+
+已知回答使用 `status: "known"`、`basis: "checked" | "user_confirmed" | "inferred"`、实际 `observedAt` 和 `facts`。存在时为 `{exists: true, subjectKey: question.context.eventKey, arrangement: {title, startsAt, endsAt, timeZone, location}}`，确认不存在时为 `{exists: false, subjectKey: ...}`。不需要账号 ID、日历 ID、能力登记或任何凭据。未知／需要用户决定分别用 `unknown`／`needs_user`；推测不能通过验收。未确认回答允许使用更新的 `expectedAnswerRevision` 补充，重复请求保持原 ID 和内容。事实最多沿用五分钟，修复及持续观察要求问题指定时间之后核实的信息；过时回答被拒绝，取消或旧上下文的回答仅保留记录。
+
+A2A 的 taskId／requestId 来自外层 message.taskId／message.messageId；两种协议共用所有者、原请求方 clientId、问题摘要和版本校验。Python 客户端提供 `answer-pa-question`。返回证据标为 `pa_reported`，只说明 PA 提供的事实，不宣称 EIGOS 访问／修改了日历，也不升级为服务商直接证明。
+
+## 持续观察与变化
+
+持续任务在提交时显式携带 `monitoring: {until: <未来ISO时间>, maxQueries: <1–10000>}`；最长三十天，默认查询上限 256。一次性委托不自动延长。模型选定原来源、观察字段和只读动作后，Worker 按持久计划读取；相同且仍有效的事实只刷新证据，不再调用模型。`watching` 是非终态；期限结束后仍须当前证据通过验收。查询、模型、动作及活跃执行时间均累计计量。
+
+`report_source_change` 接受 `{action, taskId, watchId, eventId, note, requestId}`，只保存 `user_asserted` 提示并唤醒原来源复核。`revoke_observation`／`resume_observation` 接受 `{action, taskId, watchId, requestId}`，停止或恢复原期限／预算内的观察，不取消服务商业务、不创建替代操作。A2A 用相同 action 的 data part。查看 `delegation.situation` 的 `effective`、健康状态、最近观察、过期／逾期标志和累计查询数；`operator_required` 表示需在线浏览器代理，`pa_required` 表示在等 PA 提供信息。两者均不能描述为当前有效监控。
+
+代码、测试范围及当前限制见[态势感知设计与实现](situation-awareness-design-2026-10-25.md)。`calendar.event.manage@1` 是隔离合成日历，仅在显式本机开发沙箱配置 `EIGOS_CALENDAR_SANDBOX_DATABASE_PATH` 后提供，不能用于真实用户日历。
 
 ## PA 自有支付与预约回读
 

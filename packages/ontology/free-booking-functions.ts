@@ -22,10 +22,14 @@ export function readRegistration(graph: OntologyObjectStore, owner: string, ref:
   const at = options.historical ? Date.parse(s.receipt.receivedAt) : graph.now();
   const request = registrationInputSchema.parse(scopeObject.properties.input);
   if (data.serviceUrl !== request.serviceUrl || data.kind !== request.kind || data.participants !== request.participants || request.startsAt && Date.parse(data.startsAt) !== Date.parse(request.startsAt) || request.endsAt && Date.parse(data.endsAt) !== Date.parse(request.endsAt) || Date.parse(data.endsAt) <= Date.parse(data.startsAt) || s.browserEvidence.pageUrl !== request.serviceUrl || Date.parse(s.payload.expiresAt) <= at || Date.parse(data.observedAt) > at || Date.parse(s.browserEvidence.observedAt) !== Date.parse(data.observedAt) || Date.parse(s.receipt.startedAt) > Date.parse(s.receipt.receivedAt) || Date.parse(data.observedAt) > Date.parse(s.receipt.receivedAt)) fail('Registration source does not match the requested event, time or freshness');
-  for (const other of graph.related(owner, s.scope, `${s.payload.type}Observations`, budget) ?? []) {
+  for (const other of options.historical ? [] : graph.related(owner, s.scope, `${s.payload.type}Observations`, budget) ?? []) {
     if (digest(other.ref) === digest(ref)) continue;
     const newer = snapshotSchema.parse(other.properties.snapshot);
     if (newer.payload.sourceId === s.payload.sourceId && newer.payload.sourceVersion > s.payload.sourceVersion && Date.parse(newer.receipt.receivedAt) <= at && sourceProof(graph, owner, other.ref, budget)) fail('A newer participant source observation supersedes this state');
+  }
+  if (!options.historical && s.payload.type === 'RegistrationRecord' && data.event) {
+    const events = graph.related(owner, ref, 'event', budget);
+    if (events?.length !== 1 || digest(events[0]!.properties.data) !== digest(data.event) || !sourceProof(graph, owner, events[0]!.ref, budget)) fail('The registration event arrangement has changed or lacks current source evidence');
   }
   return s;
 }
@@ -37,7 +41,7 @@ export function registrationStatus(graph: OntologyObjectStore, owner: string, re
   }
   const data = registrationRecordSchema.parse(s.payload.data), independent = data.independentRead && s.receipt.action === 'ReadParticipantRegistration';
   const hasSubmission = ['submitted', 'pending_approval', 'waitlisted', 'confirmed'].includes(data.state) && !!data.submittedAt && Date.parse(data.submittedAt) <= graph.now();
-  const confirmed = independent && data.state === 'confirmed' && !!data.confirmationReference && !!data.confirmedAt && Date.parse(data.confirmedAt) <= graph.now();
+  const confirmed = independent && data.state === 'confirmed' && !!data.confirmationReference && !!data.confirmedAt && Date.parse(data.confirmedAt) <= graph.now() && data.event?.state !== 'canceled';
   return { status: data.state, free: isFreeRegistration(data), independentRead: independent, submitted: independent && hasSubmission, confirmed, data, evidenceLevel: s.evidenceLevel };
 }
 export function evaluateRegistrationFunction(graph: OntologyObjectStore, owner: string, input: { function: string; object: ObjectRef }, budget: ReadBudget): Computation | undefined {
@@ -55,9 +59,20 @@ export function projectRegistration(ctx: AgentActionContext, action: string, res
   const object: ObjectWrite = { ref, properties: { id: ref.id, displayTitle: data.title, requestRevision: ctx.request.revision, data: result.payload.data, snapshot } };
   const links: LinkWrite[] = [{ type: `${ref.type}Request`, from: ref, to: root }, { type: `${ref.type}Task`, from: ref, to: ctx.state.scope }];
   const source = { type: 'SourceReceipt', id: digest({ ref, receipt: receipt.id }) };
-  const proof: ObjectWrite = { ref: source, properties: { receiptId: source.id, displayTitle: '参与者报名来源回读', sourceIdentity: receipt.sourceIdentity, sourceEventId: receipt.id, scope: 'reservation', observedAt: receipt.receivedAt, evidenceLevel: result.evidenceLevel, contentDigest: receipt.responseSha256, subjects: [{ object: ref, digest: digest(object.properties), linksDigest: linkSnapshotDigest(ref, links) }], safeSummary: result.evidenceLevel === 'synthetic' ? '合成报名来源；不是实际参加资格' : '本机授权浏览器观察；来源网页状态与任务提交回执分别记录' } };
+  const extra: ObjectWrite[] = [], removeLinks: LinkWrite[] = [];
+  if (result.payload.type === 'RegistrationRecord' && data.event) {
+    if (data.event.canonicalUrl !== data.serviceUrl) fail('Event occurrence belongs to another source URL');
+    const eventRef = { type: 'EventOccurrence', id: digest({ binding: ctx.state.programDigest, source: data.event.sourceId, identityBasis: data.event.identityBasis, url: data.event.canonicalUrl }) };
+    let revision: number | undefined;
+    try { revision = ctx.graph.read(ctx.owner, eventRef).revision; } catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; }
+    if (revision) for (const previous of ctx.graph.related(ctx.owner, eventRef, 'sourceReceipts', { remaining: 1000 }) ?? []) removeLinks.push({ type: 'EventEvidence', from: eventRef, to: previous.ref });
+    extra.push({ ref: eventRef, ...(revision ? { expectedRevision: revision } : {}), properties: { id: eventRef.id, displayTitle: data.event.title,
+      data: data.event, observedAt: data.observedAt, validUntil: result.payload.expiresAt } });
+    links.push({ type: 'RegistrationEvent', from: ref, to: eventRef }, { type: 'EventEvidence', from: eventRef, to: source }, { type: 'RequestEvent', from: root, to: eventRef });
+  }
+  const proof: ObjectWrite = { ref: source, properties: { receiptId: source.id, displayTitle: '参与者报名来源回读', sourceIdentity: receipt.sourceIdentity, sourceEventId: receipt.id, scope: 'reservation', observedAt: receipt.receivedAt, evidenceLevel: result.evidenceLevel, contentDigest: receipt.responseSha256, subjects: [object, ...extra].map(item => ({ object: item.ref, digest: digest(item.properties), linksDigest: linkSnapshotDigest(item.ref, links) })), safeSummary: result.evidenceLevel === 'synthetic' ? '合成报名来源；不是实际参加资格' : '本机授权浏览器观察；来源网页状态与任务提交回执分别记录' } };
   links.push({ type: `${ref.type}Evidence`, from: ref, to: source }, { type: 'ReceiptRequest', from: source, to: root });
-  ctx.graph.ingest(ctx.owner, { objects: [object, proof], links }, { kind: result.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: receipt.sourceIdentity, observedAt: receipt.receivedAt });
+  ctx.graph.ingest(ctx.owner, { objects: [object, ...extra, proof], links, removeLinks }, { kind: result.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: receipt.sourceIdentity, observedAt: receipt.receivedAt });
   readRegistration(ctx.graph, ctx.owner, ref);
   return ref;
 }

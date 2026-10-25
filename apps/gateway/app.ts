@@ -42,6 +42,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const store = new JobStore(config.DATABASE_PATH);
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    calendarSandboxPath: config.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH,
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
     didi: config.EIGOS_DIDI_KEY_FILE ? { keyFile: config.EIGOS_DIDI_KEY_FILE, keySha256: config.EIGOS_DIDI_KEY_SHA256!, bindingId: config.EIGOS_DIDI_BINDING_ID!, environment: config.EIGOS_DIDI_ENVIRONMENT } : undefined,
@@ -190,5 +191,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, catalog, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); await catalog.close(); store.close(); members.close(); } };
 }

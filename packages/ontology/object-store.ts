@@ -6,7 +6,7 @@ import { businessModel } from './business-model.js';
 import { nameSchema, objectRefSchema, type ObjectRef, type OntologyModel } from './model.js';
 import { deriveProperty, evaluateFunction, functionCallSchema } from './object-functions.js';
 
-const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
+const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'agent', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
 const filterSchema = z.object({ property: nameSchema, op: z.enum(['eq', 'lt', 'lte', 'gt', 'gte', 'in']), value: z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.array(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).min(1).max(20)]) }).strict();
 const queryFields = { select: z.array(nameSchema).min(1).max(20).optional(), where: z.array(filterSchema).max(8).default([]), limit: z.number().int().min(1).max(50).default(20), cursor: z.string().max(4096).optional() };
@@ -85,6 +85,7 @@ export class OntologyObjectStore {
         if (properties[def.primaryKey] !== object.ref.id) failure('Primary key does not match object identity');
         if (object.ref.type === 'SourceReceipt' && source.kind === 'synthetic' && properties.evidenceLevel !== 'synthetic') failure('Synthetic evidence cannot be promoted');
         if (object.ref.type === 'SourceReceipt' && (source.kind === 'task' || source.kind === 'user' && properties.evidenceLevel !== 'user_asserted')) failure('User statements cannot become provider evidence');
+        if (object.ref.type === 'SourceReceipt' && source.kind === 'agent' && properties.evidenceLevel !== 'pa_reported') failure('Personal Agent evidence cannot be promoted to direct provider verification');
         const old = this.db.prepare('SELECT * FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, object.ref.type, object.ref.id);
         const createdAt = old ? String(JSON.parse(String(old.body)).createdAt) : new Date(this.now()).toISOString();
         const body = JSON.stringify({ properties, source, createdAt });

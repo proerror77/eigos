@@ -1,4 +1,8 @@
 import { evaluateRegistrationFunction } from './free-booking-functions.js';
+import { evaluateCalendarFunction } from './calendar-functions.js';
+import { evaluatePACalendar } from './pa-context-functions.js';
+import { arrivalProjectionCallSchema } from './event-occurrence.js';
+import { evaluateArrivalProjection } from './arrival-projection.js';
 import { evaluateMeituanRead } from './meituan-read-projection.js';
 import { evaluateRideEstimate } from './ride-estimate-functions.js';
 import { evaluateBookingFunction } from './booking-functions.js';
@@ -21,8 +25,11 @@ import type { OntologyObjectStore, ObjectView, ReadBudget } from './object-store
 export interface Computation { status: 'known' | 'unknown'; value?: unknown; reason?: string; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }
 const simple = (name: string) => z.object({ function: z.literal(name), object: objectRefSchema }).strict();
 export const functionCallSchema = z.union([
+  arrivalProjectionCallSchema,
   simple('taskOutcomeStatus'),
+  simple('situationStatus'),
   simple('registrationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
+  simple('calendarStatus'), simple('paCalendarStatus'),
   simple('customsGateStatus'), simple('shippingGateStatus'),
   simple('commerceObservationStatus'), simple('commerceJourneyStatus'),
   simple('checkoutReadiness'), simple('commerceOrderOutcome'),
@@ -63,6 +70,12 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 
 /** Registered read-only functions. Missing evidence is never replaced by zero or a model inference. */
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
+  const arrival = evaluateArrivalProjection(store, owner, input, budget);
+  if (arrival) return arrival;
+  const calendarResult = evaluateCalendarFunction(store, owner, input, budget);
+  if (calendarResult) return calendarResult;
+  const paCalendarResult = evaluatePACalendar(store, owner, input, budget);
+  if (paCalendarResult) return paCalendarResult;
   const meituanResult = evaluateMeituanRead(store, owner, input, budget);
   if (meituanResult) return meituanResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
@@ -86,6 +99,15 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   const domainResult = evaluateDomainFunction(store, owner, input, budget);
   if (domainResult) return domainResult;
   const object = store.read(owner, input.object, budget), p = object.properties;
+  if (input.function === 'situationStatus') {
+    const current = object.ref.type === 'ServiceRequest' ? objectRefSchema.safeParse(p.currentSituation) : undefined;
+    if (current && !current.success) return unknown('No current situation assessment', [object.ref]);
+    const assessment = current?.success ? store.read(owner, current.data, budget) : object;
+    requireType(assessment, 'SituationAssessment'); const value = assessment.properties;
+    const request = one(store, owner, assessment.ref, 'request', budget);
+    if (!request || value.requestRevision !== request.properties.revision || Date.parse(String(value.validUntil)) <= store.now() || object.ref.type === 'ServiceRequest' && !same(request.ref, object.ref)) return unknown('Situation assessment is stale or belongs to another request revision', [assessment.ref]);
+    return known({ status: value.judgment, assessedAt: value.assessedAt, validUntil: value.validUntil, reason: value.reason, components: value.components, evidenceRefs: value.evidenceRefs, meaning: 'Current bounded assessment; not a new business authority or proof of arrival' }, [assessment.ref]);
+  }
   if (input.function === 'taskOutcomeStatus') {
     requireType(object, 'ServiceRequest');
     const ref = objectRefSchema.safeParse(p.currentAssessment);

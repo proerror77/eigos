@@ -22,7 +22,7 @@
 
 ## 设计与项目方向
 
-- [态势感知与持续履约设计补充](situation-awareness-design-2026-10-25.md)：变化接收、持续观察、组件失效与局部重规划；含活动改址验收，尚未实现。
+- [态势感知与持续履约设计补充](situation-awareness-design-2026-10-25.md)：变化接收、持续观察、组件失效与局部重规划；含合成活动改址和 PA 事实问答，真实日历连接留在 PA。
 - [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；S0 已有离线检查工具，运行时策略尚未启用。
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
 - [模型选择的只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)：滴滴首轮依赖图、纯函数绑定、证据归属与动态决策边界。

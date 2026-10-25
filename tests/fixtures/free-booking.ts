@@ -11,6 +11,7 @@ import { commerceDecision as decision, commerceStep as step } from './commerce-a
 import { backend, evidence, interpretation, owner, principal } from '../backend-fixture.js';
 import type { Job } from '../../packages/core/domain.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
+import type { EventOccurrenceData } from '../../packages/ontology/event-occurrence.js';
 
 export function participantChoice(ctx: AgentPlanningContext, access: PlanningAccess) {
   access.session.call('describe_ontology', { search: 'RegistrationTask', limit: 1 });
@@ -35,24 +36,26 @@ export function participantChoice(ctx: AgentPlanningContext, access: PlanningAcc
   return decision(ctx, [step('wait', 'WaitForRegistration', { scope, record: record.ref, seconds: 1 })]);
 }
 
-export function participantFixture(options: { target?: 'submitted' | 'confirmed'; kind?: 'event_registration' | 'appointment'; state?: RegistrationData['state']; asyncSubmit?: boolean; choice?: typeof participantChoice } = {}) {
+export function participantFixture(options: { target?: 'submitted' | 'confirmed'; kind?: 'event_registration' | 'appointment'; state?: RegistrationData['state']; asyncSubmit?: boolean; choice?: typeof participantChoice; event?: EventOccurrenceData; freshnessMs?: number } = {}) {
   const attendeeRef = digest('synthetic-participant'), identity = 'synthetic-participant-source', at = new Date(Date.now() + 86400000).toISOString();
   const input = { kind: options.kind ?? 'event_registration', serviceUrl: 'https://luma.com/eigos-synthetic-free', completionTarget: options.target ?? 'confirmed', participants: 1 as const, startsAt: null };
   const terms = { serviceUrl: input.serviceUrl, title: 'Synthetic free participant event', kind: input.kind, startsAt: at, endsAt: new Date(Date.parse(at) + 3600000).toISOString(), timeZone: 'Asia/Shanghai', participants: 1 as const, attendeeRef, payment: { requirement: 'not_required' as const, total: { minor: '0', currency: 'CNY' }, feesComplete: true }, termsRef: 'synthetic-free-terms' };
-  let state: RegistrationData['state'] = options.state ?? 'confirmed', submits = 0, version = 0, pending = options.asyncSubmit ?? false, recoveries = 0;
+  let state: RegistrationData['state'] = options.state ?? 'confirmed', submits = 0, reads = 0, version = 0, pending = options.asyncSubmit ?? false, recoveries = 0;
+  const submittedAt = new Date().toISOString(); let confirmedAt = submittedAt;
   const flags = { paid: false, missingFees: false, consent: false, wrongParticipant: false, changedReference: false, noConfirmation: false, rejectSubmit: false };
   const accepted = new Set<string>();
   const result = (ctx: AgentActionContext, action: string): AgentActionResult => {
     const observedAt = new Date().toISOString();
-    const values = { ...terms, ...(flags.wrongParticipant ? { attendeeRef: digest('other-participant') } : {}), payment: { ...terms.payment, ...(flags.paid ? { requirement: 'required' as const, total: { minor: '100', currency: 'CNY' } } : {}), feesComplete: !flags.missingFees } };
-    const data = action === 'InspectRegistrationPage' ? registrationOfferSchema.parse({ ...values, availability: 'available', alreadyRegistered: false, requiresApproval: state === 'pending_approval', requiresAdditionalConsent: flags.consent, observedAt, expiresAt: new Date(Date.now() + 300000).toISOString() }) : registrationRecordSchema.parse({ ...values, registrationId: flags.changedReference && action === 'ReadParticipantRegistration' ? 'different-registration' : 'synthetic-registration', state, submittedAt: observedAt, ...(state === 'confirmed' ? { confirmedAt: observedAt, ...(!flags.noConfirmation ? { confirmationReference: 'synthetic-confirmation' } : {}) } : {}), observedAt, independentRead: action === 'ReadParticipantRegistration' });
-    const payload = { type: action === 'InspectRegistrationPage' ? 'RegistrationOffer' as const : 'RegistrationRecord' as const, data, sourceId: action === 'InspectRegistrationPage' ? input.serviceUrl : 'synthetic-registration', sourceVersion: ++version, expiresAt: new Date(Date.now() + 300000).toISOString() };
+    const values = { ...terms, ...(options.event ? { event: options.event } : {}), ...(flags.wrongParticipant ? { attendeeRef: digest('other-participant') } : {}), payment: { ...terms.payment, ...(flags.paid ? { requirement: 'required' as const, total: { minor: '100', currency: 'CNY' } } : {}), feesComplete: !flags.missingFees } };
+    const data = action === 'InspectRegistrationPage' ? registrationOfferSchema.parse({ ...values, availability: 'available', alreadyRegistered: false, requiresApproval: state === 'pending_approval', requiresAdditionalConsent: flags.consent, observedAt, expiresAt: new Date(Date.now() + 300000).toISOString() }) : registrationRecordSchema.parse({ ...values, registrationId: flags.changedReference && action === 'ReadParticipantRegistration' ? 'different-registration' : 'synthetic-registration', state, submittedAt, ...(state === 'confirmed' ? { confirmedAt, ...(!flags.noConfirmation ? { confirmationReference: 'synthetic-confirmation' } : {}) } : {}), observedAt, independentRead: action === 'ReadParticipantRegistration' });
+    const payload = { type: action === 'InspectRegistrationPage' ? 'RegistrationOffer' as const : 'RegistrationRecord' as const, data, sourceId: action === 'InspectRegistrationPage' ? input.serviceUrl : 'synthetic-registration', sourceVersion: ++version, expiresAt: new Date(Date.now() + (options.freshnessMs ?? 300000)).toISOString() };
     const receipt = { id: digest(randomUUID()), ownerDigest: digest(ctx.owner), requestId: ctx.request.id, requestRevision: ctx.request.revision, action, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId, operationKey: ctx.operationKey!, readbackSequence: 0, sourceIdentity: identity, method: 'GET' as const, path: '/synthetic', status: 200 as const, responseSha256: digest(payload), payloadDigest: digest(payload), signature: 'a'.repeat(64), startedAt: observedAt, receivedAt: observedAt };
     const value = registrationResultSchema.parse({ payload, receipt, evidenceLevel: 'synthetic', browserEvidence: { pageUrl: input.serviceUrl, snapshotSha256: 'b'.repeat(64), screenshotSha256: 'c'.repeat(64), observedAt } });
     return { value, evidenceRefs: [receipt.id] };
   };
   const source: ParticipantBookingSource = { environment: 'sandbox', configurationDigest: digest({ fixture: 'participant-v1' }), identity, attendeeRef,
     call: async (ctx, action, _input, _signal, recovery) => {
+      if (action === 'ReadParticipantRegistration') reads++;
       if (action.startsWith('SubmitFreeRegistration')) {
         if (recovery) recoveries++;
         else { ctx.assertDispatchAllowed!(); if (accepted.has(ctx.operationKey!)) throw new Error('Duplicate synthetic source write'); accepted.add(ctx.operationKey!); submits++; }
@@ -77,5 +80,5 @@ export function participantFixture(options: { target?: 'submitted' | 'confirmed'
     }
     throw new Error('Synthetic participant budget exceeded');
   };
-  return { ...b, catalog, model, source, flags, input, approve, until, counters: () => ({ submits, recoveries }), release: () => { pending = false; }, setState: (next: RegistrationData['state']) => { state = next; }, submit: (extra: object = {}) => b.submit({ goal: '合成验证：免费报名并独立确认参加资格，不付款。', executionEnvironment: 'sandbox', ...extra }), last: (job: Job, type: string): ObjectRef => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1)! };
+  return { ...b, catalog, model, source, flags, input, approve, until, counters: () => ({ submits, reads, recoveries }), release: () => { pending = false; }, setState: (next: RegistrationData['state']) => { if (next === 'confirmed' && state !== next) confirmedAt = new Date().toISOString(); state = next; }, submit: (extra: object = {}) => b.submit({ goal: '合成验证：免费报名并独立确认参加资格，不付款。', executionEnvironment: 'sandbox', ...extra }), last: (job: Job, type: string): ObjectRef => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1)! };
 }

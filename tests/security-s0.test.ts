@@ -27,8 +27,8 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 108); assert.equal(report.counts.properties, 870);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 42);
+  assert.equal(report.counts.objectTypes, 116); assert.equal(report.counts.properties, 922);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 51);
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));
   assert.deepEqual(businessModel.ref, before);

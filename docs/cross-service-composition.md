@@ -1,12 +1,12 @@
 # 跨服务任务编排
 
-运行合同 `ontology-execution-v22`，本体 `eigos.business@19`。本次把跨服务编排作为执行内核的一部分，继续使用同一个 `eigos.delegate`、Task、所有者、授权账本和结果查询接口。
+运行合同 `ontology-execution-v23`，本体 `eigos.business@20`。本次把跨服务编排作为执行内核的一部分，继续使用同一个 `eigos.delegate`、Task、所有者、授权账本和结果查询接口。
 
-当前组件仅激活／完成一次，完成后禁止继续调用组件动作；源结果变化或失鲜会阻止依赖验收，但没有局部修复路径。持续观察、组件代次和受影响部分的重新规划见[态势感知设计补充](situation-awareness-design-2026-10-25.md)，该补充尚未实现。
+每个组件代次仅激活／完成一次；完成后只开放显式声明的观察动作。来源变化或失鲜使结果及受影响依赖变为 stale，模型用 `RepairServiceComponent` 选择下一代，保留原业务身份及历史结果。`StartObservationWatch` 只绑定既定读取；真实日历使用向 PA 询问事实的程序，连接及权限留在 PA。实现与验证范围见[态势感知设计与实现](situation-awareness-design-2026-10-25.md)。
 
 ## 图与执行边界
 
-同一环境有至少两个已配置的 Ontology Action 程序时，目录提供 `services.compose.live@1` 或 `services.compose.sandbox@1`。模型选择 2–4 个不同程序组成有界无环图。现有滴滴、美团各读取能力、Shopify 目录、参与者免费报名以及配置的交易／预约沙箱可按实际环境参与。旧文档、CSV、预制适配器尚未转换成 Action 程序，不会被伪装成可组合节点；缺少必要服务时不能用部分完成代替整个目标。
+同一环境有至少两个已配置的 Ontology Action 程序时，目录提供 `services.compose.live@2` 或 `services.compose.sandbox@2`。模型选择 2–4 个不同程序组成有界无环图。现有滴滴、美团各读取能力、Shopify 目录、参与者免费报名以及配置的交易／预约沙箱可按实际环境参与。旧文档、CSV、预制适配器尚未转换成 Action 程序，不会被伪装成可组合节点；缺少必要服务时不能用部分完成代替整个目标。
 
 每个组件固定能力版本、业务子目标、输入、依赖和原要求／条件的归属。独立组件可以在一个只读 frontier 中并行；有依赖的组件先保持未激活。模型必须显式选择 `CompleteServiceComponent`，由原程序的验证器检查当前来源，再产生 `ServiceComponentResult`。随后显式选择 `ActivateServiceComponent`，只使用预先声明、实际已验收的上游字段来初始化下游。宿主不补选供应商、不添加业务步骤、不重放已完成的动作。
 

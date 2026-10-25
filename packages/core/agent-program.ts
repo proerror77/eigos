@@ -11,6 +11,10 @@ import type { AgentDecision } from '../ontology/agent-actions.js';
 export interface AgentProgramContext {
   executionConfigurationDigest?: string;
   graph: OntologyObjectStore; owner: string; request: ServiceRequest; state: AgentExecutionState; intents?: ActionIntent[];
+  observationControl?: {
+    start(selection: import('../ontology/situation.js').WatchSelection, policy: import('../ontology/situation.js').WatchPolicy, sample: import('../ontology/situation.js').SourceSample): import('../ontology/situation.js').ObservationWatch;
+    stopComponent(componentId: string, generation: number): void;
+  };
 }
 export interface AgentActionContext extends AgentProgramContext {
   planId: string; intentId: string; attemptId: string; modelRunId: string; operationKey?: string; recovery?: boolean; originalDispatchAt?: string;
@@ -21,12 +25,15 @@ export interface AgentActionContext extends AgentProgramContext {
   persistPrivate?: (write: () => void) => boolean;
   /** Actual post-source host reads for an explicitly model-selected dataflow. */
   inputPlanning?: PlanningSnapshot;
+  /** A persisted, explicitly selected read schedule; never a business permit. */
+  observation?: { watchId: string; watchRevision: number; readId: string; selectionDigest: string; contractDigest: string };
 }
 export interface AgentActionResult {
   value: unknown; evidenceRefs: string[];
   paPayment?: { mode: 'request' | 'wait'; terms: import('./pa-payment.js').PAPaymentTerms };
+  paQuestion?: { questionId: string };
   /** An accepted asynchronous source operation. Query its original key, never replay it. */
-  pending?: { retryAfterMs: number };
+  pending?: { retryAfterMs: number; operatorRequired?: true; paRequired?: true };
   /** A model-selected, durable pause; this does not assert a provider result. */
   waitUntil?: string;
 }
@@ -40,6 +47,7 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  close?(): void | Promise<void>;
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   readonly ref: Ref;
@@ -51,9 +59,15 @@ export interface AgentProgram {
    * '*' denotes an array index, never arbitrary object-key traversal. */
   readonly handoffFields?: readonly { path: readonly string[]; kind: 'string' | 'number' | 'boolean' }[];
   readonly limits?: { modelTurns: number; plans: number; actions: number };
+  /** Explicit read actions which remain legal after component acceptance. */
+  readonly observationActions?: readonly string[];
+  readonly observationCompletion?: { argument: string; evaluate: string };
+  readonly interactiveActions?: readonly string[];
   permitted(owner: string): boolean;
   capability(): ServiceCapability;
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown): { scope: ObjectRef; input: Record<string, unknown>; components?: AgentExecutionState['components'] };
+  /** Pure rebinding preserving any original provider identity. No implicit write. */
+  rebind?(ctx: AgentProgramContext, input: Record<string, unknown>): { scope: ObjectRef; input: Record<string, unknown> };
   describeComponents?(ctx: AgentProgramContext): { actionIds: readonly string[]; [key: string]: unknown }[];
   sourceConfigurationForScope?(state: AgentExecutionState, scope: ObjectRef): string;
   schema(action: string): z.ZodType<Record<string, unknown>>;
@@ -68,6 +82,11 @@ export interface AgentProgram {
   /** Read the original operation only. It must never replay a business write. */
   recover?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult | undefined>;
   project(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult): ObjectRef;
+  sourceObservation?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, source: AgentActionResult | ObjectRef): import('../ontology/situation.js').SourceSample;
+  observationFunction?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): string;
+  refreshObservation?(ctx: AgentProgramContext, watch: import('../ontology/situation.js').ObservationWatch, object: ObjectRef, reads: PlanningSnapshot): boolean;
+  applySituationChanges?(ctx: AgentProgramContext, changes: import('../ontology/situation.js').SituationChange[]): void;
+  expireResults?(ctx: AgentProgramContext): boolean;
   /** Terminal-task audit only. Read the original provider references; never pay,
    * change the booking, project completion, or reopen a canceled task. */
   reconcilePAPayment?(ctx: AgentProgramContext, signal: AbortSignal): Promise<NonNullable<import('./pa-payment.js').PAPaymentState['recovery']>>;

@@ -10,6 +10,7 @@ import { didiReadDefinition, didiReadDefinitionRef } from '../../ontology/didi-r
 import { resolveOntologyMcpRead, ONTOLOGY_READ_GUIDANCE, type McpReadDependency } from '../../ontology/mcp-read.js';
 import type { OntologyObjectStore } from '../../ontology/object-store.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
+import type { SourceSample } from '../../ontology/situation.js';
 import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchemas, rideEstimateCompletionSchema, type RideEstimateAction, type RideEstimateObservation } from '../../ontology/ride-estimate.js';
 import { checkedRideEstimate, projectRideEstimate } from '../../ontology/ride-estimate-projection.js';
 import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, didiPlaceSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiPlace } from './contracts.js';
@@ -38,6 +39,8 @@ function routeLocationFacts(request: ServiceRequest, route: { origin: DidiPlace;
 export class DidiAgentProgram implements AgentProgram {
   readonly ref = DIDI_PROGRAM_REF;
   readonly actionIds = rideEstimateActionIds;
+  readonly observationActions = rideEstimateActionIds;
+  readonly observationCompletion = { argument: 'observation', evaluate: 'rideEstimateStatus' };
   readonly completionSchema = z.toJSONSchema(rideEstimateCompletionSchema);
   readonly handoffFields = ['name', 'address', 'addressAll', 'city'].map(key => ({ path: ['didiAnswer', 'places', '*', key], kind: 'string' as const }));
   readonly guidance = ONTOLOGY_READ_GUIDANCE;
@@ -66,6 +69,7 @@ export class DidiAgentProgram implements AgentProgram {
     if (!Object.hasOwn(rideEstimateActionSchemas, action)) throw new DomainError('FORBIDDEN', 'DiDi action is not registered');
     return rideEstimateActionSchemas[action as RideEstimateAction];
   }
+  rebind(ctx: AgentProgramContext, input: Record<string, unknown>) { return this.initialize(ctx.graph, ctx.owner, ctx.request, input); }
   definition(graph: OntologyObjectStore, action: string) {
     const definition = graph.model.action(action);
     if (!this.actionIds.includes(action as RideEstimateAction) || definition.read?.effect !== 'read' || !equal(definition.read.inputSchema, z.toJSONSchema(this.schema(action))) || !equal(definition.read.module, { ...didiReadDefinitionRef, completion: didiReadDefinition.completion }) || !equal(definition.read.mcp, didiReadDefinition.actions.find(a => a.id === action)?.mcp)) invalid('DiDi action definition changed');
@@ -141,6 +145,16 @@ export class DidiAgentProgram implements AgentProgram {
     if (s.requestId !== ctx.request.id || s.requestRevision !== ctx.request.revision || s.configurationDigest !== this.configurationDigest || s.action !== action || !equal(s.actionInput, input) || !equal(s.scope, ctx.state.scope) || !equal(s.route, call.route) || s.receipt.inputDigest !== digest(call.args) || s.receipt.bindingId !== this.binding.bindingId || s.receipt.environment !== this.binding.environment || s.receipt.endpoint !== didiEndpoint(this.binding.environment) || s.evidenceKind !== this.connector.evidenceKind || s.planId !== ctx.planId || s.intentId !== ctx.intentId || s.attemptId !== ctx.attemptId || s.modelRunId !== ctx.modelRunId || !equal(result.evidenceRefs, [s.id]) || Date.parse(s.expiresAt) <= ctx.graph.now()) invalid('DiDi result does not bind this accepted action attempt');
     return projectRideEstimate(ctx.graph, ctx.owner, s);
   }
+  sourceObservation(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, source: AgentActionResult | ObjectRef): SourceSample {
+    this.validate(ctx, action, input);
+    const ref = objectRefSchema.safeParse(source), snapshot = ref.success ? this.observation(ctx, ref.data).snapshot : checkedRideEstimate((source as AgentActionResult).value);
+    if (snapshot.action !== action || !equal(snapshot.actionInput, input) || snapshot.configurationDigest !== this.configurationDigest || snapshot.receipt.bindingId !== this.binding.bindingId || snapshot.evidenceKind !== this.connector.evidenceKind) invalid('Observation does not match this fixed DiDi read');
+    return { source: { bindingId: this.binding.bindingId, bindingDigest: this.configurationDigest, accountRef: digest(this.binding.keySha256), subjectId: digest({ action, call: this.call(ctx, action, input).args }), mappingVersion: 'didi-independent-read-1' },
+      eventId: snapshot.receipt.id, observedAt: snapshot.observedAt, expiresAt: snapshot.expiresAt, authoritativeRead: true,
+      data: Object.fromEntries(Object.entries({ ...snapshot.data, ...(snapshot.route ? { route: snapshot.route } : {}) }).map(([key, value]) => [`didiAnswer.${key}`, value])),
+      evidenceRefs: [snapshot.receipt.id], evidenceLevel: snapshot.evidenceKind === 'fixture' ? 'synthetic' : snapshot.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly',
+      object: ref.success ? ref.data : { type: snapshot.data.kind === 'places' ? 'DidiPlaceObservation' : 'RideEstimateObservation', id: snapshot.id } };
+  }
   complete(ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): Delivery {
     const scope = this.scope(ctx), completion = rideEstimateCompletionSchema.parse(proposal), { snapshot: s } = this.observation(ctx, completion.observation);
     this.readEvaluated(ctx, completion.observation, reads);
@@ -152,6 +166,6 @@ export class DidiAgentProgram implements AgentProgram {
     const prefix = s.evidenceKind === 'provider_mock' ? '【滴滴 Mock 数据】' : s.evidenceKind === 'fixture' ? '【合成测试数据】' : '';
     const answer = s.data.kind === 'places' ? s.data.places.map(p => `${p.name}：${p.addressAll || p.address}`).join('\n') || '本次地点搜索未返回结果。'
       : `${s.route!.origin.name} → ${s.route!.destination.name}\n${requestedItems.map(item => `${item.productName}：${item.priceText}（预估）`).join('\n') || '本次未返回符合指定车型的估价。'}\n估价不代表最终完整车费或接驾承诺。`;
-    return { evidenceLevel: s.evidenceKind === 'fixture' ? 'synthetic' : s.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly', artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { ontologyModule: didiReadDefinitionRef, observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only'], ...(s.route ? { locations: routeLocationFacts(ctx.request, s.route, scope.city) } : {}) }, evidenceRefs: [s.receipt.id] };
+    return { evidenceLevel: s.evidenceKind === 'fixture' ? 'synthetic' : s.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly', validUntil: s.expiresAt, artifact: { id: randomUUID(), name: 'didi-read-result.json', data: { goal: ctx.request.originalGoal, deliverable: `${prefix}${answer}\n未下单、未付款。`, execution: 'completed', result: { didiAnswer: { ontologyModule: didiReadDefinitionRef, observation: completion.observation, ...s.data, ...(s.route ? { route: s.route, requestedItems } : {}), receiptId: s.receipt.id, observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true } } } }, facts: { conditions: ['execution.no_order', 'ride.estimate_only'], ...(s.route ? { locations: routeLocationFacts(ctx.request, s.route, scope.city) } : {}) }, evidenceRefs: [s.receipt.id] };
   }
 }

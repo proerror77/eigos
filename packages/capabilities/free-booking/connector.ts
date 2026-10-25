@@ -19,6 +19,7 @@ export const participantCommandSchema = z.strictObject({
   context: bookingSourceContextSchema, bindingId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
   attendeeRef: z.string().regex(/^[a-f0-9]{64}$/), action: z.enum(['InspectRegistrationPage', 'SubmitFreeRegistration', 'ReadParticipantRegistration']),
   input: z.record(z.string(), z.unknown()), planDigest: z.string().regex(/^[a-f0-9]{64}$/), configurationDigest: z.string().regex(/^[a-f0-9]{64}$/),
+  observation: z.strictObject({ watchId: z.string().regex(/^[a-f0-9]{64}$/), watchRevision: z.number().int().positive(), readId: z.uuid(), selectionDigest: z.string().regex(/^[a-f0-9]{64}$/), contractDigest: z.string().regex(/^[a-f0-9]{64}$/) }).optional(),
 });
 export class ParticipantBrowserConnector implements ParticipantBookingSource {
   readonly environment = 'live' as const;
@@ -35,7 +36,10 @@ export class ParticipantBrowserConnector implements ParticipantBookingSource {
     try { token = readFileSync(this.options.tokenFile, 'utf8').trim(); } catch { throw new AgentReadError('Participant browser credentials are unavailable'); }
     if (!/^[a-f0-9]{64}$/.test(token)) throw new AgentReadError('Participant browser credential is invalid');
     const context = bookingSourceContextSchema.parse({ ownerDigest: digest(ctx.owner), requestId: ctx.request.id, requestRevision: ctx.request.revision, action, planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId, operationKey: ctx.operationKey, readbackSequence: 0 });
-    const command = recovery ? undefined : participantCommandSchema.parse({ context, bindingId: this.options.bindingId, attendeeRef: this.attendeeRef, action, input, planDigest: ctx.state.plans.find(p => p.id === ctx.planId)!.digest, configurationDigest: ctx.state.programDigest });
+    if (ctx.observation && action !== 'ReadParticipantRegistration') throw new DomainError('FORBIDDEN', 'Standing participant observations are read-only');
+    const command = recovery ? undefined : participantCommandSchema.parse({ context, bindingId: this.options.bindingId, attendeeRef: this.attendeeRef, action, input,
+      planDigest: ctx.observation?.selectionDigest ?? ctx.state.plans.find(p => p.id === ctx.planId)!.digest, configurationDigest: ctx.state.programDigest,
+      ...(ctx.observation ? { observation: ctx.observation } : {}) });
     if (command) participantServiceUrl.parse((command.input.scope as { serviceUrl: unknown }).serviceUrl);
     signal.throwIfAborted();
     if (!recovery && action === 'SubmitFreeRegistration') { if (!ctx.assertDispatchAllowed) throw new DomainError('FORBIDDEN', 'Participant write has no current grant'); ctx.assertDispatchAllowed(); }
@@ -55,7 +59,7 @@ export class ParticipantBrowserConnector implements ParticipantBookingSource {
     if (envelope.status === 'pending') {
       const age = Date.now() - Date.parse(ctx.originalDispatchAt ?? startedAt);
       const retryAfterMs = Math.min(30000, 2000 * 2 ** Math.min(4, Math.floor(Math.max(0, age) / 30000)));
-      return { value: { operationKey: ctx.operationKey, source: this.identity }, evidenceRefs: [], pending: { retryAfterMs } };
+      return { value: { operationKey: ctx.operationKey, source: this.identity, operatorRequired: true }, evidenceRefs: [], pending: { retryAfterMs, operatorRequired: true } };
     }
     if (envelope.status === 'rejected') throw new AgentOperationRejected(envelope.message ?? 'Participant source declined the operation', [digest(raw.toString('utf8'))]);
     if (!response.ok || !envelope.result || !envelope.browserEvidence) throw new AgentReadError('Participant source result is incomplete');

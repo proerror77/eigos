@@ -20,10 +20,10 @@ export const syntheticKey = 'didi-fixture-key-never-a-real-account';
 export const input = { mode: 'estimate', city: '北京市', origin: '北京西站', destination: '西二旗地铁站' } as const;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 export const sourcePlace = (name: string, offset = 0) => ({ display_name: name, address: `地点${offset}号`, address_all: `${name}地点${offset}号`, city: '北京市', location: { lng: 116.3 + offset / 100, lat: 39.9 + offset / 100 } });
-export function didiFixture() {
+export function didiFixture(environment: 'production' | 'mock' = 'production') {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-didi-')), keyFile = join(directory, 'key');
   writeFileSync(keyFile, syntheticKey, { mode: 0o600 });
-  const binding: DidiBinding = { bindingId: 'synthetic-didi', keyFile, keySha256: createHash('sha256').update(syntheticKey).digest('hex'), environment: 'production', auditDirectory: join(directory, 'audit') };
+  const binding: DidiBinding = { bindingId: 'synthetic-didi', keyFile, keySha256: createHash('sha256').update(syntheticKey).digest('hex'), environment, auditDirectory: join(directory, 'audit') };
   const calls: { method?: string; name?: string; args?: Record<string, unknown>; redirect?: RequestRedirect }[] = [];
   const flags = { empty: false, ambiguous: false, before: undefined as undefined | ((name: string) => Promise<void>), transform: undefined as undefined | ((body: any, request: any) => any) };
   const fetcher: typeof fetch = async (_url, init = {}) => {

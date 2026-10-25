@@ -7,7 +7,7 @@ import { authorizationRequest, createSandboxGrant, requiredEffects } from './pol
 import { createActionIntents } from '../coordinator/runtime.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { DomainError, ownerKey, replySchema, requireScope, submitSchema, taskIdSchema, remediationSchema, type Job, type Principal } from './domain.js';
+import { DomainError, ownerKey, replySchema, requireScope, submitSchema, taskIdSchema, remediationSchema, observationReportSchema, observationRevokeSchema, observationResumeSchema, type Job, type Principal } from './domain.js';
 import { JobStore, type ListFilter } from './store.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { templatePlanning } from '../ontology/planning-contract.js';
@@ -16,6 +16,7 @@ import { createAgentSandboxGrant, validateAgentAuthority } from './agent-authori
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest } from './pa-payment.js';
 import { readBookingObservation } from '../ontology/booking-functions.js';
 import { bookingDataSchema, bookingPaymentDataSchema } from '../ontology/booking.js';
+import { answerPAQuestionSchema } from './pa-questions.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; waitTimeoutMs?: number }
 
@@ -40,7 +41,46 @@ export class TaskService {
     requireScope(p, 'tasks:read');
     return this.store.ontology.evaluate(ownerKey(p), input);
   }
-
+  reportSourceChange(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write'); const args = observationReportSchema.parse(input), owner = ownerKey(p);
+    this.store.once(owner, `source-notice:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), watch = this.store.situations.watch(owner, args.watchId);
+      if (job.delegation?.backendVersion !== BACKEND_VERSION || watch.jobId !== job.id || watch.requestRevision !== job.delegation.request.revision || contextId && contextId !== job.contextId) throw new DomainError('CONFLICT', 'Source notification belongs to another task or request revision');
+      this.store.situations.receive(owner, watch.selection.source, { eventId: args.eventId, contentDigest: digest({ note: args.note }), note: args.note, kind: 'user_asserted' });
+      const current = this.store.get(owner, job.id); this.store.save(owner, current); return current;
+    });
+    return this.view(owner, this.store.get(owner, args.taskId));
+  }
+  revokeObservation(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write'); const args = observationRevokeSchema.parse(input), owner = ownerKey(p);
+    this.store.once(owner, `revoke-observation:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), watch = this.store.situations.watch(owner, args.watchId);
+      if (job.delegation?.backendVersion !== BACKEND_VERSION || watch.jobId !== job.id || watch.requestRevision !== job.delegation.request.revision || contextId && contextId !== job.contextId) throw new DomainError('CONFLICT', 'Observation revocation belongs to another task or request revision');
+      this.store.situations.revoke(owner, watch.id);
+      const current = this.store.get(owner, job.id);
+      if (current.delegation?.phase === 'awaiting_pa_answer' && current.delegation.paQuestion?.question.observation?.watchId === watch.id) {
+        current.delegation.phase = 'clarifying'; current.delegation.observationPaused = true;
+        current.question = '已停止这项持续询问；此前问题的回答只保留记录。恢复观察须明确使用原观察的恢复入口。';
+        current.updatedAt = new Date().toISOString(); current.revision = (current.revision ?? 0) + 1;
+      }
+      this.store.save(owner, current); return current;
+    });
+    return this.view(owner, this.store.get(owner, args.taskId));
+  }
+  resumeObservation(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write'); const args = observationResumeSchema.parse(input), owner = ownerKey(p);
+    this.store.once(owner, `resume-observation:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), watch = this.store.situations.watch(owner, args.watchId);
+      if (job.delegation?.backendVersion !== BACKEND_VERSION || watch.jobId !== job.id || watch.requestRevision !== job.delegation.request.revision || contextId && contextId !== job.contextId) throw new DomainError('CONFLICT', 'Observation resumption belongs to another task or revision');
+      this.store.situations.resume(owner, watch.id);
+      const current = this.store.get(owner, job.id);
+      if (current.state === 'input-required' && current.delegation!.observationPaused) {
+        current.state = 'working'; current.delegation!.phase = current.delegation!.agent?.pendingPlanId ? 'executing' : 'planning'; delete current.question; delete current.delegation!.observationPaused;
+      }
+      current.updatedAt = new Date().toISOString(); current.delegation!.nextAt = 0; this.store.save(owner, current); return current;
+    });
+    return this.view(owner, this.store.get(owner, args.taskId));
+  }
   submit(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = submitSchema.parse(input);
@@ -59,15 +99,65 @@ export class TaskService {
       };
         job.state = 'submitted'; job.revision = 1; job.runs = [];
         job.executionMode = 'worker';
-        job.delegation = { backendVersion: BACKEND_VERSION, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
+        job.delegation = { backendVersion: BACKEND_VERSION, requesterClientId: p.clientId, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
           executionEnvironment: args.executionEnvironment ?? 'live',
+          ...(args.monitoring ? { monitoring: args.monitoring } : {}),
           requestedDeliverable: job.deliverable, messages: [{ id: args.requestId, text: args.goal, receivedAt: now }],
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
       this.store.save(owner, job);
+      if (args.monitoring) this.store.situations.establish(owner, job.id, 1, args.monitoring);
       return job;
     });
     return submitted;
+  }
+
+  answerPAQuestion(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = answerPAQuestionSchema.parse(input), owner = ownerKey(p);
+    // Validate the answering actor even on idempotent retries. An answer is
+    // information from the original PA, never a transferable access grant.
+    const question = this.store.paQuestions.get(owner, args.questionId).question;
+    const task = this.store.get(owner, args.taskId);
+    if (question.taskId !== task.id || question.requesterClientId !== p.clientId || task.delegation?.requesterClientId !== p.clientId)
+      throw new DomainError('FORBIDDEN', 'Only the original requesting PA may answer this factual question');
+    if (contextId && contextId !== task.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+    this.store.once(owner, `pa-answer:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
+      const job = this.store.get(owner, args.taskId), d = job.delegation!;
+      if (d.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical tasks cannot accept new PA answers');
+      const record = this.store.paQuestions.answer(owner, args), q = record.question, state = d.agent;
+      const terminal = ['completed', 'canceled', 'failed', 'rejected'].includes(job.state);
+      const scopes = [state?.scope, ...Object.values(state?.components ?? {}).map(c => c.scope)];
+      let current = !terminal && q.requestRevision === d.request.revision
+        && scopes.some(scope => scope && digest(scope) === digest(q.scope)) && d.paQuestion?.question.id === q.id
+        && job.state === 'input-required' && d.phase === 'awaiting_pa_answer';
+      if (q.observation) {
+        const watch = this.store.situations.watch(owner, q.observation.watchId);
+        current &&= watch.status === 'active' && !watch.superseded && watch.revision === q.observation.watchRevision
+          && watch.pendingRead?.id === q.observation.readId && digest(watch.selection) === q.observation.selectionDigest && watch.contractDigest === q.observation.contractDigest;
+      } else current &&= state?.pendingPlanId === q.planId && ['awaiting_remote', 'effect_unknown'].includes(this.store.intent(owner, q.intentId).state);
+      job.updatedAt = new Date().toISOString();
+      d.events.push({ at: job.updatedAt, event: current ? 'pa_factual_answer_received' : 'late_pa_answer_audit_only', evidence: q.id });
+      if (current) {
+        d.paQuestion = this.store.paQuestions.summary(owner, q.id);
+        const confirmed = record.answer?.status === 'known' && record.answer.basis !== 'inferred';
+        if (confirmed) {
+          if (q.observation) this.store.situations.wakeRead(owner, q.observation.watchId);
+          else {
+            const intent = this.store.intent(owner, q.intentId);
+            intent.nextAt = 0; intent.failedQueries = 0; this.store.saveIntent(owner, intent);
+          }
+          job.state = record.resume?.state ?? 'working'; d.phase = record.resume?.phase ?? 'executing'; d.nextAt = 0;
+          job.question = record.resume?.question;
+        } else {
+          job.question = record.answer?.status === 'known' ? 'PA 提供的是推测，当前安排仍待确认。请补充已核实的信息；这不请求日历连接或操作权限。'
+            : `当前信息仍未确认：${record.answer?.reason ?? 'PA 尚未回答'}。可由原 PA 在同一问题下补充事实；这不请求日历连接或操作权限。`;
+        }
+        job.revision = (job.revision ?? 0) + 1;
+      }
+      this.store.save(owner, job); return job;
+    });
+    return this.view(owner, this.store.get(owner, args.taskId));
   }
 
   reply(p: Principal, input: unknown, contextId?: string): Job {
@@ -82,9 +172,11 @@ export class TaskService {
     const replied = this.store.once(owner, `reply:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId);
       if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
+      if (job.delegation?.phase === 'awaiting_pa_answer') throw new DomainError('CONFLICT', 'Use answer_pa_question for the current factual question; answering does not grant connection or action access');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
       if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
+      if (job.delegation?.observationPaused) throw new DomainError('CONFLICT', 'Use resume_observation for the exact paused watch; text does not renew an expired observation budget or horizon');
       job.updatedAt = new Date().toISOString();
       job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
       if (job.service === DELEGATE) {
@@ -114,7 +206,8 @@ export class TaskService {
           job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
           delete job.delegation!.agent;
         }
-        request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+        request.revision++; delete job.delegation!.paQuestion;
+        request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
         for (const r of args.requirements ?? []) {
           const previous = request.requirements.findIndex(x => x.id === r.id);
           const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };
@@ -124,6 +217,7 @@ export class TaskService {
         job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
       }
       this.store.save(owner, job);
+      if (job.delegation?.request.monitoring) this.store.situations.establish(owner, job.id, job.delegation.request.revision, job.delegation.request.monitoring);
       return job;
     });
     return replied;
@@ -244,6 +338,7 @@ export class TaskService {
         const plan = d.agent.plans.find(p => p.id === d.agent!.pendingPlanId), program = this.options.catalog.agentProgram(d.agent.programRef, owner);
         const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.enum(['sandbox', 'live_free']) }).strict().parse(input);
         if (!plan || !program || program.configurationDigest !== d.agent.programDigest || (permit.environment === 'sandbox' ? !this.options.allowSandboxActions || d.request.executionEnvironment !== 'sandbox' : !program.liveFreeReservation || d.request.executionEnvironment === 'sandbox')) throw new DomainError('FORBIDDEN', 'No current configured Agent plan in the requested environment');
+        this.store.situations.assertCurrent(owner, id, plan.situationRevision ?? 0);
         validatePlanningSnapshot(this.store.ontology, owner, d.request, plan.ontologyPlanning, true);
         const ctx = { graph: this.store.ontology, owner, request: d.request, state: d.agent, intents: this.store.intents(owner, job.id) };
         for (const step of plan.steps) if (step.effect !== 'read') { validateAgentAuthority(program, ctx, plan, step); program.validatePlanning?.(ctx, step.action, step.input, plan.ontologyPlanning); }
@@ -367,6 +462,10 @@ export class TaskService {
     });
   }
   private view(owner: string, job: Job): Job {
+    if (job.delegation?.request.monitoring) {
+      job.delegation.situation = this.store.situations.summary(owner, job.id);
+      if (job.delegation.situation) job.delegation.situation.currentAssessment = this.store.ontology.read(owner, { type: 'ServiceRequest', id: job.id }).properties.currentSituation as import('../ontology/model.js').ObjectRef | undefined;
+    }
     if (job.delegation?.backendVersion === BACKEND_VERSION && (job.delegation.plan || job.delegation.agent || job.delegation.agentHistory?.length)) {
       const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);
       job.delegation.actions = intents.map(i => ({ id: i.id, stepId: i.stepId, state: i.state, remoteRef: i.remoteRef, latestObservationId: i.latestObservationId }));

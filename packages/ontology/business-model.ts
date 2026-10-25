@@ -1,4 +1,8 @@
 import { compositionObjects, compositionLinks, compositionActions } from './composition.js';
+import { situationObjects, situationLinks, situationFunctions, situationActions, monitoringSchema } from './situation.js';
+import { eventOccurrenceObjects, eventOccurrenceLinks, travelTimingObjects, travelTimingLinks, arrivalProjectionFunctions } from './event-occurrence.js';
+import { calendarObjects, calendarLinks, calendarActions, calendarFunctions } from './calendar.js';
+import { paContextObjects, paContextLinks, paContextActions, paContextFunctions } from './pa-context.js';
 import { registrationObjects, registrationLinks, registrationActions, registrationFunctions } from './free-booking.js';
 import { meituanReadObjects, meituanReadLinks, meituanReadActions, meituanReadFunctions } from './meituan-read.js';
 import { bookingObjects, bookingLinks, bookingActions, bookingFunctions } from './booking.js';
@@ -117,11 +121,13 @@ const objects: ObjectTypeDefinition[] = [
   type('Payment', '付款记录', 'paymentId', { providerReference: str('Provider payment reference'), purpose: choice(['goods', 'deposit'], 'Payment business purpose'), amount: money('Observed payment amount'), paymentState: choice(['not_started', 'pending', 'paid', 'failed', 'unknown'], 'Payment source state'), observedAt: time('Payment observation') }),
   type('Refund', '退款记录', 'refundId', { providerReference: str('Provider refund reference'), amount: money('Observed refund amount'), refundState: choice(['not_started', 'pending', 'refunded', 'rejected', 'unknown'], 'Refund state; acceptance is not receipt of funds'), observedAt: time('Refund observation') }),
   type('AfterSalesCase', '售后事项', 'caseId', { requestedRemedy: choice(['cancel', 'refund', 'redelivery'], 'Requested remedy'), progress: choice(['requested', 'processing', 'resolved', 'rejected', 'unknown'], 'Remedy state'), originalBusinessReference: str('Original owned business reference') }),
-  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
+  type('SourceReceipt', '来源回执', 'receiptId', { sourceIdentity: str('Verified source identity'), sourceEventId: str('Provider event or read receipt identity'), scope: choice(['public_locations', 'delivery_quote', 'goods_offer', 'checkout_session', 'order', 'delivery', 'reservation', 'payment', 'refund', 'calendar', ...domainNames.map(d => `domain_${d}`)], 'Business scope validated by the source mapping'), observedAt: time('Receipt time'), evidenceLevel: choice(['synthetic', 'provider_test', 'user_asserted', 'pa_reported', 'live_readonly', 'live_operation', 'live_fulfillment'], 'Evidence strength; synthetic is never promoted'), contentDigest: p('string', z.string().regex(/^[a-f0-9]{64}$/), 'Digest of validated source content'), subjects: p('array', z.array(z.object({ object: objectRefSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), linksDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(100), 'Source mapping binds normalized properties and outgoing business relationships'), safeSummary: str('Curated source receipt summary', 500, { required: true }), privatePayload: str('Private source payload reference', 1000, { restricted: true }) }, { titleKey: 'safeSummary' }),
 ];
 // Only changed definitions advance. Historical object fingerprints are never rewritten.
-objects.find(o => o.id === 'ServiceRequest')!.version = '5';
+objects.find(o => o.id === 'ServiceRequest')!.version = '6';
 objects.find(o => o.id === 'ServiceRequest')!.properties.currentAssessment = p('struct', objectRefSchema, 'Current result assessment; historical assessments remain linked');
+objects.find(o => o.id === 'ServiceRequest')!.properties.currentSituation = p('struct', objectRefSchema, 'Current bounded situation, distinct from historical terminal acceptance');
+objects.find(o => o.id === 'ServiceRequest')!.properties.monitoring = p('struct', monitoringSchema, 'Explicit PA observation horizon and cumulative query limit; no business write authority');
 const assessment = objects.find(o => o.id === 'OutcomeAssessment')!;
 assessment.version = '2';
 assessment.properties.criterionResults = p('array', z.array(z.strictObject({ criterion: z.string().max(100), result: z.enum(['pass', 'fail', 'unknown', 'needs_human']), evidenceIds: z.array(z.string().max(1000)).max(200) })).max(100), 'Per-criterion evidence-backed checks');
@@ -190,13 +196,13 @@ link('CaseReservation', 'AfterSalesCase', 'reservation', false, 'Reservation', '
 for (const idName of evidenceTypes) link(`${idName}Evidence`, idName, 'sourceReceipts', true, 'SourceReceipt', idName[0]!.toLowerCase() + idName.slice(1) + 's', true, true);
 links.find(l => l.id === 'OfferProvider')!.description = '报价关联的提供主体；不是销售商家身份的证明。跨渠道比较时同时核对参与角色及身份依据。';
 
-export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '19', objects: [...objects, ...compositionObjects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...compositionLinks, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
+export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business', version: '20', objects: [...objects, ...paContextObjects, ...travelTimingObjects, ...calendarObjects, ...eventOccurrenceObjects, ...situationObjects, ...compositionObjects, ...meituanReadObjects, ...rideEstimateObjects, ...domainObjects, ...commerceObjects, ...catalogReadObjects, ...catalogAgentObjects, ...commerceJourneyObjects, ...customsPolicyObjects, ...stripePaymentObjects, ...bookingObjects, ...registrationObjects], links: [...links, ...paContextLinks, ...travelTimingLinks, ...calendarLinks, ...eventOccurrenceLinks, ...situationLinks, ...compositionLinks, ...meituanReadLinks, ...rideEstimateLinks, ...domainLinks, ...commerceLinks, ...catalogReadLinks, ...catalogAgentLinks, ...commerceJourneyLinks, ...customsPolicyLinks, ...stripePaymentLinks, ...bookingLinks, ...registrationLinks],
   interfaces: [
     { id: 'EvidenceBacked', description: 'Objects traceable to source receipts; no automatic evidence promotion', properties: {}, links: [{ name: 'sourceReceipts', target: 'SourceReceipt', many: true }] },
     { id: 'CommerceFact', description: 'Source-bound commerce observation with explicit versioned dependencies', parents: ['EvidenceBacked'], properties: {}, links: [{ name: 'dependsOn', target: 'CommerceFact', many: true }] },
     { id: 'Offer', description: '报价共性接口；具体实例是配送、商品或预订报价', parents: ['EvidenceBacked'], properties: offerProperties, links: [{ name: 'request', target: 'ServiceRequest', many: false }, { name: 'provider', target: 'Provider', many: false }, { name: 'channel', target: 'Channel', many: false }] },
   ],
-  actions: [...compositionActions,
+  actions: [...compositionActions, ...situationActions, ...calendarActions, ...paContextActions,
     ...commerceJourneyActions, ...stripePaymentActions, ...bookingActions, ...registrationActions,
     ...catalogAgentActions,
     ...rideEstimateActions, ...meituanReadActions,
@@ -208,7 +214,7 @@ export const BUSINESS_MODEL_DEFINITION: ModelDefinition = { id: 'eigos.business'
   functions: [
     { id: 'taskOutcomeStatus', version: '1', inputTypes: ['ServiceRequest'], description: 'Read the current request-version assessment, goal coverage and original source receipt references; historical task acceptance never refreshes provider facts or grants authority' },
     ...customsPolicyFunctions,
-    ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions, ...registrationFunctions,
+    ...commerceJourneyFunctions, ...stripePaymentFunctions, ...bookingFunctions, ...registrationFunctions, ...situationFunctions, ...calendarFunctions, ...paContextFunctions, ...arrivalProjectionFunctions,
     ...catalogAgentFunctions,
     ...rideEstimateFunctions, ...meituanReadFunctions,
     ...commerceFunctions,

@@ -1,10 +1,11 @@
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
+import { DomainError, replySchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, observationReportSchema, observationRevokeSchema, observationResumeSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import { answerPAQuestionSchema } from '../../packages/core/pa-questions.js';
 
 function result(action: () => unknown): CallToolResult {
   try {
@@ -56,6 +57,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     inputSchema: replySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reply(principal, args)));
+  server.registerTool('answer_pa_question', {
+    description: 'The original requesting PA answers a scoped factual question. Use the exact question ID, digest and answer revision. Answer only what is known, or report unknown/needs_user. Connections and permissions remain with the PA; this never grants EIGOS access or authorizes a calendar operation.',
+    inputSchema: answerPAQuestionSchema,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.answerPAQuestion(principal, args)));
   server.registerTool('select_payment_route', {
     description: 'Select a payment route for the original unpaid booking using current PA wallet availability: prefer Link Agent Wallet, otherwise the provider Link checkout requiring user confirmation. Selection is durable and cannot be switched after issuance; no credentials or payment execution are accepted.',
     inputSchema: paPaymentRouteSchema,
@@ -66,6 +72,18 @@ export function createMcpServer(tasks: TaskService, principal: Principal): McpSe
     inputSchema: paPaymentReportSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => tasks.reportPayment(principal, args)));
+  server.registerTool('report_source_change', {
+    description: 'Report an owned watched-source change as a user assertion. It only wakes the fixed independent read; it does not prove provider facts, change the goal, reopen terminal tasks or grant a business action.',
+    inputSchema: observationReportSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.reportSourceChange(principal, args)));
+  server.registerTool('revoke_observation', {
+    description: 'Revoke one owned standing source observation. Stops further scheduled reads; it does not cancel a provider registration, calendar event or order.',
+    inputSchema: observationRevokeSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.revokeObservation(principal, args)));
+  server.registerTool('resume_observation', {
+    description: 'Explicitly resume an owned paused or revoked observation under its original horizon and remaining cumulative budget. Does not reopen terminal tasks or authorize business writes.',
+    inputSchema: observationResumeSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => tasks.resumeObservation(principal, args)));
   server.registerTool('cancel_task', {
     description: 'Cancel an owned open ontology task. Completed tasks cannot be canceled. This does not cancel or reverse provider orders.',
     inputSchema: z.object({ taskId: taskIdSchema }).strict(),

@@ -13,6 +13,8 @@ import { boundAgentAction } from '../core/agent-action-binding.js';
 import { dataflowValue } from './read-dataflow.js';
 import { checkRequirements } from './resolver.js';
 import { assessConditions, hardConditionsPass } from './conditions.js';
+import type { SourceSample, ObservationWatch, SituationChange } from '../ontology/situation.js';
+import { projectObservationWatch } from '../ontology/situation-projection.js';
 
 
 type Node = CompositionInput['components'][number];
@@ -27,20 +29,26 @@ export class CompositionProgram implements AgentProgram {
   readonly ref;
   readonly configurationDigest: string;
   readonly actionIds: string[];
+  readonly observationActions: string[];
+  readonly interactiveActions: string[];
   readonly liveFreeReservation: true | undefined;
   readonly limits = { modelTurns: 80, plans: 24, actions: 64 };
   readonly completionSchema = z.toJSONSchema(compositionCompletionSchema);
   readonly guidance: string;
   constructor(private programs: AgentProgram[], private environment: 'live' | 'sandbox') {
-    this.ref = { id: `services.compose.${environment}`, version: '1' };
+    this.ref = { id: `services.compose.${environment}`, version: '2' };
     this.liveFreeReservation = programs.some(p => p.liveFreeReservation) ? true : undefined;
     this.actionIds = [...new Set([...Object.keys(compositionActionSchemas), ...programs.flatMap(p => p.capability().actions.map(a => a.ref.id))])];
-    this.configurationDigest = digest({ ref: this.ref, bindings: programs.map(p => ({ ref: p.ref, digest: p.configurationDigest, handoffFields: p.handoffFields ?? [] })) });
+    this.observationActions = [...new Set(programs.flatMap(p => p.observationActions ?? []))];
+    this.interactiveActions = [...new Set(programs.flatMap(p => p.interactiveActions ?? []))];
+    this.configurationDigest = digest({ ref: this.ref, bindings: programs.map(p => ({ ref: p.ref, digest: p.configurationDigest, handoffFields: p.handoffFields ?? [], observationActions: p.observationActions ?? [], observationCompletion: p.observationCompletion })) });
     this.guidance = [
       'Fulfill ALL components in the pinned service graph. task.components lists each selected component; its state contains the actual scope, input, observations and accepted result, alongside its allowed Actions and completion schema. Use those component scopes for provider Actions, never the ServiceComposition scope. Components have separate evidence; partial success cannot finish the root task.',
       'Choose actual provider actions yourself. Independent active components may be read in the same frontier. CompleteServiceComponent is an explicit local Action with the root composition scope, componentId and completionJson matching THAT component completion schema. Read and evaluate its source observations first; the host independently verifies the result. It does not declare the whole task complete.',
       'A dependent component has no program scope yet. After ALL its dependencies have accepted results, explicitly choose ActivateServiceComponent with the root scope and its componentId. The host resolves only the already selected bindings from actual verified outputs, initializes the scope and returns its reference. No upstream business action is inserted or replayed. Read and evaluate upstream sources in that decision before activation.',
       'Once every component has been independently completed, read current source evidence again and choose complete with {rationale}. The host revalidates all components, original requirements and global budgets. Missing, failed, expired or uncertain components cannot be ignored. For clarification about a component include componentId in the decision. Exact write authorization remains per selected plan; no parent or component success grants another write.',
+      'A completed component permits only its declared observationActions. If validity is stale, read current facts, explicitly choose RepairServiceComponent with expectedGeneration, then re-complete that generation. Dependency inputs are rebound only from current verified upstream outputs. Preserve original registration/order/payment identities; unknown effects require original-operation recovery, never a replacement submission.',
+      'For a request with an explicit monitoring contract, select StartObservationWatch for each needed source read, its current observation, fixed action/arguments and bounded policy. refreshCompletion=true authorizes only rebinding unchanged completion evidence to subsequent verified observations. Each repeat is a read, never a business write. complete before the monitoring horizon records current validity and durably waits; it does not finish the ongoing goal.',
     ].join('\n');
   }
   permitted(owner: string) { return this.programs.length >= 2 && this.programs.every(p => p.permitted(owner)); }
@@ -49,10 +57,10 @@ export class CompositionProgram implements AgentProgram {
     const definitions = this.programs.map(p => p.capability());
     const actions = [...Object.keys(compositionActionSchemas).map(id => ({ ref: { id, version: '1' }, effect: 'local' as const })), ...definitions.flatMap(c => c.actions)];
     const unique = <T>(values: T[], key: (v: T) => string) => [...new Map(values.map(v => [key(v), v])).values()];
-    return { ref: this.ref, ontologyRef: { id: 'eigos.composition', version: '1' }, name: '跨服务任务编排',
+    return { ref: this.ref, ontologyRef: { id: 'eigos.composition', version: '2' }, name: '跨服务任务编排',
       description: 'Combine two to four DISTINCT configured Action programs in one task. Select explicit components, dependencies and input bindings. Every subgoal must complete; no simulated service satisfies a live goal. The components listed in ontology.programs are the only bound services. Deferred inputs must be omitted and supplied by a binding from verified upstream output; every requirement/condition ID must be assigned to at least one component. Shared budgets and quantities aggregate, other shared constraints apply to each assigned component. Explicit budgetShares must cover all assigned components within the root ceiling; without shares a write waits for verified costs of the other components.',
       tags: ['composition', 'cross-service', this.environment], environment: this.environment, constraintEvaluation: 'staged', completion: 'domain',
-      inputSchema: z.toJSONSchema(compositionInputSchema), ontology: { programs: definitions.map(c => ({ ref: c.ref, name: c.name, description: c.description, inputSchema: c.inputSchema, predicates: c.predicates, outcomePredicates: c.outcomePredicates, requirementRoles: c.requirementRoles, handoffFields: this.programs.find(p => equal(p.ref, c.ref))!.handoffFields ?? [] })), actions: Object.keys(compositionActionSchemas), maxComponents: 4 },
+      inputSchema: z.toJSONSchema(compositionInputSchema), ontology: { programs: definitions.map(c => ({ ref: c.ref, name: c.name, description: c.description, inputSchema: c.inputSchema, predicates: c.predicates, outcomePredicates: c.outcomePredicates, requirementRoles: c.requirementRoles, handoffFields: this.programs.find(p => equal(p.ref, c.ref))!.handoffFields ?? [], observationActions: this.programs.find(p => equal(p.ref, c.ref))!.observationActions ?? [] })), actions: Object.keys(compositionActionSchemas), maxComponents: 4 },
       actions: unique(actions, a => a.ref.id), predicates: unique(definitions.flatMap(c => c.predicates), p => p.id),
       outcomePredicates: [...new Set(definitions.flatMap(c => c.outcomePredicates ?? []))], requirementRoles: unique(definitions.flatMap(c => c.requirementRoles ?? []), r => `${r.kind}:${r.role}`), verifierRef: { id: 'composition.all-components', version: '1' } };
   }
@@ -107,13 +115,13 @@ export class CompositionProgram implements AgentProgram {
     const components: Record<string, ComponentState> = {};
     for (const node of input.components) {
       const p = this.bound(node); if (!p.permitted(owner)) fail('Component binding is unavailable to this owner');
-      components[node.id] = { programRef: p.ref, programDigest: p.configurationDigest, observations: [], ...(!node.dependsOn.length ? p.initialize(graph, owner, this.request(request, input, node), node.input) : {}) };
+      components[node.id] = { programRef: p.ref, programDigest: p.configurationDigest, generation: 1, observations: [], ...(!node.dependsOn.length ? p.initialize(graph, owner, this.request(request, input, node), node.input) : {}) };
     }
     for (const node of input.components) {
       const state = components[node.id]!;
       if (!state.input || !state.scope) continue;
       state.inputDigest = digest(state.input); state.componentRef = { type: 'ServiceComponent', id: digest({ composition: scope, node: node.id }) };
-      graph.ingest(owner, { objects: [{ ref: state.componentRef, properties: { id: state.componentRef.id, displayTitle: node.goal.slice(0, 500), requestRevision: request.revision, componentId: node.id, scope: state.scope, inputDigest: state.inputDigest, dependencies: [] } }], links: [{ type: 'ServiceComponentComposition', from: state.componentRef, to: scope }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
+      graph.ingest(owner, { objects: [{ ref: state.componentRef, properties: { id: state.componentRef.id, displayTitle: node.goal.slice(0, 500), requestRevision: request.revision, componentId: node.id, generation: state.generation, scope: state.scope, inputDigest: state.inputDigest, dependencies: [] } }], links: [{ type: 'ServiceComponentComposition', from: state.componentRef, to: scope }] }, { kind: 'task', id: request.id, observedAt: new Date().toISOString() });
     }
     return { scope, input: input as unknown as Record<string, unknown>, components };
   }
@@ -127,7 +135,8 @@ export class CompositionProgram implements AgentProgram {
     const input = this.input(ctx), node = input.components.find(n => n.id === id) ?? fail('Unknown service component'), state = ctx.state.components![id] ?? fail('Missing component state'), program = this.bound(node);
     if (state.programDigest !== program.configurationDigest || !equal(state.programRef, program.ref) || state.input && state.inputDigest !== digest(state.input)) fail('Component execution input or binding changed');
     if (!state.scope || !state.input) fail('Activate the component from its verified dependencies first');
-    const intentIds = new Set(ctx.state.plans.flatMap(p => p.steps.filter(s => equal(s.input.scope, state.scope)).map(s => s.intentId)));
+    const scopes = [state.scope, ...(state.history ?? []).map(h => h.scope)];
+    const intentIds = new Set(ctx.state.plans.flatMap(p => p.steps.filter(s => scopes.some(scope => equal(s.input.scope, scope))).map(s => s.intentId)));
     const request = this.request(ctx.request, input, node);
     for (const budget of ctx.request.requirements.filter(r => r.kind === 'budget' && node.requirementIds.includes(r.id))) {
       if (budget.kind !== 'budget') continue;
@@ -144,11 +153,13 @@ export class CompositionProgram implements AgentProgram {
     }
     return { node, state, program, ctx: { ...ctx, executionConfigurationDigest: this.configurationDigest, request, intents: ctx.intents?.filter(i => intentIds.has(i.id)), state: { ...ctx.state, programRef: program.ref, programDigest: program.configurationDigest, scope: state.scope, input: state.input, observations: state.observations, components: undefined } } as AgentProgramContext };
   }
-  private route(ctx: AgentProgramContext, action: string, args: Record<string, unknown>) {
+  private route(ctx: AgentProgramContext, action: string, args: Record<string, unknown>, recovery = false) {
     const node = this.input(ctx).components.find(n => equal(ctx.state.components![n.id]?.scope, args.scope)) ?? fail('Action requires an activated component scope');
     const selected = this.context(ctx, node.id);
     if (!selected.program.capability().actions.some(a => a.ref.id === action)) fail('Action is outside this component binding');
-    if (selected.state.result) fail('Component is already complete; do not replay its actions');
+    const observation = selected.program.observationActions?.includes(action) && !!selected.program.sourceObservation && this.definition(ctx.graph, action).read?.effect === 'read';
+    if (!recovery && selected.state.result && !observation) fail('Component is already complete; only its declared observation reads may continue');
+    if (!recovery && selected.state.validity === 'stale' && !observation) fail('Repair the stale component generation before selecting new business actions');
     return selected;
   }
   schema(action: string): z.ZodType<Record<string, unknown>> {
@@ -169,8 +180,8 @@ export class CompositionProgram implements AgentProgram {
   }
   describeComponents(ctx: AgentProgramContext) {
     return this.input(ctx).components.map(node => {
-      const state = ctx.state.components![node.id]!, { result, ...scope } = state;
-      return { ...node, state: { ...scope, ...(result ? { result: { ref: result.ref, at: result.at, evidenceRefs: result.delivery.evidenceRefs, evidenceLevel: result.delivery.evidenceLevel } } : {}) }, actionIds: this.bound(node).actionIds, completionSchema: this.bound(node).completionSchema, guidance: this.bound(node).guidance };
+      const state = ctx.state.components![node.id]!, { result, history, ...scope } = state;
+      return { ...node, state: { ...scope, history: history?.map(h => ({ generation: h.generation, scope: h.scope, result: h.result?.ref })), ...(result ? { result: { ref: result.ref, at: result.at, validity: result.validity, validUntil: result.delivery.validUntil, evidenceRefs: result.delivery.evidenceRefs, evidenceLevel: result.delivery.evidenceLevel } } : {}) }, actionIds: this.bound(node).actionIds, observationActions: this.bound(node).observationActions ?? [], completionSchema: this.bound(node).completionSchema, guidance: this.bound(node).guidance };
     });
   }
   private exportedOutput(program: AgentProgram, raw: unknown): Record<string, unknown> {
@@ -205,24 +216,166 @@ export class CompositionProgram implements AgentProgram {
     const input = this.input(ctx), node = input.components.find(n => n.id === args.componentId) ?? fail('Unknown component');
     if (!equal(args.scope, ctx.state.scope)) fail('Local composition action belongs to another scope');
     const state = ctx.state.components![node.id]!;
+    if (action === 'StartObservationWatch') { this.watchBinding(ctx, args); return; }
+    if (action === 'RepairServiceComponent') {
+      if (!state.scope || state.generation !== args.expectedGeneration || state.validity !== 'stale') fail('Repair needs the exact stale component generation');
+      const r = this.context(ctx, node.id);
+      if (r.ctx.intents?.some(i => !['read', 'local'].includes(i.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(i.state))) fail('Resolve the original unknown business operation before repairing this component');
+      if (node.dependsOn.some(id => !this.validResult(ctx.state.components![id]!))) fail('Repair requires current verified dependency results');
+      return;
+    }
     if (action === 'ActivateServiceComponent') {
-      if (state.scope || !node.dependsOn.length || node.dependsOn.some(id => !ctx.state.components![id]?.result)) fail('Component activation requires all original dependency results and no prior activation');
-    } else if (!state.scope || state.result) fail('Complete each activated component exactly once');
+      if (state.scope || !node.dependsOn.length || node.dependsOn.some(id => !this.validResult(ctx.state.components![id]!))) fail('Component activation requires all original dependency results and no prior activation');
+    } else if (!state.scope || state.result || state.validity === 'stale') fail('Complete each activated component generation exactly once');
   }
   validatePlanning(ctx: AgentProgramContext, action: string, args: Record<string, unknown>, reads: PlanningSnapshot) {
     if (!local(action)) { const r = this.route(ctx, action, args); r.program.validatePlanning?.(r.ctx, action, args, reads); return; }
+    if (action === 'StartObservationWatch') {
+      const r = this.watchBinding(ctx, args), call = { function: r.program.observationCompletion!.evaluate, object: args.observation };
+      const value = ctx.graph.evaluate(ctx.owner, call);
+      if (value.status !== 'known' || !reads.reads.some(read => read.tool === 'evaluate_ontology' && read.status === 'ok' && read.inputDigest === digest(call) && read.outputDigest === digest(value))) fail('Evaluate the exact current source observation before selecting its watch');
+      r.program.validatePlanning?.(r.ctx, String(args.action), r.arguments, reads); return;
+    }
     if (action === 'CompleteServiceComponent') this.verified(ctx, String(args.componentId), JSON.parse(String(args.completionJson)), reads);
     else {
       const node = this.input(ctx).components.find(n => n.id === args.componentId)!;
       for (const id of node.dependsOn) this.verified(ctx, id, ctx.state.components![id]!.result!.proposal, reads);
     }
   }
-  private verified(ctx: AgentProgramContext, id: string, proposal: unknown, reads: PlanningSnapshot): Delivery {
+  private verified(ctx: AgentProgramContext, id: string, proposal: unknown, reads: PlanningSnapshot, refresh = false): Delivery {
     const r = this.context(ctx, id), delivery = r.program.complete(r.ctx, proposal, reads), capability = r.program.capability();
+    if (!refresh && r.state.result && !this.validResult(r.state)) fail('The selected component result is stale');
     const checks = checkRequirements({ ...r.ctx.request, requirements: [...r.ctx.request.requirements, ...(r.ctx.request.successCriteria ?? [])] }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
     if (!delivery.evidenceRefs.length || [...r.ctx.request.requirements, ...(r.ctx.request.successCriteria ?? [])].some(q => q.strength === 'hard' && !checks.some(c => c.requirementId === q.id && c.result === 'pass')) || !hardConditionsPass(assessConditions(ctx.graph, ctx.owner, r.ctx.request, undefined, 'result'), 'result')) fail('Component result does not satisfy its assigned requirements');
-    if (r.state.result && (!equal(r.state.result.delivery.evidenceRefs, delivery.evidenceRefs) || !equal(this.exportedOutput(r.program, r.state.result.delivery.artifact.data.result), this.exportedOutput(r.program, delivery.artifact.data.result)))) fail('A component source changed after its result was consumed');
+    if (!refresh && r.state.result && (!equal(r.state.result.delivery.evidenceRefs, delivery.evidenceRefs) || !equal(this.exportedOutput(r.program, r.state.result.delivery.artifact.data.result), this.exportedOutput(r.program, delivery.artifact.data.result)))) fail('A component source changed after its result was consumed');
     return delivery;
+  }
+  private validResult(state: ComponentState) {
+    return !!state.result && state.validity !== 'stale' && state.result.validity === 'valid' && (!state.result.delivery.validUntil || Date.parse(state.result.delivery.validUntil) > Date.now());
+  }
+  private watchBinding(ctx: AgentProgramContext, raw: Record<string, unknown>) {
+    const args = compositionActionSchemas.StartObservationWatch.parse(raw), r = this.context(ctx, args.componentId);
+    if (!ctx.request.monitoring || Date.parse(ctx.request.monitoring.until) <= Date.now()) fail('The PA must explicitly delegate a future observation horizon');
+    if (!r.program.observationActions?.includes(args.action) || !r.program.sourceObservation || !r.program.observationCompletion || this.definition(ctx.graph, args.action).read?.effect !== 'read') fail('This program does not expose a bound independent observation read');
+    const input = JSON.parse(args.argumentsJson) as Record<string, unknown>;
+    r.program.validate(r.ctx, args.action, input);
+    if (!r.state.observations.some(ref => equal(ref, args.observation))) fail('Select an actual owned component observation');
+    const sample = r.program.sourceObservation!(r.ctx, args.action, input, args.observation);
+    if (args.refreshCompletion && (!r.state.result || !equal((r.state.result.proposal as Record<string, unknown>)[r.program.observationCompletion!.argument], args.observation))) fail('Unchanged completion refresh must bind the currently accepted result observation');
+    return { ...r, arguments: input, sample };
+  }
+  sourceObservation(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, source: AgentActionResult | ObjectRef): SourceSample {
+    const r = this.route(ctx, action, input);
+    if (!r.program.observationActions?.includes(action) || !r.program.sourceObservation) fail('No current source mapping for this observation');
+    return r.program.sourceObservation!(r.ctx, action, input, source);
+  }
+  observationFunction(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) {
+    const r = this.route(ctx, action, input);
+    return r.program.observationCompletion?.evaluate ?? fail('Observation evaluation is not declared');
+  }
+  private dependencyDigests(ctx: AgentProgramContext, node: Node): Record<string, string> {
+    const values: Record<string, string> = {};
+    for (const binding of node.bindings) {
+      const upstream = ctx.state.components![binding.from]!.result ?? fail('Missing upstream component result');
+      const output = this.exportedOutput(this.bound(this.input(ctx).components.find(n => n.id === binding.from)!), upstream.delivery.artifact.data.result);
+      values[`${binding.from}:${binding.targetKey}`] = digest(dataflowValue(output, binding.path));
+    }
+    for (const id of node.dependsOn.filter(id => !node.bindings.some(b => b.from === id))) {
+      const upstream = ctx.state.components![id]!.result ?? fail('Missing upstream component result');
+      values[id] = digest(this.exportedOutput(this.bound(this.input(ctx).components.find(n => n.id === id)!), upstream.delivery.artifact.data.result));
+    }
+    return values;
+  }
+  private resolvedInput(ctx: AgentProgramContext, node: Node): Record<string, unknown> {
+    const resolved = structuredClone(node.input);
+    for (const binding of node.bindings) {
+      const producer = this.input(ctx).components.find(n => n.id === binding.from)!, upstream = ctx.state.components![binding.from]!;
+      if (!this.validResult(upstream)) fail('Dependency result is stale');
+      const source = upstream.result!, record = ctx.graph.read(ctx.owner, source.ref), program = this.bound(producer);
+      const parents = ctx.graph.related(ctx.owner, source.ref, 'composition', { remaining: 1000 });
+      if (record.properties.artifactDigest !== digest(source.delivery.artifact.data) || record.properties.requestRevision !== ctx.request.revision || record.properties.componentId !== producer.id || record.properties.validity !== 'valid' || !equal(record.properties.output, this.exportedOutput(program, source.delivery.artifact.data.result)) || parents?.length !== 1 || !equal(parents[0]!.ref, ctx.state.scope)) fail('Dependency result changed or belongs to another composition');
+      const field = this.exportField(program, binding.path) ?? fail('Output field is no longer exported');
+      let cursor: unknown = record.properties.output;
+      for (const segment of binding.path) {
+        if (Array.isArray(cursor) && cursor.length !== 1) fail('Multiple source candidates need an explicit user selection before a cross-service handoff');
+        cursor = dataflowValue(cursor, [segment]);
+      }
+      if (typeof cursor !== field.kind || typeof cursor === 'number' && !Number.isFinite(cursor)) fail('Exported source value has the wrong type');
+      resolved[binding.targetKey] = cursor;
+    }
+    return resolved;
+  }
+  private resultProperties(ctx: AgentProgramContext, node: Node, state: ComponentState) {
+    const result = state.result!;
+    return { id: result.ref.id, displayTitle: node.goal.slice(0, 500), requestRevision: ctx.request.revision, componentId: node.id, generation: state.generation,
+      validity: result.validity, ...(result.delivery.validUntil ? { validUntil: result.delivery.validUntil } : {}), artifactDigest: digest(result.delivery.artifact.data),
+      output: this.exportedOutput(this.bound(node), result.delivery.artifact.data.result), evidenceRefs: result.delivery.evidenceRefs, evidenceLevel: result.delivery.evidenceLevel ?? 'unverified' };
+  }
+  private saveResult(ctx: AgentProgramContext, node: Node, state: ComponentState) {
+    if (!state.result) return;
+    const current = ctx.graph.read(ctx.owner, state.result.ref), properties = this.resultProperties(ctx, node, state);
+    if (equal(current.properties, properties)) return;
+    const receipts = (ctx.graph.related(ctx.owner, { type: 'ServiceRequest', id: ctx.request.id }, 'sourceReceipts', { remaining: 5000 }) ?? []).filter(r => state.result!.delivery.evidenceRefs.includes(r.ref.id) || state.result!.delivery.evidenceRefs.includes(String(r.properties.sourceEventId)));
+    ctx.graph.ingest(ctx.owner, { objects: [{ ref: current.ref, expectedRevision: current.revision, properties }], links: receipts.map(r => ({ type: 'ComponentResultEvidence', from: current.ref, to: r.ref })) }, { kind: 'task', id: ctx.request.id, observedAt: new Date().toISOString() });
+  }
+  private invalidate(ctx: AgentProgramContext, componentId: string, reason: string, fields?: string[]) {
+    const input = this.input(ctx), pending: { id: string; fields?: string[] }[] = [{ id: componentId, fields }], seen = new Set<string>();
+    while (pending.length) {
+      const change = pending.shift()!; if (seen.has(change.id)) continue; seen.add(change.id);
+      const node = input.components.find(n => n.id === change.id); if (!node) continue;
+      const state = ctx.state.components![node.id]!;
+      if (state.scope) { state.validity = 'stale'; state.staleReason = reason; if (state.result) { state.result.validity = 'stale'; this.saveResult(ctx, node, state); } }
+      for (const consumer of input.components.filter(n => n.dependsOn.includes(node.id))) {
+        const bindings = consumer.bindings.filter(b => b.from === node.id);
+        const affected = !change.fields?.length || !bindings.length || bindings.some(binding => change.fields!.some(field => {
+          const path = binding.path.join('.'); return field === path || field.startsWith(`${path}.`) || path.startsWith(`${field}.`);
+        }));
+        if (affected) pending.push({ id: consumer.id });
+      }
+    }
+  }
+  applySituationChanges(ctx: AgentProgramContext, changes: SituationChange[]) {
+    for (const change of changes) if (change.componentId && change.reason !== 'restored') this.invalidate(ctx, change.componentId, `Observation ${change.reason}`, change.reason === 'changed' ? change.fields : undefined);
+  }
+  expireResults(ctx: AgentProgramContext): boolean {
+    let changed = false;
+    for (const node of this.input(ctx).components) {
+      const state = ctx.state.components![node.id]!;
+      if (state.result?.validity === 'valid') {
+        const reads = state.result.validationReads ?? ctx.state.plans.find(plan => plan.id === state.result!.validationPlanId)?.ontologyPlanning;
+        let valid = !state.result.delivery.validUntil || Date.parse(state.result.delivery.validUntil) > ctx.graph.now();
+        if (valid && reads) { try { this.verified(ctx, node.id, state.result.proposal, reads, true); } catch { valid = false; } }
+        if (!valid) { this.invalidate(ctx, node.id, 'Component evidence expired or no longer satisfies its conditions'); changed = true; }
+      }
+    }
+    return changed;
+  }
+  private repair(ctx: AgentActionContext, node: Node, state: ComponentState, reads: PlanningSnapshot): ObjectRef {
+    this.validate(ctx, 'RepairServiceComponent', { scope: ctx.state.scope, componentId: node.id, expectedGeneration: state.generation });
+    for (const id of node.dependsOn) this.verified(ctx, id, ctx.state.components![id]!.result!.proposal, reads);
+    const r = this.context(ctx, node.id), input = this.resolvedInput(ctx, node), changedInput = !equal(input, state.input);
+    const initialized = changedInput ? r.program.rebind?.(r.ctx, input) ?? fail('This program cannot safely rebind its original business identity') : { scope: state.scope!, input: state.input! };
+    if (state.result) { state.result.validity = 'superseded'; this.saveResult(ctx, node, state); }
+    state.history = [...(state.history ?? []), { generation: state.generation, scope: state.scope!, componentRef: state.componentRef!, input: state.input!, inputDigest: state.inputDigest!, result: state.result, observations: state.observations }];
+    ctx.observationControl?.stopComponent(node.id, state.generation);
+    state.generation++; Object.assign(state, initialized); state.inputDigest = digest(state.input); state.dependencyDigests = this.dependencyDigests(ctx, node);
+    state.observations = changedInput ? [] : [...state.observations]; delete state.result; delete state.staleReason; state.validity = 'valid';
+    const ref = { type: 'ServiceComponent', id: digest({ composition: ctx.state.scope, component: node.id, generation: state.generation }) }; state.componentRef = ref;
+    ctx.graph.ingest(ctx.owner, { objects: [{ ref, properties: { id: ref.id, displayTitle: node.goal.slice(0, 500), requestRevision: ctx.request.revision,
+      componentId: node.id, generation: state.generation, scope: state.scope, inputDigest: state.inputDigest, dependencies: node.dependsOn.map(id => ctx.state.components![id]!.result!.ref) } }],
+      links: [{ type: 'ServiceComponentComposition', from: ref, to: ctx.state.scope }] }, { kind: 'task', id: ctx.request.id, observedAt: new Date().toISOString() });
+    return ref;
+  }
+  refreshObservation(ctx: AgentProgramContext, watch: ObservationWatch, object: ObjectRef, reads: PlanningSnapshot): boolean {
+    const id = watch.selection.componentId; if (!id) return false;
+    const r = this.context(ctx, id), completion = r.program.observationCompletion;
+    if (!watch.selection.refreshCompletion || !r.state.result || !completion || r.state.generation !== watch.selection.generation || !equal(r.state.scope, watch.selection.scope)) return false;
+    const proposal = { ...(r.state.result.proposal as Record<string, unknown>), [completion.argument]: object };
+    let delivery: Delivery;
+    try { delivery = this.verified(ctx, id, proposal, reads, true); } catch { return false; }
+    if (!equal(this.exportedOutput(r.program, r.state.result.delivery.artifact.data.result), this.exportedOutput(r.program, delivery.artifact.data.result))) return false;
+    r.state.result = { ...r.state.result, proposal, delivery, at: new Date().toISOString(), validity: 'valid', validationReads: reads }; r.state.validity = 'valid'; delete r.state.staleReason;
+    this.saveResult(ctx, r.node, r.state); return true;
   }
   authority(ctx: AgentProgramContext, action: string, args: Record<string, unknown>) {
     this.validate(ctx, action, args);
@@ -236,40 +389,33 @@ export class CompositionProgram implements AgentProgram {
     const r = this.route(ctx, action, args); return r.program.invoke({ ...ctx, ...r.ctx } as AgentActionContext, action, args, signal);
   }
   recover(ctx: AgentActionContext, action: string, args: Record<string, unknown>, signal: AbortSignal) {
-    const r = this.route(ctx, action, args); return r.program.recover?.({ ...ctx, ...r.ctx } as AgentActionContext, action, args, signal) ?? Promise.resolve(undefined);
+    const r = this.route(ctx, action, args, true); return r.program.recover?.({ ...ctx, ...r.ctx } as AgentActionContext, action, args, signal) ?? Promise.resolve(undefined);
   }
   project(ctx: AgentActionContext, action: string, args: Record<string, unknown>, result: AgentActionResult): ObjectRef {
     if (!local(action)) { const r = this.route(ctx, action, args), ref = r.program.project({ ...ctx, ...r.ctx } as AgentActionContext, action, args, result); r.state.observations.push(ref); return ref; }
     const input = this.input(ctx), node = input.components.find(n => n.id === args.componentId)!, state = ctx.state.components![node.id]!, at = new Date().toISOString();
     const plan = ctx.state.plans.find(p => p.id === ctx.planId) ?? fail('Missing local composition plan');
-    const ref = { type: action === 'ActivateServiceComponent' ? 'ServiceComponent' : 'ServiceComponentResult', id: digest({ request: ctx.request.id, revision: ctx.request.revision, component: node.id, action, intent: ctx.intentId }) };
+    if (action === 'StartObservationWatch') {
+      const r = this.watchBinding(ctx, args);
+      const watch = ctx.observationControl?.start({ componentId: node.id, generation: state.generation, scope: state.scope!, programRef: this.ref, programDigest: this.configurationDigest,
+        action: String(args.action), input: r.arguments, source: r.sample.source, fields: Object.keys(r.sample.data), modelRunId: ctx.modelRunId, planId: ctx.planId, refreshCompletion: args.refreshCompletion === true }, compositionActionSchemas.StartObservationWatch.parse(args).policy, r.sample) ?? fail('Observation persistence is unavailable');
+      return projectObservationWatch(ctx.graph, ctx.owner, watch);
+    }
+    if (action === 'RepairServiceComponent') return this.repair(ctx, node, state, plan.ontologyPlanning);
+    const ref = { type: action === 'ActivateServiceComponent' ? 'ServiceComponent' : 'ServiceComponentResult', id: digest({ request: ctx.request.id, revision: ctx.request.revision, component: node.id, generation: state.generation, action, intent: ctx.intentId }) };
     let properties: Record<string, unknown>;
     if (action === 'ActivateServiceComponent') {
-      const resolved = structuredClone(node.input);
-      for (const binding of node.bindings) {
-        const source = ctx.state.components![binding.from]!.result!, record = ctx.graph.read(ctx.owner, source.ref);
-        const producer = input.components.find(n => n.id === binding.from)!, program = this.bound(producer);
-        const parents = ctx.graph.related(ctx.owner, source.ref, 'composition', { remaining: 1000 });
-        if (record.properties.artifactDigest !== digest(source.delivery.artifact.data) || record.properties.requestRevision !== ctx.request.revision || record.properties.componentId !== producer.id || !equal(record.properties.output, this.exportedOutput(program, source.delivery.artifact.data.result)) || parents?.length !== 1 || !equal(parents[0]!.ref, ctx.state.scope)) fail('Dependency result changed or belongs to another composition');
-        const field = this.exportField(program, binding.path) ?? fail('Output field is no longer exported');
-        let cursor: unknown = record.properties.output;
-        for (const segment of binding.path) {
-          if (Array.isArray(cursor) && cursor.length !== 1) fail('Multiple source candidates need an explicit user selection before a cross-service handoff');
-          cursor = dataflowValue(cursor, [segment]);
-        }
-        const value = cursor;
-        if (typeof value !== field.kind || typeof value === 'number' && !Number.isFinite(value)) fail('Exported source value has the wrong type');
-        resolved[binding.targetKey] = value;
-      }
+      const resolved = this.resolvedInput(ctx, node);
       Object.assign(state, this.bound(node).initialize(ctx.graph, ctx.owner, this.request(ctx.request, input, node), resolved));
       state.inputDigest = digest(state.input);
       state.componentRef = ref;
-      properties = { componentId: node.id, scope: state.scope, inputDigest: digest(state.input), dependencies: node.dependsOn.map(id => ctx.state.components![id]!.result!.ref) };
+      state.dependencyDigests = this.dependencyDigests(ctx, node);
+      properties = { componentId: node.id, generation: state.generation, scope: state.scope, inputDigest: digest(state.input), dependencies: node.dependsOn.map(id => ctx.state.components![id]!.result!.ref) };
     } else {
       const proposal = JSON.parse(String(args.completionJson)), delivery = this.verified(ctx, node.id, proposal, plan.ontologyPlanning);
-      properties = { componentId: node.id, artifactDigest: digest(delivery.artifact.data), output: this.exportedOutput(this.bound(node), delivery.artifact.data.result), evidenceRefs: delivery.evidenceRefs, evidenceLevel: delivery.evidenceLevel ?? 'unverified' };
+      properties = { componentId: node.id, generation: state.generation, validity: 'valid', ...(delivery.validUntil ? { validUntil: delivery.validUntil } : {}), artifactDigest: digest(delivery.artifact.data), output: this.exportedOutput(this.bound(node), delivery.artifact.data.result), evidenceRefs: delivery.evidenceRefs, evidenceLevel: delivery.evidenceLevel ?? 'unverified' };
       if (Buffer.byteLength(JSON.stringify(properties)) > 40000) fail('Component result exceeds the bounded handoff size');
-      state.result = { ref, proposal, delivery, at };
+      state.result = { ref, proposal, delivery, at, validity: 'valid', validationPlanId: ctx.planId }; state.validity = 'valid'; delete state.staleReason;
     }
     const receipts = state.result ? (ctx.graph.related(ctx.owner, { type: 'ServiceRequest', id: ctx.request.id }, 'sourceReceipts', { remaining: 5000 }) ?? []).filter(r => state.result!.delivery.evidenceRefs.includes(String(r.properties.sourceEventId)) || state.result!.delivery.evidenceRefs.includes(r.ref.id)) : [];
     ctx.graph.ingest(ctx.owner, { objects: [{ ref, properties: { id: ref.id, displayTitle: node.goal.slice(0, 500), requestRevision: ctx.request.revision, ...properties } }], links: [{ type: `${ref.type}Composition`, from: ref, to: ctx.state.scope }, ...(state.result ? [{ type: 'ComponentResultScope', from: ref, to: state.componentRef! }, ...receipts.map(r => ({ type: 'ComponentResultEvidence', from: ref, to: r.ref }))] : [])] }, { kind: 'task', id: ctx.request.id, observedAt: at });
@@ -290,7 +436,8 @@ export class CompositionProgram implements AgentProgram {
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
     compositionCompletionSchema.parse(raw); const input = this.input(ctx);
     const deliveries = new Map(input.components.map(n => {
-      const result = ctx.state.components![n.id]?.result ?? fail('Every component must be independently complete before the parent');
+      const state = ctx.state.components![n.id]!, result = state.result ?? fail('Every component must be independently complete before the parent');
+      if (!this.validResult(state) || !equal(state.dependencyDigests ?? {}, this.dependencyDigests(ctx, n))) fail('A component or its consumed dependency is stale');
       return [n.id, this.verified(ctx, n.id, result.proposal, reads)] as const;
     }));
     const checks: RequirementCheck[] = [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].map(requirement => {

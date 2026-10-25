@@ -14,6 +14,7 @@ export function createWorker(config: Config, overrides: {
   try {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS);
     const catalog = createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+      calendarSandboxPath: config.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
@@ -26,6 +27,6 @@ export function createWorker(config: Config, overrides: {
     const worker = new Worker(store, { coordinator: new Coordinator(store, overrides.reasoner ?? new CodexReasoner(model), catalog,
       { allowSandbox: config.EIGOS_ACTION_SANDBOX === 'true', maxTaskMs: config.EIGOS_TASK_MAX_MS ?? 86400000 }), ...overrides.timing });
     worker.start();
-    return { worker, close: async () => { await worker.close(); if (!overrides.store) store.close(); } };
+    return { worker, close: async () => { await worker.close(); await catalog.close(); if (!overrides.store) store.close(); } };
   } catch (error) { if (!overrides.store) store.close(); throw error; }
 }

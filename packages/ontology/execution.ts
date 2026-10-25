@@ -1,6 +1,9 @@
 import { z } from 'zod';
 
-export const BACKEND_VERSION = 'ontology-execution-v22' as const;
+export const BACKEND_VERSION = 'ontology-execution-v23' as const;
+/** Explicit ongoing delegation; no business write authority is implied. */
+export const monitoringSchema = z.strictObject({ until: z.iso.datetime({ offset: true }), maxQueries: z.number().int().min(1).max(10000).default(256) });
+export type MonitoringContract = z.infer<typeof monitoringSchema>;
 export const refSchema = z.object({ id: z.string().min(1).max(200), version: z.string().min(1).max(80) }).strict();
 export type Ref = z.infer<typeof refSchema>;
 const integer = z.string().regex(/^(0|[1-9]\d{0,17})$/);
@@ -33,6 +36,7 @@ export interface ServiceRequest {
   outcome?: 'refund' | 'cancel';
   businessScopeId?: string;
   executionEnvironment?: 'live' | 'sandbox';
+  monitoring?: MonitoringContract;
 }
 export interface ActionType { ref: Ref; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[] }
 export interface ServiceCapability {

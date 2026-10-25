@@ -46,7 +46,7 @@ export function chooseComposition(ctx: AgentPlanningContext, access: PlanningAcc
 function fixture(input = compositionExample(), choice = chooseComposition) {
   const didi = didiFixture(), meituan = meituanPrimitiveFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, meituan: meituan.reader, didi: { ...didi.binding, connector: didi.connector } });
-  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.live', input), capabilityRef: { id: 'services.compose.live', version: '1' } }, evidence: evidence() }),
+  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.live', input), capabilityRef: { id: 'services.compose.live', version: '2' } }, evidence: evidence() }),
     plan: async () => { throw new Error('No legacy cross-service recipe'); }, act: async (ctx, _signal, access) => { const decision = choice(ctx, access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
   const b = backend(catalog, model, store);
   const finish = async (id: string) => { for (let i = 0; i < 15; i++) { const current = store.get(owner, id); if (!['working', 'submitted'].includes(current.state)) return current; await b.run(); } throw new Error(JSON.stringify(store.get(owner, id).delegation?.agent?.feedback)); };
@@ -139,7 +139,7 @@ test('Cross-service reservations keep separate exact grants and PA payment retai
     { id: 'registration', capabilityRef: regProgram.ref, goal: '确认免费报名', input: registration.input, dependsOn: [], bindings: [], requirementIds: ['total', 'people'], conditionIds: [], budgetShares: [{ requirementId: 'total', minor: '0' }] },
     { id: 'booking', capabilityRef: bookProgram.ref, goal: '预约并由 PA 模拟付款后确认', input: { query: 'consultation', participants: 2, startsAt: null }, dependsOn: [], bindings: [], requirementIds: ['total', 'people'], conditionIds: [], budgetShares: [{ requirementId: 'total', minor: '20000' }] },
   ] };
-  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.sandbox', input), capabilityRef: { id: 'services.compose.sandbox', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('No recipe'); },
+  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async request => ({ decision: { ...interpretation(request, 'services.compose.sandbox', input), capabilityRef: { id: 'services.compose.sandbox', version: '2' } }, evidence: evidence() }), plan: async () => { throw new Error('No recipe'); },
     act: async (ctx, _signal, access) => {
       access.session.call('describe_ontology', { actions: ['CompleteServiceComponent'] });
       access.session.call('query_ontology', { object: ctx.state.scope });

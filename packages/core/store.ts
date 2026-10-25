@@ -9,6 +9,8 @@ import { digest } from './delegation.js';
 import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
 import { synchronizeTaskOutcome } from './task-outcome.js';
+import { SituationStore } from './situation-store.js';
+import { PAQuestionStore } from './pa-questions.js';
 
 export interface ListFilter {
   limit: number;
@@ -18,7 +20,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; observationOnly?: boolean; activeStartedAt?: number }
 
 function equivalentFingerprint(a: string, b: string): boolean {
   if (a === b) return true;
@@ -31,6 +33,8 @@ function equivalentFingerprint(a: string, b: string): boolean {
 export class JobStore {
   private db: DatabaseSync;
   readonly ontology: OntologyObjectStore;
+  readonly situations: SituationStore;
+  readonly paQuestions: PAQuestionStore;
 
   constructor(path: string) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -79,6 +83,19 @@ export class JobStore {
       `);
     });
     this.ontology = new OntologyObjectStore(this.db);
+    this.paQuestions = new PAQuestionStore(this.db);
+    this.situations = new SituationStore(this.db, {
+      active: (owner, id, revision) => {
+        const job = this.get(owner, id);
+        return job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.request.revision === revision
+          && ['working', 'submitted', 'input-required', 'auth-required'].includes(job.state);
+      },
+      wake: (owner, id) => {
+        const job = this.get(owner, id);
+        if (!job.delegation || job.delegation.nextAt === 0) return;
+        job.delegation.nextAt = 0; this.save(owner, job);
+      },
+    });
   }
 
   close(): void { this.db.close(); }
@@ -359,18 +376,19 @@ export class JobStore {
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1)
+        OR (state IN ('input-required','auth-required') AND EXISTS (SELECT 1 FROM observation_watches w WHERE w.owner=jobs.owner AND w.job_id=jobs.id AND w.status='active' AND w.next_at<=? AND json_extract(w.body,'$.requestRevision')=json_extract(jobs.body,'$.delegation.request.revision'))))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
-        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
+        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(at, ...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(at).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, at + leaseMs);
-      return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
+      return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? job.delegation?.recoveryPending ? { recovery: true } : { observationOnly: true } : {}) };
     });
   }
 
@@ -386,7 +404,7 @@ export class JobStore {
   private active(claim: WorkClaim, now: number): boolean {
     const lease = this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(claim.job.id);
     const current = this.get(claim.owner, claim.job.id);
-    return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
+    return lease?.token === claim.token && Number(lease.expires_at) > now && (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : claim.observationOnly ? [claim.job.state, 'working'].includes(current.state) : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
@@ -432,12 +450,20 @@ export class JobStore {
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
       synchronizeTaskOutcome(job);
+      if (this.situations && job.delegation?.request.monitoring) job.delegation.situation = this.situations.summary(owner, job.id);
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
+      if (this.situations && ['completed', 'canceled', 'failed', 'rejected'].includes(job.state)) {
+        this.situations.stop(owner, job.id, job.state === 'completed' ? 'ended' : 'revoked', `Task ${job.state}`);
+        if (job.delegation?.request.monitoring) {
+          job.delegation.situation = this.situations.summary(owner, job.id);
+          this.db.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(job), owner, job.id);
+        }
+      }
       projectTask(this.ontology, owner, job);
       if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) this.recordFeedback(owner, job, job.delegation.outcome?.evidenceLevel ?? 'unverified');
       this.db.exec('RELEASE task_and_ontology');

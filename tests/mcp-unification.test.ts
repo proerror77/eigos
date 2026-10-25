@@ -14,8 +14,10 @@ test('All configured vendor MCP programs use independent definitions and common 
   try{
     const catalog=createExecutionCatalog({store,didi:{...didi.binding,connector:didi.connector},meituan:meituan.reader,shopifyCatalog:{merchants:[{id:'fixture',name:'Synthetic merchant',shopId:'gid://shopify/Shop/123',domain:'fixture.myshopify.com'}],connector:{evidenceKind:'fixture',invoke:async()=>{shopifyCalls++;throw new Error('No constructor reads allowed');}}}});
     for(const ref of [{id:'ride.estimate.query',version:'1'},{id:'commerce.catalog.query',version:'2'},{id:'geo.search',version:'1'},{id:'address.book.read',version:'1'},{id:'delivery.quote',version:'2'}]){
-      const program=catalog.agentProgram(ref,owner);assert(program);assert.equal(program.guidance,ONTOLOGY_READ_GUIDANCE);
-      for(const id of program.actionIds){const definition=program.definition(store.ontology,id);assert(definition.read?.mcp);assert(definition.read.module?.digest);assert.equal(definition.read.effect,'read');}
+      const program=catalog.agentProgram(ref,owner);assert(program);assert(program.guidance.startsWith(ONTOLOGY_READ_GUIDANCE));
+      for(const id of program.actionIds){const definition=program.definition(store.ontology,id);
+        if(id==='StartTaskObservationWatch'){assert.equal(definition.operation?.effect,'local');assert(program.observationActions?.length);continue;}
+        assert(definition.read?.mcp);assert(definition.read.module?.digest);assert.equal(definition.read.effect,'read');}
       assert.deepEqual(catalog.bindings(ref,owner),[],'No eager legacy MCP adapter may be registered');
       assert.deepEqual(catalog.discoverySources(ref,owner),[],'No pre-model MCP discovery recipe may remain');
     }

@@ -71,6 +71,10 @@ const commerceDisabled = process.env.EIGOS_COMMERCE_SANDBOX_URL === '';
 const commerceUrl = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_URL ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_URL');
 const commerceTokenFile = commerceDisabled ? undefined : process.env.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE ?? field(oldSettings, 'EIGOS_COMMERCE_SANDBOX_TOKEN_FILE');
 const commerce = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development', EIGOS_ACTION_SANDBOX: commerceUrl ? 'true' : 'false', EIGOS_COMMERCE_SANDBOX_URL: commerceUrl, EIGOS_COMMERCE_SANDBOX_TOKEN_FILE: commerceTokenFile });
+const calendarPath = process.env.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH === '' ? undefined : process.env.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH ?? field(oldSettings, 'EIGOS_CALENDAR_SANDBOX_DATABASE_PATH');
+const calendar = readWorkerConfig({ NODE_ENV: 'development', HOST: '127.0.0.1', PUBLIC_URL: 'http://127.0.0.1:3430', EIGOS_AUTH_MODE: 'development',
+  DATABASE_PATH: join(runtime, 'tasks.sqlite'), EIGOS_ACTION_SANDBOX: calendarPath ? 'true' : 'false', EIGOS_CALENDAR_SANDBOX_DATABASE_PATH: calendarPath });
+if (calendarPath && /[\r\n'"#]/.test(calendarPath)) throw new Error('Synthetic calendar path cannot be represented in managed settings');
 const participant = participantDeploymentSettings(process.env, parseEnv(oldSettings), join(runtime, 'tasks.sqlite'));
 const codex = process.env.EIGOS_CODEX_BIN ?? execFileSync('/usr/bin/which', ['codex'], { encoding: 'utf8' }).trim();
 const passport = execFileSync('/usr/bin/which', ['pt-passport'], { encoding: 'utf8' }).trim();
@@ -105,7 +109,9 @@ const settings = [marker, 'NODE_ENV=development', 'HOST=127.0.0.1', 'PORT=3430',
   `EIGOS_SHOPIFY_CATALOG_MERCHANTS=${shopifySetting}`,
   ...(shopifyMerchants.length ? [`EIGOS_SHOPIFY_AUDIT_DIR=${join(runtime, 'shopify-reads')}`] : []),
   ...(didi.EIGOS_DIDI_KEY_FILE ? [`EIGOS_DIDI_KEY_FILE=${didi.EIGOS_DIDI_KEY_FILE}`, `EIGOS_DIDI_KEY_SHA256=${didi.EIGOS_DIDI_KEY_SHA256}`, `EIGOS_DIDI_BINDING_ID=${didi.EIGOS_DIDI_BINDING_ID}`, `EIGOS_DIDI_ENVIRONMENT=${didi.EIGOS_DIDI_ENVIRONMENT}`, 'EIGOS_DIDI_ORDERS_ENABLED=false', `EIGOS_DIDI_AUDIT_DIR=${join(runtime, 'didi-reads')}`] : []),
-  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? ['EIGOS_ACTION_SANDBOX=true', `EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
+  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL || calendar.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH ? ['EIGOS_ACTION_SANDBOX=true'] : []),
+  ...(commerce.EIGOS_COMMERCE_SANDBOX_URL ? [`EIGOS_COMMERCE_SANDBOX_URL=${commerce.EIGOS_COMMERCE_SANDBOX_URL}`, `EIGOS_COMMERCE_SANDBOX_TOKEN_FILE=${commerce.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE}`, `EIGOS_COMMERCE_SANDBOX_AUDIT_DIR=${join(runtime, 'commerce-sandbox-reads')}`] : []),
+  ...(calendar.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH ? [`EIGOS_CALENDAR_SANDBOX_DATABASE_PATH=${calendar.EIGOS_CALENDAR_SANDBOX_DATABASE_PATH}`] : []),
   ...Object.entries(participant).map(([key, value]) => `${key}=${value}`),
   `EIGOS_ONTOLOGY_AUDIT_PATH=${join(runtime, 'ontology-reads.jsonl')}`, `EIGOS_RELEASE_DIGEST=${buildDigest}`, ''].join('\n');
 const strings = values => values.map(v => `<string>${xml(v)}</string>`).join('');

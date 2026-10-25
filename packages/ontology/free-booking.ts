@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { moneySchema } from './execution.js';
 import { bookingReceiptSchema } from './booking.js';
+import { eventOccurrenceSchema } from './event-occurrence.js';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
 
 const text = z.string().trim().min(1).max(500), instant = z.iso.datetime({ offset: true });
@@ -20,6 +21,7 @@ const service = {
   serviceUrl: bookingServiceUrl, title: text, kind: z.enum(['event_registration', 'appointment']),
   startsAt: instant, endsAt: instant, timeZone: text.refine(value => { try { new Intl.DateTimeFormat('en', { timeZone: value }); return true; } catch { return false; } }), participants: z.literal(1),
   attendeeRef: sha, payment: registrationPaymentSchema, termsRef: text,
+  event: eventOccurrenceSchema.optional(),
 };
 export const registrationOfferSchema = z.strictObject({
   ...service, availability: z.enum(['available', 'unavailable', 'waitlist', 'unknown']),

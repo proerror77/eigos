@@ -44,7 +44,11 @@ export interface Delegation {
   groundingDecisions?: { modelRunId: string; decision: Grounding }[];
   backendVersion: typeof BACKEND_VERSION;
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'watching' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'awaiting_pa_answer' | 'executing' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  situation?: import('../ontology/situation.js').SituationSummary;
+  observationPaused?: boolean;
+  requesterClientId?: string;
+  paQuestion?: import('./pa-questions.js').PAQuestionSummary;
   plan?: ExecutionPlan;
   agent?: import('../ontology/agent-actions.js').AgentExecutionState;
   agentHistory?: import('../ontology/agent-actions.js').AgentExecutionState[];

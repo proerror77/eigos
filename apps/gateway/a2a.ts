@@ -3,9 +3,10 @@ import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/ser
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
-import { DomainError, ownerKey, submitSchema, replySchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
+import { DomainError, ownerKey, submitSchema, replySchema, observationReportSchema, observationRevokeSchema, observationResumeSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import { answerPAQuestionSchema } from '../../packages/core/pa-questions.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -112,12 +113,20 @@ export class A2AGateway implements A2ARequestHandler {
       } else throw new ContentTypeNotSupportedError('Use text parts or a single structured data part');
       let job: Job;
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
+        if (input && typeof input === 'object' && 'action' in input && input.action === 'answer_pa_question') {
+          job = this.tasks.answerPAQuestion(p, answerPAQuestionSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId }), message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {
           const route = paPaymentRouteSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.selectPaymentRoute(p, route, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_payment_result') {
           const report = paPaymentReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.reportPayment(p, report, message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'report_source_change') {
+          job = this.tasks.reportSourceChange(p, observationReportSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId }), message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'revoke_observation') {
+          job = this.tasks.revokeObservation(p, observationRevokeSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId }), message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'resume_observation') {
+          job = this.tasks.resumeObservation(p, observationResumeSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId }), message.contextId || undefined);
         } else {
           const answer = replySchema.parse({ ...(input as object), taskId: message.taskId, requestId: message.messageId });
           job = this.tasks.reply(p, answer, message.contextId || undefined);

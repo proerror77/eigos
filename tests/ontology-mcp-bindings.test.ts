@@ -68,7 +68,8 @@ test('Ontology discovery exposes the actual tool binding and dependencies to the
   const t = setupDidi((ctx, access) => {
     const described = access.session.call('describe_ontology', { actions: ['EstimateDidiRide'] }) as { actions: { read: { mcp: unknown } }[] };
     assert.deepEqual(described.actions[0]!.read.mcp, action.read!.mcp);
-    assert(ctx.capability.actions!.every(a => a.ref.version === didiReadDefinition.version));
+    assert(ctx.capability.actions!.filter(a => a.effect === 'read').every(a => a.ref.version === didiReadDefinition.version));
+    assert(ctx.capability.actions!.filter(a => a.effect !== 'read').every(a => a.ref.id === 'StartTaskObservationWatch' && a.effect === 'local'));
     return chooseDidi(ctx, access);
   });
   return (async () => { try { const job = t.b.submit(); assert.equal((await t.finish(job.id)).state, 'completed'); } finally { t.close(); } })();

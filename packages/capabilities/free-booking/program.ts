@@ -10,6 +10,7 @@ import { objectRefSchema, type ObjectRef } from '../../ontology/model.js';
 import type { PlanningSnapshot } from '../../ontology/planning-contract.js';
 import { registrationActionSchemas, registrationInputSchema, registrationOfferSchema, registrationRecordSchema, registrationResultSchema, type RegistrationAction } from '../../ontology/free-booking.js';
 import type { AgentDecision } from '../../ontology/agent-actions.js';
+import type { SourceSample } from '../../ontology/situation.js';
 
 export interface ParticipantBookingSource {
   readonly environment: 'live' | 'sandbox'; readonly configurationDigest: string; readonly identity: string; readonly attendeeRef: string;
@@ -24,7 +25,10 @@ export class ParticipantBookingProgram implements AgentProgram {
   readonly configurationDigest: string;
   readonly actionIds: string[];
   readonly completionSchema = z.toJSONSchema(completion);
-  readonly handoffFields = ['serviceUrl', 'title', 'startsAt', 'endsAt', 'timeZone'].map(key => ({ path: ['registration', key], kind: 'string' as const }));
+  readonly observationActions = ['ReadParticipantRegistration'];
+  readonly observationCompletion = { argument: 'registration', evaluate: 'registrationStatus' };
+  readonly handoffFields = [...['serviceUrl', 'title', 'startsAt', 'endsAt', 'timeZone'].map(key => ({ path: ['registration', key], kind: 'string' as const })),
+    ...['sourceId', 'canonicalUrl', 'title', 'startsAt', 'endsAt', 'admissionClosesAt', 'timeZone', 'venueName', 'venueAddress', 'venueCity', 'state'].map(key => ({ path: ['registration', 'event', key], kind: 'string' as const }))];
   readonly limits = { modelTurns: 80, plans: 24, actions: 64 };
   readonly guidance = [
     'Fulfill the participant goal using the published registration Ontology. Select InspectRegistrationPage, the bound SubmitFreeRegistration action, ReadParticipantRegistration, WaitForRegistration and completion based on independently evaluated source facts. There is no fixed recipe.',
@@ -142,11 +146,27 @@ export class ParticipantBookingProgram implements AgentProgram {
     }
     return projectRegistration(ctx, action, source);
   }
+  sourceObservation(ctx: AgentProgramContext, action: string, input: Record<string, unknown>, source: AgentActionResult | ObjectRef): SourceSample {
+    if (action !== 'ReadParticipantRegistration') fail('Only independent original-registration reads can be watched');
+    this.validate(ctx, action, input);
+    const ref = objectRefSchema.safeParse(source);
+    const result = ref.success ? this.observed(ctx, ref.data) : registrationResultSchema.parse((source as AgentActionResult).value);
+    const data = registrationRecordSchema.parse(result.payload.data);
+    if (result.payload.type !== 'RegistrationRecord' || !data.independentRead || result.receipt.action !== action || data.attendeeRef !== this.source.attendeeRef || result.receipt.sourceIdentity !== this.source.identity || result.receipt.ownerDigest !== digest(ctx.owner) || result.receipt.requestId !== ctx.request.id || result.receipt.requestRevision !== ctx.request.revision || (this.source.environment === 'sandbox') !== (result.evidenceLevel === 'synthetic')) fail('Observation is not an owned independent participant source read');
+    const { observedAt: _observed, event, ...facts } = data;
+    return { source: { bindingId: this.source.identity, bindingDigest: this.configurationDigest, accountRef: this.source.attendeeRef, subjectId: data.registrationId, mappingVersion: 'participant-event-1' },
+      eventId: result.receipt.id, observedAt: data.observedAt, expiresAt: result.payload.expiresAt, authoritativeRead: true,
+      data: { ...Object.fromEntries(Object.entries(facts).map(([key, value]) => [`registration.${key}`, value])), ...Object.fromEntries(Object.entries(event ?? {}).map(([key, value]) => [`registration.event.${key}`, value])) },
+      evidenceRefs: [result.receipt.id], evidenceLevel: result.evidenceLevel,
+      object: ref.success ? ref.data : { type: 'RegistrationRecord', id: digest({ scope: ctx.state.scope, receipt: result.receipt.id }) } };
+  }
   complete(ctx: AgentProgramContext, raw: unknown, reads: PlanningSnapshot): Delivery {
     const input = this.scope(ctx), proposal = completion.parse(raw), s = this.observed(ctx, proposal.registration), result = this.evaluate(ctx, proposal.registration, reads), data = registrationRecordSchema.parse(s.payload.data);
     if (!isFreeRegistration(data) || !data.independentRead || s.receipt.action !== 'ReadParticipantRegistration' || !('submitted' in result) || (input.completionTarget === 'confirmed' ? !result.confirmed : !result.submitted)) fail('The requested participant endpoint is not independently confirmed');
     const verifiedAt = new Date().toISOString(), predicates = ['registration.free', ...(result.submitted ? ['registration.submitted'] : []), ...(result.confirmed ? ['registration.confirmed'] : [])];
+    const achievedAt = input.completionTarget === 'confirmed' ? data.confirmedAt! : data.submittedAt!;
     const resultData = { environment: this.source.environment, evidenceLevel: s.evidenceLevel, source: 'operator_assisted_browser', paymentRequired: false, realPayment: false, completionTarget: input.completionTarget, registration: data, browserEvidence: s.browserEvidence, verifiedAt };
-    return { evidenceLevel: s.evidenceLevel, artifact: { id: digest(resultData), name: 'participant-registration.json', data: { goal: ctx.request.originalGoal, deliverable: input.completionTarget === 'confirmed' ? '已独立回读并确认免费报名或预约资格；这不证明实际到场。' : `已独立回读报名或预约提交回执；当前状态：${data.state}。`, execution: 'completed', result: resultData } }, facts: { conditions: predicates, totalPrice: data.payment.total, amounts: { service_total: data.payment.total }, quantity: { amount: '1', unit: 'person' }, quantities: { participant_count: { amount: '1', unit: 'person' } }, deliveryBy: verifiedAt, deadlines: { completion: verifiedAt } }, evidenceRefs: [s.receipt.id] };
+    if (data.event?.state === 'canceled') fail('The registered event was canceled; registration confirmation alone does not preserve participation');
+    return { evidenceLevel: s.evidenceLevel, validUntil: s.payload.expiresAt, artifact: { id: digest(resultData), name: 'participant-registration.json', data: { goal: ctx.request.originalGoal, deliverable: input.completionTarget === 'confirmed' ? '已独立回读并确认免费报名或预约资格；这不证明实际到场。' : `已独立回读报名或预约提交回执；当前状态：${data.state}。`, execution: 'completed', result: resultData } }, facts: { conditions: predicates, totalPrice: data.payment.total, amounts: { service_total: data.payment.total }, quantity: { amount: '1', unit: 'person' }, quantities: { participant_count: { amount: '1', unit: 'person' } }, deliveryBy: achievedAt, deadlines: { completion: achievedAt } }, evidenceRefs: [s.receipt.id] };
   }
 }

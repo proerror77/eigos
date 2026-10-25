@@ -28,9 +28,13 @@ export interface AgentActionPlan {
   environment?: 'sandbox' | 'live_free';
   steps: (AgentStep & { definitionDigest: string; input: Record<string, unknown>; intentId: string; operationKey: string; effect: import('./actions.js').EffectClass; additionalEffects?: import('./actions.js').EffectClass[]; cost?: { minor: string; currency: string; payeeId: string }; operationScope?: string })[];
   ontologyPlanning: PlanningSnapshot; digest: string;
+  situationRevision?: number;
   initialSelection?: { modelRunId: string; definitionActions: string[]; groundingPlanning: PlanningSnapshot };
 }
 export interface AgentExecutionState {
+  situationRevision?: number;
+  monitoringSelection?: { modelRunId: string; at: string };
+  monitoringResult?: { proposal: unknown; delivery: import('../core/catalog.js').Delivery; at: string };
   components?: Record<string, import('./composition.js').ComponentState>;
   version: '1'; programRef: Ref; programDigest: string; scope: ObjectRef;
   input: Record<string, unknown>; requestRevision: number;
@@ -41,6 +45,6 @@ export interface AgentExecutionState {
   paPayment?: import('../core/pa-payment.js').PAPaymentState;
   feedback: { at: string; kind: 'validation' | 'action' | 'completion'; message: string; inputDigest: string }[];
   informationRequests?: { at: string; modelRunId: string; decision: AgentDecision; ontologyPlanning: PlanningSnapshot }[];
-  completion?: { mode?: 'model' | 'planned'; planId?: string; modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot };
+  completion?: { mode?: 'model' | 'planned'; planId?: string; modelRunId: string; modelDecision: AgentDecision; proposal: unknown; ontologyPlanning: PlanningSnapshot; situationRevision?: number };
 }
 export const agentObjectRefSchema = objectRefSchema;

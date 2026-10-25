@@ -3,12 +3,12 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "19",
-    "digest": "d3602c1a7de7de56d3f18d60ee3710e7e07a19a0694ee0f49c935b4e9a86b258"
+    "version": "20",
+    "digest": "cff51ea57b55f37ee2b1e08258f71ed9d315fd2786b2330a129dab6bd4a83686"
   },
   "types": {
     "ServiceRequest": {
-      "fingerprint": "c16f5b0d12bc9b41005ce2674789cb12f8e095d3d2e6887b6d345cd83e8dec0e",
+      "fingerprint": "7e3001057cd0dc9f0b609cc2c305ce2f6c5bbaed62c5aa5c410b447d592cb004",
       "fields": {
         "requestId": "task_private",
         "displayTitle": "task_private",
@@ -19,7 +19,9 @@
         "progress": "task_private",
         "projectionState": "task_private",
         "createdAt": "task_private",
-        "currentAssessment": "task_private"
+        "currentAssessment": "task_private",
+        "currentSituation": "task_private",
+        "monitoring": "task_private"
       }
     },
     "Proposal": {
@@ -342,7 +344,7 @@
       }
     },
     "SourceReceipt": {
-      "fingerprint": "b4575b30d19323c6ad4cc8209bc0b913f268f0d6860b1764c32869d320435ca3",
+      "fingerprint": "b7b7bb631cec33ae53639444550167e54e8013c6c7b4dd240f24205898234775",
       "fields": {
         "receiptId": "task_private",
         "displayTitle": "task_private",
@@ -1331,7 +1333,7 @@
       }
     },
     "RegistrationOffer": {
-      "fingerprint": "13c62a10ae5d6837794763bdcdff054616d4873eaaf1a0628251352a05aa45e1",
+      "fingerprint": "89f51cafa3315a6f5b192591e02540ede075d0f02ee88a3bdbf18eaca4295dff",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -1341,7 +1343,7 @@
       }
     },
     "RegistrationRecord": {
-      "fingerprint": "6c78633ef00b7cc600d271d91bb4ff38cf58ce5d0b8b7f2caff7248c8bbef50d",
+      "fingerprint": "0c2a0b7556dd26f7d12248e15eee0a8dc5ad3bc00fc7fd12ad133280c2d8d81f",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -1383,7 +1385,7 @@
       }
     },
     "ServiceComposition": {
-      "fingerprint": "ae1f1aeeaa59eb748f1adab5d9e1cd850071eeb26a8ddb764b28d3508dff0899",
+      "fingerprint": "626702c76dcb59f6d248a683d0e52555fe3f5763477f854273bc21aa73a9fc9e",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -1393,7 +1395,7 @@
       }
     },
     "ServiceComponent": {
-      "fingerprint": "37776daf088231b751073d8d370941fa518cdbe66aca16aebcbe23d455759af1",
+      "fingerprint": "544ffc48bb3be3320db89095c513ff666168caeaf7032883e30461ba785c4c00",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -1401,11 +1403,12 @@
         "componentId": "task_private",
         "scope": "task_private",
         "inputDigest": "task_private",
-        "dependencies": "task_sensitive"
+        "dependencies": "task_sensitive",
+        "generation": "task_private"
       }
     },
     "ServiceComponentResult": {
-      "fingerprint": "3191bde983042eaf798a8f374f770a9a93ee43eed8c00bd4bed47d130d9e7c1f",
+      "fingerprint": "b9219709b48e98bdc4b820afce2f6c34f0503bfcc3224793c897bfa894f4cfe6",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -1414,7 +1417,96 @@
         "artifactDigest": "task_private",
         "output": "internal_only",
         "evidenceRefs": "task_sensitive",
-        "evidenceLevel": "task_private"
+        "evidenceLevel": "task_private",
+        "generation": "task_private",
+        "validity": "task_private",
+        "validUntil": "task_private"
+      }
+    },
+    "PAQuestion": {
+      "fingerprint": "19f0e2ef1ad1a37f633b32861bc3a356d7d171051716866542d930b8ad6bbe0b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "questionDigest": "task_private",
+        "question": "internal_only"
+      }
+    },
+    "PACalendarAnswer": {
+      "fingerprint": "acfd4d7a0e06494420951cce9e531ff494ee7b91925fb24954b2093268a9bb1e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "task_sensitive"
+      }
+    },
+    "TravelTimingObservation": {
+      "fingerprint": "298b15548a80d2e6844b2ab91abecdb22df5ad4a618e9a10f79292169d6ce230",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "data": "task_sensitive"
+      }
+    },
+    "CalendarTask": {
+      "fingerprint": "b6bca1b4c3d394cc3e8e266f10c8cd00fada2d99dd7a5fe96d7f35906c282a33",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "bindingDigest": "task_private",
+        "originalEventId": "task_sensitive",
+        "questionFreshAfter": "task_private"
+      }
+    },
+    "CalendarObservation": {
+      "fingerprint": "c9f9439534efc984e741fd4ebcd4ad1453706c1b80f12a102d628c2c2cc1ede7",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "requestRevision": "task_private",
+        "data": "task_sensitive",
+        "snapshot": "task_sensitive"
+      }
+    },
+    "EventOccurrence": {
+      "fingerprint": "d227e5eafdb47e08e3efd59410815d0ed8b23135109f56066c72d7d7c5abf6cd",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_sensitive",
+        "data": "task_sensitive",
+        "observedAt": "task_private",
+        "validUntil": "task_private"
+      }
+    },
+    "ObservationWatch": {
+      "fingerprint": "6bd3a00b4fd7ff8cbac8b5fe29b756769a79705286b278b30c63606f92c949b7",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "until": "task_private",
+        "status": "task_private",
+        "health": "task_private",
+        "summary": "internal_only"
+      }
+    },
+    "SituationAssessment": {
+      "fingerprint": "3ba37adbe801057caed34a6d48c74f61a1bc569c3f1bd167be9902288c25398a",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "situationRevision": "task_private",
+        "judgment": "task_private",
+        "assessedAt": "task_private",
+        "validUntil": "task_private",
+        "reason": "task_sensitive",
+        "evidenceRefs": "task_private",
+        "components": "internal_only"
       }
     }
   },
@@ -1422,7 +1514,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "ba6042ea0988093338bab0b50a896cf71a355db2003ec1cb0194a0b7efa6d4db",
+      "sourceDigest": "bab835d3472dd4befe8b15ecd9af0bcbfc837ae9e658b87996eb58d2792a0c63",
       "channels": [
         "http"
       ],
@@ -1434,7 +1526,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "22c873fa47b4449334c3c048b2e29fbd16a17b27e901daa879f4586aff525088",
+      "sourceDigest": "d4b0aef9edb186cca4230af08b6bba940028f024b4183c531a747b65a22fd26d",
       "channels": [
         "mcp"
       ],
@@ -1446,7 +1538,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "5e15cd1af5a7805a88fda94ff3321377de44b738fa99364ba8a8a4ee97dfe56b",
+      "sourceDigest": "366357add98cf3b24e6f37f906691d2e851cf73f33f504fd47ffcbf37b27bfd8",
       "channels": [
         "a2a"
       ],
@@ -1458,7 +1550,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "b22ffea784baa61bf8f95797f0509cd2ab9b5d0fe9eb992a0945522c8b534952",
+      "sourceDigest": "67e70e47cf1d936bff461cb48eb714e9dd8e1df2ce6760e2b5720ecb040a2d53",
       "channels": [
         "http",
         "mcp",
@@ -1472,7 +1564,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "609a084691b1cdaed69bfd4e9e5c27bb8b874c0a67209a4da0dde9f7f5e51664",
+      "sourceDigest": "6c46891723e1cb5ee4b7cb8ce46ba4de09f69122ff5015cf974ba030dcc35b8e",
       "channels": [
         "sqlite",
         "idempotency"
@@ -1485,7 +1577,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "1761972182b77956037499ccd16485191d7f71d4d7ee3835fe7d23663e5225ed",
+      "sourceDigest": "d0af6c096da571b3b20e740852e78a20f0d2841e79910c9e006779b02afeadd3",
       "channels": [
         "query",
         "function"
@@ -1570,7 +1662,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "79f900ccb42b419f48a40f9d24eef19998d22594dd20a5e7c616e52e7a19ac54",
+      "sourceDigest": "cc1cf7f374b149f3eb5b34997751cfca20f3eeeabf34738b975f1f8ec31b28a1",
       "channels": [
         "model",
         "query"
@@ -1595,7 +1687,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "c888437e42c913ef458f560f0e7f35b756904eeab002d90f8f6111d55264cea6",
+      "sourceDigest": "695a740e1996aaac46e02f9eb317099c545cc919cc81d90004bc363f50a76668",
       "channels": [
         "model",
         "dispatch"
@@ -1608,7 +1700,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "efdbac5eb72f312340bc7bf96c71ca7eba577c8760322f71c9f5fa8d2dcfb370",
+      "sourceDigest": "be44eeb2ee5dccd294676a189bb3402933c578548e0e2d84d3ec916b2d1d7914",
       "channels": [
         "model",
         "dispatch",
@@ -1683,7 +1775,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "99b4f8b2f25d59a8db81c54bd9f09f72c2b1c4c1f8c687f92b85db00f52bb7ab",
+      "sourceDigest": "f48451ac02561def4cc5dfaf4b5d3ba34eec6b61dea76c59f4c1a062207e3ab7",
       "channels": [
         "source",
         "dispatch"
@@ -1747,7 +1839,7 @@
     {
       "id": "booking-bridge",
       "file": "packages/capabilities/free-booking/browser-bridge.ts",
-      "sourceDigest": "5d80d7b727ac00abce951da9af7e2b604572a2ff6c4ab8f7cb3c2dd0d2ebf878",
+      "sourceDigest": "8453d964444f62540fdd6b7e82da8d5fa13f4a63ea91b7488ea22a71e28cdac9",
       "channels": [
         "source",
         "private_file"
@@ -1773,7 +1865,7 @@
     {
       "id": "task-projection",
       "file": "packages/ontology/task-projection.ts",
-      "sourceDigest": "2b673d457cd09bb1981633e6c1de56a67885da1128133bd684cd50bf6a98ff5d",
+      "sourceDigest": "fdc6874153bc1f206530efe3653a258be0ce85bd05f14b9d2700724476a3bd5b",
       "channels": [
         "ontology_write"
       ],
@@ -1825,7 +1917,7 @@
     {
       "id": "initial-selection",
       "file": "packages/coordinator/initial-selection.ts",
-      "sourceDigest": "9d41a6abb5260730d39d3becac35278a5f086b0a72c3bebd250dcfeea15f5365",
+      "sourceDigest": "3c5c39234aeeed49c9e1f51c89575346bb7dc0949458fcd952ce8bd767749a4d",
       "channels": [
         "model",
         "dispatch",
@@ -1920,7 +2012,7 @@
     {
       "id": "composition-program",
       "file": "packages/coordinator/composition-program.ts",
-      "sourceDigest": "96291618dee362f74dc24ec08e881a022eae1250e9580a7def44bad84500beac",
+      "sourceDigest": "3c30572e3e2f519c142344e431afefd122fc7e9779c121132f48186ee2988b30",
       "channels": [
         "model",
         "dispatch",
@@ -1934,7 +2026,7 @@
     {
       "id": "composition-contract",
       "file": "packages/ontology/composition.ts",
-      "sourceDigest": "7cb2c54cb0895c80bc5968a9946e7a337437dee61c7db451b4009c06fb1ea0dc",
+      "sourceDigest": "83cbed661b785f2af71007432736dbdcacba2b35fda0e20f259cf97cc10f89e8",
       "channels": [
         "model",
         "dispatch",
@@ -1958,6 +2050,124 @@
       "currentControl": "Owned pinned task/program bindings, no authority amplification, fail closed on unknown state",
       "targetControl": "Intersect existing task and source grants; preserve historical records",
       "stage": "S3"
+    },
+    {
+      "id": "situation-store",
+      "file": "packages/core/situation-store.ts",
+      "channels": [
+        "sqlite",
+        "dispatch"
+      ],
+      "content": "Owned notices, source samples, observation contracts, cumulative budgets and source ordering",
+      "currentControl": "Owner/task/source identity, current read fences, read-only fixed selection and terminal task guards",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "16b891839d895123303734a0204f3ec7ac8bf51acf839ee67a48c315b6e6825d"
+    },
+    {
+      "id": "observation-runtime",
+      "file": "packages/coordinator/observation-runtime.ts",
+      "channels": [
+        "dispatch",
+        "model"
+      ],
+      "content": "Fixed source observation scheduling and unchanged-evidence refresh",
+      "currentControl": "Current task claim and watch generation; source changes invalidate before new dispatch",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "937cff7f4305d44acd2dbf92071deea52f5afeaa4b1caa54c1c56af58a472dc6"
+    },
+    {
+      "id": "observed-program",
+      "file": "packages/coordinator/observed-program.ts",
+      "channels": [
+        "model",
+        "dispatch",
+        "artifact"
+      ],
+      "content": "Explicit standalone observation binding and conditional completion",
+      "currentControl": "Model-selected reads only; no business writes or implicit observation contract",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "5868c2c62944e290c3f72e91cb47c0a1a9d15ef6e0f42a6f4227e371a3358367"
+    },
+    {
+      "id": "situation-projection",
+      "file": "packages/ontology/situation-projection.ts",
+      "channels": [
+        "ontology_write",
+        "artifact"
+      ],
+      "content": "Current assessment and observation health with freshness",
+      "currentControl": "Current task and owned source evidence; no raw notification payload",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "11cf6899b99975a1fe57b3f144336db442110d0ba29b5a904a4deb280240d939"
+    },
+    {
+      "id": "pa-questions",
+      "file": "packages/core/pa-questions.ts",
+      "channels": [
+        "sqlite",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Scoped questions and versioned factual answers from original PA",
+      "currentControl": "Information only; no connections, credentials, capability or action grants; exact context and fresh facts",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "73507eff5076b9aa7e8635dc05d030e89d621abfd5d0a0b56b034fed017ad824"
+    },
+    {
+      "id": "personal-context",
+      "file": "packages/capabilities/personal-context.ts",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "PA calendar facts and arrangement checks",
+      "currentControl": "Original requesting PA retains connections; checked or user-confirmed facts labeled pa_reported",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "2e2a08d8b4794099389ed100c2654a6bf0391186cbb1edc78e5403495d2b7a7e"
+    },
+    {
+      "id": "pa-context-functions",
+      "file": "packages/ontology/pa-context-functions.ts",
+      "channels": [
+        "function",
+        "ontology_write"
+      ],
+      "content": "Question-bound PA evidence and current arrangement comparison",
+      "currentControl": "Owned question/source proof, context/freshness and evidence-basis checks",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "8a773275bdf276631d0e7c9e9eacd5729af0b583933cceef134d06db707d16c2"
+    },
+    {
+      "id": "calendar-sandbox",
+      "file": "packages/capabilities/calendar/sandbox.ts",
+      "channels": [
+        "sqlite",
+        "source"
+      ],
+      "content": "Isolated synthetic calendar items and conditional operations",
+      "currentControl": "Explicit local sandbox, owned original item and operation identity; no user connection",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "2807c7c8e7205e419a3cd1d892fd7daa166ed02d72fa1a5941eadbafba386431"
+    },
+    {
+      "id": "arrival-projection",
+      "file": "packages/ontology/arrival-projection.ts",
+      "channels": [
+        "function"
+      ],
+      "content": "Evidence-based arrival intervals and latest departure",
+      "currentControl": "Typed scoped timing evidence; missing data remains unknown; predictions never prove arrival",
+      "targetControl": "Preserve explicit task and actor scope, field policy and current source authority; no automatic grants",
+      "stage": "S3",
+      "sourceDigest": "db16c09a883231b2c7641fe0d8156f82798fe9932f7f4d56a5047754fd332449"
     }
   ]
 }

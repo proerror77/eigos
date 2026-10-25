@@ -10,6 +10,7 @@ import type { ObjectRef } from './model.js';
 import { projectDomainSnapshot } from './domain-projection.js';
 import { projectCheckoutRequest, projectCommerceSnapshot } from './commerce-projection.js';
 import { projectCatalogRead } from './catalog-projection.js';
+import { prepareSituationAssessment, projectSituation } from './situation-projection.js';
 
 function upsert(graph: OntologyObjectStore, owner: string, type: string, id: string, values: Record<string, unknown>): ObjectWrite {
   const ref = { type, id }; let expectedRevision: number | undefined;
@@ -26,7 +27,8 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   if (job.delegation.outcome?.status === 'unknown' || job.delegation.outcome?.status === 'needs_human') progress.failed = 'needs_review';
   const d = job.delegation, outcome = d.outcome;
   const assessmentRef = outcome ? { type: 'OutcomeAssessment', id: digest({ request: request.id, outcome, state: job.state, coverage: d.goalCoverage?.requestRevision === request.revision ? d.goalCoverage.digest : null }) } : undefined;
-  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: d.agent?.programRef.id ?? d.plan?.capabilityRef.id ?? (d.goalCoverage?.requestRevision === request.revision ? d.goalCoverage.capabilityRef.id : undefined) ?? d.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt, ...(assessmentRef ? { currentAssessment: assessmentRef } : {}) };
+  const situation = d.situation ? prepareSituationAssessment(job, d.situation) : undefined;
+  const values = { originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: d.agent?.programRef.id ?? d.plan?.capabilityRef.id ?? (d.goalCoverage?.requestRevision === request.revision ? d.goalCoverage.capabilityRef.id : undefined) ?? d.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt, ...(assessmentRef ? { currentAssessment: assessmentRef } : {}), ...(request.monitoring ? { monitoring: request.monitoring } : {}), ...(situation ? { currentSituation: situation.ref } : {}) };
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
   const saveRequest = (projectionState: string) => {
     const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });
@@ -40,7 +42,13 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
     if (previous.revision === request.revision) previousProjection = String(previous.projectionState ?? 'request_only');
   } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   saveRequest(previousProjection);
+  if (situation) projectSituation(graph, owner, job, situation);
   const root = { type: 'ServiceRequest', id: request.id };
+  if (d.paQuestion) {
+    const question = d.paQuestion.question, ref = { type: 'PAQuestion', id: question.id };
+    const object = upsert(graph, owner, ref.type, ref.id, { requestRevision: question.requestRevision, questionDigest: question.digest, question });
+    if (!object.expectedRevision) graph.ingest(owner, { objects: [object], links: [{ type: 'PAQuestionTask', from: ref, to: root }] }, source);
+  }
   const coverage = d.goalCoverage;
   const coverageRef = coverage ? { type: 'GoalCoverage', id: coverage.digest } : undefined;
   const unchanged = (object: ObjectWrite) => !!object.expectedRevision && digest(graph.read(owner, object.ref).properties) === digest(object.properties);
