@@ -1,6 +1,6 @@
 # PA 接入 EIGOS
 
-以下既有示例对应默认 `EIGOS_SECURITY_MODE=legacy`。foundation v2 的[资源／任务／输出合同](security-s2-s4.md)由 [S5 客户端及来源适配](security-s5.md)补齐；查询要求 version 2 和显式 taskId，任务响应为 TaskView。`POST /security/context` 返回 S5 与当前安装／授权引用。S5 已有离线迁移工具及常驻数据副本演练；真实会员双安装、隔离／撤销与部分来源只读验收已通过；滴滴于 18:30 完成新的受保护真实只读验收，最终常驻切换与读回正在完成。新模式需要独立的来源、角色、模型与接收资格，不直接复用旧库授权。
+以下既有示例对应默认 `EIGOS_SECURITY_MODE=legacy`。foundation v2 的[资源／任务／输出合同](security-s2-s4.md)由 [S5 客户端及来源适配](security-s5.md)补齐；查询要求 version 2 和显式 taskId，任务响应为 TaskView。`POST /security/context` 返回 S5 与当前安装／授权引用。S5 已完成离线迁移和常驻 foundation v2 切换；真实会员双安装、隔离／撤销、滴滴等来源只读验收及重启后独立 PA 读回已通过。新模式需要独立的来源、角色、模型与接收资格，不直接复用旧库授权。
 单任务目标覆盖、统一结果和反馈的当前合同见[单任务闭环](single-task-ontology-closure.md)。
 
 完整对象目录、来源接入及工作分支／常驻运行版本见[模型与接入能力总览](ontology-and-integrations.md)。

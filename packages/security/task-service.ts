@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DomainError, ownerKey, requireScope, type Job, type Principal } from '../core/domain.js';
 import type { JobStore, ListFilter } from '../core/store.js';
-import { POLICY_VERSION, SECURITY_CONTRACT } from './contracts.js';
+import { POLICY_VERSION, SECURITY_CONTRACT, securityDefaults } from './contracts.js';
 import { SecurityError, type TaskDataGrant } from './store.js';
 import { withAuthorization } from './context.js';
 import {z} from 'zod';
@@ -31,7 +31,7 @@ export class TaskSecurity {
     }));
     const grant = security.issueTaskGrant({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, kind: 'task_data', status: 'active',
       ownerKey: actor.ownerKey, memberId: actor.memberId, approvedByMemberId: actor.memberId, installationId: actor.installationId,
-      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: new Date(Math.min(Date.parse(parent.expiresAt), previous ? Date.parse(previous.expiresAt) : security.now() + 86400000)).toISOString(),
+      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: new Date(Math.min(Date.parse(parent.expiresAt), previous ? Date.parse(previous.expiresAt) : Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000)).toISOString(),
       taskId: job.id, requestRevision: job.delegation.request.revision, purpose: previous?.purpose ?? 'delegated_task',
       operations: previous?.operations ?? ['task.process', ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
       inputs: previous?.inputs ?? [], outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });

@@ -1461,7 +1461,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "f91f182faef86deadf88c240fa7339044f8cdfcd2a756b456d9357e69525d129",
+      "sourceDigest": "36fa701916aaf22210650940b35f04208845e43b6a4719d0635ac85367013079",
       "channels": [
         "http"
       ],
@@ -1904,7 +1904,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "0def7928e7d6e8c3d27b0986605a536de39a2e623ce74029e306c80014880e30",
+      "sourceDigest": "33a7a79e677d2c9007c45daf1adaf5041e125c42517753ad164eda4106512649",
       "channels": [
         "authorization_control"
       ],
@@ -2084,7 +2084,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "5faf3f3ff1d2efa2497a4e3fc5f3b7dc5ad6b4da5173661734b2001e30d501e8",
+      "sourceDigest": "c328e068966c61cc85185fef75807b2a30bcb4f08e6b9f989572579c510e6703",
       "channels": [
         "http-mcp-a2a"
       ],

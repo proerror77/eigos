@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-25T11:41:00.921700+00:00",
+  "stage": "S5_foundation_v2",
+  "residentCutoverCompleted": true,
+  "backend": "ontology-execution-v23",
+  "buildDigest": "02149c2b5d6a2ee8947adb1d65cfc573ad308a60c8855df5b3b6d436699b4d4f",
+  "runtimeFiles": 187,
+  "activationBaseCommit": "adaf770d0e6612aec65f8280e45dd82f49d8216a",
+  "activationBaseCi": {
+    "runId": 40186273729,
+    "conclusion": "success",
+    "independentReadback": true
+  },
+  "finalRevisionCi": "The workflow for the Git revision containing this record is required separately.",
+  "mergedResidentCommit": "ea11669fb9a28a91e343b52c2ea5192a17f70479",
+  "otherWorkingChangesPreserved": true,
+  "migration": {
+    "version": "eigos.security-migration.v1",
+    "sourceDigest": "3e6247f4cd5569178bbc3c638e703e6171b7024ee2882ba8bf9caa40098931bf",
+    "taskCount": 51,
+    "objectCount": 652,
+    "candidates": {
+      "verifiedCandidates": 0,
+      "unmappedOrHistoricalObjects": 652,
+      "activeTaskBindings": 0
+    },
+    "permissionsGranted": 0,
+    "verified": true,
+    "links": 1160,
+    "executionIntents": 122,
+    "executionAttempts": 122,
+    "executionObservations": 122,
+    "idempotencyReceipts": 58,
+    "privateAssetFiles": 135,
+    "assetDirectories": 5,
+    "sourceDatabasesPreserved": true,
+    "oldTasksExecutionMode": "worker-security-archive",
+    "membershipSnapshotByteCopyVerifiedBeforeActivation": true
+  },
+  "identity": {
+    "existingAuth0": true,
+    "sameActiveMember": true,
+    "distinctInstallations": 2,
+    "newReadOnlyAgentGrants": 2,
+    "sourceProfilesPerInstallation": 8,
+    "grantExpiresAt": "2026-11-24T11:03:47.761Z",
+    "providerSettingsChanged": false,
+    "taskGrantMaxSeconds": 86400,
+    "localActions": [
+      "ActivateServiceComponent",
+      "CompleteServiceComponent"
+    ]
+  },
+  "postCutover": {
+    "independentPythonPa": true,
+    "completedAcceptedTasks": 2,
+    "shopifyLiveReadOnly": true,
+    "didiLiveReadOnly": true,
+    "didiPlaceCount": 7,
+    "sourceReadActions": 2,
+    "sameRequestReplaySameTask": true,
+    "ownOntologyReadback": true,
+    "crossInstallationDeniedBothDirections": true
+  },
+  "restart": {
+    "passed": true,
+    "taskPayloadsUnchanged": true,
+    "persistentTablesUnchanged": {
+      "jobs": true,
+      "action_intents": true,
+      "action_attempts": true,
+      "action_observations": true,
+      "security_grants": true,
+      "security_task_authorities": true,
+      "security_sources": true,
+      "security_roles": true,
+      "security_migration_archive": true
+    },
+    "sourceCallsRepeated": 0,
+    "legacyListenerStopped": true
+  },
+  "forwardFixes": {
+    "taskLifetimeUsesSingleTimestamp": true,
+    "healthReportsUnavailablePublisher": true,
+    "gatewayStopsForSupervisorRestart": true,
+    "syntheticForcedExpiryProcess": {
+      "synthetic": true,
+      "liveDataModified": false,
+      "forcedSyntheticManagerExpiry": true,
+      "gatewayExitCode": 1,
+      "exitedWithinSeconds": 30.024,
+      "externalSourceCalls": 0,
+      "supervisorMayRestartFromSamePersistentState": true
+    },
+    "earlierRefreshLossTriggerNotDetermined": true
+  },
+  "validation": {
+    "typecheck": true,
+    "unitAndIntegrationTests": 740,
+    "compiledE2eTests": 11,
+    "build": true,
+    "securityInventory": {
+      "types": 112,
+      "properties": 889,
+      "paths": 95
+    },
+    "diffCheck": true
+  },
+  "boundaries": {
+    "businessWriteOperationsGranted": 0,
+    "businessWriteActionsPerformed": 0,
+    "orders": 0,
+    "payments": 0,
+    "operatorRequiredForBrowserSources": true,
+    "unattendedBrowser": false,
+    "legacyRollbackAfterNewFacts": false
+  },
+  "privateEvidenceSha256": {
+    "final-migration-proof.json": "4bdc465e4bbad88ca3f6b825006ec00f50aecdfa134a844efb362fca1ac17455",
+    "final-readonly-grant-receipt.json": "097d1888b91b94c2224a66e69cacce43607f4a1548dfbe7dc6b17608815b030f",
+    "post-A-readback.json": "9013abd8f767cc650044c506f39efdc46d4194520a4c68a01df25006d34a67d7",
+    "post-B-readback.json": "86ef00f308199b9329ad910fe836cedca69492095878c607d67fdea5a6d730be",
+    "post-protocol-proof.json": "0a457718c24613c214384dbdd27ee7323b03fa7a2ec7f6a5f99b5f5dd873f438",
+    "resident-runtime-proof.json": "d9243f75c37d84a44d6d1af483c2c390f103fc96a05ae9ba34419164ef97b1b0",
+    "supervisor-failure-proof.json": "2ce3b60f2e8788147315a2977cc8e0a1d25b9015982507d83b612acc1f9b774d"
+  }
+}

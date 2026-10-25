@@ -105,6 +105,27 @@ test('S1 gateway lease and qualification expiry fail closed and two eligibility 
   } finally { f.close(); }
 });
 
+test('S1 missed eligibility refresh notifies the supervisor and a fresh coordinator preserves revoked grants', t => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  let now = Date.now(); const f = securityFixture(() => now);
+  const replacement = new AuthorizationCoordinator(f.jobs.security, f.members);
+  try {
+    const a = f.installation('A'), b = f.installation('B'); f.approve(a.id); const revoked = f.approve(b.id);
+    const taskA = f.task(a.id), taskB = f.task(b.id);
+    f.coordinator.revokeGrant(f.member.id, revoked.id, revoked.revision);
+    const grants = f.jobs.security.listGrants(f.owner);
+    let unavailable = 0; f.coordinator.onUnavailable(() => { unavailable++; });
+    now += 61000; t.mock.timers.tick(30000);
+    assert.equal(unavailable, 1); assert.equal(f.coordinator.available, false);
+    assert.equal(f.jobs.claim(['eigos.delegate'], 1000, now), undefined);
+    t.mock.timers.tick(30000); assert.equal(unavailable, 1);
+    replacement.start(); assert.equal(replacement.available, true);
+    assert(f.jobs.security.workAuthority(f.owner, taskA.job.id));
+    assert.equal(f.jobs.security.workAuthority(f.owner, taskB.job.id), undefined);
+    assert.deepEqual(f.jobs.security.listGrants(f.owner), grants);
+  } finally { replacement.close(); f.close(); }
+});
+
 test('S1 task grant and authority cannot exceed parent fields, cross installations or reuse a changed request revision', () => {
   const f = securityFixture();
   try {

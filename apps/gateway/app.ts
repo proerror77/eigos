@@ -91,7 +91,10 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S5_foundation_v2' : 'legacy' }));
+  app.get('/health', (_req, res) => {
+    const available = !security || security.available;
+    res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S5_foundation_v2' : 'legacy' });
+  });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: security ? 'metadata.payment.request' : 'metadata.delegation.agent.paPayment.request', selectionPath: security ? 'metadata.payment.selection' : 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(security ? paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true}) : paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider, security);
   mountAgentRoutes(app, config, members, verify, security);

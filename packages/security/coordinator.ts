@@ -20,13 +20,24 @@ export const agentGrantRequestSchema = z.strictObject({ installationId: grantFie
 export class AuthorizationCoordinator {
   private token?: string;
   private timer?: ReturnType<typeof setInterval>;
+  private unavailable?: () => void;
   constructor(readonly store: SecurityStore, private members: MemberStore, private jobs?: JobStore, private catalog?: ExecutionCatalog) {}
+  get available() { return this.token !== undefined; }
+  onUnavailable(handler: () => void) { this.unavailable = handler; }
   start() {
     this.token = this.store.acquireManager();
     try { this.refresh(); } catch (error) { this.close(); throw error; }
+    let lastRefresh = this.store.now();
     this.timer = setInterval(() => {
+      const delayMs = Math.max(0, this.store.now() - lastRefresh - securityDefaults.authorityProjectionRefreshSeconds * 1000);
+      lastRefresh = this.store.now();
       try { this.refresh(); }
-      catch { this.close(); console.error('Authorization eligibility refresh stopped; new work fails closed'); }
+      catch (error) {
+        this.close();
+        const cause = error instanceof Error ? error.cause : undefined;
+        console.error('Authorization eligibility refresh stopped; new work fails closed', { delayMs, reason: cause instanceof SecurityError ? cause.reason : cause instanceof Error ? cause.name : 'unknown' });
+        this.unavailable?.();
+      }
     }, securityDefaults.authorityProjectionRefreshSeconds * 1000);
     this.timer.unref();
   }
@@ -35,7 +46,7 @@ export class AuthorizationCoordinator {
     try {
       if (!this.token || !this.store.renewManager(this.token)) throw new SecurityError('AUTHORITY_UNAVAILABLE');
       for (const old of this.store.subjects()) this.store.publishSubject(this.members.authorizationFacts(old.memberId, old.installationId), this.token);
-    } catch { this.close(); throw new SecurityError('AUTHORITY_UNAVAILABLE'); }
+    } catch (error) { this.close(); const failure = new SecurityError('AUTHORITY_UNAVAILABLE'); failure.cause = error; throw failure; }
   }
   authenticate(principal: Principal, bearer: string): AccessContext {
     if (!this.token) throw new SecurityError('AUTHORITY_UNAVAILABLE');

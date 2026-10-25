@@ -7,6 +7,35 @@ import {ownerKey} from '../packages/core/domain.js';
 import {didiFixture} from './fixtures/didi.js';
 import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
+import {securityFixture} from './fixtures/security.js';
+import {TaskService} from '../packages/core/tasks.js';
+import {businessModel} from '../packages/ontology/business-model.js';
+import {securityDefaults} from '../packages/security/contracts.js';
+
+test('foundation health becomes unavailable when its authorization publisher stops',async()=>{
+  const f=await securityGatewayFixture();
+  try {
+    assert.equal((await fetch(`${f.base}/health`)).status,200);
+    f.gateway.security!.close();
+    const response=await fetch(`${f.base}/health`);
+    assert.equal(response.status,503);assert.equal((await response.json()).status,'unavailable');
+  }finally{await f.close();}
+});
+
+test('a long-lived installation issues a task grant from one timestamp even while the clock advances',()=>{
+  let clock=Date.now();const f=securityFixture(()=>++clock);
+  try {
+    const a=f.installation('Long-lived installation'),expiresAt=new Date(clock+30*86400000).toISOString(),policy=f.jobs.security.policies;
+    f.coordinator.approveAgentGrant(f.member.id,{installationId:a.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal']}],sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt});
+    policy.setRole({subjectKind:'installation',subjectId:a.id,resource:{kind:'namespace',id:businessModel.ref.id,version:businessModel.ref.digest},role:'Viewer',expiresAt},policy.revision());
+    policy.setRecipient(a.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt},policy.revision());
+    const p={...f.principal,access:f.coordinator.authenticate(f.principal,a.token)},tasks=new TaskService(f.jobs,{catalog:new ExecutionCatalog([],[],[])});
+    const job=tasks.submit(p,{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic long-lived installation task'});
+    const grant=f.jobs.security.listGrants(f.owner).find(g=>g.kind==='task_data' && g.taskId===job.id)!;
+    assert.equal(Date.parse(grant.expiresAt)-Date.parse(grant.issuedAt),securityDefaults.taskGrantMaxSeconds*1000);
+    assert(f.jobs.security.workAuthority(f.owner,job.id));
+  }finally{f.close();}
+});
 
 test('HTTP, MCP and A2A share task grants, safe metadata and current replay authorization',async()=>{
   const f=await securityGatewayFixture(),a=f.install(),b=f.install(),ca=new Client({name:'scoped-a',version:'1'}),cb=new Client({name:'scoped-b',version:'1'});
