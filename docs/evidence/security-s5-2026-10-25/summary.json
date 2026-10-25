@@ -56,8 +56,11 @@
     "residentSwitched": false,
     "postCutoverReadbackPassed": false,
     "realBusinessWritesPerformed": false,
-    "pendingReason": "Didi upstream quota exhausted; user source-scope decision pending",
-    "candidateWithoutDidiPrepared": true
+    "pendingReason": "Didi quota recovery and positive protected read-only acceptance required before the user-selected full cutover",
+    "candidateWithoutDidiPrepared": true,
+    "userSelection": "retain-current-resident-until-didi-recovers",
+    "sourceScopeDecisionPending": false,
+    "partialCutoverSelected": false
   },
   "verification": {
     "fullSuite": {

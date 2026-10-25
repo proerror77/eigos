@@ -1,6 +1,6 @@
 # Gateway、Worker 与共用任务核心
 
-可选的 `EIGOS_SECURITY_MODE=foundation` 已接入 [S2–S4 三层权限](security-s2-s4.md)，默认 legacy 保留现有行为。foundation v2 使用新持久任务库和 `worker-security-v2` 队列；Gateway／Worker 的 mode、数据库及策略定义摘要必须一致。Worker 从业务库读取短期身份投影和当前任务授权，不读取会员库；旧 foundation 头／旧 Worker 被拒绝。协议已走共同安全视图，[S5](security-s5.md) 已实现离线复制迁移并核对常驻快照；真实双安装登录与部分来源只读验收已完成；当前常驻仍为 legacy，切换范围待滴滴配额问题的处理决定。
+可选的 `EIGOS_SECURITY_MODE=foundation` 已接入 [S2–S4 三层权限](security-s2-s4.md)，默认 legacy 保留现有行为。foundation v2 使用新持久任务库和 `worker-security-v2` 队列；Gateway／Worker 的 mode、数据库及策略定义摘要必须一致。Worker 从业务库读取短期身份投影和当前任务授权，不读取会员库；旧 foundation 头／旧 Worker 被拒绝。协议已走共同安全视图，[S5](security-s5.md) 已实现离线复制迁移并核对常驻快照；真实双安装登录与部分来源只读验收已完成；当前常驻仍为 legacy；用户已选择等待滴滴额度恢复并通过真实只读验收后整体切换。
 
 ## 目录与职责
 

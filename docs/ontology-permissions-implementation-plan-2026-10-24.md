@@ -1,6 +1,6 @@
 # EIGOS 三层权限实施方案：会员、Agent 与任务范围
 
-日期：2026-10-24，Asia/Shanghai。状态：**S0–S4 已交付；S5 迁移、适配、真实会员双安装和部分只读来源验收完成，常驻切换待处理滴滴配额范围**。初始源码基线：`6abdb13`。阶段记录见 [S0](security-s0.md)、[S1](security-s1.md)、[S2–S4](security-s2-s4.md) 与 [S5](security-s5.md)。S2–S4 使用新 foundation v2 库和合成资料验证；常驻未切换。下文保留原设计与验收目标，实际支持范围和未适配路径以 S2–S4 与 S5 阶段记录为准。依据先行整理的 [Palantir 官方权限语义](research/palantir-permission-semantics-2026-10-24.md)。
+日期：2026-10-24，Asia/Shanghai。状态：**S0–S4 已交付；S5 迁移、适配、真实会员双安装和部分只读来源验收完成，常驻按用户选择保留，待滴滴额度恢复并验收后整体切换**。初始源码基线：`6abdb13`。阶段记录见 [S0](security-s0.md)、[S1](security-s1.md)、[S2–S4](security-s2-s4.md) 与 [S5](security-s5.md)。S2–S4 使用新 foundation v2 库和合成资料验证；常驻未切换。下文保留原设计与验收目标，实际支持范围和未适配路径以 S2–S4 与 S5 阶段记录为准。依据先行整理的 [Palantir 官方权限语义](research/palantir-permission-semantics-2026-10-24.md)。
 
 ## 1. 目标与交付范围
 
