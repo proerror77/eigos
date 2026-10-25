@@ -8,7 +8,7 @@ import { compactSchema, packPromptData } from './prompt-data.js';
 
 export type OntologyReasoningModel = Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'openStructuredSession' | 'closeStructuredSessions' | 'ontologyContextPreparation' | 'securityChannelId'>>;
 export async function reasonWithOntology(model: OntologyReasoningModel, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
-  record: (evidence: RunEvidence) => void, maxTurns = 8, context?: { actions?: string[]; refs?: ObjectRef[]; data?: unknown; prepare?: boolean }) {
+  record: (evidence: RunEvidence) => void, maxTurns = 8, context?: { actions?: string[]; refs?: ObjectRef[]; data?: unknown; prepare?: boolean; decodeFinal?: { encoding: 'fixed_scope_message_refs_v1'; apply(raw: unknown): unknown } }) {
   const transcript: unknown[] = [];
   const turnLimit = Math.min(8, maxTurns);
   signal.throwIfAborted();
@@ -55,7 +55,11 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
       if (step.kind === 'final') {
         if (step.calls.length || !step.finalJson) throw new Error('Invalid final planning turn');
         if (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok')) throw new Error('The model skipped required ontology reads');
-        const output: unknown = JSON.parse(step.finalJson), evidence = { ...response.evidence, decisionDigest: digest(output) };
+        const raw: unknown = JSON.parse(step.finalJson);
+        let output: unknown;
+        try { output = context?.decodeFinal ? context.decodeFinal.apply(raw) : raw; }
+        catch (error) { record({ ...response.evidence, decisionDigest: digest(raw) }); throw error; }
+        const evidence = { ...response.evidence, decisionDigest: digest(output), ...(context?.decodeFinal ? { decisionDecoding: { encoding: context.decodeFinal.encoding, rawDecisionDigest: digest(raw) } } : {}) };
         record(evidence);
         return { output, evidence };
       }

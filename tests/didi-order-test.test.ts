@@ -1,10 +1,13 @@
-import { createFixedInputCoverage, registeredFixedInput } from '../packages/ontology/goal-coverage.js';
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+import { CodexReasoner } from '../packages/coordinator/coordinator.js';
+import { expandPromptData } from '../packages/coordinator/prompt-data.js';
+import { assertGoalCoverage, createFixedInputCoverage, registeredFixedInput } from '../packages/ontology/goal-coverage.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { JobStore } from '../packages/core/store.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
-import { digest } from '../packages/core/delegation.js';
+import { digest, encodeFixedScopeGrounding, decodeFixedScopeGrounding } from '../packages/core/delegation.js';
 import { ORDER_TEST_REF, orderTestInputSchema } from '../packages/ontology/didi-order-test.js';
 import type { AgentDecision, AgentStep } from '../packages/ontology/agent-actions.js';
 import type { Reasoner, AgentPlanningContext, PlanningAccess } from '../packages/coordinator/coordinator.js';
@@ -165,4 +168,61 @@ test('Fixed-scope coverage rejects an unpinned scope, altered input, extra const
   assert.throws(() => createFixedInputCoverage(ctx, recorded.decision, { ...run, decisionDigest: 'changed' }));
   assert.throws(() => registeredFixedInput({ ...ctx.capability, inputSchema: { type: 'object', additionalProperties: false, properties: { origin: { type: 'string' } }, required: ['origin'] } }));
  } finally { f.close(); }
+});
+
+for (const preferred of [true, false]) test(`Order planning reads focused current evidence and keeps map navigation (preferred=${preferred})`, async () => {
+ const f = fixture(true, true); let inspected = false;
+ try {
+  const reasoner = new CodexReasoner({ ontologyContextPreparation: 'worker_snapshot', runStructured: async prompt => {
+   const frame = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!));
+   const ctx = frame.task as AgentPlanningContext;
+   const objects = frame.conversation.flatMap((entry: any) => entry.result.items ?? []);
+   assert(objects.some((o: any) => o.ref.type === 'ServiceRequest'));
+   assert(objects.some((o: any) => o.ref.type === 'DidiOrderTestTask'));
+   assert(objects.some((o: any) => o.ref.type === 'DidiOrderTestQuote'));
+   assert.equal(objects.some((o: any) => o.ref.type === 'DidiOrderTestPlaceObservation'), !preferred);
+   assert.equal(ctx.state.observations.filter(ref => ref.type === 'DidiOrderTestPlaceObservation').length, 2);
+   inspected = true;
+   const decision = choose(ctx, { session: { prepareContext: () => {} } } as unknown as PlanningAccess);
+   return { output: { kind: 'final', calls: [], finalJson: JSON.stringify(decision) }, evidence: evidence() };
+  } });
+  f.model.act = (ctx, signal, access) => reasoner.act(preferred ? ctx : { ...ctx, planningObservationTypes: ['NoMatchingObservation'] }, signal, access);
+  const job = f.submit(); await f.run(); await f.run(); assert(inspected);
+  assert.equal(f.store.get(owner, job.id).state, 'auth-required');
+  f.approve(job.id); const done = await f.run(); assert.equal(done.state, 'completed');
+ } finally { f.close(); }
+});
+
+test('A map-only test override does not enter the strict official Mock credential binding', () => {
+ const f = didiFixture(), store = new JobStore(':memory:');
+ try {
+  const catalog = createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector }, didiOrderTestEnabled: true });
+  assert(catalog.agentProgram(ORDER_TEST_REF, owner)); assert.equal(f.calls.length, 0);
+ } finally { store.close(); f.close(); }
+});
+
+test('Fixed-scope message references retain the exact authenticated text and both raw and decoded response digests', async () => {
+ const f = fixture(true, true);
+ try {
+  const reasoner = new CodexReasoner({ ontologyContextPreparation: 'worker_snapshot', runStructured: async prompt => {
+   const frame = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!)), request = frame.task.request;
+   const decision = { ...interpretation(request, ORDER_TEST_REF.id, scopeInput), capabilityRef: ORDER_TEST_REF, scopeReview: (await syntheticGoalReview({request,capability:f.catalog.capability(ORDER_TEST_REF),input:scopeInput})).decision };
+   if(request.messages.length>1){assert(frame.finalSchema.properties.scopeReview.properties.clauses.items.properties.quote);return {output:{kind:'final',calls:[],finalJson:JSON.stringify(decision)},evidence:evidence()};}
+   const wire = encodeFixedScopeGrounding(decision);
+   assert(!Object.hasOwn(wire.scopeReview.clauses[0]!, 'quote'));
+   assert.deepEqual(decodeFixedScopeGrounding(request, wire), decision);
+   assert.throws(() => decodeFixedScopeGrounding(request, { ...wire, scopeReview: { ...wire.scopeReview, clauses: [{ ...wire.scopeReview.clauses[0], messageId: 'other-message' }] } }));
+   return { output: {kind:'final',calls:[],finalJson:JSON.stringify(wire)}, evidence:evidence() };
+  } });
+  f.model.ground=reasoner.ground.bind(reasoner);
+  const job=f.submit();await f.run();const current=f.store.get(owner,job.id), run=current.runs![0]!;
+  assert.equal(run.decisionDecoding!.encoding,'fixed_scope_message_refs_v1');
+  assert.notEqual(run.decisionDecoding!.rawDecisionDigest,run.decisionDigest);
+  assert.equal(current.delegation!.goalCoverage!.review.clauses[0]!.quote,current.delegation!.request.messages[0]!.text);
+  assertGoalCoverage(current,f.catalog.capability(ORDER_TEST_REF));
+  run.decisionDecoding!.rawDecisionDigest='changed';assert.throws(()=>assertGoalCoverage(current,f.catalog.capability(ORDER_TEST_REF)));
+  const request=current.delegation!.request,multi={...request,messages:[...request.messages,{...request.messages[0]!,id:'followup',text:'保留原路线，只撤销额外要求。'}]};
+  const response=await reasoner.ground(multi,f.catalog.summaries(owner,16,'sandbox').filter(c=>c.ref.id===ORDER_TEST_REF.id),new AbortController().signal,{session:new OntologyPlanningSession(f.store.ontology,owner,multi),record:()=>{},maxTurns:8});
+  assert.equal(response.evidence.decisionDecoding,undefined);assert.equal(response.decision.scopeReview!.clauses[1]!.quote,multi.messages[1]!.text);
+ } finally {f.close();}
 });

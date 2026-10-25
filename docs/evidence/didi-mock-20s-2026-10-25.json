@@ -1,0 +1,1320 @@
+{
+  "date": "2026-10-25",
+  "scope": "Isolated real Gateway/Worker, real default model, real official Mock estimate/create/query, A2A submission and independent MCP result readback",
+  "maps": "Previously obtained public location responses replayed as fixture evidence, each with 500 ms simulated latency; no claim of current production map timing",
+  "confirmation": "Exact zero-real-cost sandbox test-driver permit after the immutable plan; human confirmation wait excluded; clientTotalMs includes delivery polling and independent MCP readback",
+  "finalSeries": "message-refs",
+  "finalSummary": {
+    "attempts": 5,
+    "completed": 4,
+    "completedUnder20Seconds": 2,
+    "successfulMinMs": 17941,
+    "successfulMaxMs": 21654,
+    "successfulMedianMs": 20476.5,
+    "fifthAttempt": "Official Mock creation hit RATE_LIMITED; outcome retained as unknown; no creation replay, no account-latest query; no verified completion"
+  },
+  "experimentsNotShipped": [
+    "gpt-6-luna profiles: invalid parameters, missed readback and extra turns; retained default gpt-6.1-sol",
+    "Stable temporary model cwd: no demonstrated cache gain; reverted"
+  ],
+  "limitations": [
+    "Two of five attempts completed below 20 seconds; not a stable 20-second guarantee",
+    "The live map source remains quota-limited; production end-to-end latency has not been revalidated",
+    "Mock reused order IDs and text-only status limitations still apply",
+    "No production ride, driver pickup or payment was tested"
+  ],
+  "samples": [
+    {
+      "series": "focused-context-3",
+      "sample": 1,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 27568,
+      "quoteAndPlanMs": 29064,
+      "approvalToVerifiedMs": 990,
+      "activeTotalMs": 30054,
+      "clientTotalMs": 30083,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 500
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 524
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 66
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 51
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 84
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 20161,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24332,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 532,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 7407,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33148,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 411,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "focused-context-3",
+      "sample": 2,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 24110,
+      "quoteAndPlanMs": 25553,
+      "approvalToVerifiedMs": 1109,
+      "activeTotalMs": 26662,
+      "clientTotalMs": 26691,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 508
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 60
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 146
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 84
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 13960,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24401,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 557,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 10150,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33157,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 414,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "focused-context-3",
+      "sample": 3,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 20936,
+      "quoteAndPlanMs": 22284,
+      "approvalToVerifiedMs": 1040,
+      "activeTotalMs": 23324,
+      "clientTotalMs": 23391,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 520
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 59
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 56
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 110
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 14443,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24396,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 559,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6493,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33084,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 387,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "fast-model-pilot",
+      "sample": 1,
+      "state": "failed",
+      "modelCalls": 1,
+      "modelMs": 9348,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 9532,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 9348,
+          "model": "gpt-6-luna",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 20101,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 426,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "fast-model-diagnostic",
+      "sample": 1,
+      "state": "failed",
+      "modelCalls": 6,
+      "modelMs": 29638,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 31393,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 531
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 154
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 8398,
+          "model": "gpt-6-luna",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 20155,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 416,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 2618,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 25804,
+            "cached_input_tokens": 19968,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 225,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 2903,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 29988,
+            "cached_input_tokens": 25600,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 285,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 5330,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 44615,
+            "cached_input_tokens": 43392,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 257,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 4728,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 59201,
+            "cached_input_tokens": 57984,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 369,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 5661,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 68274,
+            "cached_input_tokens": 67968,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 314,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "fast-inline",
+      "sample": 1,
+      "state": "failed",
+      "modelCalls": 10,
+      "modelMs": 53248,
+      "quoteAndPlanMs": 22715,
+      "approvalToVerifiedMs": 33008,
+      "activeTotalMs": 55723,
+      "clientTotalMs": 55768,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 533
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 61
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 60
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 9494,
+          "model": "gpt-6-luna",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 20060,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 418,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 7763,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 41355,
+            "cached_input_tokens": 40192,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 363,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 3944,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 56601,
+            "cached_input_tokens": 55424,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 229,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 8519,
+          "model": "gpt-6-luna",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 26829,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 430,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 1557,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 34228,
+            "cached_input_tokens": 26624,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 78,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 2229,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 34624,
+            "cached_input_tokens": 34048,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 132,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 2614,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 36426,
+            "cached_input_tokens": 34432,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 68,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 2791,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 52515,
+            "cached_input_tokens": 36224,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 277,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6494,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 57500,
+            "cached_input_tokens": 57216,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 288,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 7843,
+          "model": "gpt-6-luna",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 61431,
+            "cached_input_tokens": 61184,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 277,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "stable-context",
+      "sample": 1,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 20093,
+      "quoteAndPlanMs": 21598,
+      "approvalToVerifiedMs": 1038,
+      "activeTotalMs": 22636,
+      "clientTotalMs": 22662,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 528
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 71
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 88
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 13571,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24370,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 552,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6522,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33232,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 411,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "stable-context",
+      "sample": 2,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 21572,
+      "quoteAndPlanMs": 22896,
+      "approvalToVerifiedMs": 976,
+      "activeTotalMs": 23872,
+      "clientTotalMs": 23949,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 501
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 513
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 58
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 131
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 13401,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24399,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 547,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 8171,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33189,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 401,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "stable-context",
+      "sample": 3,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 21457,
+      "quoteAndPlanMs": 22923,
+      "approvalToVerifiedMs": 976,
+      "activeTotalMs": 23899,
+      "clientTotalMs": 23980,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 503
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 519
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 60
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 142
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 83
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 14507,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24418,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 549,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6950,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33197,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 400,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "stable-context",
+      "sample": 4,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 23326,
+      "quoteAndPlanMs": 24958,
+      "approvalToVerifiedMs": 1083,
+      "activeTotalMs": 26041,
+      "clientTotalMs": 26069,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 518
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 58
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 61
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 87
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 14032,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24403,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 546,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 9294,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33203,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 410,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "stable-context",
+      "sample": 5,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 19099,
+      "quoteAndPlanMs": 20466,
+      "approvalToVerifiedMs": 1137,
+      "activeTotalMs": 21603,
+      "clientTotalMs": 21642,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 503
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 516
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 57
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 60
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 92
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 12976,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24408,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 550,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6123,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33230,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 406,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "message-refs",
+      "sample": 1,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 19406,
+      "quoteAndPlanMs": 20812,
+      "approvalToVerifiedMs": 806,
+      "activeTotalMs": 21618,
+      "clientTotalMs": 21652,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 503
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 535
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 69
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 81
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 11289,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24386,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 442,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 8117,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33018,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 390,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "message-refs",
+      "sample": 2,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 17253,
+      "quoteAndPlanMs": 18497,
+      "approvalToVerifiedMs": 838,
+      "activeTotalMs": 19335,
+      "clientTotalMs": 19360,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 501
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 507
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 53
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 81
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 10851,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24464,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 443,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 6402,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33158,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 373,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "message-refs",
+      "sample": 3,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 19590,
+      "quoteAndPlanMs": 20770,
+      "approvalToVerifiedMs": 884,
+      "activeTotalMs": 21654,
+      "clientTotalMs": 21747,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 506
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 61
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 82
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 11285,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24451,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 446,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 8305,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33118,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 387,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "message-refs",
+      "sample": 4,
+      "state": "completed",
+      "modelCalls": 2,
+      "modelMs": 15952,
+      "quoteAndPlanMs": 17186,
+      "approvalToVerifiedMs": 755,
+      "activeTotalMs": 17941,
+      "clientTotalMs": 17965,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 505
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 63
+        },
+        {
+          "tool": "taxi_create_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 54
+        },
+        {
+          "tool": "taxi_query_order",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 80
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 10441,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24436,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 444,
+            "reasoning_output_tokens": 0
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 5511,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33059,
+            "cached_input_tokens": 24704,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 394,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "message-refs",
+      "sample": 5,
+      "state": "input-required",
+      "modelCalls": 2,
+      "modelMs": 19182,
+      "quoteAndPlanMs": 20574,
+      "approvalToVerifiedMs": 652,
+      "activeTotalMs": 21226,
+      "clientTotalMs": 24501,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 502
+        },
+        {
+          "tool": "maps_textsearch",
+          "environment": "production",
+          "evidenceKind": "fixture",
+          "ms": 509
+        },
+        {
+          "tool": "taxi_estimate",
+          "environment": "mock",
+          "evidenceKind": "provider_mock",
+          "ms": 55
+        }
+      ],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 11341,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24480,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 471,
+            "reasoning_output_tokens": 19
+          }
+        },
+        {
+          "purpose": "planning",
+          "ms": 7841,
+          "model": "gpt-6.1-sol",
+          "sessionReused": true,
+          "usage": {
+            "input_tokens": 33108,
+            "cached_input_tokens": 24832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 374,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "guard-real-dispatch",
+      "sample": 1,
+      "state": "rejected",
+      "modelCalls": 1,
+      "modelMs": 10617,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 10764,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 10617,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24300,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 243,
+            "reasoning_output_tokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "series": "guard-extra-budget",
+      "sample": 1,
+      "state": "input-required",
+      "modelCalls": 1,
+      "modelMs": 12020,
+      "quoteAndPlanMs": null,
+      "approvalToVerifiedMs": null,
+      "activeTotalMs": null,
+      "clientTotalMs": 12136,
+      "mapsEvidence": "recorded fixture; 500 ms simulated delay per call; no current production map request",
+      "sourceCalls": [],
+      "modelRuns": [
+        {
+          "purpose": "grounding",
+          "ms": 12020,
+          "model": "gpt-6.1-sol",
+          "sessionReused": false,
+          "usage": {
+            "input_tokens": 24399,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 286,
+            "reasoning_output_tokens": 37
+          }
+        }
+      ]
+    }
+  ],
+  "realOrder": false,
+  "realPayment": false
+}

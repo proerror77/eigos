@@ -33,6 +33,20 @@ export const groundingSchema = z.object({
   plannedCompletion: plannedCompletionSchema.optional(),
 }).strict();
 export type Grounding = z.infer<typeof groundingSchema>;
+// The fixed-scope reviewer selects entire authenticated messages by ID. The
+// host expands only those exact references; semantic judgments remain model-owned.
+export const fixedScopeGroundingSchema = groundingSchema.extend({ scopeReview: goalReviewSchema.extend({
+  clauses: z.array(goalReviewSchema.shape.clauses.element.omit({ quote: true })).min(1).max(160),
+}) });
+export function decodeFixedScopeGrounding(request: ServiceRequest, raw: unknown): Grounding {
+  const decision = fixedScopeGroundingSchema.parse(raw), clauses = decision.scopeReview.clauses;
+  if (clauses.length !== request.messages.length || new Set(clauses.map(c => c.messageId)).size !== clauses.length || clauses.some(c => !request.messages.some(m => m.id === c.messageId))) throw new Error('Fixed scope review must reference every authenticated message exactly once');
+  return groundingSchema.parse({ ...decision, scopeReview: { ...decision.scopeReview, clauses: clauses.map(c => ({ ...c, quote: request.messages.find(m => m.id === c.messageId)!.text })) } });
+}
+export function encodeFixedScopeGrounding(decision: Grounding) {
+  if (!decision.scopeReview) throw new Error('Fixed scope review is missing');
+  return fixedScopeGroundingSchema.parse({ ...decision, scopeReview: { ...decision.scopeReview, clauses: decision.scopeReview.clauses.map(({ quote: _quote, ...clause }) => clause) } });
+}
 export const proposalSchema = z.object({
   kind: z.enum(['propose_plan', 'clarify', 'no_feasible_plan']), requestRevision: z.number().int().positive(),
   candidateId: z.string().max(200), message: z.string().trim().min(1).max(4000),

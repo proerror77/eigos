@@ -26,6 +26,7 @@ export class DidiOrderTestProgram implements AgentProgram {
   readonly ref = ORDER_TEST_REF;
   readonly initialReadFrontier = true;
   readonly preparePlanningContext = true;
+  readonly planningObservationTypes = ['DidiOrderTestQuote', 'DidiTestOrderObservation'];
   readonly actionIds = Object.keys(orderTestActionSchemas);
   readonly completionSchema = z.toJSONSchema(orderTestCompletionSchema);
   readonly configurationDigest: string;

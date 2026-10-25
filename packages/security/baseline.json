@@ -1634,7 +1634,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "26b373afa8a735b8df0ce4b77b8df1d1b964452f79573d7d8157e3e4fb5164a3",
+      "sourceDigest": "a61dd5090a14343284bf7fd246e4faa7470ac018ed5b3c6373ffd31509a6c4a4",
       "channels": [
         "model",
         "dispatch"
@@ -1647,7 +1647,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "7ffb7638175e874afe83e9f4ccfa5a5e46376bdc5010cd172c91be7743febd74",
+      "sourceDigest": "bcc74b91986cd099c74b82955e927f31e9c1d32befe17d2f773edbeab1a1d397",
       "channels": [
         "model",
         "dispatch",
@@ -1709,7 +1709,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "24cb2d5891d095a70416916517a73527bb394a77b5960ad77d503b9c13be6b8e",
+      "sourceDigest": "aa8a40dde6399d5327c7bdc93fd7950019283f2ee82fdde6375d0a3828f18ed2",
       "channels": [
         "registered_model",
         "private_file"
@@ -1722,7 +1722,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "1bb742e59a23f6a58d49c437138ced0862dceb930f66e558bb16fe29ce3b1a88",
+      "sourceDigest": "029cae9b4c3c15275d2636f2d2867a2dd087f2fcef586b472ae40ffb54ad05e4",
       "channels": [
         "source",
         "dispatch"
@@ -2132,7 +2132,7 @@
     {
       "id": "agent-program-contract",
       "file": "packages/core/agent-program.ts",
-      "sourceDigest": "838e4c4df9e831194ab65b201694ca6748e53bd97586459d000ebff779a62d1e",
+      "sourceDigest": "bd6496ad1a6ac3f14769bd4d132183b94dd3717e52200c95e4d5148dc48a1ff9",
       "channels": [
         "worker"
       ],
@@ -2180,7 +2180,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "f39c227acfb306d4f57aa4e69808d42e082f141906ba0a3453df076c1193b893",
+      "sourceDigest": "4e56ace847e5184b9c34b201344ae53b9e4ce9331ef7535dd876239554c81b4b",
       "channels": [
         "model"
       ],
@@ -2482,7 +2482,7 @@
     {
       "id": "goal-coverage",
       "file": "packages/ontology/goal-coverage.ts",
-      "sourceDigest": "9c9fd23ed712d2cb70eb24dde0ecf104ab986e311cac43c613f9cdeff1a1bd7b",
+      "sourceDigest": "686b9dbb53be8d4704e240fe7e9d5b1250aba75d5578d1212fb07f0a2dbc0219",
       "channels": [
         "model",
         "artifact"
@@ -2576,7 +2576,7 @@
     {
       "id": "didi-order-test-program",
       "file": "packages/capabilities/didi/order-test-program.ts",
-      "sourceDigest": "278dc7684bc50bdcd54b63e4baec63d4366124ed753ac93de8659ed4acfa3f45",
+      "sourceDigest": "9476eb493204ca2cd7cbb68be7d009a57ffb945486d48112f2c7151668d60fd5",
       "channels": [
         "model",
         "dispatch",
@@ -2624,6 +2624,19 @@
       "currentControl": "Parent orchestration and exact selected child source both required",
       "targetControl": "No authority borrowed across components or installations",
       "stage": "S5"
+    },
+    {
+      "id": "fixed-scope-message-references",
+      "file": "packages/core/delegation.ts",
+      "sourceDigest": "0a159790192638d5f4f5b8623e1519fe572211be79d6017563501a8d68d54373",
+      "channels": [
+        "model",
+        "artifact"
+      ],
+      "content": "Fixed-scope model wire schema and exact authenticated message reference expansion",
+      "currentControl": "One whole-message reference per original message; strict schema; raw and decoded decision digests; semantic coverage remains model-owned",
+      "targetControl": "Task-scoped instruction provenance and no automatic historical grants",
+      "stage": "S3"
     }
   ]
 }

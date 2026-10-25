@@ -45,6 +45,9 @@ export interface AgentProgram {
   observeOriginal?(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal):Promise<import('../security/recovery.js').RecoveryObservation|undefined>;
   readonly initialReadFrontier?: true;
   readonly preparePlanningContext?: true;
+  /** Presentation preference only; all accepted references remain discoverable.
+   * When none match, retain the available observations for failure recovery. */
+  readonly planningObservationTypes?: readonly string[];
   /** Explicitly bound participant reservations with no charge or payment effect. */
   readonly liveFreeReservation?: true;
   readonly ref: Ref;

@@ -145,7 +145,7 @@ export class AgentRuntime {
         return;
       }
     } else {
-      const context=secureAgentContext({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) },this.store.ontology);
+      const context=secureAgentContext({ request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: boundAgentActionIds(ctx.graph, program), guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object })) },this.store.ontology);
       access.session.authorizeModel(this.reasoner.securityChannelId);
       response = await this.reasoner.act(context, signal, access);
       access.session.authorizeModel(this.reasoner.securityChannelId);

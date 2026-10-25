@@ -1,4 +1,4 @@
-import { digest } from '../core/delegation.js';
+import { digest, encodeFixedScopeGrounding } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { Job } from '../core/domain.js';
 import type { ServiceCapability, ServiceRequest } from './execution.js';
@@ -57,6 +57,7 @@ export function createFixedInputCoverage(ctx: GoalReviewContext, decision: Groun
   const input = registeredFixedInput(ctx.capability);
   if (!input || decision.kind !== 'resolve' || digest(decision.capabilityRef) !== digest(ctx.capability.ref) || !ctx.request.capabilityRef || digest(ctx.request.capabilityRef) !== digest(ctx.capability.ref) || digest(input) !== digest(ctx.input) || digest(JSON.parse(decision.inputJson)) !== digest(input)
     || decision.requirementsJson !== '[]' || decision.conditionsJson !== '[]' || !decision.scopeReview || evidence.decisionDigest !== digest(decision)) fail('Fixed-input review must retain the exact PA-pinned registered scope and original criteria');
+  if (evidence.decisionDecoding && (evidence.decisionDecoding.encoding !== 'fixed_scope_message_refs_v1' || evidence.decisionDecoding.rawDecisionDigest !== digest(encodeFixedScopeGrounding(decision)))) fail('Fixed-input message references differ from the actual model response');
   const review = validateGoalReview(ctx, decision.scopeReview);
   const body = { version: '1' as const, reviewOrigin: 'registered_fixed_input' as const, modelDecisionDigest: evidence.decisionDigest!,
     requestRevision: ctx.request.revision, requestDigest: digest(ctx.request), capabilityRef: ctx.capability.ref, capabilityDigest: digest(ctx.capability), input: structuredClone(input!), inputDigest: digest(input), review, modelRunId: evidence.id, assessedAt: evidence.completedAt };

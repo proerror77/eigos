@@ -9,7 +9,7 @@
 | 会员／安装／Worker 身份合同 | [contracts.ts](../packages/security/contracts.ts)：AccessContext 判别联合；复用原 ownerKey 语义、会员 UUID、registration.id、任务 revision 和 scopes，不重建登录系统。 |
 | 安装／任务数据／执行授权合同 | 同上：AgentAccessGrant、TaskDataGrant、TaskExecutionAuthority 的严格数据结构；已有 PlanGrant 保持原状。解析成功只证明结构有效，不证明权限有效。 |
 | 安全标签与默认规则 | 同上：SecurityEnvelope、角色权限、无自动降密／跨会员共享／旧任务补权；运行时策略组合和撤销由 S1–S4 实现。 |
-| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：112 个类型、889 个顶层属性的明确政策，模型和逐类型摘要；代码路径随 S1–S5 复核扩充到 94 个，S0 初次归档仍为当时的 30 个。 |
+| 已审查模型清单 | [baseline.json](../packages/security/baseline.json)：112 个类型、889 个顶层属性的明确政策，模型和逐类型摘要；代码路径随 S1–S5 复核扩充到 95 个，S0 初次归档仍为当时的 30 个。 |
 | 嵌套字段覆盖和变化检测 | [inventory.ts](../packages/security/inventory.ts)：枚举对象／接口／关系／动作／函数；属性树覆盖数组、union、开放 record 和未知结构。新定义／字段、嵌套 schema 变化、已限制字段降级、已登记出口变化使检查失败。 |
 | 只读快照迁移报告 | [migration-audit.ts](../packages/security/migration-audit.ts)：直接 readOnly 打开显式快照，不构造会创建表的 JobStore／MemberStore，不执行迁移 SQL。 |
 | 可重复入口和回归 | [security-s0.mjs](../scripts/security-s0.mjs)、[测试](../tests/security-s0.test.ts)：清单检查、合同反例、离线副本、隐私和无改写验证。 |

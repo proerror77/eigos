@@ -15,19 +15,20 @@
   "readbackSha256": "a865483e24f27ae83e05f2362c8d2acd4c6fe5705f9e051cdf3797fb3503b7ec",
   "backend": "ontology-execution-v23",
   "residentChangedAtThisCheckpoint": false,
-  "legacyResidentCommit": "c4809d91172a025d1bd26c0ed919e5f438245e51",
+  "legacyResidentCommit": "ea11669fb9a28a91e343b52c2ea5192a17f70479",
   "otherWorkingChangesPreserved": true,
   "meaning": "Real protected source acceptance before final migration and resident activation",
   "mergedCandidateValidation": {
     "typecheck": true,
-    "unitAndIntegrationTests": 732,
+    "unitAndIntegrationTests": 737,
     "compiledE2eTests": 11,
     "build": true,
     "securityInventory": {
       "types": 112,
       "properties": 889,
-      "paths": 94
+      "paths": 95
     },
     "diffCheck": true
-  }
+  },
+  "additionalMergedResidentChange": "Fixed-scope message reference encoding and bounded planning observation preference"
 }
