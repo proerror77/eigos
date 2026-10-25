@@ -70,6 +70,9 @@ function trustedTemplates() {
   return templates;
 }
 
+/** Canonical reviewed kernel, independent of owner-authored active releases. */
+export function currentKernelImplementation(): OntologyModel { const value = trustedTemplates(); return compiledModel(value.kernel, value.registry); }
+
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
 export class DefinitionStore {

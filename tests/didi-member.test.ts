@@ -133,7 +133,7 @@ test('invited member estimate crosses real A2A and MCP transports with a separat
     for (let i = 0; i < 400; i++) { const job = gateway.store.get(aliceOwner, id); if (!['submitted', 'working'].includes(job.state)) return job; await new Promise(r => setTimeout(r, 10)); }
     throw new Error('Synthetic member estimate did not settle');
   };
-  const done: Job = await settle(await submit()); assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+  const done: Job = await settle(await submit()); assert.equal(done.state, 'completed', JSON.stringify({feedback:done.delegation?.agent?.feedback,grounding:done.delegation?.groundingFeedback,question:done.question,error:done.error}));
   for (const token of ['alice', 'bob']) {
     const client = new Client({ name: 'member-didi-test', version: '1' }); clients.push(client);
     await client.connect(new StreamableHTTPClientTransport(new URL(base + '/mcp'), { requestInit: { headers: { Authorization: `Bearer ${token}` } } }));

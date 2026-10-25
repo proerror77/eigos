@@ -1,3 +1,5 @@
+import { authorizationScope } from '../security/context.js';
+import { describeAuthorized } from '../security/view.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -170,6 +172,18 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
   for (const type of (composed ? [] : [...names]).filter(name => !isExecutionBookkeepingType(name) && name !== 'ServiceRequest')) {
     if (graph.model.isInterface(type)) continue;
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
+  }
+  if (graph.security) {
+    const visible = describeAuthorized(graph.security.security, authorizationScope()!, {limit: graph.model.typeIds().length}, graph.model);
+    const actionIds = new Set(actions.map(action => action.id));
+    const types: object[] = [], deferredTypes: string[] = []; let bytes = 0;
+    for (const type of visible.types.filter(type => names.has(type.id))) {
+      const size = Buffer.byteLength(JSON.stringify(type));
+      if (composed && bytes + size > 50000) deferredTypes.push(type.id); else {types.push(type); bytes += size;}
+    }
+    return {model: visible.model, types, ...(deferredTypes.length ? {deferredTypes, definitionRetrieval:'describe_ontology'} : {}),
+      actions: visible.actions.filter(action => actionIds.has(action.id)),
+      functions: visible.functions.filter(fn => fn.inputTypes.some(type => names.has(type)))};
   }
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));

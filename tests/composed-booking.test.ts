@@ -24,6 +24,7 @@ async function setup() {
     observeTaskContext(access);
     const pin = (actionId: string) => {
       const page = access.session.call('discover_actions', { actionId }) as ActionDiscoveryPage;
+      assert(page.items[0]!.bindings.every(binding=>!binding.pin.programRef.id.startsWith('services.compose.')), 'Native provider choices must retain their own component context');
       return page.items[0]!.bindings.find(binding => binding.readiness === 'ready')!.pin;
     };
     const base: AgentDecision = { kind: 'execute', requestRevision: ctx.request.revision, message: 'Synthetic explicit choice from fresh source facts', steps: [], completionJson: '' };

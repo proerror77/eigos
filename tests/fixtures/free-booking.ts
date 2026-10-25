@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 // Synthetic participant source and model. No Luma account or public event is contacted.
 import { randomUUID } from 'node:crypto';
 import { digest } from '../../packages/core/delegation.js';
@@ -61,7 +62,7 @@ export function participantFixture(options: { target?: 'submitted' | 'confirmed'
       return result(ctx, action);
     } };
   const catalog = createExecutionCatalog({ participantBookingSource: source });
-  const model: Reasoner = { ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, 'booking.participant.free', input), capabilityRef: { id: 'booking.participant.free', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('Participant registration must use the business Agent'); }, act: async (ctx, _signal, access) => { observeTaskContext(access); const selected = (options.choice ?? participantChoice)(ctx, access); acknowledgeReads(access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
+  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async (request, _caps, _signal, access) => ({ decision: { ...interpretation(observeTaskContext(access) ?? request, 'booking.participant.free', input), capabilityRef: { id: 'booking.participant.free', version: '1' } }, evidence: evidence() }), plan: async () => { throw new Error('Participant registration must use the business Agent'); }, act: async (ctx, _signal, access) => { observeTaskContext(access); const selected = (options.choice ?? participantChoice)(ctx, access); acknowledgeReads(access); return { decision: selected, evidence: { ...evidence(), decisionDigest: digest(selected) } }; } };
   const b = backend(catalog, model, undefined, { allowSandbox: true });
   const approve = (job: Job) => { const a = job.delegation!.authorizationRequest!; return b.tasks.authorize(principal, job.id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
   const until = async (predicate: (job: Job) => boolean, max = 80) => {

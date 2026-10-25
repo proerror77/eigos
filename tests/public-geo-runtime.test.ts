@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from './backend-fixture.js';
 // Every CLI response is synthetic, including the resulting live-shaped receipt.
 // This exercises local runtime wiring; it proves no live provider or PA/model result.
 import assert from 'node:assert/strict';
@@ -24,6 +25,7 @@ const evidence = () => ({ id: randomUUID(), runtime: 'synthetic-public-geo-runti
 
 function fixedReasoner(input = query): Reasoner {
   return {
+    reviewGoal: async ctx => { const result = await syntheticGoalReview(ctx); result.evidence.runtime = evidence().runtime; return result; },
     ground: async (request, _caps, _signal, access) => { request = observeTaskContext(access) ?? request; return { decision: {
       kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref,
       message: 'Synthetic fixed public query; no model was called', inputJson: JSON.stringify(input),
@@ -45,7 +47,9 @@ function fixedReasoner(input = query): Reasoner {
 }
 
 async function terminal(read: () => Job): Promise<Job> {
-  const deadline = Date.now() + 15000;
+  // This is a process/schema integration check, not a latency benchmark.
+  // Allow cold provider startup and the separate goal review on shared runners.
+  const deadline = Date.now() + 60000;
   while (true) {
     const job = read();
     if (!['submitted', 'working'].includes(job.state)) return job;
@@ -75,7 +79,7 @@ ${failure ? "console.error('PRIVATE_SYNTHETIC_PROVIDER_ERROR'); process.exit(2);
     tokenReads: () => existsSync(passportCalls) ? readFileSync(passportCalls, 'utf8').trim().split('\n').filter(Boolean).length : 0 };
 }
 
-for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gateway/Worker public discovery runtime ${mode} with synthetic CLI only`, { timeout: 30000, concurrency: false }, async () => {
+for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gateway/Worker public discovery runtime ${mode} with synthetic CLI only`, { timeout: 90000, concurrency: false }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-public-geo-runtime-'));
   const fixture = fakeCli(directory, mode === 'provider_failure'); const previousPath = process.env.PATH;
   process.env.PATH = `${fixture.bin}:/usr/bin:/bin`;
@@ -96,7 +100,7 @@ for (const mode of ['success', 'denied', 'provider_failure'] as const) test(`Gat
     assert.equal(submitted.state, 'submitted');
     assert.deepEqual(fixture.calls(), [], 'Gateway must only enqueue, never invoke the CLI');
     assert.equal(fixture.tokenReads(), 0);
-    worker = createWorker(readWorkerConfig(env), { reasoner: fixedReasoner(mode === 'denied' ? deniedQuery : query), timing: { pollMs: 25, leaseMs: 10000, timeoutMs: 15000 } });
+    worker = createWorker(readWorkerConfig(env), { reasoner: fixedReasoner(mode === 'denied' ? deniedQuery : query), timing: { pollMs: 25, leaseMs: 30000, timeoutMs: 45000 } });
     const completed = await terminal(() => gateway!.tasks.get(principal, submitted.id));
     assert.equal(completed.id, submitted.id);
     assert.equal(completed.delegation?.resolution, undefined, 'No prepared source recipe or product-supply claim');

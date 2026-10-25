@@ -89,7 +89,7 @@ export const CUSTOMS_REFERENCES = freeze([
 ].map(value => regulatoryReferenceSchema.parse(value)));
 
 const ruleSchema = z.strictObject({ id, description: text, source: z.enum(['platform_policy', 'evidence_integrity', 'synthetic_fixture']), effect: z.enum(['block', 'require_evidence']) });
-const ruleSetSchema = z.strictObject({
+export const ruleSetSchema = z.strictObject({
   id, version: id, coverage: z.literal('synthetic_commerce_only'), legalApproval: z.literal(false),
   referenceIds: z.array(id).min(1).max(20), rules: z.array(ruleSchema).min(1).max(20),
   supportedProduct: z.strictObject({ category: z.literal('roasted_coffee'), hsCodes: z.array(id).min(1).max(10) }),
@@ -116,13 +116,14 @@ const referenceRef = (reference: typeof CUSTOMS_REFERENCES[number]): ObjectRef =
 export const CUSTOMS_REFERENCE_REFS = freeze(CUSTOMS_REFERENCES.map(referenceRef));
 const ruleProperties = () => ({ id: CUSTOMS_RULE_REF.id, displayTitle: '运输与海关参考资料及沙箱执行关卡', policyDigest: CUSTOMS_POLICY_DIGEST, snapshot: CUSTOMS_RULE_SET });
 const referenceProperties = (reference: typeof CUSTOMS_REFERENCES[number]) => ({ id: referenceRef(reference).id, displayTitle: reference.title, snapshot: reference });
+const sameProperties=(actual:Record<string,unknown>,expected:Record<string,unknown>)=>digest(Object.fromEntries(Object.keys(expected).map(key=>[key,actual[key]])))===digest(expected);
 
 export function seedCustomsPolicy(graph: OntologyObjectStore, owner: string, scope: ObjectRef, request: ObjectRef) {
   const expected = [{ ref: CUSTOMS_RULE_REF, properties: ruleProperties() }, ...CUSTOMS_REFERENCES.map(r => ({ ref: referenceRef(r), properties: referenceProperties(r) }))];
   const missing = expected.filter(object => {
     try {
       const existing = graph.read(owner, object.ref);
-      if (digest(existing.properties) !== digest(object.properties) || existing.source.kind !== 'provider' || existing.source.id !== 'eigos-reviewed-policy-registry') throw new DomainError('CONFLICT', 'An immutable policy document differs from its reviewed identity');
+      if (!sameProperties(existing.properties,object.properties) || existing.source.kind !== 'provider' || existing.source.id !== 'eigos-reviewed-policy-registry') throw new DomainError('CONFLICT', 'An immutable policy document differs from its reviewed identity');
       // A later catalog capture must not replace an older document's provenance.
       return false;
     } catch (error) {
@@ -138,9 +139,9 @@ export function seedCustomsPolicy(graph: OntologyObjectStore, owner: string, sco
 
 export function checkedCustomsPolicy(graph: OntologyObjectStore, owner: string, scope: ObjectRef, budget: ReadBudget = { remaining: 1000 }) {
   const books = graph.related(owner, scope, 'customsRuleSet', budget);
-  if (books?.length !== 1 || digest(books[0]!.ref) !== digest(CUSTOMS_RULE_REF) || digest(books[0]!.properties) !== digest(ruleProperties())) throw new DomainError('CONFLICT', 'The current trusted customs rule set is missing or changed');
+  if (books?.length !== 1 || digest(books[0]!.ref) !== digest(CUSTOMS_RULE_REF) || !sameProperties(books[0]!.properties,ruleProperties())) throw new DomainError('CONFLICT', 'The current trusted customs rule set is missing or changed');
   const references = graph.related(owner, CUSTOMS_RULE_REF, 'references', budget) ?? [];
-  if (references.length !== CUSTOMS_REFERENCES.length || CUSTOMS_REFERENCES.some(expected => !references.some(r => r.ref.id === referenceRef(expected).id && digest(r.properties) === digest(referenceProperties(expected))))) throw new DomainError('CONFLICT', 'A customs reference version or source identity changed');
+  if (references.length !== CUSTOMS_REFERENCES.length || CUSTOMS_REFERENCES.some(expected => !references.some(r => r.ref.id === referenceRef(expected).id && sameProperties(r.properties,referenceProperties(expected))))) throw new DomainError('CONFLICT', 'A customs reference version or source identity changed');
   return { ruleSet: CUSTOMS_RULE_REF, policyDigest: CUSTOMS_POLICY_DIGEST, references: references.map(r => r.ref), coverage: CUSTOMS_RULE_SET.coverage, legalApproval: false as const };
 }
 

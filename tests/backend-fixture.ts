@@ -1,6 +1,8 @@
 // Synthetic model decisions. Live reasoning is a separate verification step.
 import { randomUUID } from 'node:crypto';
-import { Coordinator, type Reasoner, type PlanningContext, type PlanningAccess } from '../packages/coordinator/coordinator.js';
+import { digest } from '../packages/core/delegation.js';
+import type { GoalReview, GoalReviewContext } from '../packages/ontology/goal-coverage.js';
+import { Coordinator, CodexReasoner, type Reasoner, type PlanningContext, type PlanningAccess } from '../packages/coordinator/coordinator.js';
 import { ExecutionCatalog, type ExecutionAdapter } from '../packages/core/catalog.js';
 import { JobStore } from '../packages/core/store.js';
 import { TaskService } from '../packages/core/tasks.js';
@@ -11,6 +13,15 @@ import type { ServiceRequest, CandidateFacts, ProviderBinding, ServiceCapability
 export const principal = { issuer: 'local-development', tenant: 'local', subject: 'developer', clientId: 'test', scopes: [...SCOPES] };
 export const owner = ownerKey(principal);
 export const evidence = () => ({ id: randomUUID(), runtime: 'ontology-v2-fixture', startedAt: new Date().toISOString(), completedAt: new Date().toISOString(), outputSha256: 'fixture' });
+// Explicit synthetic semantic review for tests whose goals/interpretations are
+// fixtures. Production has no permissive reviewer fallback.
+export async function syntheticGoalReview(ctx: GoalReviewContext) {
+  const decision: GoalReview = { requestRevision: ctx.request.revision, verdict: 'covered', message: 'Synthetic coverage fixture, not a natural-language correctness claim', clauses: ctx.request.messages.map((m, i) => ({
+    messageId: m.id, quote: m.text, disposition: 'covered', inputKeys: i === 0 ? Object.keys(ctx.input) : [],
+    requirementIds: i === 0 ? [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].map(r => r.id) : [], conditionIds: i === 0 ? (ctx.request.conditions ?? []).map(c => c.id) : [], reason: 'Explicit synthetic mapping',
+  })) };
+  return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
+}
 export function interpretation(request: ServiceRequest, id = 'brief.prepare', input: object = { goal: 'Prepare a brief', deliverable: 'Record acceptance requirements' }): LegacyGrounding {
   return { kind: 'resolve', requestRevision: request.revision, capabilityRef: { id, version: '2' }, message: 'Fixture interpretation', inputJson: JSON.stringify(input), requirementsJson: '[]', conditionsJson: '[]' };
 }
@@ -20,7 +31,7 @@ export function proposal(context: PlanningContext, index = 0): PlanProposal {
     steps: candidate.recipe ? candidate.recipe.map(s => ({ id: s.id, actionTypeRef: s.actionTypeRef, bindingRef: s.bindingRef ?? candidate.binding.ref, inputJson: JSON.stringify(s.input), dependsOn: s.dependsOn })) : [{ id: 'action', actionTypeRef: context.capability.actions[0]!.ref, bindingRef: candidate.binding.ref, inputJson: JSON.stringify(candidate.input), dependsOn: [] }] };
 }
 export function reasoner(ground: (request: ServiceRequest) => Grounding = interpretation, plan: (context: PlanningContext) => PlanProposal = proposal): Reasoner {
-  return { ground: async (request, _caps, _signal, access) => ({ decision: ground(observeTaskContext(access) ?? request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
+  return { reviewGoal: syntheticGoalReview, ground: async (request, _caps, _signal, access) => ({ decision: ground(observeTaskContext(access) ?? request), evidence: evidence() }), plan: async (context, _signal, access) => { observePlanning(context, access); return { decision: plan(context), evidence: evidence() }; } };
 }
 const observedContexts = new WeakMap<PlanningAccess['session'], ServiceRequest>();
 /** The synthetic model explicitly reads and acknowledges its delivered context. */
@@ -41,6 +52,8 @@ export function observePlanning(context: PlanningContext, access: PlanningAccess
   access.session.call('query_ontology', { type: 'ServiceRequest', where: [{ property: 'requestId', op: 'eq', value: context.request.id }] });
 }
 export function backend(catalog: ExecutionCatalog, model = reasoner(), store = new JobStore(':memory:'), options: { allowSandbox?: boolean; allowExternalDrafts?: boolean } = {}) {
+  // Plain deterministic fixtures have synthetic semantic coverage; actual model reviewers and explicit missing-review tests retain their own behavior.
+  if (!(model instanceof CodexReasoner) && !Object.hasOwn(model, 'reviewGoal')) Object.assign(model, {reviewGoal: syntheticGoalReview});
   const tasks = new TaskService(store, { catalog, allowSandboxActions: options.allowSandbox, allowExternalDrafts: options.allowExternalDrafts }); const coordinator = new Coordinator(store, model, catalog, options);
   const submit = (extra: object = {}) => tasks.submit(principal, { service: 'eigos.delegate', goal: 'Prepare a brief', requestId: randomUUID(), ...extra });
   const run = async () => { const claim = store.claim(['eigos.delegate'], 15000); if (!claim) throw new Error('Expected durable claim'); await coordinator.run(claim, new AbortController().signal); return store.get(owner, claim.job.id); };

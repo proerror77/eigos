@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { businessTransaction } from '../packages/core/transaction.js';
-import { businessModel, businessModelV9 } from '../packages/ontology/business-model.js';
+import { businessModelV9 } from '../packages/ontology/business-model.js';
 import { migrateIntegratedOntology } from '../packages/ontology/integration-migration.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
+import { createSeedDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+const seed = createSeedDefinition(), businessModel = compileOntologyDocument(seed.document, seed.registry);
 
 test('migration reserves its writer before reading, so another connection cannot invalidate its snapshot', t => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-migration-race-')), path = join(dir, 'graph.sqlite');

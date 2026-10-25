@@ -1,3 +1,4 @@
+import {permitsPersonalSource} from '../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -25,6 +26,7 @@ const invalid = (message: string): never => { throw new DomainError('CONFLICT', 
 /** Business action binding and source validation. The LLM owns the step graph,
  * arguments, choice of products, follow-up reads and completion selection. */
 export class CatalogAgentProgram implements AgentProgram {
+  readonly projectionTypes=['CatalogTask','CatalogObservation','CatalogEndpoint','ProductOffer','Provider','Channel','ProductVariant','SourceReceipt'];
   readonly ref = CATALOG_AGENT_REF;
   readonly actionIds = catalogActionIds;
   readonly completionSchema = z.toJSONSchema(catalogCompletionSchema);
@@ -37,7 +39,7 @@ export class CatalogAgentProgram implements AgentProgram {
     this.connector = options.connector ?? new AnonymousShopifyConnector(options.auditDirectory);
     this.configurationDigest = digest({ merchants: this.merchants, profile: SHOPIFY_TEST_PROFILE, protocol: SHOPIFY_UCP_VERSION, evidenceKind: this.connector.evidenceKind, program: 'catalog-ontology-bindings-v3', ontology: catalogReadDefinitionRef });
   }
-  permitted(owner: string) { return this.merchants.length > 0 && owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return this.merchants.length > 0 && permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     return { ref: this.ref, ontologyRef: { id: 'catalog.agent.actions', version: catalogReadDefinition.version }, name: 'Agent 公开商品查询与比较',
       description: `根据用户目标选择和组合商品搜索、变体详情、商家目录发现、指定变体读取，返回有来源的公开商品信息或比较。支持商家：${this.merchants.map(m => `${m.name}（merchantId=${m.id}）`).join('、')}。解释请求时只确定 merchantIds 和 country=US；查询词、结果数量、商品变体及后续动作由 Agent 在读取 Ontology 后决定。US 是目录市场。比较两款、取两条等是检索目标，不是采购数量；单价筛选不是完整服务预算。只查询，不创建购物车、不下单付款；库存数量、配送及合作状态未知。`,
@@ -199,6 +201,6 @@ export class CatalogAgentProgram implements AgentProgram {
     const prices = rows.map(i => i.displayPrice).filter((p): p is NonNullable<typeof p> => !!p);
     const priceComparison = rows.length === 2 && prices.length === 2 && prices[0]!.currency === prices[1]!.currency ? { currency: prices[0]!.currency, firstMinusSecondMinor: String(BigInt(prices[0]!.minor) - BigInt(prices[1]!.minor)), basis: 'display_price_only' } : undefined;
     const deliverable = '已按 Agent 选择的商品和来源完成匿名只读查询。显示价格不代表完整税费或配送报价；库存数量、配送承诺、目录完整性及合作状态未知。未创建购物车、结账、订单或付款。';
-    return { artifact: { id: randomUUID(), name: 'agent-catalog-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { catalogAnswer: { ontologyModule: catalogReadDefinitionRef, scope: ctx.state.scope, country: 'US', selections, ...(priceComparison ? { priceComparison } : {}), selectionRationale: completion.rationale, completeness: 'partial_or_unknown', stockQuantity: 'unknown', deliveryCommitment: 'unknown', partnerTrust: 'unverified', noBusinessWrites: true } } } }, facts: { ...facts, quantities: { result_count: { amount: String(rows.length), unit: 'result' } } }, evidenceRefs: selections.map(s => s.receiptId) };
+    return { evidenceLevel: this.connector.evidenceKind === 'fixture' ? 'synthetic' : this.connector.evidenceKind, artifact: { id: randomUUID(), name: 'agent-catalog-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { catalogAnswer: { ontologyModule: catalogReadDefinitionRef, scope: ctx.state.scope, country: 'US', selections, ...(priceComparison ? { priceComparison } : {}), selectionRationale: completion.rationale, completeness: 'partial_or_unknown', stockQuantity: 'unknown', deliveryCommitment: 'unknown', partnerTrust: 'unverified', noBusinessWrites: true } } } }, facts: { ...facts, quantities: { result_count: { amount: String(rows.length), unit: 'result' } } }, evidenceRefs: selections.map(s => s.receiptId) };
   }
 }

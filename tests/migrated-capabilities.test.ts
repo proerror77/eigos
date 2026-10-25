@@ -30,7 +30,7 @@ test('explicit historical document adapter resumes the same task and verifies it
     const original = b.submit({ goal: '请写一份工作坊文档草稿' }); const asked = await b.run(); assert.equal(asked.state, 'input-required'); assert(asked.delegation!.pendingActionInput);
     b.tasks.reply(principal, { taskId: original.id, answer: '100字以内', requestId: 'answer' }); const done = await b.run();
     assert.equal(done.id, original.id); assert.equal(done.state, 'completed'); assert(done.artifact!.data.markdown!.includes('工作坊'));
-    assert(seen[1]!.includes('100字以内')); assert.equal(done.runs!.filter(r => r.purpose === 'document').length, 2); assert.equal(done.runs!.length, 4);
+    assert(seen[1]!.includes('100字以内')); assert.equal(done.runs!.filter(r => r.purpose === 'document').length, 2); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 4);
     assert.equal(b.store.intents(owner, done.id).length, 1); assert.equal(b.store.attempts(owner, done.delegation!.intentId!)[1]!.kind, 'resume');
     const facts = b.store.capabilityFacts(owner, done.delegation!.plan!.bindingRef); assert.equal(facts.summary.evidenceLevelCounts.model_generated, 1); assert.equal(facts.summary.automaticPromotion, false);
   } finally { b.store.close(); }

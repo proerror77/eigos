@@ -18,24 +18,25 @@ async function port() {
   const value = (server.address() as { port: number }).port;
   await new Promise<void>((done, reject) => server.close(error => error ? reject(error) : done())); return value;
 }
-test('E2E: one managed launcher starts and stops Gateway, Worker and the resident participant browser queue', { timeout: 30000 }, async () => {
+test('E2E: one managed launcher starts and stops Gateway, Worker, participant queue and an explicit commerce simulator', { timeout: 90000 }, async () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-participant-process-')), taskDatabasePath = join(directory, 'tasks.sqlite');
   const store = new JobStore(taskDatabasePath); store.close();
-  const gatewayPort = await port(), bridgePort = await port(), bearer = randomBytes(32).toString('hex'), release = 'f'.repeat(64);
+  const gatewayPort = await port(), bridgePort = await port(), commercePort=await port(), bearer = randomBytes(32).toString('hex'), release = 'f'.repeat(64);
+  const commerce=`http://127.0.0.1:${commercePort}`,commerceToken=join(directory,'commerce-token');writeFileSync(commerceToken,randomBytes(32).toString('hex'),{mode:0o600});
   const config = { bindingId: 'synthetic-process-only', attendeeRef: 'a'.repeat(64), port: bridgePort, taskDatabasePath, databasePath: join(directory, 'queue.sqlite'), evidenceDirectory: join(directory, 'evidence'), workerTokenFile: join(directory, 'worker-token'), operatorTokenFile: join(directory, 'operator-token') };
   for (const file of [config.workerTokenFile, config.operatorTokenFile]) writeFileSync(file, randomBytes(32).toString('hex'), { mode: 0o600 });
   const file = join(directory, 'browser.json'); writeFileSync(file, JSON.stringify(config));
-  const settings = participantDeploymentSettings({ EIGOS_FREE_BOOKING_BROWSER_CONFIG: file }, {}, taskDatabasePath);
+  const settings = {...participantDeploymentSettings({ EIGOS_FREE_BOOKING_BROWSER_CONFIG: file }, {}, taskDatabasePath),EIGOS_MANAGED_COMMERCE_SANDBOX:'true',EIGOS_ACTION_SANDBOX:'true',EIGOS_COMMERCE_SANDBOX_PORT:String(commercePort),EIGOS_COMMERCE_SANDBOX_URL:commerce,EIGOS_COMMERCE_SANDBOX_TOKEN_FILE:commerceToken,EIGOS_COMMERCE_SANDBOX_DATABASE:join(directory,'commerce.sqlite')};
   const child = spawn(process.execPath, [resolve('scripts/run-local.mjs'), '--built'], { env: { PATH: process.env.PATH, HOME: process.env.HOME, NODE_NO_WARNINGS: '1', NODE_ENV: 'development', HOST: '127.0.0.1', PORT: String(gatewayPort), PUBLIC_URL: `http://127.0.0.1:${gatewayPort}`, DATABASE_PATH: taskDatabasePath, EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: bearer, EIGOS_EXECUTOR: 'disabled', EIGOS_RELEASE_DIGEST: release, ...settings }, stdio: ['ignore', 'pipe', 'pipe'] });
   let diagnostics = ''; child.stderr.on('data', bytes => { diagnostics = (diagnostics + bytes).slice(-3000); });
   const gateway = `http://127.0.0.1:${gatewayPort}`, bridge = `http://127.0.0.1:${bridgePort}`;
   try {
     let ready = false;
-    for (const deadline = Date.now() + 15000; Date.now() < deadline;) {
+    for (const deadline = Date.now() + 45000; Date.now() < deadline;) {
       if (child.exitCode !== null) assert.fail('Managed launcher exited: ' + diagnostics);
       try {
-        const health = await Promise.all([gateway, bridge].map(origin => fetch(origin + '/health', { signal: AbortSignal.timeout(500) }).then(r => r.json())));
-        if (health.every(value => value.backend === BACKEND_VERSION && value.releaseDigest === release)) { ready = true; break; }
+        const health = await Promise.all([gateway, bridge,commerce].map(origin => fetch(origin + '/health', { signal: AbortSignal.timeout(500) }).then(r => r.json())));
+        if (health.slice(0,2).every(value => value.backend === BACKEND_VERSION && value.releaseDigest === release) && health[2].environment==='sandbox' && health[2].realOperationsAllowed===false) { ready = true; break; }
       } catch { /* Wait for the independently started processes. */ }
       await new Promise(done => setTimeout(done, 50));
     }
@@ -52,7 +53,7 @@ test('E2E: one managed launcher starts and stops Gateway, Worker and the residen
       const timer = setTimeout(() => child.kill('SIGKILL'), 10000); timer.unref();
       await exited; clearTimeout(timer);
     }
-    for (const origin of [gateway, bridge]) await assert.rejects(fetch(origin + '/health', { signal: AbortSignal.timeout(500) }));
+    for (const origin of [gateway, bridge,commerce]) await assert.rejects(fetch(origin + '/health', { signal: AbortSignal.timeout(500) }));
     rmSync(directory, { recursive: true, force: true });
   }
 });

@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from '../backend-fixture.js';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../../packages/core/delegation.js';
 import { JobStore } from '../../packages/core/store.js';
@@ -52,7 +53,7 @@ export const chooseMeituan: MeituanChoice = (ctx, access) => {
   return decision([step('quote', 'EstimateMeituanDelivery', { scope, addresses: book.ref, sender: sender.ref, recipient: recipient.ref })]);
 };
 export function meituanReasoner(mode: 'geo' | 'addresses' | 'delivery', choice: MeituanChoice = chooseMeituan, selectors = { sender: '地址1', recipient: '地址2' }): Reasoner {
-  return { ground: async (request, _caps, _signal, access) => {
+  return { reviewGoal: syntheticGoalReview, ground: async (request, _caps, _signal, access) => {
     request = observeTaskContext(access) ?? request;
     const input = mode === 'geo' ? { city: '北京市', keyword: '天安门' } : mode === 'addresses' ? {} : { ...missingMeituan, ...(request.revision > 1 ? selectors : {}) };
     return { decision: { ...interpretation(request, mode === 'geo' ? 'geo.search' : mode === 'addresses' ? 'address.book.read' : 'delivery.quote', input), capabilityRef: { id: mode === 'geo' ? 'geo.search' : mode === 'addresses' ? 'address.book.read' : 'delivery.quote', version: mode === 'delivery' ? '2' : '1' } }, evidence: evidence() };

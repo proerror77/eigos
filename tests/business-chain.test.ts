@@ -6,6 +6,11 @@ import { businessModel, businessModelV9 } from '../packages/ontology/business-mo
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { setup, bookChoice } from './fixtures/paotui-agent.js';
 import { owner } from './backend-fixture.js';
+import { createSeedDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+import { migrateIntegratedOntology } from '../packages/ontology/integration-migration.js';
+const seed = createSeedDefinition(), migrationModel = compileOntologyDocument(seed.document, seed.registry);
+function migrateGraph(db: DatabaseSync) { const graph = new OntologyObjectStore(db, migrationModel, Date.now, undefined, { skipLegacyMigration: true }); migrateIntegratedOntology(db, businessModelV9, migrationModel); return graph; }
 
 const at = '2026-10-20T03:00:00.000Z';
 test('known v9 business definitions migrate atomically and idempotently without rewriting facts or granting authority', () => {
@@ -24,16 +29,16 @@ test('known v9 business definitions migrate atomically and idempotently without 
     }
     db.prepare('INSERT INTO ontology_links VALUES(?,?,?,?,?,?,?)').run(owner, 'ProposalOffer', 'Proposal', 'proposal', 'ProductOffer', 'old-offer', digest(businessModelV9.link('ProposalOffer')));
     const before = db.prepare('SELECT type,id,revision,body FROM ontology_objects ORDER BY type').all();
-    const graph = new OntologyObjectStore(db);
+    const graph = migrateGraph(db);
     assert.deepEqual(db.prepare('SELECT type,id,revision,body FROM ontology_objects ORDER BY type').all(), before);
     for (const row of rows) assert.deepEqual(graph.read(owner, { type: row.type, id: row.id }).properties, row.properties);
     assert.equal(graph.evaluate(owner, { function: 'authorizationStatus', object: { type: 'Authorization', id: 'authorization' } }).value, 'unknown');
     assert.equal(graph.query(owner, { type: 'BusinessDecision' }).items.length, 0, 'Migration invents no past actions');
     assert.equal(graph.query(owner, { type: 'ExecutionAttempt' }).items.length, 0, 'Migration never replays execution');
     const after = db.prepare('SELECT * FROM ontology_objects ORDER BY type').all();
-    new OntologyObjectStore(db);
+    migrateGraph(db);
     assert.deepEqual(db.prepare('SELECT * FROM ontology_objects ORDER BY type').all(), after);
-    assert.equal(db.prepare('SELECT definition_digest FROM ontology_links').get()!.definition_digest, digest(businessModel.link('ProposalOffer')));
+    assert.equal(db.prepare('SELECT definition_digest FROM ontology_links').get()!.definition_digest, digest(migrationModel.link('ProposalOffer')));
   } finally { db.close(); }
 });
 
@@ -46,7 +51,7 @@ test('an unknown predecessor aborts the complete migration, including earlier va
       db.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run(owner, type!, id!, 1, definition!, JSON.stringify({ properties, source: { kind: 'task', id: 'original', observedAt: at }, createdAt: at }));
     }
     const before = db.prepare('SELECT * FROM ontology_objects ORDER BY type').all();
-    assert.throws(() => new OntologyObjectStore(db), /Unknown predecessor/);
+    assert.throws(() => migrateGraph(db), /Unknown predecessor/);
     assert.deepEqual(db.prepare('SELECT * FROM ontology_objects ORDER BY type').all(), before);
   } finally { db.close(); }
 });

@@ -1,3 +1,4 @@
+import { authorizationScope } from '../security/context.js';
 import { ConnectionAuthorizationRequired, DomainError, type Job } from './domain.js';
 import type { ServiceDefinition } from './services.js';
 import { type Ref, type ServiceCapability, type ProviderBinding, type CandidateFacts, type ExecutionPlan, type ServiceRequest } from '../ontology/execution.js';
@@ -8,6 +9,11 @@ import type { AgentProgram } from './agent-program.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
 import { actionDiscoverySchema, type ActionBindingPin, type ActionDiscoveryEntry, type ActionDiscoveryPage, type ActionDiscoveryQuery, type DiscoveredActionBinding } from './action-bindings.js';
 import { actionEffects, actionVersion } from '../ontology/composition-contract.js';
+import { permittedCapability, permittedProgram, secureProgram, secureAdapter, secureDiscovery } from '../security/execution.js';
+import { businessModel } from '../ontology/business-model.js';
+import {requireRecovery} from '../security/recovery.js';
+import type {SecurityStore} from '../security/store.js';
+import { CompositionProgram } from '../coordinator/composition-program.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 /** A bounded view for reusing one adapter operation. It links to the real sealed
@@ -27,6 +33,7 @@ export type Preparation = { kind: 'needs_input'; question: string; details?: Rec
   recipe?: PreparedStep[];
 };
 export interface Delivery {
+  evidenceLevel?: string; requirementChecks?: import('../ontology/execution.js').RequirementCheck[];
   conditionSubject?: import('../ontology/model.js').ObjectRef; artifact: NonNullable<Job['artifact']>; facts: CandidateFacts; evidenceRefs: string[];
   /** Trusted verifier's economic identity prevents summing a quote and its payment twice. */
   economicFacts?: { key: string; phase: 'quote' | 'commitment' | 'payment' | 'refund'; amount: { minor: string; currency: string }; role?: keyof NonNullable<CandidateFacts['amounts']>; evidenceRefs: string[] }[];
@@ -82,8 +89,22 @@ export class ExecutionCatalog {
   private programs = new Map<string, AgentProgram>();
   private dynamicBase?: ExecutionCatalog;
   private ontologyScope?: string;
+  private ontologyModel?: OntologyObjectStore['model'];
+  private security?:SecurityStore;
+  secureWith(security:SecurityStore) {if(this.security && this.security!==security && (this.security.enabled || security.enabled))throw new Error('A catalog cannot cross security stores');this.security=security;}
   constructor(services: ServiceCapability[], bindings: ProviderBinding[], adapters: RegisteredAdapter[], sources: DiscoverySource[] = [], programs: AgentProgram[] = [],
-    private readonly dynamicFactory?: (graph: OntologyObjectStore, owner: string) => AgentProgram | undefined) {
+    private readonly dynamicFactory?: (graph: OntologyObjectStore, owner: string) => AgentProgram | undefined, security?: SecurityStore) {
+    if(security) this.secureWith(security);
+    const composites = (['live', 'sandbox'] as const).flatMap(environment => {
+      const eligible = programs.map(program=>({program,capability:program.capability()})).filter(({program:p,capability:c})=>!p.callerManagedActions && digest([...p.actionIds].sort())===digest(c.actions.map(a=>a.ref.id).sort()) && !p.ref.id.startsWith('services.compose.') && p.ref.id!=='eigos.goal' && ['local',environment].includes(c.environment??'local'));
+      // Explicit orchestration selects capability refs, whereas native goals
+      // select exact provider pins. Ambiguous capability families stay native.
+      const counts=new Map<string,number>();for(const {capability} of eligible)counts.set(key(capability.ref),(counts.get(key(capability.ref))??0)+1);
+      const available=eligible.filter(({capability})=>counts.get(key(capability.ref))===1).map(({program})=>program);
+      if (services.some(s => s.ref.id === `services.compose.${environment}`)) return [];
+      return available.length >= 2 ? [new CompositionProgram(available, environment, program => secureProgram(program, this.security))] : [];
+    });
+    services = [...services, ...composites.map(p => p.capability())]; programs = [...programs, ...composites];
     for (const adapter of adapters) {
       if (this.adapters.has(adapter.id)) throw new Error('Duplicate adapter');
       this.adapters.set(adapter.id, adapter);
@@ -122,8 +143,9 @@ export class ExecutionCatalog {
     const program = base.dynamicFactory(graph, owner);
     if (!program) return base;
     const catalog = new ExecutionCatalog([...base.services.values(), program.capability()], [...base.providers.values()], [...base.adapters.values()], base.sources,
-      [...base.programs.values(), program], base.dynamicFactory);
-    catalog.dynamicBase = base; catalog.ontologyScope = scope;
+      [...base.programs.values(), program], base.dynamicFactory, base.security);
+    if (base.security) catalog.secureWith(base.security);
+    catalog.dynamicBase = base; catalog.ontologyScope = scope; catalog.ontologyModel = graph.model;
     // Discovery records remain owner/request/version bound and are checked
     // against the source's current permission on every subsequent use.
     catalog.discovered = base.discovered;
@@ -132,7 +154,7 @@ export class ExecutionCatalog {
   managedProgram(owner: string): AgentProgram | undefined {
     const programs = [...this.programs.values()].filter(program => program.callerManagedActions === true && program.permitted(owner));
     if (programs.length > 1) throw new DomainError('CONFLICT', 'Managed action program is ambiguous');
-    return programs[0];
+    return programs[0] ? secureProgram(programs[0], this.security) : undefined;
   }
   /** Owner, environment and release filtering happens before any binding metadata is returned. */
   discoverActions(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: ActionDiscoveryQuery): ActionDiscoveryPage {
@@ -142,9 +164,10 @@ export class ExecutionCatalog {
     if (current.properties.revision !== request.revision) throw new DomainError('CONFLICT', 'Action discovery request revision changed');
     for (const type of [query.inputType, query.outputType]) if (type && !graph.model.hasType(type)) throw new DomainError('INVALID_INPUT', 'Unknown action discovery type');
     const environment = request.executionEnvironment ?? 'live';
-    const permittedPrograms = [...catalog.programs.values()].filter(program => (!query.programRef || sameRef(program.ref, query.programRef)) && program.permitted(owner)
+    const permittedPrograms = [...catalog.programs.values()].filter(program => !(program instanceof CompositionProgram) && permittedProgram(program) && (!query.programRef || sameRef(program.ref, query.programRef)) && program.permitted(owner)
       && (environment === 'sandbox' ? program.capability().environment !== 'live' : program.capability().environment !== 'sandbox'));
     const definitions = graph.model.actionDefinitions().filter(action => {
+      if (catalog.security?.enabled) { const scope = authorizationScope(); if (!scope || scope.policies.security !== catalog.security) throw new DomainError('FORBIDDEN','Current task authority is required for action discovery'); if (!scope.policies.resourceAllowed(scope,'actionType',action.id)) return false; }
       if (query.actionId && action.id !== query.actionId) return false;
       if (query.inputType && !Object.values(action.inputs).some(type => graph.model.assignableType(query.inputType!, type))) return false;
       if (query.outputType && !(action.resultTypes ?? (action.read ? [action.read.resultType] : action.operation ? [action.operation.resultType] : [])).some(type => graph.model.assignableType(type, query.outputType!))) return false;
@@ -227,7 +250,7 @@ export class ExecutionCatalog {
     const implementation = graph.model.actionImplementation(actionId);
     if (!implementation) return { status: 'definition_only', reason: 'This definition has no registered executable implementation' };
     const catalog = this.forOntology(graph, owner);
-    const candidates = [...catalog.programs.values()].filter(program => program.actionIds.includes(actionId) && program.permitted(owner));
+    const candidates = [...catalog.programs.values()].filter(program => !(program instanceof CompositionProgram) && permittedProgram(program) && program.actionIds.includes(actionId) && program.permitted(owner));
     for (const program of candidates) {
       if (implementation.kind === 'declarative' && !program.callerManagedActions) continue;
       if (implementation.kind === 'trusted' && program.callerManagedActions) continue;
@@ -261,22 +284,49 @@ export class ExecutionCatalog {
   agentProgram(ref: Ref, owner: string): AgentProgram | undefined {
     const program = this.programs.get(key(ref));
     if (program && !program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent program is unavailable to this identity');
-    return program;
+    return program ? secureProgram(program,this.security) : undefined;
+  }
+  /** Feedback belongs to one actual configured runtime, never to an aggregate
+   * of providers merely sharing a semantic capability name. */
+  programForCapability(ref: Ref, owner: string): AgentProgram | undefined {
+    const matches=[...this.programs.values()].filter(program=>sameRef(program.capability().ref,ref) && program.permitted(owner) && permittedProgram(program));
+    return matches.length===1 ? this.agentProgram(matches[0]!.ref,owner) : undefined;
   }
   source(ref: Ref, owner: string): { binding: ProviderBinding; program: AgentProgram } | { binding: ProviderBinding; adapter: RegisteredAdapter } {
     const selected = this.programBindings.get(key(ref));
     if (!selected) return this.binding(ref, owner);
     if (!selected.binding.enabled || !selected.program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent source is unavailable to this identity');
-    return { binding: structuredClone(selected.binding), program: selected.program };
+    return { binding: structuredClone(selected.binding), program: secureProgram(selected.program, this.security) };
   }
   binding(ref: Ref, owner: string, requestId?: string): { binding: ProviderBinding; adapter: RegisteredAdapter } {
     const binding = this.providers.get(key(ref)) ?? (requestId ? this.discovered.get(JSON.stringify([owner, requestId, key(ref)])) : undefined);
     const adapter = binding && this.adapters.get(binding.adapterId);
     if (!binding?.enabled || !adapter?.permitted(owner)) throw new DomainError('FORBIDDEN', 'Provider binding is unavailable to this identity');
-    return { binding: structuredClone(binding), adapter };
+    return { binding: structuredClone(binding), adapter: secureAdapter(binding,adapter,this.security) };
   }
-  discoverySources(ref: Ref, owner: string): DiscoverySource[] { return this.sources.filter(s => s.capabilityRefs.some(r => sameRef(r, ref)) && s.permitted(owner)); }
+  discoverySources(ref: Ref, owner: string): DiscoverySource[] { return this.sources.filter(s => permittedCapability(ref.id) && s.capabilityRefs.some(r => sameRef(r, ref)) && s.permitted(owner)).map(s=>secureDiscovery(s,ref.id,this.security)); }
   hasRemediation(): boolean { return [...this.adapters.values()].some(a => isActionAdapter(a) && !!a.prepareRemediation); }
+  /** Reviewed server metadata for the member control plane, without credentials,
+   * source locators or an implicit grant for programs restricted to another owner. */
+  securityProfiles(owner:string) {
+    const model = this.security?.model ?? this.ontologyModel ?? businessModel;
+    return [...this.programs.values()].filter(p=>p.permitted(owner)).map(program=>{
+      const ontology=program.capability().ontology;
+      const objects=ontology && 'objects' in ontology && Array.isArray(ontology.objects) ? ontology.objects.filter((v):v is string=>typeof v==='string') : [];
+      return {
+      capabilityId:program.capability().ref.id,bindingId:`program:${program.ref.id}`,programId:program.ref.id,programDigest:program.configurationDigest,
+      name:program.capability().name,operations:[...program.actionIds,...(program.observeOriginal?['recover_original']:[])],
+      outputTypes:[...new Set([...(program.projectionTypes??objects),...program.actionIds.flatMap(id=>{
+        const action=model.action(id); return [...Object.values(action.inputs),...action.changes.map(c=>c.split('.')[0]!)];
+      })])].filter(t=>model.hasType(t) && !model.isInterface(t) && t!=='ServiceRequest'),
+    };});
+  }
+  async observeOriginal(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal) {
+    requireRecovery(operation,this.security);
+    const program=this.programs.get(key(operation.programRef));
+    if(!program?.observeOriginal || !program.permitted(operation.owner) || program.configurationDigest!==operation.programDigest) throw new DomainError('FORBIDDEN','Original source observer is unavailable');
+    return program.observeOriginal(operation,signal);
+  }
   registerDiscovered(ctx: AdapterContext, binding: DiscoveredBinding): void {
     const source = this.sources.find(s => s.id === binding.discovery.sourceId && s.adapterId === binding.adapterId && s.channelId === binding.channelId && s.capabilityRefs.some(r => sameRef(r, binding.capabilityRef)));
     if (!source?.permitted(ctx.owner) || binding.discovery.requestId !== ctx.request.id || binding.discovery.requestRevision !== ctx.request.revision || !binding.discovery.evidenceRefs.length) throw new DomainError('FORBIDDEN', 'Discovered binding has invalid source, identity or request provenance');
@@ -286,7 +336,7 @@ export class ExecutionCatalog {
     this.discovered.set(id, structuredClone(binding));
   }
   bindings(ref: Ref, owner: string): ProviderBinding[] {
-    return [...this.providers.values()].filter(b => sameRef(b.capabilityRef, ref) && b.enabled && this.adapters.get(b.adapterId)!.permitted(owner)).map(b => structuredClone(b));
+    return [...this.providers.values()].filter(b => permittedCapability(ref.id) && sameRef(b.capabilityRef, ref) && b.enabled && this.adapters.get(b.adapterId)!.permitted(owner)).map(b => structuredClone(b));
   }
   summaries(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live') {
     const page = this.summaryPage(owner, limit, environment);
@@ -296,9 +346,9 @@ export class ExecutionCatalog {
   /** Bounded bootstrap only. The action directory searches all permitted programs. */
   summaryPage(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live') {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new DomainError('INVALID_INPUT', 'Invalid capability page size');
-    const programs = (ref: Ref) => [...this.programs.values()].filter(program => sameRef(program.capability().ref, ref) && program.permitted(owner));
+    const programs = (ref: Ref) => [...this.programs.values()].filter(program => sameRef(program.capability().ref, ref) && permittedProgram(program) && program.permitted(owner));
     const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || programs(s.ref).length));
-    const items = permitted.slice(0, limit).map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], ...(s.goalOutcomes ? { goalOutcomes: structuredClone(s.goalOutcomes) } : {}), requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation,
+    const items = permitted.slice(0, limit).map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], ...(s.goalOutcomes ? { goalOutcomes: structuredClone(s.goalOutcomes) } : {}), requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, scopeReviewMode: s.scopeReviewMode, ...(this.programs.get(key(s.ref)) instanceof CompositionProgram ? { composition: structuredClone(s.ontology) } : {}),
       sourceAuthorization: programs(s.ref).map(program => program.sourceAuthorization?.(owner)).find(Boolean) ?? this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
     return { items, hasMore: permitted.length > items.length };
   }

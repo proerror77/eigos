@@ -60,7 +60,7 @@ export const serializableActionSchema = z.strictObject({
   effects: effects.optional(), resultTypes: names.optional(), description: text, inputs: inputTypes,
   changes: z.array(z.string().min(1).max(200)).min(1).max(200), submissionCriteria: z.array(z.string().min(1).max(200)).min(1).max(100),
   providerOperation: z.string().min(1).max(200).optional(),
-  read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema, mcp: mcpReadBindingSchema.optional(), module: z.strictObject({ id: ontologyIdSchema, version: versionSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), completion: z.strictObject({ evaluate: nameSchema }) }).optional() }).optional(),
+  read: z.strictObject({ version: versionSchema, effect: z.literal('read'), inputSchema: schema, resultType: nameSchema, mcp: mcpReadBindingSchema.optional(), module: z.strictObject({ id: ontologyIdSchema, version: versionSchema, digest: z.string().regex(/^[a-f0-9]{64}$/), completion: z.strictObject({ evaluate: nameSchema, planned: z.boolean().optional(), afterAuthorizedOperation: z.boolean().optional() }) }).optional() }).optional(),
   operation: z.strictObject({ version: versionSchema, effect: z.enum(['local', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft']), additionalEffects: effects.optional(), environment: z.enum(['sandbox', 'local', 'live_free', 'live']), inputSchema: schema, resultType: nameSchema }).optional(),
   inputSchema: schema.optional(), implementation: actionImplementationSchema.optional(), composition: compositionContractSchema.optional(),
 });

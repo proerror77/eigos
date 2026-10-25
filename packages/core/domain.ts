@@ -1,7 +1,8 @@
 import type { Delegation } from './delegation.js';
 import { z } from 'zod';
 import type { RunEvidence } from '../capabilities/executor.js';
-import { requirementsSchema } from '../ontology/execution.js';
+import { requirementsSchema, refSchema } from '../ontology/execution.js';
+import type { AccessContext } from '../security/contracts.js';
 import { locationContextSchema } from './location-context.js';
 import { executionBudgetProfileSchema } from './execution-budget.js';
 
@@ -16,6 +17,8 @@ export interface Principal {
   tenant: string;
   clientId: string;
   scopes: string[];
+  /** Server-derived only; never accepted in task/tool arguments. */
+  access?: AccessContext;
 }
 
 export class DomainError extends Error {
@@ -52,6 +55,7 @@ export const submitSchema = z.union([z.object({
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
   executionBudget: executionBudgetProfileSchema.optional(),
   ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
+  capabilityRef: refSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
 const answerReplySchema = z.object({
   taskId: taskIdSchema,
@@ -83,7 +87,7 @@ export interface Job {
   service: string;
   delegation?: Delegation;
   afterSales?: Omit<import('../ontology/actions.js').AfterSalesCase, 'owner'>[];
-  executionMode?: 'worker';
+  executionMode?: 'worker' | 'worker-security-foundation' | 'worker-security-v2' | 'worker-security-archive';
   goal: string;
   deliverable?: string;
   state: JobState;

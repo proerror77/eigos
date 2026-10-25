@@ -1,3 +1,4 @@
+import { extendTaskClosureKernel } from './task-closure-kernel.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -16,7 +17,7 @@ import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type Ontol
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '21';
+export const CURRENT_KERNEL_VERSION = '22';
 export const PA_PAYMENT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '19', digest: '60287d4b34e950c24e6479812e3a8fd0be6ba19402917a2f3ff9db63798065df' });
 export const PROVIDER_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '20', digest: 'ef3a604ace56a5617bfe67b93686ec5a19ac94ba2c06ebc37676e4b1c3efa5a4' });
 export const CHECKOUT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '18', digest: 'da1bfa28f9c3a2635913e93a3c3889702c82c2a82ed3d9c9d9dbf9dc38817ee6' });
@@ -114,12 +115,18 @@ export function createSeedDefinition(registry = new TrustedDefinitionRegistry())
 }
 
 /** A separate immutable kernel release can add supported engine contracts without relabelling old facts. */
-export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+export function createConsolidatedKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   createProviderReadKernelDefinition(registry);
   const composition = createCompositionKernelDefinition(registry);
   const didi = complete(extendDidiKernel(composition.document, registry), registry, false);
   const combined = extendPAPaymentKernel(extendCheckoutKernel(didi.document, registry), registry);
-  return complete(extendConsolidatedKernel(combined, registry, BUSINESS_MODEL_DEFINITION), registry, false);
+  const predecessor = complete(extendConsolidatedKernel(combined, registry, BUSINESS_MODEL_DEFINITION), registry, false);
+  if (predecessor.audit.model.digest !== 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107') throw new DomainError('CONFLICT', 'The original consolidated v21 fingerprint changed');
+  return predecessor;
+}
+export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  const predecessor = createConsolidatedKernelDefinition(registry);
+  return complete(extendTaskClosureKernel(predecessor.document, registry, BUSINESS_MODEL_DEFINITION), registry, false);
 }
 export function createProviderReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const payment = createPAPaymentKernelDefinition(registry);

@@ -1,3 +1,4 @@
+import { predecessorRideActions, predecessorRideFunctions } from './provider-read-predecessor.js';
 import { z } from 'zod';
 import type { OntologyDocument } from './definition-contracts.js';
 import type { TrustedDefinitionRegistry } from './model-compiler.js';
@@ -17,11 +18,11 @@ export function extendDidiKernel(original: OntologyDocument, registry: TrustedDe
     })) });
   document.links.push(...links.map(value => ({ ...value, resourceId: `builtin:eigos.business:link:${value.id}`, writePolicy: 'source' as const })));
   const evidenceTypes = new Set(objects.filter(object => object.interfaces?.some(value => value.id === 'EvidenceBacked')).map(object => object.id));
-  for (const value of [...rideEstimateActions, ...rideBookingActions]) {
+  for (const value of [...predecessorRideActions, ...rideBookingActions]) {
     const action = composable(value, evidenceTypes);
     document.actions.push({ ...action, resourceId: `builtin:eigos.business:action:${action.id}`, implementation: { kind: 'trusted', handlerRef: registry.registerAction(action) } });
   }
-  for (const fn of [...rideEstimateFunctions, ...rideBookingFunctions]) document.functions.push({ ...fn, handlerRef: registry.registerFunction(fn) });
+  for (const fn of [...predecessorRideFunctions, ...rideBookingFunctions]) document.functions.push({ ...fn, handlerRef: registry.registerFunction(fn) });
   const known = new Set(document.links.map(link => link.id));
   for (const link of executionReferenceLinks(document.objects, document.actions, document.interfaces)) if (!known.has(link.id)) document.links.push({ ...link, resourceId: `builtin:eigos.business:link:${link.id}`, writePolicy: 'source' });
   return document;

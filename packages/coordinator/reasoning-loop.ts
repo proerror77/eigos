@@ -8,9 +8,9 @@ import { digest } from '../core/delegation.js';
 import type { ObjectRef } from '../ontology/model.js';
 import { compactSchema, packPromptData } from './prompt-data.js';
 
-export type OntologyReasoningModel = Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'openStructuredSession' | 'closeStructuredSessions' | 'ontologyContextPreparation'>> & { ontologyTransport?: 'native-mcp' };
+export type OntologyReasoningModel = Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'openStructuredSession' | 'closeStructuredSessions' | 'ontologyContextPreparation' | 'securityChannelId'>> & { ontologyTransport?: 'native-mcp' };
 export async function reasonWithOntology(model: OntologyReasoningModel, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
-  record: (evidence: RunEvidence) => void, maxTurns = 8, context?: { actions?: string[]; refs?: ObjectRef[]; data?: unknown; prepare?: boolean }) {
+  record: (evidence: RunEvidence) => void, maxTurns = 8, context?: { actions?: string[]; refs?: ObjectRef[]; data?: unknown; prepare?: boolean; decodeFinal?: { encoding: 'fixed_scope_message_refs_v1'; apply(raw: unknown): unknown } }) {
   if (model.ontologyTransport === 'native-mcp') return reasonWithNativeOntology(model, prompt, finalSchema, session, signal, record, maxTurns);
   const transcript: unknown[] = [];
   const turnLimit = Math.min(8, maxTurns);
@@ -46,7 +46,9 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
         'describe_ontology returns concise action summaries by default; request actions=[exact IDs] for only the input schemas needed now. interface.functions is navigation from current ontology definitions for already-bound types; it is not source evidence or evaluation. Use query_ontology.select to request business properties without duplicate raw evidence when supported by the definition. Reads in one batch are evaluated in listed order. When an exact reference and its registered function are already known, prefer querying and evaluating it in that same ordered batch, alongside needed definitions; this needs no extra model response. Never guess IDs for future source outputs.',
         rendered,
       ].join('\n\n');
+      session.authorizeModel(model.securityChannelId);
       const response = conversation ? await conversation.run(input) : await model.runStructured(input, schema, signal);
+      session.authorizeModel(model.securityChannelId);
       response.evidence = { ...response.evidence, promptData: data.metrics };
       if (prepared) response.evidence = { ...response.evidence, ontologyContext: { digest: prepared.digest, receiptIds: prepared.receiptIds, startedAt: prepared.startedAt, preparedAt: prepared.preparedAt, model: prepared.model, requestRevision: prepared.requestRevision } };
       signal.throwIfAborted();
@@ -55,7 +57,11 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
         if (step.calls.length || !step.finalJson) throw new Error('Invalid final planning turn');
         if (!session.usesTaskContext() && (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new Error('The model skipped required ontology reads');
         session.acceptReceipts(session.receipts().filter(receipt => receipt.status === 'ok').map(receipt => receipt.id));
-        const output: unknown = JSON.parse(step.finalJson), evidence = { ...response.evidence, decisionDigest: digest(output) };
+        const raw: unknown = JSON.parse(step.finalJson);
+        let output: unknown;
+        try { output = context?.decodeFinal ? context.decodeFinal.apply(raw) : raw; }
+        catch (error) { record({ ...response.evidence, decisionDigest: digest(raw) }); throw error; }
+        const evidence = { ...response.evidence, decisionDigest: digest(output), ...(context?.decodeFinal ? {decisionDecoding: {encoding: context.decodeFinal.encoding, rawDecisionDigest: digest(raw)}} : {}) };
         record(evidence);
         return { output, evidence };
       }
@@ -76,12 +82,13 @@ export async function reasonWithOntology(model: OntologyReasoningModel, prompt: 
 
 const completionSchema = z.object({ decisionDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 
-async function reasonWithNativeOntology(model: Pick<CodexExecutor, 'runStructured'>, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
+async function reasonWithNativeOntology(model: Pick<CodexExecutor, 'runStructured'> & Partial<Pick<CodexExecutor, 'securityChannelId'>>, prompt: string, finalSchema: object, session: OntologyPlanningSession, signal: AbortSignal,
   record: (evidence: RunEvidence) => void, maxTurns = 8) {
   if (maxTurns < 1) throw new ReasoningBudgetExhausted();
   const budgetAbort = new AbortController(), nativeSignal = AbortSignal.any([signal, budgetAbort.signal]);
-  const mcp = await openOntologyMcp(session, nativeSignal, () => budgetAbort.abort(new ReasoningBudgetExhausted()), finalSchema);
+  const mcp = await openOntologyMcp(session, nativeSignal, () => budgetAbort.abort(new ReasoningBudgetExhausted()), finalSchema, model.securityChannelId);
   try {
+    session.authorizeModel(model.securityChannelId);
     const response = await model.runStructured([
       prompt,
       'Use the native eigos_ontology MCP tools attached to this model session. Tool calls execute against the current task-bound Ontology and return actual receipts. Do not describe a tool call in JSON or text as a substitute for invoking it.',
@@ -94,6 +101,7 @@ async function reasonWithNativeOntology(model: Pick<CodexExecutor, 'runStructure
       JSON.stringify({ finalSchema, requestRef: { type: 'ServiceRequest', id: session.request.id }, ...(!session.usesTaskContext() ? { request: session.request } : {}) }),
     ].join('\n\n'), z.toJSONSchema(completionSchema), nativeSignal, { mcp: mcp.connection });
     signal.throwIfAborted();
+    session.authorizeModel(model.securityChannelId);
     let evidence: RunEvidence = { ...response.evidence, ontologyMcp: mcp.evidence() };
     try {
       const decision = mcp.result();

@@ -6,7 +6,9 @@ import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { DomainError, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
-import { taskSummary } from '../../packages/core/task-summary.js';
+import { publicTask as taskSummary } from './task-view.js';
+import {secureDescribeSchema,secureQuerySchema,secureEvaluateSchema,checkAccessSchema} from '../../packages/security/view.js';
+import { SecurityError } from '../../packages/security/store.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
@@ -20,8 +22,9 @@ async function result(action: () => unknown): Promise<CallToolResult> {
     const value = await action();
     return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
   } catch (error) {
+    if(error instanceof z.ZodError) return {isError:true,content:[{type:'text',text:JSON.stringify({code:'INVALID_INPUT',message:'Input does not match the authorized tool contract'})}]};
     if (error instanceof DomainError) {
-      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error.code, message: error.message }) }] };
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error instanceof SecurityError ? error.reason : error.code, message: error.message }) }] };
     }
     throw error;
   }
@@ -29,15 +32,15 @@ async function result(action: () => unknown): Promise<CallToolResult> {
 
 export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
-  if (definitions) mountDefinitionMcp(server, definitions, principal);
-  if (network) mountNetworkMcp(server, network.service, principal, network.token);
+  if (!tasks.secured && definitions) mountDefinitionMcp(server, definitions, principal);
+  if (!tasks.secured && network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   if (options.runtime) server.registerTool('get_runtime_info', {
     description: 'Identify this EIGOS deployment and its MCP/A2A endpoints. This describes the installed runtime, not Worker availability or business completion.',
     inputSchema: z.object({}).strict(), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return { ...options.runtime, mcp: `${options.runtime!.instance}/mcp`, a2a: `${options.runtime!.instance}/a2a` }; }));
   const ontologyContext = { ontologyId: ontologyIdSchema.optional(), taskId: taskIdSchema.optional(), release: ontologyReleaseRefSchema.optional() };
-  if (sources) {
+  if (!tasks.secured && sources) {
     server.registerTool('list_source_connections', { description: 'Discover available account-backed services and the current user\'s own connection status. Visibility does not lend another member\'s credential.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.list(principal, sources.token)));
     server.registerTool('get_source_connection', { description: 'Read this user\'s Meituan connection state, expiry and next action. Accepted credential is not provider verification.', inputSchema: z.object({}).strict(), annotations: read }, () => result(() => sources.service.status(principal, sources.token)));
     server.registerTool('begin_source_connection', { description: 'Begin or rotate the user\'s own read-only Meituan connection. The PA must obtain the credential locally and upload through the returned private HTTP path. Never send a token through MCP or task text.', inputSchema: sourceBeginSchema, annotations: { idempotentHint: true, destructiveHint: false } }, args => result(() => sources.service.begin(principal, sources.token, args)));
@@ -46,16 +49,17 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   }
   server.registerTool('describe_ontology', {
     description: 'Read bounded business object/interface definitions, properties, source semantics and bidirectional links. Definitions do not grant access or prove live supply.',
-    inputSchema: z.object({ ...ontologyContext, search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
-  }, args => result(() => tasks.describeOntology(principal, args)));
+    inputSchema: tasks.secured ? secureDescribeSchema : z.object({ ...ontologyContext, search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Discover types with related contracts by default; use actions or functions to page through their complete catalogues') }).strict(), annotations: read,
+  }, (args: unknown) => result(() => tasks.describeOntology(principal, args)));
   server.registerTool('query_ontology', {
     description: 'Read only owned business objects or one named relationship. Filters and projections use registered fields; private fields are forbidden. Inspect hasMore/cursor, source kind and evidence level.',
-    inputSchema: z.union(objectQuerySchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
-  }, args => result(() => tasks.queryOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
+    inputSchema: tasks.secured ? secureQuerySchema : z.union(objectQuerySchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
+  }, (args: unknown) => result(() => tasks.queryOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   server.registerTool('evaluate_ontology', {
     description: 'Run a registered, bounded, read-only business calculation. Missing or incompatible evidence stays unknown; synthetic evidence is never live fulfillment.',
-    inputSchema: z.union(functionCallSchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
-  }, args => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
+    inputSchema: tasks.secured ? secureEvaluateSchema : z.union(functionCallSchema.options.map(schema => schema.safeExtend(ontologyContext))), annotations: read,
+  }, (args: unknown) => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
+  if (tasks.secured) server.registerTool('check_access',{description:'Check current access to your granted task and selected fields; this grants no authority.',inputSchema:checkAccessSchema,annotations:read},args=>result(()=>tasks.checkAccess(principal,args)));
   server.registerTool('list_services', {
     description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',
     inputSchema: z.object({}), annotations: read,
@@ -69,12 +73,12 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. While submitted/working, use waitMs up to 30000 to await a terminal state or needed action without rapid repeated calls. Timeout returns the unchanged original task and never cancels execution. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
     inputSchema: z.object({ taskId: taskIdSchema, waitMs: z.number().int().min(0).max(30000).optional() }).strict(), annotations: read,
   }, ({ taskId, waitMs }) => result(async () => taskSummary(await tasks.getAfterWait(principal, taskId, waitMs))));
-  if (options.externalDrafts) server.registerTool('authorize_checkout_draft', {
+  if (!tasks.secured && options.externalDrafts) server.registerTool('authorize_checkout_draft', {
     description: 'Authorize exactly one live unpaid checkout draft for the merchant, items and source preview returned by this owned task. Copy its planDigest and draft unchanged; expiresAt may copy draft.sourceExpiresAt and must not exceed it. This grants no order, payment, customer-data submission or later edit. Reuse requestId for identical retries.',
     inputSchema: externalDraftPermitSchema.omit({ action: true, environment: true }).extend({ taskId: taskIdSchema }).strict(),
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, ({ taskId, ...permit }) => result(() => taskSummary(tasks.authorize(principal, taskId, { ...permit, action: 'approve_external_draft', environment: 'live' }))));
-  server.registerTool('get_member_usage', {
+  if (!tasks.secured) server.registerTool('get_member_usage', {
     description: 'Read only the authenticated member’s recorded EIGOS Worker usage across tasks. Member limits are disabled. Unknown/unreported usage is separate; task safety budgets still apply.',
     inputSchema: z.object({}).strict(), annotations: read,
   }, () => result(() => tasks.usage(principal)));
@@ -88,11 +92,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: versionedReplySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.reply(principal, args))));
-  server.registerTool('amend_task', {
+  if (!tasks.secured) server.registerTool('amend_task', {
     description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.amend(principal, args))));
-  server.registerTool('resume_task', {
+  if (!tasks.secured) server.registerTool('resume_task', {
     description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));

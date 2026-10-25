@@ -7,6 +7,7 @@ import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSc
 import { TaskService } from '../../packages/core/tasks.js';
 import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
+import type { TaskView } from '../../packages/security/task-service.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 
 export class AgentUser implements User {
@@ -28,6 +29,7 @@ const states: Record<JobState, TaskState> = {
 };
 
 function toTask(job: Job, historyLength?: number): Task {
+  const safe='view' in job && job.view==='eigos.task.v2' ? job as TaskView : undefined;
   if (historyLength !== undefined) z.number().int().min(0).max(1000).parse(historyLength);
   const summary = taskSummary(job);
   const messages = job.messages.map(message => ({
@@ -42,7 +44,7 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: { view: summary.view, service: summary.service, revision: summary.revision, internalState: summary.state, counts: summary.counts,
+    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,outputStatus:safe.outputStatus,...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, internalState: summary.state, counts: summary.counts,
       ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
       ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
       ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
@@ -52,7 +54,7 @@ function toTask(job: Job, historyLength?: number): Task {
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resources, task data, sources and output channels are checked separately. Replies require expectedRevision from current Task metadata. Connecting never authorizes a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,

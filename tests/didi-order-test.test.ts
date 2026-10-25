@@ -1,0 +1,232 @@
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+import { CodexReasoner } from '../packages/coordinator/coordinator.js';
+import { expandPromptData } from '../packages/coordinator/prompt-data.js';
+import { assertGoalCoverage, createFixedInputCoverage, registeredFixedInput } from '../packages/ontology/goal-coverage.js';
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { JobStore } from '../packages/core/store.js';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import { digest, encodeFixedScopeGrounding, decodeFixedScopeGrounding } from '../packages/core/delegation.js';
+import { ORDER_TEST_REF, orderTestInputSchema } from '../packages/ontology/didi-order-test.js';
+import type { AgentDecision, AgentStep } from '../packages/ontology/agent-actions.js';
+import type { Reasoner, AgentPlanningContext, PlanningAccess } from '../packages/coordinator/coordinator.js';
+import { DidiMockOrderConnector, MOCK_ORDER_ENDPOINT, parseMockOrderStatus, type MockOrderSource } from '../packages/capabilities/didi/order-test-connector.js';
+import { didiFixture } from './fixtures/didi.js';
+import { backend, owner, principal, interpretation, evidence, syntheticGoalReview, observeTaskContext, acknowledgeReads } from './backend-fixture.js';
+
+const scopeInput = { city: '北京市', origin: '北京西站', destination: '西二旗-地铁站', serviceClass: '快车', target: 'created' };
+const secretTrace = 'PRIVATE_MOCK_TRACE_NEVER_IN_MODEL';
+const readGraph = (scope: object): AgentStep[] => [
+ { id: 'from', action: 'SearchDidiTestPlaces', argumentsJson: JSON.stringify({ scope, role: 'origin' }), dependsOn: [], inputRefs: [] },
+ { id: 'to', action: 'SearchDidiTestPlaces', argumentsJson: JSON.stringify({ scope, role: 'destination' }), dependsOn: [], inputRefs: [] },
+ { id: 'quote', action: 'EstimateDidiTestOrder', argumentsJson: JSON.stringify({ scope }), dependsOn: ['from', 'to'], inputRefs: [
+  { stepId: 'from', targetKey: 'origin' }, { stepId: 'from', targetKey: 'originPlaceId', compute: { function: 'selectDidiOrderTestPlace', path: ['placeId'] } },
+  { stepId: 'to', targetKey: 'destination' }, { stepId: 'to', targetKey: 'destinationPlaceId', compute: { function: 'selectDidiOrderTestPlace', path: ['placeId'] } },
+ ] },
+];
+function choose(ctx: AgentPlanningContext, access: PlanningAccess): AgentDecision {
+ access.session.prepareContext({ actions: [...ctx.actionIds], refs: [ctx.state.scope, ...ctx.state.observations.slice().reverse()] });
+ observeTaskContext(access);
+ const quote = ctx.state.observations.find(r => r.type === 'DidiOrderTestQuote');
+ return { kind: 'execute', requestRevision: ctx.request.revision, message: quote ? 'Choose exact Mock create and original-ID verification, subject to a separate permit' : 'Choose source maps and Mock quote only', completionJson: '', steps: quote ? [
+  { id: 'create', action: 'CreateDidiTestOrder', argumentsJson: JSON.stringify({ scope: ctx.state.scope, quote, productCategory: '1' }), dependsOn: [], inputRefs: [] },
+  { id: 'verify', action: 'QueryDidiTestOrder', argumentsJson: JSON.stringify({ scope: ctx.state.scope }), dependsOn: ['create'], inputRefs: [{ stepId: 'create', targetKey: 'order' }] },
+ ] : readGraph(ctx.state.scope), ...(quote ? { plannedCompletion: { argumentsJson: JSON.stringify({ rationale: 'Only verified Mock creation' }), inputRefs: [{ stepId: 'verify', targetKey: 'observation' }] } } : {}) };
+}
+function fixture(initial = false, fixed = false) {
+ const maps = didiFixture(), store = new JobStore(':memory:'), calls: { tool: string; input: Record<string, unknown> }[] = [];
+ const flags = { loseCreation: false, badStatus: false, cancelOnCreate: undefined as undefined | (() => void) };
+ const source: MockOrderSource = { evidenceKind: 'fixture', invoke: async (tool, input) => {
+  calls.push({ tool, input });
+  if (tool === 'taxi_create_order') { flags.cancelOnCreate?.(); if (flags.loseCreation) throw new Error('Synthetic lost response after possible acceptance'); }
+  const raw = tool === 'taxi_estimate' ? { structuredContent: { traceId: secretTrace, phoneNumberSuffix: 'PRIVATE_PHONE_SUFFIX', items: [{ productName: '快车', productCategory: '1', priceText: '15' }] } }
+    : tool === 'taxi_create_order' ? { structuredContent: { orderId: 'mock-order-id', status: 'created', from: { name: '北京西站' }, to: { name: '西二旗地铁站' }, phoneNumberSuffix: 'PRIVATE_PHONE_SUFFIX' } }
+    : { content: [{ type: 'text', text: flags.badStatus ? 'unknown prose; do not accept' : '系统正在为您匹配最近的司机...\n提示：您可以随时取消订单' }] };
+  const at = new Date().toISOString();
+  return { raw, receipt: { id: randomUUID(), bindingId: maps.binding.bindingId, environment: 'mock', endpoint: MOCK_ORDER_ENDPOINT, tool, inputDigest: digest(input), responseSha256: digest(raw), toolSchemaDigest: digest({ tool }), startedAt: at, receivedAt: at } };
+ } };
+ const catalog = createExecutionCatalog({ store, didi: { ...maps.binding, connector: maps.connector }, didiOrderTestEnabled: true, didiOrderTestSource: source });
+ const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async (r, _caps, _signal, access) => {
+  const prepared = initial ? access.session.prepareContext({ actions: ['SearchDidiTestPlaces', 'EstimateDidiTestOrder'] }) : undefined;
+  r = observeTaskContext(access) ?? r;
+  if (!initial && !access.session.usesTaskContext()) { access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 }); access.session.call('query_ontology', { object: { type: 'ServiceRequest', id: r.id } }); }
+  const decision = { ...interpretation(r, ORDER_TEST_REF.id, scopeInput), capabilityRef: ORDER_TEST_REF, ...(fixed ? { scopeReview: (await syntheticGoalReview({ request: r, capability: catalog.capability(ORDER_TEST_REF), input: scopeInput })).decision } : {}), ...(initial ? { initialSteps: readGraph({}).map(s => { const input = JSON.parse(s.argumentsJson); delete input.scope; return { ...s, argumentsJson: JSON.stringify(input), scopeInputs: ['scope'] }; }) } : {}) };
+  const run = { ...evidence(), decisionDigest: digest(decision), ...(prepared ? { ontologyContext: { digest: prepared.digest, receiptIds: prepared.receiptIds, startedAt: prepared.startedAt, preparedAt: prepared.preparedAt, model: prepared.model, requestRevision: prepared.requestRevision } } : {}) };
+  return { decision, evidence: run };
+ }, plan: async () => { throw new Error('No recipe'); }, act: async (ctx, _signal, access) => { const decision = choose(ctx, access); acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } }; } };
+ const b = backend(catalog, model, store, { allowSandbox: true });
+ const submit = () => b.submit({ executionEnvironment: 'sandbox', capabilityRef: ORDER_TEST_REF, goal: '只做官方 Mock 下单测试，确认快车报价后创建并查询，禁止真实派车付款。' });
+ const approve = (id: string) => { const a = store.get(owner, id).delegation!.authorizationRequest!; return b.tasks.authorize(principal, id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };
+ return { ...b, catalog, model, maps, source, calls, flags, submit, approve, close: () => { store.close(); maps.close(); } };
+}
+
+test('Official Mock order path displays the quote, waits for exact authority, then creates and independently reads without another model reply', async () => {
+ const f = fixture();
+ try {
+  const job = f.submit(); await f.run(); await f.run(); await f.run();
+  const waiting = f.store.get(owner, job.id);
+  assert.equal(waiting.state, 'auth-required', JSON.stringify({state:waiting.state,question:waiting.question,grounding:waiting.delegation!.groundingFeedback,feedback:waiting.delegation!.agent?.feedback}));
+  assert.match(waiting.question!, /15 元/); assert.match(waiting.question!, /Mock/); assert.match(waiting.question!, /北京西站/);
+  assert.deepEqual(f.calls.map(c => c.tool), ['taxi_estimate']);
+  assert(!JSON.stringify(waiting).includes(secretTrace)); assert(!JSON.stringify(waiting).includes('PRIVATE_PHONE_SUFFIX'));
+  const modelCalls = waiting.runs!.length; f.approve(job.id); const done = await f.run();
+  assert.equal(done.state, 'completed', JSON.stringify(done.delegation!.agent!.feedback));
+  assert.equal(done.runs!.length, modelCalls); assert.equal(done.delegation!.agent!.completion!.mode, 'planned');
+  assert.deepEqual(f.calls.map(c => c.tool), ['taxi_estimate', 'taxi_create_order', 'taxi_query_order']);
+  assert.equal(f.calls[2]!.input.order_id, 'mock-order-id'); assert.equal(f.calls[1]!.input.estimate_trace_id, secretTrace);
+  assert.equal(done.delegation!.outcome!.evidenceLevel, 'synthetic'); assert.equal((done.artifact!.data.result as any).realOrder, false);
+  assert(!JSON.stringify(done).includes(secretTrace)); assert(!JSON.stringify(done).includes('PRIVATE_PHONE_SUFFIX'));
+ } finally { f.close(); }
+});
+
+test('A lost creation response is not retried and does not trigger an account-wide order lookup', async () => {
+ const f = fixture();
+ try {
+  const job = f.submit(); await f.run(); await f.run(); await f.run(); f.approve(job.id); f.flags.loseCreation = true; await f.run();
+  for (let i = 0; i < 3; i++) { await new Promise(r => setTimeout(r, 1050)); const claim = f.store.claim(['eigos.delegate'], 15000); if (claim) await f.coordinator.run(claim, new AbortController().signal); }
+  const current = f.store.get(owner, job.id); assert.equal(current.state, 'input-required');
+  assert.equal(f.calls.filter(c => c.tool === 'taxi_create_order').length, 1); assert.equal(f.calls.filter(c => c.tool === 'taxi_query_order').length, 0);
+ } finally { f.close(); }
+});
+
+test('Cancellation during the acknowledged Mock write preserves audit evidence but cannot complete or query a replacement order', async () => {
+ const f = fixture();
+ try {
+  const job = f.submit(); await f.run(); await f.run(); await f.run(); f.approve(job.id); f.flags.cancelOnCreate = () => { f.tasks.cancel(principal, job.id); };
+  await f.run(); const current = f.store.get(owner, job.id);
+  assert.equal(current.state, 'canceled'); assert(!current.artifact); assert.equal(f.calls.filter(c => c.tool === 'taxi_create_order').length, 1); assert.equal(f.calls.filter(c => c.tool === 'taxi_query_order').length, 0);
+ } finally { f.close(); }
+});
+
+test('Unrecognized status prose is not independent order confirmation', async () => {
+ const f = fixture();
+ try { const job = f.submit(); await f.run(); await f.run(); await f.run(); f.approve(job.id); f.flags.badStatus = true; await assert.rejects(f.run(), /source read requires recovery/); assert.equal(f.calls.filter(call => call.tool === 'taxi_create_order').length, 1); assert.notEqual(f.store.get(owner, job.id).state, 'completed'); }
+ finally { f.close(); }
+});
+
+test('Mock transport rejects production and ambiguous queries before a network call', async () => {
+ const maps = didiFixture(); let calls = 0;
+ try {
+  assert.throws(() => new DidiMockOrderConnector(maps.binding), /MOCK_ENDPOINT_REQUIRED/);
+  const source = new DidiMockOrderConnector({ ...maps.binding, environment: 'mock' }, async () => { calls++; throw new Error('No network'); });
+  await assert.rejects(source.invoke('taxi_query_order', {}, new AbortController().signal));
+  await assert.rejects(source.invoke('taxi_create_order', { product_category: '1', estimate_trace_id: secretTrace, caller_car_phone: '13800000000' }, new AbortController().signal));
+  assert.equal(calls, 0);
+  assert.throws(() => parseMockOrderStatus({ structuredContent: { orderId: 'other', statusCode: 0 } }, 'owned'), /ORDER_ID_MISMATCH/);
+  assert.throws(() => orderTestInputSchema.parse({ ...scopeInput, origin: '上海虹桥站' }));
+ } finally { maps.close(); }
+});
+
+test('A capability hint cannot select the sandbox program in a live request or bypass goal coverage', async () => {
+ const f = fixture();
+ try { const job = f.tasks.submit(principal, { service: 'eigos.delegate', goal: 'real ride', requestId: randomUUID(), capabilityRef: ORDER_TEST_REF }); await f.run(); assert.equal(f.store.get(owner, job.id).state, 'rejected'); assert.equal(f.calls.length, 0); }
+ finally { f.close(); }
+});
+
+test('One grounding reply may select quote preparation in a mixed program, but the write still needs a later source-backed decision and permit', async () => {
+ const f = fixture(true);
+ try {
+  const job = f.submit(); await f.run(); const quoted = f.store.get(owner, job.id);
+  assert(quoted.delegation!.agent!.observations.some(r => r.type === 'DidiOrderTestQuote'));
+  assert.equal(quoted.runs!.length, 2, 'Grounding and independent goal coverage, no invented response');
+  assert.deepEqual(f.calls.map(c => c.tool), ['taxi_estimate']);
+  await f.run(); const waiting = f.store.get(owner, job.id); assert.equal(waiting.state, 'auth-required'); assert.equal(waiting.runs!.length, 3);
+  f.approve(job.id); const done = await f.run(); assert.equal(done.state, 'completed'); assert.equal(done.runs!.length, 3);
+ } finally { f.close(); }
+});
+
+test('A canceled task may query an ID retained in its late creation audit, without projecting completion or replaying creation', async () => {
+ const f = fixture();
+ try {
+  const job = f.submit(); await f.run(); await f.run(); await f.run(); f.approve(job.id); f.flags.cancelOnCreate = () => { f.tasks.cancel(principal, job.id); }; const first = f.store.claim(['eigos.delegate'], 15000)!; await f.coordinator.run(first, new AbortController().signal); f.store.release(first);
+  const claim = f.store.claim(['eigos.delegate'], 15000); assert(claim?.recovery); await f.coordinator.run(claim, new AbortController().signal);
+  assert.equal(f.calls.filter(c => c.tool === 'taxi_create_order').length, 1); assert.equal(f.calls.filter(c => c.tool === 'taxi_query_order').length, 1);
+  const done = f.store.get(owner, job.id); assert.equal(done.state, 'canceled'); assert(!done.artifact); assert(!done.delegation!.agent!.observations.some(r => r.type === 'DidiTestOrderObservation'));
+ } finally { f.close(); }
+});
+
+ test('PA-pinned fixed scope reviews the original request in the actual initial response without a second interpretation', async () => {
+ const f = fixture(true, true);
+ try {
+  f.model.reviewGoal = async () => { throw new Error('Unexpected second review'); };
+  const job = f.submit(); await f.run(); await f.run();
+  const waiting = f.store.get(owner, job.id);
+  assert.equal(waiting.state, 'auth-required'); assert.equal(waiting.delegation!.goalCoverage!.reviewOrigin, 'registered_fixed_input');
+  assert.equal(waiting.runs!.length, 2);
+  f.approve(job.id); const done = await f.run(); assert.equal(done.state, 'completed'); assert.equal(done.runs!.length, 2);
+ } finally { f.close(); }
+});
+
+test('Fixed-scope coverage rejects an unpinned scope, altered input, extra constraints and changed response provenance', async () => {
+ const f = fixture(true, true);
+ try {
+  const job = f.submit(); await f.run(); const current = f.store.get(owner, job.id), d = current.delegation!;
+  const recorded = d.groundingDecisions![0]!, run = current.runs!.find(r => r.id === recorded.modelRunId)!;
+  const decision=recorded.decision; assert('capabilityRef' in decision);
+  const ctx = { request: d.request, capability: f.catalog.capability(ORDER_TEST_REF), input: scopeInput };
+  assert(createFixedInputCoverage(ctx, decision, run));
+  assert.throws(() => createFixedInputCoverage({ ...ctx, request: { ...ctx.request, capabilityRef: undefined } }, decision, run));
+  assert.throws(() => createFixedInputCoverage({ ...ctx, input: { ...scopeInput, origin: 'different' } }, decision, run));
+  assert.throws(() => createFixedInputCoverage(ctx, { ...decision, requirementsJson: '[{}]' }, run));
+  assert.throws(() => createFixedInputCoverage(ctx, decision, { ...run, decisionDigest: 'changed' }));
+  assert.throws(() => registeredFixedInput({ ...ctx.capability, inputSchema: { type: 'object', additionalProperties: false, properties: { origin: { type: 'string' } }, required: ['origin'] } }));
+ } finally { f.close(); }
+});
+
+for (const preferred of [true, false]) test(`Order planning reads focused current evidence and keeps map navigation (preferred=${preferred})`, async () => {
+ const f = fixture(true, true); let inspected = false;
+ try {
+  const reasoner = new CodexReasoner({ ontologyContextPreparation: 'worker_snapshot', runStructured: async prompt => {
+   const frame = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!));
+   const ctx = frame.task as AgentPlanningContext;
+   const objects = frame.conversation.flatMap((entry: any) => entry.result.items ?? []);
+   assert(objects.some((o: any) => o.ref.type === 'ServiceRequest'));
+   assert(objects.some((o: any) => o.ref.type === 'DidiOrderTestTask'));
+   assert(objects.some((o: any) => o.ref.type === 'DidiOrderTestQuote'));
+   assert.equal(objects.some((o: any) => o.ref.type === 'DidiOrderTestPlaceObservation'), !preferred);
+   assert.equal(ctx.state.observations.filter(ref => ref.type === 'DidiOrderTestPlaceObservation').length, 2);
+   inspected = true;
+   const decision = choose(ctx, { session: { prepareContext: () => {}, usesTaskContext: () => false } } as unknown as PlanningAccess);
+   return { output: { kind: 'final', calls: [], finalJson: JSON.stringify(decision) }, evidence: evidence() };
+  } });
+  f.model.act = (ctx, signal, access) => reasoner.act(preferred ? ctx : { ...ctx, planningObservationTypes: ['NoMatchingObservation'] }, signal, access);
+  const job = f.submit(); await f.run(); await f.run(); assert(inspected);
+  assert.equal(f.store.get(owner, job.id).state, 'auth-required');
+  f.approve(job.id); const done = await f.run(); assert.equal(done.state, 'completed');
+ } finally { f.close(); }
+});
+
+test('A map-only test override does not enter the strict official Mock credential binding', () => {
+ const f = didiFixture(), store = new JobStore(':memory:');
+ try {
+  const catalog = createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector }, didiOrderTestEnabled: true });
+  assert(catalog.agentProgram(ORDER_TEST_REF, owner)); assert.equal(f.calls.length, 0);
+ } finally { store.close(); f.close(); }
+});
+
+test('Fixed-scope message references retain the exact authenticated text and both raw and decoded response digests', async () => {
+ const f = fixture(true, true);
+ try {
+  const reasoner = new CodexReasoner({ ontologyContextPreparation: 'worker_snapshot', runStructured: async prompt => {
+   const frame = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!)), request = frame.task.request;
+   const decision = { ...interpretation(request, ORDER_TEST_REF.id, scopeInput), capabilityRef: ORDER_TEST_REF, scopeReview: (await syntheticGoalReview({request,capability:f.catalog.capability(ORDER_TEST_REF),input:scopeInput})).decision };
+   if(request.messages.length>1){assert(frame.finalSchema.properties.scopeReview.properties.clauses.items.properties.quote);return {output:{kind:'final',calls:[],finalJson:JSON.stringify(decision)},evidence:evidence()};}
+   const wire = encodeFixedScopeGrounding(decision);
+   assert(!Object.hasOwn(wire.scopeReview.clauses[0]!, 'quote'));
+   assert.deepEqual(decodeFixedScopeGrounding(request, wire), decision);
+   assert.throws(() => decodeFixedScopeGrounding(request, { ...wire, scopeReview: { ...wire.scopeReview, clauses: [{ ...wire.scopeReview.clauses[0], messageId: 'other-message' }] } }));
+   return { output: {kind:'final',calls:[],finalJson:JSON.stringify(wire)}, evidence:evidence() };
+  } });
+  f.model.ground=reasoner.ground.bind(reasoner);
+  const job=f.submit();await f.run();const current=f.store.get(owner,job.id), run=current.runs![0]!;
+  assert.equal(run.decisionDecoding!.encoding,'fixed_scope_message_refs_v1');
+  assert.notEqual(run.decisionDecoding!.rawDecisionDigest,run.decisionDigest);
+  assert.equal(current.delegation!.goalCoverage!.review.clauses[0]!.quote,current.delegation!.request.messages[0]!.text);
+  assertGoalCoverage(current,f.catalog.capability(ORDER_TEST_REF));
+  run.decisionDecoding!.rawDecisionDigest='changed';assert.throws(()=>assertGoalCoverage(current,f.catalog.capability(ORDER_TEST_REF)));
+  const request=current.delegation!.request,multi={...request,messages:[...request.messages,{...request.messages[0]!,id:'followup',text:'保留原路线，只撤销额外要求。'}]};
+  const response=await reasoner.ground(multi,f.catalog.summaries(owner,16,'sandbox').filter(c=>c.ref.id===ORDER_TEST_REF.id),new AbortController().signal,{session:new OntologyPlanningSession(f.store.ontology,owner,multi),record:()=>{},maxTurns:8});
+  assert.equal(response.evidence.decisionDecoding,undefined);assert.equal(('scopeReview' in response.decision ? response.decision.scopeReview! : assert.fail('Expected fixed-scope review')).clauses[1]!.quote,multi.messages[1]!.text);
+ } finally {f.close();}
+});

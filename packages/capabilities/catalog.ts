@@ -1,3 +1,6 @@
+import { bindPersonalSourceOwner } from '../core/source-owner.js';
+import { DidiOrderTestProgram } from './didi/order-test-program.js';
+import type { MockOrderSource } from './didi/order-test-connector.js';
 import { ParticipantBookingProgram, type ParticipantBookingSource } from './free-booking/program.js';
 import { ParticipantBrowserConnector, type ParticipantBrowserOptions } from './free-booking/connector.js';
 import { DidiBookingProgram } from './didi/booking-program.js';
@@ -40,12 +43,14 @@ import type { ShopifyPASandboxOptions } from './shopify/pa-checkout-connector.js
 import { ShopifyCheckoutProgram } from './shopify/checkout-program.js';
 import type { ShopCheckoutConnector } from './shopify/checkout-contracts.js';
 
-export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveReader; participantBooking?: ParticipantBrowserOptions; participantBookingSource?: ParticipantBookingSource; didiMember?: { connectionFile: string; connector?: DidiConnector }; didi?: DidiBinding & { connector?: DidiConnector; bookingEnabled?: boolean; bookingConnector?: DidiBookingConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
+export function createExecutionCatalog(options: { personalSourceOwner?: string; didiOrderTestEnabled?: boolean; didiOrderTestSource?: MockOrderSource; meituan?: MeituanPrimitiveReader; participantBooking?: ParticipantBrowserOptions; participantBookingSource?: ParticipantBookingSource; didiMember?: { connectionFile: string; connector?: DidiConnector }; didi?: DidiBinding & { connector?: DidiConnector; bookingEnabled?: boolean; bookingConnector?: DidiBookingConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
   if (options.didiMember && (options.didi || !options.store || options.store.databasePath === ':memory:')) throw new Error('Member DiDi requires its own connection and persistent business store');
   const didiAccess = options.didiMember ? new DidiMemberAccess(options.didiMember.connectionFile, (record, hash) => options.store!.memberDidiSourceAdmitted(record, hash)) : undefined;
   const didiSource = didiAccess?.record.binding ?? options.didi;
   const didiBinding = didiSource ? { bindingId: didiSource.bindingId, keyFile: didiSource.keyFile, keySha256: didiSource.keySha256, environment: didiSource.environment, auditDirectory: didiSource.auditDirectory } : undefined;
   const didi = didiBinding ? new DidiAgentProgram(didiBinding, { connector: options.didiMember?.connector ?? options.didi?.connector, memberAccess: didiAccess }) : undefined;
+  if (options.didiOrderTestEnabled && (!options.didi || !options.store || options.didiMember)) throw new Error('Order testing requires the explicit local DiDi binding and owned store');
+  const didiOrder = options.didiOrderTestEnabled ? new DidiOrderTestProgram(didiBinding!, options.store!, { maps: options.didi!.connector, orders: options.didiOrderTestSource }) : undefined;
   const didiBooking = didi && options.didi?.bookingEnabled ? new DidiBookingProgram(didi.binding, options.didi.bookingConnector, options.didi.connector) : undefined;
   const brief = new LocalArtifactProgram('brief'), csv = options.csvInputDirectory ? new LocalArtifactProgram('csv', options.csvInputDirectory) : undefined;
   const shopify = options.shopifyCatalog?.merchants.length ? new CatalogAgentProgram(options.shopifyCatalog.merchants, options.shopifyCatalog) : undefined;
@@ -78,7 +83,9 @@ export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveRead
   const sandbox = options.sandbox ? new SandboxServiceAdapter(options.sandbox.endpoint, options.sandbox.tokenFile) : undefined;
   const sandboxProgram = sandbox ? new SandboxAgentProgram(sandbox, options.store) : undefined;
   if (options.publicGeoDiscoveryQueries?.length && !meituanReader) throw new Error('Public-location discovery requires the existing personal Meituan reader');
+  if (options.personalSourceOwner) for (const program of [didiOrder, didiBooking, registration, ...meituan, ...(didiAccess ? [] : [didi]), shopify, commerce, stripe, booking]) if (program) bindPersonalSourceOwner(program, options.personalSourceOwner);
   return new ExecutionCatalog([
+    ...(didiOrder ? [didiOrder.capability()] : []),
     ...(registration ? [registration.capability()] : []), ...meituan.map(program => program.capability()),
     ...(didiBooking ? [didiBooking.capability()] : []), ...(didi ? [didi.capability()] : []), brief.capability(),
     ...paotuiPrograms.map(program => program.capability()), ...domainCapabilities,
@@ -90,8 +97,8 @@ export function createExecutionCatalog(options: { meituan?: MeituanPrimitiveRead
       ...(options.csvInputDirectory ? [CSV_BINDING] : []), ...(sandbox ? [{ ...SANDBOX_BINDING, configurationDigest: sandbox.configurationDigest }] : [])],
     [new BriefAdapter(), ...domainProviders.map(provider => new DomainServiceAdapter(provider)), ...ucp,
       ...(options.csvInputDirectory ? [new CsvAuditAdapter(options.csvInputDirectory)] : []), ...(sandbox ? [sandbox] : [])],
-    [], [ ...(registration ? [registration] : []), ...meituan, ...(didiBooking ? [didiBooking] : []), ...(didi ? [didi] : []), brief,
+    [], [ ...(didiOrder ? [didiOrder] : []), ...(registration ? [registration] : []), ...meituan, ...(didiBooking ? [didiBooking] : []), ...(didi ? [didi] : []), brief,
       ...(sandboxProgram ? [sandboxProgram] : []), ...(csv ? [csv] : []), ...domainPrograms, ...ucpPrograms, ...paotuiPrograms,
       ...(shopify ? [shopify] : []), ...(shopifyCheckout ? [shopifyCheckout] : []), ...(commerce ? [commerce] : []), ...(stripe ? [stripe] : []), ...(booking ? [booking] : []), ...(shopifyPayment ? [shopifyPayment] : []),
-      ...(document ? [document] : [])], createDynamicOntologyProgram);
+      ...(document ? [document] : [])], createDynamicOntologyProgram, options.store?.security);
 }

@@ -38,7 +38,7 @@ test('natural quote retains original task, private choices and hard constraints 
   let store = new JobStore(path); let b = runner(store, s);
   try {
     const submitted = b.submit({ goal: '查一下1公斤文件普通送的价格，先让我选择地址。', requirements: [{ id: 'weight', kind: 'quantity', strength: 'hard', expected: { amount: '1', unit: '公斤' } }] });
-    const asked = await b.run(); assert.equal(asked.state, 'input-required'); assert.match(asked.question!, /地址1：测试住处/); assert.equal(asked.runs!.length, 1); assert.equal(asked.artifact, undefined);
+    const asked = await b.run(); assert.equal(asked.state, 'input-required'); assert.match(asked.question!, /地址1：测试住处/); assert.equal(asked.runs!.filter(r => r.purpose !== 'goal_coverage').length, 1); assert.equal(asked.artifact, undefined);
     assert.deepEqual(s.calls.map(q => q.action), ['addresses']);
     assert.throws(() => store.preparationContext('different-owner', submitted.id, 'delivery-addresses:fixture-config'), /not found/);
     store.close(); store = new JobStore(path); b = runner(store, s);

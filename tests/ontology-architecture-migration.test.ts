@@ -183,7 +183,9 @@ test('metadata migration leaves historical backend-v15 tasks byte-identical and 
     store.close(); store = undefined; db = new DatabaseSync(path);
     db.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.backendVersion','ontology-execution-v15') WHERE id=?").run(task.id);
     const root = db.prepare("SELECT * FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(owner, task.id)!;
-    const oldProperties = JSON.parse(String(root.body)).properties; parseHistoricalProperties(FROZEN_V14.objects.ServiceRequest!, oldProperties);
+    const originalBody=JSON.parse(String(root.body)), {currentAssessment:_closure,...oldProperties}=originalBody.properties;
+    parseHistoricalProperties(FROZEN_V14.objects.ServiceRequest!, oldProperties);
+    db.prepare("UPDATE ontology_objects SET body=? WHERE owner=? AND type='ServiceRequest' AND id=?").run(JSON.stringify({...originalBody,properties:oldProperties}),owner,task.id);
     db.prepare("UPDATE ontology_objects SET definition_digest=? WHERE owner=? AND type='ServiceRequest' AND id=?").run(FROZEN_V14.objects.ServiceRequest!.fingerprint, owner, task.id);
     const before = db.prepare('SELECT * FROM jobs WHERE id=?').get(task.id), beforeObjects = unchangedFacts(objects(db));
     store = new JobStore(path); const current = new TaskService(store, { catalog });

@@ -25,6 +25,11 @@ import { assessGoal, GoalProgram, partialGoalArtifact } from './goal-program.js'
 import { assertGoalEffects } from '../core/goal-contract.js';
 import { actionBudgetImpactSchema } from '../ontology/actions.js';
 import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } from './initial-selection.js';
+import { secureAgentContext, secureRequest } from '../security/model.js';
+import { assertGoalCoverage } from '../ontology/goal-coverage.js';
+import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
+import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
+import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
@@ -74,7 +79,9 @@ export class AgentRuntime {
     const job = current ?? this.store.get(claim.owner, claim.job.id), d = job.delegation!;
     const state = d.agent ?? failure('Agent state is missing');
     if (state.requestRevision !== d.request.revision) failure('Agent state belongs to an old request revision');
-    const request = readOntologyRequest(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, d.request.id);
+    const graph = this.store.ontologyForJob(claim.owner, claim.job);
+    const compatibility = graph.security && (this.reasoner.ontologyContextMode !== 'task' || !!d.agent?.components || !!d.request.capabilityRef && this.catalog.capability(d.request.capabilityRef).scopeReviewMode === 'registered_fixed_input');
+    const request = compatibility ? secureRequest(graph, claim.owner, d.request) : readOntologyRequest(graph, claim.owner, d.request.id);
     if (request.revision !== d.request.revision) failure('Current business request differs from its Ontology revision');
     return { graph: this.store.ontologyForJob(claim.owner, claim.job), owner: claim.owner, request, state, intents: this.store.intents(claim.owner, claim.job.id), modelRuns: job.runs };
   }
@@ -108,11 +115,53 @@ export class AgentRuntime {
       job.messages.push({ id: randomUUID(), role: 'agent', text: message, at: job.updatedAt });
     });
   }
+  private accept(claim: WorkClaim, program: AgentProgram, selection: NonNullable<AgentExecutionState['completion']>) {
+        this.store.finish(claim, current => {
+          const fresh = this.context(claim, current), reads = selection.ontologyPlanning, proposal = selection.proposal;
+          assertGoalCoverage(current, program.capability());
+          validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, reads, true);
+          const goal = fresh.state.composition ? assessGoal(this.catalog, fresh, proposal, reads) : undefined;
+          if (goal) {
+            current.delegation!.agent!.composition!.assessment = goal.assessment;
+            current.artifact = goal.delivery.artifact;
+            if (!goal.assessment.accepted) {
+              this.feedback(current, 'completion', 'The whole goal remains incomplete; retain verified component results and inspect missing criteria', digest(proposal));
+              current.delegation!.nextAt = 0;
+              return;
+            }
+          }
+          const delivery = goal?.delivery ?? program.complete(fresh, proposal, reads), capability = program.capability();
+          const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
+          const checks = goal?.assessment.requirements ?? delivery.requirementChecks ?? checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
+          if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
+          const conditions = goal?.assessment.conditions ?? assessConditions(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, delivery.conditionSubject, 'result');
+          if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
+          const at = new Date().toISOString();
+          current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
+          resolveTaskRecovery(current, 'decision');
+          if (goal) for (const proof of goal.assessment.components.filter(value => value.status === 'verified')) {
+            const component = fresh.state.composition!.contexts.find(value => value.id === proof.contextId)!;
+            const source = this.catalog.agentProgram(component.programRef, claim.owner)!;
+            source.onCompletionAccepted?.(componentContext(fresh, component, source), current);
+          }
+          else program.onCompletionAccepted?.(fresh, current);
+          delete current.delegation!.agent!.pendingPlanId;
+          current.delegation!.phase = 'accepted'; current.delegation!.conditionChecks = conditions; current.delegation!.agent!.completion = { ...selection };
+          current.delegation!.acceptance = { accepted: true, reason: selection.mode === 'planned' ? 'The model selected a conditional future evidence binding; fresh post-source host reads, independent source validation and hard requirements passed' : 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
+          current.delegation!.outcome = {requestId: fresh.request.id, requestRevision: fresh.request.revision, status:'satisfied', assessedAt:at, reason:current.delegation!.acceptance!.reason, evidenceRefs:delivery.evidenceRefs, evidenceLevel:delivery.evidenceLevel ?? 'unverified',
+            criterionResults:[...checks.map(check=>({requirementId:check.requirementId,status:check.result==='pass'?'satisfied' as const:check.result==='fail'?'unsatisfied' as const:'unknown' as const,evidenceRefs:check.evidenceRefs})),
+              ...conditions.map(check=>({requirementId:check.conditionId,status:check.result==='pass'?'satisfied' as const:check.result==='fail'?'unsatisfied' as const:'unknown' as const,evidenceRefs:check.evidenceRefs.map(ref=>JSON.stringify(ref))})),
+              {requirementId:'goal_coverage',status:'satisfied',evidenceRefs:[current.delegation!.goalCoverage!.digest]}, {requirementId:'independent_verifier',status:'satisfied',evidenceRefs:delivery.evidenceRefs}]};
+          current.delegation!.events.push({ at, event: selection.mode === 'planned' ? 'agent_planned_completion_verified' : 'agent_completion_verified', evidence: selection.modelRunId });
+          current.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
+        });
+  }
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     if (claim.recovery) { await this.recoverTerminal(claim, this.program(claim), signal); return; }
     if (!this.withinTaskBudget(claim)) return;
     const program = this.program(claim), ctx = this.context(claim);
     program.assertContext?.(ctx);
+    if (!this.store.get(claim.owner, claim.job.id).delegation?.callerAction) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
     if (ctx.state.pendingPlanId) { await this.execute(claim, program, signal); return; }
     if (ctx.intents?.some(intent => !['read', 'local', 'object_write'].includes(intent.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown', 'needs_review'].includes(intent.state))) failure('An unconfirmed business effect blocks new planning; reconcile its original intent first');
     if (!this.reasoner.act) throw new DomainError('CONFLICT', 'This Worker has no agent action reasoner');
@@ -126,12 +175,13 @@ export class AgentRuntime {
       this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window')); return;
     }
     const access = this.access(claim, signal);
-    const reasoningContext = { request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), actionIds: [...(ctx.state.managedActionIds ?? program.actionIds)], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object,
+    const reasoningContext = { request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: [...(ctx.state.managedActionIds ?? program.actionIds)], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object,
       ...(ctx.state.composition ? { ports: ((intent.acceptedOutput?.ports ?? []) as import('../ontology/composition-contract.js').AcceptedPortValue[]).map(port => ({ name: port.port, definition: port.definition, value: port.value, receiptDigest: port.digest })) } : {}) })) };
     signal.throwIfAborted();
     if (!this.store.claimActive(claim)) return;
     const initialSelection = ctx.state.initialSelectionPending;
     let response: { decision: AgentDecision; evidence: NonNullable<Job['runs']>[number] };
+    let preparedReads: PlanningSnapshot | undefined;
     if (initialSelection) {
       try {
         if (ctx.state.composition || ctx.state.plans.length || ctx.state.observations.length) failure('Initial reads require an untouched single-program scope');
@@ -142,6 +192,7 @@ export class AgentRuntime {
         const decision = bindInitialSelection(ctx.graph, program, ctx.state.scope, source);
         access.session.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
         access.session.acceptReceipts(access.session.receipts().filter(read => read.status === 'ok').map(read => read.id));
+        preparedReads = access.session.finish();
         response = { decision, evidence: job.runs!.find(run => run.id === initialSelection.modelRunId)! };
       } catch (error) {
         signal.throwIfAborted();
@@ -149,14 +200,19 @@ export class AgentRuntime {
         return;
       }
     } else {
-      response = await this.reasoner.act(reasoningContext, signal, access);
+      const safeContext = secureAgentContext(reasoningContext, ctx.graph);
+      access.session.authorizeModel(this.reasoner.securityChannelId);
+      response = await this.reasoner.act(safeContext, signal, access);
+      access.session.authorizeModel(this.reasoner.securityChannelId);
       signal.throwIfAborted(); access.record(response.evidence);
     }
     if (!this.withinTaskBudget(claim)) return;
     const decision = agentDecisionSchema.parse(response.decision);
+    if (ctx.state.composition && decision.plannedCompletion) failure('Native composed goals require explicit component verification');
+    if (!ctx.state.composition) validatePlannedCompletion(ctx.graph, program, decision);
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
-    const reads = access.session.finish();
+    const reads = preparedReads ?? access.session.finish();
     if (decision.kind === 'prepare') {
       try {
         this.store.finish(claim, current => {
@@ -197,39 +253,7 @@ export class AgentRuntime {
       try {
         if (decision.steps.length || !decision.completionJson) failure('A completion decision must contain only its evidence selection');
         const proposal: unknown = JSON.parse(decision.completionJson);
-        this.store.finish(claim, current => {
-          const fresh = this.context(claim, current);
-          validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, reads, true);
-          const goal = fresh.state.composition ? assessGoal(this.catalog, fresh, proposal, reads) : undefined;
-          if (goal) {
-            current.delegation!.agent!.composition!.assessment = goal.assessment;
-            current.artifact = goal.delivery.artifact;
-            if (!goal.assessment.accepted) {
-              this.feedback(current, 'completion', 'The whole goal remains incomplete; retain verified component results and inspect missing criteria', digest(proposal));
-              current.delegation!.nextAt = 0;
-              return;
-            }
-          }
-          const delivery = goal?.delivery ?? program.complete(fresh, proposal, reads), capability = program.capability();
-          const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
-          const checks = goal?.assessment.requirements ?? checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
-          if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
-          const conditions = goal?.assessment.conditions ?? assessConditions(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, delivery.conditionSubject, 'result');
-          if (!hardConditionsPass(conditions, 'result')) failure('A required business result remains unknown');
-          const at = new Date().toISOString();
-          current.artifact = delivery.artifact; current.state = 'completed'; current.updatedAt = at;
-          resolveTaskRecovery(current, 'decision');
-          if (goal) for (const proof of goal.assessment.components.filter(value => value.status === 'verified')) {
-            const component = fresh.state.composition!.contexts.find(value => value.id === proof.contextId)!;
-            const source = this.catalog.agentProgram(component.programRef, claim.owner)!;
-            source.onCompletionAccepted?.(componentContext(fresh, component, source), current);
-          }
-          else program.onCompletionAccepted?.(fresh, current);
-          current.delegation!.phase = 'accepted'; current.delegation!.conditionChecks = conditions; current.delegation!.agent!.completion = { modelRunId: response.evidence.id, modelDecision: decision, proposal, ontologyPlanning: reads };
-          current.delegation!.acceptance = { accepted: true, reason: 'The agent selected the result and evaluated its current source evidence; independent readback and hard requirements passed', at, checks, evidenceRefs: delivery.evidenceRefs };
-          current.delegation!.events.push({ at, event: 'agent_completion_verified', evidence: response.evidence.id });
-          current.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
-        });
+        this.accept(claim, program, {modelRunId:response.evidence.id, modelDecision:decision, proposal, ontologyPlanning:reads});
       } catch (error) {
         if (error instanceof ConnectionAuthorizationRequired) throw error;
         if (!this.store.claimActive(claim)) return;
@@ -276,7 +300,9 @@ export class AgentRuntime {
           assertAcceptedOutputCurrent(this.catalog, ctx, intent, link.port);
           checked[link.targetKey] = acceptedInput(ctx, intent, link.port, port!);
         }
+        if (ctx.state.composition) {
         for (const link of step.inputRefs) {
+          if (link.compute) failure('Named port composition cannot carry scalar read derivations');
           const source = preceding.get(link.stepId) ?? failure('Unknown action output reference');
           if (!step.dependsOn.includes(link.stepId) || Object.hasOwn(input, link.targetKey) || targets.has(link.targetKey)) failure('Invalid or ambiguous action output reference');
           targets.add(link.targetKey);
@@ -287,6 +313,7 @@ export class AgentRuntime {
           } else checked[link.targetKey] = { type: agentOperation(actionProgram.definition(this.store.ontologyForJob(claim.owner, claim.job), source.action)).resultType, id: `pending:${source.id}` };
         }
         actionProgram.schema(step.action).parse(checked);
+        } else validateReadBindings(ctx.graph, actionProgram, step, definition, input, preceding);
         for (const value of Object.values(input)) {
           const ref = objectRefSchema.safeParse(value);
           if (ref.success && !(reads.deliveredObjects ?? reads.objects).some(o => equal(o.ref, ref.data))) failure('Read referenced ontology objects before selecting an action');
@@ -322,7 +349,7 @@ export class AgentRuntime {
       const quoteBody = localApproval ? { id: randomUUID(), ...localApproval, environment: 'local_simulation' as const, requestDigest: digest(ctx.request), bindingRef: steps[0]!.binding?.ref ?? program.ref, bindingDigest: steps[0]!.binding?.digest ?? program.configurationDigest, inputDigest: stepInputDigest(steps[0]!), detailsDigest: digest({ privateDigest: (steps[0] as AgentActionPlan['steps'][number]).privateDigest, terms: localApproval }) } : undefined;
       const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: ctx.state.composition ? '3' : '2', ...(steps.some(step => !['read', 'local', 'object_write', 'external_draft'].includes(step.effect)) ? { environment: steps.some(step => step.effect === 'reserve' && ctx.graph.model.action(step.action).operation?.environment === 'live_free') ? 'live_free' as const : 'sandbox' as const } : {}), sequence: plans.length + 1, requestId: ctx.request.id, requestRevision: ctx.request.revision, programRef: program.ref, programDigest: program.configurationDigest, scope: ctx.state.scope, scopeDigest: ctx.state.composition ? componentScopeDigest(ctx, ctx.state.scope) : digest(this.store.ontologyForJob(claim.owner, claim.job).read(claim.owner, ctx.state.scope).properties), modelRunId: response.evidence.id, modelDecision: decision, reasoning: decision.message, createdAt: new Date().toISOString(), steps, ontologyPlanning: reads, ...(initialSelection ? { initialSelection } : {}), ...(quoteBody ? { quote: { ...quoteBody, digest: digest(quoteBody) } } : {}) };
       const plan = { ...body, digest: digest(body) };
-      if (initialSelection) verifyInitialPlan(this.store.get(claim.owner, claim.job.id), this.store.ontology, program, plan);
+      if (initialSelection) verifyInitialPlan(this.store.get(claim.owner, claim.job.id), this.store.ontologyForJob(claim.owner, claim.job), program, plan);
       const saved = this.store.checkpoint(claim, current => {
         const state = current.delegation!.agent!;
         delete state.initialSelectionPending;
@@ -344,10 +371,13 @@ export class AgentRuntime {
   }
   private async execute(claim: WorkClaim, program: AgentProgram, signal: AbortSignal) {
     const initial = this.context(claim), plan = initial.state.plans.find(p => p.id === initial.state.pendingPlanId) ?? failure('Pending agent plan is missing');
-    assertAgentPlanProjection(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, plan);
-    const execution = readExecutionContext(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, plan.requestId, plan.requestRevision);
-    const path = execution?.plans.find(p => p.planId === plan.id) ?? failure('Pending execution path is missing from Ontology');
-    if (execution?.pendingPlanId !== plan.id || path.planDigest !== plan.digest) failure('Pending execution path differs from Ontology');
+    const integrity = this.store.withExecutionIntegrity(claim.owner, claim.job.id, graph => {
+      assertAgentPlanProjection(graph, claim.owner, plan);
+      const execution = readExecutionContext(graph, claim.owner, plan.requestId, plan.requestRevision);
+      return {pendingPlanId:execution?.pendingPlanId,path:execution?.plans.find(p=>p.planId===plan.id)};
+    });
+    const path = integrity.path ?? failure('Pending execution path is missing from Ontology');
+    if (integrity.pendingPlanId !== plan.id || path.planDigest !== plan.digest) failure('Pending execution path differs from Ontology');
     const orderedSteps = path.steps.map(visible => {
       const step = plan.steps.find(s => s.id === visible.stepId) ?? failure('Ontology execution step has no sealed invocation');
       const refs = (items: typeof step.inputRefs) => [...items].sort((a, b) => a.targetKey.localeCompare(b.targetKey));
@@ -397,6 +427,23 @@ export class AgentRuntime {
       // A business-effect frontier remains serial and retains exact-plan grants.
       for (const step of orderedSteps) if (!await this.executeStep(claim, program, plan, step, signal)) return;
     }
+    if (!this.context(claim).state.composition && plan.modelDecision?.plannedCompletion && plan.steps.every(step => this.store.intent(claim.owner, step.intentId).state === 'effect_confirmed')) {
+      try {
+        validatePlannedCompletion(this.store.ontologyForJob(claim.owner, claim.job), program, plan.modelDecision!);
+        const selected = plan.modelDecision!.plannedCompletion;
+        const accepted = (id: string) => this.store.intent(claim.owner, plan.steps.find(step => step.id === id)!.intentId).acceptedOutput?.object;
+        const proposal = bindAcceptedObjects(dataflowArguments(selected.argumentsJson), selected.inputRefs, accepted);
+        const originalAccess = this.access(claim, signal), access = {...originalAccess, session: originalAccess.session.hostEvidenceSession()};
+        access.session.prepareContext({ actions: selected.inputRefs.map(ref => plan.steps.find(step => step.id === ref.stepId)!.action), refs: [plan.scope, ...selected.inputRefs.map(ref => objectRefSchema.parse(accepted(ref.stepId)))] });
+        access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id));
+        this.accept(claim, program, { mode: 'planned', planId: plan.id, modelRunId: plan.modelRunId!, modelDecision: plan.modelDecision!, proposal, ontologyPlanning: access.session.finish() });
+        return;
+      } catch (error) {
+        signal.throwIfAborted();
+        if (!this.store.claimActive(claim)) return;
+        this.store.checkpoint(claim, job => this.feedback(job, 'completion', errorMessage(error), digest(plan.modelDecision!.plannedCompletion)));
+      }
+    }
     if (plan.callerDecision) {
       this.completeCallerAction(claim, program, plan);
       return;
@@ -424,6 +471,9 @@ export class AgentRuntime {
       job.delegation!.conditionChecks = conditions; delete job.delegation!.agent!.pendingPlanId;
       job.delegation!.agent!.callerCompletion = { requestId: plan.callerDecision!.requestId, planDigest: plan.digest, intentIds: proposal.intentIds, ontologyPlanning: reads };
       job.delegation!.acceptance = { accepted: true, reason: 'The authenticated caller action committed under its exact grant and independent managed-object readback passed', at, checks, evidenceRefs: delivery.evidenceRefs };
+      job.delegation!.outcome = {requestId:ctx.request.id,requestRevision:ctx.request.revision,status:'satisfied',assessedAt:at,reason:job.delegation!.acceptance!.reason,evidenceRefs:delivery.evidenceRefs,evidenceLevel:delivery.evidenceLevel??'unverified',
+        criterionResults:[...checks.map(check=>({requirementId:check.requirementId,status:check.result==='pass'?'satisfied' as const:check.result==='fail'?'unsatisfied' as const:'unknown' as const,evidenceRefs:check.evidenceRefs})),...conditions.map(check=>({requirementId:check.conditionId,status:check.result==='pass'?'satisfied' as const:check.result==='fail'?'unsatisfied' as const:'unknown' as const,evidenceRefs:check.evidenceRefs.map(ref=>JSON.stringify(ref))})),
+          {requirementId:'caller_action_contract',status:'satisfied',evidenceRefs:[plan.callerDecision!.envelopeDigest]}, {requirementId:'independent_managed_readback',status:'satisfied',evidenceRefs:delivery.evidenceRefs}]};
       job.delegation!.events.push({ at, event: 'caller_managed_action_verified', evidence: plan.digest });
       job.messages.push({ id: randomUUID(), role: 'agent', text: delivery.artifact.data.deliverable, at });
     });
@@ -432,10 +482,11 @@ export class AgentRuntime {
   private async executeStep(claim: WorkClaim, program: AgentProgram, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], signal: AbortSignal): Promise<boolean> {
     signal.throwIfAborted(); if (!this.store.claimActive(claim)) return false;
     if (!this.withinTaskBudget(claim)) return false;
+    if (!plan.callerDecision) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), this.program(claim).capability());
     program = this.boundStep(claim, program, step).program;
     const intent = this.store.intent(claim.owner, step.intentId);
     if (intent.planDigest !== plan.digest || intent.effect !== step.effect || intent.businessOperationKey !== step.operationKey || !equal(intent.bindingRef,stepBindingRef(plan, step)) || !equal(intent.additionalEffects??[],step.additionalEffects??[]) || intent.inputDigest!==stepInputDigest(step) || intent.privateDigest!==digest(intent.privateData) || intent.privateDigest !== (step.privateDigest ?? digest({}))) failure('Action ledger differs from its pinned plan');
-    if (this.store.ontologyForJob(claim.owner, claim.job).read(claim.owner, executionStepRef(plan, step.id)).properties.state !== intent.state) failure('Ontology invocation state differs from the durable ledger');
+    if (this.store.withExecutionIntegrity(claim.owner, claim.job.id, graph => graph.read(claim.owner, executionStepRef(plan, step.id)).properties.state) !== intent.state) failure('Ontology invocation state differs from the durable ledger');
     if (['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state)) return true;
     if (intent.state !== 'ready') {
       if (step.effect === 'object_write') {
@@ -462,19 +513,30 @@ export class AgentRuntime {
     if (dependencies.some(i => i.state !== 'effect_confirmed')) {
       this.store.checkpoint(claim, () => { intent.state = 'canceled_before_dispatch'; this.store.saveIntent(claim.owner, intent); }); return true;
     }
-    let input = structuredClone(step.input);
+    let input = structuredClone(step.input), inputPlanning: PlanningSnapshot | undefined;
     let attempt: ExecutionAttempt | undefined;
     try {
       const root = this.context(claim);
       if (root.state.composition) input = composedInputs(this.catalog, root, plan, step, id => this.store.intent(claim.owner, id));
-      else for (const link of step.inputRefs) input[link.targetKey] = objectRefSchema.parse(dependencies.find(i => i.stepId === link.stepId)?.acceptedOutput?.object);
+      else if (step.inputRefs.length) {
+        validateReadBindings(root.graph, program, step, program.definition(root.graph, step.action), step.input, new Map(plan.steps.filter(item=>item.id!==step.id).map(item=>[item.id,item])));
+        const originalAccess=this.access(claim,signal), access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
+        access.session.prepareContext({actions:[step.action],refs:[plan.scope,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
+        input=bindAcceptedObjects(input,step.inputRefs,id=>dependencies.find(intent=>intent.stepId===id)?.acceptedOutput?.object,(ref,object)=>{
+          const result=access.session.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000}) as {status?:string;value?:unknown;reason?:string};
+          if(result.status!=='known')failure(result.reason??'Deferred source input requires a new decision');
+          return dataflowValue(result.value,ref.compute!.path);
+        });
+        access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)); inputPlanning=access.session.finish();
+      }
       const current = this.boundStep(claim, program, step).context;
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, current.request, plan.ontologyPlanning, true);
       if (step.definitionDigest !== digest(program.definition(this.store.ontologyForJob(claim.owner, claim.job), step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
       if (program.privateInput && digest(program.privateInput(current, step.action, input) ?? {}) !== intent.privateDigest) failure('Prepared private input changed before dispatch');
-      program.validatePlanning?.(current, step.action, input, plan.ontologyPlanning);
+      program.validatePlanning?.(current, step.action, input, inputPlanning ?? plan.ontologyPlanning);
       validateAgentAuthority(program, current, plan, step);
+      if (!plan.callerDecision) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), this.program(claim).capability());
       if (plan.quote && !hasSimulationApproval(this.store.get(claim.owner, claim.job.id), plan)) {
         this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.question = '请批准当前准确的本地模拟报价；该批准不产生真实支付或外部业务权限。'; job.updatedAt = new Date().toISOString(); });
         return false;
@@ -486,18 +548,24 @@ export class AgentRuntime {
       if (!['read', 'local'].includes(step.effect)) {
         if (step.effect === 'external_draft' ? !this.options.allowExternalDrafts : step.effect !== 'object_write' && !this.options.allowSandbox && !isLiveFreeOperation(program, current, agentOperation(program.definition(current.graph, step.action)))) failure('Sandbox business operations are disabled');
         if (!agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) {
-          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = plan.environment === 'live_free' ? '已选定免费报名或预约，需要提交绑定本计划的零费用预约许可；没有付款权限。' : step.effect === 'object_write' ? '待提交的数据变更已经固定；请审查目标、字段与当前版本，并批准这一准确变更。' : step.effect === 'external_draft' ? '已固定商家、商品与数量；需要批准这一次真实的未付款结账草稿创建。此授权不允许下单、付款或提交个人资料。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'; job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
+          this.store.finish(claim, job => { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; job.delegation!.authorizationRequest = agentPlanAuthorization(plan); job.question = program.authorizationSummary?.(current, plan) ?? (plan.environment === 'live_free' ? '已选定免费报名或预约，需要提交绑定本计划的零费用预约许可；没有付款权限。' : step.effect === 'object_write' ? '待提交的数据变更已经固定；请审查目标、字段与当前版本，并批准这一准确变更。' : step.effect === 'external_draft' ? '已固定商家、商品与数量；需要批准这一次真实的未付款结账草稿创建。此授权不允许下单、付款或提交个人资料。' : 'Agent 已选定准确的沙箱动作与条款，需要 PA 提交绑定本计划的模拟授权。'); job.updatedAt = new Date().toISOString(); job.messages.push({ id: randomUUID(), role: 'agent', text: job.question, at: job.updatedAt }); });
           return false;
         }
       }
-      if (!this.store.checkpoint(claim, () => {
+      if (!this.store.checkpoint(claim, job => {
+        let authorizationId: string | undefined;
         if (!['read', 'local'].includes(step.effect)) {
           const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Action authority expired before dispatch');
+          authorizationId = grant.id;
           if (!['object_write', 'external_draft', 'refund'].includes(step.effect)) this.store.reserveBudget(claim.owner, intent.id, grant, step.cost!);
         }
         if (intent.dispatchInput && !equal(intent.dispatchInput, input)) failure('Original dispatch input cannot change');
+        if (inputPlanning) {
+          const state=job.delegation!.agent!;
+          state.inputResolutions=[...(state.inputResolutions??[]),{planId:plan.id,stepId:step.id,intentId:intent.id,inputDigest:digest(input),ontologyPlanning:inputPlanning}];
+        }
         intent.dispatchInput = structuredClone(input); this.store.saveIntent(claim.owner, intent);
-        attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input));
+        attempt = this.store.startAttempt(claim, intent.id, 'dispatch', digest(input), undefined, undefined, authorizationId);
       })) return false;
     } catch (error) {
       this.store.checkpoint(claim, job => { intent.state = 'rejected'; this.store.saveIntent(claim.owner, intent); this.feedback(job, 'validation', errorMessage(error), digest({ action: step.action, input })); });
@@ -505,6 +573,7 @@ export class AgentRuntime {
       return true;
     }
     const context: AgentActionContext = { ...this.boundStep(claim, program, step).context, planId: plan.id, intentId: intent.id, attemptId: attempt!.id, ...(plan.modelRunId ? { modelRunId: plan.modelRunId } : {}), ...(plan.callerDecision ? { callerRequestId: plan.callerDecision.requestId } : {}), operationKey: intent.businessOperationKey, originalDispatchAt: attempt!.startedAt, execution: { intent: this.store.intent(claim.owner, intent.id), attempt: attempt! } };
+    context.inputPlanning = inputPlanning;
     context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     context.assertDispatchAllowed = () => {
       signal.throwIfAborted();
@@ -512,6 +581,7 @@ export class AgentRuntime {
       if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
       const current = this.boundStep(claim, program, step).context;
       validateAgentAuthority(program, current, plan, step);
+      if (!plan.callerDecision) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), this.program(claim).capability());
       if (plan.quote && !hasSimulationApproval(this.store.get(claim.owner, claim.job.id), plan)) failure('Exact local simulation approval expired or was revoked');
       if (!['read', 'local'].includes(step.effect) && !agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step)) failure('Exact plan authority expired or was revoked before the provider write');
     };
@@ -586,6 +656,7 @@ export class AgentRuntime {
     const context: AgentActionContext = { ...this.boundStep(claim, program, step).context, planId: plan.id, intentId: intent.id, attemptId: attempt.id,
       modelRunId: plan.modelRunId, operationKey: intent.businessOperationKey, recovery: true, originalDispatchAt: dispatch?.startedAt,
       execution: { intent: this.store.intent(claim.owner, intent.id), attempt } };
+    context.persistPrivate = write => this.store.checkpoint(claim, () => write());
     let response: AgentActionResult | undefined, result: ActionResult;
     const unknown = (message: string): ActionResult => ({ kind: 'unknown', eventId: attempt.id, sourceVersion: attempt.ordinal, evidenceRefs: [], message });
     try {

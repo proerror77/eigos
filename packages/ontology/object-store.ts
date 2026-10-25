@@ -12,13 +12,18 @@ import { assertIdentityAssertionWrite } from './identity-mapping.js';
 import { assertTransactionPartyRoleWrite } from './errand-domain.js';
 import { assertBusinessTransaction } from '../core/transaction.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
+import type { SecurityPolicies } from '../security/policy-store.js';
+import { authorizationScope } from '../security/context.js';
+import { SecurityError } from '../security/store.js';
+import {accessDigest} from '../security/model.js';
+import {responseOnlyProjection,projectFunctionValue} from '../security/projections.js';
 
 const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
 const filterSchema = z.object({ property: nameSchema, op: z.enum(['eq', 'lt', 'lte', 'gt', 'gte', 'in']), value: z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.array(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).min(1).max(20)]) }).strict();
 const queryFields = { select: z.array(nameSchema).min(1).max(20).optional(), where: z.array(filterSchema).max(8).default([]), limit: z.number().int().min(1).max(50).default(20), cursor: z.string().max(4096).optional() };
 export const objectQuerySchema = z.union([
-  z.object({ type: nameSchema, ...queryFields }).strict(),
+  z.object({ type: nameSchema, currentDefinitionsOnly: z.boolean().optional(), ...queryFields }).strict(),
   z.object({ from: objectRefSchema, link: nameSchema, ...queryFields }).strict(),
   z.object({ object: objectRefSchema, ...queryFields }).strict(),
 ]).describe('Each response covers only the requested object, type, or named relationship. Empty results on one relationship do not prove that other relationships or participants are absent. Inspect pagination and state the scope actually read; unqueried information remains unverified.');
@@ -33,6 +38,7 @@ export interface ObjectBatch { objects: ObjectWrite[]; links?: LinkWrite[]; remo
 export interface ObjectTombstone { ref: ObjectRef; expectedRevision: number }
 export interface ManagedObjectBatch extends ObjectBatch { creates?: ObjectRef[]; tombstones?: ObjectTombstone[] }
 export interface OntologyGraphContext {
+  security?: SecurityPolicies;
   ontologyId?: string;
   releaseRef?: OntologyReleaseRef;
   compatibleDefinition?: (args: { kind: 'object' | 'link'; id: string; storedDigest: string; currentDigest: string; properties?: Record<string, unknown> }) => boolean;
@@ -45,6 +51,7 @@ export interface OntologyQueryResult {
   model: OntologyModel['ref']; items: ObjectView[];
   page: { limit: number; scanned: number; hasMore: boolean; cursor?: string };
   datasetRevision: number;
+  definitionScope?: 'current_definitions_only';
 }
 const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
@@ -82,8 +89,9 @@ export class OntologyObjectStore {
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_update BEFORE UPDATE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS ontology_object_versions_no_delete BEFORE DELETE ON ontology_object_versions BEGIN SELECT RAISE(ABORT,'Object writer history is immutable'); END;
     `);
-    if (model === businessModel && !context.skipLegacyMigration) migrateIntegratedOntology(this.db, businessModelV9, businessModel);
+    if (model.ref.id === 'eigos.business' && model.ref.version === '15' && !context.skipLegacyMigration) migrateIntegratedOntology(this.db, businessModelV9, model);
   }
+  get security() { return this.context.security; }
   private get scoped() { return this.ontologyId !== 'eigos.business'; }
   private get objectTable() { return this.scoped ? 'ontology_scoped_objects' : 'ontology_objects'; }
   private get linkTable() { return this.scoped ? 'ontology_scoped_links' : 'ontology_links'; }
@@ -91,13 +99,14 @@ export class OntologyObjectStore {
   private owned(alias = '') { return this.scoped ? `${alias}ontology_id=? AND ${alias}owner=?` : `${alias}owner=?`; }
   private ownerParameters(owner: string): string[] { return this.scoped ? [this.ontologyId, owner] : [owner]; }
   forModel(model: OntologyModel, context: OntologyGraphContext & { ontologyId: string; releaseRef: OntologyReleaseRef }): OntologyObjectStore {
-    const view = new OntologyObjectStore(this.db, model, this.now, this.readOverlay, { ...context, skipLegacyMigration: true }, false);
+    const view = new OntologyObjectStore(this.db, model, this.now, this.readOverlay, { ...context, security: this.security, skipLegacyMigration: true }, false);
     view.readerFactory = this.readerFactory;
     if (this.backingStore) view.backingStore = this.backingStore.forModel(model, context);
     return view;
   }
   private assertObjectDefinition(type: string, storedDigest: string, properties: Record<string, unknown>): void {
     const currentDigest = this.model.fingerprint(type);
+    if (this.security && (!this.security.model.hasType(type) || currentDigest !== this.security.model.fingerprint(type))) throw new SecurityError('POLICY_CHANGED');
     if (storedDigest === currentDigest) return;
     if (!this.context.compatibleDefinition?.({ kind: 'object', id: type, storedDigest, currentDigest, properties })
       || digest(this.model.parseProperties(type, properties)) !== digest(properties)) throw new DomainError('CONFLICT', 'Object definition changed; historical data cannot be reinterpreted');
@@ -142,14 +151,20 @@ export class OntologyObjectStore {
   }
   private overlay(owner: string): NetworkOntologyReadAdapter {
     this.assertReaderOwner(owner);
+    if (this.security) throw new SecurityError('AUTHORIZATION_REQUIRED');
     if (!this.readOverlay) throw new DomainError('FORBIDDEN', 'Network objects require a current authorized read context');
     return this.readOverlay;
   }
+  private guard() {
+    if (this.security && (this.ontologyId !== this.security.model.ref.id || digest(this.model.ref) !== digest(this.security.model.ref))) throw new SecurityError('POLICY_CHANGED');
+    return authorizationScope()?.projection ? undefined : this.security;
+  }
+  private properties(type:string) {return this.guard()?.fields(type) ?? this.model.properties(type);}
   private charge(budget: ReadBudget, count = 1) {
     budget.remaining -= count;
     if (budget.remaining < 0) throw new DomainError('CONFLICT', 'Ontology read work budget exhausted; narrow the query');
   }
-  revision(owner: string): number { return Number(this.db.prepare(`SELECT revision FROM ${this.revisionTable} WHERE ${this.owned()}`).get(...this.ownerParameters(owner))?.revision ?? 0); }
+  revision(owner: string): number { return this.guard()?.visibleRevision(owner) ?? Number(this.db.prepare(`SELECT revision FROM ${this.revisionTable} WHERE ${this.owned()}`).get(...this.ownerParameters(owner))?.revision ?? 0); }
   private raw(owner: string, ref: ObjectRef, budget: ReadBudget, allowTombstone = false): StoredObject {
     objectRefSchema.parse(ref); this.model.object(ref.type); this.charge(budget);
     this.assertReaderOwner(owner);
@@ -162,20 +177,35 @@ export class OntologyObjectStore {
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
+    this.guard()?.requireObject(owner, ref);
     return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
+    if (this.guard()) { if (!authorizationScope()?.integrity) throw new SecurityError('AUTHORIZATION_REQUIRED'); this.guard()!.requireObject(owner, ref); }
     if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Private source facts are unavailable through a read view');
     return structuredClone(this.raw(owner, ref, budget));
   }
+  /** Internal evidence validation returns a digest, never the unprojected body. */
+  evidencePropertiesDigest(owner:string,ref:ObjectRef,budget:ReadBudget):string {
+    if(this.guard()) {
+      if(!authorizationScope()?.integrity) throw new SecurityError('AUTHORIZATION_REQUIRED');
+      this.guard()!.requireObject(owner,ref);
+    }
+    return digest(this.raw(owner,ref,budget).properties);
+  }
   relationshipDigest(owner: string, ref: ObjectRef, budget: ReadBudget): string {
     if (isVirtualRef(ref)) return this.overlay(owner).relationshipDigest(ref, budget);
+    this.guard()?.requireObject(owner, ref);
     this.raw(owner, ref, budget);
     const rows = this.db.prepare(`SELECT * FROM ${this.linkTable} WHERE ${this.owned()} AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' ORDER BY type,to_type,to_id LIMIT 201`).all(...this.ownerParameters(owner), ref.type, ref.id);
     this.charge(budget, rows.length);
     if (rows.length > 200) throw new DomainError('CONFLICT', 'Relationship evidence exceeds the read bound');
-    return linkSnapshotDigest(ref, rows.map(row => {
+    return linkSnapshotDigest(ref, rows.filter(row => {
+      const guard = this.guard(); if (!guard || authorizationScope()?.integrity) return true;
+      const scope = guard.scope(owner);
+      return guard.resourceAllowed(scope, 'linkType', String(row.type)) && !!guard.binding(scope, { type: String(row.to_type), id: String(row.to_id) });
+    }).map(row => {
       this.assertLinkDefinition(String(row.type), String(row.definition_digest));
       return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
     }));
@@ -252,6 +282,7 @@ export class OntologyObjectStore {
   ingest(owner: string, input: ObjectBatch, provenance: ObjectSource): void { this.ingestBatch(owner, input, provenance); }
   private ingestBatch(owner: string, input: ObjectBatch, provenance: ObjectSource, tombstones: ObjectTombstone[] = []): void {
     if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Read views cannot import facts');
+    if (this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
     z.string().min(1).max(2000).parse(owner);
     if (Buffer.byteLength(JSON.stringify(input)) > 1_000_000) failure('Ontology import byte limit exceeded');
     const batch = batchSchema.parse(input), source = sourceSchema.parse(provenance);
@@ -385,34 +416,61 @@ export class OntologyObjectStore {
         }
       }
       if (changed) this.bumpRevision(owner);
+      this.security?.recordProjection(owner, batch, source);
       this.db.exec('RELEASE ontology_import');
     } catch (error) { this.db.exec('ROLLBACK TO ontology_import; RELEASE ontology_import'); throw error; }
   }
   private project(owner: string, object: StoredObject, target: string, select: string[] | undefined, budget: ReadBudget): ObjectView {
     const properties: Record<string, unknown> = {}, derived: NonNullable<ObjectView['derived']> = {};
-    const selected = select ?? Object.keys(this.model.properties(target)).filter(k => { const p = this.model.properties(target)[k]!; return !p.restricted && !p.derived; });
+    const guard = this.guard(), binding = guard?.requireObject(owner, object.ref, object.revision);
+    const selected = select ?? Object.keys(this.properties(target)).filter(k => { const p = this.properties(target)[k]!; return !p.restricted && !p.derived; });
     for (const name of selected) {
-      const p = this.model.properties(target)[name];
+      if(guard && authorizationScope()?.actor.actorKind==='worker' && responseOnlyProjection(object.ref.type,name)) {
+        if(select?.includes(name))throw new SecurityError('INSUFFICIENT_ACCESS');continue;
+      }
+      const p = this.properties(target)[name];
       if (!p) failure('Unknown property');
       if (p.restricted) throw new DomainError('FORBIDDEN', 'Property is not available through the agent query interface');
       const actual = this.model.propertyName(object.ref.type, target, name);
+      if (binding && !binding.fields.includes(actual)) {
+        if(!(authorizationScope()?.integrity && guard!.integrityAllowed(object.ref.type,actual,binding.fields))) {
+          if (select || authorizationScope()?.inference && guard!.fieldPolicy(object.ref.type,actual)!=='internal_only') throw new SecurityError('INSUFFICIENT_ACCESS');
+          continue;
+        }
+      }
       if (p.derived) {
-        const computation = deriveProperty(this, owner, object.ref, p.derived, budget);
+        const computation = guard ? guard.infer(owner, p.derived, () => deriveProperty(this, owner, object.ref, p.derived!, budget)) : deriveProperty(this, owner, object.ref, p.derived, budget);
         if (computation.status === 'known') properties[name] = computation.value;
         derived[name] = { status: computation.status, reason: computation.reason, functionRef: { id: p.derived, version: this.model.function(p.derived).version }, evidenceRefs: computation.evidenceRefs, evidenceLevels: computation.evidenceLevels };
-      } else if (Object.hasOwn(object.properties, actual)) properties[name] = object.properties[actual];
+      } else {
+        const value=guard?guard.value(object.ref.type,actual,object.properties):object.properties[actual];
+        if(value!==undefined) properties[name]=value;
+      }
     }
-    return { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
+    const value = { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
+    // Interface names are projected from concrete policy fields, never a second
+    // independently visible copy of a hidden concrete field.
+    if (guard && target === object.ref.type) return guard.project(owner, value, select);
+    if (guard) {
+      const safe = guard.project(owner, { ...object, properties: Object.fromEntries(Object.entries(properties).map(([k,v]) => [this.model.propertyName(object.ref.type, target, k), v])) });
+      value.properties = Object.fromEntries(Object.entries(properties).filter(([k]) => Object.hasOwn(safe.properties, this.model.propertyName(object.ref.type, target, k))));
+    }
+    return value;
   }
   query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }, readScope?: string): OntologyQueryResult {
+    return this.security ? this.security.readSnapshot(() => this.queryRaw(owner,input,budget,readScope)) : this.queryRaw(owner,input,budget,readScope);
+  }
+  private queryRaw(owner: string, input: ObjectQuery, budget: ReadBudget, readScope?: string): OntologyQueryResult {
     const args = objectQuerySchema.parse(input);
     this.assertReaderOwner(owner);
     const networkQuery = 'object' in args ? isVirtualRef(args.object) : 'type' in args ? isVirtualRef({ type: args.type })
       : isVirtualRef(args.from) || networkLinkIds.has(this.model.navigation(args.from.type, args.link).link.id);
     if (networkQuery) return this.overlay(owner).query(args, budget);
+    const guard = this.guard(), scope = guard?.scope(owner);
     const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined, ...(readScope ? { readScope } : {}) });
     let last: ObjectRef | undefined;
-    if (args.cursor) {
+    if (args.cursor && guard) last = guard.cursor(owner, queryDigest, args.cursor) as ObjectRef;
+    else if (args.cursor) {
       let cursor: z.infer<typeof cursorSchema>;
       try { cursor = cursorSchema.parse(JSON.parse(Buffer.from(args.cursor, 'base64url').toString())); } catch { return failure('Invalid ontology cursor'); }
       if (cursor.owner !== digest(owner) || (cursor.ontologyId ?? 'eigos.business') !== this.ontologyId || cursor.query !== queryDigest || cursor.model !== this.model.ref.digest || cursor.revision !== revision) throw new DomainError('CONFLICT', 'Query context changed; restart the bounded query');
@@ -420,14 +478,17 @@ export class OntologyObjectStore {
     }
     let target: string, sql: string, params: (string | number)[], historical = false;
     if ('object' in args) {
+      guard?.requireObject(owner, args.object);
       this.raw(owner, args.object, budget);
       target = args.object.type;
       sql = `SELECT o.* FROM ${this.objectTable} o WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`;
       params = [...this.ownerParameters(owner), args.object.type, args.object.id];
     } else if ('from' in args) {
+      guard?.requireObject(owner, args.from);
       this.raw(owner, args.from, budget);
       const nav = this.model.navigation(args.from.type, args.link);
       historical = this.model.linkWritePolicy(nav.link.id) === 'source';
+      if (guard && scope) guard.requireResource(scope, 'linkType', nav.link.id);
       target = nav.other.type;
       const side = nav.direction === 'forward' ? 'from' : 'to', other = nav.direction === 'forward' ? 'to' : 'from';
       const storedDefinitions = this.db.prepare(`SELECT DISTINCT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 201`).all(...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id);
@@ -440,12 +501,22 @@ export class OntologyObjectStore {
       const types = this.model.concreteTypes(target);
       sql = `SELECT o.* FROM ${this.objectTable} o WHERE ${this.owned('o.')} AND o.type IN (${types.map(() => '?').join(',')})`;
       params = [...this.ownerParameters(owner), ...types];
+      if (args.currentDefinitionsOnly) {
+        sql += ` AND (${types.map(() => '(o.type=? AND o.definition_digest=?)').join(' OR ')})`;
+        params.push(...types.flatMap(type => [type, this.model.fingerprint(type)]));
+      }
+
     }
     if (!historical) {
       sql += ' AND NOT EXISTS (SELECT 1 FROM ontology_tombstones deleted WHERE deleted.ontology_id=? AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id)';
       params.push(this.ontologyId);
     }
-    const properties = this.model.properties(target);
+    if (guard && scope) {
+      guard.requireResource(scope, this.model.isInterface(target) ? 'interface' : 'objectType', target);
+      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property));
+      sql += bound.sql; params.push(...bound.params);
+    }
+    const properties = this.properties(target);
     for (const name of args.select ?? []) {
       if (!Object.hasOwn(properties, name)) failure('Unknown selected property');
       if (properties[name]!.restricted) throw new DomainError('FORBIDDEN', 'Restricted property cannot be selected');
@@ -475,6 +546,8 @@ export class OntologyObjectStore {
         const deleted = this.db.prepare('SELECT revision,deleted_at FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id);
         if (deleted) object.tombstone = { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) };
       }
+      const binding = guard?.requireObject(owner, ref, object.revision);
+      if (binding && args.where.some(f => !binding.fields.includes(this.model.propertyName(ref.type, target, f.property)))) throw new SecurityError('INSUFFICIENT_ACCESS');
       const matches = args.where.every(f => {
         const value = object.properties[this.model.propertyName(ref.type, target, f.property)];
         if (value === undefined) return false;
@@ -492,25 +565,43 @@ export class OntologyObjectStore {
       }
       last = ref;
     }
-    const cursor = hasMore && last ? Buffer.from(JSON.stringify({ owner: digest(owner), ontologyId: this.ontologyId, query: queryDigest, model: this.model.ref.digest, revision, last })).toString('base64url') : undefined;
+    const cursor = hasMore && last ? guard ? guard.cursor(owner, queryDigest, undefined, last) as string : Buffer.from(JSON.stringify({ owner: digest(owner), ontologyId: this.ontologyId, query: queryDigest, model: this.model.ref.digest, revision, last })).toString('base64url') : undefined;
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during query; retry against the current revision');
-    return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision };
+    return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision,
+      ...('type' in args && args.currentDefinitionsOnly ? { definitionScope: 'current_definitions_only' } : {}) };
   }
   /** Single bounded relationship read for registered functions; never follows unlimited pages. */
   related(owner: string, from: ObjectRef, link: string, budget: ReadBudget): ObjectView[] | undefined {
     const result = this.query(owner, { from, link, limit: 50 }, budget);
+    if (this.guard()) {
+      const nav = this.model.navigation(from.type, link), side = nav.direction === 'forward' ? 'from' : 'to';
+      // Completeness is used only inside trusted calculations, never returned as
+      // a hidden neighbor count. Missing rows cannot imply a zero/full result.
+      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM ontology_links WHERE owner=? AND type=? AND ${side}_type=? AND ${side}_id=?`).get(owner, nav.link.id, from.type, from.id)?.n ?? 0);
+      if (total !== result.items.length) return undefined;
+    }
     return result.page.hasMore ? undefined : result.items;
   }
   evaluate(owner: string, input: unknown, budget: ReadBudget = { remaining: 1000 }) {
+    return this.security?this.security.readSnapshot(()=>this.evaluateRaw(owner,input,budget)):this.evaluateRaw(owner,input,budget);
+  }
+  private evaluateRaw(owner: string, input: unknown, budget: ReadBudget) {
     this.assertReaderOwner(owner);
     const revision = this.revision(owner);
     const args = functionCallSchema.parse(input), definition = this.model.function(args.function);
     if (!definition.inputTypes.some(t => this.model.implements(args.object.type, t))) failure('Function requires its registered object type');
-    // Registered canonical calculations already own a deliberately narrow
-    // private-evidence check. A read overlay must not disable that check or
-    // expose it as a general private-read method to query callers.
     const calculationStore = this.backingStore && !isVirtualRef(args.object) ? this.backingStore : this;
-    const result = { ...evaluateFunction(calculationStore, owner, args, budget), functionRef: { id: definition.id, version: definition.version }, model: this.model.ref };
+    const guard = this.guard();
+    if(guard){const scope=guard.scope(owner);guard.requireResource(scope,'function',args.function);guard.requireResource(scope,'function',args.function,'function.invoke');guard.requireObject(owner,args.object);}
+    let computation;
+    try { computation = guard ? guard.infer(owner, args.function, () => evaluateFunction(calculationStore, owner, args, budget)) : evaluateFunction(calculationStore, owner, args, budget); }
+    catch (error) {
+      if (!guard || !(error instanceof SecurityError && ['INSUFFICIENT_ACCESS','AUTHORIZATION_REQUIRED','OUTPUT_NOT_ALLOWED'].includes(error.reason) || error instanceof DomainError && error.code === 'NOT_FOUND')) throw error;
+      computation = { status: 'unknown' as const, reason: 'insufficient_access', evidenceRefs: [], evidenceLevels: [] };
+    }
+    const functionRef={id:definition.id,version:definition.version};
+    const model=this.security?{id:this.model.ref.id,version:'authorized.v2',digest:digest({functionRef,access:accessDigest()})}:this.model.ref;
+    const result = { ...computation,...(guard && computation.status==='known'?{value:projectFunctionValue(args.function,args.object.type,computation.value)}:{}), functionRef, model };
     if (Buffer.byteLength(JSON.stringify(result)) > 64000) throw new DomainError('CONFLICT', 'Function response limit exceeded; narrow the investigation');
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during calculation; retry against the current revision');
     return result;

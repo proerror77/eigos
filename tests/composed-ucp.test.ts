@@ -26,7 +26,7 @@ async function setup() {
     plan: async () => { throw new Error('Composed UCP cannot select a fixed recipe'); },
     act: async (ctx, _signal, access) => {
       observeTaskContext(access);
-      const pin = (id: string) => (access.session.call('discover_actions', { actionId: id }) as ActionDiscoveryPage).items[0]!.bindings[0]!.pin;
+      const pin = (id: string) => { const bindings=(access.session.call('discover_actions', { actionId: id }) as ActionDiscoveryPage).items[0]!.bindings; assert(bindings.every(b=>!b.pin.programRef.id.startsWith('services.compose.')), 'Native leaves cannot substitute an explicit orchestration context'); return bindings[0]!.pin; };
       const base: AgentDecision = { kind: 'execute', requestRevision: ctx.request.revision, message: 'Choose a scoped atomic operation from accepted evidence', steps: [], completionJson: '' };
       let decision: AgentDecision;
       if (!ctx.state.composition!.contexts.length) decision = { ...base, kind: 'prepare', contexts: [
@@ -53,6 +53,7 @@ async function setup() {
       acknowledgeReads(access); return { decision, evidence: { ...evidence(), decisionDigest: digest(decision) } };
     },
   };
+  assert(catalog.agentProgram({id:'services.compose.sandbox',version:'1'},owner), 'Explicit orchestration remains available through its own contract');
   const b = backend(catalog, model, store, { allowSandbox: true });
   const submit = () => b.submit({ goal: '仅在隔离沙箱准备结账并确认同一订单；独立核验结账与订单，不要求配送。', executionEnvironment: 'sandbox' });
   const approve = (id: string) => { const a = store.get(owner, id).delegation!.authorizationRequest!; b.tasks.authorize(principal, id, { action: 'approve_plan', requestId: randomUUID(), planDigest: a.planDigest, allowedEffects: a.effects, maxAmount: a.maxAmount, payeeIds: a.payeeIds, expiresAt: new Date(Date.now() + 60000).toISOString(), environment: 'sandbox' }); };

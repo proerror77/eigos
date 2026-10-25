@@ -9,6 +9,7 @@ import { modelEnvironment, modelFeatureArgs } from './model-process.js';
 import { openCodexModelSession } from './model-session.js';
 import { ModelSessionPool } from './model-session-pool.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
+import type { ModelTiming } from './model-timing.js';
 import { modelUsageRecorder } from '../core/model-usage-context.js';
 
 export const decisionSchema = z.object({
@@ -27,6 +28,9 @@ export interface RunEvidence {
   completedAt: string;
   outputSha256: string;
   decisionDigest?: string;
+  decisionDecoding?: { encoding: 'fixed_scope_message_refs_v1'; rawDecisionDigest: string };
+  timing?: ModelTiming;
+  outputSchemaDigest?: string;
   model?: string;
   reasoningEffort?: string;
   serviceTier?: string;
@@ -46,7 +50,7 @@ export interface RunEvidence {
   promptData?: PromptDataMetrics;
   ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
   usage?: Record<string, number>;
-  purpose?: 'grounding' | 'planning' | 'document';
+  purpose?: 'grounding' | 'planning' | 'document' | 'goal_coverage';
   nativeMcpCalls?: { server: string; tool: string; status: string; failure?: { message: string; argumentKeys: string[]; function?: string; objectType?: string } }[];
   ontologyMcp?: { server: 'eigos_ontology'; transport: 'streamable-http'; sessionId: string; taskId: string; toolAttempts: number;
     calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
@@ -78,6 +82,7 @@ const outputSchema = {
 // Documents have no tools; Agent decisions receive only their Worker-owned,
 // task-bound native Ontology MCP connection.
 export class CodexExecutor implements Executor {
+  readonly securityChannelId: string = 'codex-native';
   readonly ontologyTransport = 'native-mcp' as const;
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
   private sessions: ModelSessionPool;

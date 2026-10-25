@@ -14,6 +14,9 @@
 - [共享本体](../packages/ontology/README.md)：唯一注册库、任务版本与供应商定义。
 - [本体建模](guides/ontology-modeling.md)：草稿、发布、激活和受管数据动作。
 - [模型执行](architecture/model-execution.md)：原生 MCP、会话复用和读取回执。
+- [任务闭环与跨服务编排](architecture/task-closure.md)。
+- [态势感知与持续履约设计边界](architecture/situation-awareness.md)：设计合同，尚未实现。
+- [本体权限与受保护任务](guides/ontology-security.md)。
 - [领域术语](architecture/domain.md)：参与者、业务对象和验收含义。
 
 ## 账号与网络
@@ -27,6 +30,7 @@
 ## 服务接入
 
 - [美团只读来源](integrations/meituan.md)。
+- [滴滴官方 Mock 下单测试](integrations/didi-order-test.md)。
 - [供应商与沙箱配置](integrations/providers.md)。
 - [免费报名与预约](integrations/free-booking.md)。
 - [预约与 PA 付款交接](integrations/booking-payment.md)。

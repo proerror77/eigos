@@ -4,7 +4,7 @@ import { mountSourceRoutes } from './sources.js';
 import { assertSourceProxy } from '../../packages/core/private-source-proxy.js';
 import { mountNetworkRoutes } from './network/routes.js';
 import { createExecutionCatalog } from '../../packages/capabilities/catalog.js';
-import { paPaymentProtocol } from '../../packages/core/pa-payment.js';
+import { paPaymentProtocol, paPaymentRequestSchema } from '../../packages/core/pa-payment.js';
 import type { ExecutionCatalog } from '../../packages/core/catalog.js';
 import { createMcpExpressApp } from '@modelcontextprotocol/express';
 import { createMcpHandler } from '@modelcontextprotocol/server';
@@ -24,7 +24,11 @@ import { DomainError, ownerKey, SCOPES, type Principal, type Scope } from '../..
 import { createMcpServer } from './mcp.js';
 import { JobStore } from '../../packages/core/store.js';
 import { TaskService } from '../../packages/core/tasks.js';
-import { taskSummary } from '../../packages/core/task-summary.js';
+import { publicTask as taskSummary } from './task-view.js';
+import { AuthorizationCoordinator } from '../../packages/security/coordinator.js';
+import { SecurityError } from '../../packages/security/store.js';
+import { accessContextSchema } from '../../packages/security/contracts.js';
+import { digest } from '../../packages/core/delegation.js';
 import { MemberAccessError, MemberStore } from '../../packages/members/store.js';
 import { mountMemberRoutes } from './members/routes.js';
 import type { LoginProvider } from './members/oidc.js';
@@ -35,7 +39,7 @@ import { DefinitionService } from '../../packages/ontology/definition-service.js
 import { mountDefinitionRoutes } from './ontology/routes.js';
 import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
 
-const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()) });
+const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
   : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
 
@@ -54,11 +58,11 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   });
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
-  const store = new JobStore(config.DATABASE_PATH);
+  const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
   try {
-    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
       paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
       didiMember: config.EIGOS_DIDI_MEMBER_CONNECTION_FILE ? { connectionFile: config.EIGOS_DIDI_MEMBER_CONNECTION_FILE } : undefined,
@@ -72,7 +76,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       commerceSandbox: config.EIGOS_COMMERCE_SANDBOX_URL ? { endpoint: config.EIGOS_COMMERCE_SANDBOX_URL, tokenFile: config.EIGOS_COMMERCE_SANDBOX_TOKEN_FILE! } : undefined,
       sandbox: config.EIGOS_SANDBOX_PROVIDER_URL ? { endpoint: config.EIGOS_SANDBOX_PROVIDER_URL, tokenFile: config.EIGOS_SANDBOX_TOKEN_FILE! } : undefined });
     tasks = new TaskService(store, { catalog, allowSandboxActions: config.EIGOS_ACTION_SANDBOX === 'true', allowExternalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length });
-    if (config.EIGOS_NETWORK_ENABLED === 'true') network = new NetworkService(store.createNetworkStore(), members, { memberIds: config.EIGOS_NETWORK_MEMBER_IDS, operatorIds: config.EIGOS_NETWORK_OPERATOR_MEMBER_IDS, collaborationLimits: { maxResponders: config.EIGOS_NETWORK_MAX_RESPONDERS, maxClarificationRounds: config.EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS }, catalog, jobs: store, tasks });
+    if (!store.security.enabled && config.EIGOS_NETWORK_ENABLED === 'true') network = new NetworkService(store.createNetworkStore(), members, { memberIds: config.EIGOS_NETWORK_MEMBER_IDS, operatorIds: config.EIGOS_NETWORK_OPERATOR_MEMBER_IDS, collaborationLimits: { maxResponders: config.EIGOS_NETWORK_MAX_RESPONDERS, maxClarificationRounds: config.EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS }, catalog, jobs: store, tasks });
     if (config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE) {
       const access = new PersonalSourceAccess(config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, (c, hash) => store.personalSourceAdmitted(c, hash), config.EIGOS_PAOTUI_SKILL_DIR!);
       const member = members.get(access.record.memberId);
@@ -89,10 +93,16 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       members.setRevocationObserver(change => store.revokeMemberDidiSource(change.memberId));
     } else store.admitMemberDidiSource();
   } catch (error) { network?.close(); store.close(); members.close(); throw error; }
+  const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members, store, catalog) : undefined;
+  try { security?.start(); } catch(error) { network?.close(); store.close(); members.close(); throw error; }
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
-      const entry = {
+      const entry = security ? {
+        at:new Date().toISOString(),path:req.path.startsWith('/tasks/')?'/tasks/:taskId/authorize':req.path.startsWith('/agents/registrations/')?'/agents/registrations/:id/:action':req.path,
+        method:['SendMessage','GetTask','ListTasks','CancelTask','tools/call','tools/list','initialize','approve_plan','confirm_simulated_payment'].includes(req.body?.method??req.body?.action)?req.body.method??req.body.action:req.method,
+        requestDigest:digest({requestId:req.body?.id,messageId:req.body?.params?.message?.messageId,taskId:req.body?.params?.id??req.body?.params?.message?.taskId,registrationId:req.body?.registrationId}),
+      } : {
         at: new Date().toISOString(), path: req.path, method: req.body?.method ?? req.body?.action ?? req.method,
         requestId: auditId(req.body?.id), messageId: auditId(req.body?.params?.message?.messageId),
         taskId: auditId(req.body?.params?.id ?? req.body?.params?.message?.taskId ?? req.body?.params?.arguments?.taskId),
@@ -121,12 +131,12 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     next();
   });
   const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const };
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', ...runtimeIdentity }));
+  app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity, securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
   mountInviteBeta(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
-  app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json(paPaymentProtocol(!!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL)));
-  mountMemberRoutes(app, config, members, loginProvider);
-  mountAgentRoutes(app, config, members, verify);
+  app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
+  mountMemberRoutes(app, config, members, loginProvider, security);
+  mountAgentRoutes(app, config, members, verify, security);
   const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
   app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (_req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
@@ -139,7 +149,18 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       if (!match?.[1]) throw new Error('Missing token');
       const principal = inviteBetaPrincipal(config, await verify(match[1]));
       if (!principal) { res.status(403).json({ error: 'client_not_admitted', membership_url: `${config.PUBLIC_URL}/members` }); return; }
-      if (config.EIGOS_AUTH_MODE === 'jwt') {
+      if (security) {
+        try {
+          if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
+          principal.access = security.authenticate(principal, match[1]);
+        } catch(error) {
+          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason});
+          else if(error instanceof AgentAccessError||error instanceof MemberAccessError) res.status(403).json({error:error.code});
+          else if(error instanceof DomainError) res.status(403).json({error:error.code});
+          else next(error);
+          return;
+        }
+      } else if (config.EIGOS_AUTH_MODE === 'jwt') {
         if (principal.clientId === config.OIDC_AGENT_CLIENT_ID) {
           try { members.agents.authorize(principal, match[1]); }
           catch (error) {
@@ -165,23 +186,53 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   };
 
-  mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
-  const sources = config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
-  mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
+  if (!security) mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
+  const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
+  if (!security) mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
   const definitions = new DefinitionService(store, tasks, catalog);
-  mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
+  if (!security) mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
+
+  app.post('/security/context', authenticate, (req, res) => {
+    if (!security) { res.status(404).json({error:'security_foundation_not_enabled'}); return; }
+    if (!z.strictObject({}).safeParse(req.body).success) {res.status(400).json({error:'invalid_security_context_input'});return;}
+    const p=principals.get(req)!,context=p.access;
+    if(!p.scopes.includes('services:read')){res.status(403).json({error:'insufficient_scope'});return;}
+    if(context?.actorKind!=='agent'){res.status(403).json({error:'AUTHORIZATION_REQUIRED'});return;}
+    res.json({stage:'S5',actorKind:context.actorKind,installationId:context.installationId,grant:context.agentGrant,authEpoch:context.authEpoch,businessAccess:'task_grant_required'});
+  });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.
-  for (const operation of ['describe', 'query', 'evaluate'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
+  for (const operation of ['describe', 'query', 'evaluate','check-access'] as const) app.post(`/ontology/${operation}`, authenticate, (req, res, next) => {
     try {
       const p = principals.get(req)!;
       const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') ?? '';
       const reader = operation === 'describe' ? undefined : network?.ontologyReader(p, token);
-      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : tasks.evaluateOntology(p, req.body, reader));
+      res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : operation === 'check-access' ? tasks.checkAccess(p,req.body) : tasks.evaluateOntology(p, req.body, reader));
     } catch (error) {
       if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }
       next(error);
+    }
+  });
+
+  const taskHttp=(action:(req:Request)=>unknown):RequestHandler=>(req,res,next)=>{
+    try {res.json(action(req));} catch(error) {
+      if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='NOT_FOUND'?404:error.code==='INVALID_INPUT'?400:409).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof z.ZodError){res.status(400).json({error:'invalid_task_input'});return;} next(error);
+    }
+  };
+  app.get('/tasks',authenticate,taskHttp(req=>{const found=tasks.list(principals.get(req)!,z.strictObject({limit:z.coerce.number().int().min(1).max(100).default(50),offset:z.coerce.number().int().min(0).max(1_000_000).default(0)}).parse(req.query));return {...found,jobs:found.jobs.map(taskSummary)};}));
+  app.get('/tasks/:taskId',authenticate,taskHttp(req=>taskSummary(tasks.get(principals.get(req)!,String(req.params.taskId)))));
+  app.post('/tasks',authenticate,taskHttp(req=>taskSummary(tasks.submit(principals.get(req)!,req.body))));
+  app.post('/tasks/:taskId/reply',authenticate,taskHttp(req=>taskSummary(tasks.reply(principals.get(req)!,{...req.body,taskId:String(req.params.taskId)}))));
+  app.post('/tasks/:taskId/cancel',authenticate,taskHttp(req=>{z.strictObject({}).parse(req.body);return taskSummary(tasks.cancel(principals.get(req)!,String(req.params.taskId)));}));
+  app.get('/tasks/:taskId/artifacts/:artifactId',authenticate,(req,res,next)=>{
+    try {
+      const artifact=tasks.downloadArtifact(principals.get(req)!,String(req.params.taskId),String(req.params.artifactId));
+      res.set({'Content-Type':artifact.mediaType,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Disposition':`attachment; filename="artifact"; filename*=UTF-8''${encodeURIComponent(artifact.name)}`}).send(artifact.content);
+    } catch(error) {
+      if(error instanceof DomainError){res.status(error.code==='NOT_FOUND'?404:403).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof z.ZodError){res.status(400).json({error:'invalid_artifact'});return;}next(error);
     }
   });
 
@@ -207,7 +258,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, security || config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);
@@ -242,5 +293,5 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, network, catalog, definitions, scopes: SCOPES, close: async () => { await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, network, catalog, definitions, security, scopes: SCOPES, close: async () => { security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
 }

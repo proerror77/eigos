@@ -83,3 +83,7 @@ A2A 使用 `SendMessage` 提交或续接，使用 `GetTask` 回读。长任务�
 会员登记见[Agent 接入流程](guides/agent-onboarding.md)，账号来源见[会员来源连接](guides/member-sources.md)。协作网络通过 `network_query`、`network_command`、`network_updates` 和命令回执接口工作；内容可见性不授予执行或付款权限。
 
 可复用客户端位于 `packages/agent-client/` 和 `integrations/`。示例位于 `examples/`。实际启用范围见[能力目录](architecture/capabilities.md)。
+
+## 受保护模式
+
+上述完整主线接口对应 legacy。显式 `EIGOS_SECURITY_MODE=foundation` 使用共同 TaskView、任务范围查询和独立来源／输出许可；未审查的 legacy 管理与网络入口不自动开放。接入合同及限制见[本体权限指南](guides/ontology-security.md)。目标覆盖与统一结果回写见[任务闭环](architecture/task-closure.md)，测试下单见[滴滴 Mock](integrations/didi-order-test.md)。

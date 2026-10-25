@@ -1,3 +1,4 @@
+import { projectCapabilityCatalog } from '../ontology/capability-catalog.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
@@ -6,7 +7,7 @@ import { NetworkStore } from '../network/store.js';
 import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
 import type { ExecutionCatalog } from './catalog.js';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DomainError, type Job, type JobState } from './domain.js';
@@ -20,10 +21,14 @@ import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelRe
 import type { RunEvidence } from '../capabilities/executor.js';
 import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
-import { DefinitionStore } from '../ontology/definition-store.js';
+import { DefinitionStore, currentKernelImplementation } from '../ontology/definition-store.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
+import { SecurityStore, type SecurityMode } from '../security/store.js';
+import { authorizationScope } from '../security/context.js';
+import {agentDispatchGrant} from './agent-authorization.js';
+import { synchronizeTaskOutcome } from './task-outcome.js';
 
 export interface ListFilter {
   limit: number;
@@ -33,7 +38,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string }
 // Throwing through the shared transaction is essential: returning false from
 // inside it would commit a dispatch marker whose lease expired during the save.
 const lostClaimFence = Symbol('lost-claim-fence');
@@ -60,9 +65,14 @@ export class JobStore {
   private readonly ontologyViews = new Map<string, OntologyObjectStore>();
   readonly databasePath: string;
 
-  constructor(path: string) {
+  private securitySequence = 0;
+  private transactionDepth = 0;
+  readonly security: SecurityStore;
+  private readonly projectionBase: OntologyObjectStore;
+
+  constructor(path: string, options: { securityMode?: SecurityMode; securityNow?: () => number } = {}) {
     this.databasePath = path === ':memory:' ? path : resolve(path);
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    if (path !== ':memory:') { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); closeSync(openSync(path, 'a', 0o600)); }
     this.db = new DatabaseSync(path);
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
     this.transaction(() => {
@@ -119,11 +129,15 @@ export class JobStore {
       if (!budgetColumns.has('additional_impacts')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN additional_impacts TEXT');
       initializeMemberUsage(this.db);
     });
+    try {
+      const reviewedModel = currentKernelImplementation();
+      this.security = this.transaction(() => new SecurityStore(this.db, options.securityMode, options.securityNow, false, reviewedModel));
     // Run the explicitly supported historical migrations once before the
     // persistent definition registry becomes the authority for every view.
     this.definitions = new DefinitionStore(this.db);
     const legacyModel = this.definitions.legacyImplementation();
-    this.baseOntology = new OntologyObjectStore(this.db, legacyModel, Date.now, undefined, { skipLegacyMigration: true });
+    this.projectionBase = new OntologyObjectStore(this.db, legacyModel, options.securityNow ?? Date.now, undefined, { skipLegacyMigration: true });
+    this.baseOntology = this.security.enabled ? new OntologyObjectStore(this.db, legacyModel, options.securityNow ?? Date.now, undefined, { skipLegacyMigration: true, security: this.security.policies }, false) : this.projectionBase;
     if (!this.definitions.hasBaseline()) migrateIntegratedOntology(this.db, businessModelV9, legacyModel);
     this.definitions.bootstrap();
     this.baseOntology.setReadOverlayFactory((owner, requestId) => {
@@ -131,6 +145,7 @@ export class JobStore {
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
     });
     initializeMemberSources(this.db);
+    } catch(error) { this.db.close(); throw error; }
   }
   /** Unbound discovery follows the current default release. Task execution
    * must use ontologyForJob, including projections and historical readback. */
@@ -162,7 +177,26 @@ export class JobStore {
   ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
     return this.ontologyForRelease(this.ontologyReleaseForJob(owner, jobOrId));
   }
-  setOntologyCatalog(catalog: ExecutionCatalog): void { this.ontologyCatalog = catalog; }
+  private projectionForJob(owner: string, job: Job): OntologyObjectStore {
+    if (!this.security.enabled) return this.ontologyForJob(owner, job);
+    const ref = this.ontologyReleaseForJob(owner, job), release = this.definitions.resolve(ref);
+    return this.projectionBase.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref, ...(release.compatibleDefinition ? { compatibleDefinition: release.compatibleDefinition } : {}) });
+  }
+  withExecutionIntegrity<T>(owner:string,taskId:string,read:(graph:OntologyObjectStore)=>T):T {
+    const job=this.get(owner,taskId),scope=this.security.enabled?this.security.policies.scope(owner):undefined;
+    if(scope && (scope.actor.actorKind!=='worker' || scope.operation!=='task.process' || scope.grant?.taskId!==taskId || scope.grant.requestRevision!==job.delegation?.request.revision))throw new DomainError('FORBIDDEN','Current worker task authority is required for execution integrity');
+    scope?.assertCurrent();
+    const previous=Number(this.db.prepare('PRAGMA query_only').get()!.query_only);this.db.exec('PRAGMA query_only=ON');
+    try {const result=read(this.projectionForJob(owner,job));if(result && typeof result==='object' && 'then' in result)throw new DomainError('FORBIDDEN','Execution integrity reads must be synchronous');scope?.assertCurrent();return result;}
+    finally {this.db.exec(`PRAGMA query_only=${previous}`);}
+  }
+  projectCapabilities(owner:string,taskId:string,summaries:ReturnType<ExecutionCatalog['summaries']>) {
+    const job=this.get(owner,taskId);
+    if(this.security.enabled){const scope=this.security.policies.scope(owner);if(scope.actor.actorKind!=='worker' || scope.grant?.taskId!==taskId || scope.grant.requestRevision!==job.delegation?.request.revision)throw new DomainError('FORBIDDEN','Current task authority is required for capability projection');}
+    projectCapabilityCatalog(this.projectionForJob(owner,job),owner,taskId,summaries);
+    if(this.security.enabled)this.security.policies.bindTaskProjection(owner,taskId);
+  }
+  setOntologyCatalog(catalog: ExecutionCatalog): void { catalog.secureWith(this.security); this.ontologyCatalog = catalog; }
 
   memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
 
@@ -206,7 +240,7 @@ export class JobStore {
    * business effects can update ledger truth without advancing the task. */
   private projectExecution(owner: string, job: Job): void {
     if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) return;
-    const graph = this.ontologyForJob(owner, job);
+    const graph = this.projectionForJob(owner, job);
     if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION && job.state === 'completed'
       && graph.read(owner, { type: 'ServiceRequest', id: job.id }).properties.projectionState === 'invalid_source') {
       // Keep the canonical completed record available for diagnosis. An invalid
@@ -300,8 +334,16 @@ export class JobStore {
     this.projectExecution(owner, this.get(owner, intent.jobId));
     });
   }
-  dispatchIntent(owner: string, id: string): void {
+  dispatchIntent(owner: string, id: string, claim?: WorkClaim): void {
     this.executionMutation(() => {
+      if (this.security.enabled && (!claim || claim.owner !== owner || !this.active(claim, Date.now()) || this.intent(owner, id).jobId !== claim.job.id)) throw new DomainError('FORBIDDEN', 'Current task authority and claim are required for dispatch');
+      if (this.security.enabled) {
+        const intent=this.intent(owner,id),{plan,step}=this.security.policies.requireDispatch(owner,intent,'dispatch');
+        if(!['read','local'].includes(step.effect)) {
+          const permit=agentDispatchGrant(this,owner,intent.jobId,plan,step);
+          if(!permit || step.cost && !this.db.prepare("SELECT 1 FROM budget_reservations WHERE owner=? AND intent_id=? AND grant_id=? AND minor=? AND currency=? AND state='held'").get(owner,intent.id,permit.id,step.cost.minor,step.cost.currency)) throw new DomainError('FORBIDDEN','Exact business permit and held budget are required');
+        }
+      }
     const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
     if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
     this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
@@ -311,7 +353,9 @@ export class JobStore {
     return this.executionMutation(() => {
     const intent = this.intent(claim.owner, intentId);
     if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
-    if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId);
+    if (this.security.enabled && !this.active(claim, Date.now())) throw new DomainError('FORBIDDEN', 'Task authority or claim is no longer active');
+    if (this.security.enabled && kind !== 'dispatch') this.security.policies.requireDispatch(claim.owner,intent,kind);
+    if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId, claim);
     else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
     const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}), ...(authorizationId ? { authorizationId } : {}) };
     this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));
@@ -495,10 +539,58 @@ export class JobStore {
     this.db.prepare('UPDATE aftersales_cases SET body=? WHERE owner=? AND id=?').run(JSON.stringify({ ...value, state, updatedAt: new Date().toISOString() }), owner, caseId);
   }
   recordFeedback(owner: string, job: Job, evidenceLevel: string, verification = true): void {
-    const d = job.delegation; if (!d?.plan) return;
+    const d = job.delegation;
+    if (d?.agent) {
+      const agent = d.agent, outcome = d.outcome;
+      const endpoint = agent.input.target ?? agent.input.completionTarget ?? agent.input.mode;
+      const row = { capabilityRef: agent.programRef, bindingRef: agent.programRef, bindingDefinitionDigest: agent.programDigest,
+        goalKind: typeof endpoint === 'string' ? `${agent.programRef.id}:${endpoint}` : agent.programRef.id, outcome: outcome?.status ?? 'unknown', taskState: job.state, evidenceLevel: outcome?.evidenceLevel ?? 'unverified',
+        criterionResults: outcome?.criterionResults ?? [], observedAt: outcome?.assessedAt ?? job.updatedAt };
+      const key = digest(agent.programRef);
+      this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, key, JSON.stringify(row));
+      for (const [componentId, component] of Object.entries(agent.components ?? {})) {
+        const endpoint = component.input?.target ?? component.input?.completionTarget ?? component.input?.mode;
+        const item = { capabilityRef: component.programRef, bindingRef: component.programRef, bindingDefinitionDigest: component.programDigest,
+          rootTaskId: job.id, requestRevision: d.request.revision, componentId, scope: 'component_only', parentState: job.state,
+          goalKind: typeof endpoint === 'string' ? `${component.programRef.id}:${endpoint}` : component.programRef.id,
+          outcome: component.result ? 'satisfied' : 'unknown', taskState: component.result ? 'completed' : job.state,
+          evidenceLevel: component.result?.delivery.evidenceLevel ?? 'unverified', criterionResults: [], observedAt: component.result?.at ?? row.observedAt };
+        this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner')
+          .run(`${job.id}:${d.request.revision}:${componentId}`, owner, digest(component.programRef), JSON.stringify(item));
+      }
+      const native = agent.composition;
+      const assessment = native?.assessment;
+      const currentAssessment = assessment && assessment.goalDigest === native?.goal.digest && native.goal.requestId === job.id && native.goal.requestRevision === d.request.revision ? assessment : undefined;
+      for (const component of native?.contexts ?? []) {
+        if (component.requestRevision !== d.request.revision) continue;
+        const assessed = currentAssessment?.components.find(item => item.contextId === component.id);
+        const delivery = assessed?.status === 'verified' && assessed.delivery?.evidenceRefs.length ? assessed.delivery : undefined;
+        const endpoint = component.input.target ?? component.input.completionTarget ?? component.input.mode;
+        const item = { capabilityRef: component.programRef, bindingRef: component.programRef, bindingDefinitionDigest: component.programDigest,
+          rootTaskId: job.id, requestRevision: component.requestRevision, componentId: component.id, contextDigest: component.digest,
+          scope: 'component_only', parentTaskState: job.state,
+          goalKind: typeof endpoint === 'string' ? `${component.programRef.id}:${endpoint}` : component.programRef.id,
+          outcome: delivery ? 'satisfied' : 'unknown', taskState: delivery ? 'completed' : job.state,
+          evidenceLevel: delivery?.evidenceLevel ?? 'unverified', evidenceRefs: delivery ? [...delivery.evidenceRefs] : [], criterionResults: [],
+          observedAt: currentAssessment?.at ?? row.observedAt, availabilityProof: false, automaticPromotion: false };
+        this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner')
+          .run(`${job.id}:${component.requestRevision}:context:${component.digest}`, owner, digest(component.programRef), JSON.stringify(item));
+      }
+      if (!verification || !['completed', 'failed', 'rejected', 'canceled'].includes(job.state)) return;
+      const claim = { id: digest({ owner, program: agent.programRef, configuration: agent.programDigest }), capabilityRef: agent.programRef, bindingRef: agent.programRef, publisherId: 'configured-agent-program', sourceRevision: agent.programDigest, sourceRef: 'configured-versioned-definition', observedAt: row.observedAt };
+      const verified = { id: digest({ owner, jobId: job.id, revision: d.request.revision, state: job.state, outcome }), claimId: claim.id, sourceRevision: agent.programDigest,
+        actionTypeRefs: [...new Map(agent.plans.flatMap(p => p.steps.map(s => [s.action, { id: s.action, definitionDigest: s.definitionDigest }] as const))).values()],
+        level: row.evidenceLevel, result: job.state === 'completed' && outcome?.status === 'satisfied' ? 'passed' : outcome?.status === 'unsatisfied' ? 'failed' : 'inconclusive',
+        scope: { capabilityRef: agent.programRef, requestId: job.id, requestRevision: d.request.revision, configurationDigest: agent.programDigest, executionEnvironment: d.request.executionEnvironment ?? 'live', observedAt: row.observedAt },
+        evidenceRefs: outcome?.evidenceRefs ?? [], verifiedAt: row.observedAt, availabilityProof: false };
+      this.db.prepare('INSERT OR IGNORE INTO capability_claims VALUES(?,?,?,?)').run(claim.id, owner, key, JSON.stringify(claim));
+      this.db.prepare('INSERT OR IGNORE INTO capability_verifications VALUES(?,?,?,?)').run(verified.id, owner, key, JSON.stringify(verified));
+      return;
+    }
+    if (!d?.plan) return;
     const row = { capabilityRef: d.plan.capabilityRef, bindingRef: d.plan.bindingRef, bindingDefinitionDigest: d.plan.bindingDigests.find(p => p.ref.id === d.plan!.bindingRef.id && p.ref.version === d.plan!.bindingRef.version)?.digest,
       goalKind: d.request.outcome ?? d.plan.completionTarget, outcome: ['working', 'submitted', 'auth-required', 'input-required', 'canceled'].includes(job.state) ? 'unknown' : d.outcome?.status ?? 'unknown', taskState: job.state, evidenceLevel, criterionResults: d.outcome?.criterionResults ?? [], observedAt: new Date().toISOString() };
-    this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, digest(d.plan.bindingRef), JSON.stringify(row));
+    this.db.prepare('INSERT INTO outcome_feedback VALUES(?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET binding_key=excluded.binding_key,body=excluded.body WHERE outcome_feedback.owner=excluded.owner').run(job.id, owner, digest(d.plan.bindingRef), JSON.stringify(row));
     if (!verification) return;
     const selected = d.resolution?.candidates.find(c => c.id === d.plan!.candidateId);
     const sourceRevision = selected?.offer?.sourceRevision ?? d.plan.digest;
@@ -538,7 +630,8 @@ export class JobStore {
   }
 
   transaction<T>(action: () => T): T {
-    return businessTransaction(this.db, action);
+    if (this.security?.enabled && (this.transactionDepth || this.security.inTransaction)) { this.transactionDepth++; try { return this.security.atomic(action); } finally { this.transactionDepth--; } }
+    return businessTransaction(this.db, () => { this.transactionDepth++; try { return action(); } finally { this.transactionDepth--; } });
   }
 
   // Only claimed attempts are interrupted. Unclaimed durable work remains queued.
@@ -583,13 +676,17 @@ export class JobStore {
       this.expireClaims(at);
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
-      if (Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) >= 2) return;
-      const row = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
-        AND COALESCE(json_extract(body,'$.executionMode'), 'worker')='worker'
+      const active=Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n)
+        +(this.security.enabled?Number(this.db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running' AND lease_until>?").get(at)!.n):0);
+      if (active >= 2) return;
+      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+        AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
-        AND id NOT IN (SELECT job_id FROM work_claims) ORDER BY created_at,id LIMIT 1`).get(...services, BACKEND_VERSION, at);
+        AND id NOT IN (SELECT job_id FROM work_claims)
+        ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
+      const row = this.security.enabled ? query.get({ securityNow: at,securityDefinition:this.security.policies.definitionDigest }, 'worker-security-v2', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
@@ -597,7 +694,8 @@ export class JobStore {
       const token = randomUUID();
       const claimedAt = now ?? Date.now();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
-      return { owner: String(row.owner), job, token, ...(job.state !== 'working' ? { recovery: true } : {}) };
+      const authority = this.security.workAuthority(String(row.owner), job.id, at);
+      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
 
@@ -617,6 +715,10 @@ export class JobStore {
   private active(claim: WorkClaim, now: number): boolean {
     if (!this.leaseOwned(claim, now)) return false;
     const current = this.get(claim.owner, claim.job.id);
+    if (this.security.enabled) {
+      const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
+      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
+    }
     return (claim.recovery ? current.state === claim.job.state && current.delegation?.recoveryPending === true : current.state === 'working')
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
@@ -658,14 +760,24 @@ export class JobStore {
   }
 
   hasContext(owner: string, contextId: string): boolean {
+    if (this.security.enabled) {
+      const scope=this.security.policies.scope(owner,false);
+      return this.security.listGrants(owner).some(g=>g.kind==='task_data' && g.installationId===scope.actor.installationId && g.status==='active'
+        && this.get(owner,g.taskId).contextId===contextId && !!this.security.taskGrant(scope.actor,g.taskId));
+    }
     return !!this.db.prepare('SELECT 1 FROM jobs WHERE owner = ? AND context_id = ? LIMIT 1').get(owner, contextId);
   }
 
   hasRequest(owner: string, operation: string, requestId: string): boolean {
+    if (this.security.enabled) operation = `${this.security.policies.scope(owner,false).actor.installationId}:${operation}`;
     return !!this.db.prepare('SELECT 1 FROM requests WHERE owner=? AND operation=? AND request_id=?').get(owner, operation, requestId);
   }
+  hasActiveClaim(taskId:string):boolean { return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=? AND expires_at>?').get(taskId,this.security.now()); }
 
   save(owner: string, job: Job): void {
+    // The old Worker queue selector must not claim a foundation task even if an
+    // operator accidentally starts an old binary against this new database.
+    if (this.security.enabled) job.executionMode = 'worker-security-v2';
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
       const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
@@ -675,21 +787,34 @@ export class JobStore {
         if (digest(original.delegation?.ontologyRelease ?? null) !== digest(job.delegation?.ontologyRelease ?? null)) throw new DomainError('CONFLICT', 'A task\'s ontology release is immutable');
         if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
       }
+      synchronizeTaskOutcome(job);
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(
       job.id, owner, job.contextId, job.state, job.createdAt, job.updatedAt, JSON.stringify(job),
       );
       if (!saved.changes) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
-      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.ontologyForJob(owner, job), owner, job);
+      if (job.service === 'eigos.delegate' && job.delegation?.backendVersion === BACKEND_VERSION) projectTask(this.projectionForJob(owner, job), owner, job);
       this.projectExecution(owner, job);
+      if (this.security.enabled) this.security.policies.bindTaskProjection(owner, job.id);
+      const scope=authorizationScope();
+      if (this.security.enabled && scope?.actor.actorKind==='worker' && scope.grant?.taskId===job.id && scope.lineage.size) {
+        const envelope=this.security.policies.outputEnvelope(owner);
+        this.security.policies.validateLineage(scope,envelope);
+        if (job.question) this.security.policies.recordOutput(owner,job.id,'question',job.question,envelope);
+        if (job.artifact) this.security.policies.recordOutput(owner,job.id,'artifact',job.artifact,envelope);
+        if(job.delegation?.authorizationRequest) this.security.policies.recordOutput(owner,job.id,'authorization',job.delegation.authorizationRequest,envelope);
+        if(job.delegation?.agent?.paPayment) this.security.policies.recordOutput(owner,job.id,'payment',job.delegation.agent.paPayment.request,envelope);
+      }
+      if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent) this.recordFeedback(owner, job, job.delegation.outcome?.evidenceLevel ?? 'unverified');
       this.db.exec('RELEASE task_and_ontology');
     } catch (error) { this.db.exec('ROLLBACK TO task_and_ontology; RELEASE task_and_ontology'); throw error; }
   }
 
-  list(owner: string, filter: ListFilter): { jobs: Job[]; total: number } {
+  list(owner: string, filter: ListFilter, taskIds?: string[]): { jobs: Job[]; total: number } {
     const clauses = ['owner = ?'];
     const args: string[] = [owner];
+    if (taskIds) { clauses.push('id IN (SELECT value FROM json_each(?))'); args.push(JSON.stringify(taskIds)); }
     if (filter.contextId) { clauses.push('context_id = ?'); args.push(filter.contextId); }
     if (filter.state) { clauses.push('state = ?'); args.push(filter.state); }
     if (filter.updatedAfter) { clauses.push('updated_at >= ?'); args.push(filter.updatedAfter); }
@@ -701,6 +826,7 @@ export class JobStore {
   }
 
   assertTransaction(): void {
+    if (this.security?.enabled && this.transactionDepth > 0) return;
     assertBusinessTransaction(this.db);
   }
   sharesNetworkStore(store: NetworkStore): boolean { return store.usesConnection(this.db); }
@@ -718,14 +844,16 @@ export class JobStore {
   }
   onceInTransaction(owner: string, operation: string, requestId: string, fingerprint: string, action: () => Job): Job {
     this.assertTransaction();
+    if (this.security.enabled) operation = `${this.security.policies.scope(owner,false).actor.installationId}:${operation}`;
     const previous = this.db.prepare('SELECT fingerprint, response FROM requests WHERE owner=? AND operation=? AND request_id=?')
       .get(owner, operation, requestId);
     if (previous) {
       if (!equivalentFingerprint(String(previous.fingerprint), fingerprint)) throw new DomainError('CONFLICT', 'Request ID was already used with different input');
-      return JSON.parse(String(previous.response)) as Job;
+      const response = JSON.parse(String(previous.response));
+      return this.security.enabled ? this.get(owner, String(response.taskId)) : response as Job;
     }
     const result = action();
-    this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(result));
+    this.db.prepare('INSERT INTO requests VALUES (?, ?, ?, ?, ?)').run(owner, operation, requestId, fingerprint, JSON.stringify(this.security.enabled ? {taskId:result.id} : result));
     return result;
   }
 }

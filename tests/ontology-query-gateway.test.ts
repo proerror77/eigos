@@ -1,5 +1,6 @@
 // Actual authenticated HTTP/MCP/A2A transports; only synthetic data, no Worker or live source.
 import assert from 'node:assert/strict';
+import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -59,6 +60,6 @@ test('N1 queries share PA authentication, owner and scope boundaries without exp
     assert.equal(projected.value.items[0].properties.originalGoal, '只准备一个说明，验证原 PA 入口');
     const card = await fetch(base + '/.well-known/agent-card.json').then(r => r.json());
     assert.deepEqual(card.skills.map((s: { id: string }) => s.id), ['eigos.delegate']);
-    assert.equal((await fetch(base + '/health').then(r => r.json())).backend, 'ontology-execution-v20');
+    assert.equal((await fetch(base + '/health').then(r => r.json())).backend, BACKEND_VERSION);
   } finally { await client.close(); await gateway.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });

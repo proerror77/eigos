@@ -27,6 +27,8 @@ import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.j
 import { GoalProgram } from '../coordinator/goal-program.js';
 import { addLocationContext, prepareLocationContext } from './location-context.js';
 import { componentContext, resolveComposedStep } from './composed-actions.js';
+import { AuthorizedOntologyView } from '../security/view.js';
+import { TaskSecurity } from '../security/task-service.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
 export interface OntologyReadContext { ontologyId?: string; release?: OntologyReleaseRef; taskId?: string }
@@ -34,7 +36,8 @@ const readContextSchema = z.object({ ontologyId: ontologyIdSchema.optional(), re
 
 export class TaskService {
   private stopping = false;
-  constructor(private store: JobStore, private options: TaskOptions) { store.setOntologyCatalog(options.catalog); }
+  private security?: TaskSecurity;
+  constructor(private store: JobStore, private options: TaskOptions) { store.setOntologyCatalog(options.catalog); if (store.security.enabled) this.security = new TaskSecurity(store); }
   private catalogForJob(owner: string, job: Job) { return this.options.catalog.forOntology(this.store.ontologyForJob(owner, job), owner); }
   private ontologyContext(p: Principal, input: OntologyReadContext = {}) {
     const context = readContextSchema.parse(input), owner = ownerKey(p);
@@ -62,12 +65,24 @@ export class TaskService {
     }
     return context;
   }
+  get secured() { return !!this.security; }
 
   services() {
+    if (this.security) return [{id:'eigos.delegate',name:'Task-scoped EIGOS execution',description:'Delegate within the current installation and task grants. Resources, source operations, model processing and delivery channels require independent permission.',requiredInputs:['goal'],tags:['delegation'],examples:[],inputModes:['text/plain','application/json'],outputModes:['application/json','text/markdown']}];
     return [this.options.catalog.delegationService(), ...(this.options.catalog.hasRemediation() ? [{ id: 'eigos.aftersales', name: 'Owned service after-sales', description: 'Separate linked after-sales task for owned sandbox operations only. No real order, payment, cancellation or refund.', requiredInputs: ['originalTaskId', 'action', 'reason'], tags: ['aftersales'], examples: [], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])];
   }
 
+  checkAccess(p: Principal,input:unknown) {
+    requireScope(p,'tasks:read');
+    if (!this.security) throw new DomainError('FORBIDDEN','Security foundation is not enabled');
+    return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).check(input);
+  }
+  downloadArtifact(p:Principal,taskId:string,artifactId:string) {
+    if (!this.security) throw new DomainError('NOT_FOUND','Controlled artifact not found');
+    return this.security.download(p,taskIdSchema.parse(taskId),z.uuid().parse(artifactId));
+  }
   resumeSource(p: Principal, input: unknown, assertConnected: (owner: string) => void): Job {
+    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation source resumption requires reviewed task authority');
     requireScope(p, 'tasks:write');
     const args = z.object({ taskId: taskIdSchema, requestId: z.uuid(), expectedRevision: z.number().int().positive() }).strict().parse(input), owner = ownerKey(p);
     return this.store.once(owner, `source_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -113,28 +128,32 @@ export class TaskService {
 
   describeOntology(p: Principal, input: unknown, context?: OntologyReadContext) {
     requireScope(p, 'services:read');
+    if (this.security) { if(context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); return new AuthorizedOntologyView(this.store.ontology,this.store.security,p).describe(input); }
     const scoped = this.ontologyInput(input, context);
     const query = z.object({ search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().optional(), kind: z.enum(['types', 'actions', 'functions']).optional() }).strict().parse(scoped.query);
     return this.ontologyContext(p, scoped.context).model.describe(query);
   }
   queryOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {
     requireScope(p, 'tasks:read');
+    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; return new AuthorizedOntologyView(this.store.ontologyForJob(ownerKey(p),taskId),this.store.security,p).query(input); }
     const scoped = this.ontologyInput(input, context), base = this.ontologyContext(p, this.ontologyReadContext(scoped.context, reader));
     const graph = reader ? base.withReadOverlay(reader) : base;
     return graph.query(ownerKey(p), scoped.query as import('../ontology/object-store.js').ObjectQuery);
   }
   evaluateOntology(p: Principal, input: unknown, reader?: import('../ontology/network-read.js').NetworkOntologyReadAdapter, context?: OntologyReadContext) {
     requireScope(p, 'tasks:read');
+    if (this.security) { if(reader || context) throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract'); const taskId=z.object({taskId:taskIdSchema}).passthrough().parse(input).taskId; return new AuthorizedOntologyView(this.store.ontologyForJob(ownerKey(p),taskId),this.store.security,p).evaluate(input); }
     const scoped = this.ontologyInput(input, context), base = this.ontologyContext(p, this.ontologyReadContext(scoped.context, reader));
     const graph = reader ? base.withReadOverlay(reader) : base;
     return graph.evaluate(ownerKey(p), scoped.query);
   }
 
-  submit(p: Principal, input: unknown, contextId?: string): Job { return this.submitInternal(p, input, contextId, false); }
+  submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false)) : this.submitInternal(p, input, contextId, false); }
   /** An authenticated caller may prepare one declarative action without an LLM
    * decision. It still uses the same pending plan, exact grant, Worker intent,
    * atomic observation and independent readback as model-selected actions. */
   prepareOntologyAction(p: Principal, input: unknown): Job {
+    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation caller-managed preparation requires reviewed task authority');
     requireScope(p, 'tasks:write'); requireScope(p, 'ontology:read');
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     const args = z.strictObject({ ontologyId: ontologyIdSchema.default('eigos.business'), action: z.string().min(1).max(80).optional(),
@@ -187,6 +206,7 @@ export class TaskService {
     });
   }
   submitInTransaction(p: Principal, input: unknown): Job {
+    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation network submission is unavailable');
     this.store.assertTransaction(); return this.submitInternal(p, input, undefined, true);
   }
   private submitInternal(p: Principal, input: unknown, contextId: string | undefined, inTransaction: boolean): Job {
@@ -212,6 +232,7 @@ export class TaskService {
         job.executionMode = 'worker';
         job.delegation = { backendVersion: BACKEND_VERSION, ontologyRelease, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
           executionEnvironment: args.executionEnvironment ?? 'live',
+          ...(args.capabilityRef ? { capabilityRef: args.capabilityRef } : {}),
           requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
@@ -225,9 +246,10 @@ export class TaskService {
     return submitted;
   }
 
-  amend(p: Principal, input: unknown, contextId?: string): Job { return this.reply(p, versionedReplySchema.parse(input), contextId, undefined, true); }
+  amend(p: Principal, input: unknown, contextId?: string): Job { if (this.security) throw new DomainError('FORBIDDEN', 'Foundation amendments require a reviewed task grant transition'); return this.reply(p, versionedReplySchema.parse(input), contextId, undefined, true); }
 
   resume(p: Principal, input: unknown, contextId?: string): Job {
+    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation technical resumption requires reviewed task authority');
     requireScope(p, 'tasks:write');
     const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -249,6 +271,10 @@ export class TaskService {
   }
 
   reply(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }, amendment = false): Job {
+    const { taskId } = z.object({taskId:taskIdSchema}).passthrough().parse(input);
+    return this.security ? this.security.mutate(p, taskId, () => this.replyRaw(p,input,contextId,expected,amendment)) : this.replyRaw(p,input,contextId,expected,amendment);
+  }
+  private replyRaw(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }, amendment = false): Job {
     requireScope(p, 'tasks:write');
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
@@ -330,11 +356,13 @@ export class TaskService {
 
   get(p: Principal, id: string): Job {
     requireScope(p, 'tasks:read');
+    if (this.security) return this.security.get(p,taskIdSchema.parse(id));
     return this.view(ownerKey(p), this.store.get(ownerKey(p), taskIdSchema.parse(id)));
   }
-  usage(p: Principal) { requireScope(p, 'tasks:read'); return this.store.memberUsage(ownerKey(p)); }
+  usage(p: Principal) { if (this.security) throw new DomainError('FORBIDDEN', 'Foundation usage is not an authorized task projection'); requireScope(p, 'tasks:read'); return this.store.memberUsage(ownerKey(p)); }
 
-  selectPaymentRoute(p: Principal, input: unknown, contextId?: string): Job {
+  selectPaymentRoute(p:Principal,input:unknown,contextId?:string):Job {const args=paPaymentRouteSchema.parse(input);return this.security?this.security.mutate(p,args.taskId,()=>this.selectPaymentRouteRaw(p,args,contextId)):this.selectPaymentRouteRaw(p,args,contextId);}
+  private selectPaymentRouteRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = paPaymentRouteSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `pa-route:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -342,6 +370,7 @@ export class TaskService {
       if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION || job.state !== 'input-required' || job.delegation.phase !== 'awaiting_pa_payment') throw new DomainError('CONFLICT', 'Payment route selection requires the original waiting task');
       if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
       const payment = verifyPAPaymentRequest(job, owner);
+      if (this.security && payment.request.version !== '2') throw new DomainError('FORBIDDEN','This payment handoff needs a reviewed foundation projection');
       if (payment.request.id !== args.handoffId || payment.request.digest !== args.handoffDigest) throw new DomainError('CONFLICT', 'Payment route must reference the exact original handoff');
       const state = job.delegation.agent!, component = state.composition?.contexts.find(value => value.id === state.composition?.paymentContextId);
       const program = this.catalogForJob(owner, job).agentProgram(component?.programRef ?? state.programRef, owner);
@@ -360,7 +389,8 @@ export class TaskService {
     });
   }
 
-  reportPayment(p: Principal, input: unknown, contextId?: string): Job {
+  reportPayment(p:Principal,input:unknown,contextId?:string):Job {const args=paPaymentReportSchema.parse(input);return this.security?this.security.mutate(p,args.taskId,()=>this.reportPaymentRaw(p,args,contextId)):this.reportPaymentRaw(p,args,contextId);}
+  private reportPaymentRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = paPaymentReportSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `pa-payment:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
@@ -368,6 +398,7 @@ export class TaskService {
       if (job.service !== DELEGATE || job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'No current PA payment task');
       if (contextId && job.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
       const payment = verifyPAPaymentRequest(job, owner);
+      if (this.security && payment.request.version !== '2') throw new DomainError('FORBIDDEN','This payment handoff needs a reviewed foundation projection');
       if (args.handoffId !== payment.request.id || args.handoffDigest !== payment.request.digest) throw new DomainError('CONFLICT', 'Payment notification must reference the exact original handoff');
       if (job.state === 'working' || job.state === 'submitted' || job.state === 'auth-required') throw new DomainError('CONFLICT', 'Original provider readback is running; read the task and retry this same notification later');
       if (payment.reports.length >= 20) throw new DomainError('CONFLICT', 'Payment notification bound reached; query the original task');
@@ -395,11 +426,13 @@ export class TaskService {
     const updatedAfter = filter.updatedAfter
       ? new Date(z.iso.datetime({ offset: true }).parse(filter.updatedAfter)).toISOString()
       : undefined;
+    if (this.security) return this.security.list(p,{...filter,updatedAfter});
     const owner = ownerKey(p); const found = this.store.list(owner, { ...filter, updatedAfter });
     return { ...found, jobs: found.jobs.map(job => this.view(owner, job)) };
   }
 
-  cancel(p: Principal, id: string): Job {
+  cancel(p:Principal,id:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.cancelRaw(p,id)):this.cancelRaw(p,id);}
+  private cancelRaw(p: Principal, id: string): Job {
     requireScope(p, 'tasks:write');
     const owner = ownerKey(p);
     taskIdSchema.parse(id);
@@ -423,9 +456,13 @@ export class TaskService {
   }
 
   authorize(p: Principal, id: string, input: unknown, expectedContextId?: string): Job {
+    taskIdSchema.parse(id); return this.security ? this.security.mutate(p,id,() => this.authorizeRaw(p,id,input,expectedContextId)) : this.authorizeRaw(p,id,input,expectedContextId);
+  }
+  private authorizeRaw(p: Principal, id: string, input: unknown, expectedContextId?: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id);
     const args = z.object({ requestId: z.string().trim().min(1).max(128) }).passthrough().parse(input);
     const owner = ownerKey(p);
+    if (this.security && ['approve_external_draft','approve_object_write'].includes(String(args.action))) throw new DomainError('FORBIDDEN','This operation needs a reviewed foundation authorization contract');
     const fingerprint = args.action === 'approve_external_draft' ? digest(externalDraftPermitSchema.parse(input)) : JSON.stringify(args);
     if (expectedContextId && this.store.get(owner, id).contextId !== expectedContextId) throw new DomainError('NOT_FOUND', 'Task not found in this context');
     return this.store.once(owner, `authorize:${id}`, args.requestId, fingerprint, () => {
@@ -500,12 +537,14 @@ export class TaskService {
     });
   }
 
-  reconcile(p: Principal, id: string, requestId: string): Job {
+  reconcile(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.reconcileRaw(p,id,requestId)):this.reconcileRaw(p,id,requestId);}
+  private reconcileRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `reconcile:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id);
       if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.agent?.paPayment) {
         const payment = verifyPAPaymentRequest(job, owner);
+      if (this.security && payment.request.version !== '2') throw new DomainError('FORBIDDEN','This payment handoff needs a reviewed foundation projection');
         if (job.state === 'completed' || job.state === 'working' || job.state === 'submitted') return this.view(owner, job);
         const terminal = ['canceled', 'failed', 'rejected'].includes(job.state);
         payment.recoveryAttempts = 0; payment.readbackSequence++; payment.status = terminal ? 'withdrawn' : 'reported';
@@ -535,7 +574,8 @@ export class TaskService {
       if (!terminal) { job.state = 'working'; delete job.question; } job.updatedAt = new Date().toISOString(); this.store.save(owner, job); return job;
     });
   }
-  revokeAuthorization(p: Principal, id: string, requestId: string): Job {
+  revokeAuthorization(p:Principal,id:string,requestId:string):Job {taskIdSchema.parse(id);return this.security?this.security.mutate(p,id,()=>this.revokeAuthorizationRaw(p,id,requestId)):this.revokeAuthorizationRaw(p,id,requestId);}
+  private revokeAuthorizationRaw(p: Principal, id: string, requestId: string): Job {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id); const owner = ownerKey(p);
     return this.store.once(owner, `revoke:${id}`, requestId, id, () => {
       const job = this.store.get(owner, id); const d = job.delegation;
@@ -564,7 +604,8 @@ export class TaskService {
       this.store.save(owner, job); return job;
     });
   }
-  requestRemediation(p: Principal, input: unknown): Job {
+  requestRemediation(p:Principal,input:unknown):Job {const args=remediationSchema.parse(input);return this.security?this.security.mutate(p,args.originalTaskId,()=>this.requestRemediationRaw(p,args)):this.requestRemediationRaw(p,args);}
+  private requestRemediationRaw(p: Principal, input: unknown): Job {
     requireScope(p, 'tasks:write'); const args = remediationSchema.parse(input); const owner = ownerKey(p); const catalog = this.options.catalog;
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     if (!catalog) throw new DomainError('CONFLICT', 'Ontology backend is required for after-sales');
@@ -664,13 +705,16 @@ export class TaskService {
     // Durable execution is independent of this HTTP process and connection.
     const owner = ownerKey(p);
     const deadline = Date.now() + (this.options.waitTimeoutMs ?? 300000);
+    this.security?.assertTask(p,id);
     let job = this.store.get(owner, id);
+    if (this.security) this.security.project(p,job);
     while ((job.state === 'working' || job.state === 'submitted') && job.delegation?.backendVersion === BACKEND_VERSION) {
       if (this.stopping || Date.now() >= deadline) throw new Error('Blocking task wait interrupted; query the existing task or retry the same message with returnImmediately=true');
       await delay(50);
       job = this.store.get(owner, id);
+      if (this.security) this.security.project(p,job);
     }
-    return job;
+    return this.security ? this.security.project(p,job) : job;
   }
 
   async close(): Promise<void> { this.stopping = true; }

@@ -13,7 +13,7 @@ import type { Reasoner, AgentPlanningContext, PlanningAccess } from '../../packa
 import type { PaotuiObservation } from '../../packages/ontology/paotui-agent.js';
 import { paotuiInputs } from '../../packages/capabilities/paotui-current-inputs.js';
 import type { ObjectRef } from '../../packages/ontology/model.js';
-import { backend, evidence, interpretation, owner } from '../backend-fixture.js';
+import { backend, evidence, interpretation, owner, syntheticGoalReview } from '../backend-fixture.js';
 
 export const step = (id: string, action: string, args: object, dependsOn: string[] = [], inputRefs: AgentStep['inputRefs'] = []): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn, inputRefs });
 export const decide = (ctx: AgentPlanningContext, steps: AgentStep[] = [], completion?: unknown): AgentDecision => ({ kind: completion ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic action choice', steps, completionJson: completion ? JSON.stringify(completion) : '' });
@@ -64,7 +64,7 @@ export function groundedPaotuiInput(request: ServiceRequest) {
   return goodsName ? { goodsName } : {};
 }
 export function paotuiModel(choice: Choice = quoteChoice, kind: 'quote' | 'addresses' = 'quote'): Reasoner {
-  return { ground: async (r, _caps, _signal, access) => {
+  return { reviewGoal: syntheticGoalReview, ground: async (r, _caps, _signal, access) => {
     access.session.call('read_task_context', {});
     access.session.acceptReceipts(access.session.receipts().filter(r => r.status === 'ok').map(r => r.id));
     return { decision: { ...interpretation(r, PAOTUI_AGENT_REFS[kind].id, kind === 'quote' ? groundedPaotuiInput(r) : {}), capabilityRef: PAOTUI_AGENT_REFS[kind] }, evidence: evidence() };

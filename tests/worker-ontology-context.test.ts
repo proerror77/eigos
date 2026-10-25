@@ -1,3 +1,4 @@
+import { syntheticGoalReview } from './backend-fixture.js';
 // Synthetic model and provider fixtures. Real native PA timing is a separate check.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -11,6 +12,7 @@ import { JobStore } from '../packages/core/store.js';
 import { digest } from '../packages/core/delegation.js';
 import { drillCase } from './fixtures/ontology-drill.js';
 import { backend, evidence, interpretation, owner, principal } from './backend-fixture.js';
+import { didiDataflow, dataflowCompletion } from './fixtures/didi-dataflow.js';
 import { didiFixture, input, syntheticKey } from './fixtures/didi.js';
 import { DIDI_PROGRAM_REF } from '../packages/capabilities/didi/program.js';
 import type { AgentDecision, AgentStep } from '../packages/ontology/agent-actions.js';
@@ -22,7 +24,7 @@ import { expandPromptData, SessionPromptData, expandSessionPromptData } from '..
 import { verifyInitialPlan } from '../packages/coordinator/initial-selection.js';
 
 function sessionFixture() {
-  const data = drillCase('QD-1'), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now);
+  const data = drillCase('QD-1'), db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, undefined, () => data.now, undefined, {skipLegacyMigration:true});
   graph.ingest(owner, data.batch, data.source);
   return { ...data, db, graph, session: new OntologyPlanningSession(graph, owner, data.request) };
 }
@@ -124,7 +126,7 @@ test('Cancellation during context preparation stops before opening or invoking a
   } finally { f.db.close(); }
 });
 
-function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' = false, reuse = false) {
+function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'dependent' | 'dataflow' = false, reuse = false) {
   const source = didiFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, didi: { ...source.binding, connector: source.connector } });
   const requests: { calls: number; packet: any }[] = [];
@@ -138,11 +140,11 @@ function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'depend
     const ctx = blocks.find(value => value.state?.scope) as AgentPlanningContext | undefined;
     if (!ctx) {
       const request = packet.task.request;
-      const initialSteps = initial ? [
+      const initialSteps = initial === 'dataflow' ? didiDataflow().map(step => ({ ...step, scopeInputs: ['scope'] })) : initial ? [
         { id: 'chosen_destination', action: initial === 'dependent' ? 'EstimateDidiRide' : 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'destination', keywords: input.destination }), scopeInputs: [initial === 'bad_binding' ? 'notTheScope' : 'scope'] },
         { id: 'chosen_origin', action: 'SearchDidiPlaces', argumentsJson: JSON.stringify({ role: 'origin', keywords: input.origin }), scopeInputs: ['scope'] },
       ] : undefined;
-      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF, ...(initialSteps ? { initialSteps } : {}) }) }, evidence: evidence() };
+      return { output: { kind: 'final', calls: [], finalJson: JSON.stringify({ ...interpretation(request, DIDI_PROGRAM_REF.id, input), capabilityRef: DIDI_PROGRAM_REF, ...(initialSteps ? { initialSteps } : {}), ...(initial === 'dataflow' ? { plannedCompletion: dataflowCompletion } : {}) }) }, evidence: evidence() };
     }
     const objects = packet.conversation.flatMap((entry: any) => entry.result.items ?? []);
     const observations: { ref: ObjectRef; snapshot: RideEstimateObservation }[] = objects.filter((object: any) => object.properties.snapshot).map((object: any) => ({ ref: object.ref, snapshot: object.properties.snapshot as RideEstimateObservation }));
@@ -161,7 +163,7 @@ function syntheticContextDidi(initial: false | 'valid' | 'bad_binding' | 'depend
     keys.push(key);
     return { packData: (data: unknown) => encoder.pack(data), run: (prompt: string) => model.runStructured(prompt), close: async () => {} };
   } });
-  const b = backend(catalog, new CodexReasoner(model), store);
+  const b = backend(catalog, Object.assign(new CodexReasoner(model), { reviewGoal: syntheticGoalReview }), store);
   return { ...source, store, catalog, b, requests, keys, close: () => { store.close(); source.close(); } };
 }
 
@@ -172,11 +174,13 @@ test('Same-task conversation reuse still obtains fresh reads for every autonomou
     assert.equal(done.state, 'completed', JSON.stringify({ feedback: done.delegation?.agent?.feedback, recovery: done.delegation?.recovery, error: done.error })); assert(done.delegation!.acceptance!.accepted);
     assert.equal(f.keys.length, 3); assert(f.keys[0]); assert.equal(new Set(f.keys).size, 1);
     assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
-    const contexts = done.runs!.map(run => run.ontologyContext!);
+    const contexts = done.runs!.filter(r => r.purpose !== 'goal_coverage').map(run => run.ontologyContext!);
     assert.equal(new Set(contexts.map(context => context.digest)).size, 3);
     assert.equal(new Set(contexts.flatMap(context => context.receiptIds)).size, contexts.flatMap(context => context.receiptIds).length);
-    assert(done.runs!.every(run => run.promptData?.encoding === 'session-json-v1'));
-    assert(done.runs![2]!.promptData!.encodedBytes < done.runs![2]!.promptData!.sourceBytes * 0.6);
+    assert(done.runs!.filter(r => r.purpose !== 'goal_coverage').every(run => run.promptData?.encoding === 'session-json-v1'));
+    const packing=done.runs!.filter(r => r.purpose !== 'goal_coverage')[2]!.promptData!;
+    assert((packing.reusedValues ?? 0)>0, 'The same-task dictionary actually reuses exact values');
+    assert(packing.encodedBytes<packing.sourceBytes, 'Lossless session packing reduces this repeated context without relying on one kernel-specific ratio');
     const base = new OntologyPlanningSession(f.store.ontology, owner, done.delegation!.request).modelSessionKey();
     assert.notEqual(new OntologyPlanningSession(f.store.ontology, 'different-owner', done.delegation!.request).modelSessionKey(), base);
     assert.notEqual(new OntologyPlanningSession(f.store.ontology, owner, { ...done.delegation!.request, revision: done.delegation!.request.revision + 1 }).modelSessionKey(), base);
@@ -188,7 +192,7 @@ test('A real initial model choice merges interpretation and independent tool sel
   try {
     const task = f.b.submit({ goal: 'Synthetic exact route only; no order or payment' });
     const first = await f.b.run();
-    assert.equal(f.requests.length, 1); assert.equal(first.runs!.length, 1);
+    assert.equal(f.requests.length, 1); assert.equal(first.runs!.filter(r => r.purpose !== 'goal_coverage').length, 1);
     assert.equal(f.calls.filter(c => c.method === 'tools/call').length, 2, JSON.stringify({ state: first.state, feedback: first.delegation?.agent?.feedback, recovery: first.delegation?.recovery, events: first.delegation?.events.slice(-3) }));
     const plan = first.delegation!.agent!.plans[0]!;
     assert(plan.initialSelection); assert.equal(plan.modelRunId, first.runs![0]!.id);
@@ -199,7 +203,7 @@ test('A real initial model choice merges interpretation and independent tool sel
     assert(!first.runs![0]!.ontologyContext!.receiptIds.some(id => plan.ontologyPlanning.reads.some(read => read.id === id)));
     let done = await f.b.run(); done = await f.b.run();
     assert.equal(done.state, 'completed', JSON.stringify(done.delegation!.agent!.feedback));
-    assert.equal(done.runs!.length, 3); assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
+    assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 3); assert.deepEqual(f.requests.map(request => request.calls), [0, 2, 3]);
     assert(done.delegation!.acceptance!.accepted); assert.equal(done.delegation!.agent!.completion!.modelDecision.kind, 'complete');
     assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read' && intent.state === 'effect_confirmed'));
     const program = f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!;
@@ -222,6 +226,28 @@ for (const invalid of ['bad_binding', 'dependent'] as const) test(`Invalid initi
     assert.equal((await f.b.run()).delegation!.agent!.plans.length, 1);
     assert.equal(f.requests.length, 2);
   } finally { f.close(); }
+});
+
+test('An omitted bounded initial definition returns to a fresh model decision before any dispatch',async()=>{
+  const f=syntheticContextDidi('valid'),original=OntologyPlanningSession.prototype.call;
+  let omitted=false;
+  OntologyPlanningSession.prototype.call=function(tool,input,options){
+    const initial=this.graph===f.store.ontology && f.store.get(owner,this.request.id).delegation?.agent?.initialSelectionPending;
+    if(!omitted && initial && tool==='describe_ontology' && options?.origin==='worker_context') {
+      omitted=true;return original.call(this,tool,input,{...options,maxOutputBytes:10});
+    }
+    return original.call(this,tool,input,options);
+  };
+  try {
+    f.b.submit();const waiting=await f.b.run();
+    assert(omitted);assert.equal(waiting.state,'working');
+    assert.equal(waiting.delegation!.agent!.initialSelectionPending,undefined);
+    assert.equal(waiting.delegation!.agent!.feedback[0]!.kind,'validation');
+    assert.equal(f.store.intents(owner,waiting.id).length,0);
+    assert.equal(f.calls.filter(call=>call.method==='tools/call').length,0);
+    assert.equal((await f.b.run()).delegation!.agent!.plans.length,1);
+    assert.equal(f.requests.length,2);
+  }finally{OntologyPlanningSession.prototype.call=original;f.close();}
 });
 
 for (const stop of ['handoff', 'cancel'] as const) test(`Initial selection survives a clean ${stop} boundary without another model call or a late source dispatch`, async () => {
@@ -255,7 +281,7 @@ test('Four synthetic decisions independently choose tools and only complete afte
     let job = task; for (let i = 0; i < 4; i++) job = await f.b.run();
     assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback)); assert(job.delegation!.acceptance!.accepted);
     assert.equal(f.requests.length, 4); assert.deepEqual(f.requests.map(request => request.calls), [0, 0, 2, 3]);
-    assert.equal(job.runs!.length, 4); assert(job.runs!.every(run => run.ontologyContext));
+    assert.equal(job.runs!.filter(r => r.purpose !== 'goal_coverage').length, 4); assert(job.runs!.filter(r => r.purpose !== 'goal_coverage').every(run => run.ontologyContext));
     assert.equal(job.delegation!.agent!.plans.length, 2); assert.equal(job.delegation!.agent!.completion!.modelDecision.kind, 'complete');
     assert(job.delegation!.agent!.plans.every(plan => plan.ontologyPlanning.mode === 'worker_context'));
     assert(job.delegation!.ontologyReads!.every(read => read.origin === 'worker_context'));
@@ -279,4 +305,62 @@ test('Context evaluation retains expired source status and prevents dispatch eve
     assert(evaluations.length && evaluations.every((entry: any) => entry.result.status === 'unknown'));
     assert(f.store.intents(owner, task.id).every(intent => intent.effect === 'read'));
   } finally { f.close(); }
+});
+
+
+test('One grounding model response can choose a dynamic read graph and a conditional future evidence binding', async () => {
+  const f = syntheticContextDidi('dataflow', true);
+  try {
+    const job = f.b.submit(); const done = await f.b.run();
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.agent?.feedback));
+    assert.equal(f.requests.length, 1); assert.equal(done.runs!.filter(r => r.purpose !== 'goal_coverage').length, 1);
+    assert.equal(f.requests[0]!.calls, 0, 'The model has no future provider facts');
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 3);
+    const state = done.delegation!.agent!, plan = state.plans[0]!;
+    assert(plan.initialSelection); verifyInitialPlan(done, f.store.ontology, f.catalog.agentProgram(DIDI_PROGRAM_REF, owner)!, plan);
+    assert.equal(plan.steps[2]!.inputRefs[1]!.compute!.function, 'selectDidiPlace');
+    assert.equal(state.completion!.mode, 'planned');
+    const preModelReads = new Set(done.runs![0]!.ontologyContext!.receiptIds);
+    for (const proof of [state.inputResolutions![0]!.ontologyPlanning, state.completion!.ontologyPlanning]) {
+      assert(proof.reads.every(read => read.origin === 'worker_context' && !preModelReads.has(read.id)));
+    }
+    assert.equal(state.completion!.modelRunId, done.runs![0]!.id);
+    assert.equal(f.store.get(owner, job.id).delegation!.acceptance!.accepted, true);
+  } finally { f.close(); }
+});
+
+test('A rejected model reference decoding still retains the actual response receipt before stopping', async () => {
+ const f = sessionFixture(), records: any[] = [], raw = { messageId: 'unknown' }, receipt = evidence();
+ try {
+  const model = {ontologyContextPreparation:'worker_snapshot' as const,runStructured:async()=>({output:{kind:'final',calls:[],finalJson:JSON.stringify(raw)},evidence:receipt})};
+  await assert.rejects(reasonWithOntology(model,'Synthetic malformed reference',{},f.session,new AbortController().signal,r=>records.push(r),8,{decodeFinal:{encoding:'fixed_scope_message_refs_v1',apply:()=>{throw new Error('Unknown message reference');}}}),/Unknown message/);
+  assert.equal(records.length,1);assert.equal(records[0].id,receipt.id);assert.equal(records[0].decisionDigest,digest(raw));assert.equal(records[0].outputSha256,receipt.outputSha256);
+ }finally{f.db.close();}
+});
+
+test('Derived request outcome and assessment updates do not invalidate a fixed planning snapshot', () => {
+ const f=sessionFixture();
+ try {
+  f.session.prepareContext();const snapshot=f.session.finish();const ref={type:'ServiceRequest',id:f.request.id};const current=f.graph.read(owner,ref);
+  f.graph.ingest(owner,{objects:[{ref,expectedRevision:current.revision,properties:{...current.properties,requestedOutcome:'changed-derived-binding',currentAssessment:{type:'OutcomeAssessment',id:'later-assessment'}}}],links:[]},f.source);
+  validatePlanningSnapshot(f.graph,owner,f.request,snapshot,true);
+  const updated=f.graph.read(owner,ref);f.graph.ingest(owner,{objects:[{ref,expectedRevision:updated.revision,properties:{...updated.properties,originalGoal:'A changed user goal'}}],links:[]},f.source);
+  assert.throws(()=>validatePlanningSnapshot(f.graph,owner,f.request,snapshot,true),/changed/);
+ }finally{f.db.close();}
+});
+
+test('An explicit literal-scope pin keeps its structured reference decoder on a native-default model', async () => {
+ const f=sessionFixture();let calls=0;
+ try {
+  const ref={id:'fixed.fixture',version:'1'},request={...f.request,capabilityRef:ref};
+  const model={ontologyTransport:'native-mcp' as const,ontologyContextPreparation:'worker_snapshot' as const,runStructured:async(_prompt:string,_schema:object,_signal:AbortSignal,options?:unknown)=>{
+    calls++;assert.equal(options,undefined,'Fixed program must not open native discovery');
+    const raw={kind:'clarify',requestRevision:request.revision,capabilityRef:{id:'none',version:'none'},message:'Synthetic transport selection',inputJson:'{}',requirementsJson:'[]',conditionsJson:'[]',scopeReview:{requestRevision:request.revision,verdict:'clarify',message:'Synthetic scope boundary',clauses:request.messages.map(m=>({messageId:m.id,disposition:'uncovered',inputKeys:[],requirementIds:[],conditionIds:[],reason:'No source action requested'}))}};
+    return {output:{kind:'final',calls:[],finalJson:JSON.stringify(raw)},evidence:evidence()};
+  }};
+  assert.equal(request.messages.length,1);
+  const capability={ref,name:'Fixed fixture',description:'Only a fixed fixture',tags:[],inputSchema:{type:'object',additionalProperties:false,properties:{fixed:{const:true}},required:['fixed']},scopeReviewMode:'registered_fixed_input' as const,predicates:[],outcomePredicates:[],requirementRoles:[],locationSemantics:undefined,constraintEvaluation:undefined,sourceAuthorization:undefined};
+  const result=await new CodexReasoner(model).ground(request,[capability],new AbortController().signal,{session:f.session,record:()=>{},maxTurns:8});
+  assert.equal(calls,1);assert.equal(result.evidence.decisionDecoding?.encoding,'fixed_scope_message_refs_v1');assert.equal(result.decision.kind,'clarify');
+ }finally{f.db.close();}
 });

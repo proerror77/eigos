@@ -6,9 +6,10 @@ import type { AgentActionPlan } from '../ontology/agent-actions.js';
 import type { ActionDefinition } from '../ontology/model.js';
 import type { AgentProgram, AgentProgramContext } from './agent-program.js';
 import { stepBindingRef, stepInputDigest } from './composed-actions.js';
-import { authorizationPresentationSchema, actionBudgetImpactSchema, objectWriteScopeSchema, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ExternalDraftPlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
+import { authorizationPresentationSchema, actionBudgetImpactSchema, objectWriteScopeSchema, type PlanGrant, type EffectClass, type FinancialPlanGrant, type ObjectWritePlanGrant, type ExternalDraftPlanGrant, type ObjectWriteScope, type ObjectWriteAuthorizationRequest, type PlanAuthorizationRequest } from '../ontology/actions.js';
 import { assertGoalEffects } from './goal-contract.js';
 import { externalDraftScopeSchema, type ExternalDraftScope } from '../ontology/external-draft.js';
+import { boundAgentAction } from './agent-action-binding.js';
 
 export function agentOperation(definition: ActionDefinition) {
   if (definition.implementation?.kind === 'declarative') return { version: '1' as const, effect: 'object_write' as const, environment: 'managed' as const, inputSchema: definition.inputSchema, resultType: definition.resultTypes?.[0] ?? 'ServiceRequest' };
@@ -61,7 +62,7 @@ export function validateAgentAuthority(program: AgentProgram, ctx: AgentProgramC
       || step.binding.actionId !== step.action || step.binding.definitionDigest !== step.definitionDigest || step.bindingDigest !== step.binding.digest
       : plan.programDigest !== program.configurationDigest || digest(plan.programRef) !== digest(program.ref))) throw new DomainError('CONFLICT', 'Pinned agent plan or request changed');
   if (plan.callerDecision && (!program.callerManagedActions || step.effect !== 'object_write')) throw new DomainError('FORBIDDEN', 'Caller plans cannot invoke trusted source or provider programs');
-  const op = agentOperation(program.definition(ctx.graph, step.action));
+  const op = agentOperation(boundAgentAction(ctx.graph, program, step.action));
   if (ctx.state.composition) assertGoalEffects(ctx.state.composition.goal, [step.effect, ...(step.additionalEffects ?? [])]);
   if (op.effect !== step.effect || digest('additionalEffects' in op ? op.additionalEffects ?? [] : []) !== digest(step.additionalEffects ?? [])) throw new DomainError('CONFLICT', 'Declared business effects changed');
   if (step.effect === 'read' || step.effect === 'local') {
@@ -132,11 +133,14 @@ export function createAgentExternalDraftGrant(owner: string, jobId: string, plan
     allowedEffects: ['external_draft'], draft: structuredClone(required.draft), expiresAt: permit.expiresAt, revoked: false, environment: 'live', approvedAt: new Date().toISOString() };
 }
 export function agentDispatchGrant(store: JobStore, owner: string, jobId: string, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], now = Date.now()) {
+  return store.grants(owner, jobId).find(g => g.owner === owner && g.jobId === jobId && matchesAgentGrant(g, plan, step, now));
+}
+
+export function matchesAgentGrant(g: PlanGrant, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], now = Date.now()) {
   const required = [step.effect, ...(step.additionalEffects ?? [])];
-  return store.grants(owner, jobId).find(g => {
-    if (g.revoked || g.owner !== owner || g.jobId !== jobId || g.planDigest !== plan.digest || Date.parse(g.expiresAt) <= now || !g.bindingRefs.some(r => digest(r) === digest(stepBindingRef(plan, step))) || !required.every(e => g.allowedEffects.includes(e))) return false;
+
+    if (g.revoked || g.planDigest !== plan.digest || Date.parse(g.expiresAt) <= now || !g.bindingRefs.some(r => digest(r) === digest(stepBindingRef(plan, step))) || !required.every(e => g.allowedEffects.includes(e))) return false;
     if (step.effect === 'object_write') return g.kind === 'object_write' && g.environment === 'managed' && g.allowedEffects.length === 1 && g.allowedEffects[0] === 'object_write' && !!step.objectWrite && !step.cost && !step.additionalEffects?.length && digest(g.objectWrite) === digest(step.objectWrite);
     if (step.effect === 'external_draft') return g.kind === 'external_draft' && g.environment === 'live' && g.allowedEffects.length === 1 && g.allowedEffects[0] === 'external_draft' && !!step.externalDraft && !step.cost && !step.additionalEffects?.length && digest(g.draft) === digest(step.externalDraft);
     return (g.kind === undefined || g.kind === 'financial') && g.environment === (plan.environment ?? 'sandbox') && !!step.cost && g.payeeIds.includes(step.cost.payeeId) && g.maxAmount.currency === step.cost.currency && BigInt(g.maxAmount.minor) >= BigInt(step.cost.minor) && digest(g.budgetImpact ?? null) === digest(step.budgetImpact ?? null);
-  });
 }
