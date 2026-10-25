@@ -8,6 +8,7 @@ import { AgentReadError, AgentOperationRejected, type AgentActionContext, type A
 import { bookingSourceContextSchema, bookingReceiptSchema } from '../../ontology/booking.js';
 import { registrationPayloadSchema, registrationResultSchema, participantServiceUrl } from '../../ontology/free-booking.js';
 import type { ParticipantBookingSource } from './program.js';
+import {recoverySourceCredential,recoveryObservationSchema,type OriginalOperation} from '../../security/recovery.js';
 
 export interface ParticipantBrowserOptions { endpoint: string; tokenFile: string; bindingId: string; attendeeRef: string }
 export function participantBridgeOrigin(value: string) {
@@ -28,6 +29,16 @@ export class ParticipantBrowserConnector implements ParticipantBookingSource {
     if (!isAbsolute(options.tokenFile) || !/^[A-Za-z0-9_-]{1,80}$/.test(options.bindingId) || !/^[a-f0-9]{64}$/.test(options.attendeeRef)) throw new DomainError('INVALID_INPUT', 'Participant source needs an absolute private token path and pinned account binding');
     this.identity = `luma-participant:${options.bindingId}`; this.attendeeRef = options.attendeeRef;
     this.configurationDigest = digest({ ...options, endpoint: this.origin, protocol: 'eigos.participant.browser.v1' });
+  }
+  async observeOriginal(operation:OriginalOperation,signal:AbortSignal) {
+    const credential=recoverySourceCredential(operation),token=readFileSync(this.options.tokenFile,'utf8').trim();
+    if(!/^[a-f0-9]{64}$/.test(token) || !/^[a-f0-9]{64}$/.test(operation.operationKey))throw new AgentReadError('Original participant audit locator is unavailable');
+    const response=await fetch(this.origin+'/audit/operations/'+operation.operationKey,{headers:{Authorization:`Bearer ${token}`,'x-eigos-recovery':Buffer.from(JSON.stringify(credential)).toString('base64url')},signal:AbortSignal.any([signal,AbortSignal.timeout(10000)]),redirect:'error'});
+    let bytes=0;const chunks:Uint8Array[]=[];
+    if(response.body)for await(const chunk of response.body){bytes+=chunk.byteLength;if(bytes>65536)throw new AgentReadError('Original participant audit response exceeds its bound');chunks.push(chunk);}
+    const raw=Buffer.concat(chunks),signature=response.headers.get('x-eigos-participant-signature');
+    if(!response.ok || raw.length>65536 || !signature || !/^[a-f0-9]{64}$/.test(signature) || !timingSafeEqual(Buffer.from(signature,'hex'),createHmac('sha256',token).update(raw).digest()))throw new AgentReadError('Original participant audit response is unavailable');
+    return recoveryObservationSchema.parse(JSON.parse(raw.toString('utf8')));
   }
   async call(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal, recovery = false): Promise<AgentActionResult | undefined> {
     if (!ctx.operationKey || ctx.request.executionEnvironment === 'sandbox') throw new DomainError('FORBIDDEN', 'Participant browser requires the original live operation identity');

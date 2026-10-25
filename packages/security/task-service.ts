@@ -4,10 +4,13 @@ import type { JobStore, ListFilter } from '../core/store.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from './contracts.js';
 import { SecurityError, type TaskDataGrant } from './store.js';
 import { withAuthorization } from './context.js';
+import {z} from 'zod';
+import {objectRefSchema} from '../ontology/model.js';
+import {projectionFields} from './projections.js';
 
 /** Strict construction, never a spread of Job/delegation/RunEvidence. */
 export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'state' | 'goal' | 'messages' | 'createdAt' | 'updatedAt'> {
-  view: 'eigos.task.v2'; question?: string; artifact?: Job['artifact']; error?: string;
+  view: 'eigos.task.v2'; question?: string; artifact?: Job['artifact']; error?: string; accepted?:true;
   outputStatus: 'available' | 'restricted' | 'receipt_only';
   attachments?: {id:string;name:string;mediaType:string;size:number}[];
   authorization?: NonNullable<Job['delegation']>['authorizationRequest'];
@@ -103,7 +106,13 @@ export class TaskSecurity {
         // Arbitrary result payloads and provider locators have no public contract.
         // Text deliverables are sealed and delivered through the same lineage check.
         const markdown=job.artifact.data.markdown;
-        if (allowed('artifact',job.artifact)) base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof markdown==='string'?{markdown}:{}),goal:job.artifact.data.goal,deliverable:job.artifact.data.deliverable,execution:job.artifact.data.execution}};
+        if (allowed('artifact',job.artifact)) {
+          const metadata=z.object({securityEvidenceRefs:z.array(objectRefSchema).max(20).optional()}).safeParse(job.artifact.data.result);
+          const observations=(metadata.success?metadata.data.securityEvidenceRefs??[]:[]).map(ref=>{const object=this.store.ontology.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field)))};});
+          if(observations.length)security.policies.requireRecipient(scope,security.policies.outputEnvelope(actor.ownerKey),'agent_response');
+          base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof markdown==='string'?{markdown}:{}),goal:job.artifact.data.goal,deliverable:job.artifact.data.deliverable,execution:job.artifact.data.execution,...(observations.length?{result:{observations}}:{})}};
+          if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;
+        }
         else base.outputStatus='restricted';
       }
       if (job.error) base.error='Task did not produce an authorized deliverable; inspect its current state.';

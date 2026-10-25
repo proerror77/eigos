@@ -46,11 +46,12 @@ export class SecurityStore {
   readonly enabled: boolean;
   readonly policies: SecurityPolicies;
   readonly recoveries: RecoveryStore;
-  constructor(private db: DatabaseSync, mode: SecurityMode = 'legacy', readonly now: () => number = Date.now) {
+  constructor(private db: DatabaseSync, mode: SecurityMode = 'legacy', readonly now: () => number = Date.now,readOnly=false) {
     const version=mode==='foundation'?2:1;
     const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_settings'").get();
     const orphanedSecurity = !table && db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('security_subjects','security_grants','security_task_authorities') LIMIT 1").get();
     const existing = table ? db.prepare('SELECT version,mode FROM security_settings WHERE slot=1').get() : undefined;
+    if(readOnly && (!existing || mode!=='foundation'))throw new Error('A read-only security reader requires an existing foundation database');
     if (orphanedSecurity || table && !existing) throw new Error('Security database configuration is missing; no automatic fallback');
     if (existing && (existing.version !== version || existing.mode !== mode)) throw new Error('Security database mode/version mismatch; no automatic downgrade or cutover');
     if(existing && mode==='foundation')for(const name of ['security_manager','security_subjects','security_fences','security_grants','security_task_authorities','security_events']) {
@@ -58,7 +59,7 @@ export class SecurityStore {
     }
     if (!existing && mode === 'foundation' && Number(db.prepare('SELECT count(*) AS n FROM jobs').get()!.n) > 0) throw new Error('Existing tasks require an explicit offline security migration');
     this.enabled = mode === 'foundation';
-    this.atomic(() => {
+    if(!readOnly)this.atomic(() => {
       db.exec(`CREATE TABLE IF NOT EXISTS security_settings(slot INTEGER PRIMARY KEY CHECK(slot=1),version INTEGER NOT NULL,mode TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS security_manager(slot INTEGER PRIMARY KEY CHECK(slot=1),token TEXT NOT NULL,expires_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS security_subjects(installation_id TEXT PRIMARY KEY,owner TEXT NOT NULL,member_id TEXT NOT NULL,client_id TEXT NOT NULL,epoch INTEGER NOT NULL,state TEXT NOT NULL,valid_until INTEGER NOT NULL);
@@ -72,8 +73,8 @@ export class SecurityStore {
       db.prepare('INSERT OR IGNORE INTO security_settings VALUES(1,?,?)').run(version,mode);
       if (db.prepare('SELECT mode FROM security_settings WHERE slot=1').get()?.mode !== mode) throw new Error('Security mode changed concurrently');
     });
-    this.policies = new SecurityPolicies(db, this);
-    this.recoveries = new RecoveryStore(db,this);
+    this.policies = new SecurityPolicies(db, this,readOnly);
+    this.recoveries = new RecoveryStore(db,this,readOnly);
   }
   atomic<T>(fn: () => T): T {
     const name = `security_${++this.sequence}`;

@@ -1,0 +1,649 @@
+{
+  "format": "eigos.model-phase-measurement.v1",
+  "date": "2026-10-24",
+  "cliVersion": "0.159.2",
+  "environment": "isolated local Gateway/Worker; actual model and live readonly DiDi",
+  "residentChanged": false,
+  "sameGoalBytes": true,
+  "sameModelAndPermissions": true,
+  "sameTaskInputAndHardConstraintMeaning": {
+    "sameTaskInput": true,
+    "sameHardConstraintMeaning": true,
+    "allFourSamples": true
+  },
+  "samplesPerVariant": 2,
+  "order": [
+    "paired-before-1",
+    "paired-after-1",
+    "paired-before-2",
+    "paired-after-2"
+  ],
+  "phaseDefinition": {
+    "setup": "session open to model request sent",
+    "requestToFirstOutput": "request sent to first final-output delta; queue/network/prefill/unexposed model work remain combined",
+    "visibleOutput": "first to last final-output delta, client observed rather than pure server inference",
+    "afterOutput": "last final-output delta to JSON parsing completion",
+    "requestAcknowledgement": "nested RPC acknowledgement duration, not an additional disjoint phase"
+  },
+  "primarySamples": [
+    {
+      "sample": "paired-before-1",
+      "taskSeconds": 22.027,
+      "continuousClientSeconds": 22.35671654199905,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25737,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 984,
+            "reasoning_output_tokens": 0
+          },
+          "phaseSeconds": {
+            "model": 20.439512,
+            "setup": 2.091474,
+            "requestToFirstOutput": 4.547493,
+            "visibleOutput": 13.638302,
+            "afterOutput": 0.162243,
+            "requestAcknowledgement": 0.017363
+          },
+          "startupSeconds": {
+            "localPreparation": 0.003025,
+            "processInitialize": 0.260651,
+            "threadStart": 1.820634,
+            "readyToRequest": 0.007165
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 965,
+          "outputDeltaBytes": 3178,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.296
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.316
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.582
+        }
+      ]
+    },
+    {
+      "sample": "paired-after-1",
+      "taskSeconds": 21.16,
+      "continuousClientSeconds": 21.34909287499977,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25824,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 985,
+            "reasoning_output_tokens": 38
+          },
+          "phaseSeconds": {
+            "model": 19.712102,
+            "setup": 1.807353,
+            "requestToFirstOutput": 6.982123,
+            "visibleOutput": 10.875207,
+            "afterOutput": 0.047419,
+            "requestAcknowledgement": 0.005364
+          },
+          "startupSeconds": {
+            "localPreparation": 0.002782,
+            "processInitialize": 0.090064,
+            "threadStart": 1.707974,
+            "readyToRequest": 0.006534
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 927,
+          "outputDeltaBytes": 2965,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.313
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.325
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.427
+        }
+      ]
+    },
+    {
+      "sample": "paired-before-2",
+      "taskSeconds": 25.573,
+      "continuousClientSeconds": 25.72499204199994,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25754,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1038,
+            "reasoning_output_tokens": 47
+          },
+          "phaseSeconds": {
+            "model": 24.106321,
+            "setup": 1.891986,
+            "requestToFirstOutput": 8.057416,
+            "visibleOutput": 13.600333,
+            "afterOutput": 0.556585,
+            "requestAcknowledgement": 0.005523
+          },
+          "startupSeconds": {
+            "localPreparation": 0.002018,
+            "processInitialize": 0.094689,
+            "threadStart": 1.789118,
+            "readyToRequest": 0.006161
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 970,
+          "outputDeltaBytes": 3241,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.279
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.303
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.421
+        }
+      ]
+    },
+    {
+      "sample": "paired-after-2",
+      "taskSeconds": 15.04,
+      "continuousClientSeconds": 15.390152958996623,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25804,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 916,
+            "reasoning_output_tokens": 0
+          },
+          "phaseSeconds": {
+            "model": 13.652574,
+            "setup": 1.83302,
+            "requestToFirstOutput": 4.247597,
+            "visibleOutput": 7.488154,
+            "afterOutput": 0.083803,
+            "requestAcknowledgement": 0.008246
+          },
+          "startupSeconds": {
+            "localPreparation": 0.007932,
+            "processInitialize": 0.105817,
+            "threadStart": 1.705222,
+            "readyToRequest": 0.014049
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 898,
+          "outputDeltaBytes": 2972,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.295
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.305
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.427
+        }
+      ]
+    }
+  ],
+  "means": {
+    "modelSeconds": {
+      "before": 22.272917,
+      "after": 16.682338,
+      "observedReductionPercent": 25.1003
+    },
+    "setupSeconds": {
+      "before": 1.99173,
+      "after": 1.820187,
+      "observedReductionPercent": 8.6128
+    },
+    "requestToFirstOutputSeconds": {
+      "before": 6.302454,
+      "after": 5.61486,
+      "observedReductionPercent": 10.9099
+    },
+    "visibleOutputSeconds": {
+      "before": 13.619317,
+      "after": 9.18168,
+      "observedReductionPercent": 32.5834
+    },
+    "afterOutputSeconds": {
+      "before": 0.359414,
+      "after": 0.065611,
+      "observedReductionPercent": 81.745
+    },
+    "requestAcknowledgementSeconds": {
+      "before": 0.011443,
+      "after": 0.006805,
+      "observedReductionPercent": 40.5313
+    },
+    "taskSeconds": {
+      "before": 23.8,
+      "after": 18.1,
+      "observedReductionPercent": 23.9496
+    },
+    "reportedOutputTokens": {
+      "before": 1011,
+      "after": 950.5,
+      "observedReductionPercent": 5.9842
+    }
+  },
+  "dynamicVariation": {
+    "sample": "dynamic-places",
+    "taskSeconds": 16.706,
+    "continuousClientSeconds": 16.998642292001023,
+    "modelReplies": 1,
+    "modelSessions": 1,
+    "sourceCalls": 1,
+    "graphCount": 1,
+    "completionMode": "planned",
+    "independentReadback": {
+      "a2aMcpStoreEqual": true,
+      "rawSourceHashesVerified": 1,
+      "allEffectsReadOnly": true,
+      "evaluationTime": "acceptance_time_replay"
+    },
+    "modelRuns": [
+      {
+        "model": "gpt-6.1-sol",
+        "runtime": "codex-app-server",
+        "reportedUsage": {
+          "input_tokens": 25839,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 511,
+          "reasoning_output_tokens": 59
+        },
+        "phaseSeconds": {
+          "model": 15.138171,
+          "setup": 2.113283,
+          "requestToFirstOutput": 7.480145,
+          "visibleOutput": 5.451599,
+          "afterOutput": 0.093144,
+          "requestAcknowledgement": 0.012788
+        },
+        "startupSeconds": {
+          "localPreparation": 0.001726,
+          "processInitialize": 0.256451,
+          "threadStart": 1.849012,
+          "readyToRequest": 0.006093
+        },
+        "outputBoundary": "streamed_delta",
+        "outputDeltaCount": 440,
+        "outputDeltaBytes": 1460,
+        "timingSumVerified": true
+      }
+    ],
+    "sourceOperations": [
+      {
+        "tool": "maps_textsearch",
+        "seconds": 0.371
+      }
+    ]
+  },
+  "exploratoryRuns": [
+    {
+      "sample": "diagnostic-1",
+      "taskSeconds": 18.335,
+      "continuousClientSeconds": 18.66405854200275,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25761,
+            "cached_input_tokens": 3584,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1044,
+            "reasoning_output_tokens": 29
+          },
+          "phaseSeconds": {
+            "model": 16.694032,
+            "setup": 2.102544,
+            "requestToFirstOutput": 5.943283,
+            "visibleOutput": 8.557256,
+            "afterOutput": 0.090949,
+            "requestAcknowledgement": 0.013261
+          },
+          "startupSeconds": {
+            "localPreparation": 0.003005,
+            "processInitialize": 0.301469,
+            "threadStart": 1.792527,
+            "readyToRequest": 0.005543
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 993,
+          "outputDeltaBytes": 3327,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.284
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.292
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.584
+        }
+      ]
+    },
+    {
+      "sample": "diagnostic-2",
+      "taskSeconds": 23.31,
+      "continuousClientSeconds": 23.762407541998982,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 25771,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 998,
+            "reasoning_output_tokens": 26
+          },
+          "phaseSeconds": {
+            "model": 21.245069,
+            "setup": 2.207955,
+            "requestToFirstOutput": 6.558586,
+            "visibleOutput": 12.389539,
+            "afterOutput": 0.088989,
+            "requestAcknowledgement": 0.012691
+          },
+          "startupSeconds": {
+            "localPreparation": 0.002418,
+            "processInitialize": 0.285504,
+            "threadStart": 1.915327,
+            "readyToRequest": 0.004707
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 951,
+          "outputDeltaBytes": 3169,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.295
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.41
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.458
+        }
+      ]
+    },
+    {
+      "sample": "optimized-diagnostic-1",
+      "taskSeconds": 21.432,
+      "continuousClientSeconds": 21.66856029200062,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 26147,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 794,
+            "reasoning_output_tokens": 39
+          },
+          "phaseSeconds": {
+            "model": 19.690014,
+            "setup": 2.261541,
+            "requestToFirstOutput": 6.719596,
+            "visibleOutput": 10.637968,
+            "afterOutput": 0.070909,
+            "requestAcknowledgement": 0.014578
+          },
+          "startupSeconds": {
+            "localPreparation": 0.003642,
+            "processInitialize": 0.322547,
+            "threadStart": 1.931403,
+            "readyToRequest": 0.003948
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 734,
+          "outputDeltaBytes": 2884,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.277
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.297
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.602
+        }
+      ]
+    },
+    {
+      "sample": "optimized-diagnostic-2",
+      "taskSeconds": 22.135,
+      "continuousClientSeconds": 22.381215333996806,
+      "modelReplies": 1,
+      "modelSessions": 1,
+      "sourceCalls": 3,
+      "graphCount": 1,
+      "completionMode": "planned",
+      "independentReadback": {
+        "a2aMcpStoreEqual": true,
+        "rawSourceHashesVerified": 3,
+        "allEffectsReadOnly": true,
+        "evaluationTime": "acceptance_time_replay"
+      },
+      "modelRuns": [
+        {
+          "model": "gpt-6.1-sol",
+          "runtime": "codex-app-server",
+          "reportedUsage": {
+            "input_tokens": 26141,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 808,
+            "reasoning_output_tokens": 39
+          },
+          "phaseSeconds": {
+            "model": 20.508739,
+            "setup": 1.919631,
+            "requestToFirstOutput": 8.272273,
+            "visibleOutput": 10.206999,
+            "afterOutput": 0.109835,
+            "requestAcknowledgement": 0.002976
+          },
+          "startupSeconds": {
+            "localPreparation": 0.002256,
+            "processInitialize": 0.076675,
+            "threadStart": 1.836443,
+            "readyToRequest": 0.004257
+          },
+          "outputBoundary": "streamed_delta",
+          "outputDeltaCount": 747,
+          "outputDeltaBytes": 2914,
+          "timingSumVerified": true
+        }
+      ],
+      "sourceOperations": [
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.402
+        },
+        {
+          "tool": "maps_textsearch",
+          "seconds": 0.411
+        },
+        {
+          "tool": "taxi_estimate",
+          "seconds": 0.425
+        }
+      ]
+    }
+  ],
+  "rejectedExperiment": {
+    "format": "direct decision JSON rather than finalJson string",
+    "adopted": false,
+    "reason": "Output tokens decreased but two diagnostic runs did not improve elapsed time; representation/pool changes reverted."
+  },
+  "adoptedOptimization": "Keep existing structured decision schema; concise successful narratives and short model-chosen NEW local IDs, retaining complete typed constraints/source quotes/graph choices.",
+  "measurementLimits": [
+    "Historical22.5s records have no stream events and cannot be retroactively split.",
+    "Only client-observed time boundaries, not pure queue or server inference.",
+    "Two samples per variant; decode throughput/wait variation contributes, so full latency reduction is not a causal or percentile guarantee.",
+    "Primary samples finished before full local tests; only-search variation overlapped tests and is excluded from performance means."
+  ],
+  "validation": {
+    "phaseTestsPassed": 24,
+    "laterFocusedPassed": 57,
+    "processE2EPassed": 8,
+    "sourceReadback": "A2A/MCP/store/raw-source hashes and model-selected graph proofs passed",
+    "localFullSuite": {
+      "passed": 626,
+      "failed": 0,
+      "laterTestAdditions": "Current focused suite and exact-commit CI cover additional delta-correlation cases."
+    },
+    "currentFocused": {
+      "passed": 34,
+      "failed": 0
+    }
+  },
+  "comparisonCode": {
+    "before": "211099879e4e34ad772da4412cfc203b47d4d2db474bcac657e20377954124fd",
+    "after": "ae25fff70b3f87b372149fb0da9158b6d89128d93f6e80c9e0e137b77c00618b",
+    "businessModel": "eigos.business@17",
+    "backend": "ontology-execution-v20",
+    "publicDecisionContractChanged": false
+  }
+}

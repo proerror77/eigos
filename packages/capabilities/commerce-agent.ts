@@ -1,3 +1,5 @@
+import {commerceEntitySchemas} from '../ontology/commerce-journey.js';
+import {permitsPersonalSource} from '../core/source-owner.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -25,6 +27,7 @@ const fail = (message: string): never => { throw new DomainError('CONFLICT', mes
 const equal = (a: unknown, b: unknown) => digest(a) === digest(b);
 const supportedPredicates = ['commerce.sandbox_only', 'commerce.stock_confirmed', 'commerce.customs_checked', 'commerce.all_buyer_fees', 'commerce.delivery_promised', 'commerce.cart_created', 'commerce.checkout_prepared', 'commerce.order_confirmed', 'commerce.payment_settled', 'commerce.delivery_verified'];
 export class CommerceAgentProgram implements AgentProgram {
+  get projectionTypes(){return ['CommerceTask',...Object.keys(commerceEntitySchemas),'CustomsRuleSet','RegulatoryReference','SourceReceipt','Order','OrderLine','ProductVariant','Payment','Shipment','DeliveryEvent','DeliveryAllocation',...(this.stripe?['StripePaymentObservation']:[])];}
   readonly ref: { id: string; version: string };
   readonly actionIds: string[];
   readonly configurationDigest: string;
@@ -60,7 +63,7 @@ export class CommerceAgentProgram implements AgentProgram {
     }
     this.configurationDigest = digest({ connector: this.connector.configurationDigest, semantics: 'commerce-journey-v3', customsPolicyDigest: CUSTOMS_POLICY_DIGEST, ...(this.stripe ? { stripe: this.stripe.client.configurationDigest } : {}) });
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     const predicates = this.stripe ? [...supportedPredicates.filter(p => !['commerce.payment_settled', 'commerce.delivery_verified'].includes(p)), 'commerce.payment_confirmed'] : supportedPredicates;
     return { ref: this.ref, ontologyRef: { id: 'eigos.commerce.journey', version: '2' }, name: this.stripe ? 'Agent 沙箱订单与 Stripe 测试支付' : 'Agent 自主沙箱交易与履约', environment: 'sandbox', tags: ['commerce', 'agent', 'sandbox', 'cross-border'],

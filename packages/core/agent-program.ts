@@ -47,6 +47,9 @@ export interface AgentProgram {
   readonly ref: Ref;
   readonly configurationDigest: string;
   readonly actionIds: readonly string[];
+  /** Complete registered write inventory, including supporting receipts and
+   * canonical business objects. Each type still needs an explicit data grant. */
+  readonly projectionTypes?: readonly string[];
   readonly guidance: string;
   readonly completionSchema: object;
   readonly limits?: { modelTurns: number; plans: number; actions: number };

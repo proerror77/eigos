@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { spawnSync } from 'node:child_process';
+import { spawnSync,execFile } from 'node:child_process';
+import {promisify} from 'node:util';
 import { resolve } from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync,readFileSync } from 'node:fs';
+import {randomUUID} from 'node:crypto';
 import { securityFixture } from '../fixtures/security.js';
 import { businessModel } from '../../packages/ontology/business-model.js';
+import {securedProgramFixture} from '../fixtures/secured-program.js';
+import {participantFixture} from '../fixtures/free-booking.js';
+import {ParticipantBookingProgram} from '../../packages/capabilities/free-booking/program.js';
 
 test('E2E: the existing compiled members CLI enforces the same persistent Worker revocation fence', () => {
   const f = securityFixture();
@@ -44,4 +49,16 @@ test('E2E: compiled local policy administration uses revision checks and definit
     assert.equal(run('revoke-role',{id:receipt.roleId,expectedRevision:policy.revision()}).status,0);
     assert.notEqual(run('review-definition',{...request,expectedRevision:policy.revision()}).status,0);
   }finally{f.close();}
+});
+
+test('E2E: a separate compiled Worker claims native source authority and the parent independently reads a protected result',async()=>{
+  const source=participantFixture(),f=securedProgramFixture(()=>new ParticipantBookingProgram(source.source),source.input,()=>{throw Error('Parent process must not execute the task');});
+  try {
+    const job=f.tasks.submit(f.p,{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic existing registration read in a separate Worker',executionEnvironment:'sandbox'}),configFile=resolve(f.directory,'child.json'),resultFile=resolve(f.directory,'result.json');
+    writeFileSync(configFile,JSON.stringify({database:f.database,owner:f.owner,taskId:job.id,resultFile}),{mode:0o600});
+    await promisify(execFile)(process.execPath,[resolve('dist/tests/fixtures/security-native-worker.js'),configFile],{timeout:40000});
+    assert.deepEqual(JSON.parse(readFileSync(resultFile,'utf8')),{state:'completed',reads:1,submits:0});
+    const view=f.tasks.get(f.p,job.id);assert.ok('view' in view);assert.equal(view.view,'eigos.task.v2');assert.ok('accepted' in view);assert.equal(view.accepted,true);assert.ok(JSON.stringify(view).includes('synthetic-registration'));assert.ok(!JSON.stringify(view).includes(source.source.attendeeRef));
+    f.coordinator.revokeInstallation(f.member.id,f.a.id);assert.throws(()=>f.tasks.get(f.p,job.id),/ACCESS_REVOKED/);
+  }finally{f.close();source.store.close();}
 });

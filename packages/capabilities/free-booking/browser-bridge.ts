@@ -13,9 +13,12 @@ import type { PlanGrant } from '../../ontology/actions.js';
 import { bookingSourceContextSchema } from '../../ontology/booking.js';
 import { registrationInputSchema, registrationOfferSchema, registrationRecordSchema, participantServiceUrl } from '../../ontology/free-booking.js';
 import { participantCommandSchema } from './connector.js';
+import {SecurityStore} from '../../security/store.js';
+import {ownerIdentitySchema} from '../../security/contracts.js';
+import {assertQueuedSourceAuthority} from '../../security/source-authority.js';
 
 type Command = z.infer<typeof participantCommandSchema>;
-type QueueRow = { key: string; state: string; command: Command; result?: object; browserEvidence?: object; message?: string };
+type QueueRow = { key: string; state: string; command: Command; result?: object; browserEvidence?: object; message?: string;rejectedBeforeDispatch?:boolean };
 const localOwner = JSON.stringify(['local-development', 'local', 'developer']);
 const hash = (data: Buffer) => createHash('sha256').update(data).digest('hex');
 class Rejection extends Error { constructor(readonly safeMessage: string, readonly status = 409) { super(safeMessage); } }
@@ -30,25 +33,37 @@ async function json(req: IncomingMessage): Promise<unknown> {
  * Worker and operator credentials are separate; model tools possess neither. */
 export async function createParticipantBrowserBridge(options: {
   databasePath: string; taskDatabasePath: string; evidenceDirectory: string; bindingId: string; attendeeRef: string;
-  workerToken: string; operatorToken: string; port?: number;
+  workerToken: string; operatorToken: string; port?: number;ownerKey?:string;
 }) {
   if (![options.databasePath, options.taskDatabasePath, options.evidenceDirectory].every(isAbsolute) || resolve(options.databasePath) === resolve(options.taskDatabasePath) || !/^[A-Za-z0-9_-]{1,80}$/.test(options.bindingId) || !/^[a-f0-9]{64}$/.test(options.attendeeRef) || !/^[a-f0-9]{64}$/.test(options.workerToken) || !/^[a-f0-9]{64}$/.test(options.operatorToken) || options.workerToken === options.operatorToken) throw new Error('Participant bridge requires distinct private files, credentials and a pinned local account');
   mkdirSync(dirname(options.databasePath), { recursive: true, mode: 0o700 }); mkdirSync(options.evidenceDirectory, { recursive: true, mode: 0o700 });
-  const evidenceRoot = realpathSync(options.evidenceDirectory), db = new DatabaseSync(options.databasePath), taskDb = new DatabaseSync(options.taskDatabasePath, { readOnly: true });
+  const evidenceRoot = realpathSync(options.evidenceDirectory),taskDb = new DatabaseSync(options.taskDatabasePath, { readOnly: true });
+  let security:SecurityStore|undefined,sourceOwner:string,db:DatabaseSync;
+  try {
+    const marked=taskDb.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_settings'").get();
+    const header=marked?taskDb.prepare('SELECT mode,version FROM security_settings WHERE slot=1').get():undefined;
+    if(marked && (!header || !['legacy','foundation'].includes(String(header.mode)) || header.version!==(header.mode==='foundation'?2:1)) || !marked && taskDb.prepare("SELECT 1 FROM sqlite_master WHERE name IN ('security_grants','security_subjects') LIMIT 1").get())throw new Error('Participant task security configuration is invalid; no fallback');
+    security=header?.mode==='foundation'?new SecurityStore(taskDb,'foundation',Date.now,true):undefined;
+    sourceOwner=security?ownerIdentitySchema.parse(options.ownerKey):localOwner;
+    if(!security && options.ownerKey)throw new Error('Member source owner requires foundation task authority');
+    db=new DatabaseSync(options.databasePath);
+  }catch(error){taskDb.close();throw error;}
   db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS operations (key TEXT PRIMARY KEY,state TEXT NOT NULL,body TEXT NOT NULL); CREATE TABLE IF NOT EXISTS observations (version INTEGER PRIMARY KEY AUTOINCREMENT,operation_key TEXT UNIQUE NOT NULL);');
   const identity = `luma-participant:${options.bindingId}`;
   const get = (key: string): QueueRow | undefined => { const row = db.prepare('SELECT body FROM operations WHERE key=?').get(key); return row ? JSON.parse(String(row.body)) : undefined; };
   const save = (row: QueueRow) => db.prepare('INSERT INTO operations VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET state=excluded.state,body=excluded.body').run(row.key, row.state, JSON.stringify(row));
   const authority = (command: Command, writing = false) => {
     const row = taskDb.prepare('SELECT body,owner FROM jobs WHERE id=?').get(command.context.requestId);
-    if (!row || row.owner !== localOwner || command.context.ownerDigest !== digest(localOwner)) reject('The original participant task is unavailable', 403);
+    if (!row || row.owner !== sourceOwner || command.context.ownerDigest !== digest(sourceOwner)) reject('The original participant task is unavailable', 403);
     const job = JSON.parse(String(row.body)) as Job, d = job.delegation, state = d?.agent;
+    if(security?job.executionMode!=='worker-security-v2':job.executionMode?.startsWith('worker-security-'))reject('Participant task is not in the current execution mode',403);
     if (d?.backendVersion !== BACKEND_VERSION || !['working', 'submitted'].includes(job.state) || d.request.revision !== command.context.requestRevision || state?.programDigest !== command.configurationDigest || state.programRef.id !== 'booking.participant.free' || state.pendingPlanId !== command.context.planId) reject('Participant task was canceled, changed or stopped', 403);
     const plan = state.plans.find(p => p.id === command.context.planId), step = plan?.steps.find(s => s.intentId === command.context.intentId);
     if (!plan || plan.digest !== command.planDigest || !step || step.action !== command.action || step.operationKey !== command.context.operationKey) reject('The original participant plan changed', 403);
+    if(security)try{assertQueuedSourceAuthority(security,sourceOwner,job.id,plan,step.action);}catch{reject('Current task, source or resource authority is unavailable',403);}
     if (writing) {
       if (plan.environment !== 'live_free' || step.effect !== 'reserve' || step.additionalEffects?.length || step.cost?.minor !== '0') reject('Only an exact zero-charge participant reservation may be dispatched', 403);
-      const grants = taskDb.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(localOwner, job.id).map(r => JSON.parse(String(r.body)) as PlanGrant);
+      const grants = taskDb.prepare('SELECT body FROM plan_grants WHERE owner=? AND job_id=?').all(sourceOwner, job.id).map(r => JSON.parse(String(r.body)) as PlanGrant);
       if (!grants.some(g => !g.revoked && g.planDigest === plan.digest && g.environment === 'live_free' && Date.parse(g.expiresAt) > Date.now() && g.allowedEffects.length === 1 && g.allowedEffects[0] === 'reserve' && g.maxAmount.minor === '0' && g.maxAmount.currency === step.cost!.currency && g.payeeIds.includes(identity) && g.bindingRefs.some(ref => digest(ref) === digest(plan.programRef)))) reject('The zero-charge reservation permit expired or was revoked', 403);
       const offer = registrationOfferSchema.parse(command.input.offer);
       if (!isFreeRegistration(offer) || offer.requiresAdditionalConsent || offer.alreadyRegistered || offer.availability !== 'available' || Date.parse(offer.expiresAt) <= Date.now()) reject('The selected free registration terms expired or changed', 403);
@@ -86,7 +101,7 @@ export async function createParticipantBrowserBridge(options: {
           z.strictObject({ rejected: z.string().trim().min(1).max(500) }),
           z.strictObject({ data: z.record(z.string(), z.unknown()), pageUrl: participantServiceUrl, snapshotPath: z.string(), screenshotPath: z.string() }),
         ]).parse(await json(req));
-        if ('rejected' in input) { row.state = 'rejected'; row.message = input.rejected; save(row); send({ recorded: true }); return; }
+        if ('rejected' in input) { row.rejectedBeforeDispatch=row.state==='queued';row.state = 'rejected'; row.message = input.rejected; save(row); send({ recorded: true }); return; }
         if (row.state !== 'dispatched') reject('Read or submit through the explicit browser dispatch first');
         const scope = registrationInputSchema.parse(row.command.input.scope), type = row.command.action === 'InspectRegistrationPage' ? 'RegistrationOffer' : 'RegistrationRecord';
         const data = type === 'RegistrationOffer' ? registrationOfferSchema.parse(input.data) : registrationRecordSchema.parse(input.data);
@@ -104,6 +119,22 @@ export async function createParticipantBrowserBridge(options: {
         save(row); send({ recorded: true, sourceVersion: version }); return;
       }
       if (req.headers.authorization !== `Bearer ${options.workerToken}`) reject('Worker authentication required', 403);
+      const audit=/^\/audit\/operations\/([a-f0-9]{64})$/.exec(url.pathname);
+      if(audit && req.method==='GET') {
+        if(!security)reject('Original-operation audit requires foundation authority',403);
+        let original;try{original=security.recoveries.authorizeSourceRead(JSON.parse(Buffer.from(String(req.headers['x-eigos-recovery']),'base64url').toString('utf8')),audit[1]!);}catch{reject('Original-operation audit authority is unavailable',403);}
+        if(original.owner!==sourceOwner || original.programRef.id!=='booking.participant.free')reject('Original source owner differs',403);
+        const operation=get(original.operationKey);
+        if(!operation || operation.command.context.ownerDigest!==digest(sourceOwner) || operation.command.context.requestId!==original.taskId || operation.command.context.intentId!==original.intentId || operation.command.action!==original.action || operation.command.configurationDigest!==original.programDigest)reject('Original operation is unavailable',404);
+        const result=operation.result as {data?:Record<string,unknown>}|undefined,data=result?.data;
+        const fresh=db.prepare("SELECT body FROM operations WHERE state='complete' ORDER BY rowid DESC LIMIT 100").all().map(r=>JSON.parse(String(r.body)) as QueueRow).find(r=>{
+          const value=(r.result as {data?:Record<string,unknown>}|undefined)?.data;
+          return data?.registrationId && r.command.action==='ReadParticipantRegistration' && r.command.context.ownerDigest===digest(sourceOwner) && value?.independentRead===true && value.registrationId===data.registrationId && value.serviceUrl===data.serviceUrl && value.attendeeRef===options.attendeeRef && Date.parse(String(value.observedAt))>=Math.max(Date.parse(original.originalDispatchAt),Date.now()-300000) && Date.parse(String(value.observedAt))<=Date.now();
+        });
+        const observed=(fresh?.result as {data?:Record<string,unknown>}|undefined)?.data;
+        const state=operation.rejectedBeforeDispatch?'rejected':observed && ['submitted','pending_approval','waitlisted','confirmed'].includes(String(observed.state))?'confirmed':'unknown';
+        send({operationKey:original.operationKey,...(original.remoteRef?{remoteRef:original.remoteRef}:{}),state,observedAt:observed?String(observed.observedAt):new Date().toISOString(),evidenceDigest:digest({operationKey:original.operationKey,sourceState:operation.state,independentEvidence:fresh?.browserEvidence,observation:observed??null})});return;
+      }
       context = bookingSourceContextSchema.parse(JSON.parse(Buffer.from(String(req.headers['x-eigos-context']), 'base64url').toString('utf8')));
       const match = /^\/operations\/([a-f0-9]{64})$/.exec(url.pathname);
       if (!match || match[1] !== context.operationKey || !['POST', 'GET'].includes(req.method!)) reject('Unknown participant operation', 404);

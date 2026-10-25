@@ -1,3 +1,4 @@
+import {permitsPersonalSource} from '../../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
@@ -18,6 +19,7 @@ function fail(message: string): never { throw new DomainError('CONFLICT', messag
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
 const completion = z.strictObject({ booking: objectRefSchema.extend({ type: z.literal('BookingObservation') }), payment: objectRefSchema.extend({ type: z.literal('BookingPaymentObservation') }).optional(), rationale: z.string().min(1).max(2000) });
 export class BookingAgentProgram implements AgentProgram {
+  readonly projectionTypes=['BookingTask','BookingOffers','BookingObservation','BookingPaymentObservation','PAPaymentRequest','SourceReceipt'];
   readonly ref = { id: 'booking.pa-payment.sandbox', version: '3' };
   readonly actionIds = Object.keys(bookingActionSchemas);
   readonly limits = { modelTurns: 48, plans: 20, actions: 36 };
@@ -35,7 +37,7 @@ export class BookingAgentProgram implements AgentProgram {
     'Complete only with separately read and evaluated booking/payment refs. The provider must confirm the original booking AND exact paid amount, currency, payee and original terms. PA submitted/approved/paid text, wallet approval, payment alone or booking alone is insufficient. Booking confirmation proves reservation, not attendance or delivery of the underlying service.',
   ].join('\n');
   constructor(options: BookingSandboxOptions) { this.connector = new BookingSandboxConnector(options); this.configurationDigest = digest({ source: this.connector.configurationDigest, semantics: 'optional-payment-booking-link-routes-v3' }); }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     const predicates = ['booking.sandbox_only', 'booking.confirmed', 'booking.payment_confirmed', 'booking.payment_not_required'];
     return { ref: this.ref, ontologyRef: { id: 'eigos.booking.pa-payment', version: '3' }, name: '可选付款预约与独立回读', description: '在隔离服务商沙箱查询和建立预约。明确无需付款且完整费用为零时，只独立核验原预约确认；需要付款时保留 PA 的 Link Agent Wallet／普通 Link 付款和双重回读。无真实预约、扣款或服务履约。', tags: ['booking', 'pa-payment', 'sandbox'], environment: 'sandbox', inputSchema: z.toJSONSchema(bookingInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: bookingActionMetadata[id as BookingAction].effect })), predicates: predicates.map(id => ({ id, description: id === 'booking.payment_confirmed' ? 'Independent provider receipt confirms exact PA-funded synthetic payment' : id === 'booking.confirmed' ? 'Independent provider receipt confirms the original booking' : 'All provider and wallet operations stay in the isolated sandbox' })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'booking.pa-payment.independent', version: '3' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of participants in the service booking, in person units' }, { kind: 'budget', role: 'service_total', description: 'Complete fixed booking price including every mandatory fee' }, { kind: 'deadline', role: 'completion', description: 'Deadline for obtaining confirmed booking and payment, not service attendance' }, { kind: 'location', role: 'venue', description: 'Exact source venue reference' }], ontology: { objects: ['BookingTask', 'BookingOffers', 'BookingObservation', 'BookingPaymentObservation', 'PAPaymentRequest'], functions: ['bookingObservationStatus'], execution: 'agent_selected_atomic_actions', paymentAuthority: 'pa_owned', realSourceConnected: false } };

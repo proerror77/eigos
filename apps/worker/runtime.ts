@@ -14,7 +14,7 @@ export function createWorker(config: Config, overrides: {
   if (store.security.enabled !== (config.EIGOS_SECURITY_MODE === 'foundation')) throw new Error('Gateway and Worker security modes must match');
   try {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS);
-    const catalog = createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    const catalog = createExecutionCatalog({ store, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,

@@ -42,6 +42,10 @@ export function snapshotObject(graph: OntologyObjectStore, owner: string, ref: O
   return { ref, revision: object.revision, propertiesDigest: digest(relevantProperties(ref, object.properties, request)), linksDigest: graph.relationshipDigest(owner, ref, { remaining: 1000 }) };
 }
 export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
+  const check=()=>validatePlanningSnapshotRaw(graph,owner,request,snapshot,fresh);
+  return graph.security?graph.security.readSnapshot(check):check();
+}
+function validatePlanningSnapshotRaw(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
   if (graph.security && snapshot.accessDigest!==accessDigest()) throw new DomainError('FORBIDDEN','Planning authority changed; fresh authorized reads are required');
   const { digest: expected, ...body } = snapshot;
   if (!['model_queries', 'worker_context', 'worker_context_with_queries', 'trusted_template'].includes(snapshot.mode) || digest(body) !== expected || digest(snapshot.model) !== digest(graph.model.ref) || snapshot.requestRevision !== request.revision || snapshot.conditionsDigest !== digest(request.conditions ?? [])) throw new DomainError('CONFLICT', 'Ontology planning contract changed');
@@ -135,6 +139,9 @@ export class OntologyPlanningSession {
     if (!this.seen.has(key(ref))) throw new DomainError('FORBIDDEN', 'Read the owned object before using its reference');
   }
   call(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }): unknown {
+    return this.graph.security?this.graph.security.readSnapshot(()=>this.callRaw(tool,input,options)):this.callRaw(tool,input,options);
+  }
+  private callRaw(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }): unknown {
     this.active();
     if (this.reads.length >= 20) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
     const before = new Set(this.seen.keys());

@@ -9,6 +9,7 @@ import { modelEnvironment, modelFeatureArgs } from './model-process.js';
 import { openCodexModelSession } from './model-session.js';
 import { ModelSessionPool } from './model-session-pool.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
+import type { ModelTiming } from './model-timing.js';
 
 export const decisionSchema = z.object({
   decision: z.enum(['ask_user', 'complete']),
@@ -36,6 +37,8 @@ export interface RunEvidence {
   sessionReused?: boolean;
   requestSentAt?: string;
   requestAcknowledgedAt?: string;
+  timing?: ModelTiming;
+  outputSchemaDigest?: string;
   threadId?: string;
   turnId?: string;
   promptBytes?: number;

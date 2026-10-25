@@ -5,6 +5,8 @@ import { bindingDigest } from '../core/catalog.js';
 import { authorizationScope, withProjection,withIntegrity } from './context.js';
 import { SecurityError } from './store.js';
 import type {SecurityStore} from './store.js';
+import {objectRefSchema,type ObjectRef} from '../ontology/model.js';
+import type {Delivery} from '../core/catalog.js';
 
 export function permittedCapability(id: string): boolean {
   const scope=authorizationScope(); if (!scope) return true;
@@ -29,12 +31,19 @@ export function secureProgram(program: AgentProgram,authority?:SecurityStore): A
   // have no write method, cannot supply an origin, and cannot manufacture a binding.
   return new Proxy(program,{get(target,key){
     const value=Reflect.get(target,key,target);
+    if(key==='guidance')return value+'\nFoundation field contract: query the currently described authorized fields. Source business facts are in observedData; private snapshot/data fields are unavailable. Use authorizedInput for a scope that declares it. PA-only response fields are never model inputs. A denied field cannot be recovered through an alternate query.';
     if (typeof value!=='function') return value;
     if (key==='initialize') return (...args:unknown[])=>{check();return withProjection(origin,()=>Reflect.apply(value,target,args));};
     if (key==='project') return (...args:unknown[])=>{check(String(args[1]));return withProjection(origin,()=>Reflect.apply(value,target,args));};
     if (key==='invoke' || key==='recover') return (...args:unknown[])=>{check(String(args[1]));return withIntegrity(()=>Reflect.apply(value,target,args));};
     if (key==='reconcilePAPayment') return (...args:unknown[])=>{check('reconcile_payment');return Reflect.apply(value,target,args);};
-    if(['validate','validatePlanning','validatePause','authority','complete','clarification'].includes(String(key))) return (...args:unknown[])=>withIntegrity(()=>Reflect.apply(value,target,args));
+    if(key==='complete')return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>{
+      const delivery=Reflect.apply(value,target,args) as Delivery,refs=new Map<string,ObjectRef>();
+      const collect=(input:unknown)=>{if(!input || typeof input!=='object')return;const ref=objectRefSchema.safeParse(input);if(ref.success){refs.set(JSON.stringify(ref.data),ref.data);return;}for(const value of Object.values(input))collect(value);};
+      collect(args[1]);if(refs.size>20)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      delivery.artifact.data.result={...delivery.artifact.data.result,securityEvidenceRefs:[...refs.values()]};return delivery;
+    }));
+    if(['validate','validatePlanning','validatePause','authority','clarification'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
     return value.bind(target);
   }});
 }

@@ -34,7 +34,7 @@ export function secureAgentContext(context:AgentPlanningContext,graph:OntologyOb
   if (!graph.security) return context;
   const scope=authorizationScope()!,policy=graph.security;
   const object=graph.read(scope.actor.ownerKey,context.state.scope);
-  const input=object.properties.input;
+  const input=object.properties.authorizedInput??object.properties.input;
   if (!input || typeof input!=='object' || Array.isArray(input)) throw new SecurityError('INSUFFICIENT_ACCESS');
   const refs=context.state.observations.filter(ref=>!!policy.binding(scope,ref));
   return {...context,request:secureRequest(graph,scope.actor.ownerKey,context.request),actionIds:context.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute')),

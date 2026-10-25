@@ -29,7 +29,7 @@ test('foundation HTTP keeps same-client installations distinct and requires vers
     assert.equal((await f.post('/tasks',{service:'eigos.delegate',requestId:'no-viewer',goal:'Synthetic task'},headers)).status,403);
     assert.equal(f.gateway.store.list(ownerKey(f.p), { limit: 10, offset: 0 }).total, 0);
     const card = await fetch(f.base + '/.well-known/agent-card.json').then(r => r.json()); assert.deepEqual(card.skills.map((s:{id:string})=>s.id),['eigos.delegate']);
-    const health = await fetch(f.base + '/health').then(r => r.json()); assert.equal(health.securityStage, 'S4_foundation_v2');
+    const health = await fetch(f.base + '/health').then(r => r.json()); assert.equal(health.securityStage, 'S5_foundation_v2');
   } finally { await f.close(); }
 });
 

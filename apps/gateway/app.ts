@@ -45,7 +45,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   const principals = new WeakMap<Request, Principal>();
   const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
-  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+  const catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
     documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
     publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,
     didi: config.EIGOS_DIDI_KEY_FILE ? { keyFile: config.EIGOS_DIDI_KEY_FILE, keySha256: config.EIGOS_DIDI_KEY_SHA256!, bindingId: config.EIGOS_DIDI_BINDING_ID!, environment: config.EIGOS_DIDI_ENVIRONMENT } : undefined,
@@ -90,7 +90,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S4_foundation_v2' : 'legacy' }));
+  app.get('/health', (_req, res) => res.json({ status: 'ok', version: '0.1.0', backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, securityStage: security ? 'S5_foundation_v2' : 'legacy' }));
   app.get('/.well-known/eigos-pa-payment', (_req, res) => res.json({ version: '2', environment: 'sandbox', paymentAuthority: 'pa_owned', credentialsAccepted: false, routePolicy: 'prefer_link_agent_wallet', routes: ['link_agent_wallet', 'link_checkout'], checkoutRequiresUserConfirmation: true, switchAfterSelection: false, requestPath: security ? 'metadata.payment.request' : 'metadata.delegation.agent.paPayment.request', selectionPath: security ? 'metadata.payment.selection' : 'metadata.delegation.agent.paPayment.selection', a2a: { method: 'SendMessage', actions: ['select_payment_route', 'report_payment_result'] }, mcpTools: ['select_payment_route', 'report_payment_result'], notificationIsPaymentProof: false, completionRequires: ['independent_provider_payment', 'independent_provider_booking'], requestSchema: z.toJSONSchema(security ? paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true}) : paPaymentRequestSchema), routeSchema: z.toJSONSchema(paPaymentRouteSchema), selectionSchema: z.toJSONSchema(paPaymentSelectionSchema), reportSchema: z.toJSONSchema(paPaymentReportSchema) }));
   mountMemberRoutes(app, config, members, loginProvider, security);
   mountAgentRoutes(app, config, members, verify, security);
@@ -149,7 +149,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     const p = principals.get(req)!, context = p.access;
     if (!p.scopes.includes('services:read')) { res.status(403).json({ error: 'insufficient_scope' }); return; }
     if (context?.actorKind !== 'agent') { res.status(403).json({ error: 'AUTHORIZATION_REQUIRED' }); return; }
-    res.json({ stage: 'S4', actorKind: context.actorKind, installationId: context.installationId, grant: context.agentGrant, authEpoch: context.authEpoch, businessAccess: 'task_grant_required' });
+    res.json({ stage: 'S5', actorKind: context.actorKind, installationId: context.installationId, grant: context.agentGrant, authEpoch: context.authEpoch, businessAccess: 'task_grant_required' });
   });
 
   // Same authentication, membership, scopes and owner as MCP/A2A; no object-write endpoint.

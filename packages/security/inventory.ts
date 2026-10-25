@@ -12,7 +12,7 @@ export const securityBaselineSchema = z.strictObject({
   model: z.strictObject({ id: z.string(), version: z.string(), digest: sha }),
   types: z.record(z.string(), z.strictObject({ fingerprint: sha, fields: z.record(z.string(), fieldPolicySchema) })),
   surfaces: z.array(z.strictObject({ id: z.string(), file: z.string(), sourceDigest: sha, channels: z.array(z.string()).min(1),
-    content: z.string(), currentControl: z.string(), targetControl: z.string(), stage: z.enum(['S1', 'S2', 'S3', 'S4']) })).min(1),
+    content: z.string(), currentControl: z.string(), targetControl: z.string(), stage: z.enum(['S1', 'S2', 'S3', 'S4', 'S5']) })).min(1),
 });
 export type SecurityBaseline = z.infer<typeof securityBaselineSchema>;
 
@@ -62,7 +62,7 @@ export function buildSecurityInventory(input: unknown, definition: ModelDefiniti
   }).sort((a, b) => a.id.localeCompare(b.id));
   if (new Set(baseline.surfaces.map(s => s.id)).size !== baseline.surfaces.length) issues.push('duplicate_surface');
   if (root) for (const s of baseline.surfaces) {
-    if (!/^(apps|packages|scripts)\/[A-Za-z0-9_./-]+\.(ts|mjs)$/.test(s.file) || s.file.split('/').includes('..')) { issues.push(`invalid_surface_path:${s.id}`); continue; }
+    if (!/^(apps|packages|scripts|integrations)\/[A-Za-z0-9_./-]+\.(ts|mjs|py)$/.test(s.file) || s.file.split('/').includes('..')) { issues.push(`invalid_surface_path:${s.id}`); continue; }
     try { if (digest(readFileSync(resolve(root, s.file), 'utf8')) !== s.sourceDigest) issues.push(`surface_changed:${s.id}`); }
     catch { issues.push(`surface_unavailable:${s.id}`); }
   }

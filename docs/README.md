@@ -16,17 +16,19 @@
 
 项目采用 TypeScript／Node.js，通过 MCP 和 A2A 接收 Agent 委托，使用 Ontology + LLM 组织任务理解、规划与执行。Gateway／Worker 和共享任务核心负责接入、持久任务、授权校验、恢复与结果核验。技术细节见[开发与运行](gateway-worker.md)及[本体规格](ontology-spec-v0.2-2026-10-18.md)。
 
-当前实现包含文档草稿生成、本地 CSV 模拟审计，以及受限的美团地点／地址／运费、滴滴地点／车型估价和 Shopify 公开商品查询。免费报名分支另有需要在线浏览器操作代理的 Luma 真实验证，尚未装入当前本人常驻实例。跨服务交易与履约在本地合成环境中验证；真实交易与履约仍待接入。完整目录和本轮运行状态见[模型与接入总览](ontology-and-integrations.md)，接口与配置条件见[接入指南](integration.md)。
+当前实现包含文档草稿生成、本地 CSV 模拟审计，以及受限的美团地点／地址／运费、滴滴地点／车型估价和 Shopify 公开商品查询。免费报名分支另有需要在线浏览器操作代理的 Luma 真实验证，具体启用与运行版本按实例配置和健康读回核对。跨服务交易与履约在本地合成环境中验证；真实交易与履约仍待接入。完整目录和本轮运行状态见[模型与接入总览](ontology-and-integrations.md)，接口与配置条件见[接入指南](integration.md)。
 
 自动测试、真实模型、真实来源和本地模拟的证据分别记录。历史测试通过不代表当前部署或真实业务完成；具体记录与限制见对应能力文档及 `docs/evidence/` 中的验证归档。
 
 ## 设计与项目方向
 
-- [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；已有离线检查工具，对象／字段策略仍待接入。
+- [三层权限实施方案](ontology-permissions-implementation-plan-2026-10-24.md)与 [S0 合同／迁移清单](security-s0.md)：会员、Agent 安装和任务范围；保留最初合同和离线检查清单，运行策略实现见后续阶段。
 - [S1 身份与撤销控制面](security-s1.md)：身份／安装授权存储、跨库拒绝协调及 Worker 复核的阶段记录。
-- [S2–S4 资源、任务数据与输出保护](security-s2-s4.md)：foundation v2 协议、安全视图、来源／模型资格、会员审阅、附件和原操作查证；S5 迁移与运行验收待完成。
+- [S2–S4 资源、任务数据与输出保护](security-s2-s4.md)：foundation v2 协议、安全视图、来源／模型资格、会员审阅、附件和原操作查证；S5 的真实会员运行验收与常驻切换仍待完成。
+- [S5 迁移、PA 与来源适配](security-s5.md)：离线复制工具、常驻副本核对、v2 客户端、原生来源投影及待登录的切换包。
 - [PA、EIGOS 与服务提供者的分工](agent-mcp-ontology-responsibilities-2026-10-22.md)。
 - [模型选择的只读依赖图与条件验收](ontology-read-dataflow-2026-10-24.md)：滴滴首轮依赖图、纯函数绑定、证据归属与动态决策边界。
+- [模型耗时分段与输出简述对照](evidence/model-phase-latency-2026-10-24/README.md)：启动、首输出等待、可见输出及真实对照边界。
 - [Ontology 规格](ontology-spec-v0.2-2026-10-18.md)。
 - [实施阶段与记录](backend-implementation-goals.md)。
 - [品牌说明](brand-brief.md)。

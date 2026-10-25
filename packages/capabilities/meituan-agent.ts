@@ -1,3 +1,4 @@
+import {permitsPersonalSource} from '../core/source-owner.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -33,6 +34,7 @@ const amount = (value: unknown) => {
 };
 
 export class MeituanReadProgram implements AgentProgram {
+  get projectionTypes(){return ['MeituanReadTask','MeituanReadObservation','SourceReceipt',...(this.mode==='geo'?['Place']:this.mode==='delivery'?['Parcel','DeliveryRoute','Provider','Channel','DeliveryQuote']:[])];}
   readonly ref;
   readonly configurationDigest: string;
   readonly actionIds: string[];
@@ -43,7 +45,7 @@ export class MeituanReadProgram implements AgentProgram {
     this.actionIds = meituanReadDefinition.actions.filter(a => permittedTools[mode].includes(a.mcp.tool)).map(a => a.id);
     this.configurationDigest = digest({ program: this.ref, mode, reader: reader.configurationDigest, evidenceKind: reader.evidenceKind, ontology: meituanReadDefinitionRef, publicQueries });
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     const schema = this.mode === 'geo' ? publicGeoQuerySchema : this.mode === 'addresses' ? z.strictObject({}) : meituanDeliveryInputSchema;
     return { ref: this.ref, ontologyRef: { id: meituanReadDefinitionRef.id, version: meituanReadDefinitionRef.version }, name: modes[this.mode].name, environment: 'live', completion: 'artifact',
@@ -184,14 +186,16 @@ export class MeituanReadProgram implements AgentProgram {
     if (s.data.kind === 'locations' && !equal(s.data.places, source.raw.value.places)) invalid('Public locations differ from the source receipt');
     if (s.data.kind === 'addresses' && (s.data.count !== (source.raw.value.addresses as unknown[]).length || s.data.selectionReady !== (this.mode === 'addresses' || source.selection?.kind === 'ready'))) invalid('Private selection readiness differs from the source receipt');
     if (s.data.kind === 'address_detail' && s.data.role !== source.role) invalid('Contact role differs from the accepted selection');
-    return projectMeituanRead(ctx.graph, ctx.owner, s);
+    const ref=projectMeituanRead(ctx.graph,ctx.owner,s);
+    if(ctx.graph.security && s.data.kind==='addresses')ctx.graph.security.storePrivateView(ctx.owner,ref,'addressBook',{addresses:(source.raw.value.addresses as Record<string,unknown>[]).map(a=>({addressId:z.union([z.string().min(1),z.number().int()]).parse(a.addressId).toString(),address:z.string().min(1).parse(a.address),cityId:z.union([z.string().min(1),z.number().int()]).parse(a.cityId).toString(),...Object.fromEntries(['houseNumber','name','tag'].filter(k=>typeof a[k]==='string').map(k=>[k,a[k]]))}))});
+    return ref;
   }
   clarification(ctx: AgentProgramContext, _decision: AgentDecision, reads: PlanningSnapshot): string | undefined {
     for (const ref of [...ctx.state.observations].reverse()) {
       const s = this.observation(ctx, ref).snapshot;
       if (s.data.kind !== 'addresses') continue;
       const source = this.source(ctx, ref);
-      if (source.selection?.kind === 'needs_input') { this.evaluated(ctx, ref, reads); return source.selection.question; }
+      if (source.selection?.kind === 'needs_input') { this.evaluated(ctx, ref, reads);if(ctx.graph.security)ctx.graph.security.responseOnlyValue(ctx.owner,ref,'addressBook');return source.selection.question; }
     }
   }
   complete(ctx: AgentProgramContext, value: unknown, reads: PlanningSnapshot): Delivery {
@@ -210,6 +214,7 @@ export class MeituanReadProgram implements AgentProgram {
       if (later.data.kind === 'addresses' && (!later.data.selectionReady || !equal(selectedAddresses(book!), selectedAddresses(this.source(ctx, ref))))) invalid('Later address evidence invalidated the selected route');
     }
     const privateSource = this.source(ctx, proposal.observation);
+    if(ctx.graph.security && s.data.kind==='addresses')ctx.graph.security.responseOnlyValue(ctx.owner,proposal.observation,'addressBook');
     const result = s.data.kind === 'locations' ? { source: 'meituan', readOnly: true, places: s.data.places }
       : s.data.kind === 'addresses' ? { source: 'meituan', readOnly: true, addresses: z.array(z.record(z.string(), z.unknown())).parse(privateSource.raw.value.addresses).map(a => Object.fromEntries(['addressId', 'address', 'houseNumber', 'name', 'tag', 'cityId'].filter(k => a[k] !== undefined).map(k => [k, a[k]]))) }
       : s.data.kind === 'quote' ? { source: 'meituan', previewOnly: true, orderCreated: false, quote: Object.fromEntries(['_previewTotal', '_deliveryFee'].map(k => [k, (privateSource.raw.value.quote as Record<string, unknown>)[k]])), goods: { name: s.data.goodsName, category: s.data.category, weightKg: s.data.weightKg }, service: s.data.service } : invalid('Unsupported completion');

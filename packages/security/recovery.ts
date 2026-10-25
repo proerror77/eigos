@@ -33,9 +33,14 @@ export function requireRecovery(operation:OriginalOperation,security?:SecuritySt
     || digest(operation.programRef)!==digest(scope.work.permit.programRef)) throw new SecurityError('AUTHORIZATION_REQUIRED');
   scope.assertCurrent();
 }
+export function recoverySourceCredential(operation:OriginalOperation) {
+  const scope=contexts.getStore();requireRecovery(operation,scope?.security);
+  return {id:scope!.work.permit.id,token:scope!.work.token};
+}
 
 export class RecoveryStore {
-  constructor(private db:DatabaseSync,private security:SecurityStore) {
+  constructor(private db:DatabaseSync,private security:SecurityStore,readOnly=false) {
+    if(readOnly)return;
     db.exec(`CREATE TABLE IF NOT EXISTS security_recoveries(id TEXT PRIMARY KEY,owner TEXT NOT NULL,task_id TEXT NOT NULL,intent_id TEXT NOT NULL,state TEXT NOT NULL,attempts INTEGER NOT NULL,next_at INTEGER NOT NULL,token TEXT,lease_until INTEGER NOT NULL,body TEXT NOT NULL,result TEXT);
       CREATE UNIQUE INDEX IF NOT EXISTS security_active_recovery ON security_recoveries(intent_id) WHERE state IN ('pending','running');`);
   }
@@ -104,9 +109,17 @@ export class RecoveryStore {
       }
     });
   }
-  assertCurrent(work:RecoveryWork) {
+  assertCurrent(work:Pick<RecoveryWork,'permit'|'token'>) {
     this.eligible(work.permit);
     if(!this.db.prepare("SELECT 1 FROM security_recoveries WHERE id=? AND token=? AND state='running' AND lease_until>?").get(work.permit.id,work.token,this.security.now())) throw new SecurityError('ACCESS_REVOKED');
+  }
+  authorizeSourceRead(input:unknown,operationKey:string):OriginalOperation {
+    const {id,token}=z.strictObject({id:z.uuid(),token:z.uuid()}).parse(input);
+    const row=this.db.prepare('SELECT body FROM security_recoveries WHERE id=?').get(id);
+    if(!row)throw new SecurityError('AUTHORIZATION_REQUIRED');const permit=JSON.parse(String(row.body)) as RecoveryPermit;
+    if(permit.operationKey!==operationKey)throw new SecurityError('AUTHORIZATION_REQUIRED');this.assertCurrent({permit,token});
+    const {owner,taskId,intentId,remoteRef,action,programRef,programDigest,originalDispatchAt}=permit;
+    return {owner,taskId,intentId,operationKey,remoteRef,action,programRef,programDigest,originalDispatchAt};
   }
   renew(work:RecoveryWork) {
     try{this.assertCurrent(work);return this.db.prepare("UPDATE security_recoveries SET lease_until=? WHERE id=? AND token=? AND state='running'").run(this.security.now()+15000,work.permit.id,work.token).changes===1;}catch{return false;}
@@ -116,7 +129,7 @@ export class RecoveryStore {
       const p=work.permit,row=this.db.prepare('SELECT state,token,attempts FROM security_recoveries WHERE id=?').get(p.id);
       if(!row || row.token!==work.token) return;
       let result:RecoveryObservation|undefined;
-      try{result=recoveryObservationSchema.parse(value);if(result.operationKey!==p.operationKey || p.remoteRef && result.remoteRef!==p.remoteRef || Date.parse(result.observedAt)>this.security.now()) result=undefined;}catch{result=undefined;}
+      try{result=recoveryObservationSchema.parse(value);if(result.operationKey!==p.operationKey || p.remoteRef && result.remoteRef!==p.remoteRef || Date.parse(result.observedAt)>this.security.now() || Date.parse(result.observedAt)<Date.parse(p.originalDispatchAt)) result=undefined;}catch{result=undefined;}
       const body={kind:result?.state==='confirmed'?'confirmed':result?.state==='rejected'?'rejected':'unknown',eventId:work.attempt.id,sourceVersion:work.attempt.ordinal,
         evidenceRefs:result?[result.evidenceDigest]:[],message:'Original-operation audit observation; no task projection or new dispatch'};
       this.db.prepare('INSERT OR IGNORE INTO action_observations VALUES(?,?,?,?,?,?,?,?,?)').run(randomUUID(),p.owner,p.intentId,work.attempt.id,work.attempt.id,new Date(this.security.now()).toISOString(),digest(body),0,JSON.stringify(body));

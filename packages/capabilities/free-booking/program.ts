@@ -1,3 +1,4 @@
+import {permitsPersonalSource} from '../../core/source-owner.js';
 import { readRegistration, projectRegistration, registrationStatus, isFreeRegistration } from '../../ontology/free-booking-functions.js';
 import { z } from 'zod';
 import { digest } from '../../core/delegation.js';
@@ -14,14 +15,17 @@ import type { AgentDecision } from '../../ontology/agent-actions.js';
 export interface ParticipantBookingSource {
   readonly environment: 'live' | 'sandbox'; readonly configurationDigest: string; readonly identity: string; readonly attendeeRef: string;
   call(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal, recovery?: boolean): Promise<AgentActionResult | undefined>;
+  observeOriginal?:AgentProgram['observeOriginal'];
 }
 const completion = z.strictObject({ registration: objectRefSchema.extend({ type: z.literal('RegistrationRecord') }), rationale: z.string().min(1).max(2000) });
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
 export class ParticipantBookingProgram implements AgentProgram {
+  readonly projectionTypes=['RegistrationTask','RegistrationOffer','RegistrationRecord','SourceReceipt'];
   readonly ref = { id: 'booking.participant.free', version: '1' };
   readonly liveFreeReservation: true | undefined;
   readonly configurationDigest: string;
+  readonly observeOriginal?:AgentProgram['observeOriginal'];
   readonly actionIds: string[];
   readonly completionSchema = z.toJSONSchema(completion);
   readonly limits = { modelTurns: 80, plans: 24, actions: 64 };
@@ -34,11 +38,12 @@ export class ParticipantBookingProgram implements AgentProgram {
     'The live Luma source uses a local browser operator bridge. It runs only while an authorized operator is connected to the signed-in browser; it is not a public Luma attendee API or unattended account integration. Source evidence is browser observed, not a Luma-signed API receipt.',
   ].join('\n');
   constructor(readonly source: ParticipantBookingSource) {
+    this.observeOriginal=source.observeOriginal?.bind(source);
     this.liveFreeReservation = source.environment === 'live' ? true : undefined;
     this.configurationDigest = digest({ source: source.configurationDigest, semantics: 'participant-free-booking-v1' });
     this.actionIds = ['InspectRegistrationPage', source.environment === 'live' ? 'SubmitFreeRegistration' : 'SubmitFreeRegistrationSandbox', 'ReadParticipantRegistration', 'WaitForRegistration'];
   }
-  permitted(owner: string) { return owner === JSON.stringify(['local-development', 'local', 'developer']); }
+  permitted(owner: string) { return permitsPersonalSource(this,owner); }
   capability(): ServiceCapability {
     const predicates = ['registration.free', 'registration.submitted', 'registration.confirmed'];
     return { ref: this.ref, ontologyRef: { id: 'eigos.registration', version: '1' }, name: '免费活动报名与通用预约', description: `普通参与者的免费报名／预约、审核与候补跟踪、独立确认回读；支付不是必需步骤。${this.source.environment === 'live' ? '通过本机已登录 Luma 浏览器操作，需要在线操作代理。' : '仅合成来源验证。'}`, tags: ['registration', 'booking', 'free', 'participant', this.source.environment], environment: this.source.environment, inputSchema: z.toJSONSchema(registrationInputSchema), constraintEvaluation: 'staged', actions: this.actionIds.map(id => ({ ref: { id, version: '1' }, effect: id.startsWith('Submit') ? 'reserve' : id === 'WaitForRegistration' ? 'local' : 'read' })), predicates: predicates.map(id => ({ id, description: id })), outcomePredicates: predicates, completion: 'domain', verifierRef: { id: 'registration.independent', version: '1' }, requirementRoles: [{ kind: 'quantity', role: 'participant_count', description: 'Number of registered participants; this initial participant connector supports one signed-in person' }, { kind: 'budget', role: 'service_total', description: 'Complete mandatory service charges, including zero' }, { kind: 'deadline', role: 'completion', description: 'Deadline for the requested submission or confirmation endpoint' }], ontology: { objects: ['RegistrationTask', 'RegistrationOffer', 'RegistrationRecord'], functions: ['registrationStatus'], payment: 'optional', livePaymentsEnabled: false, provider: this.source.identity, execution: 'agent_selected_atomic_actions', source: 'operator_assisted_browser' } };

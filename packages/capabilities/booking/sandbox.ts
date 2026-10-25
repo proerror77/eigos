@@ -10,7 +10,7 @@ import { paPaymentRequestSchema } from '../../core/pa-payment.js';
 import { bookingInputSchema, bookingOfferSchema, bookingPayloadSchema, bookingSourceContextSchema, type BookingData } from '../../ontology/booking.js';
 
 type Context = z.infer<typeof bookingSourceContextSchema>;
-const localOwner = digest(JSON.stringify(['local-development', 'local', 'developer']));
+import {ownerIdentitySchema} from '../../security/contracts.js';
 const id = z.string().min(1).max(200);
 class Rejection extends Error { constructor(readonly code: string, readonly status = 409) { super(code); } }
 function reject(code: string, status = 409): never { throw new Rejection(code, status); }
@@ -32,7 +32,8 @@ export interface BookingSandboxFlags {
 }
 /** Separate provider and PA credentials; no outgoing network client or real
  * payment processor. This simulator is never a production service adapter. */
-export async function createBookingSandboxProvider(options: { databasePath?: string; port?: number; sourceToken?: string; paToken?: string; holdMs?: number } = {}) {
+export async function createBookingSandboxProvider(options: { databasePath?: string; port?: number; sourceToken?: string; paToken?: string; holdMs?: number; ownerKey?: string } = {}) {
+  const localOwner=digest(ownerIdentitySchema.parse(options.ownerKey??JSON.stringify(['local-development','local','developer'])));
   const path = options.databasePath ?? ':memory:'; if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;

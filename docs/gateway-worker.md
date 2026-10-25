@@ -1,6 +1,6 @@
 # Gateway、Worker 与共用任务核心
 
-可选的 `EIGOS_SECURITY_MODE=foundation` 已接入 [S2–S4 三层权限](security-s2-s4.md)，默认 legacy 保留现有行为。foundation v2 使用新持久任务库和 `worker-security-v2` 队列；Gateway／Worker 的 mode、数据库及策略定义摘要必须一致。Worker 从业务库读取短期身份投影和当前任务授权，不读取会员库；旧 foundation 头／旧 Worker 被拒绝。协议已走共同安全视图，旧实例迁移及真实部署仍属待完成的 S5。
+可选的 `EIGOS_SECURITY_MODE=foundation` 已接入 [S2–S4 三层权限](security-s2-s4.md)，默认 legacy 保留现有行为。foundation v2 使用新持久任务库和 `worker-security-v2` 队列；Gateway／Worker 的 mode、数据库及策略定义摘要必须一致。Worker 从业务库读取短期身份投影和当前任务授权，不读取会员库；旧 foundation 头／旧 Worker 被拒绝。协议已走共同安全视图，[S5](security-s5.md) 已实现离线复制迁移并核对常驻快照；当前常驻仍为 legacy，真实登录验收与切换尚未完成。
 
 ## 目录与职责
 
@@ -89,3 +89,5 @@ Docker 镜像默认启动 Gateway，也包含构建后的 Worker 代码。Worker
 常驻安装可设置 `EIGOS_FREE_BOOKING_BROWSER_CONFIG=/absolute/private/browser.json` 后运行 `npm run setup:pa`。该私有配置包含已固定账号摘要、独立 Worker／操作代理凭据文件、来源队列／证据目录、端口及常驻 `tasks.sqlite` 的准确路径。安装前检查账号绑定、凭据角色和任务库；安装器保留这些配置，并将独立 `participant-browser` 进程与 Gateway／Worker 一起置于同一不可变版本和启停管理下。任一子进程退出会停止其余进程，安装器须同时回读 Gateway 和来源健康及版本才确认就绪。队列在线不表示浏览器操作代理在线。
 
 后续不传配置会保留原绑定；显式 `EIGOS_FREE_BOOKING_BRIDGE_URL=''` 关闭来源。其他已配置的外部本机桥接仍可使用四项 `EIGOS_FREE_BOOKING_*` 设置。旧的临时会话库和已完成报名不复制到常驻任务库，也不重新提交。部署只改变代码及受控配置，不生成新的报名许可。
+
+S5 个人来源在非 production、本机监听、HTTPS public origin 的 foundation JWT 实例中，可用 `EIGOS_PERSONAL_SOURCE_OWNER` 显式绑定一个规范会员身份；凭据存在本身不赋予任何安装来源许可。可选 `EIGOS_MANAGED_COMMERCE_SANDBOX=true` 由本地进程组启动独立的合成来源，必须同时设置绝对私有 `EIGOS_COMMERCE_SANDBOX_DATABASE`、端口以及匹配的 loopback URL。它只用于隔离沙箱。

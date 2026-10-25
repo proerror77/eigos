@@ -119,7 +119,7 @@ export class ExecutionCatalog {
       return {
       bindingId:`program:${program.ref.id}`,programId:program.ref.id,programDigest:program.configurationDigest,
       name:program.capability().name,operations:[...program.actionIds,...(program.observeOriginal?['recover_original']:[])],
-      outputTypes:[...new Set([...objects,...program.actionIds.flatMap(id=>{
+      outputTypes:[...new Set([...(program.projectionTypes??objects),...program.actionIds.flatMap(id=>{
         const action=businessModel.action(id); return [...Object.values(action.inputs),...action.changes.map(c=>c.split('.')[0]!)];
       })])].filter(t=>businessModel.hasType(t) && !businessModel.isInterface(t) && t!=='ServiceRequest'),
     };});

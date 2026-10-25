@@ -19,6 +19,7 @@ import { SCOPES } from '../packages/core/domain.js';
 import { MemberStore } from '../packages/members/store.js';
 import { MEMBERSHIP_SCOPE, type AdmissionPolicy } from '../packages/members/agents.js';
 import { AgentConnector } from '../packages/agent-client/client.js';
+import {businessModel} from '../packages/ontology/business-model.js';
 
 const profile = { displayName: 'Delegated member', locale: 'zh-CN' as const, timezone: 'Asia/Shanghai' };
 const identity = { issuer: 'https://idp.fixture', subject: 'alice', tenant: 'one' };
@@ -62,7 +63,7 @@ test('registration and invitation credentials are hashed; owner-bound invitation
   assert.equal(statSync(path).mode & 0o777, 0o600); rmSync(directory, { recursive: true, force: true });
 });
 
-async function fixture(policy: AdmissionPolicy = 'self-service') {
+async function fixture(policy: AdmissionPolicy = 'self-service',foundation=false) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-agent-http-'));
   const keys = await generateKeyPair('ES256');
   const jwk = { ...await exportJWK(keys.publicKey), kid: 'onboarding', alg: 'ES256', use: 'sig' };
@@ -70,9 +71,9 @@ async function fixture(policy: AdmissionPolicy = 'self-service') {
   const address = server.address(); assert(address && typeof address !== 'string');
   const http = `http://127.0.0.1:${address.port}`, base = `https://127.0.0.1:${address.port}`, issuer = identity.issuer;
   const config: Config = { ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(directory, 'tasks.sqlite') }),
-    EIGOS_AUTH_MODE: 'jwt', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: base, OAUTH_JWKS_URL: issuer + '/jwks', OIDC_AGENT_CLIENT_ID: 'connector', EIGOS_MEMBERSHIP_APPROVAL: policy };
+    EIGOS_AUTH_MODE: 'jwt', EIGOS_SECURITY_MODE:foundation?'foundation':'legacy', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: base, OAUTH_JWKS_URL: issuer + '/jwks', OIDC_AGENT_CLIENT_ID: 'connector', EIGOS_MEMBERSHIP_APPROVAL: policy };
   const gateway = createApp(config, jwtVerifier(issuer, base, createLocalJWKSet({ keys: [jwk] }))); server.on('request', gateway.app);
-  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); worker.start();
+  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); if(!foundation)worker.start();
   let exchanges = 0, refreshes = 0, failRefresh = false;
   const sign = (subject = 'alice', enroll = true, scopes: string[] = [...SCOPES, MEMBERSHIP_SCOPE], expires = 300) => new SignJWT({ tenant_id: 'one', client_id: 'connector', scope: scopes.join(' '), [enrollmentClaim(base)]: enroll })
     .setProtectedHeader({ alg: 'ES256', kid: jwk.kid, typ: 'at+jwt' }).setIssuer(issuer).setAudience(base).setSubject(subject).setJti(randomUUID()).setIssuedAt().setExpirationTime(Math.floor(Date.now() / 1000) + expires).sign(keys.privateKey);
@@ -205,4 +206,31 @@ test('lost binding acknowledgement resumes the original registration without ano
     assert.equal((await resumed.registerMembership(profile, true)).status, 'active');
     assert.equal(f.gateway.members.list().length, 1);
   } finally { await f.close(); }
+});
+
+test('two independently enrolled JWT connectors use foundation v2 and never fall back after cross-installation denial',async()=>{
+  const f=await fixture('self-service',true),clients:AgentConnector[]=[];
+  try {
+    const until=new Date(Date.now()+3600000).toISOString(),policy=f.gateway.store.security.policies;
+    for(const name of ['A','B']) {
+      const agent=await AgentConnector.open({baseUrl:f.base,credentialPath:join(f.directory,name,'credentials.json'),displayName:'Scoped '+name,fetch:f.fetcher});
+      await agent.beginAuthorization();await agent.finishAuthorization();await agent.registerMembership(profile,true);
+      await assert.rejects(agent.accessToken(),/data_authorization_required/);
+      f.gateway.security!.approveAgentGrant(f.gateway.members.list()[0]!.id,{installationId:agent.registrationId,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision']}],sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:until});
+      policy.setRole({subjectKind:'installation',subjectId:agent.registrationId,resource:{kind:'namespace',id:businessModel.ref.id,version:businessModel.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
+      policy.setRecipient(agent.registrationId,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+      assert.equal((await agent.authorizationContext()).installationId,agent.registrationId);clients.push(agent);
+    }
+    const requestId=randomUUID(),tasks=[];
+    for(const [i,agent] of clients.entries()) {
+      const response=await agent.fetch('/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:'eigos.delegate',requestId,goal:'Private synthetic task '+i})});assert.equal(response.status,200,JSON.stringify(await response.clone().json()));
+      const task=await response.json();assert.equal(task.view,'eigos.task.v2');tasks.push(task);
+      const query=await agent.queryOntology(task.id,{object:{type:'ServiceRequest',id:task.id}});assert.equal(query.version,2);assert.equal(query.items[0].properties.originalGoal,'Private synthetic task '+i);
+      await assert.rejects(agent.queryOntology(task.id,{object:{type:'ServiceRequest',id:task.id}},0));
+    }
+    assert.notEqual(tasks[0].id,tasks[1].id);
+    await assert.rejects(clients[1]!.queryOntology(tasks[0].id,{object:{type:'ServiceRequest',id:tasks[0].id}}),/task_permission_required|gateway_http_404/);
+    assert.equal((await clients[0]!.checkAccess({taskId:tasks[0].id,operation:'task.query',object:{type:'ServiceRequest',id:tasks[0].id}})).allowed,true);
+    await clients[0]!.revoke();await assert.rejects(clients[0]!.authorizationContext(),/revoked/);assert.equal((await clients[1]!.authorizationContext()).installationId,clients[1]!.registrationId);
+  }finally{await f.close();}
 });

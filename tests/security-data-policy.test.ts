@@ -9,6 +9,7 @@ import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import type { Principal } from '../packages/core/domain.js';
 import {syntheticOntology} from './fixtures/ontology-objects.js';
+import {authorizationScope} from '../packages/security/context.js';
 
 function fixture(extraTypes:string[]=[]) {
   const f = securityFixture(), rawDb = new DatabaseSync(f.database), raw = new OntologyObjectStore(rawDb), a = f.installation('A'), b = f.installation('B');
@@ -53,6 +54,36 @@ test('resource Viewer is independent of data grants; schema does not grant anoth
     assert.ok(f.vb.describe({search:'Place'}).types.length);
     assert.throws(()=>f.jobs.ontology.read(f.owner,{type:'Place',id:'A'}),/AUTHORIZATION_REQUIRED/);
   } finally {f.close();}
+});
+
+for(const connection of ['current','separate'] as const)test(`synchronous read checkpoints detect grant revocation from the ${connection} database connection`,()=>{
+  const f=fixture();try {
+    f.role(f.a.id);const task=f.task(f.a),policy=f.jobs.security.policies;
+    assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      authorizationScope()!.assertCurrent();
+      if(connection==='current')f.jobs.security.revokeGrant(f.owner,task.grant.id,task.grant.revision);
+      else {const db=new DatabaseSync(f.database);try{db.prepare("UPDATE security_grants SET state='revoked' WHERE id=?").run(task.grant.id);}finally{db.close();}}
+      authorizationScope()!.assertCurrent();assert.fail('A revoked read must not return');
+    })),/AUTHORIZATION_REQUIRED|POLICY_CHANGED|ACCESS_REVOKED/);
+  }finally{f.close();}
+});
+
+test('synchronous read checkpoint does not survive eligibility expiry',()=>{
+  let now=Date.now();const f=securityFixture(()=>now);try {
+    const a=f.installation('Expiring');f.approve(a.id);const p={...f.principal,access:f.coordinator.authenticate(f.principal,a.token)};
+    assert.throws(()=>f.jobs.security.withAgent(p,undefined,'task.process',()=>f.jobs.security.policies.readSnapshot(()=>{now+=120000;authorizationScope()!.assertCurrent();})),/AUTHORITY_UNAVAILABLE|ACCESS_REVOKED/);
+  }finally{f.close();}
+});
+
+test('a rejected asynchronous read cannot retain the synchronous authorization checkpoint',async()=>{
+  const f=fixture();let late:Promise<void>|undefined;
+  try {
+    f.role(f.a.id);const task=f.task(f.a);
+    assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>f.jobs.security.policies.readSnapshot(()=>{
+      late=Promise.resolve().then(()=>authorizationScope()!.assertCurrent());return late;
+    })),/must be synchronous/);
+    await assert.rejects(late!,/AUTHORIZATION_REQUIRED/);
+  }finally{f.close();}
 });
 
 test('definition review separates edit/manage from execution and checks both old and new link endpoints',()=>{

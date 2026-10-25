@@ -40,7 +40,7 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: safe ? {service:job.service,view:safe.view,outputStatus:safe.outputStatus,...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.error?{error:safe.error}:{})}
+    metadata: safe ? {service:job.service,view:safe.view,outputStatus:safe.outputStatus,...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.error?{error:safe.error}:{})}
       : { service: job.service, ...(job.delegation ? { delegation: job.delegation } : {}), ...(job.afterSales ? { afterSales: job.afterSales } : {}), ...(job.runs ? { runs: job.runs } : {}), ...(job.error ? { error: job.error } : {}) },
   });
 }

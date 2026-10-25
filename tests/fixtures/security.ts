@@ -17,10 +17,10 @@ export function securityFixture(now: () => number = Date.now) {
   const member = members.login(principal);
   members.apply(member.id, { displayName: 'Synthetic Alice', locale: 'zh-CN', timezone: 'Asia/Shanghai', consent: true }, false);
   const owner = ownerKey(principal);
-  function installation(name: string) {
+  function installation(name: string,tokenLifetimeMs=60000) {
     const id = randomUUID(), credential = 'a'.repeat(43), token = `synthetic-${randomUUID()}`;
     members.agents.create({ registrationId: id, displayName: name }, credential);
-    members.agents.bind(id, credential, principal, member.id, token, Date.now() + 60000, Date.now(), true);
+    members.agents.bind(id, credential, principal, member.id, token, Date.now() + tokenLifetimeMs, Date.now(), true);
     members.authorize(principal);
     return { id, credential, token };
   }

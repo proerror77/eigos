@@ -35,6 +35,7 @@ if (existsSync(ownership) && JSON.parse(read(ownership)).sourceRoot !== root) th
 const previousPlist = read(plistPath);
 if (previousPlist && !previousPlist.includes(xml(envPath)) && !previousPlist.includes(xml(runtimeEnv))) throw new Error('LaunchAgent belongs to another runtime');
 const oldSettings = read(runtimeEnv) || read(envPath);
+if(field(oldSettings,'EIGOS_SECURITY_MODE')==='foundation')throw new Error('Use the reviewed foundation rollout; legacy setup cannot replace foundation authentication or data');
 if (oldSettings && !oldSettings.startsWith(marker) && !oldSettings.startsWith(oldMarker)) throw new Error('Existing settings are not owned by this setup');
 const token = field(oldSettings, 'EIGOS_DEV_TOKEN') ?? randomBytes(32).toString('hex');
 if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Existing runtime credential is invalid');
@@ -82,7 +83,7 @@ const ontologyFiles = readdirSync(join(sourceRoot, 'ontology')).filter(name => n
   if (!existsSync(join(sourceRoot, path)) || !readFileSync(join(sourceRoot, path)).equals(readFileSync(join(sourceRoot, 'ontology', name)))) throw new Error('Run npm run ontology:sync before updating the runtime');
   return path;
 });
-const files = [...sourceFiles.map(path => 'dist/' + path.slice(sourceRoot.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
+const files = [...sourceFiles.map(path => 'dist/' + path.slice(sourceRoot.length + 1).replace(/\.ts$/, '.js')), ...ontologyFiles, 'dist/packages/security/baseline.json', 'scripts/run-local.mjs', 'package.json', 'package-lock.json'];
 const fingerprint = createHash('sha256');
 for (const path of files) { fingerprint.update(path + '\0'); fingerprint.update(readFileSync(join(sourceRoot, path))); }
 const buildDigest = fingerprint.digest('hex');

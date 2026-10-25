@@ -9,11 +9,11 @@ import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.j
 import type { ObjectBatch, ObjectSource, ObjectView } from '../ontology/object-store.js';
 import { POLICY_VERSION, SECURITY_CONTRACT, resourceDefaults, resourceRefSchema, securityEnvelopeSchema,grantRefSchema } from './contracts.js';
 import { SecurityError, type SecurityStore, type TaskDataGrant } from './store.js';
-import { authorizationScope, withInference,withIntegrity, type AuthorizationScope } from './context.js';
+import { authorizationScope, withAuthorization,withInference,withIntegrity, type AuthorizationScope } from './context.js';
 import { combineEnvelopes, requireChannel, type SecurityEnvelope, type Channel } from './envelope.js';
 import { submissionDigest,accessDigest } from './model.js';
 import type { ActionIntent, ExecutionAttempt } from '../ontology/actions.js';
-import {projectionFields,projectedValue,integrityField,integrityFunctions,projectionContract,projectionInputs} from './projections.js';
+import {projectionFields,projectedValue,integrityField,integrityFunctions,projectionContract,projectionInputs,projectionMarkings,responseOnlyProjection} from './projections.js';
 import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
 
@@ -38,7 +38,7 @@ export class SecurityPolicies {
   readonly definitionDigest:string;
   private roleCache=new WeakMap<AuthorizationScope,z.infer<typeof roleSchema>[]>();
   private labelCache=new WeakMap<AuthorizationScope,Map<string,{field:string;body:Record<string,unknown>}[]>>();
-  constructor(private db: DatabaseSync, readonly security: SecurityStore) {
+  constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {
     const existing=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy'").get();
     const definitions=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy_definitions'").get();
     const expected=digest({model:businessModel.ref,fields:baseline.types,projection:projectionContract,roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
@@ -47,10 +47,11 @@ export class SecurityPolicies {
     if(security.enabled && existing) {
       const revision=db.prepare('SELECT revision FROM security_policy WHERE slot=1').get()?.revision;
       if(!Number.isSafeInteger(revision) || Number(revision)<1)throw new Error('Security policy authority is missing; explicit recovery is required');
-      for(const name of ['security_roles','security_sources','security_bindings','security_cursors','security_outputs','security_reads','security_artifacts','security_model_channels','security_recipients','security_object_origins','security_labels','security_recoveries']) {
+      for(const name of ['security_roles','security_sources','security_bindings','security_cursors','security_outputs','security_reads','security_artifacts','security_model_channels','security_recipients','security_object_origins','security_labels','security_recoveries','security_private_views']) {
         if(!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))throw new Error('Security policy table is missing; explicit recovery is required');
       }
     }
+    if(readOnly)return;
     db.exec(`CREATE TABLE IF NOT EXISTS security_policy(slot INTEGER PRIMARY KEY CHECK(slot=1),revision INTEGER NOT NULL);
       INSERT OR IGNORE INTO security_policy VALUES(1,1);
       CREATE TABLE IF NOT EXISTS security_roles(id TEXT PRIMARY KEY,subject_id TEXT NOT NULL,body TEXT NOT NULL);
@@ -61,7 +62,8 @@ export class SecurityPolicies {
       CREATE TABLE IF NOT EXISTS security_outputs(owner TEXT NOT NULL,task_id TEXT NOT NULL,output_id TEXT NOT NULL,content_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,task_id,output_id));
       CREATE TABLE IF NOT EXISTS security_reads(grant_id TEXT NOT NULL,digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(grant_id,digest));
       CREATE TABLE IF NOT EXISTS security_artifacts(id TEXT PRIMARY KEY,owner TEXT NOT NULL,task_id TEXT NOT NULL,name TEXT NOT NULL,media_type TEXT NOT NULL,content BLOB NOT NULL,content_digest TEXT NOT NULL,envelope TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS security_model_channels(id TEXT PRIMARY KEY,body TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS security_model_channels(id TEXT PRIMARY KEY,body TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS security_private_views(owner TEXT NOT NULL,type TEXT NOT NULL,object_id TEXT NOT NULL,field TEXT NOT NULL,content_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,type,object_id,field));`);
     db.exec('CREATE TABLE IF NOT EXISTS security_policy_definitions(slot INTEGER PRIMARY KEY CHECK(slot=1),digest TEXT NOT NULL);');
     db.prepare('INSERT OR IGNORE INTO security_policy_definitions VALUES(1,?)').run(expected);
     db.exec(`CREATE TABLE IF NOT EXISTS security_recipients(installation_id TEXT PRIMARY KEY,body TEXT NOT NULL);
@@ -208,7 +210,29 @@ export class SecurityPolicies {
     return value.fields[field]!;
   }
   fields(type:string) {return {...businessModel.properties(type),...projectionFields(type)};}
-  value(type:string,field:string,properties:Record<string,unknown>) {return projectedValue(type,field,properties);}
+  value(type:string,field:string,properties:Record<string,unknown>) {
+    if(!responseOnlyProjection(type,field) || Object.hasOwn(properties,field))return projectedValue(type,field,properties);
+    const scope=authorizationScope(),id=properties[businessModel.object(type).primaryKey];if(!scope || typeof id!=='string')return;
+    const row=this.db.prepare('SELECT content_digest,body FROM security_private_views WHERE owner=? AND type=? AND object_id=? AND field=?').get(scope.actor.ownerKey,type,id,field);
+    if(!row)return;const body=JSON.parse(String(row.body));if(digest(body)!==row.content_digest)throw new SecurityError('POLICY_CHANGED');
+    return projectionFields(type)[field]!.schema.parse(body);
+  }
+  storePrivateView(owner:string,ref:ObjectRef,field:string,input:unknown) {
+    const scope=this.scope(owner);
+    if(scope.actor.actorKind!=='worker' || !scope.projection || !responseOnlyProjection(ref.type,field))throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const binding=this.requireObject(owner,ref);if(!binding.fields.includes(field))return;
+    const value=projectionFields(ref.type)[field]!.schema.parse(input),fingerprint=digest(value);
+    const old=this.db.prepare('SELECT content_digest FROM security_private_views WHERE owner=? AND type=? AND object_id=? AND field=?').get(owner,ref.type,ref.id,field);
+    if(old && old.content_digest!==fingerprint)throw new SecurityError('POLICY_CHANGED');
+    this.db.prepare('INSERT OR IGNORE INTO security_private_views VALUES(?,?,?,?,?,?)').run(owner,ref.type,ref.id,field,fingerprint,JSON.stringify(value));
+  }
+  responseOnlyValue(owner:string,ref:ObjectRef,field:string) {
+    const scope=this.scope(owner),binding=this.requireObject(owner,ref);
+    if(scope.actor.actorKind!=='worker' || !responseOnlyProjection(ref.type,field) || !binding.fields.includes(field))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const value=this.value(ref.type,field,{[businessModel.object(ref.type).primaryKey]:ref.id});if(value===undefined)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const envelope=combineEnvelopes([this.envelope(owner,ref,binding.revision,[field],{[field]:value},scope.grant!.channels),...(binding.inputEnvelope?[binding.inputEnvelope]:[])]);
+    this.validateLineage(scope,envelope);this.capture(scope,envelope);return value;
+  }
   integrityAllowed(type:string,field:string,allowed:string[]) {return integrityField(type,field,allowed);}
   envelope(owner: string, ref: ObjectRef, revision: number, fields: string[], properties: Record<string, unknown>, channels: Channel[]): SecurityEnvelope {
     const policies = fields.map(f => this.fieldPolicy(ref.type, f));
@@ -216,7 +240,8 @@ export class SecurityPolicies {
     const result:SecurityEnvelope={ version: SECURITY_CONTRACT, ownerKey: owner, policyVersion: POLICY_VERSION, requiredMarkings: policies.includes('task_sensitive') ? ['member_private', 'personal_data'] : ['member_private'],
       classification: policies.includes('internal_only') ? 'internal' : policies.includes('task_sensitive') ? 'sensitive' : 'private', channels,
       lineage: [{ object: ref, revision, fields: dependencies, contentDigest: digest(Object.fromEntries(dependencies.map(f => [f, this.value(ref.type,f,properties)]))) }], lineageComplete: true };
-    if(dependencies.includes('observedData')) result.requiredMarkings=[...new Set([...result.requiredMarkings,'precise_location' as const,'financial' as const])];
+    result.requiredMarkings=[...new Set([...result.requiredMarkings,...fields.flatMap(field=>projectionMarkings(ref.type,field))])];
+    if(fields.some(field=>responseOnlyProjection(ref.type,field)))result.channels=result.channels.filter(channel=>channel!=='registered_model');
     const scope=authorizationScope(),key=JSON.stringify([owner,ref.type,ref.id]);
     let cache=scope?this.labelCache.get(scope):undefined;if(scope && !cache){cache=new Map();this.labelCache.set(scope,cache);}
     let records=cache?.get(key);
@@ -260,14 +285,35 @@ export class SecurityPolicies {
       }
     }
   }
+  /** A single synchronous read keeps repeated authority checks cheap. Local DB
+   * writes and commits from another connection invalidate it immediately; time
+   * bounds and a full exit check prevent a lease/consent expiry escaping it.
+   * It never spans source calls, promises, dispatch or another model tool call. */
+  readSnapshot<T>(action:()=>T):T {
+    const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
+    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${this.db.prepare('SELECT total_changes() AS n').get()!.n}`;
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>();
+    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
+    const validUntil=Math.min(...validity);
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at)bindings.clear();if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=now;}};
+    try {
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,assertCurrent:current},()=>{
+        const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
+      });
+    }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
+  }
   binding(scope: AuthorizationScope, ref: ObjectRef, revision?: number): ObjectBinding | undefined {
     scope.assertCurrent();
     if(!scope.grant)return;
+    if(scope.readBindings?.has(refKey(ref))) {
+      const cached=scope.readBindings.get(refKey(ref)) as ObjectBinding | undefined;
+      return cached && (revision===undefined || cached.revision===revision)?cached:undefined;
+    }
     // One bounded read shares verified authority and dependency results. Recheck
     // at its end; never carry this memo across a tool call, write or async turn.
     const parent=this.security.agentGrant(scope.actor.installationId),clearance=this.recipient(scope.actor.installationId);
     const sources=this.sources(scope.actor.ownerKey,scope.actor.installationId),roles=this.roles(scope.actor.memberId,scope.actor.installationId);
-    const checked=new Map<string,ObjectBinding|undefined>();
+    const checked=scope.readBindings as Map<string,ObjectBinding|undefined> | undefined ?? new Map<string,ObjectBinding|undefined>();
     const read=(ref:ObjectRef,revision?:number):ObjectBinding|undefined=>{
       const key=refKey(ref);
       if(checked.has(key)){const cached=checked.get(key);return cached && (revision===undefined || cached.revision===revision)?cached:undefined;}

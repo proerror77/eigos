@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-25",
+  "securityMode": "foundation-v2",
+  "currentResidentMode": "legacy",
+  "snapshotRehearsal": {
+    "verified": true,
+    "sourceDigest": "8ed8d5ca1cacb4ea6f527e80dbfe7e759aa8a101d68e96b10af6794cfd4b15ba",
+    "tasks": 48,
+    "objects": 568,
+    "links": 1053,
+    "intents": 114,
+    "attempts": 114,
+    "observations": 114,
+    "idempotencyReceipts": 55,
+    "businessPlanGrants": 3,
+    "budgetRows": 3,
+    "files": 130,
+    "assetGroups": 5,
+    "verifiedCandidateObjects": 26,
+    "archivedUnmappedOrHistoricalObjects": 542,
+    "activeBindings": 0,
+    "permissionsGranted": 0,
+    "sourceSnapshotsUnchanged": true
+  },
+  "sourceCoverage": [
+    "didi-readonly",
+    "shopify-catalog",
+    "meituan-geo",
+    "meituan-addresses",
+    "meituan-delivery-quote",
+    "participant-existing-registration-read",
+    "participant-original-operation-audit",
+    "synthetic-commerce-quote",
+    "synthetic-free-booking"
+  ],
+  "identityAcceptance": {
+    "provider": "existing Auth0",
+    "pendingInstallations": 2,
+    "boundInstallations": 0,
+    "realDualInstallationPassed": false,
+    "reason": "User cannot complete device login at this time",
+    "providerSettingsChanged": false,
+    "isolationServerStopped": true,
+    "pollersStopped": true
+  },
+  "cutover": {
+    "privateProposalPrepared": true,
+    "candidateSettingsValidated": true,
+    "readyForActivation": false,
+    "residentSwitched": false,
+    "postCutoverReadbackPassed": false,
+    "realBusinessWritesPerformed": false
+  },
+  "verification": {
+    "fullSuite": {
+      "command": "npm test",
+      "passed": 682,
+      "failed": 0,
+      "durationMs": 399653.187334,
+      "note": "A final synchronous-scope lifetime regression was added afterward; the 25 affected checks and 11 compiled E2E checks passed again."
+    },
+    "compiledFocused": {
+      "passed": 4,
+      "failed": 0
+    },
+    "inventory": {
+      "types": 103,
+      "properties": 823,
+      "surfaces": 83
+    },
+    "ci": "Recorded separately by the exact commit workflow and final delivery readback",
+    "typecheck": "passed",
+    "sourceDiffCheck": "passed",
+    "finalReviewRegressions": {
+      "passed": 25,
+      "failed": 0,
+      "includes": "JWT connector constraints, synchronous-scope lifetime, data policy, output and Worker"
+    },
+    "compiledE2E": {
+      "command": "npm run test:e2e:run",
+      "passed": 11,
+      "failed": 0,
+      "durationMs": 16461.820709
+    },
+    "build": "passed",
+    "migrationAndInventoryFinal": {
+      "passed": 12,
+      "failed": 0
+    },
+    "pristineMigrationReadback": "passed"
+  }
+}

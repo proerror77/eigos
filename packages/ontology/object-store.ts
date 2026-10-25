@@ -9,6 +9,7 @@ import type { SecurityPolicies } from '../security/policy-store.js';
 import { authorizationScope } from '../security/context.js';
 import { SecurityError } from '../security/store.js';
 import {accessDigest} from '../security/model.js';
+import {responseOnlyProjection,projectFunctionValue} from '../security/projections.js';
 
 const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
@@ -161,6 +162,9 @@ export class OntologyObjectStore {
     const guard = this.guard(), binding = guard?.requireObject(owner, object.ref, object.revision);
     const selected = select ?? Object.keys(this.properties(target)).filter(k => { const p = this.properties(target)[k]!; return !p.restricted && !p.derived; });
     for (const name of selected) {
+      if(guard && authorizationScope()?.actor.actorKind==='worker' && responseOnlyProjection(object.ref.type,name)) {
+        if(select?.includes(name))throw new SecurityError('INSUFFICIENT_ACCESS');continue;
+      }
       const p = this.properties(target)[name];
       if (!p) failure('Unknown property');
       if (p.restricted) throw new DomainError('FORBIDDEN', 'Property is not available through the agent query interface');
@@ -191,6 +195,9 @@ export class OntologyObjectStore {
     return value;
   }
   query(owner: string, input: ObjectQuery, budget: ReadBudget = { remaining: 1000 }) {
+    return this.security?this.security.readSnapshot(()=>this.queryRaw(owner,input,budget)):this.queryRaw(owner,input,budget);
+  }
+  private queryRaw(owner: string, input: ObjectQuery, budget: ReadBudget) {
     const args = objectQuerySchema.parse(input);
     const guard = this.guard(), scope = guard?.scope(owner);
     const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined });
@@ -292,6 +299,9 @@ export class OntologyObjectStore {
     return result.page.hasMore ? undefined : result.items;
   }
   evaluate(owner: string, input: unknown, budget: ReadBudget = { remaining: 1000 }) {
+    return this.security?this.security.readSnapshot(()=>this.evaluateRaw(owner,input,budget)):this.evaluateRaw(owner,input,budget);
+  }
+  private evaluateRaw(owner: string, input: unknown, budget: ReadBudget) {
     const revision = this.revision(owner);
     const args = functionCallSchema.parse(input), definition = this.model.function(args.function);
     if (!definition.inputTypes.some(t => this.model.implements(args.object.type, t))) failure('Function requires its registered object type');
@@ -305,7 +315,7 @@ export class OntologyObjectStore {
     }
     const functionRef={id:definition.id,version:definition.version};
     const model=this.security?{id:this.model.ref.id,version:'authorized.v2',digest:digest({functionRef,access:accessDigest()})}:this.model.ref;
-    const result = { ...computation, functionRef, model };
+    const result = { ...computation,...(guard && computation.status==='known'?{value:projectFunctionValue(args.function,args.object.type,computation.value)}:{}), functionRef, model };
     if (Buffer.byteLength(JSON.stringify(result)) > 64000) throw new DomainError('CONFLICT', 'Function response limit exceeded; narrow the investigation');
     if (this.revision(owner) !== revision) throw new DomainError('CONFLICT', 'Objects changed during calculation; retry against the current revision');
     return result;

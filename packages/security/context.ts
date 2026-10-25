@@ -16,6 +16,8 @@ export interface AuthorizationScope {
   projection?: { programId: string; programDigest: string; sourceBindingId: string };
   inference?: boolean;
   integrity?: boolean;
+  synchronousRead?: boolean;
+  readBindings?: Map<string,unknown>;
 }
 const contexts = new AsyncLocalStorage<AuthorizationScope>();
 export const authorizationScope = () => contexts.getStore();

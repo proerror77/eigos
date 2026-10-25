@@ -1350,7 +1350,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "53e813968f8124b2b97eb3b294440c4bdb5c710a47512044dfe5a5c2073bc79e",
+      "sourceDigest": "da4a5f1b271ba1c75590ded220a696040040f8a5a12f613a68ec6c43c4978afb",
       "channels": [
         "http"
       ],
@@ -1374,7 +1374,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "40fe374204073c6251640c0044759a640c3f78391576d0c7c7acbcd8898d735f",
+      "sourceDigest": "adbb869091051fcc644965e552e43b9499bae593a40af97f58ec8c61ddb27d10",
       "channels": [
         "a2a"
       ],
@@ -1413,7 +1413,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "38edc06e19353db35f454b2300483200433c69cdba4530c060c886d720e38f08",
+      "sourceDigest": "51410185e3417f786312f478502cddc8c4939d4feb5e9f4a8ca930d132a58c95",
       "channels": [
         "query",
         "function"
@@ -1474,7 +1474,7 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "9fd2e2ee4db0eb06b1e553a3e3caf5db87ad096ea5232b44a04d9174d9890e7a",
+      "sourceDigest": "ccb7c4487a9d676ecf4379d4f627de4af61c41fc9f9f4105dc82cbb84dee063c",
       "channels": [
         "http"
       ],
@@ -1498,7 +1498,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "ba717d7a23706a62c905bacc1df821eabbdc714ff7b241c806c7892ea7558b14",
+      "sourceDigest": "37daf02050520628dabd04491483a874aa1432fafadce489731bf321aa471e40",
       "channels": [
         "model",
         "query"
@@ -1550,7 +1550,7 @@
     {
       "id": "model-session",
       "file": "packages/capabilities/model-session.ts",
-      "sourceDigest": "bbbf80f822f0ecf80418650d37ecd1e44a31fd3b620c357e7c4489eb4237e092",
+      "sourceDigest": "2a2ba7c07380fc77b300f662c7ef18a0e55563fc104d9d61fbe6a69282bf2c7c",
       "channels": [
         "registered_model"
       ],
@@ -1598,7 +1598,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "d478c088defc7a45388d89c853a7b58bfe77c06f0dd7b7a7e2b87b0e32b0bd9b",
+      "sourceDigest": "c374ad7af22f87ea56966310e4e2bc3de5f6566b4e07ed72628053854ae8fad5",
       "channels": [
         "registered_model",
         "private_file"
@@ -1611,7 +1611,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "99b4f8b2f25d59a8db81c54bd9f09f72c2b1c4c1f8c687f92b85db00f52bb7ab",
+      "sourceDigest": "1e14ea5ffd880a390b5dc3715d5f87d940fdb9367f1bb5e27425128ad9017f5c",
       "channels": [
         "source",
         "dispatch"
@@ -1675,7 +1675,7 @@
     {
       "id": "booking-bridge",
       "file": "packages/capabilities/free-booking/browser-bridge.ts",
-      "sourceDigest": "54dba39dcd654931d85884edca031c2bb87eabec0ad3a560d2c510f32b850837",
+      "sourceDigest": "70b832fd08949b51f17bacecf9147f220feee3277635040e25b6cb64ab4dbfda",
       "channels": [
         "source",
         "private_file"
@@ -1688,7 +1688,7 @@
     {
       "id": "participant-app",
       "file": "apps/participant-browser/main.ts",
-      "sourceDigest": "20f10668e95ffbddb7f17648d51518d8a4636ea6693d785e89fae45b4bf09ac5",
+      "sourceDigest": "444c03948079540e48c22b3f6e71368b32872726ee884ecc1648c36a863d4b5b",
       "channels": [
         "http",
         "private_file"
@@ -1805,7 +1805,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "6827e99253fce62eebadc5b083c4b82b4b5b3732812f54508349b7b02b86187c",
+      "sourceDigest": "290d3cdff991987d24b578928466d7dba4ffe53561472156cbb908684f508a05",
       "channels": [
         "authorization_control"
       ],
@@ -1829,7 +1829,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "3ab3b55c8bae52209c78042373059119f4790b93e8b73881bd0dc7a7efb80b8e",
+      "sourceDigest": "2979498200a8153c5b9e324b26f092882bdc608973c7363a08169c5f33dc7f21",
       "channels": [
         "authorization_control"
       ],
@@ -1841,7 +1841,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "5ce8bd09082532a463707cefe5774b88a07837e06759fba21e710193fabeb893",
+      "sourceDigest": "be77cda8ffe13902e5f4cd3ee62bd4a64c13893336a08d824a63e7467634ef6a",
       "channels": [
         "authorization_control"
       ],
@@ -1865,7 +1865,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "97fc85569d771bbfc35216acac3084631693fe870b3bb07062cb69af9f1c1aea",
+      "sourceDigest": "b17f8cd7c809cf098db121de8774e082f598bba6663aac73a7538bdbd88d35ec",
       "channels": [
         "authorization_control"
       ],
@@ -1889,7 +1889,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "28124cfecf95ba47bb447f8f1ba81f369d111a9b227423ce6aef41ccc26e8095",
+      "sourceDigest": "de41a7e31615235d7b69111c274de41690322fe9208c7b4c4113ca7ddf595802",
       "channels": [
         "internal"
       ],
@@ -1913,7 +1913,7 @@
     {
       "id": "security-execution",
       "file": "packages/security/execution.ts",
-      "sourceDigest": "26894ea5988c66fe932ab10e99e38c769747f2b3a845a0dce155918a86444745",
+      "sourceDigest": "42bd12455ab394e469904e72b101e4f6c46350d3b807722ec02bda953d95cce5",
       "channels": [
         "worker"
       ],
@@ -1925,7 +1925,7 @@
     {
       "id": "security-model",
       "file": "packages/security/model.ts",
-      "sourceDigest": "b7375126a2e6c811d7b48b5d5149de9b04a9bc6c3a7574f87e3ddf5368599e02",
+      "sourceDigest": "2cd67c68284339c92d87f7624315ff1d84ab5eb0c56d20c1d1b8ba13cc6fc7dd",
       "channels": [
         "model"
       ],
@@ -1937,7 +1937,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "79ee67c239e7e9912381c66d4660c16f1b722f6d59303a9d25a196f0d40e0d68",
+      "sourceDigest": "fa1497bf9fe5ff28b7ce1bc05f724029f6a6de2a068e9bbc57b65f6ab52b66e5",
       "channels": [
         "all-reads"
       ],
@@ -1949,7 +1949,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "81a53b08041d76edc435dfae80dd849094eee6d8ae985bff4db1c9e2e295e85e",
+      "sourceDigest": "3b075b591e2871f0139e86d65b4e0a8dc483d27b9144cf43e765f88d3dd441f7",
       "channels": [
         "model-and-agent"
       ],
@@ -1961,7 +1961,7 @@
     {
       "id": "security-original-recovery",
       "file": "packages/security/recovery.ts",
-      "sourceDigest": "65c4e3dbd98b611ddf59665b79dba2cb2bc3dad284faf694f1859b95c0943863",
+      "sourceDigest": "bc223f887cb656b22ccaac8b36011579de4135ad510bb1513a290fa0185d8fc0",
       "channels": [
         "audit"
       ],
@@ -1973,7 +1973,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "16d08d498f6eda5069e45d20024fd4ccdeb74c35c2edd897d2a175d91148388b",
+      "sourceDigest": "5faf3f3ff1d2efa2497a4e3fc5f3b7dc5ad6b4da5173661734b2001e30d501e8",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -2009,7 +2009,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "a8688ab2a6bcbf407f6e41017c20aa2d6c34515e73d5bf90d91f14e855e6a296",
+      "sourceDigest": "d05af7624b5b1eef3aee5d6676043e88c159c5071829f730efa281986cd44d6e",
       "channels": [
         "worker"
       ],
@@ -2021,7 +2021,7 @@
     {
       "id": "agent-program-contract",
       "file": "packages/core/agent-program.ts",
-      "sourceDigest": "fb34ddc0f1a9dbb17ad54054982ae5ed0e57ce970cc4004fe013fdee2a5fc5bf",
+      "sourceDigest": "121d111d938c19e119e0e192e5f8302b366dd6913ff85173760a063ffa6c3548",
       "channels": [
         "worker"
       ],
@@ -2069,7 +2069,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "1fb7fb3acec5416eeb5e72e98f0779d851a83a4b35de21c5a56e048d4c9558c6",
+      "sourceDigest": "f39c227acfb306d4f57aa4e69808d42e082f141906ba0a3453df076c1193b893",
       "channels": [
         "model"
       ],
@@ -2089,6 +2089,284 @@
       "currentControl": "Foundation v2: Compile all runtime surfaces and copy the reviewed field baseline",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
+    },
+    {
+      "id": "model-timing",
+      "file": "packages/capabilities/model-timing.ts",
+      "sourceDigest": "0d99621d2804abea43eb300b6538f6fc4424e01fb81015a0f7785d72118fce3d",
+      "channels": [
+        "registered_model",
+        "model",
+        "artifact"
+      ],
+      "content": "Monotonic model startup, first-output, stream and completion metadata",
+      "currentControl": "Client-observed boundaries only; no hidden reasoning or source text; unavailable generation stays null",
+      "targetControl": "Caller-scoped labeled metadata and model-channel eligibility; no new authority",
+      "stage": "S3"
+    },
+    {
+      "id": "s5-apps-booking-sandbox-main",
+      "file": "apps/booking-sandbox/main.ts",
+      "sourceDigest": "57e40f1e6cfd83d617b15e0ae52e5e5c341c3953704724e6947e750d3dcac030",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-apps-commerce-sandbox-main",
+      "file": "apps/commerce-sandbox/main.ts",
+      "sourceDigest": "c353bf4b1fd13ffa2c00c45dc831fb997f08efc3072f0efcd9c4231b46b07983",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-integrations-grok-eigos-delegate-scripts-eigos-a2a",
+      "file": "integrations/grok/eigos-delegate/scripts/eigos_a2a.py",
+      "sourceDigest": "e734e6f659fe8ca2b646bd483cbb2b738cb88bdd8180848aa1ea6355dda9da42",
+      "channels": [
+        "PA client"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-agent-client-client",
+      "file": "packages/agent-client/client.ts",
+      "sourceDigest": "e74e2f97e7c2406dbf2c38df76d9b07d41dfa2fd5052bcd0cca5a7a39587028c",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-booking-program",
+      "file": "packages/capabilities/booking/program.ts",
+      "sourceDigest": "a835d638bdac5a679b7db0a235622b6c0e2a9d98bb716af2e073c244a401a7f8",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-booking-sandbox",
+      "file": "packages/capabilities/booking/sandbox.ts",
+      "sourceDigest": "ff07a7334d438aafdd6e49e253fba5de45a2f1ed9fbdd73e8a98faa9c03a8936",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-catalog-agent",
+      "file": "packages/capabilities/catalog-agent.ts",
+      "sourceDigest": "a29fe347f86cba0ecb37e60072f8a2ede77b31fe519459d2d14c37fc54716d5b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-commerce-agent",
+      "file": "packages/capabilities/commerce-agent.ts",
+      "sourceDigest": "d6c51202a47e6cc3be4564d67d6472e8623af1962c417bc12db9eb1c47eaceba",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-didi-program",
+      "file": "packages/capabilities/didi/program.ts",
+      "sourceDigest": "62eddb946f02e957cc08ee8911a2d5e997d00806da1704c41bba7bf0b140ff5a",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-free-booking-connector",
+      "file": "packages/capabilities/free-booking/connector.ts",
+      "sourceDigest": "225055a354fe9e9c182852e50e82be868eee0c394d344b0890405d57241efae0",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-free-booking-program",
+      "file": "packages/capabilities/free-booking/program.ts",
+      "sourceDigest": "5586220562e70aa5c46ddceacccc0c9f90f5f57ac897ed5d4e52bb0a284df8b0",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-capabilities-meituan-agent",
+      "file": "packages/capabilities/meituan-agent.ts",
+      "sourceDigest": "6aec3ce2829f418e7d08c4f517677eb3735944824caeda5a67cb603eea1f302b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-ontology-customs-policy",
+      "file": "packages/ontology/customs-policy.ts",
+      "sourceDigest": "f6167846d964f639bfc676c3f249d0058eef6078439fef9b42f1a8936989164b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-inventory",
+      "file": "packages/security/inventory.ts",
+      "sourceDigest": "09de0719ff672a2c23b029ad4e8dc1f599161f2ad0129f0a2b846fc7a8a92385",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-run-local",
+      "file": "scripts/run-local.mjs",
+      "sourceDigest": "9bcb1cf1a111627420881fa3720070c263d40313b7987c083586472fe52809a0",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-setup-pa",
+      "file": "scripts/setup-pa.mjs",
+      "sourceDigest": "8a1e159598d99b70eba3e897cd388732146fd886cc1e1a0dccb46af5e23ddf61",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-core-source-owner",
+      "file": "packages/core/source-owner.ts",
+      "sourceDigest": "bd140057d3cf794e58ddd03653f7aced0cb61abda3c243fd94728655c186248f",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-migration",
+      "file": "packages/security/migration.ts",
+      "sourceDigest": "ba88e41bb4f7823fde92b5415f7671907d7459f83319efae334402e6d7f83173",
+      "channels": [
+        "offline migration"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-packages-security-source-authority",
+      "file": "packages/security/source-authority.ts",
+      "sourceDigest": "f3204ecaa8119471d0ff1490a231f3cba24571e4c7bf3e8b8d7899aaf47051e7",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-agent-enroll",
+      "file": "scripts/agent-enroll.mjs",
+      "sourceDigest": "c8616ba9b477acdc147033f38d698f1834045b46bca62b0c14ab6a0818dffe24",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-agent-request",
+      "file": "scripts/agent-request.mjs",
+      "sourceDigest": "686f50b31e8e2099e94933c4d92a71cbae9af7f698e99ddaad062d4a6ec6755b",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
+    },
+    {
+      "id": "s5-scripts-security-migrate",
+      "file": "scripts/security-migrate.mjs",
+      "sourceDigest": "7a2c3b5f756ba8120adbd31a99cbe04f60a511e6c230efa8e752b4e9a12bf22d",
+      "channels": [
+        "runtime"
+      ],
+      "content": "S5 source, client, migration or runtime integration contract",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
+      "stage": "S5"
     }
   ]
 }

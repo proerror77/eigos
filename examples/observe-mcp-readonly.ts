@@ -38,6 +38,19 @@ const delegation = job.delegation!;
 assert.equal(delegation.backendVersion, BACKEND_VERSION, 'Use a matching archived observer for historical backend evidence; never reinterpret it');
 assert(delegation.acceptance?.accepted && delegation.agent);
 assert(job.runs?.length && job.runs.every(run => run.threadId && (run.runtime === 'codex-exec' || run.runtime === 'codex-app-server' && run.turnId)), 'This observer requires actual Worker model turns, not a synthetic reasoner');
+const timingEvidence = job.runs.flatMap(run => {
+  const timing = run.timing;
+  if (!timing) return [];
+  assert.equal(timing.version, 'model-client-timing-v1'); assert.equal(timing.clock, 'monotonic');
+  const phases = [timing.setupMs, timing.requestToFirstOutputMs, timing.visibleOutputMs ?? 0, timing.afterOutputMs];
+  assert(phases.every(value => Number.isFinite(value) && value >= 0));
+  assert(Math.abs(phases.reduce((sum, value) => sum + value, 0) - timing.totalMs) < 0.01);
+  assert(Math.abs(Object.values(timing.startup).reduce((sum, value) => sum + value, 0) - timing.setupMs) < 0.01);
+  assert.equal(timing.outputBoundary === 'streamed_delta', timing.visibleOutputMs !== null);
+  if (timing.outputBoundary === 'streamed_delta') assert(timing.outputDeltaCount > 0 && timing.outputDeltaBytes > 0);
+  else assert.equal(timing.outputDeltaCount, 0);
+  return [{ modelRunId: run.id, version: timing.version, outputBoundary: timing.outputBoundary, phaseSumVerified: true }];
+});
 assert(caller.artifacts.flatMap((a: { parts: { data?: unknown }[] }) => a.parts).some((part: { data?: unknown }) => part.data && digest(part.data) === digest(job.artifact!.data)), 'Caller and MCP readback differ');
 const db = new DatabaseSync(join(runtime, 'tasks.sqlite'), { readOnly: true });
 const owner = JSON.stringify(['local-development', 'local', 'developer']);
@@ -177,7 +190,7 @@ try {
     if (completionRun.ontologyContext) assert(completionRun.ontologyContext.receiptIds.every(id => completion.ontologyPlanning.reads.some(read => read.id === id)));
   }
   const initialSelections = delegation.agent.plans.filter(plan => plan.initialSelection).map(plan => ({ modelRunId: plan.modelRunId, actualGroundingAndInitialChoiceOneResponse: true, beforeModelReads: plan.initialSelection!.groundingPlanning.reads.length, postModelScopeBindingReads: plan.ontologyPlanning.reads.length, scopeActuallyReadBeforeDispatch: true }));
-  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, initialSelections, completionMode: completion.mode ?? 'model', inputResolutions: delegation.agent.inputResolutions?.length ?? 0, noOrderOrPayment: true };
+  const report = { taskId: id, backend: BACKEND_VERSION, accepted: true, callerArtifactMatches: true, allEffectsReadOnly: true, evaluationTime: 'acceptance_time_replay', acceptedAt: delegation.acceptance.at, bindings, contextEvidence, initialSelections, timingEvidence, completionMode: completion.mode ?? 'model', inputResolutions: delegation.agent.inputResolutions?.length ?? 0, noOrderOrPayment: true };
   writeFileSync(join(directory, 'ontology-mcp-observer.json'), JSON.stringify(report, null, 2) + '\n', { mode: 0o600 });
   console.log(JSON.stringify({ taskId: id, accepted: true, callerArtifactMatches: true, readActions: bindings.length, evaluationTime: report.evaluationTime }));
 } finally { db.close(); }

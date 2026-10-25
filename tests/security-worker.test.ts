@@ -13,13 +13,14 @@ import {evidence,interpretation} from './backend-fixture.js';
 import type {AgentDecision,AgentStep} from '../packages/ontology/agent-actions.js';
 import type {ObjectRef} from '../packages/ontology/model.js';
 import type {DidiData} from '../packages/capabilities/didi/contracts.js';
+import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
 
 test('foundation Worker completes the existing source-selected read loop using safe facts and sealed delivery',async()=>{
   const f=securityFixture(),source=didiFixture();
   // Only this isolated synthetic connector is made available to the synthetic
   // member. Production personal-account permitted(owner) stays unchanged.
-  class MemberFixtureProgram extends DidiAgentProgram {override permitted(owner:string){return owner===f.owner;}}
-  const program=new MemberFixtureProgram(source.binding,{connector:source.connector}),catalog=new ExecutionCatalog([program.capability()],[],[],[],[program]);
+  const program=new DidiAgentProgram(source.binding,{connector:source.connector});bindPersonalSourceOwner(program,f.owner);
+  const catalog=new ExecutionCatalog([program.capability()],[],[],[],[program]);
   const policy=f.jobs.security.policies,profile=catalog.securityProfiles(f.owner)[0]!,until=new Date(Date.now()+3600000).toISOString(),install=f.installation('Scoped source');
   const resources=['ServiceRequest',...profile.outputTypes].map(type=>({type,fields:Object.keys(policy.fields(type)).filter(field=>policy.fieldPolicy(type,field)!=='internal_only')}));
   f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:[program.ref.id],resources,sourceBindingIds:[profile.bindingId],channels:['agent_response','registered_model'],expiresAt:until});
@@ -74,7 +75,7 @@ test('foundation Worker completes the existing source-selected read loop using s
     const raw=f.jobs.get(f.owner,job.id);
     assert.equal(raw.state,'completed',JSON.stringify({state:raw.state,error:raw.error,failures,feedback:raw.delegation?.agent?.feedback,reads:raw.delegation?.ontologyReads?.filter(r=>r.status==='rejected'),intents:f.jobs.intents(f.owner,job.id).map(i=>({state:i.state,result:i.lastResult?.message}))}));
     const result=tasks.get(p,job.id);
-    assert.ok(result.artifact?.data.deliverable.includes('73.05'));assert.ok(!result.artifact?.data.result);
+    assert.ok(result.artifact?.data.deliverable.includes('73.05'));assert.ok(result.artifact?.data.result && 'observations' in result.artifact.data.result);assert.ok(!JSON.stringify(result.artifact?.data.result).includes('"snapshot":'));
     assert.deepEqual(source.calls.filter(c=>c.name).map(c=>c.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
     const text=modelInputs.join('\n');assert.ok(!text.includes('PRIVATE_TRACE_NEVER_TO_MODEL'));assert.ok(!text.includes(source.keyFile));assert.ok(!text.includes('"snapshot":'));assert.ok(closed>0);
     const observation=raw.delegation!.agent!.observations.at(-1)!;
