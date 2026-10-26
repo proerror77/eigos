@@ -30,6 +30,8 @@ import { migrateIntegratedOntology } from '../ontology/integration-migration.js'
 import { SecurityStore, type SecurityMode } from '../security/store.js';
 import { authorizationScope } from '../security/context.js';
 import {agentDispatchGrant} from './agent-authorization.js';
+import { storedRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from './runtime-authority.js';
+import { initializeTaskReadProjections, projectedTaskReadRelease } from '../ontology/task-read-projection.js';
 import { synchronizeTaskOutcome } from './task-outcome.js';
 
 export interface ListFilter {
@@ -72,11 +74,17 @@ export class JobStore {
   private transactionDepth = 0;
   readonly security: SecurityStore;
   private readonly projectionBase: OntologyObjectStore;
+  readonly authority?: RuntimeAuthority;
 
-  constructor(path: string, options: { securityMode?: SecurityMode; securityNow?: () => number } = {}) {
+  constructor(path: string, options: { securityMode?: SecurityMode; securityNow?: () => number; authority?: RuntimeAuthority } = {}) {
     this.databasePath = path === ':memory:' ? path : resolve(path);
     if (path !== ':memory:') { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); closeSync(openSync(path, 'a', 0o600)); }
     this.db = new DatabaseSync(path);
+    this.authority = options.authority;
+    try {
+      if (this.authority && resolve(path) !== resolve(this.authority.databasePath)) throw new Error('The runtime authority names a different business database');
+      if (this.authority ? !runtimeAuthorityMatches(this.db, this.authority) : !!storedRuntimeAuthority(this.db)) throw new Error('Explicit matching runtime authority is required for this business database');
+    } catch (error) { this.db.close(); throw error; }
     this.db.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;');
     this.transaction(() => {
       this.db.exec(`
@@ -131,6 +139,7 @@ export class JobStore {
       if (!budgetColumns.has('role')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN role TEXT');
       if (!budgetColumns.has('additional_impacts')) this.db.exec('ALTER TABLE budget_reservations ADD COLUMN additional_impacts TEXT');
       initializeMemberUsage(this.db);
+      initializeTaskReadProjections(this.db);
     });
     try {
       const reviewedModel = currentKernelImplementation();
@@ -159,6 +168,11 @@ export class JobStore {
   /** Unbound discovery follows the current default release. Task execution
    * must use ontologyForJob, including projections and historical readback. */
   get ontology(): OntologyObjectStore { return this.ontologyForRelease(this.definitions.active().ref); }
+  authorityCurrent(): boolean {
+    try { return this.authority ? runtimeAuthorityMatches(this.db, this.authority) : !storedRuntimeAuthority(this.db); }
+    catch { return false; }
+  }
+  assertRuntimeAuthority(): void { if (!this.authorityCurrent()) throw new DomainError('CONFLICT', 'Runtime authority changed; restart with the current reviewed configuration'); }
   ontologyForRelease(ref: OntologyReleaseRef): OntologyObjectStore {
     let release: ReturnType<DefinitionStore['resolve']>;
     try { release = this.definitions.resolve(ref); }
@@ -195,6 +209,8 @@ export class JobStore {
   ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
     if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks have no current executable ontology context');
+    if (this.authority && job.authorityId !== this.authority.id && this.db.prepare('SELECT 1 FROM jobs WHERE owner=? AND id=?').get(owner,job.id))
+      throw new DomainError('CONFLICT', 'Historical runtime authority tasks are read-only');
     // Absence is an explicit compatibility rule for pre-registry v16 records.
     // It must never mean "whatever release is active now" or rewrite receipts.
     return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
@@ -219,6 +235,8 @@ export class JobStore {
    * tasks retain the existing refusal instead of following the active model. */
   ontologyReadReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
+    const projection = projectedTaskReadRelease(this.db, owner, job);
+    if (projection) return projection;
     return job.delegation?.ontologyRelease ? structuredClone(job.delegation.ontologyRelease) : this.ontologyReleaseForJob(owner, job);
   }
   ontologyForTaskRead(owner: string, jobOrId: Job | string): OntologyObjectStore {
@@ -719,6 +737,7 @@ export class JobStore {
 
   claim(services: string[], leaseMs: number, now?: number): WorkClaim | undefined {
     return this.transaction(() => {
+      if (!this.authorityCurrent()) return;
       const at = now ?? Date.now();
       this.expireClaims(at);
       if (!services.length) return;
@@ -732,8 +751,11 @@ export class JobStore {
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims)
+        ${this.authority ? "AND json_extract(body,'$.authorityId')=:runtimeAuthority" : ''}
         ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
-      const row = this.security.enabled ? query.get({ securityNow: at,securityDefinition:this.security.policies.definitionDigest }, 'worker-security-v2', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
+      const named = { ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
+      const values = [this.security.enabled ? 'worker-security-v2' : 'worker',...services,BACKEND_VERSION,at];
+      const row = Object.keys(named).length ? query.get(named,...values) : query.get(...values);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
@@ -741,6 +763,10 @@ export class JobStore {
       const token = randomUUID();
       const claimedAt = now ?? Date.now();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
+      if (this.authority) {
+        this.db.prepare('DELETE FROM runtime_work_claims WHERE NOT EXISTS (SELECT 1 FROM work_claims c WHERE c.job_id=runtime_work_claims.job_id AND c.token=runtime_work_claims.token)').run();
+        this.db.prepare('INSERT INTO runtime_work_claims VALUES(?,?,?)').run(job.id, token, runtimeAuthorityDigest(this.authority));
+      }
       const authority = this.security.workAuthority(String(row.owner), job.id, at);
       return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
@@ -756,6 +782,7 @@ export class JobStore {
   }
 
   private leaseOwned(claim: WorkClaim, now: number): boolean {
+    if (!this.authorityCurrent() || !claimAuthorityCurrent(this.db, claim.job.id, claim.token)) return false;
     const lease = this.db.prepare('SELECT token,expires_at,revision FROM work_claims WHERE job_id=?').get(claim.job.id);
     return lease?.token === claim.token && Number(lease.expires_at) > now && Number(lease.revision) === (claim.job.revision ?? 0);
   }
@@ -847,15 +874,19 @@ export class JobStore {
   hasActiveClaim(taskId:string):boolean { return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=? AND expires_at>?').get(taskId,this.security.now()); }
 
   save(owner: string, job: Job): void {
+    this.assertRuntimeAuthority();
     // The old Worker queue selector must not claim a foundation task even if an
     // operator accidentally starts an old binary against this new database.
     if (this.security.enabled) job.executionMode = 'worker-security-v2';
     this.db.exec('SAVEPOINT task_and_ontology');
     try {
       const previous = this.db.prepare('SELECT owner,body FROM jobs WHERE id=?').get(job.id);
+      if (this.authority && !previous && job.delegation?.backendVersion === BACKEND_VERSION) job.authorityId = this.authority.id;
+      if (this.authority && job.authorityId !== undefined && job.authorityId !== this.authority.id) throw new DomainError('CONFLICT', 'Task belongs to another runtime authority');
       if (previous) {
         if (previous.owner !== owner) throw new DomainError('FORBIDDEN', 'Task owner mismatch');
         const original = JSON.parse(String(previous.body)) as Job;
+        if (original.authorityId !== job.authorityId) throw new DomainError('CONFLICT', 'Task authority is immutable');
         if (digest(original.delegation?.ontologyRelease ?? null) !== digest(job.delegation?.ontologyRelease ?? null)) throw new DomainError('CONFLICT', 'A task\'s ontology release is immutable');
         if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
       }

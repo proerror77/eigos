@@ -3,10 +3,10 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { primaryRelease } from '../dist/packages/deployment/primary.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const runtime = join(homedir(), '.local/share/eigos/invite-beta');
-const release = JSON.parse(readFileSync(join(runtime, 'release.json'), 'utf8'));
+const {release} = primaryRelease();
 const endpoint = release.endpoint;
 if (typeof endpoint !== 'string' || new URL(endpoint).protocol !== 'https:' || new URL(endpoint).origin !== endpoint) throw new Error('Primary deployment has no exact HTTPS endpoint');
 const health = await fetch(endpoint + '/health', { redirect: 'error', signal: AbortSignal.timeout(15000) }).then(r => { if (!r.ok) throw new Error('Primary runtime unavailable'); return r.json(); });

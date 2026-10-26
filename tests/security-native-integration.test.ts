@@ -10,10 +10,68 @@ import {TaskService} from '../packages/core/tasks.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import type {AgentProgram} from '../packages/core/agent-program.js';
 import {digest} from '../packages/core/delegation.js';
-import {withAuthorization} from '../packages/security/context.js';
+import {withAuthorization,withoutAuthorization} from '../packages/security/context.js';
 import {AuthorizedOntologyView} from '../packages/security/view.js';
 import {taskContextFields} from '../packages/security/task-context.js';
-import {readTaskContext} from '../packages/coordinator/task-context.js';
+import {readTaskContext,assertTaskContextCurrent} from '../packages/coordinator/task-context.js';
+import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
+import {BRIEF_CAPABILITY,BRIEF_BINDING,BriefAdapter} from '../packages/capabilities/brief.js';
+import {AuthorizationCoordinator} from '../packages/security/coordinator.js';
+import {scheduleTaskRecovery,resumeScheduledRecovery} from '../packages/core/task-recovery.js';
+import {createGoalContract} from '../packages/core/goal-contract.js';
+import {goalState,GoalProgram} from '../packages/coordinator/goal-program.js';
+import {templatePlanning} from '../packages/ontology/planning-contract.js';
+import {secureAgentContext} from '../packages/security/model.js';
+import {LocalArtifactProgram} from '../packages/capabilities/local-artifact-agent.js';
+
+test('current task authority reads unchanged historical capability metadata without rewriting its writer or granting provider access',()=>{
+ const f=securityFixture();let manager:AuthorizationCoordinator|undefined;const rawDb=new DatabaseSync(f.database);
+ try {
+  const catalog=new ExecutionCatalog([BRIEF_CAPABILITY],[BRIEF_BINDING],[new BriefAdapter()]),summaries=catalog.summaries(f.owner);
+  f.coordinator.close();manager=new AuthorizationCoordinator(f.jobs.security,f.members,f.jobs,catalog);manager.start();
+  const policy=f.jobs.security.policies,install=f.installation('compatible metadata'),until=new Date(Date.now()+3600000).toISOString();
+  const resources=[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','projectionState','createdAt']},...Object.entries(taskContextFields).map(([type,fields])=>({type,fields:fields.filter(field=>Object.hasOwn(policy.fields(type),field)&&policy.fieldPolicy(type,field)!=='internal_only')}))];
+  const parent=manager.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:['brief.prepare'],resources,sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:until});
+  policy.setRole({subjectKind:'installation',subjectId:install.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
+  policy.setRecipient(install.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+  const principal={...f.principal,access:manager.authenticate(f.principal,install.token)},tasks=new TaskService(f.jobs,{catalog});
+  const task=tasks.submit(principal,{service:'eigos.delegate',goal:'Synthetic metadata compatibility',requestId:randomUUID()});
+  const legacy=f.jobs.definitions.legacy(),oldId=randomUUID(),source=JSON.parse(String(rawDb.prepare("SELECT body FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(f.owner,task.id)!.body)).properties;
+  const oldGraph=new OntologyObjectStore(rawDb,legacy.model,Date.now,undefined,{skipLegacyMigration:true,ontologyId:legacy.ref.ontologyId,releaseRef:legacy.ref});
+  const fields=legacy.model.properties('ServiceRequest'),properties=Object.fromEntries(Object.entries({...source,requestId:oldId}).filter(([key])=>Object.hasOwn(fields,key)));
+  oldGraph.ingest(f.owner,{objects:[{ref:{type:'ServiceRequest',id:oldId},properties}]},{kind:'task',id:oldId,observedAt:new Date().toISOString()});
+  projectCapabilityCatalog(oldGraph,f.owner,oldId,summaries);
+  const original=rawDb.prepare("SELECT id,definition_digest,body FROM ontology_objects WHERE owner=? AND type='RegisteredCapability'").get(f.owner)!;
+  assert.notEqual(original.definition_digest,policy.model.fingerprint('RegisteredCapability'));
+  const claim=f.jobs.claim(['eigos.delegate'],30000)!;assert(claim);
+  const scope=f.jobs.security.workerScope(f.owner,task.id,claim.securityAuthorityId!,claim.token);
+  withAuthorization(scope,()=>{
+    assert(f.jobs.checkpoint(claim,()=>f.jobs.projectCapabilities(f.owner,task.id,summaries)));
+    const ref={type:'RegisteredCapability',id:String(original.id)},read=f.jobs.ontologyForJob(f.owner,task.id).read(f.owner,ref);
+    assert.equal((read.properties.capabilityRef as {id:string}).id,'brief.prepare');
+    assert.throws(()=>policy.bind(scope.grant!,ref,['id','name'],'member_asset'),/POLICY_CHANGED/,'Metadata compatibility cannot be used as a provider or member-asset grant');
+    const graph=f.jobs.ontologyForJob(f.owner,task.id),link=rawDb.prepare("SELECT * FROM ontology_links WHERE owner=? AND type='CapabilityRequest' AND from_id=? AND to_id=?").get(f.owner,ref.id,task.id)!;
+    assert(link);
+    try {
+      policy.readSnapshot(()=>{
+        assert.equal(graph.read(f.owner,ref).ref.id,ref.id);
+        rawDb.prepare("DELETE FROM ontology_links WHERE owner=? AND type='CapabilityRequest' AND from_id=? AND to_id=?").run(f.owner,ref.id,task.id);
+        assert.throws(()=>graph.read(f.owner,ref),/not available|not found/i,'A concurrent membership change invalidates task metadata cached earlier in the same read');
+      });
+    } finally {
+      rawDb.prepare(`INSERT INTO ontology_links (${Object.keys(link).join(',')}) VALUES (${Object.keys(link).map(()=>'?').join(',')})`).run(...Object.values(link));
+    }
+  });
+  const after=rawDb.prepare("SELECT definition_digest,body FROM ontology_objects WHERE owner=? AND type='RegisteredCapability' AND id=?").get(f.owner,original.id!)!;
+  assert.equal(after.definition_digest,original.definition_digest);assert.equal(after.body,original.body);
+  f.jobs.release(claim);
+  const job=f.jobs.get(f.owner,task.id);scheduleTaskRecovery(job,'validation_stalled','Synthetic repaired condition',{automatic:false});f.jobs.save(f.owner,job);
+  const grant=f.jobs.security.taskGrant(f.jobs.security.agentContext(principal),task.id);
+  manager.approveTaskGrant(f.member.id,{installationId:install.id,taskId:task.id,expectedRequestRevision:1,replaces:{id:grant.id,revision:grant.revision},expectedAgentGrant:{id:parent.id,revision:parent.revision},takeover:true,inputs:[],programIds:[],purpose:'delegated_task',operations:grant.operations,channels:grant.channels,expiresAt:grant.expiresAt});
+  const resumed=f.jobs.get(f.owner,task.id);assert.equal(resumed.id,task.id);assert.equal(resumed.goal,task.goal);assert.equal(resumed.delegation!.recovery!.state,'scheduled');
+  resumeScheduledRecovery(resumed);assert.equal(resumed.delegation!.recovery!.state,'running');assert.equal(resumed.delegation!.phase,'grounding');
+ }finally{rawDb.close();manager?.close();f.close();}
+});
 
 // Synthetic task/model metadata only. No provider, native model or user account.
 test('task-pinned dynamic catalogs preserve foundation authority before returning managed programs',()=>{
@@ -37,7 +95,7 @@ test('task-pinned dynamic catalogs preserve foundation authority before returnin
 });
 
 test('reviewed native task context stays task-bound across lifecycle projection and loses access after revocation',()=>{
- const f=securityFixture();
+ let now=Date.now();const f=securityFixture(()=>now);
  try {
   const policy=f.jobs.security.policies,install=f.installation('context'),until=new Date(Date.now()+3600000).toISOString();
   const resources=[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','projectionState','createdAt']},...Object.entries(taskContextFields).map(([type,fields])=>({type,fields:fields.filter(field=>Object.hasOwn(policy.fields(type),field) && policy.fieldPolicy(type,field)!=='internal_only')}))];
@@ -56,9 +114,36 @@ test('reviewed native task context stays task-bound across lifecycle projection 
    assert(f.jobs.checkpoint(claim,job=>{job.delegation!.phase='planning';}));
    const current=readTaskContext(graph,f.owner,submitted.id,1,{purpose:'grounding'},randomUUID());
    assert.equal(current.data.execution!.phase,'planning');
+   const assertCurrent=scope.assertCurrent;let checks=0;
+   scope.assertCurrent=()=>{checks++;now+=20;assertCurrent();};
+   try {
+    assertTaskContextCurrent(graph,f.owner,current.context);
+    assert(checks<=3,`Decision receipt validation repeated ${checks} full authority checks`);
+    assert.throws(()=>assertTaskContextCurrent(graph,f.owner,first.context),/execution context changed/);
+   }finally{scope.assertCurrent=assertCurrent;}
    policy.validateLineage(scope,policy.outputEnvelope(f.owner));
   });
   const view=tasks.get(principal,submitted.id);assert.equal(view.revision,1);assert(!Object.hasOwn(view,'runs'));assert(!Object.hasOwn(view,'delegation'));
+  withAuthorization(scope,()=>{
+   const job=f.jobs.get(f.owner,submitted.id),request=job.delegation!.request,release=job.delegation!.ontologyRelease!;
+   const capability=new LocalArtifactProgram('brief').capability(),outcome=capability.goalOutcomes![0]!,goal=createGoalContract(request,release,[{id:'brief',description:'Synthetic brief',predicate:outcome.predicate,phase:outcome.phase,messageId:request.messages[0]!.id,quote:request.originalGoal,requirementIds:[]}],[capability]);
+   const state=goalState(request,goal),program=new GoalProgram(goal),programRef={id:'fixture.prepared',version:'1'},pin={ref:programRef,programRef,actionId:'PrepareTaskBrief',actionVersion:'1',definitionDigest:digest('fixture'),configurationDigest:digest('fixture'),ontologyRelease:release,ownerDigest:digest(f.owner),requestId:request.id,requestRevision:1};
+   state.composition!.contexts.push({id:'already-prepared',programRef,programDigest:pin.configurationDigest,requestRevision:1,scope:state.scope,input:{private:'PRIVATE_PREPARATION_INPUT'},digest:digest('prepared'),initializedBy:{modelRunId:'fixture',binding:{...pin,digest:digest(pin)},decision:{kind:'prepare',requestRevision:1,message:'PRIVATE_PREPARATION_RECEIPT',steps:[],completionJson:''},ontologyPlanning:templatePlanning(request,f.jobs.ontology.model.ref)}});
+   assert(f.jobs.checkpoint(claim,current=>{current.delegation!.agent=state;}));
+   const context={request,capability:program.capability(),state,actionIds:[],guidance:program.guidance,completionSchema:program.completionSchema},contextGraph=f.jobs.ontologyForJob(f.owner,job.id);
+   assert.throws(()=>withoutAuthorization(()=>secureAgentContext(context,contextGraph)),/AUTHORIZATION_REQUIRED/);
+   const safe=secureAgentContext(context,contextGraph);
+   assert.deepEqual(safe.preparedContextNavigation,[{id:'already-prepared',programRef,scope:state.scope,retired:false}]);
+   assert.equal(safe.state.composition,undefined);assert(!JSON.stringify(safe).includes('PRIVATE_PREPARATION'));
+   const at=new Date().toISOString();
+   assert(f.jobs.checkpoint(claim,current=>{current.delegation!.agent!.composition!.assessment={version:'1',goalDigest:goal.digest,accepted:false,at,
+    criteria:[{id:'brief',result:'unknown',reason:'Required artifact is not yet proved',contextIds:['already-prepared'],evidenceRefs:[],subjects:[]}],requirements:[],conditions:[],
+    components:[{contextId:'already-prepared',status:'verified',delivery:{artifact:{id:'fixture',name:'private.json',data:{goal:'Fixture',deliverable:'PRIVATE_COMPONENT_DELIVERY',execution:'completed'}},facts:{},evidenceRefs:[]}}]};}));
+   const assessment=readTaskContext(f.jobs.ontologyForJob(f.owner,job.id),f.owner,job.id,1,{purpose:'agent'},randomUUID()).data.execution!.composition!.assessment;
+   assert.deepEqual(assessment,{version:'1',goalDigest:goal.digest,accepted:false,at,
+    criteria:[{id:'brief',result:'unknown',reason:'Required artifact is not yet proved',contextIds:['already-prepared'],evidenceRefs:[],subjects:[]}],components:[{contextId:'already-prepared',status:'verified'}]});
+   assert(!JSON.stringify(assessment).includes('PRIVATE_COMPONENT_DELIVERY'));
+  });
   f.coordinator.revokeInstallation(f.member.id,install.id);
   assert.throws(()=>new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,principal).query({version:2,taskId:submitted.id,query:{object:{type:'ServiceRequest',id:submitted.id}}}),/ACCESS_REVOKED/);
   f.jobs.release(claim);

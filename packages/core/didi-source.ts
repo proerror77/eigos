@@ -1,5 +1,5 @@
 import { closeSync, constants, fstatSync, openSync, readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { didiBindingSchema } from '../capabilities/didi/contracts.js';
 import { digest } from './delegation.js';
@@ -15,6 +15,11 @@ export const didiMemberConnectionSchema = z.strictObject({
 });
 export type DidiMemberConnection = z.infer<typeof didiMemberConnectionSchema>;
 export const didiSourceOwner = (c: DidiMemberConnection) => ownerKey({ ...c.owner, clientId: '', scopes: [] });
+export function assertEquivalentDidiAccount(binding: z.infer<typeof didiBindingSchema>, connection: DidiMemberConnection, owner: string): void {
+  if (owner !== didiSourceOwner(connection) || resolve(binding.keyFile) !== resolve(connection.binding.keyFile)
+    || binding.keySha256 !== connection.binding.keySha256 || binding.environment !== 'production' || connection.binding.environment !== 'production')
+    throw new Error('DiDi source routes identify different owners or credentials');
+}
 const denied = () => new DomainError('FORBIDDEN', 'The member DiDi estimate connection is unavailable');
 
 export function readDidiMemberConnection(path: string): DidiMemberConnection {

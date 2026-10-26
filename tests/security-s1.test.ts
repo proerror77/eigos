@@ -11,6 +11,55 @@ import { SecurityError } from '../packages/security/store.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { securityFixture } from './fixtures/security.js';
 import {historicalAttempt} from './fixtures/security-ledger.js';
+import {authorizationScope} from '../packages/security/context.js';
+
+test('S1 eligibility publication reserves its WAL writer before reading mutable authority', () => {
+  const f = securityFixture(), peer = new DatabaseSync(f.database);
+  try {
+    peer.exec('PRAGMA busy_timeout=0; CREATE TABLE writer_contention_fixture(value INTEGER)');
+    const install = f.installation('concurrent publisher'), grant = f.approve(install.id);
+    const read = f.jobs.security.getSubject.bind(f.jobs.security);
+    let attempted = false, blocked = false;
+    f.jobs.security.getSubject = id => {
+      const result = read(id);
+      if (!attempted) {
+        attempted = true;
+        try { peer.prepare('INSERT INTO writer_contention_fixture VALUES(1)').run(); }
+        catch (error) {
+          assert.equal((error as {errcode?: number}).errcode, 5);
+          blocked = true;
+        }
+      }
+      return result;
+    };
+    assert.doesNotThrow(() => f.coordinator.refresh());
+    assert(attempted && blocked, 'A competing writer must wait before the publisher reads its authority snapshot');
+    assert(f.coordinator.available);
+    assert.equal(f.jobs.security.agentGrant(install.id).id, grant.id);
+    assert.equal(peer.prepare('INSERT INTO writer_contention_fixture VALUES(1)').run().changes, 1, 'Publication releases the writer after committing');
+    assert.throws(() => f.jobs.transaction(() => {
+      f.jobs.security.atomic(() => peer.prepare('SELECT revision FROM security_policy WHERE slot=1').get());
+      f.jobs.security.revokeGrant(f.owner, grant.id, grant.revision);
+      throw new Error('Synthetic outer rollback');
+    }), /Synthetic outer rollback/);
+    assert.equal(f.jobs.security.agentGrant(install.id).id, grant.id, 'Nested security changes remain inside the caller transaction');
+  } finally { peer.close(); f.close(); }
+});
+
+test('S1 unchanged authenticated reads need no task-store writer and still reject expired authority',()=>{
+  let now=Date.now(),locked=false;const f=securityFixture(()=>now),peer=new DatabaseSync(f.database);
+  try {
+    const install=f.installation('read during publication'),grant=f.approve(install.id),before=f.jobs.security.requireSubject(install.id);
+    peer.exec('BEGIN IMMEDIATE');locked=true;
+    const actor=f.coordinator.authenticate(f.principal,install.token);
+    assert.equal(actor.actorKind,'agent');if(actor.actorKind!=='agent')assert.fail();
+    assert.equal(actor.installationId,install.id);assert.equal(actor.agentGrant.id,grant.id);
+    assert.equal(f.jobs.security.requireSubject(install.id).validUntil,before.validUntil,'A read cannot extend the eligibility lease');
+    now+=61000;
+    assert.throws(()=>f.coordinator.authenticate(f.principal,install.token),/AUTHORITY_UNAVAILABLE/);
+    assert.equal(f.coordinator.available,false);
+  }finally{if(locked)peer.exec('ROLLBACK');peer.close();f.close();}
+});
 
 test('S1 preserves verified installation identity and never enrolls a token into a data grant implicitly', () => {
   const f = securityFixture();
@@ -105,6 +154,47 @@ test('S1 gateway lease and qualification expiry fail closed and two eligibility 
   } finally { f.close(); }
 });
 
+test('S1 a Worker started before its Gateway retains an expired task until authority returns', async t => {
+  const f = securityFixture(); let executions = 0;
+  const worker = new Worker(f.jobs, { pollMs: 20, leaseMs: 1000, coordinator: { run: async claim => {
+    executions++;
+    f.jobs.finish(claim, job => { job.state = 'paused'; job.delegation!.phase = 'paused'; });
+  } } });
+  t.mock.method(console, 'error', () => {});
+  try {
+    const install = f.installation('restart'); f.approve(install.id); const original = f.task(install.id);
+    assert(f.jobs.claim(['eigos.delegate'], 100, Date.now() - 200));
+    f.coordinator.close();
+    assert.doesNotThrow(() => worker.start());
+    assert.equal(executions, 0); assert(f.jobs.hasClaim(f.owner, original.job.id));
+    assert.equal(f.jobs.get(f.owner, original.job.id).state, 'working');
+    f.coordinator.start();
+    for (let i = 0; i < 150 && !executions; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(executions, 1);
+    assert.equal(f.jobs.get(f.owner, original.job.id).goal, original.job.goal);
+  } finally { await worker.close(); f.close(); }
+});
+
+test('S1 synchronous authorized progress renews a live lease but cannot revive an expired lease', async t => {
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});
+  const f=securityFixture();let finished!:()=>void,kept=false,expired=false;
+  const done=new Promise<void>(resolve=>{finished=resolve;});
+  const worker=new Worker(f.jobs,{pollMs:10000,coordinator:{run:async claim=>{
+    try {
+      const scope=authorizationScope()!;
+      for(let i=0;i<5;i++){t.mock.timers.tick(4000);scope.assertCurrent();}
+      kept=f.jobs.claimActive(claim);
+      t.mock.timers.tick(16000);
+      try{scope.assertCurrent();}catch{expired=true;}
+      assert.equal(f.jobs.renew(claim,15000),false);
+    }finally{finished();}
+  }}});
+  try {
+    const install=f.installation('synchronous progress');f.approve(install.id);f.task(install.id);
+    worker.start();await done;assert(kept,'Current authorized work retains its claim while the timer cannot run');assert(expired,'Expired work still loses authority');
+  }finally{await worker.close();f.close();}
+});
+
 test('S1 missed eligibility refresh notifies the supervisor and a fresh coordinator preserves revoked grants', t => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   let now = Date.now(); const f = securityFixture(() => now);
@@ -124,6 +214,27 @@ test('S1 missed eligibility refresh notifies the supervisor and a fresh coordina
     assert.equal(f.jobs.security.workAuthority(f.owner, taskB.job.id), undefined);
     assert.deepEqual(f.jobs.security.listGrants(f.owner), grants);
   } finally { replacement.close(); f.close(); }
+});
+
+test('S1 transient writer contention retries only while the original Gateway lease remains current', t => {
+  t.mock.timers.enable({apis:['setInterval','setTimeout']});let now=Date.now();const f=securityFixture(()=>now);
+  const renew=f.jobs.security.renewManager.bind(f.jobs.security);let blocked=true,unavailable=0;
+  try {
+    const install=f.installation('writer contention');f.approve(install.id);const task=f.task(install.id),grants=f.jobs.security.listGrants(f.owner);
+    f.coordinator.onUnavailable(()=>{unavailable++;});
+    f.jobs.security.renewManager=token=>{if(blocked)throw Object.assign(new Error('Synthetic busy writer'),{code:'ERR_SQLITE_ERROR',errcode:5});return renew(token);};
+    f.coordinator.close();assert.doesNotThrow(()=>f.coordinator.start());assert(f.coordinator.available);
+    blocked=false;now+=500;t.mock.timers.tick(500);assert(f.coordinator.available);
+    blocked=true;
+    now+=30000;t.mock.timers.tick(30000);
+    assert(f.coordinator.available);assert.equal(unavailable,0);assert(f.jobs.security.workAuthority(f.owner,task.job.id,now));
+    blocked=false;now+=500;t.mock.timers.tick(500);
+    assert(f.coordinator.available);assert.equal(unavailable,0);
+    blocked=true;now+=61000;t.mock.timers.tick(30000);
+    assert.equal(f.coordinator.available,false);assert.equal(unavailable,1);
+    assert.equal(f.jobs.security.workAuthority(f.owner,task.job.id,now),undefined);
+    assert.deepEqual(f.jobs.security.listGrants(f.owner),grants,'Contention never issues or widens a grant');
+  }finally{f.jobs.security.renewManager=renew;f.close();}
 });
 
 test('S1 task grant and authority cannot exceed parent fields, cross installations or reuse a changed request revision', () => {

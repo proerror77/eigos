@@ -77,11 +77,18 @@ export function currentKernelImplementation(): OntologyModel { const value = tru
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
 export class DefinitionStore {
-  readonly pipeline: PipelineStore;
+  private pipelineStore?: PipelineStore;
+  get pipeline(): PipelineStore {
+    if (!this.pipelineStore) throw new DomainError('FORBIDDEN', 'Read-only definition readers do not expose pipeline management');
+    return this.pipelineStore;
+  }
   private readonly registry: TrustedDefinitionRegistry;
   private readonly models = new Map<string, ResolvedOntologyRelease>();
-  constructor(private readonly db: DatabaseSync, readonly now: () => number = Date.now) {
+  private readonly readOnly: boolean;
+  constructor(private readonly db: DatabaseSync, readonly now: () => number = Date.now, options: {readOnly?:boolean} = {}) {
+    this.readOnly=!!options.readOnly;
     this.registry = trustedTemplates().registry;
+    if(this.readOnly)return;
     this.transaction(() => db.exec(`
       CREATE TABLE IF NOT EXISTS ontology_namespaces (id TEXT PRIMARY KEY,owner TEXT,name TEXT NOT NULL,active_release_id TEXT,generation INTEGER NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ontology_definition_releases (id TEXT PRIMARY KEY,ontology_id TEXT NOT NULL,sequence INTEGER NOT NULL,digest TEXT NOT NULL,model_digest TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(ontology_id,sequence),UNIQUE(ontology_id,digest));
@@ -93,15 +100,17 @@ export class DefinitionStore {
       CREATE TABLE IF NOT EXISTS ontology_definition_events (id TEXT PRIMARY KEY,ontology_id TEXT NOT NULL,actor TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ontology_definition_lineage (release_id TEXT PRIMARY KEY,ontology_id TEXT NOT NULL,base_ref TEXT);
       CREATE TABLE IF NOT EXISTS ontology_definition_promotions (ontology_id TEXT NOT NULL,release_id TEXT NOT NULL,at TEXT NOT NULL,PRIMARY KEY(ontology_id,release_id));
+      CREATE TABLE IF NOT EXISTS ontology_definition_release_aliases (alias_id TEXT PRIMARY KEY,ontology_id TEXT NOT NULL,canonical_id TEXT NOT NULL,digest TEXT NOT NULL,source_authority TEXT NOT NULL,created_at TEXT NOT NULL);
     `));
     this.transaction(() => {
-      for (const table of ['ontology_definition_releases', 'ontology_definition_revisions', 'ontology_definition_names', 'ontology_definition_fingerprints', 'ontology_definition_events', 'ontology_definition_lineage', 'ontology_definition_promotions']) {
+      for (const table of ['ontology_definition_releases', 'ontology_definition_revisions', 'ontology_definition_names', 'ontology_definition_fingerprints', 'ontology_definition_events', 'ontology_definition_lineage', 'ontology_definition_promotions', 'ontology_definition_release_aliases']) {
         for (const operation of ['UPDATE', 'DELETE']) db.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_immutable_${operation.toLowerCase()} BEFORE ${operation} ON ${table} BEGIN SELECT RAISE(ABORT,'Ontology definition history is immutable'); END`);
       }
     });
-    this.pipeline = this.transaction(() => new PipelineStore(this.db, this.now));
+    this.pipelineStore = this.transaction(() => new PipelineStore(this.db, this.now));
   }
   private transaction<T>(action: () => T): T {
+    if(this.readOnly)throw new DomainError('FORBIDDEN','Read-only definition readers cannot change published metadata');
     let owned = false;
     try { assertBusinessTransaction(this.db); owned = true; }
     catch (error) { if (!(error instanceof DomainError && error.code === 'CONFLICT')) throw error; }
@@ -188,16 +197,42 @@ export class DefinitionStore {
     });
   }
   active(ontologyId = DEFAULT_ONTOLOGY): ResolvedOntologyRelease { return this.resolve(this.namespace(ontologyId).active); }
+  private releaseRecord(ref: OntologyReleaseRef) {
+    return this.db.prepare('SELECT * FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId, ref.ontologyId, ref.digest)
+      ?? this.db.prepare('SELECT r.* FROM ontology_definition_release_aliases a JOIN ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=? AND a.ontology_id=? AND a.digest=?').get(ref.releaseId, ref.ontologyId, ref.digest);
+  }
+  /** Offline consolidation preserves original task pins, even when independent
+   * registries assigned different IDs to byte-identical definitions. There is
+   * one canonical content record; aliases never publish or activate a model. */
+  importHistoricalRelease(input: { sourceAuthority: string; ref: OntologyReleaseRef; document: OntologyDocument; modelDigest: string }): OntologyReleaseRef {
+    const ref = ontologyReleaseRefSchema.parse(input.ref), document = normalizeOntologyDocument(input.document);
+    if (!/^[A-Za-z0-9_.:-]{1,200}$/.test(input.sourceAuthority) || ref.ontologyId !== DEFAULT_ONTOLOGY || document.id !== ref.ontologyId || digest(document) !== ref.digest)
+      return invalid('Historical definition source or content differs from its exact reference');
+    const model = compiledModel(document, this.registry);
+    if (model.ref.digest !== input.modelDigest) return conflict('Historical definition implementation is unavailable');
+    return this.transaction(() => {
+      const occupied = this.db.prepare('SELECT ontology_id,digest FROM ontology_definition_releases WHERE id=?').get(ref.releaseId)
+        ?? this.db.prepare('SELECT ontology_id,digest FROM ontology_definition_release_aliases WHERE alias_id=?').get(ref.releaseId);
+      if (occupied && (occupied.ontology_id !== ref.ontologyId || occupied.digest !== ref.digest)) return conflict('Historical release ID collides with different content');
+      const canonical = this.insertRelease(document, 'operator:consolidation');
+      if (canonical.ref.releaseId !== ref.releaseId && !occupied) {
+        this.db.prepare('INSERT INTO ontology_definition_release_aliases VALUES(?,?,?,?,?,?)').run(ref.releaseId, ref.ontologyId, canonical.ref.releaseId, ref.digest, input.sourceAuthority, new Date(this.now()).toISOString());
+        this.event(ref.ontologyId, 'operator:consolidation', 'historical_alias_imported', { sourceAuthority: input.sourceAuthority, original: ref, canonical: canonical.ref });
+      }
+      this.resolve(ref);
+      return { ...canonical.ref };
+    });
+  }
   resolve(input: OntologyReleaseRef): ResolvedOntologyRelease {
     const ref = ontologyReleaseRefSchema.parse(input), key = JSON.stringify(ref);
     const cached = this.models.get(key);
     if (cached) {
-      const durable = this.db.prepare('SELECT model_digest FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId, ref.ontologyId, ref.digest);
+      const durable = this.releaseRecord(ref);
       if (!durable || durable.model_digest !== cached.model.ref.digest) return conflict('The exact ontology release is unavailable');
       this.models.delete(key); this.models.set(key, cached);
       return cached;
     }
-    const row = this.db.prepare('SELECT * FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId, ref.ontologyId, ref.digest);
+    const row = this.releaseRecord(ref);
     if (!row) return conflict('The exact ontology release is unavailable');
     const document = parseOntologyDocument(JSON.parse(String(row.body)));
     if (document.id !== ref.ontologyId || digest(document) !== ref.digest) return conflict('Stored ontology release digest is invalid');

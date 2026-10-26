@@ -5,11 +5,12 @@ import { JobStore } from '../core/store.js';
 import { MemberStore } from '../members/store.js';
 import { AuthorizationCoordinator } from './coordinator.js';
 import type { SecurityMode } from './store.js';
+import type { RuntimeAuthority } from '../core/runtime-authority.js';
 
 /** Local operator interface used by the existing members CLI. It shares the
  * same deny-first coordinator as HTTP; it never acquires a Gateway lease or
  * provisions a grant. Detect persisted mode even when the CLI omitted the flag. */
-export function openMembershipAdministration(databasePath: string, membershipPath: string, configuredMode?: string) {
+export function openMembershipAdministration(databasePath: string, membershipPath: string, configuredMode?: string, authority?: RuntimeAuthority) {
   if (!existsSync(databasePath) || !existsSync(membershipPath) || resolve(databasePath) === resolve(membershipPath)) throw new Error('Membership administration requires the existing separate task and member databases');
   const reader = new DatabaseSync(databasePath, { readOnly: true }); let mode: SecurityMode;
   try {
@@ -22,7 +23,7 @@ export function openMembershipAdministration(databasePath: string, membershipPat
     }
   } finally { reader.close(); }
   if (configuredMode !== undefined && configuredMode !== mode) throw new Error('CLI security mode differs from the database; no bypass or cutover');
-  const tasks = new JobStore(databasePath, { securityMode: mode });
+  const tasks = new JobStore(databasePath, { securityMode: mode, authority });
   let members: MemberStore;
   try { members = new MemberStore(membershipPath); } catch (error) { tasks.close(); throw error; }
   const coordinator = mode === 'foundation' ? new AuthorizationCoordinator(tasks.security, members) : undefined;

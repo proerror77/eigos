@@ -448,7 +448,9 @@ export function projectExecution(graph: OntologyObjectStore, owner: string, job:
     write(graph, owner, context, { requestRevision: revision, phase: revision === request.revision ? delegation.phase : 'historical', state: revision === request.revision ? job.state : 'historical',
       ...(current ? { programRef: current.programRef, programDigest: current.programDigest, scope: current.scope, activeBinding: bindingRef(request.id, current),
         ...(current.composition ? { goal: { digest: current.composition.goal.digest, criteria: current.composition.goal.criteria }, components: current.composition.contexts.map(component => ({ id: component.id, programRef: component.programRef, configurationDigest: component.programDigest, scope: component.scope, digest: component.digest, ...(current.composition!.retiredContexts?.some(value => value.id === component.id) ? { retired: true } : {}) })),
-          ...(current.composition.assessment ? { goalAssessment: { accepted: current.composition.assessment.accepted, criteria: current.composition.assessment.criteria, requirements: current.composition.assessment.requirements, conditions: current.composition.assessment.conditions } } : {}) } : {}),
+          ...(current.composition.assessment ? { goalAssessment: { version: current.composition.assessment.version, goalDigest: current.composition.assessment.goalDigest, at: current.composition.assessment.at,
+            accepted: current.composition.assessment.accepted, criteria: current.composition.assessment.criteria, requirements: current.composition.assessment.requirements, conditions: current.composition.assessment.conditions,
+            components: current.composition.assessment.components.map(({contextId,status,reason})=>({contextId,status,...(reason?{reason}:{})})) } } : {}) } : {}),
         ...(current.pendingPlanId ? { pendingPlanId: current.pendingPlanId } : {}) } : {}),
       observationOrder: current?.observations ?? [], feedback: current?.feedback.slice(-20) ?? [] }, links, source, removeLinks);
   }

@@ -8,7 +8,7 @@ import type { DidiBookingConnector } from './didi/booking-connector.js';
 import { DidiAgentProgram } from './didi/program.js';
 import type { DidiBinding } from './didi/contracts.js';
 import type { DidiConnector } from './didi/connector.js';
-import { DidiMemberAccess } from '../core/didi-source.js';
+import { DidiMemberAccess, assertEquivalentDidiAccount } from '../core/didi-source.js';
 import { SandboxAgentProgram } from './sandbox-agent.js';
 import { UcpAgentProgram } from './ucp/program.js';
 import { GeoAgentProgram } from './geo-agent.js';
@@ -44,13 +44,15 @@ import { ShopifyCheckoutProgram } from './shopify/checkout-program.js';
 import type { ShopCheckoutConnector } from './shopify/checkout-contracts.js';
 
 export function createExecutionCatalog(options: { personalSourceOwner?: string; didiOrderTestEnabled?: boolean; didiOrderTestSource?: MockOrderSource; meituan?: MeituanPrimitiveReader; participantBooking?: ParticipantBrowserOptions; participantBookingSource?: ParticipantBookingSource; didiMember?: { connectionFile: string; connector?: DidiConnector }; didi?: DidiBinding & { connector?: DidiConnector; bookingEnabled?: boolean; bookingConnector?: DidiBookingConnector }; store?: JobStore; csvInputDirectory?: string; documentEnabled?: boolean; documentExecutor?: Executor; paotuiSkillDirectory?: string; paotuiMemberConnectionFile?: string; memberSourceKeyFile?: string; executionHost?: 'gateway' | 'worker'; ontologyAuditPath?: string; publicGeoDiscoveryQueries?: readonly PublicGeoQuery[]; sandbox?: { endpoint: string; tokenFile: string }; domainSandboxProviders?: DomainSandboxProvider[]; ucpSandbox?: UcpSandboxOptions; bookingSandbox?: BookingSandboxOptions; shopifyPaymentSandbox?: ShopifyPASandboxOptions; stripeTest?: StripeTestOptions; commerceSandbox?: CommerceSandboxOptions & { connector?: CommerceSandboxConnector }; shopifyCatalog?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: CatalogConnector }; shopifyCheckout?: { merchants: ShopifyMerchant[]; auditDirectory?: string; connector?: ShopCheckoutConnector } } = {}): ExecutionCatalog {
-  if (options.didiMember && (options.didi || !options.store || options.store.databasePath === ':memory:')) throw new Error('Member DiDi requires its own connection and persistent business store');
+  const unifiedDidi = !!(options.didiMember && options.didi && options.personalSourceOwner && options.store?.authority && options.store.security.enabled);
+  if (options.didiMember && (options.didi && !unifiedDidi || !options.store || options.store.databasePath === ':memory:')) throw new Error('Member DiDi requires its own connection and persistent business store');
   const didiAccess = options.didiMember ? new DidiMemberAccess(options.didiMember.connectionFile, (record, hash) => options.store!.memberDidiSourceAdmitted(record, hash)) : undefined;
-  const didiSource = didiAccess?.record.binding ?? options.didi;
+  if (unifiedDidi) assertEquivalentDidiAccount(options.didi!, didiAccess!.record, options.personalSourceOwner!);
+  const didiSource = unifiedDidi ? options.didi : didiAccess?.record.binding ?? options.didi;
   const didiBinding = didiSource ? { bindingId: didiSource.bindingId, keyFile: didiSource.keyFile, keySha256: didiSource.keySha256, environment: didiSource.environment, auditDirectory: didiSource.auditDirectory } : undefined;
-  const didi = didiBinding ? new DidiAgentProgram(didiBinding, { connector: options.didiMember?.connector ?? options.didi?.connector, memberAccess: didiAccess }) : undefined;
-  if (options.didiOrderTestEnabled && (!options.didi || !options.store || options.didiMember)) throw new Error('Order testing requires the explicit local DiDi binding and owned store');
-  const didiOrder = options.didiOrderTestEnabled ? new DidiOrderTestProgram(didiBinding!, options.store!, { maps: options.didi!.connector, orders: options.didiOrderTestSource }) : undefined;
+  const didi = didiBinding ? new DidiAgentProgram(didiBinding, { connector: options.didiMember?.connector ?? options.didi?.connector, ...(unifiedDidi ? { accountAccess: didiAccess } : { memberAccess: didiAccess }) }) : undefined;
+  if (options.didiOrderTestEnabled && (!options.didi || !options.store || options.didiMember && !unifiedDidi)) throw new Error('Order testing requires the explicit owned DiDi binding and shared store');
+  const didiOrder = options.didiOrderTestEnabled ? new DidiOrderTestProgram(didiBinding!, options.store!, { maps: options.didi!.connector, orders: options.didiOrderTestSource, accountAccess: unifiedDidi ? didiAccess : undefined }) : undefined;
   const didiBooking = didi && options.didi?.bookingEnabled ? new DidiBookingProgram(didi.binding, options.didi.bookingConnector, options.didi.connector) : undefined;
   const brief = new LocalArtifactProgram('brief'), csv = options.csvInputDirectory ? new LocalArtifactProgram('csv', options.csvInputDirectory) : undefined;
   const shopify = options.shopifyCatalog?.merchants.length ? new CatalogAgentProgram(options.shopifyCatalog.merchants, options.shopifyCatalog) : undefined;
@@ -83,7 +85,7 @@ export function createExecutionCatalog(options: { personalSourceOwner?: string; 
   const sandbox = options.sandbox ? new SandboxServiceAdapter(options.sandbox.endpoint, options.sandbox.tokenFile) : undefined;
   const sandboxProgram = sandbox ? new SandboxAgentProgram(sandbox, options.store) : undefined;
   if (options.publicGeoDiscoveryQueries?.length && !meituanReader) throw new Error('Public-location discovery requires the existing personal Meituan reader');
-  if (options.personalSourceOwner) for (const program of [didiOrder, didiBooking, registration, ...meituan, ...(didiAccess ? [] : [didi]), shopify, commerce, stripe, booking]) if (program) bindPersonalSourceOwner(program, options.personalSourceOwner);
+  if (options.personalSourceOwner) for (const program of [didiOrder, didiBooking, registration, ...meituan, ...(didiAccess && !unifiedDidi ? [] : [didi]), shopify, commerce, stripe, booking]) if (program) bindPersonalSourceOwner(program, options.personalSourceOwner);
   return new ExecutionCatalog([
     ...(didiOrder ? [didiOrder.capability()] : []),
     ...(registration ? [registration.capability()] : []), ...meituan.map(program => program.capability()),

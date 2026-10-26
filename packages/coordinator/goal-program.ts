@@ -132,7 +132,13 @@ export function aggregateGoalFacts(deliveries: Delivery[]): CandidateFacts {
 export function assessGoal(catalog: ExecutionCatalog, ctx: AgentProgramContext, proposal: unknown, reads: PlanningSnapshot): { assessment: GoalAssessment; delivery: Delivery } {
   const composition = ctx.state.composition ?? fail('Missing whole-goal state');
   assertGoalContract(composition.goal, ctx.request, ctx.graph.releaseRef);
-  const selected = goalCompletionSchema.parse(proposal);
+  const parsed = goalCompletionSchema.safeParse(proposal);
+  if (!parsed.success) {
+    const roots = new Set(['components', 'criteria', 'conditions']);
+    const fields = [...new Set(parsed.error.issues.map(issue => roots.has(String(issue.path[0])) ? String(issue.path[0]) : 'completion'))];
+    fail(`Whole-goal completion schema mismatch at ${fields.join(', ')}. Use components:[{contextId,proposalJson:JSON text}], criteria:[{id,contextIds:[contextId]}] and conditions:[{conditionId,contextId}]; include conditions:[] when none are required.`);
+  }
+  const selected = parsed.data;
   for (const [items, id] of [[selected.components, (item: { contextId: string }) => item.contextId], [selected.criteria, (item: { id: string }) => item.id], [selected.conditions, (item: { conditionId: string }) => item.conditionId]] as const) {
     const keys = items.map(item => (id as (item: unknown) => string)(item));
     if (new Set(keys).size !== keys.length) fail('Completion repeats a component, criterion or condition');

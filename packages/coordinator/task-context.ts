@@ -386,6 +386,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
 }
 
 export function assertTaskContextCurrent(graph: OntologyObjectStore, owner: string, context: PlanningContextReceipt): void {
+  if (graph.security && !authorizationScope()?.synchronousRead) return graph.security.readSnapshot(() => assertTaskContextCurrent(graph, owner, context));
   if (context.ownerDigest !== digest(owner)) return conflict('Task context belongs to another owner');
   const request = readOntologyRequest(graph, owner, context.requestId);
   if (request.revision !== context.requestRevision || digest(request) !== context.requestDigest) return conflict('Task business context changed after its read');
