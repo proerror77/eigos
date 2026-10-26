@@ -104,7 +104,11 @@ test('plain model JSON cannot replace native MCP completion and the attempted ru
   const f = await fixture();
   let runs = 0;
   try {
-    await assert.rejects(reasonWithOntology({ ontologyTransport: 'native-mcp', runStructured: async () => ({ output: { decisionDigest: 'a'.repeat(64) }, evidence: evidence() }) }, 'Read this task.', {}, f.session, new AbortController().signal, run => {
+    await assert.rejects(reasonWithOntology({ ontologyTransport: 'native-mcp', runStructured: async prompt => {
+      assert(prompt.includes('mcp__eigos_ontology__read_task_context'));
+      assert(prompt.includes('mcp__eigos_ontology__submit_decision'));
+      return { output: { decisionDigest: 'a'.repeat(64) }, evidence: evidence() };
+    } }, 'Read this task.', {}, f.session, new AbortController().signal, run => {
       runs++; assert.equal(run.ontologyMcp?.decisionSubmitted, false); assert.equal(run.ontologyMcp?.calls.length, 0);
     }), /did not submit a decision through native/);
     assert.equal(runs, 1); assert.equal(f.b.store.get(owner, f.job.id).artifact, undefined);

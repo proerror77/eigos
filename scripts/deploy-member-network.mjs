@@ -12,8 +12,10 @@ import { installReleaseDependencies } from '../dist/packages/deployment/dependen
 import { releaseFiles } from '../dist/packages/deployment/files.js';
 import { assertInviteBetaProxy } from '../dist/packages/deployment/invite-beta-proxy.js';
 import { assertCloudflareFrontend, readCloudflareFrontend } from '../dist/packages/deployment/cloudflare-frontend.js';
+import { assertLegacyDeploymentAllowed } from '../dist/packages/deployment/primary.js';
 
-// Dedicated profiles never replace com.eigos.grok-life. Frontend readback uses the operator's
+assertLegacyDeploymentAllowed();
+// Legacy profiles are unavailable after primary consolidation. Frontend readback uses the operator's
 // existing login; IdP provisioning and business execution are separate steps.
 const { values } = parseArgs({ options: { config: { type: 'string' }, profile: { type: 'string', default: 'member-network' }, 'cloudflare-frontend': { type: 'string' }, 'take-over-from': { type: 'string' }, apply: { type: 'boolean', default: false } } });
 if (!['member-network', 'invite-beta', 'shopify-checkout-private'].includes(values.profile)) throw new Error('Choose member-network, invite-beta or shopify-checkout-private');

@@ -12,8 +12,10 @@ import { BACKEND_VERSION } from '../dist/packages/ontology/execution.js';
 import { participantDeploymentSettings } from '../dist/packages/capabilities/free-booking/runtime-config.js';
 import { resolvePaOwner } from './pa-source.mjs';
 import { assertUpgradeIdle } from './pa-upgrade.mjs';
+import { assertLegacyDeploymentAllowed } from '../dist/packages/deployment/primary.js';
 
 // Owned local deployment, with immutable build snapshots and private recovery backups.
+assertLegacyDeploymentAllowed();
 if (process.platform !== 'darwin') throw new Error('This setup uses macOS launchd');
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const runtime = join(homedir(), '.local/share/eigos/grok-life');

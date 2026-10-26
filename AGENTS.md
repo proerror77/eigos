@@ -46,5 +46,6 @@
 
 - 已获授权合并的本任务短期分支，在回读 PR 合并结果和最新远端 SHA、核对全部工作已整合、没有独有／未推送提交、没有其他活动对话或 worktree 使用，并保存恢复记录后清理。Squash 合并同时核对 PR 的合并 SHA 和内容等价性，不只依赖祖先关系。需保留的未跟踪／忽略文件先归档；由 Codex／Orca 管理的 worktree 使用对应宿主的归档／清理入口。历史遗留分支先分类，不按名称、年龄或“已合并”标签批量删除。
 - 本体实现与定义集中在 `packages/ontology/`，供应商绑定只编辑 `packages/ontology/definitions/`。发布后的共享业务库是运行权威来源；Worker、Gateway 和 Ontology MCP 按同一任务发布引用读取，不各自维护可变定义副本。
+- 正式部署只有一个 `com.eigos.primary` 运行权威；MCP、A2A、私有兼容入口按身份、任务与来源授权路由到同一业务库。供应商、浏览器代理和 Mock 可独立运行，但不能另建正式任务／本体实例。迁移与停用流程见 [统一运行与路由](docs/architecture/runtime-authority.md) 和 [部署说明](docs/guides/deployment.md)。
 - `dist/` 是生成物；`packages/ontology/history/` 是只读兼容快照，不是第二个编辑入口。历史指纹不能为了通过测试而重写。
 - 当前模块导航见 [仓库结构](docs/architecture/repository.md)，领域术语见 [领域模型](docs/architecture/domain.md)。

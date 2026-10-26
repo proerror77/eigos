@@ -5,10 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
+import { claimAuthorityCurrent } from '../core/runtime-authority.js';
 import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySchema, securityDefaults, accessContextSchema, POLICY_VERSION, SECURITY_CONTRACT, type AccessContext } from './contracts.js';
 import { SecurityPolicies } from './policy-store.js';
 import { withAuthorization, type AuthorizationScope } from './context.js';
 import {RecoveryStore} from './recovery.js';
+import {businessTransaction,hasTransaction} from '../core/transaction.js';
 
 export type SecurityMode = 'legacy' | 'foundation';
 export type AgentAccessGrant = z.infer<typeof agentAccessGrantSchema>;
@@ -79,6 +81,10 @@ export class SecurityStore {
     this.recoveries = new RecoveryStore(db,this,readOnly);
   }
   atomic<T>(fn: () => T): T {
+    // A top-level deferred SAVEPOINT can lose its read snapshot to another WAL
+    // writer before it writes. Reserve the writer first; nested calls still use
+    // savepoints inside their caller's transaction and roll back with it.
+    if (!this.atomicDepth && !hasTransaction(this.db)) return businessTransaction(this.db, () => this.atomic(fn));
     const name = `security_${++this.sequence}`;
     this.db.exec(`SAVEPOINT ${name}`);
     this.atomicDepth++;
@@ -100,6 +106,9 @@ export class SecurityStore {
     return this.db.prepare('UPDATE security_manager SET expires_at=? WHERE slot=1 AND token=? AND expires_at>?').run(this.now() + securityDefaults.authorityProjectionLeaseSeconds * 1000, token, this.now()).changes === 1;
   }
   releaseManager(token: string) { this.db.prepare('UPDATE security_manager SET expires_at=0 WHERE slot=1 AND token=?').run(token); }
+  managerCurrent(token: string): boolean {
+    try { this.requireManager(token); return true; } catch { return false; }
+  }
   private requireManager(token?: string) {
     this.policies.revision();
     const row = this.db.prepare("SELECT m.token,m.expires_at FROM security_manager m JOIN security_settings c ON c.slot=m.slot WHERE m.slot=1 AND c.version=2 AND c.mode='foundation'").get();
@@ -109,6 +118,15 @@ export class SecurityStore {
   getSubject(installationId: string): Subject | undefined { const row = this.db.prepare('SELECT * FROM security_subjects WHERE installation_id=?').get(installationId); return row ? subject(row) : undefined; }
   private fenced(f: SubjectFacts): boolean {
     return !!this.db.prepare("SELECT 1 FROM security_fences WHERE owner=? AND state<>'cleared' AND ((kind='member' AND target_id=?) OR (kind='connection' AND target_id=?) OR (kind='installation' AND target_id=?)) LIMIT 1").get(f.ownerKey, f.memberId, f.clientId, f.installationId);
+  }
+  authenticateSubject(f:SubjectFacts,managerToken:string):Subject {
+    this.requireManager(managerToken);
+    const current=this.getSubject(f.installationId);
+    if(current && (current.ownerKey!==f.ownerKey || current.memberId!==f.memberId || current.clientId!==f.clientId))throw new SecurityError('POLICY_CHANGED');
+    // Authentication already re-read membership and token facts. An unchanged,
+    // live subject needs no write while a Worker publishes its task result.
+    if(f.active && current?.active && current.validUntil>this.now() && !this.fenced(f))return this.requireSubject(f.installationId,current.epoch);
+    return this.publishSubject(f,managerToken);
   }
   publishSubject(f: SubjectFacts, managerToken: string): Subject {
     return this.atomic(() => {
@@ -272,7 +290,8 @@ export class SecurityStore {
       if (data) { const current = this.taskGrant(actor, data.taskId); if (current.id !== data.id || current.revision !== data.revision) throw new SecurityError('POLICY_CHANGED'); }
       if (actor.actorKind === 'worker') {
         const lease=this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(actor.taskId);
-        if (this.workAuthority(actor.ownerKey, actor.taskId)?.id !== actor.authorityRef.id || !lease || Number(lease.expires_at)<=this.now() || digest(String(lease.token))!==actor.claimRef) throw new SecurityError('ACCESS_REVOKED');
+        if (this.workAuthority(actor.ownerKey, actor.taskId)?.id !== actor.authorityRef.id || !lease || Number(lease.expires_at)<=this.now() || digest(String(lease.token))!==actor.claimRef
+          || !claimAuthorityCurrent(this.db,actor.taskId,String(lease.token))) throw new SecurityError('ACCESS_REVOKED');
       }
     } };
     scope.assertCurrent(); if(actor.actorKind==='worker') this.policies.loadLineage(scope); return scope;

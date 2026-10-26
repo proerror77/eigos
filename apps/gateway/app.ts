@@ -38,27 +38,30 @@ import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
 import { DefinitionService } from '../../packages/ontology/definition-service.js';
 import { mountDefinitionRoutes } from './ontology/routes.js';
 import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
+import { createIngressRouter } from './ingress.js';
+import { decodeJwt } from 'jose';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
   : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
 
-export function createApp(config: Config, verify: VerifyToken = createVerifier(config), catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider) {
+export function createApp(config: Config, verify?: VerifyToken, catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider, verifierFactory?: (config: Config) => VerifyToken) {
   assertPersonalSourceConfig(config);
   assertSourceProxy(config);
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
   if (config.EIGOS_NETWORK_ENABLED === 'true' && (config.EIGOS_AUTH_MODE !== 'jwt' || !config.OIDC_AGENT_CLIENT_ID || !config.OIDC_CLIENT_ID || !config.EIGOS_NETWORK_MEMBER_IDS.length)) throw new Error('Network requires explicit JWT and enrolled-member configuration');
   const hostname = new URL(config.PUBLIC_URL).hostname;
-  const allowedOrigins = new Set([config.PUBLIC_URL, ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
+  const ingress = createIngressRouter(config, verify, verifierFactory);
+  const allowedOrigins = new Set([config.PUBLIC_URL, ...(config.authority?.ingresses.map(value => value.origin) ?? []), ...config.ALLOWED_ORIGINS.split(',').filter(Boolean)]);
   const app = createMcpExpressApp({
     host: config.HOST,
-    allowedHosts: [hostname],
+    allowedHosts: [...new Set([hostname, ...(config.authority?.ingresses.map(value => new URL(value.origin).hostname) ?? [])])],
     allowedOrigins: [...allowedOrigins].map(origin => new URL(origin).hostname),
     jsonLimit: '64kb',
   });
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
-  const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
+  const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE, authority: config.authority });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
   try {
@@ -87,14 +90,26 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (config.EIGOS_DIDI_MEMBER_CONNECTION_FILE) {
       const access = new DidiMemberAccess(config.EIGOS_DIDI_MEMBER_CONNECTION_FILE, (record, hash) => store.memberDidiSourceAdmitted(record, hash));
       const member = members.get(access.record.memberId);
-      if (network || config.EIGOS_INVITE_BETA !== 'true' || member.status !== 'active' || member.issuer !== config.OAUTH_ISSUER
+      if (network || !config.authority && config.EIGOS_INVITE_BETA !== 'true' || member.status !== 'active' || member.issuer !== config.OAUTH_ISSUER
         || ownerKey({ ...member, clientId: '', scopes: [] }) !== didiSourceOwner(access.record)) throw new Error('Member DiDi must identify its exact active invited member');
       store.admitMemberDidiSource(access.record, access.configurationDigest);
-      members.setRevocationObserver(change => store.revokeMemberDidiSource(change.memberId));
+      members.setRevocationObserver(change => { if (!store.security.enabled || change.kind === 'member') store.revokeMemberDidiSource(change.memberId); });
     } else store.admitMemberDidiSource();
   } catch (error) { network?.close(); store.close(); members.close(); throw error; }
   const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members, store, catalog) : undefined;
   try { security?.start(); } catch(error) { network?.close(); store.close(); members.close(); throw error; }
+  app.use((req, res, next) => {
+    if (!store.authorityCurrent()) { res.status(503).json({ error: 'runtime_authority_unavailable' }); return; }
+    if (config.authority) {
+      let route;
+      try { route = ingress.selected(req)!; } catch { res.status(403).json({ error: 'unregistered_ingress' }); return; }
+      res.setHeader('X-EIGOS-Authority-Id', config.authority.id);
+      if (route.browserRedirect && (req.path === '/' || req.path === '/members' || req.path.startsWith('/members/'))) {
+        res.redirect(307, config.PUBLIC_URL + req.originalUrl); return;
+      }
+    }
+    next();
+  });
   if (config.EIGOS_AUDIT_PATH) mkdirSync(dirname(config.EIGOS_AUDIT_PATH), { recursive: true, mode: 0o700 });
   app.use((req, res, next) => {
     if (config.EIGOS_AUDIT_PATH && (['/mcp', '/a2a', '/.well-known/agent-card.json', '/agents/registrations'].includes(req.path) || /^\/tasks\/[^/]+\/authorize$/.test(req.path) || /^\/agents\/registrations\/[0-9a-f-]{36}(?:\/[a-z]+)?$/i.test(req.path))) {
@@ -130,28 +145,38 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
     if (req.method === 'OPTIONS') { res.sendStatus(204); return; }
     next();
   });
-  const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const };
-  app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity, securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
+  const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const,
+    ...(config.authority ? { authorityId: config.authority.id, authorityRevision: config.authority.revision } : {}) };
+  app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity,
+    ...(config.authority?{ontologyRelease:store.definitions.active().ref}:{}),securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
   mountInviteBeta(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
   mountMemberRoutes(app, config, members, loginProvider, security);
-  mountAgentRoutes(app, config, members, verify, security);
-  const metadataUrl = `${config.PUBLIC_URL}/.well-known/oauth-protected-resource`;
-  app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (_req, res) => {
+  mountAgentRoutes(app, config, members, verify ?? createVerifier(config), security, config.authority ? req => ({ config: ingress.config(req), verify: ingress.verify(req), route: ingress.selected(req)! }) : undefined);
+  app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
-    res.json(protectedResourceMetadata(config));
+    res.json(protectedResourceMetadata(ingress.config(req)));
   });
 
   const authenticate: RequestHandler = async (req, res, next) => {
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '');
     try {
       if (!match?.[1]) throw new Error('Missing token');
-      const principal = inviteBetaPrincipal(config, await verify(match[1]));
+      const verified = await ingress.verify(req)(match[1]);
+      const principal = config.authority ? ingress.principal(req, verified) : inviteBetaPrincipal(config, verified);
       if (!principal) { res.status(403).json({ error: 'client_not_admitted', membership_url: `${config.PUBLIC_URL}/members` }); return; }
       if (security) {
         try {
-          if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
+          if (config.authority) {
+            const route = ingress.selected(req)!;
+            if (route.nativeClientIds.includes(principal.clientId)) {
+              members.authorize(principal);
+              const member = members.find(principal)!;
+              const claims = z.object({ exp: z.number() }).parse(decodeJwt(match[1]));
+              members.agents.authorizeNative(principal, member.id, match[1], claims.exp * 1000);
+            } else if (!route.agentClientIds.includes(principal.clientId)) throw new SecurityError('AUTHORIZATION_REQUIRED');
+          } else if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
           principal.access = security.authenticate(principal, match[1]);
         } catch(error) {
           if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason});
@@ -180,7 +205,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
       Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes, extra: { principal } } });
       next();
     } catch {
-      const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${metadataUrl}"` : '';
+      const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${ingress.config(req).PUBLIC_URL}/.well-known/oauth-protected-resource"` : '';
       res.setHeader('WWW-Authenticate', `Bearer realm="eigos", error="invalid_token"${discovery}`);
       res.status(401).json({ error: 'invalid_token', ...(config.OIDC_AGENT_CLIENT_ID ? { onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}) });
     }
@@ -265,7 +290,7 @@ export function createApp(config: Config, verify: VerifyToken = createVerifier(c
   app.all('/mcp', authenticate, async (req, res) => { await handleMcp(req, res, req.body); });
 
   const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()));
-  app.get('/.well-known/agent-card.json', async (_req, res) => { res.json(AgentCard.toJSON(await a2a.getAgentCard())); });
+  app.get('/.well-known/agent-card.json', async (req, res) => { res.json(AgentCard.toJSON(config.authority ? agentCard(ingress.config(req), tasks.services()) : await a2a.getAgentCard())); });
   const a2aScopes: Record<string, Scope> = {
     SendMessage: 'tasks:write', SendStreamingMessage: 'tasks:write',
     GetTask: 'tasks:read', ListTasks: 'tasks:read', SubscribeToTask: 'tasks:read', CancelTask: 'tasks:write',
