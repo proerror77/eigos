@@ -83,6 +83,14 @@ test('foundation composition retains typed handoffs, child source provenance and
   const f=fixture();
   try {
     const job=f.submit();
+    await f.tick();
+    const started=f.jobs.get(f.owner,job.id).delegation!;
+    const pipelineBinding=f.jobs.security.withAgent(f.principal,job.id,'task.query',()=>{
+      const program=f.catalog.agentProgram(started.agent!.programRef,f.owner)!;
+      return program.pipelineBinding!({graph:f.jobs.ontology,owner:f.owner,request:started.request,state:started.agent!},'SearchMeituanLocations',{scope:started.agent!.components!.geo!.scope});
+    });
+    assert.deepEqual(Object.keys(pipelineBinding).sort(),['configurationDigest','ref']);
+    assert.deepEqual(pipelineBinding.ref,{id:'geo.search',version:'1'});
     for(let i=0;i<12 && ['submitted','working'].includes(f.jobs.get(f.owner,job.id).state);i++)await f.tick();
     const done=f.jobs.get(f.owner,job.id);
     assert.equal(done.state,'completed',JSON.stringify({feedback:done.delegation?.agent?.feedback,recovery:done.delegation?.recovery,events:done.delegation?.events.slice(-4)}));

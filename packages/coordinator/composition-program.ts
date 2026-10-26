@@ -169,7 +169,8 @@ export class CompositionProgram implements AgentProgram {
     return this.bound(node).configurationDigest;
   }
   pipelineBinding(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) {
-    return local(action) ? this : this.route(ctx, action, input).program;
+    const program = local(action) ? this : this.route(ctx, action, input).program;
+    return { ref: program.ref, configurationDigest: program.configurationDigest };
   }
   describeComponents(ctx: AgentProgramContext) {
     return this.input(ctx).components.map(node => {

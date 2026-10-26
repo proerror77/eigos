@@ -53,7 +53,7 @@ export function secureProgram(program: AgentProgram,authority?:SecurityStore): A
       if(refs.size>20)throw new SecurityError('OUTPUT_NOT_ALLOWED');
       delivery.artifact.data.result={...delivery.artifact.data.result,securityEvidenceRefs:[...refs.values()]};return delivery;
     }));
-    if(['validate','validatePlanning','validatePause','authority','clarification','describeComponents','assertContext','contextRefs','validatePaymentRoute','terminalHandoff','validateOutput','projectOutputs'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
+    if(['validate','validatePlanning','validatePause','authority','clarification','describeComponents','assertContext','contextRefs','validatePaymentRoute','terminalHandoff','validateOutput','projectOutputs','pipelineBinding'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
     return value.bind(target);
   }});
 }
