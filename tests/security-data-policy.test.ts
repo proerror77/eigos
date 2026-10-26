@@ -77,6 +77,21 @@ test('synchronous read checkpoint does not survive eligibility expiry',()=>{
   }finally{f.close();}
 });
 
+test('slow authority checks are memoized from completion without removing the final check',()=>{
+  let now=Date.now();const f=securityFixture(()=>now);try {
+    const install=f.installation('Slow authority');f.approve(install.id);const principal={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)};
+    f.jobs.security.withAgent(principal,undefined,'task.process',scope=>{
+      const original=scope.assertCurrent;let checks=0;
+      scope.assertCurrent=()=>{checks++;now+=20;original();};
+      f.jobs.security.policies.readSnapshot(()=>{
+        now+=15;
+        for(let i=0;i<20;i++)authorizationScope()!.assertCurrent();
+      });
+      assert.equal(checks,3,'Entry, elapsed checkpoint and exit remain authoritative; check duration does not force another check on every field');
+    });
+  }finally{f.close();}
+});
+
 test('a rejected asynchronous read cannot retain the synchronous authorization checkpoint',async()=>{
   const f=fixture();let late:Promise<void>|undefined;
   try {

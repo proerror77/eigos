@@ -2894,7 +2894,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "fa63c867c161f533b4e2f6d143617890bca4619729baec05454d2e75ccf9bab4",
+      "sourceDigest": "bb313194da4991f2aa801258d984529b0ffda26055a86fcec79c4cc3a0a7b4e3",
       "channels": [
         "model",
         "query"
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "78028f2e5757228e819c5d3858e9052fa6ebb8b746c14c92acdac78afdc46682",
+      "sourceDigest": "42956ae38378c1f7536c3b8263618163e6eedd96616a4f6c01ed31d4d8b8ec32",
       "channels": [
         "all-reads"
       ],
