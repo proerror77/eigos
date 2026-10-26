@@ -29,7 +29,7 @@ function fixture() {
   });
   const input={sources:sources.map(({id,tasks,members})=>({id,tasks,members})),foundationSource:'foundation',membershipSource:'public',expectedPolicyDigest:sources[0]!.policy};
   const destination=join(directory,'primary'),authority:RuntimeAuthority={version:1,id:randomUUID(),revision:1,canonicalOrigin:'https://primary.example',issuer:principal.issuer,ontologyId:'eigos.business',databasePath:join(destination,'tasks.sqlite'),membershipDatabasePath:join(destination,'members.sqlite'),
-    ingresses:[{origin:'https://primary.example',audience:'https://primary.example/',agentClientId:'client',agentClientIds:['client'],nativeClientIds:[],browserRedirect:false,newRegistrations:true}]};
+    ingresses:[{origin:'https://primary.example',audience:'https://primary.example/',tenantClaim:'tenant_id',agentClientId:'client',agentClientIds:['client'],nativeClientIds:[],browserRedirect:false,newRegistrations:true}]};
   return {directory,sources,input,authority,destination,owner,close:()=>rmSync(directory,{recursive:true,force:true})};
 }
 test('closed snapshots consolidate exact task bodies and release aliases under one authority and exact identity',()=>{

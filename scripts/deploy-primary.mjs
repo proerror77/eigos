@@ -10,7 +10,7 @@ import {JobStore} from '../dist/packages/core/store.js';
 import {runtimeAuthorityDigest} from '../dist/packages/core/runtime-authority.js';
 import {releaseFiles} from '../dist/packages/deployment/files.js';
 import {installReleaseDependencies} from '../dist/packages/deployment/dependencies.js';
-import {primaryRuntime} from '../dist/packages/deployment/primary.js';
+import {primaryRuntime,readPrimaryHealth} from '../dist/packages/deployment/primary.js';
 
 const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'}}});
 if(process.platform!=='darwin' || !values.config)throw new Error('Use --config with the owned primary environment on macOS');
@@ -49,7 +49,7 @@ write(join(runtime,'authority.json'),JSON.stringify(authority,null,2)+'\n');writ
 execFileSync('launchctl',['enable',service]);execFileSync('launchctl',['bootstrap',`gui/${process.getuid()}`,plistPath]);
 let healthy=false;
 for(let i=0;i<30;i++){
-  try{const result=await fetch(`http://127.0.0.1:${config.PORT}/health`,{headers:{Host:new URL(config.PUBLIC_URL).host},signal:AbortSignal.timeout(1000)}).then(r=>r.ok?r.json():undefined);if(result?.authorityId===authority.id && result.releaseDigest===buildDigest){healthy=true;break;}}catch{}
+  try{const result=await readPrimaryHealth(config.PORT,new URL(config.PUBLIC_URL).host);if(result.authorityId===authority.id && result.releaseDigest===buildDigest){healthy=true;break;}}catch{}
   await new Promise(r=>setTimeout(r,500));
 }
 if(!healthy)throw new Error('Primary failed readiness; preserve its database and inspect the owned logs before forward repair');

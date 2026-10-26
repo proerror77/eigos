@@ -6,7 +6,16 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installReleaseDependencies } from '../packages/deployment/dependencies.js';
 import { releaseFiles } from '../packages/deployment/files.js';
-import { assertLegacyDeploymentAllowed,primaryRuntime } from '../packages/deployment/primary.js';
+import { assertLegacyDeploymentAllowed,primaryRuntime,readPrimaryHealth } from '../packages/deployment/primary.js';
+import http from 'node:http';
+import {once} from 'node:events';
+
+test('primary readiness preserves the configured ingress Host on its loopback probe',async()=>{
+  const server=http.createServer((request,response)=>{response.writeHead(request.headers.host==='primary.example'?200:403,{'Content-Type':'application/json'});response.end(JSON.stringify({authorityId:'fixture-primary'}));});
+  server.listen(0,'127.0.0.1');await once(server,'listening');
+  try{const port=(server.address() as {port:number}).port;assert.equal((await readPrimaryHealth(port,'primary.example')).authorityId,'fixture-primary');await assert.rejects(readPrimaryHealth(port,'other.example'),/unavailable/);}
+  finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
 
 test('a registered primary authority prevents retired formal installers from recreating a split runtime',()=>{
   const home=mkdtempSync(join(tmpdir(),'eigos-primary-owner-'));

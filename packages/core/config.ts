@@ -129,6 +129,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
     if (c.EIGOS_SECURITY_MODE !== 'foundation' || c.EIGOS_AUTH_MODE !== 'jwt' || c.HOST !== '127.0.0.1'
       || c.PUBLIC_URL !== c.authority.canonicalOrigin || resolve(c.DATABASE_PATH) !== resolve(c.authority.databasePath)
       || role === 'gateway' && (c.OAUTH_ISSUER !== c.authority.issuer || c.OAUTH_AUDIENCE !== primary.audience
+        || (c.OAUTH_TENANT_CLAIM ?? 'tenant_id') !== primary.tenantClaim
         || c.OIDC_AGENT_CLIENT_ID !== primary.agentClientId || !c.MEMBERSHIP_DATABASE_PATH || resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath))
       || c.MEMBERSHIP_DATABASE_PATH && resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath)
       || c.EIGOS_INVITE_BETA === 'true' || c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true')

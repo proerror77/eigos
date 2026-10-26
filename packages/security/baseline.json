@@ -3225,7 +3225,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "827d7ee93b0717f88a67c29fb3fe35bcc06ed572d51fe2ec2bf75540a278b54d",
+      "sourceDigest": "fab862a4944149ae25ef7dd22708c895a5ea2f09ff47b3fe0939c93b966a38a0",
       "channels": [
         "authorization_control"
       ],
@@ -4080,7 +4080,7 @@
     {
       "id": "runtime-authority",
       "file": "packages/core/runtime-authority.ts",
-      "sourceDigest": "3ff48d83129814a4d2b86f117c58faa1aa26fd4860131bc541004cceea9b8001",
+      "sourceDigest": "4eda6a17a0ea14307ef23f99712774c80005d6d979c9d5e063143c5268241fde",
       "channels": [
         "runtime"
       ],
@@ -4092,7 +4092,7 @@
     {
       "id": "runtime-ingress",
       "file": "apps/gateway/ingress.ts",
-      "sourceDigest": "d477cb15b8d7e42cb5dc7def31b704b0a103130d860cef5097223f2ff3800a47",
+      "sourceDigest": "80a94611a7ae1d63de3d721498201a83784d788efb55763cc41af84d70afb588",
       "channels": [
         "http",
         "mcp",
@@ -4131,7 +4131,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "2f6885151045ff00255c9fe5fa99b709ec84f3d22cacd0de8a7cad365a1001e9",
+      "sourceDigest": "6c1a8e1004e05e526668c528118b9916d7dd5b6af0646e4ab78b8f223dfa678d",
       "channels": [
         "operator_cli"
       ],

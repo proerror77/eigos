@@ -16,7 +16,7 @@ export function createIngressRouter(config: Config, override?: VerifyToken, fact
   };
   const effective = (request: Pick<Request, 'headers'>): Config => {
     const ingress = selected(request);
-    return ingress ? { ...config, PUBLIC_URL: ingress.origin, OAUTH_AUDIENCE: ingress.audience, OAUTH_LEGACY_AUDIENCE: undefined,
+    return ingress ? { ...config, PUBLIC_URL: ingress.origin, OAUTH_AUDIENCE: ingress.audience, OAUTH_TENANT_CLAIM: ingress.tenantClaim, OAUTH_LEGACY_AUDIENCE: undefined,
       OIDC_AGENT_CLIENT_ID: ingress.agentClientId, OIDC_MCP_CLIENT_ID: ingress.nativeClientIds[0] } : config;
   };
   return {

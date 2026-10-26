@@ -15,7 +15,7 @@ const audience = z.url().refine(value => {
 });
 const clients = z.array(z.string().min(1).max(200)).max(20).refine(values => new Set(values).size === values.length);
 export const runtimeIngressSchema = z.strictObject({
-  origin, audience, agentClientId: z.string().min(1).max(200),
+  origin, audience, tenantClaim: z.string().trim().min(1).max(400).default('tenant_id'), agentClientId: z.string().min(1).max(200),
   agentClientIds: clients, nativeClientIds: clients.default([]),
   browserRedirect: z.boolean().default(false), newRegistrations: z.boolean().default(true),
 }).refine(value => value.agentClientIds.includes(value.agentClientId), 'Registration client must be an admitted Agent client');
