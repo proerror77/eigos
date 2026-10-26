@@ -207,8 +207,11 @@ export class RelayClient {
         signal.throwIfAborted();
         const contact = (await this.contacts()).find(c => c.id === message.connectionId && c.state === 'accepted'
           && (c.requester === message.senderId || c.recipient === message.senderId));
-        if (!contact) {
-          this.db.prepare("UPDATE node_inbox SET state='rejected',reason='CONTACT_REVOKED',envelope=NULL WHERE sender=? AND id=? AND state='pending'").run(message.senderId, message.id);
+        signal.throwIfAborted();
+        const expired = message.expiresAt <= Date.now();
+        if (!contact || expired) {
+          this.db.prepare("UPDATE node_inbox SET state='rejected',reason=?,envelope=NULL WHERE sender=? AND id=? AND state='pending'")
+            .run(expired ? 'MESSAGE_EXPIRED_OR_INVALID' : 'CONTACT_REVOKED', message.senderId, message.id);
           continue;
         }
         await handler(message); this.markHandled(message.senderId, message.id);

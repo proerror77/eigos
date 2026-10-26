@@ -259,3 +259,35 @@ test('serializing or inspecting the connector cannot expose connection credentia
     for (const value of [secret, keys.signingKey.d!, keys.encryptionKey.d!]) assert(!output.includes(value));
   } finally { await f.close(); }
 });
+
+test('a message expiring during contact readback cannot reach the host handler', async t => {
+  const f = await fixture(), controller = new AbortController(); let expireOnReadback = false, expiresAt = Date.now() + 30000, handled = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (expireOnReadback && String(input).includes('/v1/inbox?')) { controller.abort(); throw controller.signal.reason; }
+    const response = await fetch(input, init);
+    if (expireOnReadback && String(input).endsWith('/v1/contacts')) t.mock.method(Date, 'now', () => expiresAt + 1);
+    return response;
+  };
+  try {
+    const a = await f.client('A'), b = await f.client('B', fetcher), contact = await f.connect(a, b);
+    await a.send(b.agentId, contact, { query: 'availability' }, { expiresAt }); await b.poll();
+    expireOnReadback = true;
+    await assert.rejects(b.listen(async () => { handled++; }, controller.signal));
+    assert.equal(handled, 0); assert.equal(b.rejected()[0]!.reason, 'MESSAGE_EXPIRED_OR_INVALID');
+  } finally { t.mock.restoreAll(); await f.close(); }
+});
+
+test('stopping the listener during contact readback preserves the inbox without invoking the handler', async () => {
+  const f = await fixture(), controller = new AbortController(); let stopOnReadback = false, handled = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    const response = await fetch(input, init);
+    if (stopOnReadback && String(input).endsWith('/v1/contacts')) controller.abort();
+    return response;
+  };
+  try {
+    const a = await f.client('A'), b = await f.client('B', fetcher), contact = await f.connect(a, b);
+    await a.send(b.agentId, contact, { query: 'availability' }); await b.poll(); stopOnReadback = true;
+    await assert.rejects(b.listen(async () => { handled++; }, controller.signal));
+    assert.equal(handled, 0); assert.equal((await b.pending()).length, 1);
+  } finally { await f.close(); }
+});
