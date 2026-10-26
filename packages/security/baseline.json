@@ -4043,7 +4043,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "f67a9ed4c58d698715a71f19577b00f70c18b64030b0493061b425ce83870bde",
+      "sourceDigest": "2a79414e6d026b9fad15bbe3d3d0cac6fde1bf01e679693ff28ac9276898ab5c",
       "channels": [
         "model"
       ],

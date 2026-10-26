@@ -13,7 +13,7 @@ import {digest} from '../packages/core/delegation.js';
 import {withAuthorization,withoutAuthorization} from '../packages/security/context.js';
 import {AuthorizedOntologyView} from '../packages/security/view.js';
 import {taskContextFields} from '../packages/security/task-context.js';
-import {readTaskContext} from '../packages/coordinator/task-context.js';
+import {readTaskContext,assertTaskContextCurrent} from '../packages/coordinator/task-context.js';
 import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
 import {BRIEF_CAPABILITY,BRIEF_BINDING,BriefAdapter} from '../packages/capabilities/brief.js';
 import {AuthorizationCoordinator} from '../packages/security/coordinator.js';
@@ -95,7 +95,7 @@ test('task-pinned dynamic catalogs preserve foundation authority before returnin
 });
 
 test('reviewed native task context stays task-bound across lifecycle projection and loses access after revocation',()=>{
- const f=securityFixture();
+ let now=Date.now();const f=securityFixture(()=>now);
  try {
   const policy=f.jobs.security.policies,install=f.installation('context'),until=new Date(Date.now()+3600000).toISOString();
   const resources=[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','projectionState','createdAt']},...Object.entries(taskContextFields).map(([type,fields])=>({type,fields:fields.filter(field=>Object.hasOwn(policy.fields(type),field) && policy.fieldPolicy(type,field)!=='internal_only')}))];
@@ -114,6 +114,13 @@ test('reviewed native task context stays task-bound across lifecycle projection 
    assert(f.jobs.checkpoint(claim,job=>{job.delegation!.phase='planning';}));
    const current=readTaskContext(graph,f.owner,submitted.id,1,{purpose:'grounding'},randomUUID());
    assert.equal(current.data.execution!.phase,'planning');
+   const assertCurrent=scope.assertCurrent;let checks=0;
+   scope.assertCurrent=()=>{checks++;now+=20;assertCurrent();};
+   try {
+    assertTaskContextCurrent(graph,f.owner,current.context);
+    assert(checks<=3,`Decision receipt validation repeated ${checks} full authority checks`);
+    assert.throws(()=>assertTaskContextCurrent(graph,f.owner,first.context),/execution context changed/);
+   }finally{scope.assertCurrent=assertCurrent;}
    policy.validateLineage(scope,policy.outputEnvelope(f.owner));
   });
   const view=tasks.get(principal,submitted.id);assert.equal(view.revision,1);assert(!Object.hasOwn(view,'runs'));assert(!Object.hasOwn(view,'delegation'));
