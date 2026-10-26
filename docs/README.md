@@ -25,6 +25,7 @@
 - [Agent 登记与续期](guides/agent-onboarding.md)。
 - [会员来源连接](guides/member-sources.md)。
 - [会员协作网络](guides/network.md)。
+- [独立加密 Relay 与节点连接器](guides/relay.md)：节点联系、密文信箱、持久收发及合成 PA 协商示例。
 - [部署入口](guides/deployment.md)。
 
 ## 服务接入
