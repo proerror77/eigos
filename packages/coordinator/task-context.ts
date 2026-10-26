@@ -41,6 +41,7 @@ export interface TaskContextPayload {
   request: TaskRequestView;
   instructions: { total: number; complete: boolean; included: { ref: ObjectRef; messageId: string; sequence: number }[]; nextCursor?: string; originalGoalSource?: { ref: ObjectRef; messageId: string; content: 'request.originalGoal' } };
   execution?: Omit<ExecutionContextView, 'objects' | 'links'>;
+  sourceChanges?: import('../ontology/pipeline/facts.js').PipelineFactChange[];
   capabilities: ReturnType<typeof readCapabilityCatalog>;
   capabilityDirectory?: TaskContextBinding['capabilityDirectory'];
   resolution?: PreparedResolution;
@@ -358,9 +359,10 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     }
   }
   const execution = executionView ? (({ objects: _objects, links: _links, ...view }) => view)(executionView) : undefined;
+  const sourceChanges = graph.pipelineChanges(owner, requestId, requestRevision);
   const bindingDigest = digest({ purpose: binding.purpose, program: binding.program ? { ref: binding.program.ref, configurationDigest: binding.program.configurationDigest, actionIds: [...binding.program.actionIds].sort() } : undefined,
     ...(binding.managedDiscoveryTypes ? { managedDiscoveryTypes: [...binding.managedDiscoveryTypes].sort() } : {}) });
-  const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(execution ?? null),
+  const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(sourceChanges.length ? { execution: execution ?? null, sourceChanges } : execution ?? null),
     instructionCount: instructionProjection.rows.length, instructionRefsDigest: instructionCoverageDigest(instructionProjection.rows.map(row => row.ref)), requireCompleteInstructions: binding.purpose === 'grounding' };
   const bundle = definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition);
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
@@ -371,7 +373,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       included: [...initial.delivered].sort((a, b) => a - b).map(sequence => ({ ref: instructionProjection.rows[sequence]!.ref, messageId: request.messages[sequence]!.id, sequence })),
       ...(initial.missing >= 0 ? { nextCursor: instructionCursor(graph, owner, request, initial.missing - 1) } : {}),
       ...(initial.goalSource ? { originalGoalSource: { ref: initial.goalSource.ref, messageId: String(initial.goalSource.properties.messageId), content: 'request.originalGoal' as const } } : {}) },
-    ...(execution ? { execution } : {}), capabilities, ...(binding.capabilityDirectory ? { capabilityDirectory: binding.capabilityDirectory } : {}), ...(resolution ? { resolution } : {}), ...(capability ? { capability } : {}),
+    ...(execution ? { execution } : {}), ...(sourceChanges.length ? { sourceChanges } : {}), capabilities, ...(binding.capabilityDirectory ? { capabilityDirectory: binding.capabilityDirectory } : {}), ...(resolution ? { resolution } : {}), ...(capability ? { capability } : {}),
     ...(binding.managedDiscoveryTypes ? { managedDiscovery: { types: [...binding.managedDiscoveryTypes], relationships: 'forward_managed_only' as const } } : {}),
     graph: { objects: [...objects.values()], links: [...links.values()].filter(edge => objects.has(refKey(edge.from)) && objects.has(refKey(edge.to))), unreadRefs: [...unread.values()], pendingRelationships },
     definitions: { digest: definitions.payloadDigest, originalReceiptId: definitions.originalReceiptId, reused: !!reused, bundle: structuredClone(definitions.payload) } };
@@ -389,5 +391,6 @@ export function assertTaskContextCurrent(graph: OntologyObjectStore, owner: stri
   if (request.revision !== context.requestRevision || digest(request) !== context.requestDigest) return conflict('Task business context changed after its read');
   const view = readExecutionContext(graph, owner, context.requestId, context.requestRevision);
   const execution = view ? (({ objects: _objects, links: _links, ...value }) => value)(view) : undefined;
-  if (digest(execution ?? null) !== context.executionDigest) return conflict('Task execution context changed before the decision was accepted');
+  const sourceChanges = graph.pipelineChanges(owner, context.requestId, context.requestRevision);
+  if (digest(sourceChanges.length ? { execution: execution ?? null, sourceChanges } : execution ?? null) !== context.executionDigest) return conflict('Task execution context changed before the decision was accepted');
 }

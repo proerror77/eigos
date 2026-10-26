@@ -13,7 +13,7 @@ export interface ActionBindingPin {
   providerDefinitionDigest?: string;
   ownerDigest: string; requestId: string; requestRevision: number; digest: string;
 }
-export type BindingReadiness = 'ready' | 'contract_missing' | 'contract_mismatch' | 'source_authorization_required' | 'disabled';
+export type BindingReadiness = 'ready' | 'contract_missing' | 'contract_mismatch' | 'source_authorization_required' | 'disabled' | 'pipeline_unverified' | 'conditions_unmet';
 export interface DiscoveredActionBinding {
   pin: ActionBindingPin; readiness: BindingReadiness; reason: string;
   environment: 'local' | 'live' | 'sandbox'; inputSchema: object;
@@ -21,6 +21,7 @@ export interface DiscoveredActionBinding {
   capability?: Pick<import('../ontology/execution.js').ServiceCapability, 'name' | 'description' | 'predicates' | 'outcomePredicates' | 'requirementRoles' | 'locationSemantics' | 'effectConstraints'>;
   goalOutcomes?: import('../ontology/execution.js').ServiceCapability['goalOutcomes'];
   sourceAuthorization?: { provider: string; state: string; nextAction: string };
+  pipeline?: import('../ontology/pipeline/contracts.js').PipelineStatus;
 }
 export interface ActionDiscoveryEntry {
   action: ActionDefinition; bindings: DiscoveredActionBinding[];
@@ -33,6 +34,7 @@ export const actionDiscoverySchema = z.strictObject({
   outputType: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional(),
   effects: z.array(z.enum(['local', 'read', 'object_write', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'external_draft'])).max(10).optional(),
   search: z.string().max(100).optional(), limit: z.number().int().min(1).max(10).default(5), cursor: z.string().max(1000).optional(),
+  serviceConditions: z.strictObject({ region: z.string().min(1).max(100).optional(), paymentModes: z.array(z.enum(['not_required', 'pa_owned', 'external_app'])).min(1).max(3).optional(), operatorAvailable: z.boolean().optional() }).optional(),
 });
 export type ActionDiscoveryQuery = z.input<typeof actionDiscoverySchema>;
 export interface ActionDiscoveryPage {

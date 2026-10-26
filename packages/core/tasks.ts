@@ -29,6 +29,7 @@ import { addLocationContext, prepareLocationContext } from './location-context.j
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 import { AuthorizedOntologyView } from '../security/view.js';
 import { TaskSecurity } from '../security/task-service.js';
+import { pipelineValidationRequestSchema, pipelineMappingDigest } from '../ontology/pipeline/contracts.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
 export interface OntologyReadContext { ontologyId?: string; release?: OntologyReleaseRef; taskId?: string }
@@ -154,6 +155,30 @@ export class TaskService {
   }
 
   submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false)) : this.submitInternal(p, input, contextId, false); }
+  preparePipelineValidation(p: Principal, input: unknown): Job {
+    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation validation preparation requires a reviewed task grant transition');
+    requireScope(p, 'tasks:write'); requireScope(p, 'ontology:read'); requireScope(p, 'ontology:publish');
+    const args = pipelineValidationRequestSchema.parse(input), owner = ownerKey(p), admin = p.scopes.includes('ontology:admin');
+    return this.store.once(owner, 'pipeline_validation', args.requestId, JSON.stringify(args), () => {
+      this.store.definitions.assertManagement(owner, args.ontologyId, admin);
+      if (args.release.ontologyId !== args.ontologyId || digest(this.store.definitions.active(args.ontologyId).ref) !== digest(args.release)) throw new DomainError('CONFLICT', 'Validation must pin the current published release');
+      const remaining = Date.parse(args.expiresAt) - Date.now();
+      if (remaining <= 0 || remaining > 600000) throw new DomainError('INVALID_INPUT', 'An operator validation window is at most ten minutes');
+      const release = this.store.definitions.resolve(args.release), ref = release.document.pipeline?.find(value => value.serviceId === args.serviceId);
+      if (!ref) throw new DomainError('NOT_FOUND', 'Published service intake is unavailable');
+      if (this.store.definitions.pipeline.validateDocument(release.document, release.model).length) throw new DomainError('CONFLICT', 'Validate the current source mapping before preparing an execution test');
+      const intake = this.store.definitions.pipeline.intake(args.ontologyId, ref), program = this.options.catalog.agentProgram(intake.programRef, owner);
+      if (!program || program.configurationDigest !== intake.configurationDigest || (program.capability().environment ?? 'local') !== intake.environment
+        || intake.actions.some(action => !program.actionIds.includes(action.actionId) || digest(program.definition(this.store.ontologyForRelease(args.release), action.actionId)) !== action.definitionDigest)) throw new DomainError('CONFLICT', 'No exact permitted runtime is configured for this intake');
+      const job = this.submitInTransaction(p, { service: DELEGATE, ontologyId: args.ontologyId, goal: args.goal,
+        requestId: `pipeline-validation:${digest({ owner, requestId: args.requestId })}`, capabilityRef: program.capability().ref,
+        executionEnvironment: intake.environment === 'sandbox' ? 'sandbox' : 'live' });
+      job.delegation!.pipelineValidation = { ownerDigest: digest(owner), requestRevision: job.delegation!.request.revision, release: args.release,
+        serviceId: ref.serviceId, intakeDigest: ref.intakeDigest, mappingDigest: pipelineMappingDigest(intake), expiresAt: args.expiresAt };
+      job.delegation!.events.push({ at: new Date().toISOString(), event: 'pipeline_validation_requested', evidence: digest(job.delegation!.pipelineValidation) });
+      this.store.save(owner, job); return job;
+    });
+  }
   /** An authenticated caller may prepare one declarative action without an LLM
    * decision. It still uses the same pending plan, exact grant, Worker intent,
    * atomic observation and independent readback as model-selected actions. */

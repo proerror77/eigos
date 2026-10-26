@@ -166,6 +166,12 @@ export class ExecutionCatalog {
     const environment = request.executionEnvironment ?? 'live';
     const permittedPrograms = [...catalog.programs.values()].filter(program => !(program instanceof CompositionProgram) && permittedProgram(program) && (!query.programRef || sameRef(program.ref, query.programRef)) && program.permitted(owner)
       && (environment === 'sandbox' ? program.capability().environment !== 'live' : program.capability().environment !== 'sandbox'));
+    const pipelineViews = new Map<string, ReturnType<OntologyObjectStore['pipelineStatus']>>();
+    const pipelineFor = (program: AgentProgram, actionId: string) => {
+      const key = digest({ ref: program.ref, configuration: program.configurationDigest, actionId });
+      if (!pipelineViews.has(key)) pipelineViews.set(key, graph.pipelineStatus(owner, program.ref, program.configurationDigest, actionId));
+      return pipelineViews.get(key)!;
+    };
     const definitions = graph.model.actionDefinitions().filter(action => {
       if (catalog.security?.enabled) { const scope = authorizationScope(); if (!scope || scope.policies.security !== catalog.security) throw new DomainError('FORBIDDEN','Current task authority is required for action discovery'); if (!scope.policies.resourceAllowed(scope,'actionType',action.id)) return false; }
       if (query.actionId && action.id !== query.actionId) return false;
@@ -173,7 +179,7 @@ export class ExecutionCatalog {
       if (query.outputType && !(action.resultTypes ?? (action.read ? [action.read.resultType] : action.operation ? [action.operation.resultType] : [])).some(type => graph.model.assignableType(type, query.outputType!))) return false;
       if (query.effects && !actionEffects(action).every(effect => query.effects!.includes(effect))) return false;
       const serviceText = permittedPrograms.filter(program => program.actionIds.includes(action.id)).map(program => {
-        const capability = program.capability(); return `${capability.name} ${capability.description} ${capability.tags.join(' ')}`;
+        const capability = program.capability(); return `${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`;
       }).join(' ');
       return !query.search || `${action.id} ${action.description} ${serviceText}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase());
     }).sort((a, b) => a.id.localeCompare(b.id));
@@ -183,7 +189,7 @@ export class ExecutionCatalog {
       for (const program of permittedPrograms) {
         const capability = program.capability();
         if (!program.actionIds.includes(action.id) || !program.permitted(owner) || (environment === 'sandbox' ? capability.environment === 'live' : capability.environment === 'sandbox')) continue;
-        if (query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
+        if (query.search && !`${action.id} ${action.description} ${capability.name} ${capability.description} ${capability.tags.join(' ')} ${pipelineFor(program, action.id).terms?.join(' ') ?? ''}`.toLocaleLowerCase().includes(query.search.toLocaleLowerCase())) continue;
         if (implementation?.kind === 'declarative' && !program.callerManagedActions || implementation?.kind === 'trusted' && program.callerManagedActions) continue;
         const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
         const body: Omit<ActionBindingPin, 'digest'> = {
@@ -200,10 +206,17 @@ export class ExecutionCatalog {
         } catch { readiness = 'contract_mismatch'; reason = 'Runtime cannot resolve this exact action definition'; }
         if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) { readiness = 'disabled'; reason = 'The registered provider binding is disabled or its configuration changed'; }
         if (sourceAuthorization && sourceAuthorization.state !== 'connected') { readiness = 'source_authorization_required'; reason = 'The owner must connect or renew this source before invocation'; }
+        const pipeline = pipelineFor(program, action.id);
+        if (readiness === 'ready' && !['unmanaged', 'verified', 'validation_only'].includes(pipeline.status)) { readiness = 'pipeline_unverified'; reason = pipeline.reason; }
+        const conditions = query.serviceConditions, declared = pipeline.conditions;
+        if (readiness === 'ready' && conditions && (!declared
+          || conditions.region && !declared.regions.includes(conditions.region)
+          || conditions.paymentModes && (declared.payment === 'unknown' || !conditions.paymentModes.includes(declared.payment))
+          || conditions.operatorAvailable === false && declared.operatorRequired)) { readiness = 'conditions_unmet'; reason = 'The service has not established the requested region, payment path or operator conditions'; }
         bindings.push({ pin: { ...body, digest: digest(body) }, readiness, reason, environment: capability.environment ?? 'local', inputSchema: capability.inputSchema,
           capability: { name: capability.name, description: capability.description, predicates: capability.predicates, outcomePredicates: capability.outcomePredicates ?? [], requirementRoles: capability.requirementRoles ?? [],
             ...(capability.locationSemantics ? { locationSemantics: capability.locationSemantics } : {}), ...(capability.effectConstraints ? { effectConstraints: capability.effectConstraints } : {}) },
-          completionSchema: program.completionSchema, guidance: program.guidance, ...(capability.goalOutcomes ? { goalOutcomes: capability.goalOutcomes } : {}), ...(sourceAuthorization ? { sourceAuthorization } : {}) });
+          completionSchema: program.completionSchema, guidance: program.guidance, ...(capability.goalOutcomes ? { goalOutcomes: capability.goalOutcomes } : {}), ...(sourceAuthorization ? { sourceAuthorization } : {}), ...(pipeline.status !== 'unmanaged' ? { pipeline } : {}) });
       }
       bindings.sort((a, b) => a.pin.ref.id.localeCompare(b.pin.ref.id));
       return { action, bindings, status: bindings.some(binding => binding.readiness === 'ready') ? 'available' : bindings.length ? 'not_ready' : implementation ? 'binding_unavailable' : 'definition_only' };
@@ -240,7 +253,9 @@ export class ExecutionCatalog {
       program.assertSourceAvailable?.(owner);
       throw new ConnectionAuthorizationRequired('The exact action binding requires current source authorization');
     }
-    if (!found || found.readiness !== 'ready') throw new DomainError('CONFLICT', 'The exact action binding is unavailable or requires source authorization');
+    // Preserve the exact runtime for original-operation readback even when a
+    // pipeline proof expires. New invocation is checked again at dispatch.
+    if (!found || !['ready', 'pipeline_unverified'].includes(found.readiness)) throw new DomainError('CONFLICT', 'The exact action binding is unavailable or requires source authorization');
     if (!program) throw new DomainError('CONFLICT', 'The action runtime is unavailable');
     program.assertSourceAvailable?.(owner);
     return { program, binding: found };
@@ -257,6 +272,7 @@ export class ExecutionCatalog {
       try {
         const definition = program.definition(graph, actionId);
         if (digest(definition) !== digest(graph.model.action(actionId))) continue;
+        if (!['unmanaged', 'verified', 'validation_only'].includes(graph.pipelineStatus(owner, program.ref, program.configurationDigest, actionId).status)) continue;
         return { status: 'executable', kind: implementation.kind, reason: 'A permitted configured runtime supports this exact definition; invocation still requires task scope and current authorization' };
       } catch { /* A registered definition cannot substitute for a matching runtime. */ }
     }
@@ -344,9 +360,14 @@ export class ExecutionCatalog {
     return page.items;
   }
   /** Bounded bootstrap only. The action directory searches all permitted programs. */
-  summaryPage(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live') {
+  summaryPage(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live', graph?: OntologyObjectStore) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new DomainError('INVALID_INPUT', 'Invalid capability page size');
-    const programs = (ref: Ref) => [...this.programs.values()].filter(program => sameRef(program.capability().ref, ref) && permittedProgram(program) && program.permitted(owner));
+    const programs = (ref: Ref) => [...this.programs.values()].filter(program => {
+      if (!sameRef(program.capability().ref, ref) || !permittedProgram(program) || !program.permitted(owner)) return false;
+      if (!graph) return true;
+      const states = program.actionIds.map(action => graph.pipelineStatus(owner, program.ref, program.configurationDigest, action).status);
+      return states.every(status => status === 'unmanaged') || states.some(status => status === 'verified' || status === 'validation_only');
+    });
     const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || programs(s.ref).length));
     const items = permitted.slice(0, limit).map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], ...(s.goalOutcomes ? { goalOutcomes: structuredClone(s.goalOutcomes) } : {}), requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, scopeReviewMode: s.scopeReviewMode, ...(this.programs.get(key(s.ref)) instanceof CompositionProgram ? { composition: structuredClone(s.ontology) } : {}),
       sourceAuthorization: programs(s.ref).map(program => program.sourceAuthorization?.(owner)).find(Boolean) ?? this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));

@@ -11,6 +11,7 @@
 | `apps/*-sandbox/` | 独立的合成服务提供方 |
 | `packages/ontology/` | 本体定义、注册库、编译、对象与关系、函数及版本兼容 |
 | `packages/ontology/definitions/` | 唯一可编辑的供应商 MCP 绑定数据 |
+| `packages/ontology/pipeline/` | 接入合同、验证记录、受限映射与事实变化；复用本体发布和业务数据库 |
 | `packages/core/` | 任务、授权、账本、存储和来源身份 |
 | `packages/coordinator/` | 基于同一任务本体的规划和多服务执行 |
 | `packages/capabilities/` | 业务程序、供应商连接器和验收器 |

@@ -98,6 +98,8 @@ export interface AgentProgram {
   initialize(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: unknown, component?: { id: string; scopeKey: string }): { scope: ObjectRef; input: Record<string, unknown>; managedActionIds?: string[]; components?: AgentExecutionState['components'] };
   describeComponents?(ctx: AgentProgramContext): import('../ontology/composition.js').ComponentDescription[];
   sourceConfigurationForScope?(state: AgentExecutionState, scope: ObjectRef): string;
+  /** Legacy compositions expose the selected leaf for the shared intake gate. */
+  pipelineBinding?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): { ref: Ref; configurationDigest: string };
   schema(action: string): z.ZodType<Record<string, unknown>>;
   definition(graph: OntologyObjectStore, action: string): ActionDefinition;
   validate(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): void;

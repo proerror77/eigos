@@ -22,6 +22,8 @@ import type { RunEvidence } from '../capabilities/executor.js';
 import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
 import { DefinitionStore, currentKernelImplementation } from '../ontology/definition-store.js';
+import { PipelineFactStore } from '../ontology/pipeline/facts.js';
+import type { PipelineObservation } from '../ontology/pipeline/contracts.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
@@ -61,6 +63,7 @@ export class JobStore {
   private db: DatabaseSync;
   private ontologyCatalog?: ExecutionCatalog;
   readonly definitions: DefinitionStore;
+  readonly pipelineFacts: PipelineFactStore;
   private readonly baseOntology: OntologyObjectStore;
   private readonly ontologyViews = new Map<string, OntologyObjectStore>();
   readonly databasePath: string;
@@ -140,6 +143,12 @@ export class JobStore {
     this.baseOntology = this.security.enabled ? new OntologyObjectStore(this.db, legacyModel, options.securityNow ?? Date.now, undefined, { skipLegacyMigration: true, security: this.security.policies }, false) : this.projectionBase;
     if (!this.definitions.hasBaseline()) migrateIntegratedOntology(this.db, businessModelV9, legacyModel);
     this.definitions.bootstrap();
+    this.pipelineFacts = this.transaction(() => new PipelineFactStore(this.db, {
+      active: (owner, jobId, revision) => !!this.db.prepare("SELECT 1 FROM jobs WHERE owner=? AND id=? AND state IN ('working','submitted','input-required','auth-required','paused') AND json_extract(body,'$.delegation.request.revision')=?").get(owner, jobId, revision),
+      // Only enqueue owned task work. Cross-task source records are never copied
+      // into a model session or projected under another task's authority.
+      changed: (owner, jobId, revision) => { this.db.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.nextAt',0) WHERE owner=? AND id=? AND state IN ('working','submitted') AND json_extract(body,'$.delegation.request.revision')=?").run(owner, jobId, revision); },
+    }, options.securityNow ?? Date.now));
     this.baseOntology.setReadOverlayFactory((owner, requestId) => {
       const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
@@ -161,11 +170,27 @@ export class JobStore {
       this.ontologyViews.set(key, graph);
     } else {
       graph = this.baseOntology.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref,
+        pipelineStatus: (owner, program, configuration, action) => this.definitions.pipeline.status(owner, release.document, release.model, program, configuration, action),
+        pipelineChanges: (owner, jobId, revision) => this.pipelineFacts.changes(owner, jobId, revision),
         ...(release.compatibleDefinition ? { compatibleDefinition: release.compatibleDefinition } : {}) });
       this.ontologyViews.set(key, graph);
       if (this.ontologyViews.size > 16) this.ontologyViews.delete(this.ontologyViews.keys().next().value!);
     }
     return graph;
+  }
+  /** Trusted connector ingress only; no public command accepts source facts. */
+  ingestPipelineObservation(owner: string, releaseRef: OntologyReleaseRef, serviceId: string, mappingId: string, sample: PipelineObservation, expectedRevision: number) {
+    return this.transaction(() => {
+      this.definitions.assertAccess(owner, releaseRef.ontologyId);
+      const release = this.definitions.resolve(releaseRef), ref = release.document.pipeline?.find(value => value.serviceId === serviceId);
+      if (!ref) throw new DomainError('NOT_FOUND', 'Source mapping is not published in this release');
+      const active = this.definitions.active(releaseRef.ontologyId).document.pipeline?.find(value => value.serviceId === serviceId);
+      if (active?.intakeDigest !== ref.intakeDigest) throw new DomainError('CONFLICT', 'Only the active mapping may update current source facts; historical task evidence stays pinned');
+      const issues = this.definitions.pipeline.validateDocument(release.document, release.model);
+      if (issues.length) throw new DomainError('CONFLICT', 'Source mapping validation is not current');
+      const intake = this.definitions.pipeline.intake(releaseRef.ontologyId, ref);
+      return this.pipelineFacts.apply(owner, this.ontologyForRelease(releaseRef), intake, ref.intakeDigest, mappingId, sample, expectedRevision);
+    });
   }
   ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
@@ -175,7 +200,19 @@ export class JobStore {
     return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
   }
   ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
-    return this.ontologyForRelease(this.ontologyReleaseForJob(owner, jobOrId));
+    const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
+    const ref = this.ontologyReleaseForJob(owner, job), graph = this.ontologyForRelease(ref), validation = job.delegation?.pipelineValidation;
+    if (!validation) return graph;
+    if (validation.ownerDigest !== digest(owner) || validation.requestRevision !== job.delegation!.request.revision || digest(validation.release) !== digest(ref)) throw new DomainError('FORBIDDEN', 'Validation authority changed with the task revision');
+    const release = this.definitions.resolve(ref);
+    return graph.forModel(graph.model, { ontologyId: ref.ontologyId, releaseRef: ref, compatibleDefinition: release.compatibleDefinition,
+      pipelineChanges: (reader, id, revision) => this.pipelineFacts.changes(reader, id, revision),
+      pipelineStatus: (reader, program, configuration, action) => {
+        const current = this.get(owner, job.id);
+        if (digest(current.delegation?.pipelineValidation) !== digest(validation) || current.delegation?.request.revision !== validation.requestRevision) throw new DomainError('FORBIDDEN', 'Validation task scope changed');
+        return this.definitions.pipeline.validationStatus(reader, release.document, release.model, validation, program, configuration, action);
+      },
+    });
   }
   /** Historical readback may resolve an explicit immutable release without
    * making the task executable by the current Worker. Unpinned historical

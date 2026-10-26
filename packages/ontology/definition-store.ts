@@ -10,6 +10,7 @@ import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDef
 import { createCurrentKernelDefinition, createSeedDefinition } from './seed-definition.js';
 import type { OntologyModel } from './model.js';
 import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
+import { PipelineStore } from './pipeline/store.js';
 
 export type DefinitionResource = SerializableObjectType | SerializableInterface | SerializableLink | SerializableAction;
 export interface DefinitionEntry { kind: DefinitionKind; definition: DefinitionResource }
@@ -76,6 +77,7 @@ export function currentKernelImplementation(): OntologyModel { const value = tru
 /** Persistent metadata, independent of facts and authority. All returned models
  * are immutable release compilations; authorization is never cached here. */
 export class DefinitionStore {
+  readonly pipeline: PipelineStore;
   private readonly registry: TrustedDefinitionRegistry;
   private readonly models = new Map<string, ResolvedOntologyRelease>();
   constructor(private readonly db: DatabaseSync, readonly now: () => number = Date.now) {
@@ -97,6 +99,7 @@ export class DefinitionStore {
         for (const operation of ['UPDATE', 'DELETE']) db.exec(`CREATE TRIGGER IF NOT EXISTS ${table}_immutable_${operation.toLowerCase()} BEFORE ${operation} ON ${table} BEGIN SELECT RAISE(ABORT,'Ontology definition history is immutable'); END`);
       }
     });
+    this.pipeline = this.transaction(() => new PipelineStore(this.db, this.now));
   }
   private transaction<T>(action: () => T): T {
     let owned = false;
@@ -290,6 +293,35 @@ export class DefinitionStore {
     const result = this.db.prepare('UPDATE ontology_definition_drafts SET revision=?,status=?,body=? WHERE id=? AND revision=?').run(draft.revision, draft.status, JSON.stringify(draft), draft.id, expectedRevision);
     if (result.changes !== 1) return conflict('Definition draft revision changed'); return draft;
   }
+  putPipeline(owner: string, draftId: string, expectedRevision: number, input: unknown, admin = false): DefinitionDraft {
+    return this.transaction(() => {
+      const draft = this.draft(draftId); this.assertManagement(owner, draft.ontologyId, admin);
+      if (draft.status !== 'open' || draft.revision !== expectedRevision) return conflict('Draft is not open at the expected revision');
+      const ref = this.pipeline.put(draft.ontologyId, owner, input);
+      const prior = draft.document.pipeline?.find(value => value.serviceId === ref.serviceId);
+      if (prior) {
+        const before = this.pipeline.intake(draft.ontologyId, prior), after = this.pipeline.intake(draft.ontologyId, ref);
+        if (before.programRef.id !== after.programRef.id || before.source.id !== after.source.id || before.actions.some(action => !after.actions.some(next => next.actionId === action.actionId))) return conflict('A governed service/action identity cannot be removed or reassigned; publish definition_only to retire execution');
+      }
+      draft.document.pipeline = [...(draft.document.pipeline ?? []).filter(value => value.serviceId !== ref.serviceId), ref].sort((a, b) => a.serviceId.localeCompare(b.serviceId));
+      draft.document = parseOntologyDocument(draft.document);
+      this.event(draft.ontologyId, owner, 'pipeline_intake_edited', { draftId, ...ref });
+      return this.saveDraft(draft, expectedRevision);
+    });
+  }
+  pipelineDraft(owner: string, draftId: string, expectedRevision: number, serviceId: string, admin = false) {
+    const draft = this.draft(draftId); this.assertManagement(owner, draft.ontologyId, admin);
+    if (draft.status !== 'open' || draft.revision !== expectedRevision) return conflict('Draft is not open at the expected revision');
+    const ref = draft.document.pipeline?.find(value => value.serviceId === serviceId);
+    if (!ref) throw new DomainError('NOT_FOUND', 'Service intake is not attached to this draft');
+    return { draft, ref, model: compiledModel(draft.document, this.registry) };
+  }
+  validatePipeline(owner: string, draftId: string, expectedRevision: number, serviceId: string, expiresAt: string, admin = false) {
+    return this.transaction(() => {
+      const { draft, ref, model } = this.pipelineDraft(owner, draftId, expectedRevision, serviceId, admin);
+      return this.pipeline.validate(draft.ontologyId, owner, ref, model, expiresAt);
+    });
+  }
   putResource(owner: string, draftId: string, expectedRevision: number, kindInput: DefinitionKind, input: unknown, admin = false): DefinitionDraft {
     const kind = definitionKindSchema.parse(kindInput);
     return this.transaction(() => {
@@ -339,6 +371,7 @@ export class DefinitionStore {
     try {
       document = normalizeOntologyDocument(document);
       const model = compiledModel(document, this.registry), base = this.resolve(draft.base);
+      issues.push(...this.pipeline.validateDocument(document, model));
       if (document.actions.some(action => action.implementation?.kind === 'declarative') && !model.properties('Authorization').environment?.schema.safeParse('managed').success) {
         issues.push({ code: 'incompatible_kernel', message: 'Declarative actions require a kernel supporting managed authorization; activate a compatible current kernel before publishing these actions' });
       }
@@ -467,6 +500,9 @@ export class DefinitionStore {
       const lineage = this.db.prepare('SELECT base_ref FROM ontology_definition_lineage WHERE ontology_id=? AND release_id=?').get(ref.ontologyId, ref.releaseId);
       if (!historical && (!lineage?.base_ref || digest(JSON.parse(String(lineage.base_ref))) !== digest(namespace.active))) return conflict('Published release base changed; publish a fresh reviewed draft before activation');
       const current = this.resolve(namespace.active);
+      if (current.document.pipeline?.some(ref => !release.document.pipeline?.some(next => next.serviceId === ref.serviceId))) return conflict('Activation cannot remove governed service intake policies');
+      const pipelineIssues = this.pipeline.validateDocument(release.document, release.model);
+      if (pipelineIssues.length) return conflict(pipelineIssues.map(issue => issue.message).join('; '));
       const nextIdentities = new Set(entries(release.document).map(item => item.definition.resourceId));
       if (entries(current.document).some(item => !nextIdentities.has(item.definition.resourceId)) && this.hasInflightTasks(ref.ontologyId)) return conflict('Retiring definitions used by in-flight tasks requires a migration');
       // Facts can change after publication, and rollback can omit newer types.

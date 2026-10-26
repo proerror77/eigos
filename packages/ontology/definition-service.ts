@@ -11,6 +11,7 @@ import type { ManagedActionPreview } from './declarative-actions.js';
 import { objectWriteScopeSchema } from './actions.js';
 import { objectRefSchema } from './model.js';
 import { actionDiscoverySchema } from '../core/action-bindings.js';
+import { pipelineIntakeSchema, pipelineValidationRequestSchema } from './pipeline/contracts.js';
 
 const ontology = { ontologyId: ontologyIdSchema.default('eigos.business') };
 const page = { limit: z.number().int().min(1).max(50).default(20), offset: z.number().int().min(0).max(10000).default(0) };
@@ -30,6 +31,10 @@ export const definitionQuerySchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('history'), ...ontology, limit: z.number().int().min(1).max(50).default(20) }),
   z.strictObject({ operation: z.literal('get_action_task'), ...ontology, taskId: taskIdSchema }),
   z.strictObject({ operation: z.literal('discover_task_actions'), ...ontology, taskId: taskIdSchema, query: actionDiscoverySchema }),
+  z.strictObject({ operation: z.literal('get_pipeline_intake'), ...source, serviceId: resourceIdSchema }),
+  z.strictObject({ operation: z.literal('get_pipeline_task_uses'), ...ontology, taskId: taskIdSchema }),
+  z.strictObject({ operation: z.literal('get_pipeline_task_changes'), ...ontology, taskId: taskIdSchema }),
+  z.strictObject({ operation: z.literal('get_pipeline_fact'), ...ontology, taskId: taskIdSchema, object: objectRefSchema }),
 ]);
 export const definitionCommandSchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create_ontology'), id: ontologyIdSchema.optional(), name: z.string().trim().min(1).max(160) }),
@@ -38,6 +43,12 @@ export const definitionCommandSchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('retire_definition'), ...ontology, draftId, expectedRevision, resourceId: resourceIdSchema }),
   z.strictObject({ operation: z.enum(['publish_draft', 'discard_draft']), ...ontology, draftId, expectedRevision }),
   z.strictObject({ operation: z.literal('activate_release'), ...ontology, release: ontologyReleaseRefSchema, expectedGeneration: z.number().int().nonnegative() }),
+  z.strictObject({ operation: z.literal('put_pipeline_intake'), ...ontology, draftId, expectedRevision, intake: pipelineIntakeSchema }),
+  z.strictObject({ operation: z.literal('validate_pipeline_intake'), ...ontology, draftId, expectedRevision, serviceId: resourceIdSchema, expiresAt: z.iso.datetime({ offset: true }) }),
+  z.strictObject({ operation: z.literal('verify_pipeline_task'), ...ontology, draftId, expectedRevision, serviceId: resourceIdSchema, taskId: taskIdSchema, expiresAt: z.iso.datetime({ offset: true }) }),
+  z.strictObject({ operation: z.literal('report_pipeline_source_change'), ...ontology, serviceId: resourceIdSchema, sourceDigest: z.string().regex(/^[a-f0-9]{64}$/) }),
+  z.strictObject({ operation: z.literal('revoke_pipeline_verification'), ...ontology, serviceId: resourceIdSchema, verificationId: z.string().min(1).max(100) }),
+  pipelineValidationRequestSchema.extend({ operation: z.literal('prepare_pipeline_validation') }),
 ]);
 export const prepareOntologyActionSchema = z.strictObject({ ...ontology, action: z.string().min(1).max(80).optional(), interface: z.strictObject({ object: objectRefSchema, interfaceId: z.string().min(1).max(80), actionId: z.string().min(1).max(80) }).optional(), input: z.record(z.string(), z.unknown()), requestId: z.string().min(1).max(128) }).refine(value => !!value.action !== !!value.interface, 'Choose one concrete action or interface action');
 export const approveOntologyActionSchema = z.strictObject({ taskId: taskIdSchema, requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), objectWrite: objectWriteScopeSchema, expiresAt: z.iso.datetime({ offset: true }) });
@@ -85,6 +96,23 @@ export class DefinitionService {
     requireScope(principal, 'ontology:read'); const query = definitionQuerySchema.parse(input), store = this.jobs.definitions;
     if (query.operation === 'list_ontologies') return envelope(paginate(store.namespaces(ownerKey(principal), principal.scopes.includes('ontology:admin')).map(namespace => ({ ...namespace, permissions: this.permission(principal, namespace) })), query));
     this.context(principal, query.ontologyId);
+    if (query.operation === 'get_pipeline_intake') {
+      const selected = this.document(principal, query), ref = selected.document.pipeline?.find(value => value.serviceId === query.serviceId);
+      if (!ref) throw new DomainError('NOT_FOUND', 'Service intake is not attached to this ontology version');
+      return envelope({ ...ref, publication: selected.publication, release: selected.release, intake: store.pipeline.intake(query.ontologyId, ref) });
+    }
+    if (query.operation === 'get_pipeline_task_uses' || query.operation === 'get_pipeline_task_changes' || query.operation === 'get_pipeline_fact') {
+      const job = this.tasks.get(principal, query.taskId);
+      if (this.jobs.ontologyReleaseForJob(ownerKey(principal), job).ontologyId !== query.ontologyId) throw new DomainError('NOT_FOUND', 'Task is not available in this ontology');
+      if (query.operation === 'get_pipeline_fact') {
+        this.jobs.ontologyForJob(ownerKey(principal), job).read(ownerKey(principal), query.object);
+        const state = this.jobs.pipelineFacts.current(ownerKey(principal), query.ontologyId, query.object);
+        if (!state) throw new DomainError('NOT_FOUND', 'No pipeline observation exists for this object');
+        const { properties: _privateProperties, sourceKey: _sourceKey, ...provenance } = state;
+        return envelope(provenance);
+      }
+      return envelope({ items: query.operation === 'get_pipeline_task_uses' ? store.pipeline.uses(ownerKey(principal), job.id) : this.jobs.ontologyForJob(ownerKey(principal), job).pipelineChanges(ownerKey(principal), job.id, job.delegation!.request.revision) });
+    }
     if (query.operation === 'discover_task_actions') {
       const job = this.tasks.get(principal, query.taskId), owner = ownerKey(principal);
       const graph = this.jobs.ontologyForJob(owner, job);
@@ -136,17 +164,34 @@ export class DefinitionService {
   }
   command(principal: Principal, input: unknown) {
     if (Buffer.byteLength(JSON.stringify(input)) > 48000) invalid('One metadata command is limited to 48 KB; edit one bounded definition at a time');
-    const command = definitionCommandSchema.parse(input), publish = command.operation === 'publish_draft' || command.operation === 'activate_release';
+    const command = definitionCommandSchema.parse(input), publish = ['publish_draft', 'activate_release', 'verify_pipeline_task', 'report_pipeline_source_change', 'revoke_pipeline_verification', 'prepare_pipeline_validation'].includes(command.operation);
     requireScope(principal, publish ? 'ontology:publish' : 'ontology:write');
     const store = this.jobs.definitions, owner = ownerKey(principal), admin = principal.scopes.includes('ontology:admin');
     if (command.operation === 'create_ontology') return envelope(store.createNamespace(owner, { ...(command.id ? { id: command.id } : {}), name: command.name }));
     this.context(principal, command.ontologyId, true);
+    if (command.operation === 'prepare_pipeline_validation') {
+      const { operation: _operation, ...request } = command;
+      return envelope({ task: taskSummary(this.tasks.preparePipelineValidation(principal, request)), authorization: 'per_action_required', validationOnly: true });
+    }
     if (command.operation === 'create_draft') return envelope(summary(store.createDraft(owner, command.ontologyId, command.title, admin)));
     if (command.operation === 'activate_release') {
       if (command.release.ontologyId !== command.ontologyId) invalid('Release belongs to another ontology');
       return envelope(store.activate(owner, command.release, command.expectedGeneration, admin));
     }
+    if (command.operation === 'report_pipeline_source_change' || command.operation === 'revoke_pipeline_verification') {
+      if (!store.active(command.ontologyId).document.pipeline?.some(ref => ref.serviceId === command.serviceId)) throw new DomainError('NOT_FOUND', 'Published service intake is unavailable');
+      return envelope(store.pipeline.event(command.ontologyId, owner, command.serviceId, command.operation === 'report_pipeline_source_change'
+        ? { kind: 'source_changed', sourceDigest: command.sourceDigest } : { kind: 'verification_revoked', verificationId: command.verificationId }));
+    }
     const currentDraft = this.ownedDraft(principal, command.ontologyId, command.draftId, true);
+    if (command.operation === 'put_pipeline_intake') return envelope(summary(store.putPipeline(owner, command.draftId, command.expectedRevision, command.intake, admin)));
+    if (command.operation === 'validate_pipeline_intake') return envelope(store.validatePipeline(owner, command.draftId, command.expectedRevision, command.serviceId, command.expiresAt, admin));
+    if (command.operation === 'verify_pipeline_task') {
+      const job = this.tasks.get(principal, command.taskId);
+      const value = store.pipelineDraft(owner, command.draftId, command.expectedRevision, command.serviceId, admin);
+      if (this.jobs.ontologyReleaseForJob(owner, job).ontologyId !== command.ontologyId) throw new DomainError('NOT_FOUND', 'Task is not available in this ontology');
+      return envelope(store.pipeline.verifyTask(command.ontologyId, owner, value.ref, value.model, job, id => this.jobs.intent(owner, id), command.expiresAt));
+    }
     if (command.operation === 'put_definition') {
       const existing = resources(currentDraft.document).find(item => item.kind === command.kind && (item.definition.resourceId === command.definition.resourceId || item.definition.id === command.definition.id));
       if (immutable(String(command.definition.resourceId ?? '')) || existing && immutable(existing.definition.resourceId)) throw new DomainError('FORBIDDEN', 'Generated execution relationships are read-only');

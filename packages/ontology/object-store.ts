@@ -43,6 +43,8 @@ export interface OntologyGraphContext {
   releaseRef?: OntologyReleaseRef;
   compatibleDefinition?: (args: { kind: 'object' | 'link'; id: string; storedDigest: string; currentDigest: string; properties?: Record<string, unknown> }) => boolean;
   skipLegacyMigration?: boolean;
+  pipelineStatus?: (owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string) => import('./pipeline/contracts.js').PipelineStatus;
+  pipelineChanges?: (owner: string, jobId: string, requestRevision: number) => import('./pipeline/facts.js').PipelineFactChange[];
 }
 interface StoredObject { ref: ObjectRef; revision: number; createdAt: string; properties: Record<string, unknown>; source: ObjectSource; tombstone?: { revision: number; deletedAt: string } }
 export interface ObjectView extends StoredObject { derived?: Record<string, { status: 'known' | 'unknown'; reason?: string; functionRef: { id: string; version: string }; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }> }
@@ -65,6 +67,18 @@ export class OntologyObjectStore {
   readonly releaseRef?: OntologyReleaseRef;
   private readerFactory?: (owner: string, requestId: string) => NetworkOntologyReadAdapter | undefined;
   private backingStore?: OntologyObjectStore;
+  pipelineStatus(owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string): import('./pipeline/contracts.js').PipelineStatus {
+    return this.context.pipelineStatus?.(owner, programRef, configurationDigest, actionId) ?? { status: 'unmanaged', reason: 'No intake policy on this historical graph', verificationIds: [], authorization: 'per_action_required', availabilityProof: false };
+  }
+  pipelineChanges(owner: string, jobId: string, requestRevision: number): import('./pipeline/facts.js').PipelineFactChange[] {
+    const changes = this.context.pipelineChanges?.(owner, jobId, requestRevision) ?? [];
+    return changes.flatMap(change => {
+      try {
+        const view = this.read(owner, change.object), fields = change.fields.filter(field => Object.hasOwn(view.properties, field));
+        return fields.length ? [{ ...change, fields }] : [];
+      } catch (error) { if (error instanceof DomainError || error instanceof SecurityError) return []; throw error; }
+    });
+  }
   constructor(private db: DatabaseSync, model = businessModel, readonly now: () => number = Date.now, private readOverlay?: NetworkOntologyReadAdapter, private context: OntologyGraphContext = {}, initialize = true) {
     this.model = model;
     this.ontologyId = context.ontologyId ?? 'eigos.business';
