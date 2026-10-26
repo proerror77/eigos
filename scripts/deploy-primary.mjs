@@ -10,7 +10,7 @@ import {JobStore} from '../dist/packages/core/store.js';
 import {runtimeAuthorityDigest} from '../dist/packages/core/runtime-authority.js';
 import {releaseFiles} from '../dist/packages/deployment/files.js';
 import {installReleaseDependencies} from '../dist/packages/deployment/dependencies.js';
-import {primaryRuntime,readPrimaryHealth} from '../dist/packages/deployment/primary.js';
+import {primaryRuntime,waitForPrimaryHealth} from '../dist/packages/deployment/primary.js';
 import {CODEX_SECURITY_CHANNEL_ID} from '../dist/packages/capabilities/executor.js';
 
 const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'}}});
@@ -49,11 +49,7 @@ if(loaded(label))execFileSync('launchctl',['bootout',service],{stdio:'ignore'});
 write(envPath,source.split('\n').filter(line=>!line.startsWith('EIGOS_RELEASE_DIGEST=')).join('\n')+'\nEIGOS_RELEASE_DIGEST='+buildDigest+'\n');
 write(join(runtime,'authority.json'),JSON.stringify(authority,null,2)+'\n');write(plistPath,plist);
 execFileSync('launchctl',['enable',service]);execFileSync('launchctl',['bootstrap',`gui/${process.getuid()}`,plistPath]);
-let healthy=false;
-for(let i=0;i<30;i++){
-  try{const result=await readPrimaryHealth(config.PORT,new URL(config.PUBLIC_URL).host);if(result.authorityId===authority.id && result.releaseDigest===buildDigest){healthy=true;break;}}catch{}
-  await new Promise(r=>setTimeout(r,500));
-}
-if(!healthy)throw new Error('Primary failed readiness; preserve its database and inspect the owned logs before forward repair');
+try{await waitForPrimaryHealth(config.PORT,new URL(config.PUBLIC_URL).host,{authorityId:authority.id,releaseDigest:buildDigest});}
+catch(error){throw new Error(`${error.message}; preserve its database and inspect the owned logs before forward repair`,{cause:error});}
 write(prior,JSON.stringify({sourceCommit,buildDigest,release,files,authorityId:authority.id,authorityDigest:runtimeAuthorityDigest(authority),profile:'primary',endpoint:config.PUBLIC_URL,updatedAt:new Date().toISOString()},null,2)+'\n');
 console.log(JSON.stringify({status:'running',label,sourceCommit,buildDigest,authorityId:authority.id,endpoint:config.PUBLIC_URL,frontendReadback:'required'}));
