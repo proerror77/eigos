@@ -40,10 +40,10 @@ flowchart LR
 
 继续使用 `POST /ontology/v1/commands` 与 MCP `manage_ontology_definitions`；查询使用 `/ontology/v1/query` 与 `query_ontology_definitions`。它们共享 `DefinitionService` 的身份、命名空间、修订和响应大小检查。
 
-1. 用已有 `create_draft` 创建草稿，必要时通过 `put_definition` 添加概念、关系或兼容字段。
+1. 用已有 `create_draft` 创建草稿。Foundation 复用已审查的业务定义；通用模式可另用 `put_definition` 添加概念、关系或兼容字段。
 2. `put_pipeline_intake` 绑定 `draftId + expectedRevision`，保存接入记录并推进草稿修订。
 3. `validate_pipeline_intake` 运行确定性结构和映射校验，记录 `mapping_test / synthetic` 证据。它不调用模型或服务商，不声称连接器已执行。
-4. 沿用 `validate_draft → publish_draft → activate_release`。发布包含精确 intake 摘要；修改资料、映射或相关定义后须重新验证，激活时再次检查。旧发布和旧任务引用保持不变。
+4. 调用 `publish_draft → activate_release`；发布内部会重新运行完整草稿校验，通用模式还可预先调用 `validate_draft` 查看校验详情。发布包含精确 intake 摘要；修改资料、映射或相关定义后须重新验证，激活时再次检查。旧发布和旧任务引用保持不变。
 5. 有匹配的实际执行记录时，以 `verify_pipeline_task` 提供当前草稿、服务和 **taskId**。服务端加载原任务、准确动作及已接受的执行意图，不接受客户端上传的“成功证据”。只有独立验收通过的同 owner、程序、配置和环境记录才可采用。
 6. 没有执行证据或需要更新时，使用 `prepare_pipeline_validation`。完成验证任务后仍需单独登记其证据；不会自动升级目录中的能力。
 
