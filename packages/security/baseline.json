@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "42956ae38378c1f7536c3b8263618163e6eedd96616a4f6c01ed31d4d8b8ec32",
+      "sourceDigest": "75284e752f0d4969b9f7fddda6b002172b211a18179a6911caa98e021b38521d",
       "channels": [
         "all-reads"
       ],
@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "64d86bc5e0dd51193d153518e4924e26770de78e00c28537fd77fea05a8ce088",
+      "sourceDigest": "d3730154336124aec7624ad15881e36ea8fde13b0f33f6db2dad78b6a5a85908",
       "channels": [
         "http-mcp-a2a"
       ],

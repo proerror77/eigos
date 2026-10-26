@@ -514,7 +514,8 @@ export class SecurityPolicies {
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return JSON.parse(String(old.body)).properties;
   }
-  validateLineage(scope:AuthorizationScope,envelope:SecurityEnvelope) {
+  validateLineage(scope:AuthorizationScope,envelope:SecurityEnvelope):void {
+    if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.validateLineage(authorizationScope()!,envelope)));
     scope.assertCurrent();
     if (envelope.submission) {
       const row=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(scope.actor.ownerKey,envelope.submission.taskId);

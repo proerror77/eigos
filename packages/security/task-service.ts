@@ -3,7 +3,7 @@ import { DomainError, ownerKey, requireScope, type Job, type Principal } from '.
 import type { JobStore, ListFilter } from '../core/store.js';
 import { POLICY_VERSION, SECURITY_CONTRACT, securityDefaults } from './contracts.js';
 import { SecurityError, type TaskDataGrant } from './store.js';
-import { withAuthorization } from './context.js';
+import { withAuthorization,authorizationScope } from './context.js';
 import {z} from 'zod';
 import {objectRefSchema} from '../ontology/model.js';
 import {projectionFields} from './projections.js';
@@ -62,17 +62,18 @@ export class TaskSecurity {
   get(p: Principal, taskId: string) { requireScope(p,'tasks:read');this.assertTask(p,taskId);return this.project(p,this.store.get(ownerKey(p),taskId),true); }
   download(p:Principal,taskId:string,artifactId:string) {
     requireScope(p,'tasks:read');
-    return this.store.security.withAgent(p,taskId,'task.result.read',scope=>this.store.security.policies.download(scope.actor.ownerKey,taskId,artifactId));
+    return this.store.security.withAgent(p,taskId,'task.result.read',scope=>this.store.security.policies.readSnapshot(()=>this.store.security.policies.download(scope.actor.ownerKey,taskId,artifactId)));
   }
   list(p: Principal, filter: ListFilter) {
     requireScope(p,'tasks:read'); const security=this.store.security, actor=security.agentContext(p),policyRevision=security.policies.revision();
     const taskIds = security.listGrants(actor.ownerKey).flatMap(g => {
       if (g.kind !== 'task_data' || g.installationId !== actor.installationId || g.status !== 'active' || !g.operations.includes('task.result.read')) return [];
       try {
-        return security.withAgent(p,g.taskId,'task.result.read',scope=>{
+        return security.withAgent(p,g.taskId,'task.result.read',()=>security.policies.readSnapshot(()=>{
+          const scope=authorizationScope()!;
           const root=security.policies.binding(scope,{type:'ServiceRequest',id:g.taskId});if(!root)return [];
           security.policies.requireRecipient(scope,root.envelope,'agent_response');return [g.taskId];
-        });
+        }));
       } catch (error) {if(error instanceof SecurityError && ['AUTHORITY_UNAVAILABLE','POLICY_CHANGED'].includes(error.reason))throw error;return [];}
     });
     const result=this.store.list(actor.ownerKey,filter,taskIds);
@@ -87,7 +88,8 @@ export class TaskSecurity {
       goal:'',messages:[],createdAt:job.createdAt,updatedAt:job.updatedAt,outputStatus:'receipt_only'};
     const canRead=p.scopes.includes('tasks:read') && grant.operations.includes('task.result.read');
     if (!canRead) { if (requireRead) throw new SecurityError('AUTHORIZATION_REQUIRED'); return base; }
-    return security.withAgent(p,job.id,'task.result.read',scope=>{
+    return security.withAgent(p,job.id,'task.result.read',()=>security.policies.readSnapshot(()=>{
+      const scope=authorizationScope()!;
       const graph=this.store.ontologyForTaskRead(actor.ownerKey,job);
       if (!grant.channels.includes('agent_response')) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       const root=security.policies.binding(scope,{type:'ServiceRequest',id:job.id});
@@ -132,6 +134,6 @@ export class TaskSecurity {
       }
       const attachments=security.policies.artifacts(actor.ownerKey,job.id);if (attachments.length) base.attachments=attachments;
       return base;
-    });
+    }));
   }
 }
