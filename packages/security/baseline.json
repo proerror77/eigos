@@ -4131,13 +4131,13 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "e50ad744e47ad53d8429eef8ba40ab44d9f26ae240a36cc06f37da5ab6ba83c7",
+      "sourceDigest": "bbebca263cdc93a4062387603dbb4d932fc296eb71955c606fda16a8eacb6626",
       "channels": [
         "operator_cli"
       ],
       "content": "Single managed primary runtime and immutable release",
-      "currentControl": "Owned config, exact authority and stopped legacy profiles",
-      "targetControl": "Owned config, exact authority and stopped legacy profiles",
+      "currentControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
+      "targetControl": "Owned config, stopped legacy profiles and bounded readiness matching healthy status, authority and immutable release",
       "stage": "S5"
     },
     {
