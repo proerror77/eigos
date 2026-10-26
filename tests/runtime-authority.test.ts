@@ -71,6 +71,7 @@ test('public and private ingress share task authority while audience, installati
     const publicHealth=await request('primary.example','/health'),privateHealth=await request('private.example:8443','/health');
     assert.equal((await jwtVerifier(f.authority.issuer,'https://private.example:8443',keySet)(privateToken)).clientId,'private-agent');
     assert.equal(publicHealth.body.authorityId,f.authority.id);assert.deepEqual(privateHealth.body,publicHealth.body);
+    const home=await request('primary.example','/');assert.equal(home.status,200);assert.match(home.body,/登录与邀请只确认会员身份/);
     assert.equal((await request('primary.example','/security/context',privateToken,{},'private.example:8443')).status,401,'Forwarded host cannot make a private audience valid on the public ingress');
     const created=await request('private.example:8443','/tasks',privateToken,{service:'eigos.delegate',goal:'Synthetic unified task',requestId:randomUUID()});
     assert.equal(created.status,200,JSON.stringify(created.body));assert.equal(created.body.authorityId,f.authority.id);
@@ -81,6 +82,11 @@ test('public and private ingress share task authority while audience, installati
     assert.equal((await request('primary.example','/security/context',await token('native-mcp','https://primary.example/'),{})).status,403,'A fresh token cannot resurrect a revoked native installation');
     const redirected=await request('private.example:8443','/members');assert.equal(redirected.status,307);assert.equal(redirected.headers.location,'https://primary.example/members');
     assert.equal((await request('not-registered.example','/health')).status,403);
+    const prior=new DatabaseSync(f.databasePath),original=prior.prepare('SELECT body FROM jobs WHERE id=?').get(created.body.id)!.body;
+    prior.prepare("UPDATE jobs SET body=json_remove(body,'$.authorityId') WHERE id=?").run(created.body.id);
+    assert.equal(gateway.store.claim(['eigos.delegate'],30000),undefined,'Even a current-version imported task with valid old grants cannot enter the new authority queue');
+    assert.throws(()=>gateway.store.ontologyReleaseForJob(gateway.store.security.agentGrant(installs[0]!).ownerKey,created.body.id),/Historical runtime authority/);
+    prior.prepare('UPDATE jobs SET body=? WHERE id=?').run(original!,created.body.id);prior.close();
     const claim=gateway.store.claim(['eigos.delegate'],30000)!;assert(claim);assert(gateway.store.claimActive(claim));
     const db=new DatabaseSync(f.databasePath);db.prepare('UPDATE runtime_authority SET configuration_digest=?').run('0'.repeat(64));db.close();
     assert.equal(gateway.store.claimActive(claim),false);assert.equal(gateway.store.renew(claim,30000),false);assert.equal((await request('primary.example','/health')).status,503);

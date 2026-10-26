@@ -46,7 +46,8 @@ test('closed snapshots consolidate exact task bodies and release aliases under o
     const root=proofDb.prepare("SELECT definition_digest,body FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(f.owner,old.id)!;
     assert(compatibleProjectedObject(proofDb,f.owner,old.id,'ServiceRequest',String(root.definition_digest),JSON.parse(String(root.body)).properties,store.security.model.ref.digest));
     assert.equal(compatibleProjectedObject(proofDb,f.owner,old.id,'ServiceRequest','f'.repeat(64),JSON.parse(String(root.body)).properties,store.security.model.ref.digest),false);
-    assert.deepEqual(store.ontologyReadReleaseForJob(f.owner,old),active);assert.deepEqual(store.ontologyReleaseForJob(f.owner,old),old.delegation!.ontologyRelease,'Read projection does not replace the execution release');
+    assert.deepEqual(store.ontologyReadReleaseForJob(f.owner,old),active);assert.deepEqual(store.get(f.owner,old.id).delegation!.ontologyRelease,old.delegation!.ontologyRelease,'Read projection does not replace the execution release');
+    assert.throws(()=>store.ontologyReleaseForJob(f.owner,old),/Historical runtime authority/,'Import never grants execution even when backend versions match');
     const changed=structuredClone(old);changed.delegation!.request.originalGoal='Changed after review';
     assert.throws(()=>store.ontologyReadReleaseForJob(f.owner,changed),/no longer matches/);proofDb.close();store.close();
     const db=new DatabaseSync(f.authority.databasePath);assert.equal(db.prepare('SELECT count(*) n FROM ontology_definition_releases').get()!.n,2);assert(db.prepare('SELECT count(*) n FROM ontology_definition_release_aliases').get()!.n as number>=1);

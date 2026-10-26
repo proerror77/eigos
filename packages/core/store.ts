@@ -184,6 +184,8 @@ export class JobStore {
   ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
     if (job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks have no current executable ontology context');
+    if (this.authority && job.authorityId !== this.authority.id && this.db.prepare('SELECT 1 FROM jobs WHERE owner=? AND id=?').get(owner,job.id))
+      throw new DomainError('CONFLICT', 'Historical runtime authority tasks are read-only');
     // Absence is an explicit compatibility rule for pre-registry v16 records.
     // It must never mean "whatever release is active now" or rewrite receipts.
     return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
@@ -712,8 +714,11 @@ export class JobStore {
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims)
+        ${this.authority ? "AND json_extract(body,'$.authorityId')=:runtimeAuthority" : ''}
         ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
-      const row = this.security.enabled ? query.get({ securityNow: at,securityDefinition:this.security.policies.definitionDigest }, 'worker-security-v2', ...services, BACKEND_VERSION, at) : query.get('worker', ...services, BACKEND_VERSION, at);
+      const named = { ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
+      const values = [this.security.enabled ? 'worker-security-v2' : 'worker',...services,BACKEND_VERSION,at];
+      const row = Object.keys(named).length ? query.get(named,...values) : query.get(...values);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
