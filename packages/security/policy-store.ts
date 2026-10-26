@@ -276,7 +276,7 @@ export class SecurityPolicies {
       // writer, but this exception never applies to provider facts or assets.
       let sharedCapability=false;
       if(sourceBindingId==='task_context' && ref.type==='RegisteredCapability' && body.source?.kind==='task'
-        && taskContextMembers(this.db,grant.ownerKey,grant.taskId,grant.requestRevision).has(refKey(ref))) {
+        && this.contextMembers(grant.ownerKey,grant.taskId,grant.requestRevision).has(refKey(ref))) {
         const jobRow=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(grant.ownerKey,grant.taskId);
         const job=jobRow?JSON.parse(String(jobRow.body)) as Job:undefined,reader=job?.delegation?.ontologyRelease;
         if(reader && job?.delegation?.request.revision===grant.requestRevision) {
@@ -323,7 +323,7 @@ export class SecurityPolicies {
           ...(bindingRef?[{type:'ExecutionFeedback',id:digest({request:taskId,revision:g.requestRevision,bindingRef})}]:[])];
         const inherited=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
           ...this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?").all(owner,taskId,g.requestRevision).map(row=>securityEnvelopeSchema.parse(JSON.parse(String(row.body))))]);
-        for(const ref of taskContextMembers(this.db,owner,taskId,g.requestRevision).values()) {
+        for(const ref of this.contextMembers(owner,taskId,g.requestRevision).values()) {
           const fields=(parent.resources.find(r=>r.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]!.includes(field));
           if(fields.length)this.bind(g,ref,fields,'task_context',inherited);
         }
@@ -346,15 +346,21 @@ export class SecurityPolicies {
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
     const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${this.db.prepare('SELECT total_changes() AS n').get()!.n}`;
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>();
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>();
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at)bindings.clear();if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=now;}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=now;}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
+  }
+  private contextMembers(owner:string,taskId:string,revision:number) {
+    const scope=authorizationScope();scope?.assertCurrent();
+    const cache=scope?.readTaskMembers,key=JSON.stringify([owner,taskId,revision]),cached=cache?.get(key);
+    if(cached)return cached;
+    const members=taskContextMembers(this.db,owner,taskId,revision);cache?.set(key,members);return members;
   }
   binding(scope: AuthorizationScope, ref: ObjectRef, revision?: number): ObjectBinding | undefined {
     scope.assertCurrent();
@@ -389,7 +395,7 @@ export class SecurityPolicies {
         const body=row?JSON.parse(String(row.body)):undefined;
         if(!TASK_PROJECTION_TYPES.includes(ref.type) || body?.source.kind!=='task' || body.source.id!==scope.grant!.taskId || body.properties.requestRevision!==scope.grant!.requestRevision)return;
       } else if(binding.sourceBindingId==='task_context') {
-        if(!taskContextMembers(this.db,scope.actor.ownerKey,scope.grant!.taskId,scope.grant!.requestRevision).has(refKey(ref)))return;
+        if(!this.contextMembers(scope.actor.ownerKey,scope.grant!.taskId,scope.grant!.requestRevision).has(refKey(ref)))return;
         const row=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,ref.type,ref.id),properties=row?JSON.parse(String(row.body)).properties:{};
         if(ref.type==='RegisteredActionType' && !this.resourceAllowed(scope,'actionType',String(properties.actionId)))return;
         if(ref.type==='RegisteredCapability' && !parent.capabilityIds.includes(properties.capabilityRef?.id))return;

@@ -3,6 +3,7 @@ import type { AccessContext } from './contracts.js';
 import type { TaskDataGrant } from './store.js';
 import type { SecurityEnvelope } from './envelope.js';
 import type { SecurityPolicies } from './policy-store.js';
+import type { ObjectRef } from '../ontology/model.js';
 
 /** Server-only dynamic scope. Request JSON is never passed to this constructor. */
 export interface AuthorizationScope {
@@ -18,6 +19,7 @@ export interface AuthorizationScope {
   integrity?: boolean;
   synchronousRead?: boolean;
   readBindings?: Map<string,unknown>;
+  readTaskMembers?: Map<string,Map<string,ObjectRef>>;
 }
 const contexts = new AsyncLocalStorage<AuthorizationScope>();
 export const authorizationScope = () => contexts.getStore();

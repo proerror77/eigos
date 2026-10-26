@@ -37,7 +37,9 @@ export function secureRequest(graph:OntologyObjectStore,owner:string,request:Ser
 }
 export function secureAgentContext(context:AgentPlanningContext,graph:OntologyObjectStore):AgentPlanningContext {
   if (!graph.security) return context;
-  const scope=authorizationScope()!,policy=graph.security;
+  const scope=authorizationScope(),policy=graph.security;
+  if(!scope)throw new SecurityError('AUTHORIZATION_REQUIRED');
+  if(!scope.synchronousRead)return graph.security.readSnapshot(()=>secureAgentContext(context,graph));
   const nativeGoal=context.state.programRef.id==='eigos.goal' && context.state.programRef.version==='1';
   const input=nativeGoal?nativeGoalInput(graph,context.request,context.state.scope,context.state.composition?.goal):authorizedInput(graph,scope.actor.ownerKey,context.state.scope);
   const execution=nativeGoal?readExecutionContext(graph,scope.actor.ownerKey,context.request.id,context.request.revision):undefined;
@@ -83,10 +85,11 @@ export function secureGoalContext(context:GoalReviewContext,graph:OntologyObject
   if(digest(input)!==digest(context.input))throw new SecurityError('INSUFFICIENT_ACCESS');
   return {...context,input,request:secureRequest(graph,owner,context.request)};
 }
-export function assertModelChannel(graph:OntologyObjectStore,channel?:string) {
+export function assertModelChannel(graph:OntologyObjectStore,channel?:string):void {
   if (!graph.security) return;
   const scope=authorizationScope();
   if (!scope || !channel) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+  if(!scope.synchronousRead)return graph.security.readSnapshot(()=>assertModelChannel(graph,channel));
   scope.assertCurrent();
   const envelope=graph.security.outputEnvelope(scope.actor.ownerKey);
   requireChannel(graph.security.effectiveEnvelope(scope,envelope),'registered_model',graph.security.modelChannel(channel));

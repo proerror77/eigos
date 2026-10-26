@@ -3249,7 +3249,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "5082ffdb9dadbea3bbbca0f8bae4fd6e3fd797bd46d40fcce21546677940378f",
+      "sourceDigest": "2e4088b884ab5c7a6420bedfe6b76401bb93e310a020abef6586ccffcd2024e5",
       "channels": [
         "authorization_control"
       ],
@@ -3285,7 +3285,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "de41a7e31615235d7b69111c274de41690322fe9208c7b4c4113ca7ddf595802",
+      "sourceDigest": "a66c9cb9485a714af51423e17f250c4d97efdf6a2d56ac2a33c5248ae58a88c8",
       "channels": [
         "internal"
       ],
@@ -3321,7 +3321,7 @@
     {
       "id": "security-model",
       "file": "packages/security/model.ts",
-      "sourceDigest": "071fa371a2e58bdf526b4e6b59f1ca60fb28bdc55823f875639473747fdc65a6",
+      "sourceDigest": "a8dcc3ecf7cf610590c68f74eb02afa1ee73298d019e57c7331d35c524b9e850",
       "channels": [
         "model"
       ],
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "f5148c861292a2c76916ec65a0d637947f798b50c80fb49b6753f45111848a53",
+      "sourceDigest": "78028f2e5757228e819c5d3858e9052fa6ebb8b746c14c92acdac78afdc46682",
       "channels": [
         "all-reads"
       ],

@@ -11,6 +11,7 @@ import { SecurityError } from '../packages/security/store.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { securityFixture } from './fixtures/security.js';
 import {historicalAttempt} from './fixtures/security-ledger.js';
+import {authorizationScope} from '../packages/security/context.js';
 
 test('S1 eligibility publication reserves its WAL writer before reading mutable authority', () => {
   const f = securityFixture(), peer = new DatabaseSync(f.database);
@@ -157,6 +158,26 @@ test('S1 a Worker started before its Gateway retains an expired task until autho
     assert.equal(executions, 1);
     assert.equal(f.jobs.get(f.owner, original.job.id).goal, original.job.goal);
   } finally { await worker.close(); f.close(); }
+});
+
+test('S1 synchronous authorized progress renews a live lease but cannot revive an expired lease', async t => {
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});
+  const f=securityFixture();let finished!:()=>void,kept=false,expired=false;
+  const done=new Promise<void>(resolve=>{finished=resolve;});
+  const worker=new Worker(f.jobs,{pollMs:10000,coordinator:{run:async claim=>{
+    try {
+      const scope=authorizationScope()!;
+      for(let i=0;i<5;i++){t.mock.timers.tick(4000);scope.assertCurrent();}
+      kept=f.jobs.claimActive(claim);
+      t.mock.timers.tick(16000);
+      try{scope.assertCurrent();}catch{expired=true;}
+      assert.equal(f.jobs.renew(claim,15000),false);
+    }finally{finished();}
+  }}});
+  try {
+    const install=f.installation('synchronous progress');f.approve(install.id);f.task(install.id);
+    worker.start();await done;assert(kept,'Current authorized work retains its claim while the timer cannot run');assert(expired,'Expired work still loses authority');
+  }finally{await worker.close();f.close();}
 });
 
 test('S1 missed eligibility refresh notifies the supervisor and a fresh coordinator preserves revoked grants', t => {

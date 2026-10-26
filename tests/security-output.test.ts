@@ -120,6 +120,7 @@ test('controlled file bytes, metadata and old links recheck labels and revocatio
 
 test('model channel is independent of task permission and includes all submitted inputs',async()=>{
   const f=fixture();try {
+    assert.throws(()=>assertModelChannel(f.jobs.ontology,'synthetic'),/OUTPUT_NOT_ALLOWED/);
     const x=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:'model',goal:'PRIVATE_MODEL_INPUT'}),work=f.claim(x.id);
     const session=new OntologyPlanningSession(f.jobs.ontology,f.owner,work.claim.job.delegation!.request);
     let calls=0;

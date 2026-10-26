@@ -10,7 +10,7 @@ import {TaskService} from '../packages/core/tasks.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import type {AgentProgram} from '../packages/core/agent-program.js';
 import {digest} from '../packages/core/delegation.js';
-import {withAuthorization} from '../packages/security/context.js';
+import {withAuthorization,withoutAuthorization} from '../packages/security/context.js';
 import {AuthorizedOntologyView} from '../packages/security/view.js';
 import {taskContextFields} from '../packages/security/task-context.js';
 import {readTaskContext} from '../packages/coordinator/task-context.js';
@@ -50,6 +50,17 @@ test('current task authority reads unchanged historical capability metadata with
     const ref={type:'RegisteredCapability',id:String(original.id)},read=f.jobs.ontologyForJob(f.owner,task.id).read(f.owner,ref);
     assert.equal((read.properties.capabilityRef as {id:string}).id,'brief.prepare');
     assert.throws(()=>policy.bind(scope.grant!,ref,['id','name'],'member_asset'),/POLICY_CHANGED/,'Metadata compatibility cannot be used as a provider or member-asset grant');
+    const graph=f.jobs.ontologyForJob(f.owner,task.id),link=rawDb.prepare("SELECT * FROM ontology_links WHERE owner=? AND type='CapabilityRequest' AND from_id=? AND to_id=?").get(f.owner,ref.id,task.id)!;
+    assert(link);
+    try {
+      policy.readSnapshot(()=>{
+        assert.equal(graph.read(f.owner,ref).ref.id,ref.id);
+        rawDb.prepare("DELETE FROM ontology_links WHERE owner=? AND type='CapabilityRequest' AND from_id=? AND to_id=?").run(f.owner,ref.id,task.id);
+        assert.throws(()=>graph.read(f.owner,ref),/not available|not found/i,'A concurrent membership change invalidates task metadata cached earlier in the same read');
+      });
+    } finally {
+      rawDb.prepare(`INSERT INTO ontology_links (${Object.keys(link).join(',')}) VALUES (${Object.keys(link).map(()=>'?').join(',')})`).run(...Object.values(link));
+    }
   });
   const after=rawDb.prepare("SELECT definition_digest,body FROM ontology_objects WHERE owner=? AND type='RegisteredCapability' AND id=?").get(f.owner,original.id!)!;
   assert.equal(after.definition_digest,original.definition_digest);assert.equal(after.body,original.body);
@@ -112,7 +123,9 @@ test('reviewed native task context stays task-bound across lifecycle projection 
    const state=goalState(request,goal),program=new GoalProgram(goal),programRef={id:'fixture.prepared',version:'1'},pin={ref:programRef,programRef,actionId:'PrepareTaskBrief',actionVersion:'1',definitionDigest:digest('fixture'),configurationDigest:digest('fixture'),ontologyRelease:release,ownerDigest:digest(f.owner),requestId:request.id,requestRevision:1};
    state.composition!.contexts.push({id:'already-prepared',programRef,programDigest:pin.configurationDigest,requestRevision:1,scope:state.scope,input:{private:'PRIVATE_PREPARATION_INPUT'},digest:digest('prepared'),initializedBy:{modelRunId:'fixture',binding:{...pin,digest:digest(pin)},decision:{kind:'prepare',requestRevision:1,message:'PRIVATE_PREPARATION_RECEIPT',steps:[],completionJson:''},ontologyPlanning:templatePlanning(request,f.jobs.ontology.model.ref)}});
    assert(f.jobs.checkpoint(claim,current=>{current.delegation!.agent=state;}));
-   const safe=secureAgentContext({request,capability:program.capability(),state,actionIds:[],guidance:program.guidance,completionSchema:program.completionSchema},f.jobs.ontologyForJob(f.owner,job.id));
+   const context={request,capability:program.capability(),state,actionIds:[],guidance:program.guidance,completionSchema:program.completionSchema},contextGraph=f.jobs.ontologyForJob(f.owner,job.id);
+   assert.throws(()=>withoutAuthorization(()=>secureAgentContext(context,contextGraph)),/AUTHORIZATION_REQUIRED/);
+   const safe=secureAgentContext(context,contextGraph);
    assert.deepEqual(safe.preparedContextNavigation,[{id:'already-prepared',programRef,scope:state.scope,retired:false}]);
    assert.equal(safe.state.composition,undefined);assert(!JSON.stringify(safe).includes('PRIVATE_PREPARATION'));
   });

@@ -117,6 +117,27 @@ test('one whole goal executes two independently pinned programs and passes origi
   } finally { t.store.close(); }
 });
 
+test('invalid completion fields receive bounded schema feedback and can be corrected without repeating sources', async () => {
+  let selections = 0;
+  const t = setup({ choice: (ctx, access) => {
+    const selected = next(ctx, access);
+    if (selected.kind === 'complete' && selections++ === 0) {
+      const value = JSON.parse(selected.completionJson); delete value.conditions;
+      value.PRIVATE_FIELD_NAME = 'PRIVATE_SOURCE_VALUE'; selected.completionJson = JSON.stringify(value);
+    }
+    return selected;
+  } });
+  try {
+    const submitted = t.submit(), done = await t.finish(submitted.id);
+    assert.equal(done.state, 'completed'); assert.equal(selections, 2);
+    const feedback = done.delegation!.agent!.feedback.find(value => value.kind === 'completion')!;
+    assert.match(feedback.message, /schema mismatch at conditions, completion|schema mismatch at completion, conditions/);
+    assert(!feedback.message.includes('PRIVATE_'));
+    assert.equal(t.calls.length, 1); assert.equal(t.documents.length, 1);
+    assert.equal(done.delegation!.acceptance!.accepted, true);
+  } finally { t.store.close(); }
+});
+
 test('second-service failure preserves the first result and leaves the whole goal incomplete', async () => {
   const t = setup({ failDocument: true }); try {
     const done = await t.finish(t.submit().id), assessment = done.delegation!.agent!.composition!.assessment!;

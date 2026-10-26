@@ -70,15 +70,29 @@ export class Worker {
     let scope:AuthorizationScope|undefined;
     const run = { controller, done: Promise.resolve() };
     const inScope = <T>(action: () => T): T => scope ? withAuthorization(scope, action) : action();
+    let renewAt = Date.now() + Math.floor(this.leaseMs / 3);
+    const renew = () => {
+      if (!this.store.renew(claim, this.leaseMs)) return false;
+      renewAt = Date.now() + Math.floor(this.leaseMs / 3); return true;
+    };
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
-      try { scope?.assertCurrent(); if (!this.store.renew(claim, this.leaseMs)) controller.abort(); }
+      try { scope?.assertCurrent(); if (!renew()) controller.abort(); }
       catch { controller.abort(); }
     }, Math.min(this.pollMs, Math.floor(this.leaseMs / 3)));
     const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 300000);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
       scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
+      if (scope) {
+        const assertCurrent = scope.assertCurrent;
+        scope.assertCurrent = () => {
+          assertCurrent();
+          // Bounded synchronous metadata work can delay the timer. Renew only
+          // while the original lease and all authority checks are still valid.
+          if (Date.now() >= renewAt && !renew()) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
+        };
+      }
       const execute = async () => {
       if (claim.job.delegation?.recovery?.state === 'scheduled') {
         if (!this.store.checkpoint(claim, current => resumeScheduledRecovery(current))) return;
