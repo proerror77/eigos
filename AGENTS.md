@@ -30,5 +30,6 @@
 
 - `main` 为集成主线；完成整合的短期分支在核对提交包含关系、最新远端 SHA 和恢复记录后清理。其他工作区的在途修改保留。
 - 本体实现与定义集中在 `packages/ontology/`，供应商绑定只编辑 `packages/ontology/definitions/`。发布后的共享业务库是运行权威来源；Worker、Gateway 和 Ontology MCP 按同一任务发布引用读取，不各自维护可变定义副本。
+- 正式部署只有一个 `com.eigos.primary` 运行权威；MCP、A2A、私有兼容入口按身份、任务与来源授权路由到同一业务库。供应商、浏览器代理和 Mock 可独立运行，但不能另建正式任务／本体实例。迁移与停用流程见 [统一运行与路由](docs/architecture/runtime-authority.md) 和 [部署说明](docs/guides/deployment.md)。
 - `dist/` 是生成物；`packages/ontology/history/` 是只读兼容快照，不是第二个编辑入口。历史指纹不能为了通过测试而重写。
 - 当前模块导航见 [仓库结构](docs/architecture/repository.md)，领域术语见 [领域模型](docs/architecture/domain.md)。

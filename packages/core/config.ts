@@ -3,6 +3,8 @@ import { isAbsolute, resolve } from 'node:path';
 import { z } from 'zod';
 import { publicGeoQuerySchema } from '../capabilities/paotui-contracts.js';
 import { shopifyMerchantsSchema } from '../capabilities/shopify/contracts.js';
+import { readRuntimeAuthority, type RuntimeAuthority } from './runtime-authority.js';
+import { readDidiMemberConnection, didiSourceOwner } from './didi-source.js';
 
 const merchantList = (name: string) => z.string().max(16384).transform((value, ctx) => {
   try { return shopifyMerchantsSchema.parse(JSON.parse(value)); }
@@ -37,6 +39,7 @@ const schema = z.object({
   EIGOS_NETWORK_MAX_RESPONDERS: z.coerce.number().int().min(1).max(10).default(3),
   EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: z.coerce.number().int().min(1).max(10).default(2),
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  EIGOS_AUTHORITY_FILE: z.string().optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
@@ -109,17 +112,28 @@ const schema = z.object({
   EIGOS_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().min(1000).max(300000).default(120000),
   EIGOS_AUDIT_PATH: z.string().optional(),
 });
-export type Config = z.infer<typeof schema>;
+export type Config = z.infer<typeof schema> & { authority?: RuntimeAuthority };
 
 export function allowsBoundPersonalSource(config: Config, nodeEnv: string | undefined): boolean {
   return config.EIGOS_SECURITY_MODE === 'foundation' && config.EIGOS_AUTH_MODE === 'jwt'
     && ownerIdentitySchema.safeParse(config.EIGOS_PERSONAL_SOURCE_OWNER).success
     && ['127.0.0.1', 'localhost', '::1'].includes(config.HOST)
-    && new URL(config.PUBLIC_URL).protocol === 'https:' && nodeEnv !== 'production';
+    && new URL(config.PUBLIC_URL).protocol === 'https:' && (nodeEnv !== 'production' || !!config.authority);
 }
 
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
-  const c = schema.parse(env);
+  const parsed = schema.parse(env);
+  const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
+  if (c.authority) {
+    const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;
+    if (c.EIGOS_SECURITY_MODE !== 'foundation' || c.EIGOS_AUTH_MODE !== 'jwt' || c.HOST !== '127.0.0.1'
+      || c.PUBLIC_URL !== c.authority.canonicalOrigin || resolve(c.DATABASE_PATH) !== resolve(c.authority.databasePath)
+      || role === 'gateway' && (c.OAUTH_ISSUER !== c.authority.issuer || c.OAUTH_AUDIENCE !== primary.audience
+        || c.OIDC_AGENT_CLIENT_ID !== primary.agentClientId || !c.MEMBERSHIP_DATABASE_PATH || resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath))
+      || c.MEMBERSHIP_DATABASE_PATH && resolve(c.MEMBERSHIP_DATABASE_PATH) !== resolve(c.authority.membershipDatabasePath)
+      || c.EIGOS_INVITE_BETA === 'true' || c.EIGOS_DEV_TOKEN || c.EIGOS_NETWORK_ENABLED === 'true')
+      throw new Error('Primary runtime requires its exact shared authority, foundation JWT and canonical ingress; admission is configured separately');
+  }
   if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && (c.EIGOS_AUTH_MODE !== 'jwt' || !c.OIDC_AGENT_CLIENT_ID)) throw new Error('Security foundation requires JWT and an explicit registered Agent client');
   if (role === 'gateway' && c.EIGOS_SECURITY_MODE === 'foundation' && c.DATABASE_PATH === ':memory:') throw new Error('Security foundation requires a persistent task database');
   if (c.EIGOS_CSV_PILOT === 'true' && (env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(c.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(c.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
@@ -128,11 +142,18 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   const publicUrl = new URL(c.PUBLIC_URL);
   const memberSource = allowsBoundPersonalSource(c, env.NODE_ENV);
   if(c.EIGOS_PERSONAL_SOURCE_OWNER && !memberSource)throw new Error('Personal source owner requires isolated foundation JWT with a loopback listener and HTTPS origin');
-  if (c.EIGOS_DIDI_MEMBER_CONNECTION_FILE && (!isAbsolute(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) || c.EIGOS_INVITE_BETA !== 'true'
+  if (c.EIGOS_DIDI_MEMBER_CONNECTION_FILE && (!isAbsolute(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) || !c.authority && c.EIGOS_INVITE_BETA !== 'true'
     || c.EIGOS_AUTH_MODE !== 'jwt' || publicUrl.protocol !== 'https:' || c.HOST !== '127.0.0.1'
     || !isAbsolute(c.DATABASE_PATH) || !c.MEMBERSHIP_DATABASE_PATH || !isAbsolute(c.MEMBERSHIP_DATABASE_PATH)
-    || c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_KEY_SHA256 || c.EIGOS_DIDI_BINDING_ID || c.EIGOS_DIDI_AUDIT_DIR
-    || c.EIGOS_DIDI_ENVIRONMENT !== 'production' || c.EIGOS_DIDI_ORDERS_ENABLED !== 'false' || c.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true')) throw new Error('Member DiDi requires an explicit private connection in the HTTPS/JWT invite beta, persistent stores and estimate-only production access; shared personal credentials and mock orders are forbidden');
+    || !c.authority && (c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_KEY_SHA256 || c.EIGOS_DIDI_BINDING_ID || c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true')
+    || c.EIGOS_DIDI_ENVIRONMENT !== 'production' || c.EIGOS_DIDI_ORDERS_ENABLED !== 'false')) throw new Error('Member DiDi requires an explicit private connection in HTTPS/JWT, persistent stores and estimate-only production access');
+  if (c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE) {
+    const connection = readDidiMemberConnection(c.EIGOS_DIDI_MEMBER_CONNECTION_FILE);
+    if (!c.EIGOS_PERSONAL_SOURCE_OWNER || didiSourceOwner(connection) !== c.EIGOS_PERSONAL_SOURCE_OWNER
+      || !c.EIGOS_DIDI_KEY_FILE || resolve(connection.binding.keyFile) !== resolve(c.EIGOS_DIDI_KEY_FILE)
+      || connection.binding.keySha256 !== c.EIGOS_DIDI_KEY_SHA256 || connection.binding.environment !== c.EIGOS_DIDI_ENVIRONMENT)
+      throw new Error('Primary DiDi routes require one verified owner and the exact same pinned credential; ambiguous accounts are refused');
+  }
   if (c.EIGOS_DIDI_ORDERS_ENABLED === 'mock' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'mock' || !c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_ACTION_SANDBOX !== 'true')) throw new Error('DiDi orders require explicit official mock configuration, durable audit and sandbox action authorization');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');
@@ -223,7 +244,7 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
 
 /** Both owned-source modes remain explicit, non-production and loopback-only. */
 export function assertPersonalSourceConfig(c: Config, nodeEnv = process.env.NODE_ENV) {
-  if (c.EIGOS_PERSONAL_SOURCE_OWNER && (c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE || c.EIGOS_DIDI_MEMBER_CONNECTION_FILE)) throw new Error('Personal owner and member-managed sources require separate explicit bindings');
+  if (c.EIGOS_PERSONAL_SOURCE_OWNER && (c.EIGOS_MEMBER_SOURCE_KEY_FILE || c.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE || !c.authority && c.EIGOS_DIDI_MEMBER_CONNECTION_FILE)) throw new Error('Personal owner and member-managed sources require separate explicit bindings');
   const privateOrigin = c.EIGOS_MEMBER_SOURCE_TAILNET_ORIGIN;
   if (privateOrigin && (!c.EIGOS_MEMBER_SOURCE_KEY_FILE || new URL(privateOrigin).origin !== privateOrigin || new URL(privateOrigin).protocol !== 'https:' || !new URL(privateOrigin).hostname.endsWith('.ts.net') || privateOrigin !== c.PUBLIC_URL)) throw new Error('Member source private origin must exactly match an explicit HTTPS Tailscale origin');
   if (c.EIGOS_MEMBER_SOURCE_KEY_FILE) {

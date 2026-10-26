@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
+import { claimAuthorityCurrent } from '../core/runtime-authority.js';
 import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySchema, securityDefaults, accessContextSchema, POLICY_VERSION, SECURITY_CONTRACT, type AccessContext } from './contracts.js';
 import { SecurityPolicies } from './policy-store.js';
 import { withAuthorization, type AuthorizationScope } from './context.js';
@@ -272,7 +273,8 @@ export class SecurityStore {
       if (data) { const current = this.taskGrant(actor, data.taskId); if (current.id !== data.id || current.revision !== data.revision) throw new SecurityError('POLICY_CHANGED'); }
       if (actor.actorKind === 'worker') {
         const lease=this.db.prepare('SELECT token,expires_at FROM work_claims WHERE job_id=?').get(actor.taskId);
-        if (this.workAuthority(actor.ownerKey, actor.taskId)?.id !== actor.authorityRef.id || !lease || Number(lease.expires_at)<=this.now() || digest(String(lease.token))!==actor.claimRef) throw new SecurityError('ACCESS_REVOKED');
+        if (this.workAuthority(actor.ownerKey, actor.taskId)?.id !== actor.authorityRef.id || !lease || Number(lease.expires_at)<=this.now() || digest(String(lease.token))!==actor.claimRef
+          || !claimAuthorityCurrent(this.db,actor.taskId,String(lease.token))) throw new SecurityError('ACCESS_REVOKED');
       }
     } };
     scope.assertCurrent(); if(actor.actorKind==='worker') this.policies.loadLineage(scope); return scope;

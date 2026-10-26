@@ -18,6 +18,7 @@ import {projectionFields,projectedValue,integrityField,integrityFunctions,projec
 import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
+import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
@@ -27,7 +28,10 @@ const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation
 export const sourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
   programDigest: z.string().regex(/^[a-f0-9]{64}$/), operations: z.array(id).min(1).max(100),
   outputTypes: z.array(nameSchema).min(1).max(200), expiresAt: instant });
-const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefSchema});
+const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefSchema,
+  // Operator-reviewed predecessor versions may explain existing observations.
+  // They never authorize dispatch or enter newly provisioned task outputs.
+  readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
 const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
@@ -150,8 +154,11 @@ export class SecurityPolicies {
     if (subject.ownerKey !== owner || !parent.capabilityIds.includes(source.programId) || !parent.sourceBindingIds.includes(source.bindingId)
       || Date.parse(source.expiresAt) <= this.security.now() || Date.parse(source.expiresAt) > Date.parse(parent.expiresAt)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     for (const type of source.outputTypes) this.model.object(type);
+    const row=this.db.prepare("SELECT state,body FROM security_sources WHERE owner=? AND installation_id=? AND binding_id=? AND program_id=?").get(owner,source.installationId,source.bindingId,source.programId);
+    const prior=row?storedSourceSchema.parse(JSON.parse(String(row.body))):undefined;
+    const readbackVersions=row?.state==='active' && prior?.programDigest===source.programDigest && prior.parentGrant.id===parent.id && prior.parentGrant.revision===parent.revision ? prior.readbackVersions : undefined;
     this.security.atomic(() => { this.change(expectedRevision); this.db.prepare("INSERT INTO security_sources VALUES(?,?,?,?,'active',?) ON CONFLICT(installation_id,binding_id,program_id) DO UPDATE SET state='active',body=excluded.body")
-      .run(owner, source.installationId, source.bindingId, source.programId, JSON.stringify({...source,parentGrant:{id:parent.id,revision:parent.revision}})); });
+      .run(owner, source.installationId, source.bindingId, source.programId, JSON.stringify({...source,parentGrant:{id:parent.id,revision:parent.revision},...(readbackVersions?{readbackVersions}:{})})); });
   }
   sources(owner: string, installationId: string) {
     let parent;try{parent=this.security.agentGrant(installationId);}catch{return [];}
@@ -160,8 +167,12 @@ export class SecurityPolicies {
       .map(row => storedSourceSchema.parse(JSON.parse(String(row.body)))).filter(s => Date.parse(s.expiresAt) > this.security.now() && s.parentGrant.id===parent.id && s.parentGrant.revision===parent.revision);
   }
   revokeSource(owner: string, installationId: string, bindingId: string, expectedRevision: number) {
-    this.security.atomic(() => { this.change(expectedRevision); this.db.prepare("UPDATE security_sources SET state='revoked' WHERE owner=? AND installation_id=? AND binding_id=?").run(owner, installationId, bindingId);
-      for (const g of this.security.listGrants(owner)) if (g.kind === 'task_data' && g.installationId === installationId && g.status === 'active' && g.outputs.some(o => o.sourceBindingId === bindingId)) this.security.revokeGrant(owner, g.id, g.revision);
+    this.security.atomic(() => { this.change(expectedRevision);
+      const bindings=new Set([bindingId]);
+      for(const row of this.db.prepare('SELECT body FROM security_sources WHERE owner=? AND installation_id=? AND binding_id=?').all(owner,installationId,bindingId))
+        for(const version of storedSourceSchema.parse(JSON.parse(String(row.body))).readbackVersions??[])bindings.add(version.sourceBindingId);
+      this.db.prepare("UPDATE security_sources SET state='revoked' WHERE owner=? AND installation_id=? AND binding_id=?").run(owner, installationId, bindingId);
+      for (const g of this.security.listGrants(owner)) if (g.kind === 'task_data' && g.installationId === installationId && g.status === 'active' && g.outputs.some(o => bindings.has(o.sourceBindingId))) this.security.revokeGrant(owner, g.id, g.revision);
     });
   }
   requireSource(scope: AuthorizationScope, programId: string, programDigest: string, operation?: string) {
@@ -256,7 +267,8 @@ export class SecurityPolicies {
   }
   bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, inputEnvelope?:SecurityEnvelope) {
     const row = this.db.prepare('SELECT revision,body,definition_digest FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(grant.ownerKey, ref.type, ref.id);
-    if (!row || row.definition_digest !== this.model.fingerprint(ref.type)) throw new SecurityError('POLICY_CHANGED');
+    if (!row || row.definition_digest !== this.model.fingerprint(ref.type) && (grant.operations.includes('task.process')
+      || !compatibleProjectedObject(this.db,grant.ownerKey,grant.taskId,ref.type,String(row.definition_digest),JSON.parse(String(row.body)).properties,this.model.ref.digest))) throw new SecurityError('POLICY_CHANGED');
     const body=JSON.parse(String(row.body));
     if (sourceBindingId==='member_asset') {
       const originRow=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(grant.ownerKey,ref.type,ref.id,Number(row.revision));
@@ -369,7 +381,9 @@ export class SecurityPolicies {
       } else if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
         const row=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(scope.actor.ownerKey,ref.type,ref.id,binding.revision);
         const origin=row?JSON.parse(String(row.body)) as {programId:string;programDigest:string;sourceBindingId:string}:undefined;
-        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.bindingId===origin.sourceBindingId && s.programId===origin.programId && s.programDigest===origin.programDigest && s.outputTypes.includes(ref.type)))return;
+        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.programId===origin.programId && s.outputTypes.includes(ref.type)
+          && (s.bindingId===origin.sourceBindingId && s.programDigest===origin.programDigest
+            || s.readbackVersions?.some(version=>version.sourceBindingId===origin.sourceBindingId && version.programDigest===origin.programDigest))))return;
       }
       // Apply dependency visibility before filtering/counting rows. Otherwise a
       // WHERE miss could reveal a bit about data whose inputs were revoked.

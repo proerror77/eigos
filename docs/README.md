@@ -12,6 +12,7 @@
 ## 本体与执行
 
 - [共享本体](../packages/ontology/README.md)：唯一注册库、任务版本与供应商定义。
+- [统一运行与路由](architecture/runtime-authority.md)：唯一正式权威、多个协议入口和来源权限。
 - [本体建模](guides/ontology-modeling.md)：草稿、发布、激活和受管数据动作。
 - [模型执行](architecture/model-execution.md)：原生 MCP、会话复用和读取回执。
 - [任务闭环与跨服务编排](architecture/task-closure.md)。

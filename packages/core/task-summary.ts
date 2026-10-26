@@ -10,6 +10,7 @@ export function taskSummary(job: Job) {
   return {
     view: 'summary' as const,
     id: job.id, contextId: job.contextId, service: job.service, goal: job.goal, deliverable: job.deliverable,
+    ...(job.authorityId ? { authorityId: job.authorityId } : {}),
     state: job.state, revision: job.revision, createdAt: job.createdAt, updatedAt: job.updatedAt,
     question: job.question, error: job.error, artifact: job.artifact, memberUsage: job.memberUsage, afterSales: job.afterSales,
     latestInput: latestInput ? { id: latestInput.id, text: latestInput.text, receivedAt: latestInput.at } : undefined,

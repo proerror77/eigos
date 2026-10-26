@@ -6,6 +6,13 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installReleaseDependencies } from '../packages/deployment/dependencies.js';
 import { releaseFiles } from '../packages/deployment/files.js';
+import { assertLegacyDeploymentAllowed,primaryRuntime } from '../packages/deployment/primary.js';
+
+test('a registered primary authority prevents retired formal installers from recreating a split runtime',()=>{
+  const home=mkdtempSync(join(tmpdir(),'eigos-primary-owner-'));
+  try{assert.doesNotThrow(()=>assertLegacyDeploymentAllowed(home));mkdirSync(primaryRuntime(home),{recursive:true});writeFileSync(join(primaryRuntime(home),'authority.json'),'{}',{mode:0o600});assert.throws(()=>assertLegacyDeploymentAllowed(home),/one primary authority/);}
+  finally{rmSync(home,{recursive:true,force:true});}
+});
 
 test('immutable release retains JSON assets required by relocated runtime imports', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-release-assets-')), source = join(dir, 'source'), release = join(dir, 'release');
@@ -20,6 +27,9 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'package.json'), '{"type":"module"}');
     put(join(source, 'package-lock.json'), '{}');
     put(join(source, 'scripts/run-local.mjs'), '');
+    put(join(source, 'scripts/agent-request.mjs'), '');
+    put(join(source, 'scripts/agent-enroll.mjs'), '');
+    put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
     put(join(source, 'integrations/grok/eigos-native/client.mjs'), 'console.log("A2A transport fixture");');
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
     const files = releaseFiles(source);

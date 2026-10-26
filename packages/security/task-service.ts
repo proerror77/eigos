@@ -10,6 +10,7 @@ import {projectionFields} from './projections.js';
 
 /** Strict construction, never a spread of Job/delegation/RunEvidence. */
 export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'state' | 'goal' | 'messages' | 'createdAt' | 'updatedAt'> {
+  authorityId?: string;
   revision?: number; view: 'eigos.task.v2'; question?: string; artifact?: Job['artifact']; error?: string; accepted?:true;
   outputStatus: 'available' | 'restricted' | 'receipt_only';
   attachments?: {id:string;name:string;mediaType:string;size:number}[];
@@ -82,7 +83,7 @@ export class TaskSecurity {
   }
   project(p: Principal, job: Job, requireRead = false): TaskView {
     const security=this.store.security,actor=security.agentContext(p),grant=security.taskGrant(actor,job.id);
-    const base:TaskView={view:'eigos.task.v2',revision:job.revision,id:job.id,contextId:job.contextId,service:job.service,state:job.state,
+    const base:TaskView={view:'eigos.task.v2',revision:job.revision,id:job.id,contextId:job.contextId,service:job.service,state:job.state,...(this.store.authority?{authorityId:this.store.authority.id}:{}),
       goal:'',messages:[],createdAt:job.createdAt,updatedAt:job.updatedAt,outputStatus:'receipt_only'};
     const canRead=p.scopes.includes('tasks:read') && grant.operations.includes('task.result.read');
     if (!canRead) { if (requireRead) throw new SecurityError('AUTHORIZATION_REQUIRED'); return base; }

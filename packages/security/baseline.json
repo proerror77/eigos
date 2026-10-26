@@ -2746,7 +2746,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "6fddda277d549cbfa57853b046ebda1484d252dc801767ac87ebd587af8b4000",
+      "sourceDigest": "6ea2258e766e0954ff11773dac88722575cb5f427732f2aa6068eaf0e0eb3046",
       "channels": [
         "http"
       ],
@@ -2770,7 +2770,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "cd0c8599a57f8409011e32a77416ded51448864e2fb6517c71788b551301afce",
+      "sourceDigest": "1a6145c90be237d0396443cdf9becaae8cbfa5bb6d5861c672557fcd04d31c76",
       "channels": [
         "a2a"
       ],
@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "11f39fa896a72f35888184b26b68a4c2ce79aff20003e8ac7e1956c596995dc5",
+      "sourceDigest": "a84af6383d7f04797b7930958ab14dc1c3931032daa806e7cd127fcbb8bb0abd",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2858,7 +2858,7 @@
     {
       "id": "agent-registration",
       "file": "packages/members/agents.ts",
-      "sourceDigest": "761a2ca10ed1aef520fd22493c77366ce55f2262cb262841bd2a6e2ea1149f46",
+      "sourceDigest": "b349bbc9348646f8c8d304892ab503e31dac7ad05d86ea78e1db3640a705f3c5",
       "channels": [
         "membership_db"
       ],
@@ -2870,7 +2870,7 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "5ed10322b979c6ba329480da0801adab5ac1a7dedfd90973cdc50b58da0ea23d",
+      "sourceDigest": "2f4ca7d3a0a95c87c3c24d3add21a627de09fc995df6e3d6126609c37aaf92ff",
       "channels": [
         "http"
       ],
@@ -2882,7 +2882,7 @@
     {
       "id": "member-cli",
       "file": "scripts/members.mjs",
-      "sourceDigest": "ca9cab6ec6be05eeebb232c2245819d871d51971f604480ffdc0b8ccb8b9a35d",
+      "sourceDigest": "fb0ead52efc6bb9c96c7cb935854d1cfcbe21d4fd8509af09fe26635b4f1511f",
       "channels": [
         "cli"
       ],
@@ -3007,7 +3007,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "6d178fe4e320d4fe3a5e5709575b135ef8a319b31e861f03fd8481f20654bd06",
+      "sourceDigest": "0faf73635422fdbc6b61b04d95f81ac1885008e4ec6530a7c191f2ae2620bc57",
       "channels": [
         "source",
         "dispatch"
@@ -3201,7 +3201,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "863f069a237a85d03bd19c32b7018cef432ed653c13277557e129fd26b1b3a1f",
+      "sourceDigest": "fdd8eb59334976bbf635de4956f13ccb750c6f751e5a5e3253d26b8f14b25cc5",
       "channels": [
         "authorization_control"
       ],
@@ -3213,7 +3213,7 @@
     {
       "id": "security-admin",
       "file": "packages/security/admin.ts",
-      "sourceDigest": "9d8ec225a142aadd72e42b379df23020e91c753cdcc71064fff704cc2eb87c07",
+      "sourceDigest": "70552c873269ee490f6420fffb8751f7f0f490b25cec743fa6ef0c2ca8c4b26f",
       "channels": [
         "authorization_control"
       ],
@@ -3225,7 +3225,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "a3f72e904efcf14555717c785dab8051381b35f38a595b124e9efe595dc9d2d7",
+      "sourceDigest": "827d7ee93b0717f88a67c29fb3fe35bcc06ed572d51fe2ec2bf75540a278b54d",
       "channels": [
         "authorization_control"
       ],
@@ -3237,7 +3237,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "0085ab2923d7fbacf95d105781422ec5eddc607b32a73756f6e3710a3ed87988",
+      "sourceDigest": "f6055f35aac8d5969b4e61ea10df1ac98ad5537d9d0bafd96ce8c2ad880f7e34",
       "channels": [
         "authorization_control"
       ],
@@ -3261,7 +3261,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "5d060316317eb4d266715183a7cce60e5300bdd40ca586df9af0304a4c80c564",
+      "sourceDigest": "8d33c7318d0751b6f7bf16df42744adf39e31d6e8da0de999322a93f7fa688bd",
       "channels": [
         "authorization_control"
       ],
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "2877c73925a14c02fed360514aa1b714b95754fc3e62b84b4c3351ce19d0c24c",
+      "sourceDigest": "2c85dbf6b85d292383d7c128b943f1afefa2cce8aba23662dd983ed9970a888f",
       "channels": [
         "all-reads"
       ],
@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "cb7d2357291d32a067b5bb1d57b2c9f6f1eb9b29257ddd0ea58bb3337c0728c1",
+      "sourceDigest": "64d86bc5e0dd51193d153518e4924e26770de78e00c28537fd77fea05a8ce088",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -3393,7 +3393,7 @@
     {
       "id": "security-policy-cli",
       "file": "scripts/security-admin.mjs",
-      "sourceDigest": "9e07659ce37674e6f22a35623b2bb48784330cf57c564543022026eaf7533d69",
+      "sourceDigest": "2231544c0941a67bfae237bfd539559636b307a6e0429bbb9845d0e5b556383f",
       "channels": [
         "local-admin"
       ],
@@ -3599,7 +3599,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "eea909e182ed51dee0ace6309d082b3d30b5de46b9e26aeec8f7886db065ce46",
+      "sourceDigest": "961c766a974eefd0e8da4d59f432430fd9355ed9f15d3a5c833b25a20bed826f",
       "channels": [
         "runtime"
       ],
@@ -3683,7 +3683,7 @@
     {
       "id": "s5-scripts-setup-pa",
       "file": "scripts/setup-pa.mjs",
-      "sourceDigest": "fa46db486dfe3f1b74e4ad2364eb84145818700fdda7456e68bc36db7cde13b8",
+      "sourceDigest": "e6a7bbe54d792113f8f21d2c11c3eac193b5d751e0dec4991d5b3400d1f6897a",
       "channels": [
         "runtime"
       ],
@@ -3861,7 +3861,7 @@
     {
       "id": "didi-order-test-program",
       "file": "packages/capabilities/didi/order-test-program.ts",
-      "sourceDigest": "5dc40708b26171bbab0a293cde6aa48b6f58e068092d0255478498c55c11cacb",
+      "sourceDigest": "fec98c5861f200fe64ea84bf016fd025e80901c70734a6228e573ba40be6e78b",
       "channels": [
         "model",
         "dispatch",
@@ -3939,7 +3939,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "b41f29d1fcd3f40fd115dc30d458ed3285327a4f75648ad5c23e50e0cc94eb98",
+      "sourceDigest": "b0b0b0b04a6f0cd9bc48c09a71ea7a04ed720712a2be82cd5be5e2b1d8912dde",
       "channels": [
         "model",
         "artifact"
@@ -4075,6 +4075,81 @@
       "content": "Versioned explicit task-metadata binding allowlist",
       "currentControl": "Content and version included in the policy definition digest; current grants still mandatory",
       "targetControl": "No silent policy drift or inferred source permission",
+      "stage": "S5"
+    },
+    {
+      "id": "runtime-authority",
+      "file": "packages/core/runtime-authority.ts",
+      "sourceDigest": "3ff48d83129814a4d2b86f117c58faa1aa26fd4860131bc541004cceea9b8001",
+      "channels": [
+        "runtime"
+      ],
+      "content": "Operator-owned canonical store and ingress descriptor; immutable configuration history and lease fence",
+      "currentControl": "Exact descriptor digest, database path and revision; no automatic adoption",
+      "targetControl": "Exact descriptor digest, database path and revision; no automatic adoption",
+      "stage": "S5"
+    },
+    {
+      "id": "runtime-ingress",
+      "file": "apps/gateway/ingress.ts",
+      "sourceDigest": "d477cb15b8d7e42cb5dc7def31b704b0a103130d860cef5097223f2ff3800a47",
+      "channels": [
+        "http",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Per-ingress JWT audiences and registered/native client admission",
+      "currentControl": "Actual Host only; same shared TaskService and stores",
+      "targetControl": "Actual Host only; same shared TaskService and stores",
+      "stage": "S5"
+    },
+    {
+      "id": "runtime-consolidation",
+      "file": "packages/core/consolidation.ts",
+      "sourceDigest": "e1b72b9bd578707a4c571b8bae0d38327ac8f83616953ee56a62450c5d2836ab",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Closed snapshot import, exact member aliases and immutable source archive",
+      "currentControl": "Expected source digest, one permission authority, collision refusal, no automatic grants or replay",
+      "targetControl": "Expected source digest, one permission authority, collision refusal, no automatic grants or replay",
+      "stage": "S5"
+    },
+    {
+      "id": "historical-read-projection",
+      "file": "packages/ontology/task-read-projection.ts",
+      "sourceDigest": "9b64622a5bdd09670259e5a40edec59b3401c0d3c37a1c47ad22331f50445a17",
+      "channels": [
+        "operator_cli",
+        "task_read"
+      ],
+      "content": "Immutable historical read compatibility witness",
+      "currentControl": "Exact source task and artifact digest; roundtrip facts; execution release unchanged",
+      "targetControl": "Exact source task and artifact digest; roundtrip facts; execution release unchanged",
+      "stage": "S5"
+    },
+    {
+      "id": "primary-deployment",
+      "file": "scripts/deploy-primary.mjs",
+      "sourceDigest": "2f6885151045ff00255c9fe5fa99b709ec84f3d22cacd0de8a7cad365a1001e9",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Single managed primary runtime and immutable release",
+      "currentControl": "Owned config, exact authority and stopped legacy profiles",
+      "targetControl": "Owned config, exact authority and stopped legacy profiles",
+      "stage": "S5"
+    },
+    {
+      "id": "runtime-consolidation-cli",
+      "file": "scripts/consolidate-runtime.mjs",
+      "sourceDigest": "f38f847acee699c5cc6806fe6eaa723ef2e126dd181c4c6a6127fed92b26f4cb",
+      "channels": [
+        "operator_cli"
+      ],
+      "content": "Explicit copy-only migration entry",
+      "currentControl": "Explicit reviewed source digest and private authority descriptor",
+      "targetControl": "Explicit reviewed source digest and private authority descriptor",
       "stage": "S5"
     }
   ]

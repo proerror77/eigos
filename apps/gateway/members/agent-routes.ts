@@ -9,6 +9,7 @@ import { AgentAccessError, MEMBERSHIP_SCOPE, type AgentRegistration } from '../.
 import type { VerifyToken } from '../auth.js';
 import type { AuthorizationCoordinator } from '../../../packages/security/coordinator.js';
 import { SecurityError } from '../../../packages/security/store.js';
+import type { RuntimeIngress } from '../../../packages/core/runtime-authority.js';
 
 export const REGISTRATION_HEADER = 'X-EIGOS-Registration-Token';
 export const enrollmentClaim = (resource: string) => `${resource.replace(/\/$/, '')}/claims/agent_enrollment`;
@@ -30,12 +31,14 @@ export function agentOnboardingMetadata(c: Config) {
   };
 }
 
-export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, verify: VerifyToken, security?: AuthorizationCoordinator): void {
-  app.get('/.well-known/eigos-agent-registration', (_req, res) => {
+export function mountAgentRoutes(app: Express, base: Config, members: MemberStore, defaultVerify: VerifyToken, security?: AuthorizationCoordinator,
+  ingress?: (request: Request) => { config: Config; verify: VerifyToken; route: RuntimeIngress }): void {
+  app.get('/.well-known/eigos-agent-registration', (req, res) => {
+    const c = ingress?.(req).config ?? base;
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'agent_onboarding_not_configured' }); return; }
     res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S5', businessAccess: 'task_grant_required', authorizationContext: `${c.PUBLIC_URL}/security/context` } : {}) });
   });
-  const view = (value: AgentRegistration) => {
+  const view = (value: AgentRegistration, c: Config) => {
     let status = members.agents.status(value, c.EIGOS_MEMBERSHIP_APPROVAL);
     if (security && status === 'active') {
       try { security.store.agentGrant(value.id); status = 'foundation_ready'; }
@@ -47,29 +50,34 @@ export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, 
       pollAfterSeconds: 5, links: { status: base, bind: `${base}/token`, application: `${base}/application`, invitation: `${base}/invitation`, revoke: `${base}/revoke`, membership: `${c.PUBLIC_URL}/members`, mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
   };
   app.all(['/agents/registrations', '/agents/registrations/:id', '/agents/registrations/:id/:action'], async (req, res, next) => {
+    const entry = ingress?.(req), c = entry?.config ?? base, verify = entry?.verify ?? defaultVerify;
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(503).json({ error: 'agent_onboarding_not_configured' }); return; }
     try {
       const credential = req.get(REGISTRATION_HEADER) ?? '';
       if (req.path === '/agents/registrations' && req.method === 'POST') {
-        res.status(201).json(view(members.agents.create(req.body, credential))); return;
+        if (entry && !entry.route.newRegistrations && !members.agents.lookup(z.object({registrationId:z.uuid()}).passthrough().parse(req.body).registrationId)) {
+          res.status(409).json({error:'use_canonical_registration',onboarding_url:`${base.PUBLIC_URL}/.well-known/eigos-agent-registration`});return;
+        }
+        res.status(201).json(view(members.agents.create(req.body, credential),c)); return;
       }
       const id = z.uuid().parse(req.params.id), value = members.agents.get(id, credential);
-      if (!req.params.action && req.method === 'GET') { res.json(view(value)); return; }
+      if (!req.params.action && req.method === 'GET') { res.json(view(value,c)); return; }
       if (req.method !== 'POST') { res.status(405).json({ error: 'method_not_allowed' }); return; }
       const token = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '')?.[1];
       if (!token) { res.status(401).json({ error: 'user_authorization_required', onboarding_url: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` }); return; }
       let principal;
       try { principal = await verify(token); }
       catch { res.status(401).json({ error: 'invalid_token' }); return; }
-      if (principal.clientId !== c.OIDC_AGENT_CLIENT_ID) throw new DomainError('FORBIDDEN', 'Use the registered Agent connector client');
+      if (entry ? !entry.route.agentClientIds.includes(principal.clientId) : principal.clientId !== c.OIDC_AGENT_CLIENT_ID) throw new DomainError('FORBIDDEN', 'Use the registered Agent connector client');
       if (req.params.action === 'token') {
         const claims = decodeJwt(token);
         const { exp, iat } = z.object({ exp: z.number(), iat: z.number() }).parse(claims);
         if (exp * 1000 <= Date.now()) { res.status(401).json({ error: 'invalid_token' }); return; }
         const canEnroll = claims[enrollmentClaim(c.OAUTH_AUDIENCE!)] === true;
+        if (!value.memberId && entry && (!entry.route.newRegistrations || principal.clientId !== c.OIDC_AGENT_CLIENT_ID)) throw new AgentAccessError('fresh_authorization_required');
         if (!value.memberId && (!canEnroll || iat * 1000 + 5000 < value.createdAt)) throw new AgentAccessError('fresh_authorization_required');
         const member = members.find(principal) ?? members.login(principal);
-        res.json(view(members.agents.bind(id, credential, principal, member.id, token, exp * 1000, iat * 1000, canEnroll))); return;
+        res.json(view(members.agents.bind(id, credential, principal, member.id, token, exp * 1000, iat * 1000, canEnroll),c)); return;
       }
       const memberId = members.agents.requireOwner(value, principal);
       if (['application', 'invitation'].includes(String(req.params.action)) && !principal.scopes.includes(MEMBERSHIP_SCOPE)) {
@@ -85,7 +93,7 @@ export function mountAgentRoutes(app: Express, c: Config, members: MemberStore, 
         members.agents.redeem(value, principal, body.invitationToken);
       } else if (req.params.action === 'revoke') { if (security) security.revokeInstallation(memberId, id); else members.agents.revoke(memberId, id); }
       else { res.status(404).json({ error: 'unknown_registration_action' }); return; }
-      res.json(view(members.agents.get(id, credential)));
+      res.json(view(members.agents.get(id, credential),c));
     } catch (error) {
       if (error instanceof SecurityError) { res.status(error.reason === 'REVOCATION_PENDING' ? 503 : 403).json({ error: error.reason }); return; }
       if (error instanceof AgentAccessError) { res.status(error.code === 'registration_limit' ? 429 : 403).json({ error: error.code }); return; }

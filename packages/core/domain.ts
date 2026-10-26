@@ -82,6 +82,7 @@ export interface JobMessage {
 }
 export interface Job {
   id: string;
+  authorityId?: string;
   contextId: string;
   // Historical records retain their original service name, but only delegate can execute.
   service: string;
