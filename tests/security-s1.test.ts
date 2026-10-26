@@ -12,6 +12,39 @@ import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { securityFixture } from './fixtures/security.js';
 import {historicalAttempt} from './fixtures/security-ledger.js';
 
+test('S1 eligibility publication reserves its WAL writer before reading mutable authority', () => {
+  const f = securityFixture(), peer = new DatabaseSync(f.database);
+  try {
+    peer.exec('PRAGMA busy_timeout=0; CREATE TABLE writer_contention_fixture(value INTEGER)');
+    const install = f.installation('concurrent publisher'), grant = f.approve(install.id);
+    const read = f.jobs.security.getSubject.bind(f.jobs.security);
+    let attempted = false, blocked = false;
+    f.jobs.security.getSubject = id => {
+      const result = read(id);
+      if (!attempted) {
+        attempted = true;
+        try { peer.prepare('INSERT INTO writer_contention_fixture VALUES(1)').run(); }
+        catch (error) {
+          assert.equal((error as {errcode?: number}).errcode, 5);
+          blocked = true;
+        }
+      }
+      return result;
+    };
+    assert.doesNotThrow(() => f.coordinator.refresh());
+    assert(attempted && blocked, 'A competing writer must wait before the publisher reads its authority snapshot');
+    assert(f.coordinator.available);
+    assert.equal(f.jobs.security.agentGrant(install.id).id, grant.id);
+    assert.equal(peer.prepare('INSERT INTO writer_contention_fixture VALUES(1)').run().changes, 1, 'Publication releases the writer after committing');
+    assert.throws(() => f.jobs.transaction(() => {
+      f.jobs.security.atomic(() => peer.prepare('SELECT revision FROM security_policy WHERE slot=1').get());
+      f.jobs.security.revokeGrant(f.owner, grant.id, grant.revision);
+      throw new Error('Synthetic outer rollback');
+    }), /Synthetic outer rollback/);
+    assert.equal(f.jobs.security.agentGrant(install.id).id, grant.id, 'Nested security changes remain inside the caller transaction');
+  } finally { peer.close(); f.close(); }
+});
+
 test('S1 preserves verified installation identity and never enrolls a token into a data grant implicitly', () => {
   const f = securityFixture();
   try {

@@ -10,6 +10,7 @@ import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySche
 import { SecurityPolicies } from './policy-store.js';
 import { withAuthorization, type AuthorizationScope } from './context.js';
 import {RecoveryStore} from './recovery.js';
+import {businessTransaction,hasTransaction} from '../core/transaction.js';
 
 export type SecurityMode = 'legacy' | 'foundation';
 export type AgentAccessGrant = z.infer<typeof agentAccessGrantSchema>;
@@ -80,6 +81,10 @@ export class SecurityStore {
     this.recoveries = new RecoveryStore(db,this,readOnly);
   }
   atomic<T>(fn: () => T): T {
+    // A top-level deferred SAVEPOINT can lose its read snapshot to another WAL
+    // writer before it writes. Reserve the writer first; nested calls still use
+    // savepoints inside their caller's transaction and roll back with it.
+    if (!this.atomicDepth && !hasTransaction(this.db)) return businessTransaction(this.db, () => this.atomic(fn));
     const name = `security_${++this.sequence}`;
     this.db.exec(`SAVEPOINT ${name}`);
     this.atomicDepth++;
