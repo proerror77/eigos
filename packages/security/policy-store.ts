@@ -45,6 +45,15 @@ export interface ObjectBinding { object: ObjectRef; revision: number; fields: st
 export class SecurityPolicies {
   readonly definitionDigest:string;
   get model() { return this.security.model; }
+  private readonly reviewedModels = new WeakSet<SecurityStore['model']>();
+  /** Release labels may change while the reviewed business definitions do not.
+   * Cache only immutable model identity; row, field and grant checks stay live. */
+  assertModel(model: SecurityStore['model']): void {
+    if (model === this.model || this.reviewedModels.has(model)) return;
+    if (model.ref.id !== this.model.ref.id || model.ref.digest !== this.model.ref.digest
+      || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
+    this.reviewedModels.add(model);
+  }
   private roleCache=new WeakMap<AuthorizationScope,z.infer<typeof roleSchema>[]>();
   private labelCache=new WeakMap<AuthorizationScope,Map<string,{field:string;body:Record<string,unknown>}[]>>();
   constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {

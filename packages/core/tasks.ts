@@ -156,27 +156,40 @@ export class TaskService {
 
   submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false)) : this.submitInternal(p, input, contextId, false); }
   preparePipelineValidation(p: Principal, input: unknown): Job {
-    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation validation preparation requires a reviewed task grant transition');
+    return this.security
+      ? this.security.submit(p, () => this.preparePipelineValidationInternal(p, input), job => this.assertPipelineValidationProgram(p, job))
+      : this.preparePipelineValidationInternal(p, input);
+  }
+  private assertPipelineValidationProgram(p: Principal, job: Job): void {
+    const owner = ownerKey(p), scope = job.delegation!.pipelineValidation!, graph = this.store.ontologyForJob(owner, job);
+    const intake = this.store.definitions.pipeline.intake(scope.release.ontologyId, scope), program = this.options.catalog.agentProgram(intake.programRef, owner);
+    if (!program || program.configurationDigest !== intake.configurationDigest || (program.capability().environment ?? 'local') !== intake.environment
+      || intake.actions.some(action => !program.actionIds.includes(action.actionId) || digest(program.definition(graph, action.actionId)) !== action.definitionDigest))
+      throw new DomainError('CONFLICT', 'No exact permitted runtime is configured for this intake');
+  }
+  private preparePipelineValidationInternal(p: Principal, input: unknown): Job {
     requireScope(p, 'tasks:write'); requireScope(p, 'ontology:read'); requireScope(p, 'ontology:publish');
     const args = pipelineValidationRequestSchema.parse(input), owner = ownerKey(p), admin = p.scopes.includes('ontology:admin');
     return this.store.once(owner, 'pipeline_validation', args.requestId, JSON.stringify(args), () => {
       this.store.definitions.assertManagement(owner, args.ontologyId, admin);
       if (args.release.ontologyId !== args.ontologyId || digest(this.store.definitions.active(args.ontologyId).ref) !== digest(args.release)) throw new DomainError('CONFLICT', 'Validation must pin the current published release');
-      const remaining = Date.parse(args.expiresAt) - Date.now();
+      const remaining = Date.parse(args.expiresAt) - this.store.security.now();
       if (remaining <= 0 || remaining > 600000) throw new DomainError('INVALID_INPUT', 'An operator validation window is at most ten minutes');
       const release = this.store.definitions.resolve(args.release), ref = release.document.pipeline?.find(value => value.serviceId === args.serviceId);
       if (!ref) throw new DomainError('NOT_FOUND', 'Published service intake is unavailable');
       if (this.store.definitions.pipeline.validateDocument(release.document, release.model).length) throw new DomainError('CONFLICT', 'Validate the current source mapping before preparing an execution test');
-      const intake = this.store.definitions.pipeline.intake(args.ontologyId, ref), program = this.options.catalog.agentProgram(intake.programRef, owner);
-      if (!program || program.configurationDigest !== intake.configurationDigest || (program.capability().environment ?? 'local') !== intake.environment
-        || intake.actions.some(action => !program.actionIds.includes(action.actionId) || digest(program.definition(this.store.ontologyForRelease(args.release), action.actionId)) !== action.definitionDigest)) throw new DomainError('CONFLICT', 'No exact permitted runtime is configured for this intake');
-      const job = this.submitInTransaction(p, { service: DELEGATE, ontologyId: args.ontologyId, goal: args.goal,
-        requestId: `pipeline-validation:${digest({ owner, requestId: args.requestId })}`, capabilityRef: program.capability().ref,
-        executionEnvironment: intake.environment === 'sandbox' ? 'sandbox' : 'live' });
+      const intake = this.store.definitions.pipeline.intake(args.ontologyId, ref), program = this.options.catalog.configuredProgram(intake.programRef, owner);
+      if (!program || program.configurationDigest !== intake.configurationDigest || program.environment !== intake.environment
+        || intake.actions.some(action => !program.actionIds.includes(action.actionId))) throw new DomainError('CONFLICT', 'No exact permitted runtime is configured for this intake');
+      const job = this.submitInternal(p, { service: DELEGATE, ontologyId: args.ontologyId, goal: args.goal,
+        requestId: `pipeline-validation:${digest({ owner, requestId: args.requestId })}`, capabilityRef: program.capabilityRef,
+        executionEnvironment: intake.environment === 'sandbox' ? 'sandbox' : 'live' }, undefined, true);
       job.delegation!.pipelineValidation = { ownerDigest: digest(owner), requestRevision: job.delegation!.request.revision, release: args.release,
         serviceId: ref.serviceId, intakeDigest: ref.intakeDigest, mappingDigest: pipelineMappingDigest(intake), expiresAt: args.expiresAt };
       job.delegation!.events.push({ at: new Date().toISOString(), event: 'pipeline_validation_requested', evidence: digest(job.delegation!.pipelineValidation) });
-      this.store.save(owner, job); return job;
+      this.store.save(owner, job);
+      if (!this.security) this.assertPipelineValidationProgram(p, job);
+      return job;
     });
   }
   /** An authenticated caller may prepare one declarative action without an LLM

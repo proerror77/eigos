@@ -328,16 +328,19 @@ export class DefinitionStore {
     const result = this.db.prepare('UPDATE ontology_definition_drafts SET revision=?,status=?,body=? WHERE id=? AND revision=?').run(draft.revision, draft.status, JSON.stringify(draft), draft.id, expectedRevision);
     if (result.changes !== 1) return conflict('Definition draft revision changed'); return draft;
   }
+  private assertPipelineIdentity(ontologyId: string, prior: NonNullable<OntologyDocument['pipeline']>[number], next: NonNullable<OntologyDocument['pipeline']>[number] | undefined): void {
+    if (!next) return conflict('Activation cannot remove governed service intake policies');
+    const before = this.pipeline.intake(ontologyId, prior), after = this.pipeline.intake(ontologyId, next);
+    if (before.programRef.id !== after.programRef.id || before.source.id !== after.source.id || before.actions.some(action => !after.actions.some(value => value.actionId === action.actionId)))
+      return conflict('A governed service/action identity cannot be removed or reassigned; publish definition_only to retire execution');
+  }
   putPipeline(owner: string, draftId: string, expectedRevision: number, input: unknown, admin = false): DefinitionDraft {
     return this.transaction(() => {
       const draft = this.draft(draftId); this.assertManagement(owner, draft.ontologyId, admin);
       if (draft.status !== 'open' || draft.revision !== expectedRevision) return conflict('Draft is not open at the expected revision');
       const ref = this.pipeline.put(draft.ontologyId, owner, input);
       const prior = draft.document.pipeline?.find(value => value.serviceId === ref.serviceId);
-      if (prior) {
-        const before = this.pipeline.intake(draft.ontologyId, prior), after = this.pipeline.intake(draft.ontologyId, ref);
-        if (before.programRef.id !== after.programRef.id || before.source.id !== after.source.id || before.actions.some(action => !after.actions.some(next => next.actionId === action.actionId))) return conflict('A governed service/action identity cannot be removed or reassigned; publish definition_only to retire execution');
-      }
+      if (prior) this.assertPipelineIdentity(draft.ontologyId, prior, ref);
       draft.document.pipeline = [...(draft.document.pipeline ?? []).filter(value => value.serviceId !== ref.serviceId), ref].sort((a, b) => a.serviceId.localeCompare(b.serviceId));
       draft.document = parseOntologyDocument(draft.document);
       this.event(draft.ontologyId, owner, 'pipeline_intake_edited', { draftId, ...ref });
@@ -535,7 +538,7 @@ export class DefinitionStore {
       const lineage = this.db.prepare('SELECT base_ref FROM ontology_definition_lineage WHERE ontology_id=? AND release_id=?').get(ref.ontologyId, ref.releaseId);
       if (!historical && (!lineage?.base_ref || digest(JSON.parse(String(lineage.base_ref))) !== digest(namespace.active))) return conflict('Published release base changed; publish a fresh reviewed draft before activation');
       const current = this.resolve(namespace.active);
-      if (current.document.pipeline?.some(ref => !release.document.pipeline?.some(next => next.serviceId === ref.serviceId))) return conflict('Activation cannot remove governed service intake policies');
+      for (const prior of current.document.pipeline ?? []) this.assertPipelineIdentity(ref.ontologyId, prior, release.document.pipeline?.find(next => next.serviceId === prior.serviceId));
       const pipelineIssues = this.pipeline.validateDocument(release.document, release.model);
       if (pipelineIssues.length) return conflict(pipelineIssues.map(issue => issue.message).join('; '));
       const nextIdentities = new Set(entries(release.document).map(item => item.definition.resourceId));

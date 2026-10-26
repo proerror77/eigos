@@ -31,14 +31,96 @@ test('an independently read final task result does not erase or promote individu
   proof.actionEvidence!.Submit!.level = 'live_operation'; delete proof.actionEvidence!.Read;
   assert.equal(verificationCoversAction(actions[0]!, actions, proof), false);
 });
-function eventDraft(store: JobStore) {
+function eventDraft(store: JobStore, eventType = pipelineEventType, intake = eventIntake(store.ontology.model)) {
   const namespace = store.definitions.createNamespace(owner, { id: 'pipeline.events', name: 'Synthetic events' });
   let draft = store.definitions.createDraft(owner, namespace.id, 'Add source contract');
-  draft = store.definitions.putResource(owner, draft.id, draft.revision, 'object', pipelineEventType);
-  const intake = eventIntake(store.ontology.model);
+  draft = store.definitions.putResource(owner, draft.id, draft.revision, 'object', eventType);
   draft = store.definitions.putPipeline(owner, draft.id, draft.revision, intake);
   return { namespace, draft, intake };
 }
+
+test('pipeline regression: a fresh snapshot uses the same visible properties as planning', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'eigos-pipeline-projection-')), path = join(directory, 'jobs.sqlite'), store = new JobStore(path);
+  try {
+    const type = structuredClone(pipelineEventType), intake = eventIntake(store.ontology.model);
+    type.properties.privateNote = { ...type.properties.title!, restricted: true };
+    intake.mappings[0]!.fields.push({ from: ['privateNote'], to: ['privateNote'], optional: false });
+    intake.fixtures[0]!.input.privateNote = 'PRIVATE_SYNTHETIC_SOURCE_NOTE';
+    intake.fixtures[0]!.expected.privateNote = 'PRIVATE_SYNTHETIC_SOURCE_NOTE';
+    const f = eventDraft(store, type, intake);
+    store.definitions.validatePipeline(owner, f.draft.id, f.draft.revision, intake.serviceId, expiry());
+    const release = store.definitions.publish(owner, f.draft.id, f.draft.revision).release;
+    store.definitions.activate(owner, release, f.namespace.generation);
+    const graph = store.ontologyForRelease(release), now = new Date().toISOString();
+    const sample = { eventId: 'private-1', sourceAccount: 'fixture-account', sourceRevision: intake.source.revision, sourceDigest: intake.source.digest,
+      providerVersion: 1, observedAt: now, receivedAt: now, evidenceRefs: ['synthetic:private'], evidenceLevel: 'synthetic' as const, payload: intake.fixtures[0]!.input };
+    const first = store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', sample, 0), visible = graph.read(owner, first.object);
+    assert(!Object.hasOwn(visible.properties, 'privateNote'));
+    const snapshot = { ref: visible.ref, revision: visible.revision, propertiesDigest: digest(visible.properties), linksDigest: digest([]) };
+    assert.doesNotThrow(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]));
+    store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...sample, eventId: 'private-2', providerVersion: 2 }, 1);
+    assert.equal(graph.read(owner, first.object).revision, visible.revision, 'A freshness refresh must not rewrite hidden source properties');
+    assert.doesNotThrow(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]));
+    const db = new DatabaseSync(path);
+    const rowKey = [owner, f.namespace.id, first.object.type, first.object.id], originalBody = db.prepare('SELECT body FROM ontology_scoped_objects WHERE owner=? AND ontology_id=? AND type=? AND id=?').get(...rowKey)!.body;
+    try {
+      db.prepare("UPDATE ontology_scoped_objects SET body=json_set(body,'$.properties.title',?) WHERE owner=? AND ontology_id=? AND type=? AND id=?").run('CORRUPTED_SYNTHETIC_TITLE', ...rowKey);
+      assert.throws(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]), /integrity.*operator review/, 'A projection mismatch must not mask canonical fact corruption');
+      assert.throws(() => store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...sample, eventId: 'private-3', providerVersion: 3 }, 2), /immutable object writer version/);
+    } finally {
+      db.prepare('UPDATE ontology_scoped_objects SET body=? WHERE owner=? AND ontology_id=? AND type=? AND id=?').run(originalBody!, ...rowKey); db.close();
+    }
+    assert.doesNotThrow(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]));
+    store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...sample, eventId: 'private-3', providerVersion: 3, payload: { ...sample.payload, place: '合成场馆 B' } }, 2);
+    assert.throws(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]), /changed after planning/);
+  } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('pipeline regression: readable optional-property removals remain visible without exposing restricted fields', () => {
+  const store = new JobStore(':memory:');
+  try {
+    const type = structuredClone(pipelineEventType), intake = eventIntake(store.ontology.model);
+    type.properties.venue = { ...type.properties.venue!, required: false };
+    type.properties.privateNote = { ...type.properties.title!, required: false, restricted: true };
+    intake.mappings[0]!.fields.find(field => field.to[0] === 'venue')!.optional = true;
+    intake.mappings[0]!.fields.push({ from: ['privateNote'], to: ['privateNote'], optional: true });
+    intake.fixtures[0]!.input.privateNote = 'PRIVATE_SYNTHETIC_SOURCE_NOTE';
+    intake.fixtures[0]!.expected.privateNote = 'PRIVATE_SYNTHETIC_SOURCE_NOTE';
+    const f = eventDraft(store, type, intake);
+    store.definitions.validatePipeline(owner, f.draft.id, f.draft.revision, intake.serviceId, expiry());
+    const release = store.definitions.publish(owner, f.draft.id, f.draft.revision).release;
+    store.definitions.activate(owner, release, f.namespace.generation);
+    const graph = store.ontologyForRelease(release), tasks = new TaskService(store, { catalog: createExecutionCatalog({ store }) });
+    const task = tasks.submit(principal, { ontologyId: f.namespace.id, goal: 'Synthetic venue dependency', requestId: randomUUID() }), now = new Date().toISOString();
+    const sample = { eventId: 'optional-1', sourceAccount: 'fixture-account', sourceRevision: intake.source.revision, sourceDigest: intake.source.digest,
+      providerVersion: 1, observedAt: now, receivedAt: now, evidenceRefs: ['synthetic:optional'], evidenceLevel: 'synthetic' as const, payload: intake.fixtures[0]!.input };
+    const first = store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', sample, 0);
+    store.transaction(() => store.pipelineFacts.track(owner, f.namespace.id, task.id, 1, 'transport', first.object, ['venue', 'privateNote']));
+    const payload = { ...sample.payload }; delete payload.place; delete payload.privateNote;
+    store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...sample, eventId: 'optional-2', providerVersion: 2, payload }, 1);
+    assert.deepEqual(graph.pipelineChanges(owner, task.id, 1).map(change => change.fields), [['venue']]);
+    assert.deepEqual(graph.pipelineChanges('foreign-owner', task.id, 1), []);
+  } finally { store.close(); }
+});
+
+test('pipeline regression: activation cannot roll back a newly governed action to unmanaged', () => {
+  const store = new JobStore(':memory:');
+  try {
+    const f = eventDraft(store);
+    store.definitions.validatePipeline(owner, f.draft.id, f.draft.revision, f.intake.serviceId, expiry());
+    const first = store.definitions.publish(owner, f.draft.id, f.draft.revision).release;
+    store.definitions.activate(owner, first, f.namespace.generation);
+    let draft = store.definitions.createDraft(owner, f.namespace.id, 'Govern another action');
+    const intake = { ...f.intake, actions: [...f.intake.actions, { actionId: 'ReadParticipantRegistration', definitionDigest: digest(store.ontology.model.action('ReadParticipantRegistration')), requiredEvidence: 'definition_only' as const }] };
+    draft = store.definitions.putPipeline(owner, draft.id, draft.revision, intake);
+    store.definitions.validatePipeline(owner, draft.id, draft.revision, intake.serviceId, expiry());
+    const second = store.definitions.publish(owner, draft.id, draft.revision).release;
+    const current = store.definitions.activate(owner, second, store.definitions.namespace(f.namespace.id).generation);
+    assert.throws(() => store.definitions.activate(owner, first, current.generation), /governed.*identity|governed.*polic/);
+    assert.deepEqual(store.definitions.active(f.namespace.id).ref, second);
+    assert.equal(store.ontologyForRelease(second).pipelineStatus(owner, intake.programRef, intake.configurationDigest, 'ReadParticipantRegistration').status, 'definition_only');
+  } finally { store.close(); }
+});
 
 test('intakes are versioned with releases, need exact validation, and retain immutable restart history', () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-pipeline-')), path = join(directory, 'jobs.sqlite');
@@ -175,7 +257,7 @@ test('source updates are atomic and ordered; only consumers of changed fields ar
     assert.deepEqual(store.pipelineFacts.changes(owner, task.id, 1), []);
     const moved = apply({ ...sample, eventId: 'event-3', providerVersion: 3, payload: { ...sample.payload, place: '合成场馆 B' } }, 2);
     assert.equal(moved.semanticRevision, 2); assert.equal(graph.read(owner, first.object).properties.venue, '合成场馆 B');
-    assert.throws(() => store.pipelineFacts.assertSnapshots(owner, f.namespace.id, [snapshot]), /changed after planning/);
+    assert.throws(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]), /changed after planning/);
     const changes = store.pipelineFacts.changes(owner, task.id, 1);
     assert.deepEqual(changes.map(change => change.componentId).sort(), ['calendar', 'transport']);
     assert(changes.every(change => change.fields.join(',') === 'venue'));

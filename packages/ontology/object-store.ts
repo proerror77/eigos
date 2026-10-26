@@ -74,7 +74,17 @@ export class OntologyObjectStore {
     const changes = this.context.pipelineChanges?.(owner, jobId, requestRevision) ?? [];
     return changes.flatMap(change => {
       try {
-        const view = this.read(owner, change.object), fields = change.fields.filter(field => Object.hasOwn(view.properties, field));
+        const view = this.read(owner, change.object), guard = this.guard(), binding = guard?.requireObject(owner, change.object, view.revision);
+        const stored = this.raw(owner, change.object, { remaining: 1 }), properties = this.properties(change.object.type);
+        const fields = change.fields.filter(field => {
+          if (Object.hasOwn(view.properties, field)) return true;
+          // A readable field can disappear. Keep that removal notice while
+          // still hiding restricted, unauthorized and response-only fields.
+          const property = properties[field];
+          return !Object.hasOwn(stored.properties, field) && property && !property.restricted && !property.derived
+            && (!binding || binding.fields.includes(field))
+            && !(guard && authorizationScope()?.actor.actorKind === 'worker' && responseOnlyProjection(change.object.type, field));
+        });
         return fields.length ? [{ ...change, fields }] : [];
       } catch (error) { if (error instanceof DomainError || error instanceof SecurityError) return []; throw error; }
     });
@@ -170,7 +180,10 @@ export class OntologyObjectStore {
     return this.readOverlay;
   }
   private guard() {
-    if (this.security && (this.ontologyId !== this.security.model.ref.id || digest(this.model.ref) !== digest(this.security.model.ref))) throw new SecurityError('POLICY_CHANGED');
+    if (this.security) {
+      if (this.ontologyId !== this.security.model.ref.id) throw new SecurityError('POLICY_CHANGED');
+      this.security.assertModel(this.model);
+    }
     return authorizationScope()?.projection ? undefined : this.security;
   }
   private properties(type:string) {return this.guard()?.fields(type) ?? this.model.properties(type);}

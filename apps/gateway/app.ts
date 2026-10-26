@@ -215,7 +215,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
   if (!security) mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
   const definitions = new DefinitionService(store, tasks, catalog);
-  if (!security) mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
+  mountDefinitionRoutes(app, definitions, authenticate, req => principals.get(req)!);
 
   app.post('/security/context', authenticate, (req, res) => {
     if (!security) { res.status(404).json({error:'security_foundation_not_enabled'}); return; }
@@ -283,7 +283,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, security || config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, !security && config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);

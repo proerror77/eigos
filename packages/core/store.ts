@@ -146,7 +146,7 @@ export class JobStore {
       this.security = this.transaction(() => new SecurityStore(this.db, options.securityMode, options.securityNow, false, reviewedModel));
     // Run the explicitly supported historical migrations once before the
     // persistent definition registry becomes the authority for every view.
-    this.definitions = new DefinitionStore(this.db);
+    this.definitions = new DefinitionStore(this.db, options.securityNow ?? Date.now);
     const legacyModel = this.definitions.legacyImplementation();
     this.projectionBase = new OntologyObjectStore(this.db, legacyModel, options.securityNow ?? Date.now, undefined, { skipLegacyMigration: true });
     this.baseOntology = this.security.enabled ? new OntologyObjectStore(this.db, legacyModel, options.securityNow ?? Date.now, undefined, { skipLegacyMigration: true, security: this.security.policies }, false) : this.projectionBase;

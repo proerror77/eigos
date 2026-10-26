@@ -291,6 +291,16 @@ export class ExecutionCatalog {
   }
   // Metadata only, for the configured operator's listing review; never installs discovered code.
   configuredBinding(ref: Ref): ProviderBinding | undefined { const value = this.providers.get(key(ref)) ?? this.programBindings.get(key(ref))?.binding; return value ? structuredClone(value) : undefined; }
+  /** Preparation metadata only. Execution still requires agentProgram inside
+   * the new task's current source grant before the transaction can commit. */
+  configuredProgram(ref: Ref, owner: string) {
+    const program = this.programs.get(key(ref));
+    if (!program) return;
+    if (!program.permitted(owner)) throw new DomainError('FORBIDDEN', 'Agent program is unavailable to this identity');
+    const capability = program.capability();
+    return { capabilityRef: structuredClone(capability.ref), configurationDigest: program.configurationDigest,
+      environment: capability.environment ?? 'local', actionIds: [...program.actionIds] };
+  }
 
   capability(ref: Ref): ServiceCapability {
     const definition = this.services.get(key(ref));

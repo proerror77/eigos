@@ -32,7 +32,9 @@ export class TaskSecurity {
     }));
     const grant = security.issueTaskGrant({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, kind: 'task_data', status: 'active',
       ownerKey: actor.ownerKey, memberId: actor.memberId, approvedByMemberId: actor.memberId, installationId: actor.installationId,
-      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: new Date(Math.min(Date.parse(parent.expiresAt), previous ? Date.parse(previous.expiresAt) : Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000)).toISOString(),
+      parentGrant: { id: parent.id, revision: parent.revision }, issuedAt: at, expiresAt: new Date(Math.min(Date.parse(parent.expiresAt),
+        previous ? Date.parse(previous.expiresAt) : Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000,
+        job.delegation.pipelineValidation ? Date.parse(job.delegation.pipelineValidation.expiresAt) : Infinity)).toISOString(),
       taskId: job.id, requestRevision: job.delegation.request.revision, purpose: previous?.purpose ?? 'delegated_task',
       operations: previous?.operations ?? ['task.process', ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
       inputs: previous?.inputs ?? [], outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });
@@ -40,10 +42,14 @@ export class TaskSecurity {
       taskId: job.id, requestRevision: grant.requestRevision, agentGrant: grant.parentGrant, dataGrant: { id: grant.id, revision: grant.revision },
       submittedScopes: [...new Set(p.scopes)], authEpoch: actor.authEpoch, policyVersion: POLICY_VERSION, issuedAt: at, expiresAt: grant.expiresAt });
   }
-  submit(p: Principal, action: () => Job): TaskView {
+  submit(p: Principal, action: () => Job, assertPrepared?: (job: Job) => void): TaskView {
     requireScope(p,'tasks:write');
     return this.store.security.withAgent(p, undefined, 'task.process', () => this.store.transaction(() => {
-      const job = action(); this.provision(p, job); return this.project(p, this.store.get(ownerKey(p),job.id));
+      const job = action(); this.provision(p, job);
+      // Server-side metadata checks can require the newly issued task scope.
+      // Failure rolls back the task, grant and idempotency record together.
+      if (assertPrepared) this.store.security.withAgent(p, job.id, 'task.process', () => assertPrepared(job));
+      return this.project(p, this.store.get(ownerKey(p),job.id));
     }));
   }
   mutate(p: Principal, taskId: string, action: () => Job): TaskView {

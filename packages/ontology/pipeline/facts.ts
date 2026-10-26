@@ -8,6 +8,7 @@ import type { OntologyReleaseRef } from '../definition-contracts.js';
 import type { ObjectSnapshot } from '../planning-contract.js';
 import type { PipelineIntake, PipelineObservation } from './contracts.js';
 import { mapPipelineObservation } from './mapping.js';
+import { withIntegrity } from '../../security/context.js';
 
 interface FactState {
   sourceKey: string; object: ObjectRef; revision: number; semanticRevision: number; semanticDigest: string;
@@ -102,11 +103,11 @@ export class PipelineFactStore {
         intakeDigest, mappingId, release: graph.releaseRef!, observedAt: sample.observedAt, expiresAt: mapped.expiresAt, evidenceRefs: sample.evidenceRefs,
         sourceId: intake.source.id, sourceRevision: sample.sourceRevision, sourceDigest: sample.sourceDigest, evidenceLevel: sample.evidenceLevel };
       let prior;
-      try { prior = graph.read(owner, mapped.ref); }
+      try { prior = withIntegrity(() => graph.readPrivate(owner, mapped.ref)); }
       catch (error) { if (!(error instanceof DomainError && error.code === 'NOT_FOUND')) throw error; }
       // Refreshing provenance without a semantic change must not invalidate an
       // already grounded plan by incrementing its canonical object revision.
-      if (!prior || digest(prior.properties) !== digest(mapped.properties)) graph.ingest(owner, { objects: [{ ref: mapped.ref, properties: mapped.properties, ...(prior ? { expectedRevision: prior.revision } : {}) }], links: [] },
+      if (!prior || digest(prior.properties) !== mapped.semanticDigest) graph.ingest(owner, { objects: [{ ref: mapped.ref, properties: mapped.properties, ...(prior ? { expectedRevision: prior.revision } : {}) }], links: [] },
         { kind: sample.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: `pipeline:${digest({ intakeDigest, event: sample.eventId })}`, observedAt: sample.observedAt });
       this.save(owner, graph.ontologyId, state);
       result = { object: mapped.ref, status: changed ? 'applied' : 'unchanged', semanticRevision: state.semanticRevision };
@@ -138,11 +139,18 @@ export class PipelineFactStore {
       if (state && state.health !== 'fresh') fail(`Source fact is ${state.health}; historical evidence cannot authorize current execution`);
     }
   }
-  assertSnapshots(owner: string, ontologyId: string, snapshots: readonly ObjectSnapshot[]): void {
-    this.assertFresh(owner, ontologyId, snapshots.map(value => value.ref));
+  assertSnapshots(owner: string, graph: OntologyObjectStore, snapshots: readonly ObjectSnapshot[]): void {
+    this.assertFresh(owner, graph.ontologyId, snapshots.map(value => value.ref));
     for (const snapshot of snapshots.filter(value => value.ref.id.startsWith('pipeline:'))) {
-      const state = this.current(owner, ontologyId, snapshot.ref);
-      if (state && state.semanticDigest !== snapshot.propertiesDigest) fail('Source fact changed after planning; refresh the affected inputs before dispatch');
+      const state = this.current(owner, graph.ontologyId, snapshot.ref);
+      if (!state) continue;
+      // Planning hashes contain a field projection. Compare the canonical
+      // revision, then check full source integrity separately inside the host;
+      // private properties and their digest never become model tool output.
+      const current = graph.read(owner, snapshot.ref);
+      const integrity = withIntegrity(() => graph.evidencePropertiesDigest(owner, snapshot.ref, { remaining: 1 }));
+      if (state.semanticDigest !== integrity) fail('Source fact integrity differs from its recorded observation; operator review is required');
+      if (current.revision !== snapshot.revision) fail('Source fact changed after planning; refresh the affected inputs before dispatch');
     }
   }
   hasDependencies(owner: string, jobId: string, requestRevision: number): boolean {

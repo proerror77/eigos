@@ -544,7 +544,7 @@ export class AgentRuntime {
       const current = this.boundStep(claim, program, step).context;
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, current.request, plan.ontologyPlanning, true);
       this.pipelineStatus(program, current, step.action, input);
-      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph.ontologyId, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
+      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       if (step.definitionDigest !== digest(program.definition(this.store.ontologyForJob(claim.owner, claim.job), step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
       if (program.privateInput && digest(program.privateInput(current, step.action, input) ?? {}) !== intent.privateDigest) failure('Prepared private input changed before dispatch');
@@ -601,7 +601,7 @@ export class AgentRuntime {
       if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
       const current = this.boundStep(claim, program, step).context;
       this.pipelineStatus(program, current, step.action, input);
-      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph.ontologyId, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
+      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       validateAgentAuthority(program, current, plan, step);
       if (!plan.callerDecision) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), this.program(claim).capability());
       if (plan.quote && !hasSimulationApproval(this.store.get(claim.owner, claim.job.id), plan)) failure('Exact local simulation approval expired or was revoked');
