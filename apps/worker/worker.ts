@@ -32,10 +32,13 @@ export class Worker {
 
   start(): void {
     if (this.timer || this.stopping) return;
-    this.tick();
-    this.timer = setInterval(() => {
+    const poll = () => {
       try { this.tick(); } catch { console.error('Worker polling failed; durable work retained'); }
-    }, this.pollMs);
+    };
+    // The Gateway may still be starting when an expired lease needs projection.
+    // Keep the same fail-closed polling behavior on the first and later ticks.
+    poll();
+    this.timer = setInterval(poll, this.pollMs);
   }
 
   tick(): void {

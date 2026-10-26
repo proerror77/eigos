@@ -3249,7 +3249,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "ab547070765e9312e9f1a21b2c5e4c38e0821d96c59f6cfa0386c0963a3315c6",
+      "sourceDigest": "5082ffdb9dadbea3bbbca0f8bae4fd6e3fd797bd46d40fcce21546677940378f",
       "channels": [
         "authorization_control"
       ],

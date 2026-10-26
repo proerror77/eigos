@@ -138,6 +138,27 @@ test('S1 gateway lease and qualification expiry fail closed and two eligibility 
   } finally { f.close(); }
 });
 
+test('S1 a Worker started before its Gateway retains an expired task until authority returns', async t => {
+  const f = securityFixture(); let executions = 0;
+  const worker = new Worker(f.jobs, { pollMs: 20, leaseMs: 1000, coordinator: { run: async claim => {
+    executions++;
+    f.jobs.finish(claim, job => { job.state = 'paused'; job.delegation!.phase = 'paused'; });
+  } } });
+  t.mock.method(console, 'error', () => {});
+  try {
+    const install = f.installation('restart'); f.approve(install.id); const original = f.task(install.id);
+    assert(f.jobs.claim(['eigos.delegate'], 100, Date.now() - 200));
+    f.coordinator.close();
+    assert.doesNotThrow(() => worker.start());
+    assert.equal(executions, 0); assert(f.jobs.hasClaim(f.owner, original.job.id));
+    assert.equal(f.jobs.get(f.owner, original.job.id).state, 'working');
+    f.coordinator.start();
+    for (let i = 0; i < 150 && !executions; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(executions, 1);
+    assert.equal(f.jobs.get(f.owner, original.job.id).goal, original.job.goal);
+  } finally { await worker.close(); f.close(); }
+});
+
 test('S1 missed eligibility refresh notifies the supervisor and a fresh coordinator preserves revoked grants', t => {
   t.mock.timers.enable({ apis: ['setInterval'] });
   let now = Date.now(); const f = securityFixture(() => now);
