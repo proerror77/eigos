@@ -4030,7 +4030,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "603c7fc0819b002da88accf1d3e6eb5cacd2ca710e5942a2395b0be62c3fa4b7",
+      "sourceDigest": "75e7447a15fbd216c68df5bce9c7cc43511b46c416581b6b077f9af7cd7ff82f",
       "channels": [
         "model",
         "artifact"

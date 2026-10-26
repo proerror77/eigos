@@ -128,6 +128,14 @@ test('reviewed native task context stays task-bound across lifecycle projection 
    const safe=secureAgentContext(context,contextGraph);
    assert.deepEqual(safe.preparedContextNavigation,[{id:'already-prepared',programRef,scope:state.scope,retired:false}]);
    assert.equal(safe.state.composition,undefined);assert(!JSON.stringify(safe).includes('PRIVATE_PREPARATION'));
+   const at=new Date().toISOString();
+   assert(f.jobs.checkpoint(claim,current=>{current.delegation!.agent!.composition!.assessment={version:'1',goalDigest:goal.digest,accepted:false,at,
+    criteria:[{id:'brief',result:'unknown',reason:'Required artifact is not yet proved',contextIds:['already-prepared'],evidenceRefs:[],subjects:[]}],requirements:[],conditions:[],
+    components:[{contextId:'already-prepared',status:'verified',delivery:{artifact:{id:'fixture',name:'private.json',data:{goal:'Fixture',deliverable:'PRIVATE_COMPONENT_DELIVERY',execution:'completed'}},facts:{},evidenceRefs:[]}}]};}));
+   const assessment=readTaskContext(f.jobs.ontologyForJob(f.owner,job.id),f.owner,job.id,1,{purpose:'agent'},randomUUID()).data.execution!.composition!.assessment;
+   assert.deepEqual(assessment,{version:'1',goalDigest:goal.digest,accepted:false,at,
+    criteria:[{id:'brief',result:'unknown',reason:'Required artifact is not yet proved',contextIds:['already-prepared'],evidenceRefs:[],subjects:[]}],components:[{contextId:'already-prepared',status:'verified'}]});
+   assert(!JSON.stringify(assessment).includes('PRIVATE_COMPONENT_DELIVERY'));
   });
   f.coordinator.revokeInstallation(f.member.id,install.id);
   assert.throws(()=>new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,principal).query({version:2,taskId:submitted.id,query:{object:{type:'ServiceRequest',id:submitted.id}}}),/ACCESS_REVOKED/);
