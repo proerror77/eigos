@@ -3465,7 +3465,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "d703de194d9126f574c8c85d4481b9c4d34e9142dda4104471afe1619de7853a",
+      "sourceDigest": "dfe2b1445b557a2302b45f9be99292387ee19354e7fd4245867e78831408a94f",
       "channels": [
         "model"
       ],
