@@ -25,7 +25,7 @@ export function installTaskReadProjection(db: DatabaseSync, owner: string, taskI
   if (!row) throw new Error('Historical task is missing');
   const job = JSON.parse(String(row.body)) as Job, original = job.delegation?.ontologyRelease;
   if (!job.delegation || !original) throw new Error('An explicit original release is required for a historical read projection');
-  const definitions = new DefinitionStore(db), source = definitions.resolve(original), next = definitions.resolve(target);
+  const definitions = new DefinitionStore(db,Date.now,{readOnly:true}), source = definitions.resolve(original), next = definitions.resolve(target);
   if (original.ontologyId !== target.ontologyId) throw new Error('Historical read projection cannot cross namespaces');
   const objects = db.prepare('SELECT type,id,revision,definition_digest,body FROM ontology_objects WHERE owner=? ORDER BY type,id').all(owner);
   for (const object of objects) {
@@ -65,7 +65,7 @@ export function compatibleProjectedObject(db: DatabaseSync, owner: string, taskI
   const row=db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(owner,taskId);
   if(!row)return false;
   const ref=projectedTaskReadRelease(db,owner,JSON.parse(String(row.body)) as Job);if(!ref)return false;
-  const release=new DefinitionStore(db).resolve(ref);
+  const release=new DefinitionStore(db,Date.now,{readOnly:true}).resolve(ref);
   if(release.model.ref.digest!==expectedModelDigest || digest(release.model.parseProperties(type,properties))!==digest(properties))return false;
   const currentDigest=release.model.fingerprint(type);
   return storedDigest===currentDigest || release.compatibleDefinition({kind:'object',id:type,storedDigest,currentDigest,properties});

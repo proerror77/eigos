@@ -148,6 +148,9 @@ export class AuthorizationCoordinator {
         if (job.delegation!.agent) job.delegation!.agentHistory=[...(job.delegation!.agentHistory??[]),job.delegation!.agent];
         delete job.delegation!.agent;delete job.delegation!.plan;delete job.question;delete job.artifact;
         job.delegation!.phase='grounding';job.state='submitted';job.delegation!.nextAt=0;job.revision=(job.revision??0)+1;
+        if(job.delegation!.recovery && job.delegation!.recovery.state!=='resolved') {
+          job.delegation!.recovery.state='scheduled';job.delegation!.recovery.retryAt=at;job.delegation!.recovery.nextAction='wait_for_retry';
+        }
         this.jobs!.save(facts.ownerKey,job);
         // A browser controller explicitly approves internal task processing and
         // selected existing assets. No bearer/token is copied into the worker.

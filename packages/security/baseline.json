@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8c955c90635c62acd44318e92b1bd5a6e114f2de4b56fd9b117f663b76ea600e",
+      "sourceDigest": "887afa5183ca860f58cda908e6312c9e9538028e1315252df80c259a97834fb5",
       "channels": [
         "model",
         "dispatch"
@@ -2994,7 +2994,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "fc370d8fa9f1a24383633a270bd79d0e85faaeec8b83d7f218614fce9dc8a186",
+      "sourceDigest": "5662939b1f77e90fd8cdbf1a54a4c086e01bc2d8924eaeb5254c407830d0c1c6",
       "channels": [
         "registered_model",
         "private_file"
@@ -3189,7 +3189,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "2e2ec5c0e3a4351de6983d333700b5eba2dc6b1a1cd056d2ed4d86c0a7db8c39",
+      "sourceDigest": "980ccd0431cbba2befb74e04921c2988b2f62a2605eb05824ce3d209d4946cd9",
       "channels": [
         "authorization_control"
       ],
@@ -3321,7 +3321,7 @@
     {
       "id": "security-model",
       "file": "packages/security/model.ts",
-      "sourceDigest": "7277ec84d7b61177cd8214823503ee7094f265579088abcb83a78a3375b36b8b",
+      "sourceDigest": "071fa371a2e58bdf526b4e6b59f1ca60fb28bdc55823f875639473747fdc65a6",
       "channels": [
         "model"
       ],
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "2c85dbf6b85d292383d7c128b943f1afefa2cce8aba23662dd983ed9970a888f",
+      "sourceDigest": "f5148c861292a2c76916ec65a0d637947f798b50c80fb49b6753f45111848a53",
       "channels": [
         "all-reads"
       ],
@@ -3939,7 +3939,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "b0b0b0b04a6f0cd9bc48c09a71ea7a04ed720712a2be82cd5be5e2b1d8912dde",
+      "sourceDigest": "ef983f76307a679f5c6e0cfe7ea35511268ca0f9d99351fb7a46233ac126be61",
       "channels": [
         "model",
         "artifact"
@@ -4118,7 +4118,7 @@
     {
       "id": "historical-read-projection",
       "file": "packages/ontology/task-read-projection.ts",
-      "sourceDigest": "9b64622a5bdd09670259e5a40edec59b3401c0d3c37a1c47ad22331f50445a17",
+      "sourceDigest": "bbcba3d8f7587777bf1c6dbf313fe81723ebad0c73ddc2aa3cf15ed4e15e5cb2",
       "channels": [
         "operator_cli",
         "task_read"
@@ -4131,7 +4131,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "6c1a8e1004e05e526668c528118b9916d7dd5b6af0646e4ab78b8f223dfa678d",
+      "sourceDigest": "e50ad744e47ad53d8429eef8ba40ab44d9f26ae240a36cc06f37da5ab6ba83c7",
       "channels": [
         "operator_cli"
       ],

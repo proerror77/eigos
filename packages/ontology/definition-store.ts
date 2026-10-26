@@ -78,8 +78,11 @@ export function currentKernelImplementation(): OntologyModel { const value = tru
 export class DefinitionStore {
   private readonly registry: TrustedDefinitionRegistry;
   private readonly models = new Map<string, ResolvedOntologyRelease>();
-  constructor(private readonly db: DatabaseSync, readonly now: () => number = Date.now) {
+  private readonly readOnly: boolean;
+  constructor(private readonly db: DatabaseSync, readonly now: () => number = Date.now, options: {readOnly?:boolean} = {}) {
+    this.readOnly=!!options.readOnly;
     this.registry = trustedTemplates().registry;
+    if(this.readOnly)return;
     this.transaction(() => db.exec(`
       CREATE TABLE IF NOT EXISTS ontology_namespaces (id TEXT PRIMARY KEY,owner TEXT,name TEXT NOT NULL,active_release_id TEXT,generation INTEGER NOT NULL,created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ontology_definition_releases (id TEXT PRIMARY KEY,ontology_id TEXT NOT NULL,sequence INTEGER NOT NULL,digest TEXT NOT NULL,model_digest TEXT NOT NULL,body TEXT NOT NULL,created_at TEXT NOT NULL,UNIQUE(ontology_id,sequence),UNIQUE(ontology_id,digest));
@@ -100,6 +103,7 @@ export class DefinitionStore {
     });
   }
   private transaction<T>(action: () => T): T {
+    if(this.readOnly)throw new DomainError('FORBIDDEN','Read-only definition readers cannot change published metadata');
     let owned = false;
     try { assertBusinessTransaction(this.db); owned = true; }
     catch (error) { if (!(error instanceof DomainError && error.code === 'CONFLICT')) throw error; }

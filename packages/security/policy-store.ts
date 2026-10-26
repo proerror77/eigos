@@ -19,6 +19,7 @@ import {matchesAgentGrant} from '../core/agent-authorization.js';
 import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
+import {DefinitionStore} from '../ontology/definition-store.js';
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
@@ -49,7 +50,7 @@ export class SecurityPolicies {
   constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {
     const existing=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy'").get();
     const definitions=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy_definitions'").get();
-    const expected=digest({model:this.model.ref,fields:baseline.types,projection:projectionContract,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
+    const expected=digest({model:this.model.ref,fields:baseline.types,projection:projectionContract,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
     this.definitionDigest=expected;
     if(security.enabled && existing && (!definitions || db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest!==expected)) throw new Error('Security policy contract changed or is missing; explicit migration is required');
     if(security.enabled && existing) {
@@ -267,9 +268,24 @@ export class SecurityPolicies {
   }
   bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, inputEnvelope?:SecurityEnvelope) {
     const row = this.db.prepare('SELECT revision,body,definition_digest FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(grant.ownerKey, ref.type, ref.id);
-    if (!row || row.definition_digest !== this.model.fingerprint(ref.type) && (grant.operations.includes('task.process')
-      || !compatibleProjectedObject(this.db,grant.ownerKey,grant.taskId,ref.type,String(row.definition_digest),JSON.parse(String(row.body)).properties,this.model.ref.digest))) throw new SecurityError('POLICY_CHANGED');
+    if (!row)throw new SecurityError('POLICY_CHANGED');
     const body=JSON.parse(String(row.body));
+    if(row.definition_digest!==this.model.fingerprint(ref.type)) {
+      // Capability descriptions are content-addressed and deliberately reused
+      // across tasks. A current published reader may accept an unchanged older
+      // writer, but this exception never applies to provider facts or assets.
+      let sharedCapability=false;
+      if(sourceBindingId==='task_context' && ref.type==='RegisteredCapability' && body.source?.kind==='task'
+        && taskContextMembers(this.db,grant.ownerKey,grant.taskId,grant.requestRevision).has(refKey(ref))) {
+        const jobRow=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(grant.ownerKey,grant.taskId);
+        const job=jobRow?JSON.parse(String(jobRow.body)) as Job:undefined,reader=job?.delegation?.ontologyRelease;
+        if(reader && job?.delegation?.request.revision===grant.requestRevision) {
+          const release=new DefinitionStore(this.db,Date.now,{readOnly:true}).resolve(reader);
+          sharedCapability=release.model.ref.digest===this.model.ref.digest && release.compatibleDefinition({kind:'object',id:ref.type,storedDigest:String(row.definition_digest),currentDigest:this.model.fingerprint(ref.type),properties:body.properties});
+        }
+      }
+      if(!sharedCapability && (grant.operations.includes('task.process') || !compatibleProjectedObject(this.db,grant.ownerKey,grant.taskId,ref.type,String(row.definition_digest),body.properties,this.model.ref.digest)))throw new SecurityError('POLICY_CHANGED');
+    }
     if (sourceBindingId==='member_asset') {
       const originRow=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(grant.ownerKey,ref.type,ref.id,Number(row.revision));
       const origin=originRow?JSON.parse(String(originRow.body)) as {programId:string;programDigest:string;sourceBindingId:string;inputEnvelope?:SecurityEnvelope}:undefined;

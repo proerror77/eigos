@@ -81,8 +81,9 @@ const outputSchema = {
 
 // Documents have no tools; Agent decisions receive only their Worker-owned,
 // task-bound native Ontology MCP connection.
+export const CODEX_SECURITY_CHANNEL_ID = 'codex-native';
 export class CodexExecutor implements Executor {
-  readonly securityChannelId: string = 'codex-native';
+  readonly securityChannelId: string = CODEX_SECURITY_CHANNEL_ID;
   readonly ontologyTransport = 'native-mcp' as const;
   readonly ontologyContextPreparation = 'worker_snapshot' as const;
   private sessions: ModelSessionPool;

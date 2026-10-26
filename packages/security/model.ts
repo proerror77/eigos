@@ -9,6 +9,7 @@ import { combineEnvelopes,requireChannel } from './envelope.js';
 import type {ObjectRef} from '../ontology/model.js';
 import type {GoalReviewContext} from '../ontology/goal-coverage.js';
 import {compositionInputSchema} from '../ontology/composition.js';
+import {readExecutionContext} from '../ontology/execution-projection.js';
 
 // User-submitted text and structured constraints belong to the accepted task
 // contract. Derived interpretations do not silently create new submitted data.
@@ -39,6 +40,10 @@ export function secureAgentContext(context:AgentPlanningContext,graph:OntologyOb
   const scope=authorizationScope()!,policy=graph.security;
   const nativeGoal=context.state.programRef.id==='eigos.goal' && context.state.programRef.version==='1';
   const input=nativeGoal?nativeGoalInput(graph,context.request,context.state.scope,context.state.composition?.goal):authorizedInput(graph,scope.actor.ownerKey,context.state.scope);
+  const execution=nativeGoal?readExecutionContext(graph,scope.actor.ownerKey,context.request.id,context.request.revision):undefined;
+  if(nativeGoal && context.state.composition?.contexts.length && !execution?.composition)throw new SecurityError('INSUFFICIENT_ACCESS');
+  const preparedContextNavigation=nativeGoal?(execution?.composition?.components??[]).filter(component=>!!policy.binding(scope,component.scope))
+    .map(({id,programRef,scope,retired})=>({id,programRef,scope,retired:!!retired})):undefined;
   const refs=context.state.observations.filter(ref=>!!policy.binding(scope,ref));
   const definitions=context.components?compositionInputSchema.parse(input):undefined;
   const components=context.components?.map(component=>{
@@ -52,7 +57,7 @@ export function secureAgentContext(context:AgentPlanningContext,graph:OntologyOb
     return {...component,...node,state:{...state,input:componentInput,observations:state.observations.filter(ref=>!!policy.binding(scope,ref)),result},
       actionIds:component.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute'))};
   });
-  return {...context,request:secureRequest(graph,scope.actor.ownerKey,context.request),actionIds:context.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute')),
+  return {...context,...(nativeGoal?{preparedContextNavigation}:{}),request:secureRequest(graph,scope.actor.ownerKey,context.request),actionIds:context.actionIds.filter(id=>policy.resourceAllowed(scope,'actionType',id,'action.execute')),
     state:{...context.state,input:structuredClone(input as Record<string,unknown>),observations:refs,
       plans:[],feedback:[],...(nativeGoal?{composition:undefined}:{}),informationRequests:[],paPayment:undefined,components:undefined,inputResolutions:undefined,initialSelectionPending:undefined,completion:undefined},components,
     actionOutcomes:context.actionOutcomes?.map(({stepId,state})=>({stepId,intentId:'',state})),
