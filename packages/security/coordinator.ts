@@ -10,6 +10,8 @@ import { taskDataGrantSchema,grantRefSchema } from './contracts.js';
 import {TASK_PROJECTION_TYPES} from './policy-store.js';
 
 const grantFields = agentAccessGrantSchema.shape;
+const writeContention=(error:unknown)=>error instanceof Error && 'code' in error && error.code==='ERR_SQLITE_ERROR'
+  && 'errcode' in error && typeof error.errcode==='number' && Number.isInteger(error.errcode) && (error.errcode&255)===5;
 export const agentGrantRequestSchema = z.strictObject({ installationId: grantFields.installationId, capabilityIds: grantFields.capabilityIds,
   resources: grantFields.resources, sourceBindingIds: grantFields.sourceBindingIds, channels: grantFields.channels, expiresAt: grantFields.expiresAt });
 
@@ -19,33 +21,52 @@ export const agentGrantRequestSchema = z.strictObject({ installationId: grantFie
 export class AuthorizationCoordinator {
   private token?: string;
   private timer?: ReturnType<typeof setInterval>;
+  private retry?: ReturnType<typeof setTimeout>;
   private unavailable?: () => void;
   constructor(readonly store: SecurityStore, private members: MemberStore, private jobs?: JobStore, private catalog?: ExecutionCatalog) {}
-  get available() { return this.token !== undefined; }
+  get available() { return this.token !== undefined && this.store.managerCurrent(this.token); }
   onUnavailable(handler: () => void) { this.unavailable = handler; }
   start() {
     this.token = this.store.acquireManager();
-    try { this.refresh(); } catch (error) { this.close(); throw error; }
+    let retryInitial=false;
+    try { this.refresh(); } catch (error) {
+      if(writeContention(error) && this.token && this.store.managerCurrent(this.token))retryInitial=true;
+      else { this.close(); throw error; }
+    }
     let lastRefresh = this.store.now();
-    this.timer = setInterval(() => {
+    const refresh=() => {
+      clearTimeout(this.retry);this.retry=undefined;
       const delayMs = Math.max(0, this.store.now() - lastRefresh - securityDefaults.authorityProjectionRefreshSeconds * 1000);
       lastRefresh = this.store.now();
       try { this.refresh(); }
       catch (error) {
+        // A current Gateway lease remains authoritative while another bounded
+        // transaction holds the writer. Retry only before that same lease ends.
+        if(writeContention(error) && this.token && this.store.managerCurrent(this.token)) {
+          this.retry=setTimeout(refresh,500);this.retry.unref();return;
+        }
         this.close();
         const cause = error instanceof Error ? error.cause : undefined;
         console.error('Authorization eligibility refresh stopped; new work fails closed', { delayMs, reason: cause instanceof SecurityError ? cause.reason : cause instanceof Error ? cause.name : 'unknown' });
         this.unavailable?.();
       }
-    }, securityDefaults.authorityProjectionRefreshSeconds * 1000);
+    };
+    this.timer = setInterval(refresh, securityDefaults.authorityProjectionRefreshSeconds * 1000);
     this.timer.unref();
+    if(retryInitial){this.retry=setTimeout(refresh,500);this.retry.unref();}
   }
-  close() { clearInterval(this.timer); if (this.token) this.store.releaseManager(this.token); this.token = undefined; }
+  close() {
+    clearInterval(this.timer);clearTimeout(this.retry);const token=this.token;this.token=undefined;
+    if(token)try{this.store.releaseManager(token);}catch(error){if(!writeContention(error))throw error;}
+  }
   refresh() {
     try {
       if (!this.token || !this.store.renewManager(this.token)) throw new SecurityError('AUTHORITY_UNAVAILABLE');
       for (const old of this.store.subjects()) this.store.publishSubject(this.members.authorizationFacts(old.memberId, old.installationId), this.token);
-    } catch (error) { this.close(); const failure = new SecurityError('AUTHORITY_UNAVAILABLE'); failure.cause = error; throw failure; }
+    } catch (error) {
+      if(writeContention(error) && this.token && this.store.managerCurrent(this.token))throw error;
+      this.close(); const failure = new SecurityError('AUTHORITY_UNAVAILABLE'); failure.cause = error; throw failure;
+    }
   }
   authenticate(principal: Principal, bearer: string): AccessContext {
     if (!this.token) throw new SecurityError('AUTHORITY_UNAVAILABLE');
@@ -55,7 +76,7 @@ export class AuthorizationCoordinator {
     this.members.authorize(principal);
     const facts = this.members.authorizationFacts(registration.memberId!, registration.id);
     if (facts.ownerKey !== ownerKey(principal) || facts.clientId !== principal.clientId) throw new SecurityError('ACCESS_REVOKED');
-    const subject = this.store.publishSubject(facts, this.token), grant = this.store.agentGrant(subject.installationId);
+    const subject = this.store.authenticateSubject(facts, this.token), grant = this.store.agentGrant(subject.installationId);
     return accessContextSchema.parse({ version: SECURITY_CONTRACT, actorKind: 'agent', ownerKey: subject.ownerKey,
       memberId: subject.memberId, installationId: subject.installationId, clientId: subject.clientId,
       tokenScopes: [...new Set(principal.scopes)], agentGrant: { id: grant.id, revision: grant.revision },

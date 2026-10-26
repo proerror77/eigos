@@ -3189,7 +3189,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "980ccd0431cbba2befb74e04921c2988b2f62a2605eb05824ce3d209d4946cd9",
+      "sourceDigest": "0cb050dfca4732365204afd18a07789e49e3bbdf584e7af91f7eef7f7b32388f",
       "channels": [
         "authorization_control"
       ],
@@ -3201,7 +3201,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "cf44ba80237747104c6772e9d1a027b71d21697c2b17dd8b291a8014051fb8b2",
+      "sourceDigest": "610693ef9af20fd983090a4c018f234801d32653536db261a82c23c2fbdd8e99",
       "channels": [
         "authorization_control"
       ],

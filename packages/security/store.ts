@@ -106,6 +106,9 @@ export class SecurityStore {
     return this.db.prepare('UPDATE security_manager SET expires_at=? WHERE slot=1 AND token=? AND expires_at>?').run(this.now() + securityDefaults.authorityProjectionLeaseSeconds * 1000, token, this.now()).changes === 1;
   }
   releaseManager(token: string) { this.db.prepare('UPDATE security_manager SET expires_at=0 WHERE slot=1 AND token=?').run(token); }
+  managerCurrent(token: string): boolean {
+    try { this.requireManager(token); return true; } catch { return false; }
+  }
   private requireManager(token?: string) {
     this.policies.revision();
     const row = this.db.prepare("SELECT m.token,m.expires_at FROM security_manager m JOIN security_settings c ON c.slot=m.slot WHERE m.slot=1 AND c.version=2 AND c.mode='foundation'").get();
@@ -115,6 +118,15 @@ export class SecurityStore {
   getSubject(installationId: string): Subject | undefined { const row = this.db.prepare('SELECT * FROM security_subjects WHERE installation_id=?').get(installationId); return row ? subject(row) : undefined; }
   private fenced(f: SubjectFacts): boolean {
     return !!this.db.prepare("SELECT 1 FROM security_fences WHERE owner=? AND state<>'cleared' AND ((kind='member' AND target_id=?) OR (kind='connection' AND target_id=?) OR (kind='installation' AND target_id=?)) LIMIT 1").get(f.ownerKey, f.memberId, f.clientId, f.installationId);
+  }
+  authenticateSubject(f:SubjectFacts,managerToken:string):Subject {
+    this.requireManager(managerToken);
+    const current=this.getSubject(f.installationId);
+    if(current && (current.ownerKey!==f.ownerKey || current.memberId!==f.memberId || current.clientId!==f.clientId))throw new SecurityError('POLICY_CHANGED');
+    // Authentication already re-read membership and token facts. An unchanged,
+    // live subject needs no write while a Worker publishes its task result.
+    if(f.active && current?.active && current.validUntil>this.now() && !this.fenced(f))return this.requireSubject(f.installationId,current.epoch);
+    return this.publishSubject(f,managerToken);
   }
   publishSubject(f: SubjectFacts, managerToken: string): Subject {
     return this.atomic(() => {
