@@ -50,7 +50,13 @@ export async function waitForPrimaryHealth(
       }else lastFailure='Health status, authority ID or release digest does not match the deployed primary';
     }catch(error){lastFailure=error instanceof Error?error.message:String(error);}
     const remaining=deadline-performance.now();
-    if(remaining>0)await pause(Math.min(retryDelayMs,remaining));
+    // A rounded timer may wake just before the deadline. Do not turn that
+    // final fraction into another probe that overwrites the useful failure.
+    if(remaining<=retryDelayMs){
+      if(remaining>0)await pause(Math.ceil(remaining));
+      break;
+    }
+    await pause(retryDelayMs);
   }
   throw new Error(`Primary failed readiness after ${timeoutMs}ms. Last probe: ${lastFailure}`);
 }

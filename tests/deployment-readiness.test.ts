@@ -50,7 +50,7 @@ for (const mismatch of [{ status: 'unavailable' }, { authorityId: 'other' }, { r
   test(`primary readiness never accepts a mismatched ${Object.keys(mismatch)[0]}`, async () => {
     await withServer((_request, response) => response.end(JSON.stringify({ status: 'ok', ...expected, ...mismatch })), async port => {
       await assert.rejects(waitForPrimaryHealth(port, 'primary.example', expected, {
-        timeoutMs: 150, requestTimeoutMs: 100, retryDelayMs: 10,
+        timeoutMs: 150, requestTimeoutMs: 100, retryDelayMs: 150,
       }), /Last probe: Health status, authority ID or release digest does not match/);
     });
   });
@@ -65,10 +65,23 @@ test('primary readiness bounds all retries by one deadline and retains the final
   }, async port => {
     const started = performance.now();
     await assert.rejects(waitForPrimaryHealth(port, 'primary.example', expected, {
-      timeoutMs: 150, requestTimeoutMs: 100, retryDelayMs: 10,
+      timeoutMs: 150, requestTimeoutMs: 100, retryDelayMs: 40,
     }), /Primary failed readiness after 150ms.*Last probe: Primary readiness is unavailable \(HTTP 503\)/);
     assert(attempts > 1);
     assert(performance.now() - started < 2000, 'Retries must not multiply the overall wait budget');
+  });
+});
+
+test('primary readiness does not start another probe before its retry interval fits', async () => {
+  let attempts = 0;
+  await withServer((_request, response) => {
+    attempts++;
+    response.end(JSON.stringify({ status: 'ok', ...expected, releaseDigest: 'old' }));
+  }, async port => {
+    await assert.rejects(waitForPrimaryHealth(port, 'primary.example', expected, {
+      timeoutMs: 150, requestTimeoutMs: 100, retryDelayMs: 200,
+    }), /Last probe: Health status, authority ID or release digest does not match/);
+    assert.equal(attempts, 1, 'The final wait cannot become a sub-millisecond retry');
   });
 });
 
