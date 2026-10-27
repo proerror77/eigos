@@ -1,12 +1,13 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { JobStore } from '../dist/packages/core/store.js';
+import { readRuntimeAuthority } from '../dist/packages/core/runtime-authority.js';
 
 // Local operator authority comes from access to the existing private database.
 // This is not a network administration endpoint and never acquires source tokens.
 const [command,inputFile]=process.argv.slice(2),path=process.env.DATABASE_PATH;
 if(!path || path===':memory:' || !existsSync(resolve(path))) throw new Error('Use DATABASE_PATH for an existing foundation database');
-const store=new JobStore(resolve(path),{securityMode:'foundation'});
+const store=new JobStore(resolve(path),{securityMode:'foundation',authority:process.env.EIGOS_AUTHORITY_FILE?readRuntimeAuthority(process.env.EIGOS_AUTHORITY_FILE):undefined});
 try {
   const policy=store.security.policies;
   if(command==='status') console.log(JSON.stringify({securityVersion:2,policyRevision:policy.revision()}));

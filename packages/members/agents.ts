@@ -7,7 +7,7 @@ export const MEMBERSHIP_SCOPE = 'members:write';
 export const registrationSchema = z.object({ registrationId: z.uuid(), displayName: z.string().trim().min(1).max(80) }).strict();
 export const registrationCredential = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export type AdmissionPolicy = 'self-service' | 'manual' | 'invite-only';
-export type AgentRegistration = { id: string; displayName: string; memberId?: string; clientId?: string; revoked: boolean; createdAt: number };
+export type AgentRegistration = { id: string; displayName: string; memberId?: string; clientId?: string; revoked: boolean; createdAt: number; kind?: 'native_mcp' };
 export class AgentAccessError extends Error {
   constructor(readonly code: 'agent_registration_required' | 'agent_registration_revoked' | 'registration_expired' | 'fresh_authorization_required' | 'registration_credential_invalid' | 'registration_limit') { super(code); }
 }
@@ -16,7 +16,13 @@ export type RevocationObserver = (change: RevocationChange) => void;
 type Row = Record<string, unknown>;
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
 const registration = (row: Row): AgentRegistration => ({ id: String(row.id), displayName: String(row.display_name),
-  ...(row.member_id ? { memberId: String(row.member_id) } : {}), ...(row.client_id ? { clientId: String(row.client_id) } : {}), revoked: !!row.revoked, createdAt: Number(row.created_at) });
+  ...(row.member_id ? { memberId: String(row.member_id) } : {}), ...(row.client_id ? { clientId: String(row.client_id) } : {}), revoked: !!row.revoked, createdAt: Number(row.created_at), ...(row.kind === 'native_mcp' ? { kind: 'native_mcp' as const } : {}) });
+
+export function nativeInstallationId(principal: Pick<Principal, 'issuer' | 'tenant' | 'subject' | 'clientId'>): string {
+  const bytes = createHash('sha256').update(JSON.stringify(['native-mcp-installation@1', principal.issuer, principal.tenant, principal.subject, principal.clientId])).digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 15) | 80; bytes[8] = (bytes[8]! & 63) | 128;
+  const h = bytes.toString('hex'); return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
 
 // Uses the membership database connection. Only hashes of registration, access
 // and invitation credentials are persisted; upstream refresh tokens stay on the Agent.
@@ -36,6 +42,8 @@ export class AgentRegistrations {
       id TEXT PRIMARY KEY, hash TEXT UNIQUE NOT NULL, member_id TEXT NOT NULL REFERENCES members(id),
       expires_at INTEGER NOT NULL, consumed_at INTEGER, revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1))
     );`);
+    if (!this.db.prepare('PRAGMA table_info(agent_registrations)').all().some(row => row.name === 'kind'))
+      this.db.exec("ALTER TABLE agent_registrations ADD COLUMN kind TEXT NOT NULL DEFAULT 'registered' CHECK(kind IN ('registered','native_mcp'))");
   }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -57,7 +65,7 @@ export class AgentRegistrations {
   get(id: string, credential: string): AgentRegistration {
     registrationCredential.parse(credential);
     const row = this.db.prepare('SELECT * FROM agent_registrations WHERE id=?').get(id);
-    if (!row || !timingSafeEqual(Buffer.from(String(row.credential_hash), 'hex'), Buffer.from(digest(credential), 'hex'))) throw new AgentAccessError('registration_credential_invalid');
+    if (!row || row.kind === 'native_mcp' || !timingSafeEqual(Buffer.from(String(row.credential_hash), 'hex'), Buffer.from(digest(credential), 'hex'))) throw new AgentAccessError('registration_credential_invalid');
     return registration(row);
   }
   list(memberId: string): AgentRegistration[] {
@@ -115,6 +123,38 @@ export class AgentRegistrations {
     const row = this.db.prepare('SELECT r.* FROM agent_access_tokens t JOIN agent_registrations r ON r.id=t.registration_id WHERE t.hash=? AND t.expires_at>?').get(digest(token), Date.now());
     if (!row) throw new AgentAccessError('agent_registration_required');
     const value = registration(row); this.requireOwner(value, principal); return value;
+  }
+  private nativeInstallation(principal: Principal, memberId: string): AgentRegistration {
+    const member = this.db.prepare('SELECT * FROM members WHERE id=?').get(memberId);
+    const connection = this.db.prepare('SELECT blocked FROM member_connections WHERE member_id=? AND client_id=?').get(memberId, principal.clientId);
+    if (!member || member.status !== 'active' || !member.accepted_at || member.issuer !== principal.issuer || member.tenant !== principal.tenant
+      || member.subject !== principal.subject || !connection || connection.blocked) throw new AgentAccessError('agent_registration_required');
+    const id = nativeInstallationId(principal), existing = this.db.prepare('SELECT * FROM agent_registrations WHERE id=?').get(id);
+    if (existing) {
+      if (existing.kind !== 'native_mcp' || existing.member_id !== memberId || existing.client_id !== principal.clientId) throw new DomainError('CONFLICT','Native installation identity changed');
+      if (existing.revoked) throw new AgentAccessError('agent_registration_revoked');
+      return registration(existing);
+    }
+    if (Number(this.db.prepare('SELECT count(*) AS n FROM agent_registrations WHERE member_id=? AND revoked=0').get(memberId)!.n) >= 20) throw new AgentAccessError('registration_limit');
+    this.db.prepare("INSERT INTO agent_registrations(id,credential_hash,display_name,member_id,client_id,created_at,kind) VALUES(?,?,?,?,?,?,'native_mcp')")
+      .run(id, digest(randomBytes(32).toString('base64url')), 'Native MCP', memberId, principal.clientId, Date.now());
+    return registration(this.db.prepare('SELECT * FROM agent_registrations WHERE id=?').get(id)!);
+  }
+  /** Identity enrollment only; no Agent, source or task permission is issued.
+   * The caller must first verify the token and current member connection. */
+  ensureNativeInstallation(principal: Principal, memberId: string): AgentRegistration {
+    return this.transaction(() => this.nativeInstallation(principal, memberId));
+  }
+  authorizeNative(principal: Principal, memberId: string, token: string, expiresAt: number): AgentRegistration {
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() || expiresAt > Date.now() + 905000 || !token || token.length > 16000) throw new AgentAccessError('fresh_authorization_required');
+    return this.transaction(() => {
+      const value = this.nativeInstallation(principal, memberId);
+      this.db.prepare('DELETE FROM agent_access_tokens WHERE expires_at<=?').run(Date.now());
+      const previous = this.db.prepare('SELECT registration_id FROM agent_access_tokens WHERE hash=?').get(digest(token));
+      if (previous && previous.registration_id !== value.id) throw new DomainError('CONFLICT','Access token is already bound to another installation');
+      this.db.prepare('INSERT OR IGNORE INTO agent_access_tokens VALUES(?,?,?)').run(digest(token), value.id, expiresAt);
+      return value;
+    });
   }
   revoke(memberId: string, id: string): void {
     if (!this.db.prepare('SELECT 1 FROM agent_registrations WHERE id=? AND member_id=?').get(id, memberId)) throw new DomainError('NOT_FOUND', 'Agent registration not found');

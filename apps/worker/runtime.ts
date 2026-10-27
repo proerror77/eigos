@@ -13,7 +13,7 @@ export function createWorker(config: Config, overrides: {
   assertPersonalSourceConfig(config);
   assertSourceProxy(config);
   if (!overrides.store && config.DATABASE_PATH === ':memory:') throw new Error('Separate Gateway and Worker require a shared database file');
-  const store = overrides.store ?? new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE });
+  const store = overrides.store ?? new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE, authority: config.authority });
   if (store.security.enabled !== (config.EIGOS_SECURITY_MODE === 'foundation')) throw new Error('Gateway and Worker security modes must match');
   try {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {

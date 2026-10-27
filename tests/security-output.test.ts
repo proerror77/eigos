@@ -15,8 +15,8 @@ import { OntologyPlanningSession } from '../packages/coordinator/planning-sessio
 import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import {JobStore} from '../packages/core/store.js';
 
-function fixture() {
-  const f=securityFixture(),a=f.installation('A'),b=f.installation('B'),policy=f.jobs.security.policies,until=new Date(Date.now()+3600000).toISOString();
+function fixture(now:()=>number=Date.now) {
+  const f=securityFixture(now),a=f.installation('A'),b=f.installation('B'),policy=f.jobs.security.policies,until=new Date(Date.now()+3600000).toISOString();
   for(const install of [a,b]) {
     f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','createdAt']}],sourceBindingIds:[],channels:['agent_response','registered_model','controlled_download'],expiresAt:until});
     policy.setRole({subjectKind:'installation',subjectId:install.id,resource:{kind:'namespace',id:businessModel.ref.id,version:businessModel.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
@@ -35,6 +35,23 @@ function fixture() {
   }
   return {...f,a,b,pa,pb,policy,until,principal,tasks,claim,publish};
 }
+
+test('TaskView shares one bounded authorization read while retaining output lineage checks',()=>{
+  let now=Date.now();const f=fixture(()=>now);try {
+    const task=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:'bounded-read',goal:'Scoped result'});f.publish(task.id);
+    const create=f.jobs.security.scope.bind(f.jobs.security);let checks=0;
+    f.jobs.security.scope=(...args)=>{const scope=create(...args),check=scope.assertCurrent;scope.assertCurrent=()=>{checks++;now+=20;check();};return scope;};
+    const view=f.tasks.get(f.pa,task.id);assert.equal(view.artifact?.data.markdown,'Scoped report');
+    assert(checks<=5,`A slow check must not repeat for every result field: ${checks}`);
+    const db=new DatabaseSync(f.database,{readOnly:true});let envelope;
+    try{envelope=JSON.parse(String(db.prepare("SELECT body FROM security_outputs WHERE task_id=? AND output_id='artifact'").get(task.id)!.body));}finally{db.close();}
+    checks=0;
+    f.jobs.security.withAgent(f.pa,task.id,'task.result.read',scope=>f.policy.validateLineage(scope,envelope));
+    assert(checks<=4,`Standalone lineage validation also shares checked bindings: ${checks}`);
+    f.coordinator.revokeInstallation(f.member.id,f.a.id);
+    assert.throws(()=>f.tasks.get(f.pa,task.id),/ACCESS_REVOKED/);
+  }finally{f.close();}
+});
 
 test('TaskView covers submit/get/list/wait/mutation/replay without internal Job fields',async()=>{
   const f=fixture();try {
@@ -120,6 +137,7 @@ test('controlled file bytes, metadata and old links recheck labels and revocatio
 
 test('model channel is independent of task permission and includes all submitted inputs',async()=>{
   const f=fixture();try {
+    assert.throws(()=>assertModelChannel(f.jobs.ontology,'synthetic'),/OUTPUT_NOT_ALLOWED/);
     const x=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:'model',goal:'PRIVATE_MODEL_INPUT'}),work=f.claim(x.id);
     const session=new OntologyPlanningSession(f.jobs.ontology,f.owner,work.claim.job.delegation!.request);
     let calls=0;

@@ -14,7 +14,7 @@ export function inviteBetaPrincipal(config: Config, principal: Principal): Princ
 const html = (value: string) => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 
 export function mountInviteBeta(app: Express, config: Config): void {
-  if (config.EIGOS_INVITE_BETA !== 'true') return;
+  if (config.EIGOS_INVITE_BETA !== 'true' && !(config.authority && config.OIDC_MCP_CLIENT_ID)) return;
   const clientConfig = inviteBetaCodexConfig(config.PUBLIC_URL, config.OIDC_MCP_CLIENT_ID!);
   app.get('/', (_req, res) => {
     res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
@@ -23,6 +23,7 @@ export function mountInviteBeta(app: Express, config: Config): void {
 <main><small>EIGOS · 艾戈斯 · 邀请内测</small><h1>让你的 Agent 委托一个任务</h1>
 <p>本轮提供基于你所给资料的文档草稿、会议议程、分析与计划，以及任务说明整理。任务说明不代表其中的业务已经执行。</p>
 <p>本入口不接收供应商账号凭据，不执行预订、采购、付款或对外发送。服务由内测主机运行，主机离线或休眠时可能暂时不可用。</p>
+${config.authority?'<p>登录与邀请只确认会员身份。Agent 安装、任务数据和来源权限须在会员中心单独批准，可用能力以本人当前授权为准。</p>':''}
 <h2>接入步骤</h2><ol><li><a href="/members">登录会员中心</a>，填写自己的资料并同意开通。取得绑定本人身份的邀请后，在会员中心兑换。</li>
 <li>将以下公开连接配置加入 Codex 的 <code>~/.codex/config.toml</code>；若已有同名连接，请更新该连接：<pre>${html(clientConfig)}</pre>然后运行 <code>codex mcp login eigos</code>，按显示的页面完成本人授权。需要重新授权时运行同一命令。</li>
 <li>向自己的 Agent 提出文档任务，例如：<pre>请通过 EIGOS，按下面的材料生成一份中文会议议程……</pre>Agent 会提交需求、在同一个任务中补充必要信息，并读取最终交付物。</li></ol>

@@ -16,6 +16,7 @@ import type {AgentDecision,AgentStep} from '../packages/ontology/agent-actions.j
 import type {ObjectRef} from '../packages/ontology/model.js';
 import type {DidiData} from '../packages/capabilities/didi/contracts.js';
 import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
+import {DatabaseSync} from 'node:sqlite';
 
 test('foundation Worker completes the existing source-selected read loop using safe facts and sealed delivery',async()=>{
   const f=securityFixture(),source=didiFixture();
@@ -91,6 +92,17 @@ test('foundation Worker completes the existing source-selected read loop using s
     policy.setSource(f.owner,{...sourceGrant,programDigest:'0'.repeat(64)},policy.revision());
     assert.equal(tasks.get(p,job.id).artifact,undefined,'A different source configuration cannot authorize old observations');
     policy.setSource(f.owner,sourceGrant,policy.revision());
+    const migrationDb=new DatabaseSync(f.jobs.databasePath),historicalDigest='e'.repeat(64);
+    const originRow=migrationDb.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=?').get(f.owner,observation.type,observation.id)!;
+    const origin=JSON.parse(String(originRow.body));
+    migrationDb.prepare('UPDATE security_object_origins SET body=? WHERE owner=? AND type=? AND object_id=?').run(JSON.stringify({...origin,programDigest:historicalDigest}),f.owner,observation.type,observation.id);
+    assert.equal(tasks.get(p,job.id).artifact,undefined,'An unreviewed historical source version remains unavailable');
+    const sourceRow=migrationDb.prepare('SELECT body FROM security_sources WHERE installation_id=? AND program_id=?').get(install.id,program.ref.id)!;
+    const currentSource=JSON.parse(String(sourceRow.body));
+    migrationDb.prepare('UPDATE security_sources SET body=? WHERE installation_id=? AND program_id=?').run(JSON.stringify({...currentSource,readbackVersions:[{sourceBindingId:profile.bindingId,programDigest:historicalDigest}]}),install.id,program.ref.id);
+    assert.ok(tasks.get(p,job.id).artifact,'An exact operator-reviewed predecessor permits readback');
+    assert.throws(()=>f.jobs.security.withAgent(p,job.id,'task.process',scope=>policy.requireSource(scope,program.ref.id,historicalDigest)),/SOURCE_NOT_AUTHORIZED/,'Readback compatibility never authorizes old-version dispatch');
+    migrationDb.close();
     const revision=f.jobs.security.withAgent(p,job.id,'task.query',()=>f.jobs.ontology.read(f.owner,observation).revision);
     policy.restrictObject({ownerKey:f.owner,object:observation,expectedObjectRevision:revision,field:'snapshot',classification:'internal',requiredMarkings:['account_private'],channels:[]},policy.revision());
     assert.equal(tasks.get(p,job.id).artifact,undefined,'Mandatory controls on raw source dependencies propagate into the safe view and old delivery');

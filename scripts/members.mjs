@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { NetworkStore } from '../dist/packages/network/store.js';
 import { MemberStore } from '../dist/packages/members/store.js';
 import { openMembershipAdministration } from '../dist/packages/security/admin.js';
+import { readRuntimeAuthority } from '../dist/packages/core/runtime-authority.js';
 import { parseArgs } from 'node:util';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve, relative, dirname } from 'node:path';
@@ -19,7 +20,7 @@ if (extra.length || !['list', 'approve', 'suspend', 'invite', 'revoke-invite'].i
     if ((!existsSync(database) && !existsSync(path)) && process.env.EIGOS_SECURITY_MODE !== 'foundation') {
       const members = new MemberStore(path);
       admin = { members, mode: 'legacy', setStatus: (id, status) => members.setStatus(id, status), close: () => members.close() };
-    } else admin = openMembershipAdministration(database, path, process.env.EIGOS_SECURITY_MODE);
+    } else admin = openMembershipAdministration(database, path, process.env.EIGOS_SECURITY_MODE, process.env.EIGOS_AUTHORITY_FILE ? readRuntimeAuthority(process.env.EIGOS_AUTHORITY_FILE) : undefined);
     if (admin.mode === 'legacy' && existsSync(database)) {
       business = new DatabaseSync(database); business.exec('PRAGMA busy_timeout=5000;');
       if (business.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='network_auth_fences'").get()) {

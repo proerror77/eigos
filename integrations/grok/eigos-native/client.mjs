@@ -39,7 +39,7 @@ try {
     const agent = await AgentConnector.open(profile);
     if (command === 'login') {
       const status = await agent.status();
-      if (status.status === 'active') { await agent.accessToken(); emit({ status: 'active', registrationId: agent.registrationId }); }
+      if (['active','foundation_ready'].includes(status.status)) { await agent.accessToken(); emit({ status: status.status, registrationId: agent.registrationId }); }
       else {
         const authorization = await agent.beginAuthorization();
         process.stdout.write(JSON.stringify({ status: 'authorization_required', ...authorization }) + '\n');
