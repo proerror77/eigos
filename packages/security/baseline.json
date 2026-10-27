@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8385f48ce49e12cf91e2225296dfab142f47d9db0ecae225896d220d5efb4372",
+      "sourceDigest": "5a0ec3b97d5f3bddd1606048a731832e18222312c9594e87014fcefa2b348fcf",
       "channels": [
         "model",
         "dispatch"
@@ -3599,7 +3599,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "e734071a7a128ebe145042f0f0d6ff2024dbadc8191e1a922b46a143ee6a9cba",
+      "sourceDigest": "40d02d2dc347fe6b4172825447d83190c6541b3d03379390f84152d0d75a2363",
       "channels": [
         "runtime"
       ],
