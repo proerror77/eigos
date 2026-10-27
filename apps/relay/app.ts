@@ -11,9 +11,10 @@ export function createRelayApp(config: RelayConfig, options: { verifyOwner?: Ver
   const app = express(), waits = new Map<string, number>(), ingress = new Map<string, { bucket: number; count: number }>();
   let closed = false, storageClosed = false;
   app.disable('x-powered-by');
+  app.set('trust proxy', config.trustLoopbackProxy ? 'loopback' : false);
   app.use((req, res, next) => {
     res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff');
-    const address = req.socket.remoteAddress ?? 'unknown', bucket = Math.floor(Date.now() / 60000);
+    const address = req.ip ?? req.socket.remoteAddress ?? 'unknown', bucket = Math.floor(store.now() / 60000);
     for (const [key, value] of ingress) if (value.bucket !== bucket) ingress.delete(key);
     if (ingress.size >= 2048 && !ingress.has(address)) { res.status(429).json({ error: 'RATE_LIMITED' }); return; }
     const entry = ingress.get(address) ?? { bucket, count: 0 }; entry.count++; ingress.set(address, entry);

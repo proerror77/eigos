@@ -8,6 +8,7 @@ export interface RelayConfig {
   host: string; port: number; publicUrl: string; databasePath: string;
   authMode: 'jwt' | 'development'; devToken?: string;
   issuer?: string; audience?: string; jwksUrl?: string; tenantClaim: string; clientIds: string[];
+  trustLoopbackProxy?: boolean;
 }
 export type VerifyOwner = (token: string) => Promise<RelayOwner>;
 export function readRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConfig {
@@ -17,11 +18,13 @@ export function readRelayConfig(env: NodeJS.ProcessEnv = process.env): RelayConf
     EIGOS_RELAY_AUTH_MODE: z.enum(['jwt', 'development']).default('jwt'), EIGOS_RELAY_DEV_TOKEN: z.string().min(32).optional(),
     EIGOS_RELAY_OAUTH_ISSUER: z.url().optional(), EIGOS_RELAY_OAUTH_AUDIENCE: z.string().optional(), EIGOS_RELAY_OAUTH_JWKS_URL: z.url().optional(),
     EIGOS_RELAY_TENANT_CLAIM: z.string().default('tenant_id'), EIGOS_RELAY_CLIENT_IDS: z.string().default(''),
+    EIGOS_RELAY_TRUST_LOOPBACK_PROXY: z.enum(['true', 'false']).default('false'),
   }).parse(env);
   const config: RelayConfig = { host: value.EIGOS_RELAY_HOST, port: value.EIGOS_RELAY_PORT, publicUrl: relayOrigin(value.EIGOS_RELAY_PUBLIC_URL),
     databasePath: value.EIGOS_RELAY_DATABASE_PATH, authMode: value.EIGOS_RELAY_AUTH_MODE, devToken: value.EIGOS_RELAY_DEV_TOKEN,
     issuer: value.EIGOS_RELAY_OAUTH_ISSUER, audience: value.EIGOS_RELAY_OAUTH_AUDIENCE, jwksUrl: value.EIGOS_RELAY_OAUTH_JWKS_URL,
-    tenantClaim: value.EIGOS_RELAY_TENANT_CLAIM, clientIds: value.EIGOS_RELAY_CLIENT_IDS.split(',').map(s => s.trim()).filter(Boolean) };
+    tenantClaim: value.EIGOS_RELAY_TENANT_CLAIM, clientIds: value.EIGOS_RELAY_CLIENT_IDS.split(',').map(s => s.trim()).filter(Boolean), trustLoopbackProxy: value.EIGOS_RELAY_TRUST_LOOPBACK_PROXY === 'true' };
+  if (config.trustLoopbackProxy && !['127.0.0.1', '::1', 'localhost'].includes(config.host)) throw new Error('Trusted loopback proxy mode requires a loopback-only Relay listener');
   if (resolve(config.databasePath) !== config.databasePath || config.databasePath === ':memory:') throw new Error('Relay requires a dedicated absolute database path');
   if (config.authMode === 'development') {
     if (env.NODE_ENV === 'production' || !['127.0.0.1', '::1', 'localhost'].includes(config.host)

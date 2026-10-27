@@ -13,15 +13,20 @@ export function readPrivateJson(path: string, maxBytes = 16384): unknown {
 }
 
 /** Dedicated stores must never initialize inside a task, membership, or another node database. */
-export function openPrivateDatabase(path: string, applicationId: number): DatabaseSync {
+export function openPrivateDatabase(path: string, applicationId: number, options: { busyTimeoutMs?: number } = {}): DatabaseSync {
+  const timeout = options.busyTimeoutMs ?? 5000;
+  if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 5000) throw new Error('Private database lock timeout is invalid');
   if (path === ':memory:' || !path || resolve(path) !== path) throw new Error('A dedicated absolute persistent database path is required');
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  if (!existsSync(path)) closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600));
+  if (!existsSync(path)) {
+    try { closeSync(openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  }
   const info = lstatSync(path);
-  if (!info.isFile() || info.isSymbolicLink() || (info.mode & 0o077) !== 0) throw new Error('Database must be a private regular file (0600)');
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || process.getuid && info.uid !== process.getuid() || (info.mode & 0o077) !== 0) throw new Error('Database must be an owned private regular file (0600)');
   const db = new DatabaseSync(path);
   try {
-    db.exec('PRAGMA busy_timeout=5000;');
+    db.exec(`PRAGMA busy_timeout=${timeout};`);
     const id = Number(db.prepare('PRAGMA application_id').get()!.application_id);
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
     if (id !== applicationId && (id !== 0 || tables.length)) throw new Error('Refusing to use a database owned by another application');

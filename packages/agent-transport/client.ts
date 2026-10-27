@@ -1,4 +1,4 @@
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -16,22 +16,41 @@ export interface ReceivedMessage { senderId: string; id: string; connectionId: s
 
 function readPrivate(path: string): string {
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try { const stat = fstatSync(fd); if (!stat.isFile() || stat.mode & 0o077 || stat.size > 16000) throw new Error('Node credentials require a private regular file (0600)'); return readFileSync(fd, 'utf8'); }
+  try { const stat = fstatSync(fd); if (!stat.isFile() || stat.nlink !== 1 || process.getuid && stat.uid !== process.getuid() || stat.mode & 0o077 || stat.size > 16000) throw new Error('Node credentials require an owned private regular file (0600)'); return readFileSync(fd, 'utf8'); }
   finally { closeSync(fd); }
 }
 function lock(path: string): () => void {
-  const acquire = () => openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  let fd: number;
-  try { fd = acquire(); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const previous = z.strictObject({ pid: z.number().int().positive() }).parse(JSON.parse(readPrivate(path)));
-    try { process.kill(previous.pid, 0); throw new Error('This node is already open in another process'); }
-    catch (check) { if ((check as NodeJS.ErrnoException).code !== 'ESRCH') throw check; }
-    unlinkSync(path); fd = acquire();
+  let guard: DatabaseSync | undefined;
+  let marker: ReturnType<typeof fstatSync> | undefined;
+  const removeMarker = () => {
+    if (marker && existsSync(path)) { const current = lstatSync(path); if (current.dev === marker.dev && current.ino === marker.ino) unlinkSync(path); }
+  };
+  try {
+    // An OS-backed SQLite write lock serializes both startup and stale PID
+    // recovery. It is released by the OS after a crash; never unlink this DB.
+    guard = openPrivateDatabase(path + '.sqlite', 0x45474c31, { busyTimeoutMs: 0 });
+    guard.exec('BEGIN IMMEDIATE');
+    if (existsSync(path)) {
+      const raw = readPrivate(path);
+      let previous: { pid: number } | undefined;
+      try { previous = z.strictObject({ pid: z.number().int().positive() }).parse(JSON.parse(raw)); } catch { /* A crashed startup may leave an incomplete compatibility marker. */ }
+      if (previous) {
+        try { process.kill(previous.pid, 0); throw new Error('This node is already open in another process'); }
+        catch (check) { if ((check as NodeJS.ErrnoException).code !== 'ESRCH') throw check; }
+      }
+      unlinkSync(path);
+    }
+    const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { marker = fstatSync(fd); writeFileSync(fd, JSON.stringify({ pid: process.pid })); fsyncSync(fd); } finally { closeSync(fd); }
+    const held = guard;
+    return () => {
+      try { removeMarker(); } finally { held.close(); }
+    };
+  } catch (error) {
+    try { removeMarker(); } finally { guard?.close(); }
+    if (error && typeof error === 'object' && 'errcode' in error && typeof error.errcode === 'number' && [5, 6].includes(error.errcode & 255)) throw new Error('This node is already open in another process');
+    throw error;
   }
-  writeFileSync(fd, JSON.stringify({ pid: process.pid })); closeSync(fd);
-  return () => unlinkSync(path);
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -173,8 +192,11 @@ export class RelayClient {
   async send(peerId: string, connectionId: string, content: unknown, options: { id?: string; expiresAt?: number } = {}): Promise<Receipt> {
     return this.deliver(await this.queue(peerId, connectionId, content, options));
   }
-  outbox(): { id: string; receipt?: Receipt }[] {
-    return this.db.prepare('SELECT id,receipt FROM node_outbox ORDER BY rowid LIMIT 1000').all().map(row => ({ id: String(row.id), ...(row.receipt ? { receipt: receiptSchema.parse(JSON.parse(String(row.receipt))) } : {}) }));
+  /** Cursor pagination covers the entire durable history; pendingOnly selects sends without a known Relay receipt. */
+  outbox(options: { after?: number; limit?: number; pendingOnly?: boolean } = {}): { cursor: number; id: string; receipt?: Receipt }[] {
+    const query = z.strictObject({ after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0), limit: z.number().int().min(1).max(1000).default(1000), pendingOnly: z.boolean().default(false) }).parse(options);
+    return this.db.prepare(`SELECT rowid AS cursor,id,receipt FROM node_outbox WHERE rowid>? ${query.pendingOnly ? 'AND receipt IS NULL' : ''} ORDER BY rowid LIMIT ?`).all(query.after, query.limit)
+      .map(row => ({ cursor: Number(row.cursor), id: String(row.id), ...(row.receipt ? { receipt: receiptSchema.parse(JSON.parse(String(row.receipt))) } : {}) }));
   }
   async receipt(senderId: string, id: string): Promise<Receipt> {
     return receiptSchema.parse(await this.request(`/v1/messages/${agentIdSchema.parse(senderId)}/${uuidSchema.parse(id)}`));

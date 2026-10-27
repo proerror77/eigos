@@ -22,6 +22,7 @@ TLS 终止层应与 Relay 通过同机回环链路连接；跨主机后端链路
 | 配置 | 用途 |
 | --- | --- |
 | `EIGOS_RELAY_HOST`、`EIGOS_RELAY_PORT` | 默认 `127.0.0.1:8788` |
+| `EIGOS_RELAY_TRUST_LOOPBACK_PROXY` | 默认 `false`；同机 TLS 代理使用 `true`，且 Relay 只能监听回环地址。代理须覆盖或追加真实客户端地址到 `X-Forwarded-For`，不能原样信任客户端提供的地址 |
 | `EIGOS_RELAY_PUBLIC_URL` | 唯一外部 origin，用于端点和请求证明校验；生产必须 HTTPS |
 | `EIGOS_RELAY_DATABASE_PATH` | 独立持久通信库 |
 | `EIGOS_RELAY_AUTH_MODE` | 默认 `jwt`；`development` 仅允许非生产回环环境 |
@@ -33,6 +34,12 @@ TLS 终止层应与 Relay 通过同机回环链路连接；跨主机后端链路
 登记授权要求 `at+jwt`、正确 issuer/audience、`relay:enroll`、允许的 `client_id`、tenant、sub、iat/exp，寿命不超过 15 分钟。身份提供方须实际配置这些许可；现有任务令牌不自动获得 Relay 权限。
 
 Relay 不提供 OAuth 登录或 Token Exchange 服务。除了受信身份提供方的密钥读取，它不主动请求联系人端点、运行外部 Webhook 或访问供应商。节点主动连接 Relay，无需开放 PA 本机入站端口。
+
+入口限流使用经过上述代理信任检查的客户端地址；节点与登记身份仍各自接受认证后的限流。默认不会使用请求方自行提供的转发地址。
+
+节点使用独立的 `.lock.sqlite` 写锁保护整个连接器生命周期，崩溃后由操作系统释放。保留的 `.lock` PID 标记用于识别旧连接器；升级时先停止旧进程，再启动新版本。锁数据库、节点状态和私钥须放在同机私有目录，不能放在跨主机共享文件系统，也不能删除仍在使用的锁数据库。
+
+恢复待发消息时使用 `outbox({ after, limit, pendingOnly })` 分页，下一页的 `after` 取上一页最后一条的 `cursor`，直到返回空页。`pendingOnly: true` 只筛选尚无 Relay 收件响应的发送，不表示业务完成状态；已有千条历史记录不会遮住后续页的待发消息。
 
 ## 身份与信任
 

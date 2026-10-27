@@ -7,29 +7,32 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { inspect } from 'node:util';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CompactSign, createLocalJWKSet, exportJWK, generateKeyPair, importJWK, SignJWT } from 'jose';
 import { DatabaseSync } from 'node:sqlite';
 import { createRelayApp } from '../apps/relay/app.js';
 import { readRelayConfig, relayJwtVerifier } from '../apps/relay/config.js';
 import { RelayClient } from '../packages/agent-transport/client.js';
-import { createNodeKeys, createProof, verifyEnvelope, type NodeKeys } from '../packages/agent-transport/crypto.js';
+import { createNodeKeys, createProof, signEnvelope, verifyEnvelope, type NodeKeys } from '../packages/agent-transport/crypto.js';
 import { RelayError, sha256 } from '../packages/relay/contracts.js';
 import { RelayStore } from '../packages/relay/store.js';
 
 const ownerToken = 'fixture-owner-access-token-only';
 const errorCode = (code: string) => (error: unknown) => error instanceof RelayError && error.code === code;
-async function fixture(options: { limit?: number } = {}) {
+async function fixture(options: { limit?: number; trustLoopbackProxy?: boolean; now?: () => number } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-relay-')), server = createServer(), clients: RelayClient[] = [];
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert(address && typeof address !== 'string');
   const baseUrl = `http://127.0.0.1:${address.port}`, databasePath = join(directory, 'relay.sqlite');
-  const config = readRelayConfig({ EIGOS_RELAY_AUTH_MODE: 'development', EIGOS_RELAY_DEV_TOKEN: 'x'.repeat(32), EIGOS_RELAY_PUBLIC_URL: baseUrl, EIGOS_RELAY_DATABASE_PATH: databasePath });
+  const config = readRelayConfig({ EIGOS_RELAY_AUTH_MODE: 'development', EIGOS_RELAY_DEV_TOKEN: 'x'.repeat(32), EIGOS_RELAY_PUBLIC_URL: baseUrl, EIGOS_RELAY_DATABASE_PATH: databasePath,
+    EIGOS_RELAY_TRUST_LOOPBACK_PROXY: String(options.trustLoopbackProxy ?? false) });
   const verifyOwner = async (token: string) => {
     if (![ownerToken, 'other-fixture-owner'].includes(token)) throw new Error('Invalid owner');
     return { issuer: 'https://fixture.idp', subject: token === ownerToken ? 'alice' : 'bob', tenant: 'test' };
   };
-  let store = new RelayStore(databasePath, Date.now, options.limit ? { maxInboxMessages: options.limit } : {});
+  let store = new RelayStore(databasePath, options.now ?? Date.now, options.limit ? { maxInboxMessages: options.limit } : {});
   let relay = createRelayApp(config, { store, verifyOwner }); server.on('request', relay.app);
   async function client(name: string, customFetch?: typeof fetch, enrollToken = ownerToken) {
     const credentialPath = join(directory, `${name}.json`);
@@ -248,6 +251,78 @@ test('a node is pinned to its private origin and state; opening it twice cannot 
     a.close();
     await assert.rejects(RelayClient.open({ baseUrl: 'https://other-relay.fixture', credentialPath: path, displayName: 'A' }), /different relay/);
     const reopened = await f.client('A'); assert.equal(reopened.agentId, a.agentId);
+  } finally { await f.close(); }
+});
+
+test('concurrent stale-lock recovery cannot remove the winning process lock', { timeout: 30000 }, async () => {
+  const f = await fixture(), children: { child: ReturnType<typeof spawn>; exited: Promise<unknown>; gate: string; state?: string }[] = [];
+  const until = async (predicate: () => boolean) => { const end = Date.now() + 12000; while (!predicate() && Date.now() < end) await sleep(10); assert(predicate(), JSON.stringify(children.map(c => c.state))); };
+  try {
+    const client = await f.client('A'), credentialPath = join(f.directory, 'A.json'); client.close();
+    const dead = spawnSync(process.execPath, ['-e', '']); assert.equal(dead.status, 0);
+    writeFileSync(credentialPath + '.lock', JSON.stringify({ pid: dead.pid }), { mode: 0o600 });
+    const script = fileURLToPath(new URL(`./fixtures/relay-lock-child.${import.meta.url.endsWith('.ts') ? 'ts' : 'js'}`, import.meta.url));
+    for (let i = 0; i < 2; i++) {
+      const gate = join(f.directory, `lock-gate-${i}`), child = spawn(process.execPath, ['--import', 'tsx', script, credentialPath, f.baseUrl, gate, process.env.EIGOS_TEST_RELAY_LOCK_IMPLEMENTATION ?? ''], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+      const entry = { child, exited: once(child, 'exit'), gate, state: undefined as string | undefined };
+      child.on('message', message => { if (message && typeof message === 'object' && 'state' in message) entry.state = String(message.state); }); children.push(entry);
+    }
+    await until(() => children.every(c => c.state));
+    const winner = children.find(c => c.state === 'recovering'); assert(winner);
+    writeFileSync(winner.gate, 'continue'); await until(() => winner.state === 'opened' || winner.state === 'rejected');
+    for (const other of children.filter(c => c !== winner)) if (other.state === 'recovering') writeFileSync(other.gate, 'continue');
+    await until(() => children.every(c => c.state === 'opened' || c.state === 'rejected'));
+    assert.equal(children.filter(c => c.state === 'opened').length, 1, 'A stale remover must not unlink a new live owner');
+    const owner = children.find(c => c.state === 'opened')!; owner.child.kill('SIGKILL'); await owner.exited;
+    assert.equal((await f.client('A')).agentId, client.agentId, 'An actual process crash releases the OS lock without losing node identity');
+  } finally {
+    for (const { child, gate } of children) { writeFileSync(gate, 'continue'); if (child.connected) child.send('close'); }
+    await Promise.all(children.map(async ({ child, exited }) => { const timer = setTimeout(() => child.kill('SIGKILL'), 1000); try { await exited; } finally { clearTimeout(timer); } }));
+    await f.close();
+  }
+});
+
+test('outbox recovery paginates beyond a thousand delivered messages and finds a new unsent envelope after restart', { timeout: 30000 }, async () => {
+  const f = await fixture();
+  try {
+    const a = await f.client('A'), b = await f.client('B'), contact = await f.connect(a, b), receipt = await a.send(b.agentId, contact, { old: true });
+    for (const item of await b.poll()) b.markHandled(item.senderId, item.id);
+    const keys = f.keys('A', a).keys, database = new DatabaseSync(join(f.directory, 'A.json.sqlite'));
+    try {
+      const insert = database.prepare('INSERT INTO node_outbox VALUES(?,?,?,?,?,?)');
+      for (let i = 0; i < 1000; i++) {
+        const id = randomUUID(), content = { historical: i }, envelope = await signEnvelope(keys, b.identity, contact, content, { id });
+        insert.run(id, b.agentId, contact, sha256(JSON.stringify(content)), envelope, JSON.stringify({ ...receipt, id, digest: sha256(envelope), status: 'received' }));
+      }
+    } finally { database.close(); }
+    const fresh = await a.queue(b.agentId, contact, { fresh: true }); a.close();
+    const reopened = await f.client('A'), first = reopened.outbox(), second = reopened.outbox({ after: first.at(-1)!.cursor });
+    assert.equal(first.length, 1000); assert(second.some(item => item.id === fresh));
+    assert.equal(new Set([...first, ...second].map(item => item.id)).size, 1002);
+    assert.deepEqual(reopened.outbox({ pendingOnly: true }).map(item => item.id), [fresh]);
+    assert.deepEqual(reopened.outbox({ after: second.at(-1)!.cursor }), []);
+    await reopened.deliver(fresh); assert.deepEqual((await b.poll()).map(item => item.content), [{ fresh: true }]);
+  } finally { await f.close(); }
+});
+
+test('trusted loopback TLS proxies retain per-client ingress buckets without trusting a spoofed earlier hop', async () => {
+  const now = Date.now(), f = await fixture({ trustLoopbackProxy: true, now: () => now });
+  const request = async (forwarded: string) => { const response = await fetch(f.baseUrl + '/health', { headers: { 'X-Forwarded-For': forwarded } }); await response.arrayBuffer(); return response.status; };
+  try {
+    for (let batch = 0; batch < 20; batch++) assert((await Promise.all(Array.from({ length: 30 }, () => request('198.51.100.20')))).every(status => status === 200));
+    assert.equal(await request('198.51.100.20'), 429);
+    assert.equal(await request('198.51.100.21'), 200);
+    assert.equal(await request('192.0.2.123, 198.51.100.20'), 429, 'A client-supplied earlier hop cannot replace the address appended by the trusted proxy');
+    assert.throws(() => readRelayConfig({ EIGOS_RELAY_HOST: '0.0.0.0', EIGOS_RELAY_TRUST_LOOPBACK_PROXY: 'true', EIGOS_RELAY_DATABASE_PATH: join(f.directory, 'unused.sqlite') }), /loopback-only/);
+  } finally { await f.close(); }
+});
+
+test('forwarded addresses cannot evade ingress limits when no trusted proxy is configured', async () => {
+  const now = Date.now(), f = await fixture({ now: () => now });
+  const request = async (i: number) => { const response = await fetch(f.baseUrl + '/health', { headers: { 'X-Forwarded-For': `198.51.100.${i % 254 + 1}` } }); await response.arrayBuffer(); return response.status; };
+  try {
+    for (let batch = 0; batch < 20; batch++) assert((await Promise.all(Array.from({ length: 30 }, (_, i) => request(batch * 30 + i)))).every(status => status === 200));
+    assert.equal(await request(601), 429);
   } finally { await f.close(); }
 });
 
