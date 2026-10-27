@@ -4319,7 +4319,7 @@
       "currentControl": "Strict bounded data; no model-selected budget, source URL, arbitrary payload or business-effect permission",
       "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
       "stage": "S3",
-      "sourceDigest": "b3050ab970599d0c9dd6085eef9c2dc768519dfaedd6a4357dbd012a71741e3d"
+      "sourceDigest": "c862979257db5b2126bed3d5009cc0283112c65e9df9f75d571fbeb99d792b7e"
     },
     {
       "id": "pipeline-observation-store",

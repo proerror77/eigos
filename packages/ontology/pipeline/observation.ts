@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { objectRefSchema } from '../model.js';
-import { ontologyReleaseRefSchema } from '../definition-contracts.js';
+import type { ontologyReleaseRefSchema } from '../definition-contracts.js';
 import type { Ref } from '../execution.js';
 
 /** Supplied by the PA, never invented or extended by a model decision. */
@@ -11,8 +11,10 @@ export const observationBudgetSchema = z.strictObject({
 });
 export type ObservationBudget = z.infer<typeof observationBudgetSchema>;
 export const observationSelectionSchema = z.strictObject({
-  step: objectRefSchema.extend({ type: z.literal('ExecutionStep') }),
-  object: objectRefSchema,
+  // domain.ts imports the PA budget while model.ts imports DomainError. Resolve
+  // shared reference schemas only after this module graph has initialized.
+  step: z.lazy(() => objectRefSchema.extend({ type: z.literal('ExecutionStep') })),
+  object: z.lazy(() => objectRefSchema),
   fields: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,79}$/)).min(1).max(40),
   intervalMs: z.number().int().min(1000).max(3600000),
   replaceWatchId: z.uuid().optional(),
