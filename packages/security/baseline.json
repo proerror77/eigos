@@ -3163,14 +3163,14 @@
     {
       "id": "source-selection",
       "file": "packages/ontology/ride-estimate-functions.ts",
-      "sourceDigest": "b3a1fb5e3b46ea3f38834ee01cef35bc247e8b960d8cc549324b81632f416524",
+      "sourceDigest": "572c383939705a61a6e51ae2967f9686e95dca6a99fb39276f073f3aa8ed7643",
       "channels": [
         "model",
         "dispatch",
         "artifact"
       ],
       "content": "Pure source-derived place identity and source/freshness evaluation",
-      "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
+      "currentControl": "Owned current source proof, city and unique requested match; quote dependencies fresh at request start, quote freshness checked now; unknown stays unresolved",
       "targetControl": "Caller-scoped inputs and derived-output protection",
       "stage": "S3"
     },
