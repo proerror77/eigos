@@ -32,6 +32,8 @@ import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBind
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 import { assertPipelineReady } from '../ontology/pipeline/contracts.js';
+import { capturePipelineRead, projectPipelineRead, type CapturedPipelineRead } from './pipeline-source.js';
+import { PipelineObserver } from './pipeline-observer.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -125,6 +127,7 @@ export class AgentRuntime {
   private accept(claim: WorkClaim, program: AgentProgram, selection: NonNullable<AgentExecutionState['completion']>) {
         this.store.finish(claim, current => {
           const fresh = this.context(claim, current), reads = selection.ontologyPlanning, proposal = selection.proposal;
+          new PipelineObserver(this.store, this.catalog).assertCompletion(claim.owner, current);
           assertGoalCoverage(current, program.capability());
           validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, reads, true);
           this.store.pipelineFacts.assertFresh(claim.owner, fresh.graph.ontologyId, reads.objects.map(value => value.ref));
@@ -139,6 +142,9 @@ export class AgentRuntime {
             }
           }
           const delivery = goal?.delivery ?? program.complete(fresh, proposal, reads), capability = program.capability();
+          const usedFacts = (fresh.intents ?? []).filter(intent => intent.lastVerifiedResult?.evidenceRefs.some(ref => delivery.evidenceRefs.includes(ref))).flatMap(intent =>
+            ((intent.acceptedOutput?.pipelineFacts ?? []) as import('../ontology/model.js').ObjectRef[]).map(object => ({ object, semanticDigest: (intent.acceptedOutput?.pipelineFactDigests as Record<string, string> | undefined)?.[object.id] ?? '' })));
+          this.store.pipelineFacts.assertEvidence(claim.owner, fresh.graph, usedFacts);
           const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
           const checks = goal?.assessment.requirements ?? delivery.requirementChecks ?? checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
           if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
@@ -171,6 +177,7 @@ export class AgentRuntime {
     if (this.store.pipelineFacts.hasDependencies(claim.owner, claim.job.id, revision)) {
       if (!this.store.checkpoint(claim, () => this.store.pipelineFacts.expireForTask(claim.owner, claim.job.id, revision))) return;
     }
+    if (await new PipelineObserver(this.store, this.catalog).run(claim, signal)) return;
     const program = this.program(claim), ctx = this.context(claim);
     program.assertContext?.(ctx);
     if (!this.store.get(claim.owner, claim.job.id).delegation?.callerAction) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
@@ -225,6 +232,19 @@ export class AgentRuntime {
     if (!initialSelection && response.evidence.decisionDigest !== digest(decision)) failure('Agent decision differs from the recorded model output');
     if (decision.requestRevision !== ctx.request.revision) failure('Stale agent decision');
     const reads = preparedReads ?? access.session.finish();
+    if (decision.kind === 'observe') {
+      try {
+        this.store.finish(claim, current => {
+          const fresh = this.context(claim, current);
+          validatePlanningSnapshot(fresh.graph, claim.owner, fresh.request, reads, true);
+          new PipelineObserver(this.store, this.catalog).start(claim.owner, current, decision, reads, response.evidence.id);
+        });
+      } catch (error) {
+        if (error instanceof ConnectionAuthorizationRequired) throw error;
+        this.store.finish(claim, current => { this.feedback(current, 'validation', errorMessage(error), digest(decision)); current.delegation!.nextAt = 0; });
+      }
+      return;
+    }
     if (decision.kind === 'prepare') {
       try {
         this.store.finish(claim, current => {
@@ -233,6 +253,11 @@ export class AgentRuntime {
           const { contexts, request } = prepareComponentContexts(this.catalog, fresh, decision, response.evidence.id, reads);
           current.delegation!.request = request;
           current.delegation!.agent!.composition!.contexts.push(...contexts);
+          for (const component of contexts) for (const snapshot of reads.objects.filter(value => value.ref.id.startsWith('pipeline:'))) {
+            const fact = this.store.pipelineFacts.current(claim.owner, fresh.graph.ontologyId, snapshot.ref);
+            const fields = Object.keys(fresh.graph.read(claim.owner, snapshot.ref).properties).filter(field => fact && Object.hasOwn(fact.properties, field));
+            if (fields.length) this.store.pipelineFacts.track(claim.owner, fresh.graph.ontologyId, current.id, fresh.request.revision, component.id, snapshot.ref, fields, true);
+          }
           current.delegation!.phase = 'planning'; current.delegation!.nextAt = 0; current.updatedAt = new Date().toISOString();
           current.delegation!.events.push({ at: current.updatedAt, event: 'agent_contexts_prepared', evidence: digest(contexts.map(context => context.digest)) });
         });
@@ -527,6 +552,7 @@ export class AgentRuntime {
     }
     let input = structuredClone(step.input), inputPlanning: PlanningSnapshot | undefined;
     let attempt: ExecutionAttempt | undefined;
+    let pipelineRead: CapturedPipelineRead | undefined;
     try {
       const root = this.context(claim);
       if (root.state.composition) input = composedInputs(this.catalog, root, plan, step, id => this.store.intent(claim.owner, id));
@@ -542,11 +568,13 @@ export class AgentRuntime {
         access.session.acceptReceipts(access.session.receipts().filter(read=>read.status==='ok').map(read=>read.id)); inputPlanning=access.session.finish();
       }
       const current = this.boundStep(claim, program, step).context;
+      if (step.contextId && step.effect !== 'read') current.graph.assertPipelineContextCurrent(claim.owner, current.request.id, current.request.revision, step.contextId);
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, current.request, plan.ontologyPlanning, true);
       this.pipelineStatus(program, current, step.action, input);
       this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       if (step.definitionDigest !== digest(program.definition(this.store.ontologyForJob(claim.owner, claim.job), step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
+      pipelineRead = capturePipelineRead(this.store, program, current, step.action, input);
       if (program.privateInput && digest(program.privateInput(current, step.action, input) ?? {}) !== intent.privateDigest) failure('Prepared private input changed before dispatch');
       program.validatePlanning?.(current, step.action, input, inputPlanning ?? plan.ontologyPlanning);
       validateAgentAuthority(program, current, plan, step);
@@ -572,7 +600,9 @@ export class AgentRuntime {
         const pipeline = this.pipelineStatus(program, current, step.action, input);
         this.store.definitions.pipeline.recordUse(claim.owner, job.id, intent.id, this.store.ontologyReleaseForJob(claim.owner, job), pipeline);
         for (const object of [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])].filter(value => value.ref.id.startsWith('pipeline:'))) {
-          this.store.pipelineFacts.track(claim.owner, current.graph.ontologyId, job.id, current.request.revision, step.contextId ?? program.ref.id, object.ref);
+          const fact = this.store.pipelineFacts.current(claim.owner, current.graph.ontologyId, object.ref);
+          const fields = current.graph.pipelineReadableFields(claim.owner, object.ref, Object.keys(fact?.properties ?? {}));
+          if (fields.length) this.store.pipelineFacts.track(claim.owner, current.graph.ontologyId, job.id, current.request.revision, step.contextId ?? program.ref.id, object.ref, fields);
         }
         if (!['read', 'local'].includes(step.effect)) {
           const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Action authority expired before dispatch');
@@ -600,6 +630,7 @@ export class AgentRuntime {
       if (!this.store.claimActive(claim)) failure('Execution lease or task authority ended before the provider write');
       if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
       const current = this.boundStep(claim, program, step).context;
+      if (step.contextId && step.effect !== 'read') current.graph.assertPipelineContextCurrent(claim.owner, current.request.id, current.request.revision, step.contextId);
       this.pipelineStatus(program, current, step.action, input);
       this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       validateAgentAuthority(program, current, plan, step);
@@ -626,7 +657,9 @@ export class AgentRuntime {
       if (value.kind === 'confirmed') {
         const current = { ...context, ...this.boundStep(claim, program, step, job).context };
         const object = program.project(current, step.action, input, response!);
-        accepted.acceptedOutput = { object, ...(job.delegation!.agent!.composition ? { ports: sealComposedOutputs(program, current, step, input, response!, object, accepted) } : {}) };
+        const mapped = pipelineRead ? projectPipelineRead(this.store, program, current, step.action, input, response!, pipelineRead) : undefined;
+        const pipelineFacts = mapped ? [mapped.object] : [];
+        accepted.acceptedOutput = { object, ...(mapped ? { pipelineFacts, pipelineFactDigests: { [mapped.object.id]: mapped.semanticDigest } } : {}), ...(job.delegation!.agent!.composition ? { ports: sealComposedOutputs(program, current, step, input, response!, object, accepted) } : {}) };
         if (!job.delegation!.agent!.observations.some(ref => equal(ref, object))) job.delegation!.agent!.observations.push(object);
         resolveTaskRecovery(job, 'source', step.action);
         program.onAccepted?.(current, step.action, input, response!, object, job);

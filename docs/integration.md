@@ -26,6 +26,7 @@ MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实�
 | `cancel_task` | 取消任务；不自动撤销已发生的供应商操作 |
 | `reconcile_task` | 按原操作身份查证未知结果 |
 | `revoke_task_authorization` | 阻止未来派发，保留原操作查证责任 |
+| `control_task_observation` | 对已明确委托的有界观察报告提示、停止或按原预算恢复 |
 
 当前通用委托入口为 `eigos.delegate`。任务说明能力只交付说明文档；不能把它描述为购物、预约或出行已经完成。
 
@@ -67,6 +68,37 @@ A2A 使用 `SendMessage` 提交或续接，使用 `GetTask` 回读。长任务�
 ```
 
 查询返回的摘要限制内部执行信息；具体交付物在最终 artifact 中。`working` 可以包含等待 Worker、来源或异步回读；`paused` 的技术恢复信息与实际缺少用户选择分别表达。只有完成验收后的结果才能作为所请求交付的依据。
+
+## 有界观察
+
+对已配置并验证了 Pipeline 观察适配器的来源，PA 可以在同一次提交中提供 `observationBudget`：
+
+```json
+{
+  "until": "2026-11-01T10:00:00+08:00",
+  "maxReads": 100,
+  "maxActiveMs": 60000
+}
+```
+
+`until` 应替换为本次委托的未来截止时间。此预算只允许 Worker 在原任务权限内重复一个模型选定、已经独立验收的只读步骤；它不启用尚未接入的来源。模型不能增加期限和额度。任务和来源授权可能更早到期。
+
+`get_task` 的 `observation` 返回累计用量和可读观察项；`paused`、`stale`、`unavailable` 或 `coverageGapAt` 表示观察有未解决的限制，不能声称完整覆盖。结束观察不等于完成报名、到场、日历写入或付款。未变化的读取保持持久等待，不反复调用模型。
+
+MCP 控制示例（ID 和修订来自当前任务）：
+
+```json
+{
+  "action": "stop_observation",
+  "taskId": "00000000-0000-4000-8000-000000000001",
+  "expectedRevision": 1,
+  "requestId": "stable-observation-stop-id"
+}
+```
+
+调用 `control_task_observation`；可选 `watchId` 限定一个观察。`resume_observation` 使用同一结构并重新检查原来源，累计用量和截止时间不变。`report_observation_change` 另外要求 `watchId`、`eventId` 和 64 位十六进制 SHA-256 `contentDigest`，不能传来源载荷；提示只安排独立回读。
+
+A2A 在原 `taskId`／`contextId` 的 `SendMessage` data part 中传相同 `action`、`expectedRevision` 及可选字段；幂等标识使用 `message.messageId`。观察摘要位于 `Task.metadata.observation`。两种协议都检查同一任务、当前修订和权限，不会由 Gateway 执行来源调用。Foundation 只返回当前接收方可读的字段和观察信息。
 
 ## 授权与支付
 

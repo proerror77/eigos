@@ -91,13 +91,21 @@ test('A delayed renewal cannot revive a lease that expired while its task state 
 
 test('The actual idle Worker query uses its pending/recovery index instead of scanning historical task bodies', t => {
   const store = new JobStore(':memory:'), db = (store as unknown as { db: DatabaseSync }).db;
-  const prepare = db.prepare.bind(db); let query = '';
-  t.mock.method(db, 'prepare', (sql: string) => { if (sql.startsWith('SELECT owner,body FROM jobs WHERE')) query = sql; return prepare(sql); });
+  const prepare = db.prepare.bind(db); let query = '', observationQuery = '';
+  t.mock.method(db, 'prepare', (sql: string) => {
+    if (sql.startsWith('SELECT owner,body FROM jobs WHERE')) query = sql;
+    if (sql.startsWith('SELECT jobs.owner,jobs.body FROM jobs WHERE')) observationQuery = sql;
+    return prepare(sql);
+  });
   try {
     assert.equal(store.claim(['eigos.delegate'], 15000), undefined); assert(query);
     const plan = prepare('EXPLAIN QUERY PLAN ' + query).all('eigos.delegate', BACKEND_VERSION, Date.now());
     assert(plan.some(row => String(row.detail).includes('jobs_worker_ready')), JSON.stringify(plan));
     assert(!plan.some(row => String(row.detail).includes('SCAN jobs')), JSON.stringify(plan));
+    assert(observationQuery);
+    const watches = prepare('EXPLAIN QUERY PLAN ' + observationQuery).all({ observationNow: Date.now() }, 'worker', 'eigos.delegate', BACKEND_VERSION, Date.now());
+    assert(watches.some(row => String(row.detail).includes('pipeline_watch_queue')), JSON.stringify(watches));
+    assert(!watches.some(row => /SCAN (jobs|task)\b/.test(String(row.detail))), JSON.stringify(watches));
   } finally { store.close(); }
 });
 

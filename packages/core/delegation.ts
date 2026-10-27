@@ -69,13 +69,14 @@ export interface Delegation {
   backendVersion: typeof BACKEND_VERSION;
   /** Exact immutable metadata contract; absent only on pre-registry records. */
   ontologyRelease?: import('../ontology/definition-contracts.js').OntologyReleaseRef;
+  observationBudget?: import('../ontology/pipeline/observation.js').ObservationBudget;
   /** Operator-created validation task; never accepted by normal submission. */
   pipelineValidation?: import('../ontology/pipeline/contracts.js').PipelineValidationScope;
   callerAction?: { version: '1'; requestId: string; ownerDigest: string; ontologyRelease: import('../ontology/definition-contracts.js').OntologyReleaseRef;
     programRef: import('../ontology/execution.js').Ref; action: string; input: Record<string, unknown>; inputDigest: string;
     interfaceInvocation?: { object: import('../ontology/model.js').ObjectRef; interfaceId: string; actionId: string; input: Record<string, unknown> } };
   request: ServiceRequest;
-  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
+  phase: 'grounding' | 'clarifying' | 'resolving' | 'planning' | 'observing' | 'awaiting_authorization' | 'awaiting_pa_payment' | 'executing' | 'recovering' | 'paused' | 'accepted' | 'rejected' | 'failed' | 'canceled';
   recovery?: import('./task-recovery.js').TaskRecovery;
   recoveryHistory?: import('./task-recovery.js').TaskRecovery[];
   plan?: ExecutionPlan;

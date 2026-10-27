@@ -9,6 +9,7 @@ import type { ActionIntent } from '../ontology/actions.js';
 import type { AgentActionContext, AgentActionResult } from './agent-program.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import { assertPortCompatible, compositionCompiler, evaluateCompositionChecks, readAcceptedPort, sealPortValue, type AcceptedPortValue, type CompositionPort } from '../ontology/composition-contract.js';
+import { actionEffects } from '../ontology/composition-contract.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
@@ -191,7 +192,7 @@ export function componentContext(ctx: AgentProgramContext, component: AgentCompo
   if (!ctx.modelRuns?.some(run => run.id === component.initializedBy.modelRunId && run.decisionDigest === digest(component.initializedBy.decision))) fail('Component setup has no original authenticated model decision');
   const steps = ctx.state.plans.flatMap(plan => plan.steps).filter(step => step.contextId === component.id && step.contextDigest === component.digest);
   const intents = (ctx.intents ?? []).filter(intent => steps.some(step => step.intentId === intent.id && step.binding && same(intent.bindingRef, step.binding.ref)));
-  const objects = intents.filter(intent => intent.state === 'effect_confirmed').map(intent => intent.acceptedOutput?.object).filter(Boolean);
+  const objects = intents.filter(intent => intent.state === 'effect_confirmed').flatMap(intent => [intent.acceptedOutput?.object, ...((intent.acceptedOutput?.pipelineFacts ?? []) as ObjectRef[])]).filter(Boolean);
   const { managedActionIds: _rootActions, paPayment: _rootPayment, ...state } = ctx.state;
   return { ...ctx, taskIntents: ctx.taskIntents ?? ctx.intents, intents, state: { ...state, programRef: component.programRef, programDigest: component.programDigest,
     scope: component.scope, input: component.input, ...(component.managedActionIds ? { managedActionIds: component.managedActionIds } : {}),
@@ -217,6 +218,7 @@ export function selectComposedStep(catalog: ExecutionCatalog, ctx: AgentProgramC
   const pin = discoveredBinding(reads, step.bindingDigest);
   if (step.action !== pin.actionId) fail('Action differs from its discovered binding');
   const component = ctx.state.composition?.contexts.find(value => value.id === step.contextId) ?? fail('Prepare this component context before selecting actions');
+  if (actionEffects(ctx.graph.model.action(step.action)).some(effect => effect !== 'read')) ctx.graph.assertPipelineContextCurrent(ctx.owner, ctx.request.id, ctx.request.revision, component.id);
   const { program } = catalog.resolveActionBinding(ctx.graph, ctx.owner, ctx.request, pin);
   const context = componentContext(ctx, component, program);
   if (component.managedActionIds && !component.managedActionIds.includes(step.action)) fail('Action is outside this explicitly selected managed context');

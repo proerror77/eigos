@@ -420,7 +420,7 @@ export class SecurityPolicies {
       // WHERE miss could reveal a bit about data whose inputs were revoked.
       checked.set(key,binding);
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
-        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision);
+        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type] || this.observedPipelineHistory(scope,dependency)?undefined:dependency.revision);
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
         const properties=this.lineageProperties(scope,dependency);
         if(digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest){checked.set(key,undefined);return;}
@@ -511,13 +511,44 @@ export class SecurityPolicies {
     if (!scope.grant) return;
     for (const row of this.db.prepare('SELECT digest,body FROM security_reads WHERE grant_id=?').all(scope.grant.id)) scope.lineage.set(String(row.digest),securityEnvelopeSchema.parse(JSON.parse(String(row.body))));
   }
+  /** A PA-delegated observation explicitly follows a mutable Pipeline object.
+   * Historical values retain their original writer and source identity, while
+   * binding() still requires today's source, object and field authority. This
+   * permits reading old evidence, never treating it as a current business fact;
+   * Pipeline dispatch/context/completion gates enforce freshness separately. */
+  private observedPipelineHistory(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]):Record<string,unknown>|undefined {
+    if(!scope.grant || !dependency.object.id.startsWith('pipeline:'))return;
+    const watched=this.db.prepare(`SELECT 1 FROM pipeline_observation_watches w JOIN jobs j ON j.owner=w.owner AND j.id=w.task_id
+      WHERE w.owner=? AND w.task_id=? AND json_extract(w.body,'$.requestRevision')=?
+      AND json_extract(w.body,'$.selection.object.type')=? AND json_extract(w.body,'$.selection.object.id')=?
+      AND json_extract(j.body,'$.delegation.observationBudget') IS NOT NULL`).get(scope.actor.ownerKey,scope.grant.taskId,scope.grant.requestRevision,dependency.object.type,dependency.object.id);
+    if(!watched)return;
+    const current=this.db.prepare(`SELECT o.revision,o.body,f.body AS fact FROM ontology_objects o JOIN ontology_pipeline_facts f
+      ON f.owner=o.owner AND f.object_type=o.type AND f.object_id=o.id
+      WHERE o.owner=? AND o.type=? AND o.id=? AND f.ontology_id=?`).get(scope.actor.ownerKey,dependency.object.type,dependency.object.id,this.model.ref.id);
+    if(!current || Number(current.revision)===dependency.revision)return;
+    const properties=JSON.parse(String(current.body)).properties,fact=JSON.parse(String(current.fact));
+    if(digest(properties)!==fact.semanticDigest)return;
+    const old=this.db.prepare('SELECT body,definition_digest FROM ontology_object_versions WHERE ontology_id=? AND owner=? AND type=? AND id=? AND revision=? AND deleted=0')
+      .get(this.model.ref.id,scope.actor.ownerKey,dependency.object.type,dependency.object.id,dependency.revision);
+    if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))return;
+    const body=JSON.parse(String(old.body));
+    if(!['provider','synthetic'].includes(body.source.kind) || !body.source.id.startsWith('pipeline:'))return;
+    const origin=(revision:number)=>this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?')
+      .get(scope.actor.ownerKey,dependency.object.type,dependency.object.id,revision);
+    const before=origin(dependency.revision),after=origin(Number(current.revision));
+    if(!before || !after)return;
+    const identity=(row:NonNullable<typeof before>)=>{const o=JSON.parse(String(row.body));return [o.programId,o.programDigest,o.sourceBindingId];};
+    if(digest(identity(before))!==digest(identity(after)))return;
+    return body.properties;
+  }
   private lineageProperties(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]) {
     const row=this.db.prepare('SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,dependency.object.type,dependency.object.id);
     if(!row)throw new SecurityError('OUTPUT_NOT_ALLOWED');
     if(dependency.object.type==='ServiceRequest' || Number(row.revision)===dependency.revision)return JSON.parse(String(row.body)).properties;
-    // Only reviewed task-control records may use their immutable writer history.
-    // A changed provider fact never gains this exception; current grants and
-    // current field labels still apply before this historical hash is checked.
+    const observed=this.observedPipelineHistory(scope,dependency);if(observed)return observed;
+    // Other provider facts cannot reuse historical values. Current grants and
+    // field labels apply before either reviewed historical hash is checked.
     if(!taskContextFields[dependency.object.type])throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const old=this.db.prepare('SELECT body,definition_digest FROM ontology_object_versions WHERE ontology_id=? AND owner=? AND type=? AND id=? AND revision=? AND deleted=0').get(this.model.ref.id,scope.actor.ownerKey,dependency.object.type,dependency.object.id,dependency.revision);
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -533,7 +564,7 @@ export class SecurityPolicies {
     }
     for (const dependency of envelope.lineage) {
       const binding=this.binding(scope,dependency.object);
-      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision && !this.observedPipelineHistory(scope,dependency)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       const properties=this.lineageProperties(scope,dependency);
       if (digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
