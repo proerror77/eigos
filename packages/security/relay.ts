@@ -32,8 +32,9 @@ export class RelayAuthority {
       const parent = this.security.agentGrant(actor.installationId);
       if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt > now + 900000
         || expiresAt > Date.parse(parent.expiresAt) || proof.expiresAt <= now) throw new SecurityError('AUTHORIZATION_REQUIRED');
-      const previous = this.db.prepare('SELECT installation_id,owner FROM security_relay_identities WHERE agent_id=?').get(agentId);
+      const previous = this.db.prepare('SELECT installation_id,owner,state FROM security_relay_identities WHERE agent_id=?').get(agentId);
       if (previous && (previous.installation_id !== actor.installationId || previous.owner !== actor.ownerKey)) throw new SecurityError('AUTHORIZATION_REQUIRED');
+      if (previous?.state === 'revoked') throw new SecurityError('ACCESS_REVOKED');
       this.db.prepare('DELETE FROM security_relay_proofs WHERE expires_at<=?').run(now);
       if (this.db.prepare('SELECT 1 FROM security_relay_proofs WHERE id=?').get(proof.jti)) throw new SecurityError('ACCESS_REVOKED');
       const scopes = TASK_SCOPES.filter(scope => principal.scopes.includes(scope));

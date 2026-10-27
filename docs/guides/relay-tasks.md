@@ -15,7 +15,7 @@ PA（自己的 OAuth 与 Relay 私钥）
 
 PA 通过原登录流程和 `AgentConnector` 取得有效的 Foundation 安装身份。`POST /relay/bind` 同时验证其 OAuth 令牌、当前 AgentGrant、已登记 Relay 名片和该私钥的 DPoP 证明，把完整公钥 ID 绑定到准确安装。绑定只保留任务权限，最长 15 分钟，且不超过 OAuth 令牌或 AgentGrant 的到期时间。其他安装不能接管同一个公钥；重新绑定、任务读取和发送结果前都检查当前授权。
 
-`POST /relay/revoke` 撤销本安装的公钥路由。会员、安装、AgentGrant、TaskDataGrant 或来源权限的撤销仍由已有权限系统处理；Relay 联系接受不能恢复这些权限。原始 OAuth 令牌只发给其既有 Gateway；刷新凭据保留在 PA。Relay 消息不携带 OAuth、来源凭据或 Worker 租约令牌。
+`POST /relay/revoke` 撤销本安装的公钥路由，该公钥不能通过重启或重新绑定恢复；重新接入需明确建立新节点身份。会员、安装、AgentGrant、TaskDataGrant 或来源权限的撤销仍由已有权限系统处理；Relay 联系接受不能恢复这些权限。原始 OAuth 令牌只发给其既有 Gateway；刷新凭据保留在 PA。Relay 消息不携带 OAuth、来源凭据或 Worker 租约令牌。
 
 任务信封使用 `eigos.task-relay/1`，支持 `task.submit`、`task.get`、`task.reply` 和 `task.cancel`。提交只进入原有 `eigos.delegate`，不提供付款、计划批准或额外管理动作。主实例以安装 ID 和稳定业务 `requestId` 构造防重键；传输重试不会另建任务或重新发放任务授权。
 

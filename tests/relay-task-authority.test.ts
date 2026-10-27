@@ -39,9 +39,11 @@ test('Relay identity and business retry identity survive reconnect but recheck c
     assert.throws(() => f.jobs.security.relay.command(node, requestId, 'b'.repeat(64)), /another command/);
     f.jobs.security.relay.revoke(p, node);
     assert.throws(() => f.jobs.security.relay.principal(node), SecurityError);
-    bind();
+    assert.throws(bind, /ACCESS_REVOKED/, 'An ordinary reconnect cannot restore this revoked key');
+    const replacement = (await createNodeKeys('Explicit new identity')).identity.card.agentId;
+    f.jobs.security.relay.bind(p, replacement, Date.now() + 60000, { jti: randomUUID(), expiresAt: Date.now() + 30000 });
     f.jobs.security.revokeGrant(f.owner, parent.id, parent.revision);
-    assert.throws(() => f.jobs.security.relay.principal(node), SecurityError);
+    assert.throws(() => f.jobs.security.relay.principal(replacement), SecurityError);
     assert.throws(bind, SecurityError);
   } finally { f.close(); }
 });

@@ -99,6 +99,7 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     const revoke = await agent.fetch('/relay/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: node.agentId }) }); assert.equal(revoke.status, 200);
     const deniedId = randomUUID(); await pa.send({ kind: 'task.get', requestId: deniedId, taskId: submitted.id });
     await assert.rejects(pa.receive(deniedId, AbortSignal.timeout(10000)), /AUTHORIZATION_REQUIRED/);
+    await assert.rejects(new TaskRelayClient(node, agent).bind(), /relay_binding_rejected/, 'Restarting the PA cannot reactivate its revoked transport key');
   } finally {
     for (const node of nodes) node.close(); await gateway.close(); relay.stop(); relay.store.close();
     primaryServer.closeAllConnections(); relayServer.closeAllConnections();
