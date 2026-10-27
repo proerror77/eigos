@@ -23,7 +23,8 @@ import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
 import { DefinitionStore, currentKernelImplementation } from '../ontology/definition-store.js';
 import { PipelineFactStore } from '../ontology/pipeline/facts.js';
-import type { PipelineObservation } from '../ontology/pipeline/contracts.js';
+import { assertPipelineReady, type PipelineObservation } from '../ontology/pipeline/contracts.js';
+import { actionSources } from '../security/component-authority.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
@@ -158,6 +159,16 @@ export class JobStore {
       // into a model session or projected under another task's authority.
       changed: (owner, jobId, revision) => { this.db.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.nextAt',0) WHERE owner=? AND id=? AND state IN ('working','submitted') AND json_extract(body,'$.delegation.request.revision')=?").run(owner, jobId, revision); },
     }, options.securityNow ?? Date.now));
+    this.security.relayReads.setPipelineGuard((owner, request, plan, intent) => {
+      const job = this.get(owner, request.context.requestId), graph = this.ontologyForJob(owner, job);
+      const agent = job.delegation?.agent, step = plan.steps.find(value => value.intentId === intent.id);
+      if (!agent || !step) throw new DomainError('FORBIDDEN', 'The source read has no current action plan');
+      const binding = actionSources(agent, step.action, step.input, step).find(value => value.programRef.id === request.context.programId && value.programDigest === request.context.programDigest);
+      if (!binding) throw new DomainError('FORBIDDEN', 'The source read differs from the task action binding');
+      assertPipelineReady(graph.pipelineStatus(owner, binding.programRef, binding.programDigest, request.context.action));
+      const resolvedInputs = job.delegation?.agent?.inputResolutions?.filter(value => value.planId === plan.id && value.intentId === intent.id && value.inputDigest === request.context.actionInputDigest) ?? [];
+      this.pipelineFacts.assertSnapshots(owner, graph, [...plan.ontologyPlanning.objects, ...resolvedInputs.flatMap(value => value.ontologyPlanning.objects)]);
+    });
     this.baseOntology.setReadOverlayFactory((owner, requestId) => {
       const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;

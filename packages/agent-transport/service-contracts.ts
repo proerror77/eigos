@@ -20,6 +20,6 @@ export const sourceReadResponseSchema = z.strictObject({
   protocol: z.literal(SOURCE_RELAY_PROTOCOL), kind: z.literal('source.result'), callId: z.uuid(),
   authorityId: z.uuid(), requestDigest: sha,
   result: z.strictObject({ data: didiDataSchema, receipt: didiReceiptSchema }).optional(),
-  error: z.enum(['AUTHORIZATION_REJECTED', 'SOURCE_UNAVAILABLE', 'READ_OUTCOME_UNKNOWN', 'RESULT_TOO_LARGE']).optional(),
+  error: z.enum(['AUTHORIZATION_REJECTED', 'SOURCE_UNAVAILABLE', 'RATE_LIMITED', 'READ_OUTCOME_UNKNOWN', 'RESULT_TOO_LARGE']).optional(),
 }).refine(v => !!v.result !== !!v.error);
 export type SourceReadResponse = z.infer<typeof sourceReadResponseSchema>;

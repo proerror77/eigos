@@ -71,3 +71,15 @@ test('revocation after provider response withholds source facts from the return 
     assert.equal(f.source.calls.filter(c => c.name).length, 1);
   } finally { service.close(); await f.close(); }
 });
+
+test('provider rate limits retain their bounded error code instead of encouraging another immediate read', async () => {
+  const f = await fixture();
+  f.source.flags.transform = () => new Response('rate limited', { status: 429 });
+  const service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), f.authorize);
+  try {
+    await service.handle(f.message, AbortSignal.timeout(10000));
+    const response = sourceReadResponseSchema.parse((await f.gateway.poll())[0]!.content);
+    assert.equal(response.error, 'RATE_LIMITED'); assert.equal(response.result, undefined);
+    assert.equal(f.source.calls.filter(c => c.name).length, 0);
+  } finally { service.close(); await f.close(); }
+});

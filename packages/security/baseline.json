@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "16f9607a082f5680a56302642a2be4434553cd33572abca6e5a3d1e571169c77",
+      "sourceDigest": "3fee38803a0bc9c5cb0112eadd9b1b5fef3b7146f549d2c5b974cd11d5eacea8",
       "channels": [
         "sqlite",
         "idempotency"
@@ -4335,7 +4335,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "cb9977ade80cd8c64137149a965421a43cf91a6cab6a14a1308c6beab6f643bb",
+      "sourceDigest": "2a4ed371ed79d12895f6ee3140d17abc5cbb4f2d8d92f6de03ff1c04d6d583fd",
       "channels": [
         "authorization_control",
         "source"
@@ -4360,7 +4360,7 @@
     {
       "id": "relay-source-service",
       "file": "packages/agent-transport/didi-service.ts",
-      "sourceDigest": "2fc8e498dda1ce074df970d35ea90857ade9f9d45beece643b6c50eaf9d9030e",
+      "sourceDigest": "23f517a316c2c9e32739e2dd6fc83dfa30b3faa5c2bc4a6b1a05e371110d1ca8",
       "channels": [
         "agent_transport",
         "source",
@@ -4423,7 +4423,7 @@
     {
       "id": "relay-source-contract",
       "file": "packages/agent-transport/service-contracts.ts",
-      "sourceDigest": "b6b4655dc0b6fd48b2ece485702d9b8afdaab51d37ff6e2295324662b5f79988",
+      "sourceDigest": "49b93a27e07775cd704d947d9b38dea0f83956f98691b1508887fdc6ea592921",
       "channels": [
         "agent_transport",
         "source"
@@ -4481,6 +4481,32 @@
       "content": "Independent source Agent process",
       "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "native-pa-relay-client",
+      "file": "integrations/grok/eigos-native/client.mjs",
+      "sourceDigest": "d950cb7d635850743c500e74f40ce0601d7eae3189b55ed7bb3beaa3f6b87fe9",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Installed PA transport requests, saved profiles and result receipts",
+      "currentControl": "Explicit transport choice, pinned authority/public key, private OAuth custody and stable task request identity",
+      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
+      "stage": "S5"
+    },
+    {
+      "id": "primary-pa-profile-setup",
+      "file": "scripts/setup-primary-pa.mjs",
+      "sourceDigest": "de17a7a265bc1c4bb82385513f87912c6ea95d2126310ebb5505ed35b2c9510c",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Primary PA client links and saved Relay identity configuration",
+      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile",
+      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     }
   ]

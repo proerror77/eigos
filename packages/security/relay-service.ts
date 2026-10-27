@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
+import { DomainError } from '../core/domain.js';
 import { agentIdSchema } from '../relay/contracts.js';
 import { didiToolInputs } from '../capabilities/didi/contracts.js';
 import { sourceReadRequestSchema, sourceReadResponseSchema, SOURCE_RELAY_PROTOCOL, type SourceReadRequest, type SourceReadResponse } from '../agent-transport/service-contracts.js';
@@ -9,16 +10,22 @@ import { accessContextSchema } from './contracts.js';
 import { authorizationScope, withAuthorization } from './context.js';
 import { SecurityError, type SecurityStore } from './store.js';
 import type { ActionIntent, ExecutionAttempt } from '../ontology/actions.js';
+import type { AgentActionPlan } from '../ontology/agent-actions.js';
 
 type Row = Record<string, unknown>;
 /** Durable transport work, stored with the task authority. It creates no new business grant. */
 export class RelayReadAuthority {
+  private pipelineGuard?: (owner: string, request: SourceReadRequest, plan: AgentActionPlan, intent: ActionIntent) => void;
   constructor(private db: DatabaseSync, private security: SecurityStore, readOnly: boolean) {
     if (!readOnly) db.exec(`CREATE TABLE IF NOT EXISTS security_relay_reads (
       id TEXT PRIMARY KEY, retry_key TEXT NOT NULL UNIQUE, peer_id TEXT NOT NULL, actor TEXT NOT NULL,
       policy_revision INTEGER NOT NULL, request TEXT NOT NULL, state TEXT NOT NULL,
       connection_id TEXT, result TEXT, expires_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS security_relay_reads_pending ON security_relay_reads(state,expires_at);`);
+  }
+  setPipelineGuard(guard: NonNullable<RelayReadAuthority['pipelineGuard']>) {
+    if (this.pipelineGuard) throw new Error('The source Pipeline guard is already bound');
+    this.pipelineGuard = guard;
   }
   private row(id: string): Row {
     return this.db.prepare('SELECT * FROM security_relay_reads WHERE id=?').get(z.uuid().parse(id)) ?? (() => { throw new SecurityError('AUTHORIZATION_REQUIRED'); })();
@@ -43,6 +50,9 @@ export class RelayReadAuthority {
         || plan.modelRunId !== request.context.modelRunId || attempt.inputDigest !== request.context.actionInputDigest
         || digest(attempt.claimToken) !== actor.claimRef || attempt.planDigest !== plan.digest
         || !intent.dispatchInput || digest(intent.dispatchInput) !== request.context.actionInputDigest) throw new SecurityError('AUTHORIZATION_REQUIRED');
+      if (!this.pipelineGuard) throw new SecurityError('AUTHORITY_UNAVAILABLE');
+      try { this.pipelineGuard(actor.ownerKey, request, plan, intent); }
+      catch (error) { if (error instanceof DomainError) throw new SecurityError('SOURCE_NOT_AUTHORIZED'); throw error; }
     }));
     return request;
   }

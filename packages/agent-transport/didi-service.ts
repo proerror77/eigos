@@ -1,7 +1,7 @@
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { DidiMcpConnector, type DidiConnector } from '../capabilities/didi/connector.js';
+import { DidiMcpConnector, DidiReadError, type DidiConnector } from '../capabilities/didi/connector.js';
 import { didiBindingSchema, didiToolInputs } from '../capabilities/didi/contracts.js';
 import { agentIdSchema, relayOrigin, RelayError } from '../relay/contracts.js';
 import { openPrivateDatabase, transaction } from '../relay/files.js';
@@ -76,7 +76,7 @@ export class DidiRelayService {
           result = sourceReadResponseSchema.parse({ ...base, result: observed });
         } catch (error) {
           if (signal.aborted) throw error;
-          result = { ...base, error: 'SOURCE_UNAVAILABLE' };
+          result = { ...base, error: error instanceof DidiReadError && error.code === 'RATE_LIMITED' ? 'RATE_LIMITED' : 'SOURCE_UNAVAILABLE' };
         }
         this.db.prepare("UPDATE source_relay_reads SET state='completed',result=? WHERE id=?").run(JSON.stringify(result), request.callId);
       }
