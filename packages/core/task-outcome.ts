@@ -6,7 +6,14 @@ import { BACKEND_VERSION } from '../ontology/execution.js';
 export function synchronizeTaskOutcome(job: Job): void {
   const d = job.delegation;
   if (!d || d.backendVersion !== BACKEND_VERSION) return;
-  if (!d.agent && !d.goalCoverage && (d.outcome || job.state === 'completed')) return;
+  const coverage = d.goalCoverage, superseded = coverage !== undefined && coverage.requestRevision < d.request.revision;
+  if (superseded) {
+    // Keep the prior review as evidence, never as authority for changed input.
+    // This also repairs queued records written before reply invalidated it.
+    if (!d.goalCoverageHistory?.some(previous => previous.digest === coverage.digest)) d.goalCoverageHistory = [...(d.goalCoverageHistory ?? []), coverage];
+    delete d.goalCoverage;
+  }
+  if (!superseded && !d.agent && !d.goalCoverage && (d.outcome || job.state === 'completed')) return;
   if (d.plan && d.outcome?.requestRevision === d.request.revision && d.outcome.status === 'unsatisfied' && ['failed', 'rejected'].includes(job.state)) return;
   if (job.state === 'completed') {
     if (!d.acceptance?.accepted || d.outcome?.status !== 'satisfied' || d.outcome.requestRevision !== d.request.revision) throw new Error('Completed Agent task lacks its current independent outcome');
