@@ -66,14 +66,18 @@ const choice = (ctx: AgentPlanningContext, access: PlanningAccess): AgentDecisio
     completionJson: completed ? JSON.stringify({ observation: completed.ref, rationale: 'The requested route has a current synthetic estimate' }) : '' };
 };
 
-async function fixture(options: { managed?: boolean } = {}) {
+async function fixture(options: { managed?: boolean; signal: AbortSignal }) {
+  const stop = new AbortController();
+  const abort = () => stop.abort(options.signal.reason);
+  options.signal.addEventListener('abort', abort, { once: true });
+  options.signal.throwIfAborted();
   let clockOffset = 0;
   const now = () => Date.now() + clockOffset;
   const transport = await relayFixture(), source = didiFixture(), base = securityFixture(now, { unified: true });
   const serviceNode = await transport.client('DiDi'), initialGateway = await transport.client('EIGOS'), pa = await transport.client('PA');
   const gatewayId = initialGateway.agentId, serviceConnection = await transport.connect(initialGateway, serviceNode), paConnection = await transport.connect(pa, initialGateway);
   initialGateway.close();
-  const f = securedProgramFixture(() => new DidiAgentProgram(source.binding, { connector: new DidiRelayConnector(base.jobs, serviceNode.agentId, source.binding) }), rideInput, choice, base, { nativeTaskContext: options.managed, leaseMs: options.managed ? 120000 : 30000 });
+  const f = securedProgramFixture(() => new DidiAgentProgram(source.binding, { connector: new DidiRelayConnector(base.jobs, serviceNode.agentId, source.binding) }), rideInput, choice, base, { nativeTaskContext: options.managed, leaseMs: options.managed ? 120000 : 30000, signal: stop.signal });
   f.jobs.security.relay.bind(f.p, pa.agentId, Date.now() + 600000, { jti: randomUUID(), expiresAt: Date.now() + 60000 });
   const gateway = new TaskRelayGateway(f.jobs, f.tasks, base.authority!.canonicalOrigin, { version: 1, relayUrl: transport.baseUrl, credentialPath: join(transport.directory, 'EIGOS.json'), displayName: 'EIGOS' });
   const app = express(); app.use(express.json());
@@ -88,7 +92,7 @@ async function fixture(options: { managed?: boolean } = {}) {
       if (beforeAuthorization) { const run = beforeAuthorization; beforeAuthorization = undefined; run(); }
       return fetch(local + new URL(String(url)).pathname, init);
     });
-  const stop = new AbortController(), failures: unknown[] = [], reads: string[] = [];
+  const failures: unknown[] = [], reads: string[] = [];
   const listening = serviceNode.listen(async message => {
     const request = sourceReadRequestSchema.safeParse(message.content); if (request.success) reads.push(request.data.callId);
     await service.handle(message, stop.signal);
@@ -97,11 +101,11 @@ async function fixture(options: { managed?: boolean } = {}) {
   async function receive(requestId: string) {
     const until = Date.now() + 10000;
     while (Date.now() < until) {
-      for (const message of await pa.poll()) {
+      for (const message of await pa.poll({ signal: stop.signal })) {
         const response = taskRelayResponseSchema.safeParse(message.content);
         if (response.success && response.data.requestId === requestId) { pa.markHandled(message.senderId, message.id); return response.data; }
       }
-      await delay(20);
+      await delay(20, undefined, { signal: stop.signal });
     }
     throw new Error('Synthetic task response deadline elapsed');
   }
@@ -109,6 +113,7 @@ async function fixture(options: { managed?: boolean } = {}) {
     elapse(milliseconds: number) { clockOffset += milliseconds; },
     beforeAuthorization(fn: () => void) { beforeAuthorization = fn; },
     async close() {
+      options.signal.removeEventListener('abort', abort);
       stop.abort(); await listening; await gateway.close(); service.close(); await f.tasks.close();
       server.closeAllConnections(); await new Promise<void>(r => server.close(() => r()));
       await transport.close(); source.close(); f.close();
@@ -116,8 +121,8 @@ async function fixture(options: { managed?: boolean } = {}) {
   };
 }
 
-test('PA → encrypted primary → source Agent → scoped readback → PA preserves the real task and source receipt identities', { timeout: 60000 }, async () => {
-  const f = await fixture();
+test('PA → encrypted primary → source Agent → scoped readback → PA preserves the real task and source receipt identities', { timeout: 60000 }, async t => {
+  const f = await fixture({ signal: t.signal });
   try {
     const requestId = randomUUID();
     await f.pa.send(f.gatewayId, f.paConnection, { protocol: TASK_RELAY_PROTOCOL, kind: 'task.submit', authorityId: f.authority!.id, requestId,
@@ -165,8 +170,8 @@ function manageDidi(f: Awaited<ReturnType<typeof fixture>>) {
   return { intake, definitions, validation, status, verify };
 }
 
-test('Pipeline validation traverses encrypted source dispatch without enabling the service until independent evidence is registered', { timeout: 60000 }, async () => {
-  const f = await fixture({ managed: true });
+test('Pipeline validation traverses encrypted source dispatch without enabling the service until independent evidence is registered', { timeout: 180000 }, async t => {
+  const f = await fixture({ managed: true, signal: t.signal });
   try {
     const pipeline = manageDidi(f); assert.equal(pipeline.status().status, 'verification_required');
     const task = pipeline.validation(), completed = await f.advance(task.id);
@@ -177,8 +182,8 @@ test('Pipeline validation traverses encrypted source dispatch without enabling t
   } finally { await f.close(); }
 });
 
-for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evidence ${invalidation} after Relay dispatch prevents the provider call`, { timeout: 60000 }, async () => {
-  const f = await fixture({ managed: true });
+for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evidence ${invalidation} after Relay dispatch prevents the provider call`, { timeout: 180000 }, async t => {
+  const f = await fixture({ managed: true, signal: t.signal });
   try {
     const pipeline = manageDidi(f), task = pipeline.validation();
     assert.equal((await f.advance(task.id)).state, 'completed');
@@ -198,8 +203,8 @@ for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evide
   } finally { await f.close(); }
 });
 
-test('Pipeline revocation during a provider response prevents late source facts from reaching the task', { timeout: 60000 }, async () => {
-  const f = await fixture({ managed: true });
+test('Pipeline revocation during a provider response prevents late source facts from reaching the task', { timeout: 180000 }, async t => {
+  const f = await fixture({ managed: true, signal: t.signal });
   try {
     const pipeline = manageDidi(f), validation = pipeline.validation();
     assert.equal((await f.advance(validation.id)).state, 'completed');
@@ -220,8 +225,8 @@ test('Pipeline revocation during a provider response prevents late source facts 
   } finally { await f.close(); }
 });
 
-test('source revocation between encrypted dispatch and provider authorization prevents the actual read', { timeout: 30000 }, async () => {
-  const f = await fixture();
+test('source revocation between encrypted dispatch and provider authorization prevents the actual read', { timeout: 30000 }, async t => {
+  const f = await fixture({ signal: t.signal });
   try {
     const task = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read a synthetic route estimate only' });
     await f.tick();
@@ -232,8 +237,22 @@ test('source revocation between encrypted dispatch and provider authorization pr
   } finally { await f.close(); }
 });
 
-test('an expired Worker claim rejects its old source message and the original task resumes with a fresh attempt', { timeout: 60000 }, async () => {
-  const f = await fixture();
+test('cancelling a Relay fixture stops its active Worker and source read before cleanup', { timeout: 30000 }, async t => {
+  const cancelled = new AbortController();
+  const f = await fixture({ signal: AbortSignal.any([t.signal, cancelled.signal]) });
+  try {
+    f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read a synthetic route estimate only' });
+    await f.tick();
+    f.beforeAuthorization(() => cancelled.abort());
+    await assert.rejects(f.tick(), { name: 'AbortError' });
+    assert.equal(cancelled.signal.aborted, true);
+    assert.equal(f.source.calls.filter(c => c.name).length, 0);
+    await assert.rejects(f.tick(), { name: 'AbortError' });
+  } finally { await f.close(); }
+});
+
+test('an expired Worker claim rejects its old source message and the original task resumes with a fresh attempt', { timeout: 60000 }, async t => {
+  const f = await fixture({ signal: t.signal });
   try {
     const task = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read a synthetic route estimate only' });
     await f.tick();

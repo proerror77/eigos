@@ -11,7 +11,7 @@ import {withAuthorization} from '../../packages/security/context.js';
 import {digest} from '../../packages/core/delegation.js';
 import {evidence,interpretation,syntheticGoalReview,observeTaskContext,acknowledgeReads} from '../backend-fixture.js';
 
-export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string;leaseMs?:number}={}) {
+export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string;leaseMs?:number;signal?:AbortSignal}={}) {
   const f=base??securityFixture(),program=factory(f);bindPersonalSourceOwner(program,f.owner);
   const businessModel=f.jobs.security.model,BUSINESS_MODEL_DEFINITION=businessModel.definitionSnapshot();
   const catalog=new ExecutionCatalog([program.capability()],[],[],[],[program],undefined,f.jobs.security),profile=catalog.securityProfiles(f.owner)[0]!,policy=f.jobs.security.policies,until=options.grantExpiresAt??new Date(Date.now()+3600000).toISOString(),a=f.installation('Scoped native program',15*60*1000);
@@ -41,15 +41,17 @@ export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixtu
   }};
   const coordinator=new Coordinator(f.jobs,reasoner,catalog,{allowSandbox:true});
   async function tick() {
+    options.signal?.throwIfAborted();
     const claim=f.jobs.claim(['eigos.delegate'],options.leaseMs??30000);assert.ok(claim);
-    try {await withAuthorization(f.jobs.security.workerScope(f.owner,claim.job.id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
+    try {await withAuthorization(f.jobs.security.workerScope(f.owner,claim.job.id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,options.signal??new AbortController().signal));}
     finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
   }
   async function advance(id:string,max=12) {
     for(let turn=0;turn<max;turn++) {
+      options.signal?.throwIfAborted();
       const current=f.jobs.get(f.owner,id);if(!['working','submitted'].includes(current.state))return current;
       const claim=f.jobs.claim(['eigos.delegate'],options.leaseMs??30000);assert.ok(claim);
-      try {await withAuthorization(f.jobs.security.workerScope(f.owner,id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
+      try {await withAuthorization(f.jobs.security.workerScope(f.owner,id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,options.signal??new AbortController().signal));}
       finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
     }
     assert.fail('Native program exceeded its bounded decision count');
