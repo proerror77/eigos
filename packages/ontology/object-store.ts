@@ -13,7 +13,7 @@ import { assertTransactionPartyRoleWrite } from './errand-domain.js';
 import { assertBusinessTransaction } from '../core/transaction.js';
 import type { OntologyReleaseRef } from './definition-contracts.js';
 import type { SecurityPolicies } from '../security/policy-store.js';
-import { authorizationScope } from '../security/context.js';
+import { authorizationScope, withAuthorization } from '../security/context.js';
 import { SecurityError } from '../security/store.js';
 import {accessDigest} from '../security/model.js';
 import {responseOnlyProjection,projectFunctionValue} from '../security/projections.js';
@@ -45,6 +45,8 @@ export interface OntologyGraphContext {
   skipLegacyMigration?: boolean;
   pipelineStatus?: (owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string) => import('./pipeline/contracts.js').PipelineStatus;
   pipelineChanges?: (owner: string, jobId: string, requestRevision: number) => import('./pipeline/facts.js').PipelineFactChange[];
+  pipelineObservation?: (owner: string, jobId: string) => import('./pipeline/observation.js').ObservationSummary | undefined;
+  pipelineContextInputs?: (owner: string, jobId: string, requestRevision: number, componentId: string) => { object: ObjectRef; fields: string[] }[];
 }
 interface StoredObject { ref: ObjectRef; revision: number; createdAt: string; properties: Record<string, unknown>; source: ObjectSource; tombstone?: { revision: number; deletedAt: string } }
 export interface ObjectView extends StoredObject { derived?: Record<string, { status: 'known' | 'unknown'; reason?: string; functionRef: { id: string; version: string }; evidenceRefs: ObjectRef[]; evidenceLevels: string[] }> }
@@ -69,6 +71,41 @@ export class OntologyObjectStore {
   private backingStore?: OntologyObjectStore;
   pipelineStatus(owner: string, programRef: { id: string; version: string }, configurationDigest: string, actionId: string): import('./pipeline/contracts.js').PipelineStatus {
     return this.context.pipelineStatus?.(owner, programRef, configurationDigest, actionId) ?? { status: 'unmanaged', reason: 'No intake policy on this historical graph', verificationIds: [], authorization: 'per_action_required', availabilityProof: false };
+  }
+  pipelineReadableFields(owner: string, ref: ObjectRef, fields: readonly string[]): string[] {
+    const scope = authorizationScope();
+    if (scope?.integrity) return withAuthorization({ ...scope, integrity: false }, () => this.pipelineReadableFields(owner, ref, fields));
+    const view = this.read(owner, ref), guard = this.guard(), binding = guard?.requireObject(owner, ref, view.revision);
+    const properties = this.properties(ref.type);
+    return fields.filter(field => Object.hasOwn(view.properties, field) || !!properties[field] && !properties[field]!.restricted && !properties[field]!.derived
+      && (!binding || binding.fields.includes(field)) && !(guard && authorizationScope()?.actor.actorKind === 'worker' && responseOnlyProjection(ref.type, field)));
+  }
+  assertPipelineContextCurrent(owner: string, taskId: string, requestRevision: number, componentId: string): void {
+    const inputs = this.context.pipelineContextInputs?.(owner, taskId, requestRevision, componentId) ?? [];
+    for (const input of inputs) if (this.pipelineReadableFields(owner, input.object, input.fields).length !== input.fields.length) throw new DomainError('FORBIDDEN', 'Component input facts are no longer readable under current authority');
+  }
+  pipelineObservation(owner: string, taskId: string): import('./pipeline/observation.js').ObservationSummary | undefined {
+    const summary = this.context.pipelineObservation?.(owner, taskId);
+    if (!summary) return;
+    const eligibleReads = summary.eligibleReads?.flatMap(read => {
+      try {
+        this.read(owner, read.step);
+        const facts = read.facts.flatMap(fact => {
+          try { const fields = this.pipelineReadableFields(owner, fact.object, fact.fields); return fields.length ? [{ object: fact.object, fields }] : []; }
+          catch (error) { if (error instanceof DomainError || error instanceof SecurityError) return []; throw error; }
+        });
+        return facts.length ? [{ ...read, facts }] : [];
+      } catch (error) { if (error instanceof DomainError || error instanceof SecurityError) return []; throw error; }
+    });
+    return { ...summary, eligibleReads, watches: summary.watches.map(watch => {
+      try {
+        const fields = watch.object ? this.pipelineReadableFields(owner, watch.object, watch.fields ?? []) : [];
+        return fields.length ? { ...watch, fields } : { id: watch.id, status: watch.status, health: 'unavailable' as const, nextAt: watch.nextAt, reason: 'observation_access_unavailable' };
+      } catch (error) {
+        if (!(error instanceof DomainError || error instanceof SecurityError)) throw error;
+        return { id: watch.id, status: watch.status, health: 'unavailable' as const, nextAt: watch.nextAt, reason: 'observation_access_unavailable' };
+      }
+    }) };
   }
   pipelineChanges(owner: string, jobId: string, requestRevision: number): import('./pipeline/facts.js').PipelineFactChange[] {
     const changes = this.context.pipelineChanges?.(owner, jobId, requestRevision) ?? [];

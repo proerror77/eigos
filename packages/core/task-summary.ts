@@ -12,6 +12,7 @@ export function taskSummary(job: Job) {
     id: job.id, contextId: job.contextId, service: job.service, goal: job.goal, deliverable: job.deliverable,
     ...(job.authorityId ? { authorityId: job.authorityId } : {}),
     state: job.state, revision: job.revision, createdAt: job.createdAt, updatedAt: job.updatedAt,
+    ...(job.observation ? { observation: job.observation } : {}),
     question: job.question, error: job.error, artifact: job.artifact, memberUsage: job.memberUsage, afterSales: job.afterSales,
     latestInput: latestInput ? { id: latestInput.id, text: latestInput.text, receivedAt: latestInput.at } : undefined,
     counts: { messages: job.messages.length, modelRuns: job.runs?.length ?? 0 },

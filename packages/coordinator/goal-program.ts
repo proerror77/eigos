@@ -150,6 +150,7 @@ export function assessGoal(catalog: ExecutionCatalog, ctx: AgentProgramContext, 
   const components: GoalAssessment['components'] = selected.components.map(item => {
     try {
       const component = composition.contexts.find(value => value.id === item.contextId) ?? fail('Unknown completion component');
+      ctx.graph.assertPipelineContextCurrent(ctx.owner, ctx.request.id, ctx.request.revision, component.id);
       const { program } = catalog.resolveActionBinding(ctx.graph, ctx.owner, ctx.request, component.initializedBy.binding);
       const scoped = componentContext(ctx, component, program), accepted = (scoped.intents ?? []).filter(intent => intent.state === 'effect_confirmed');
       program.assertContext?.(scoped);

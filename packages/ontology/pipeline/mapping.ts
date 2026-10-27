@@ -5,6 +5,9 @@ import type { OntologyModel } from '../model.js';
 import { pipelineMappingSchema, pipelineObservationSchema, type PipelineIntake, type PipelineMapping, type PipelineObservation } from './contracts.js';
 
 const invalid = (message: string): never => { throw new DomainError('INVALID_INPUT', message); };
+export function pipelineObjectRef(owner: string, source: string, account: string, type: string, nativeId: string) {
+  return { type, id: `pipeline:${digest({ owner, source, account, type, nativeId })}` };
+}
 function read(value: unknown, path: readonly string[]): unknown {
   for (const field of path) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, field)) return undefined;
@@ -51,7 +54,7 @@ export function mapPipelineObservation(model: OntologyModel, owner: string, inta
   if (typeof nativeId !== 'string' || !nativeId.trim() || nativeId.length > 500) invalid('A stable source-native identity is required');
   // Identity is source/account/type scoped. Prices, timestamps and source
   // contract revisions do not create a new identity for the same entity.
-  const id = `pipeline:${digest({ owner, source: intake.source.id, account: sample.sourceAccount, type: mapping.objectType, nativeId })}`;
+  const id = pipelineObjectRef(owner, intake.source.id, sample.sourceAccount, mapping.objectType, nativeId as string).id;
   if (model.objectWritePolicy(mapping.objectType) !== 'source' || model.object(mapping.objectType).visibility === 'technical'
     || /^(?:Execution|Registered|Network)/.test(mapping.objectType)
     || ['Authorization', 'SourceReceipt', 'ServiceRequest', 'RequestInstruction', 'RequestConstraint', 'OutcomeAssessment', 'EntityIdentityAssertion', 'TransactionPartyRole'].includes(mapping.objectType)) invalid('Source mapping cannot write managed, identity, authorization or execution records');

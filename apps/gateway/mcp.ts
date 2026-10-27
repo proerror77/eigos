@@ -13,6 +13,7 @@ import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { DefinitionService } from '../../packages/ontology/definition-service.js';
+import { observationControlSchema } from '../../packages/ontology/pipeline/observation.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
@@ -73,6 +74,11 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. While submitted/working, use waitMs up to 30000 to await a terminal state or needed action without rapid repeated calls. Timeout returns the unchanged original task and never cancels execution. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
     inputSchema: z.object({ taskId: taskIdSchema, waitMs: z.number().int().min(0).max(30000).optional() }).strict(), annotations: read,
   }, ({ taskId, waitMs }) => result(async () => taskSummary(await tasks.getAfterWait(principal, taskId, waitMs))));
+  server.registerTool('control_task_observation', {
+    description: 'Report a change hint, stop or explicitly resume this owned task observation. Hints trigger independent bounded source reads and never become facts. Read the current task revision first. Stopping observation does not cancel a booking, order or payment; resumption keeps the original lifetime budget and permissions.',
+    inputSchema: observationControlSchema,
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.controlObservation(principal, args))));
   if (!tasks.secured && options.externalDrafts) server.registerTool('authorize_checkout_draft', {
     description: 'Authorize exactly one live unpaid checkout draft for the merchant, items and source preview returned by this owned task. Copy its planDigest and draft unchanged; expiresAt may copy draft.sourceExpiresAt and must not exceed it. This grants no order, payment, customer-data submission or later edit. Reuse requestId for identical retries.',
     inputSchema: externalDraftPermitSchema.omit({ action: true, environment: true }).extend({ taskId: taskIdSchema }).strict(),

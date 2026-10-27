@@ -1,5 +1,6 @@
 import type { Delegation } from './delegation.js';
 import { z } from 'zod';
+import { observationBudgetSchema } from '../ontology/pipeline/observation.js';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { requirementsSchema, refSchema } from '../ontology/execution.js';
 import type { AccessContext } from '../security/contracts.js';
@@ -55,6 +56,7 @@ export const submitSchema = z.union([z.object({
   locationContext: locationContextSchema.optional(),
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
   executionBudget: executionBudgetProfileSchema.optional(),
+  observationBudget: observationBudgetSchema.optional(),
   ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
   capabilityRef: refSchema.optional(),
 }).strict(), afterSalesSubmitSchema]);
@@ -102,4 +104,6 @@ export interface Job {
   messages: JobMessage[];
   createdAt: string;
   updatedAt: string;
+  /** Public read projection only; execution uses the durable observation store. */
+  observation?: import('../ontology/pipeline/observation.js').ObservationSummary;
 }

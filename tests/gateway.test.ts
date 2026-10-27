@@ -125,7 +125,8 @@ test('MCP submits, A2A replies, MCP reads the same completed task', async () => 
   const client = await mcp(accessToken);
   try {
     const catalog = await client.listTools();
-    assert.equal(catalog.tools.length, 21);
+    assert.equal(catalog.tools.length, 22);
+    assert(catalog.tools.some(tool => tool.name === 'control_task_observation'));
     const identity = await client.callTool({ name: 'get_runtime_info', arguments: {} });
     const runtime = (identity.structuredContent as { result: { instance: string; a2a: string; ontologyTransport: string } }).result;
     assert.equal(runtime.instance, base); assert.equal(runtime.a2a, `${base}/a2a`); assert.equal(runtime.ontologyTransport, 'native-mcp');

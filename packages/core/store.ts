@@ -20,14 +20,15 @@ import { scheduleTaskRecovery } from './task-recovery.js';
 import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { projectBusinessChain } from '../ontology/business-chain-projection.js';
-import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
+import { projectExecution, executionStepRef, type ExecutionLedger } from '../ontology/execution-projection.js';
 import { DefinitionStore, currentKernelImplementation } from '../ontology/definition-store.js';
 import { PipelineFactStore } from '../ontology/pipeline/facts.js';
+import { PipelineObservationStore } from './pipeline-observation-store.js';
 import type { PipelineObservation } from '../ontology/pipeline/contracts.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
-import { SecurityStore, type SecurityMode } from '../security/store.js';
+import { SecurityStore, SecurityError, type SecurityMode } from '../security/store.js';
 import { authorizationScope } from '../security/context.js';
 import {agentDispatchGrant} from './agent-authorization.js';
 import { storedRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from './runtime-authority.js';
@@ -42,7 +43,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; observationOnly?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string }
 // Throwing through the shared transaction is essential: returning false from
 // inside it would commit a dispatch marker whose lease expired during the save.
 const lostClaimFence = Symbol('lost-claim-fence');
@@ -66,6 +67,7 @@ export class JobStore {
   private ontologyCatalog?: ExecutionCatalog;
   readonly definitions: DefinitionStore;
   readonly pipelineFacts: PipelineFactStore;
+  readonly observationWatches: PipelineObservationStore;
   private readonly baseOntology: OntologyObjectStore;
   private readonly ontologyViews = new Map<string, OntologyObjectStore>();
   readonly databasePath: string;
@@ -158,6 +160,7 @@ export class JobStore {
       // into a model session or projected under another task's authority.
       changed: (owner, jobId, revision) => { this.db.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.nextAt',0) WHERE owner=? AND id=? AND state IN ('working','submitted') AND json_extract(body,'$.delegation.request.revision')=?").run(owner, jobId, revision); },
     }, options.securityNow ?? Date.now));
+    this.observationWatches = this.transaction(() => new PipelineObservationStore(this.db, options.securityNow ?? Date.now));
     this.baseOntology.setReadOverlayFactory((owner, requestId) => {
       const source = this.db.prepare("SELECT 1 FROM preparation_contexts WHERE owner=? AND job_id=? AND key='network-inquiry-source@1'").get(owner, requestId);
       return source ? createTaskNetworkOntologyReader(this, owner, requestId, this.ontologyCatalog) : undefined;
@@ -186,6 +189,8 @@ export class JobStore {
       graph = this.baseOntology.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref,
         pipelineStatus: (owner, program, configuration, action) => this.definitions.pipeline.status(owner, release.document, release.model, program, configuration, action),
         pipelineChanges: (owner, jobId, revision) => this.pipelineFacts.changes(owner, jobId, revision),
+        pipelineObservation: (owner, jobId) => this.observationSummary(owner, jobId),
+        pipelineContextInputs: (owner, jobId, revision, componentId) => this.pipelineFacts.contextInputs(owner, ref.ontologyId, jobId, revision, componentId),
         ...(release.compatibleDefinition ? { compatibleDefinition: release.compatibleDefinition } : {}) });
       this.ontologyViews.set(key, graph);
       if (this.ontologyViews.size > 16) this.ontologyViews.delete(this.ontologyViews.keys().next().value!);
@@ -194,7 +199,10 @@ export class JobStore {
   }
   /** Trusted connector ingress only; no public command accepts source facts. */
   ingestPipelineObservation(owner: string, releaseRef: OntologyReleaseRef, serviceId: string, mappingId: string, sample: PipelineObservation, expectedRevision: number) {
-    return this.transaction(() => {
+    return this.transaction(() => this.ingestPipelineObservationInTransaction(owner, releaseRef, serviceId, mappingId, sample, expectedRevision));
+  }
+  ingestPipelineObservationInTransaction(owner: string, releaseRef: OntologyReleaseRef, serviceId: string, mappingId: string, sample: PipelineObservation, expectedRevision: number) {
+      this.assertTransaction();
       this.definitions.assertAccess(owner, releaseRef.ontologyId);
       const release = this.definitions.resolve(releaseRef), ref = release.document.pipeline?.find(value => value.serviceId === serviceId);
       if (!ref) throw new DomainError('NOT_FOUND', 'Source mapping is not published in this release');
@@ -204,7 +212,6 @@ export class JobStore {
       if (issues.length) throw new DomainError('CONFLICT', 'Source mapping validation is not current');
       const intake = this.definitions.pipeline.intake(releaseRef.ontologyId, ref);
       return this.pipelineFacts.apply(owner, this.ontologyForRelease(releaseRef), intake, ref.intakeDigest, mappingId, sample, expectedRevision);
-    });
   }
   ontologyReleaseForJob(owner: string, jobOrId: Job | string): OntologyReleaseRef {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
@@ -215,6 +222,25 @@ export class JobStore {
     // It must never mean "whatever release is active now" or rewrite receipts.
     return structuredClone(job.delegation.ontologyRelease ?? this.definitions.legacy().ref);
   }
+  private observationSummary(owner: string, taskId: string): import('../ontology/pipeline/observation.js').ObservationSummary | undefined {
+    const summary = this.observationWatches.summary(owner, taskId);
+    if (!summary) return;
+    const job = this.get(owner, taskId), d = job.delegation, current = new Set(this.observationWatches.watches(owner, taskId).filter(watch => watch.requestRevision === d?.request.revision).map(watch => watch.id));
+    const eligibleReads: NonNullable<typeof summary.eligibleReads> = [];
+    for (const plan of [...(d?.agent?.plans ?? [])].reverse()) for (const step of plan.steps) {
+      if (eligibleReads.length >= 8 || step.effect !== 'read' || plan.requestRevision !== d?.request.revision) continue;
+      const intent = this.intent(owner, step.intentId), facts = (intent.acceptedOutput?.pipelineFacts ?? []) as import('../ontology/model.js').ObjectRef[];
+      if (intent.state !== 'effect_confirmed' || !facts.length) continue;
+      try {
+        const program = this.ontologyCatalog?.agentProgram(step.binding?.programRef ?? plan.programRef, owner);
+        if (!program?.pipelineTarget || !program.pipelineSample) continue;
+        eligibleReads.push({ step: executionStepRef(plan, step.id), action: step.action, facts: facts.map(object => ({ object,
+          fields: Object.keys(this.pipelineFacts.current(owner, this.ontologyReleaseForJob(owner, job).ontologyId, object)?.properties ?? {}) })) });
+      } catch (error) { if (!(error instanceof DomainError || error instanceof SecurityError)) throw error; }
+    }
+    return { ...summary, stopped: this.observationWatches.contract(owner, taskId)?.stoppedRevision === d?.request.revision,
+      watches: summary.watches.filter(watch => current.has(watch.id)), eligibleReads };
+  }
   ontologyForJob(owner: string, jobOrId: Job | string): OntologyObjectStore {
     const job = typeof jobOrId === 'string' ? this.get(owner, jobOrId) : jobOrId;
     const ref = this.ontologyReleaseForJob(owner, job), graph = this.ontologyForRelease(ref), validation = job.delegation?.pipelineValidation;
@@ -223,6 +249,8 @@ export class JobStore {
     const release = this.definitions.resolve(ref);
     return graph.forModel(graph.model, { ontologyId: ref.ontologyId, releaseRef: ref, compatibleDefinition: release.compatibleDefinition,
       pipelineChanges: (reader, id, revision) => this.pipelineFacts.changes(reader, id, revision),
+      pipelineObservation: (reader, id) => this.observationSummary(reader, id),
+      pipelineContextInputs: (reader, id, revision, componentId) => this.pipelineFacts.contextInputs(reader, ref.ontologyId, id, revision, componentId),
       pipelineStatus: (reader, program, configuration, action) => {
         const current = this.get(owner, job.id);
         if (digest(current.delegation?.pipelineValidation) !== digest(validation) || current.delegation?.request.revision !== validation.requestRevision) throw new DomainError('FORBIDDEN', 'Validation task scope changed');
@@ -738,14 +766,15 @@ export class JobStore {
   claim(services: string[], leaseMs: number, now?: number): WorkClaim | undefined {
     return this.transaction(() => {
       if (!this.authorityCurrent()) return;
-      const at = now ?? Date.now();
+      const at = now ?? this.security.now();
       this.expireClaims(at);
       if (!services.length) return;
       // Keep the existing two-call budget across all Workers sharing this database.
       const active=Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n)
         +(this.security.enabled?Number(this.db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running' AND lease_until>?").get(at)!.n):0);
       if (active >= 2) return;
-      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1))
+      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1)
+        OR (state IN ('input-required','auth-required') AND EXISTS(SELECT 1 FROM pipeline_observation_watches w WHERE w.owner=jobs.owner AND w.task_id=jobs.id AND w.status='active' AND w.next_at<=:observationNow AND json_extract(w.body,'$.requestRevision')=json_extract(jobs.body,'$.delegation.request.revision'))))
         AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
@@ -753,30 +782,30 @@ export class JobStore {
         AND id NOT IN (SELECT job_id FROM work_claims)
         ${this.authority ? "AND json_extract(body,'$.authorityId')=:runtimeAuthority" : ''}
         ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
-      const named = { ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
+      const named = { observationNow: at, ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
       const values = [this.security.enabled ? 'worker-security-v2' : 'worker',...services,BACKEND_VERSION,at];
       const row = Object.keys(named).length ? query.get(named,...values) : query.get(...values);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
-      if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(now ?? Date.now()).toISOString(); this.save(String(row.owner), job); }
+      if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(now ?? this.security.now()).toISOString(); this.save(String(row.owner), job); }
       const token = randomUUID();
-      const claimedAt = now ?? Date.now();
+      const claimedAt = now ?? this.security.now();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);
       if (this.authority) {
         this.db.prepare('DELETE FROM runtime_work_claims WHERE NOT EXISTS (SELECT 1 FROM work_claims c WHERE c.job_id=runtime_work_claims.job_id AND c.token=runtime_work_claims.token)').run();
         this.db.prepare('INSERT INTO runtime_work_claims VALUES(?,?,?)').run(job.id, token, runtimeAuthorityDigest(this.authority));
       }
       const authority = this.security.workAuthority(String(row.owner), job.id, at);
-      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
+      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? job.delegation?.recoveryPending ? { recovery: true } : { observationOnly: true } : {}) };
     });
   }
 
   renew(claim: WorkClaim, leaseMs: number, now?: number): boolean {
     return this.transaction(() => {
-      const at = now ?? Date.now();
+      const at = now ?? this.security.now();
       if (!this.active(claim, at)) return false;
-      const renewedAt = now ?? Date.now();
+      const renewedAt = now ?? this.security.now();
       return this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=? AND expires_at>?').run(renewedAt + leaseMs, claim.job.id, claim.token, renewedAt).changes === 1;
     });
   }
@@ -793,22 +822,22 @@ export class JobStore {
       const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
       if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
     }
-    return (claim.recovery ? current.state === claim.job.state && current.recoveryPending === true : current.state === 'working')
+    return (claim.recovery ? current.state === claim.job.state && current.recoveryPending === true : claim.observationOnly ? [claim.job.state, 'working'].includes(current.state) : current.state === 'working')
       && (current.requestRevision ?? 0) === (claim.job.delegation?.request?.revision ?? 0)
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
-  claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
+  claimActive(claim: WorkClaim): boolean { return this.active(claim, this.security.now()); }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
     try { return this.transaction(() => {
-      const at = now ?? Date.now();
+      const at = now ?? this.security.now();
       if (!this.active(claim, at)) return false;
       const job = this.get(claim.owner, claim.job.id);
       update(job); this.save(claim.owner, job);
       // The callback may intentionally complete/pause/revise the task. The
       // initial active check plus SQLite's write transaction fences that state;
       // the token and wall-clock deadline must still hold at commit.
-      if (!this.leaseOwned(claim, now ?? Date.now())) throw lostClaimFence;
+      if (!this.leaseOwned(claim, now ?? this.security.now())) throw lostClaimFence;
       this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
       return true;
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
@@ -816,10 +845,10 @@ export class JobStore {
 
   checkpoint(claim: WorkClaim, update: (job: Job) => void): boolean {
     try { return this.transaction(() => {
-      if (!this.active(claim, Date.now())) return false;
+      if (!this.active(claim, this.security.now())) return false;
       const job = this.get(claim.owner, claim.job.id);
       update(job); this.save(claim.owner, job);
-      if (!this.leaseOwned(claim, Date.now())) throw lostClaimFence;
+      if (!this.leaseOwned(claim, this.security.now())) throw lostClaimFence;
       return true;
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
@@ -874,6 +903,7 @@ export class JobStore {
   hasActiveClaim(taskId:string):boolean { return !!this.db.prepare('SELECT 1 FROM work_claims WHERE job_id=? AND expires_at>?').get(taskId,this.security.now()); }
 
   save(owner: string, job: Job): void {
+    if (job.delegation?.observationBudget && !this.transactionDepth) { this.transaction(() => this.save(owner, job)); return; }
     this.assertRuntimeAuthority();
     // The old Worker queue selector must not claim a foundation task even if an
     // operator accidentally starts an old binary against this new database.
@@ -891,6 +921,7 @@ export class JobStore {
         if (digest(original.delegation?.callerAction ?? null) !== digest(job.delegation?.callerAction ?? null)) throw new DomainError('CONFLICT', 'Authenticated caller action evidence is immutable');
       }
       synchronizeTaskOutcome(job);
+      if (this.observationWatches && job.delegation) this.observationWatches.settle(owner, job.id, job.delegation.request.revision, ['completed', 'canceled', 'failed', 'rejected'].includes(job.state));
       const saved = this.db.prepare(`INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET state=excluded.state, updated_at=excluded.updated_at, body=excluded.body
       WHERE jobs.owner=excluded.owner`).run(

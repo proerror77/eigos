@@ -18,6 +18,15 @@ export function permittedProgram(program:AgentProgram):boolean {
   const parent=scope.policies.security.agentGrant(scope.actor.installationId);
   return [program.ref.id,program.capability().ref.id].some(id=>parent.capabilityIds.includes(id)) && (!scope.grant || scope.grant.outputs.some(o=>o.programId===program.ref.id));
 }
+/** Host-only source projection. Source rows and fields remain constrained by
+ * the current task's registered producer grant; callbacks are never model data. */
+export function withProgramProjection<T>(program: AgentProgram, action: string, project: () => T): T {
+  const scope = authorizationScope();
+  if (!scope) return project();
+  const source = scope.policies.requireSource(scope, program.ref.id, program.configurationDigest, action);
+  scope.policies.requireResource(scope, 'actionType', action, 'action.execute');
+  return withProjection({ programId: program.ref.id, programDigest: program.configurationDigest, sourceBindingId: source.bindingId }, () => withIntegrity(project));
+}
 export function secureProgram(program: AgentProgram,authority?:SecurityStore): AgentProgram {
   if(authority?.enabled && authorizationScope()?.policies.security!==authority) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const scope=authorizationScope(); if (!scope) return program;
@@ -53,7 +62,7 @@ export function secureProgram(program: AgentProgram,authority?:SecurityStore): A
       if(refs.size>20)throw new SecurityError('OUTPUT_NOT_ALLOWED');
       delivery.artifact.data.result={...delivery.artifact.data.result,securityEvidenceRefs:[...refs.values()]};return delivery;
     }));
-    if(['validate','validatePlanning','validatePause','authority','clarification','describeComponents','assertContext','contextRefs','validatePaymentRoute','terminalHandoff','validateOutput','projectOutputs','pipelineBinding'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
+    if(['validate','validatePlanning','validatePause','authority','clarification','describeComponents','assertContext','contextRefs','validatePaymentRoute','terminalHandoff','validateOutput','projectOutputs','pipelineBinding','pipelineTarget','pipelineSample'].includes(String(key))) return (...args:unknown[])=>scope.policies.readSnapshot(()=>withIntegrity(()=>Reflect.apply(value,target,args)));
     return value.bind(target);
   }});
 }

@@ -9,6 +9,7 @@ import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { TaskView } from '../../packages/security/task-service.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
+import { observationControlSchema } from '../../packages/ontology/pipeline/observation.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -44,8 +45,8 @@ function toTask(job: Job, historyLength?: number): Task {
     artifacts: job.artifact ? [{ artifactId: job.artifact.id, name: job.artifact.name, parts: job.artifact.data.markdown
       ? [{ text: job.artifact.data.markdown, mediaType: 'text/markdown' }, { data: job.artifact.data, mediaType: 'application/json' }]
       : [{ data: job.artifact.data, mediaType: 'application/json' }] }] : [],
-    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,outputStatus:safe.outputStatus,...(safe.authorityId?{authorityId:safe.authorityId}:{}),...(safe.accepted?{accepted:true}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, ...(summary.authorityId?{authorityId:summary.authorityId}:{}), internalState: summary.state, counts: summary.counts,
-      ...(summary.latestInput ? { latestInput: summary.latestInput } : {}),
+    metadata: safe ? {service:job.service,view:safe.view,revision:safe.revision,outputStatus:safe.outputStatus,...(safe.authorityId?{authorityId:safe.authorityId}:{}),...(safe.accepted?{accepted:true}:{}),...(safe.observation?{observation:safe.observation}:{}),...(safe.attachments?{attachments:safe.attachments}:{}),...(safe.authorization?{authorization:safe.authorization}:{}),...(safe.payment?{payment:safe.payment}:{}),...(safe.question?{question:safe.question}:{}),...(safe.error?{error:safe.error}:{})} : { view: summary.view, service: summary.service, revision: summary.revision, ...(summary.authorityId?{authorityId:summary.authorityId}:{}), internalState: summary.state, counts: summary.counts,
+      ...(summary.latestInput ? { latestInput: summary.latestInput } : {}), ...(summary.observation ? { observation: summary.observation } : {}),
       ...(summary.memberUsage ? { memberUsage: summary.memberUsage } : {}), ...(summary.delegation ? { delegation: summary.delegation } : {}),
       ...(summary.afterSales ? { afterSales: summary.afterSales } : {}), ...(summary.question ? { question: summary.question } : {}), ...(summary.error ? { error: summary.error } : {}) },
   });
@@ -122,7 +123,9 @@ export class A2AGateway implements A2ARequestHandler {
       let job: Job;
       if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
+        if (input && typeof input === 'object' && 'action' in input && ['report_observation_change', 'stop_observation', 'resume_observation'].includes(String(input.action))) {
+          job = this.tasks.controlObservation(p, observationControlSchema.parse({ ...input, taskId: message.taskId, requestId: message.messageId }), message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'approve_external_draft') {
           const permit = externalDraftPermitSchema.parse({ ...input, requestId: message.messageId });
           job = this.tasks.authorize(p, message.taskId, permit, message.contextId || undefined);
         } else if (input && typeof input === 'object' && 'action' in input && input.action === 'select_payment_route') {

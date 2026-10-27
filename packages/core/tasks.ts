@@ -30,6 +30,8 @@ import { componentContext, resolveComposedStep } from './composed-actions.js';
 import { AuthorizedOntologyView } from '../security/view.js';
 import { TaskSecurity } from '../security/task-service.js';
 import { pipelineValidationRequestSchema, pipelineMappingDigest } from '../ontology/pipeline/contracts.js';
+import { observationControlSchema } from '../ontology/pipeline/observation.js';
+import { observationBinding } from '../coordinator/pipeline-observer.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
 export interface OntologyReadContext { ontologyId?: string; release?: OntologyReleaseRef; taskId?: string }
@@ -155,6 +157,43 @@ export class TaskService {
   }
 
   submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false)) : this.submitInternal(p, input, contextId, false); }
+  controlObservation(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = observationControlSchema.parse(input), owner = ownerKey(p);
+    const change = () => {
+      const once = this.security ? this.store.onceInTransaction.bind(this.store) : this.store.once.bind(this.store);
+      return once(owner, `observation:${args.action}`, args.requestId, JSON.stringify([args, contextId]), () => {
+        const job = this.store.get(owner, args.taskId), d = job.delegation;
+        if (contextId && contextId !== job.contextId) throw new DomainError('CONFLICT', 'Observation task context changed');
+        if (!d?.observationBudget || !['working', 'paused', 'auth-required', 'input-required'].includes(job.state) || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current active observation task before controlling it');
+        const watch = args.watchId ? this.store.observationWatches.watch(owner, args.watchId) : undefined;
+        if (watch && (watch.taskId !== job.id || watch.requestRevision !== d.request.revision)) throw new DomainError('FORBIDDEN', 'Observation belongs to another task revision');
+        if (args.action === 'report_observation_change') this.store.observationWatches.hint(owner, args.watchId, args.eventId, args.contentDigest);
+        else if (args.action === 'stop_observation') {
+          if (watch) this.store.observationWatches.stop(owner, watch.id);
+          if (!watch || !this.store.observationWatches.watches(owner, job.id).some(value => ['active', 'paused'].includes(value.status) && value.requestRevision === d.request.revision)) this.store.observationWatches.stopTask(owner, job.id, d.request.revision);
+        } else if (watch) {
+          observationBinding(this.store, this.options.catalog, owner, job, watch.planId, watch.stepId);
+          this.store.observationWatches.resume(owner, watch.id, d.request.revision);
+        } else {
+          this.store.observationWatches.resumeContract(owner, job.id, d.request.revision);
+          for (const selected of this.store.observationWatches.watches(owner, job.id).filter(value => value.requestRevision === d.request.revision && ['paused', 'stopped'].includes(value.status))) {
+            observationBinding(this.store, this.options.catalog, owner, job, selected.planId, selected.stepId);
+            this.store.observationWatches.resume(owner, selected.id, d.request.revision);
+          }
+        }
+        if (job.state === 'paused' && d.recovery?.code === 'observation_unavailable' && args.action !== 'report_observation_change') {
+          d.recovery.state = 'resolved'; d.recovery.resolvedAt = new Date().toISOString(); d.recovery.nextAction = 'none';
+          job.state = d.authorizationRequest ? 'auth-required' : 'working';
+        }
+        if (job.state === 'working') d.phase = this.store.observationWatches.nextAt(owner, job.id) === undefined ? 'planning' : 'observing';
+        d.nextAt = this.store.observationWatches.nextAt(owner, job.id) ?? 0;
+        job.updatedAt = new Date().toISOString(); d.events.push({ at: job.updatedAt, event: args.action, evidence: digest(args) });
+        this.store.save(owner, job); return job;
+      });
+    };
+    return this.security ? this.security.mutate(p, args.taskId, change) : this.view(owner, change());
+  }
   preparePipelineValidation(p: Principal, input: unknown): Job {
     return this.security
       ? this.security.submit(p, () => this.preparePipelineValidationInternal(p, input), job => this.assertPipelineValidationProgram(p, job))
@@ -279,6 +318,10 @@ export class TaskService {
           requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
+      if (args.observationBudget) {
+        job.delegation.observationBudget = args.observationBudget;
+        this.store.observationWatches.establish(owner, job.id, job.delegation.request.revision, args.observationBudget);
+      }
       if (args.locationContext) {
         addLocationContext(job.delegation.request, args.locationContext, args.requestId, now);
         job.delegation.events.push({ at: now, event: 'location_context_recorded' });
@@ -721,6 +764,7 @@ export class TaskService {
   }
   private view(owner: string, job: Job): Job {
     job.memberUsage = this.store.memberUsage(owner);
+    if (job.delegation?.observationBudget) job.observation = this.store.ontologyForTaskRead(owner, job).pipelineObservation(owner, job.id);
     if (job.delegation?.backendVersion === BACKEND_VERSION && job.delegation.executionBudget) job.delegation.executionBudgetStatus = executionBudgetStatus(job);
     if (job.delegation?.backendVersion === BACKEND_VERSION && (job.delegation.plan || job.delegation.agent || job.delegation.agentHistory?.length)) {
       const intents = this.store.intents(owner, job.id).filter(i => !job.delegation!.plan || i.planDigest === job.delegation!.plan.digest);

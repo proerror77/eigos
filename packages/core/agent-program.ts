@@ -56,6 +56,10 @@ export class AgentOperationRejected extends AgentReadError {
 /** Trusted business semantics, separate from a connector's single API invocation.
  * These methods validate and map facts; none chooses the next action or a recipe. */
 export interface AgentProgram {
+  /** Optional reviewed, repeatable source READ. The target is fixed before I/O;
+   * the mapper must validate the source response and return no business effects. */
+  pipelineTarget?(ctx: AgentProgramContext, action: string, input: Record<string, unknown>): import('../ontology/pipeline/observation.js').PipelineReadTarget | undefined;
+  pipelineSample?(ctx: AgentActionContext, action: string, input: Record<string, unknown>, result: AgentActionResult): import('../ontology/pipeline/contracts.js').PipelineObservation;
   /** Optional minimal observer for an explicitly approved original-operation
    * recovery. It must not call invoke or receive a graph/model/dispatch context. */
   observeOriginal?(operation:import('../security/recovery.js').OriginalOperation,signal:AbortSignal):Promise<import('../security/recovery.js').RecoveryObservation|undefined>;

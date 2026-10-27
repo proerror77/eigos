@@ -20,7 +20,7 @@ export interface PipelineFactChange {
   id: string; componentId: string; object: ObjectRef; reason: 'changed' | 'conflicted' | 'stale' | 'restored';
   fields: string[]; semanticRevision: number; at: string;
 }
-interface Dependency { jobId: string; requestRevision: number; componentId: string; sourceKey: string; fields: string[]; values: Record<string, unknown>; valuesDigest: string }
+interface Dependency { jobId: string; requestRevision: number; componentId: string; sourceKey: string; fields: string[]; values: Record<string, unknown>; valuesDigest: string; contextInput?: true }
 const fail = (message: string): never => { throw new DomainError('CONFLICT', message); };
 const values = (properties: Record<string, unknown>, fields: string[]) => Object.fromEntries(fields.map(field => [field, properties[field] ?? null]));
 
@@ -120,18 +120,31 @@ export class PipelineFactStore {
       JSON.stringify({ result, sample, mappingDigest: intakeDigest, release: graph.releaseRef, receivedAt: sample.receivedAt }));
     return { ...result, duplicate: false };
   }
-  track(owner: string, ontologyId: string, jobId: string, requestRevision: number, componentId: string, object: ObjectRef, fields?: string[]): void {
+  track(owner: string, ontologyId: string, jobId: string, requestRevision: number, componentId: string, object: ObjectRef, fields?: string[], contextInput = false): void {
     assertBusinessTransaction(this.db);
     if (!this.hooks.active(owner, jobId, requestRevision)) fail('Fact dependencies require the current active owned task');
     const state = this.current(owner, ontologyId, object); if (!state) return;
     if (state.health !== 'fresh') fail(`Source fact is ${state.health}; independently refresh it before use`);
     const selected = fields ?? Object.keys(state.properties);
     if (!selected.length || selected.length > 50 || selected.some(field => !Object.hasOwn(state.properties, field)) || componentId.length > 240) fail('Fact dependency fields must name bounded current properties');
-    const existing = this.db.prepare('SELECT 1 FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=? AND source_key=? AND component_id=?').get(owner, jobId, requestRevision, state.sourceKey, componentId);
+    const existing = this.db.prepare('SELECT body FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=? AND source_key=? AND component_id=?').get(owner, jobId, requestRevision, state.sourceKey, componentId);
+    if (existing && JSON.parse(String(existing.body)).contextInput) return; // A new action cannot silently refresh frozen context inputs.
     if (!existing && Number(this.db.prepare('SELECT count(*) AS n FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=?').get(owner, jobId, requestRevision)!.n) >= 100) fail('Task fact dependencies exceed the bounded context limit');
-    const body: Dependency = { jobId, requestRevision, componentId, sourceKey: state.sourceKey, fields: [...new Set(selected)].sort(), values: values(state.properties, selected), valuesDigest: digest(values(state.properties, selected)) };
+    const body: Dependency = { jobId, requestRevision, componentId, sourceKey: state.sourceKey, fields: [...new Set(selected)].sort(), values: values(state.properties, selected), valuesDigest: digest(values(state.properties, selected)), ...(contextInput ? { contextInput: true as const } : {}) };
     this.db.prepare('INSERT INTO ontology_pipeline_dependencies VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,ontology_id,source_key,job_id,request_revision,component_id) DO UPDATE SET body=excluded.body')
       .run(owner, ontologyId, state.sourceKey, jobId, requestRevision, componentId, JSON.stringify(body));
+  }
+  contextInputs(owner: string, ontologyId: string, jobId: string, requestRevision: number, componentId: string): { object: ObjectRef; fields: string[] }[] {
+    const rows = this.db.prepare(`SELECT d.body,f.body AS fact FROM ontology_pipeline_dependencies d JOIN ontology_pipeline_facts f
+      ON f.owner=d.owner AND f.ontology_id=d.ontology_id AND f.source_key=d.source_key
+      WHERE d.owner=? AND d.ontology_id=? AND d.job_id=? AND d.request_revision=? AND d.component_id=? AND json_extract(d.body,'$.contextInput')=1 LIMIT 101`)
+      .all(owner, ontologyId, jobId, requestRevision, componentId);
+    if (rows.length > 100) fail('Component input dependency limit exceeded');
+    return rows.map(row => {
+      const dependency: Dependency = JSON.parse(String(row.body)), state: FactState = JSON.parse(String(row.fact));
+      if (state.conflicted || Date.parse(state.expiresAt) <= this.now() || dependency.valuesDigest !== digest(values(state.properties, dependency.fields))) fail('Source facts used to initialize this component changed; prepare a new explicit context while preserving original operations');
+      return { object: state.object, fields: dependency.fields };
+    });
   }
   assertFresh(owner: string, ontologyId: string, refs: readonly ObjectRef[]): void {
     for (const ref of refs.filter(ref => ref.id.startsWith('pipeline:'))) {
@@ -155,6 +168,14 @@ export class PipelineFactStore {
   }
   hasDependencies(owner: string, jobId: string, requestRevision: number): boolean {
     return !!this.db.prepare('SELECT 1 FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=? LIMIT 1').get(owner, jobId, requestRevision);
+  }
+  assertEvidence(owner: string, graph: OntologyObjectStore, inputs: { object: ObjectRef; semanticDigest: string }[]): void {
+    this.assertFresh(owner, graph.ontologyId, inputs.map(input => input.object));
+    for (const input of inputs) {
+      const state = this.current(owner, graph.ontologyId, input.object) ?? fail('Mapped source evidence is unavailable');
+      if (state.semanticDigest !== input.semanticDigest) fail('Mapped source evidence was superseded; independently read the current result before completion');
+      if (withIntegrity(() => graph.evidencePropertiesDigest(owner, input.object, { remaining: 1 })) !== state.semanticDigest) fail('Mapped source evidence integrity changed');
+    }
   }
   expireForTask(owner: string, jobId: string, requestRevision: number): void {
     assertBusinessTransaction(this.db);

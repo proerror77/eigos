@@ -10,6 +10,7 @@ import {projectionFields} from './projections.js';
 
 /** Strict construction, never a spread of Job/delegation/RunEvidence. */
 export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'state' | 'goal' | 'messages' | 'createdAt' | 'updatedAt'> {
+  observation?: import('../ontology/pipeline/observation.js').ObservationSummary;
   authorityId?: string;
   revision?: number; view: 'eigos.task.v2'; question?: string; artifact?: Job['artifact']; error?: string; accepted?:true;
   outputStatus: 'available' | 'restricted' | 'receipt_only';
@@ -102,6 +103,18 @@ export class TaskSecurity {
       if (!root) throw new SecurityError('AUTHORIZATION_REQUIRED');
       security.policies.requireRecipient(scope,root.envelope,'agent_response');
       base.outputStatus='available';
+      if (job.delegation?.observationBudget) {
+        try {
+          const observation = graph.pipelineObservation(actor.ownerKey, job.id);
+          if (observation) {
+            security.policies.requireRecipient(scope, security.policies.outputEnvelope(actor.ownerKey), 'agent_response');
+            base.observation = observation;
+          }
+        } catch (error) {
+          if (!(error instanceof SecurityError && ['OUTPUT_NOT_ALLOWED', 'INSUFFICIENT_ACCESS', 'SOURCE_NOT_AUTHORIZED'].includes(error.reason))) throw error;
+          base.outputStatus = 'restricted';
+        }
+      }
       if (root.fields.includes('originalGoal')) base.goal=String(graph.read(actor.ownerKey,{type:'ServiceRequest',id:job.id}).properties.originalGoal ?? '');
       const allowed=(id:string,content:unknown)=>{
         const envelope=security.policies.output(actor.ownerKey,job.id,id,content);

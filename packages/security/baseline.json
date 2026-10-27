@@ -2758,7 +2758,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "9d764080c27558e51b5b09db4e688fa6b0eaa4b567130ccbc67ea8bca50d69cd",
+      "sourceDigest": "ff262093184770fef6583fa4bb72415dda10f6d2dce348ae0e6bb44a2b214830",
       "channels": [
         "mcp"
       ],
@@ -2770,7 +2770,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "1a6145c90be237d0396443cdf9becaae8cbfa5bb6d5861c672557fcd04d31c76",
+      "sourceDigest": "1f27bfb8f91891b6e10078dd933e3cd251dcf8b076ee60983df92072c5ef8472",
       "channels": [
         "a2a"
       ],
@@ -2782,40 +2782,40 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "63930fa8acd211f7bcca273778e5bcfd216e1b64944440ff1147a76dea402b8e",
+      "sourceDigest": "c151330b01e45ad4288c6e6e816b81d84d4362cf7667215c56861f2a126bf650",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes",
+      "currentControl": "Atomic owner/installation/revision-bound observation controls and idempotency; hints never become facts, stop/resume keep lifetime budgets and current source contracts; bounded Pipeline validation remains separately gated.",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "16f9607a082f5680a56302642a2be4434553cd33572abca6e5a3d1e571169c77",
+      "sourceDigest": "717baca4fb13f0c0b80991551b8d6a30ab0567eb714841dcaeafbb6fbd81652f",
       "channels": [
         "sqlite",
         "idempotency"
       ],
       "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
-      "currentControl": "One runtime authority and immutable task/release pins; selected-service mapping validation, atomic source ingestion, claim fences and historical read projections",
+      "currentControl": "One runtime and task/release authority; observation metadata shares the job transaction, owner/current-revision queue and lease clock; canceled/revised/expired claims cannot project late facts.",
       "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
       "stage": "S3"
     },
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "aed7e0c141720b8764844e0ae99de2e09382201b8c521b18ae0e8487f1d2d583",
+      "sourceDigest": "46064734b748b8eaec34588b596bccb17bf6426cb735aa02effe2ee95d671716",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden",
+      "currentControl": "Current row/field/source authority projects observation metadata and eligible reads; private fields stay hidden, and frozen component inputs must remain current and readable.",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8385f48ce49e12cf91e2225296dfab142f47d9db0ecae225896d220d5efb4372",
+      "sourceDigest": "23db2252262aab641a85988f538548482d595f9825d7fdd0ba3a86a2b28cf020",
       "channels": [
         "model",
         "dispatch"
@@ -2932,14 +2932,14 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "f9f463265f197ae7b3c9c4eb21d28c0e900cf788f7ce884aba881e78504fedef",
+      "sourceDigest": "fa0b83677b7f9a3aa82d3466752adcc8309e2c3afe7f201aacd7dbee272fc5c8",
       "channels": [
         "model",
         "dispatch",
         "artifact"
       ],
       "content": "Action plans, dispatch, observations, result acceptance and recovery",
-      "currentControl": "Current task/source/effect grants plus intake evidence, canonical revision and independent source-integrity checks at dispatch and before writes; original recovery stays separate",
+      "currentControl": "Source mapping captured before I/O; current canonical snapshots, copied context inputs and completion evidence are rechecked. Explicit PA budget and authenticated model selection gate read-only observation; original effects and recovery remain intact.",
       "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
       "stage": "S3"
     },
@@ -3261,7 +3261,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "c6c9c6ca398a670b58fe1b54f8ec7e417005cc671a31ecbf6748fab135da10a7",
+      "sourceDigest": "ba3ede5c344b3f57167b0166f4087a0d78c6a198d567fd7f62444ee31fcf9182",
       "channels": [
         "authorization_control"
       ],
@@ -3309,12 +3309,12 @@
     {
       "id": "security-execution",
       "file": "packages/security/execution.ts",
-      "sourceDigest": "0e2c8d91ac9c603b6d59666380c64a004d8a71cb4aaf8bfdd41d6bc412e91ff1",
+      "sourceDigest": "1c707c17b3fd76101b113f40f06d32ba85ca5276b06efbec9b6dec45500f0eff",
       "channels": [
         "worker"
       ],
       "content": "Current source and action guards around registered programs/adapters",
-      "currentControl": "Registered source grants and private integrity reads remain separate from model projection; pipeline leaf identity uses the same guarded read snapshot as other internal validators",
+      "currentControl": "Registered source and action guards; reviewed Pipeline target/sample hooks use private integrity snapshots, and independent canonical projection retains current output grants.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S3"
     },
@@ -3333,12 +3333,12 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "a9dffec3b7e25426dd4197e1e9b8f9e3415c3acabed79f7d191fe32734352d5c",
+      "sourceDigest": "b3f453859e206e9fcd65be75c352d9353fc3d6fd8dc47ace5e971066915dd3af",
       "channels": [
         "all-reads"
       ],
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations",
+      "currentControl": "Current resource/source/field/channel authority; only explicitly watched Pipeline facts may validate immutable historical writers with the same source origin and intact current canonical digest. Historical readability grants no freshness or new effects.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
@@ -3369,12 +3369,12 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "aaf876acc915c3fba793437a53c6e518dc6f811c0cd29ce013721ba462861967",
+      "sourceDigest": "e27dd0f5c91ac9b256b05edb8f22b4aac98be9a28cbd3a7d3d2d2e03008058fe",
       "channels": [
         "http-mcp-a2a"
       ],
       "content": "Common safe views for mutations, reads, waits, replay and downloads",
-      "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together",
+      "currentControl": "Common TaskView with current controller grants, recipient and channel checks; observation metadata contains authorized fields only and cannot expose private inputs or source payloads.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3417,7 +3417,7 @@
     {
       "id": "agent-program-contract",
       "file": "packages/core/agent-program.ts",
-      "sourceDigest": "52984584b26a46d5170082584c629982f9f38b7c960f7b328e05cc68c8043901",
+      "sourceDigest": "04f09fe059ae66559e5c4a35c4ce44c2b2a0d38697267ce90b25e9c5e6a5d090",
       "channels": [
         "worker"
       ],
@@ -3913,7 +3913,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "0782196cc3ebcd8348afff62b6bd0a23420d05ea9c24d5182ca7b35c65aba14d",
+      "sourceDigest": "26054a8e6dcbc111c9e8f5014b8756e9057c08d60c368217787c2249b0ec1d7a",
       "channels": [
         "model",
         "artifact"
@@ -4043,12 +4043,12 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "12fd9c3b27923effa0a36b410fc524ecc0b90a65aaf68b8913fc4ffc3b118341",
+      "sourceDigest": "f9fe67389b836a833f305decaa941f601fcc728dfd3e31086821d625137a637d",
       "channels": [
         "model"
       ],
       "content": "Bounded native task context and current instruction / capability / execution navigation",
-      "currentControl": "Pinned owner/task/revision/release and bounded acknowledged reads; authorized source-change notices invalidate old decision receipts without promoting facts or permissions",
+      "currentControl": "Pinned owner/task/revision/release and acknowledged reads; observation and source-change summaries enter the context digest and retain current field/source/channel authority.",
       "targetControl": "Current field/source/channel authorization on every model export",
       "stage": "S5"
     },
@@ -4145,7 +4145,7 @@
     {
       "id": "ontology-pipeline-mapping",
       "file": "packages/ontology/pipeline/mapping.ts",
-      "sourceDigest": "5ce4c1ceb1b4879d9ad4de88912de04704314c8c0d54cfb72ce7293c957ecc43",
+      "sourceDigest": "694b8b2d70df6485dbcee21e405e93c4858dca205191fa9a56f6e608157fbd71",
       "channels": [
         "source",
         "sqlite"
@@ -4158,14 +4158,14 @@
     {
       "id": "ontology-pipeline-facts",
       "file": "packages/ontology/pipeline/facts.ts",
-      "sourceDigest": "a4a325961ee465e91f9b60fe4e09b3b205974b7273f71029c7657c8bc7a4acf7",
+      "sourceDigest": "92af26daddba3612b0c7fcc265c6af345a162380972a766149edb827c221fc5d",
       "channels": [
         "source",
         "sqlite",
         "model"
       ],
       "content": "Canonical source facts, immutable observations and bounded dependency notices",
-      "currentControl": "Trusted connector ingress, atomic source ordering/conflict handling and freshness; canonical revisions and internal full-fact integrity checks do not compare private payload hashes to model projections",
+      "currentControl": "Atomic canonical facts, ordering/conflict/freshness and field dependencies; copied component input baselines cannot be silently refreshed; completion requires current mapped evidence and internal integrity.",
       "targetControl": "Preserve current source, task, field and effect authorization; no automatic historical grants",
       "stage": "S3"
     },
@@ -4306,6 +4306,126 @@
       "targetControl": "Preserve ordinary PA task access and unrelated identity applications; no self-service ontology administration",
       "stage": "S5",
       "sourceDigest": "8c791ab2a55d23677a652afb7440c4c60532bc76f162c74f9a961b47f58160b1"
+    },
+    {
+      "id": "pipeline-observation-contract",
+      "file": "packages/ontology/pipeline/observation.ts",
+      "channels": [
+        "mcp",
+        "a2a",
+        "model"
+      ],
+      "content": "PA-supplied observation budget, model read selection and idempotent controls",
+      "currentControl": "Strict bounded data; no model-selected budget, source URL, arbitrary payload or business-effect permission",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "b3050ab970599d0c9dd6085eef9c2dc768519dfaedd6a4357dbd012a71741e3d"
+    },
+    {
+      "id": "pipeline-observation-store",
+      "file": "packages/core/pipeline-observation-store.ts",
+      "channels": [
+        "sqlite",
+        "worker"
+      ],
+      "content": "Bounded watch scheduling, source-read tickets, immutable receipts and hint deduplication",
+      "currentControl": "Shared business transactions, cumulative reservations, stable pending operation keys, revision/deadline fences and explicit freshness-gap status",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "995616ab86cbe9e229328db71a00ec121054160022f2f3a435a8486160b9ef8c"
+    },
+    {
+      "id": "pipeline-source-projection",
+      "file": "packages/coordinator/pipeline-source.ts",
+      "channels": [
+        "source",
+        "sqlite"
+      ],
+      "content": "Reviewed independent read capture and canonical source projection",
+      "currentControl": "Pinned active intake, exact source/account/entity/config/action identity and registered projection grant; no arbitrary ingress or model calls",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "1e91517cfab4a0ab3fc8522c020a52b44b48d41055d27ad11c8596b45de4f043"
+    },
+    {
+      "id": "pipeline-observer-runtime",
+      "file": "packages/coordinator/pipeline-observer.ts",
+      "channels": [
+        "worker",
+        "source",
+        "model"
+      ],
+      "content": "Repeat the model-selected accepted source read without business writes",
+      "currentControl": "Current task/lease/source/field authority; late replies cannot mutate facts; no-change polls skip model calls; business completion remains independently gated",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "a8a3ecc273002ae0a310b379f11defede903dd49c710b7450a388f72430a0e19"
+    },
+    {
+      "id": "native-goal-completion",
+      "file": "packages/coordinator/goal-program.ts",
+      "channels": [
+        "worker",
+        "artifact"
+      ],
+      "content": "Whole-goal component evidence and completion assessment",
+      "currentControl": "Current component bindings and source-dependent context validity; retain original operation evidence and independent goal criteria",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "21103d3cebd6aecaaae6693a655d757ac77b8bdde652aa3e9d27545d68404f3c"
+    },
+    {
+      "id": "composed-action-contexts",
+      "file": "packages/core/composed-actions.ts",
+      "channels": [
+        "model",
+        "dispatch"
+      ],
+      "content": "Immutable source-bound component inputs and composed action selection",
+      "currentControl": "Authenticated setup and current action binding; changed source input cannot authorize a write through an old context",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "8b7e411b9113dc4f6be0edeb4509042690638a717e43e973dd5c1363d8820570"
+    },
+    {
+      "id": "agent-decision-contract",
+      "file": "packages/ontology/agent-actions.ts",
+      "channels": [
+        "model"
+      ],
+      "content": "Bounded model-selected action frontier and observation selection",
+      "currentControl": "Strict registered action/step contracts; selecting observation cannot supply new authority or an expanded lifetime budget",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "90e6d595490ce982c3a84fb651e4c88105c3109b4ed8a541023983500180fe74"
+    },
+    {
+      "id": "task-recovery-state",
+      "file": "packages/core/task-recovery.ts",
+      "channels": [
+        "worker",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Durable bounded technical recovery and observation pause metadata",
+      "currentControl": "Same task, original operations and cumulative limits; technical recovery is not owner input or business completion",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "ec7ce7a140c1b1bb077ca5bd3453a89127ad4418d821cc875ee450175ff0e2e0"
+    },
+    {
+      "id": "task-summary-projection",
+      "file": "packages/core/task-summary.ts",
+      "channels": [
+        "http",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Compact task/observation readback",
+      "currentControl": "Internal source inputs, model histories and raw observations remain outside protocol summaries",
+      "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
+      "stage": "S3",
+      "sourceDigest": "4927e7259e2f49ed09433f01a9e724489bea6c15e649c30efa70f7be8aab32c7"
     }
   ]
 }

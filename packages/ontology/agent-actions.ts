@@ -4,6 +4,7 @@ import type { PlanningSnapshot } from './planning-contract.js';
 import type { Ref } from './execution.js';
 import type { ActionBindingPin } from '../core/action-bindings.js';
 import { inputReferenceSchema, plannedCompletionSchema } from './dataflow-contract.js';
+import { observationSelectionSchema } from './pipeline/observation.js';
 
 const stepId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
 export const agentStepSchema = z.strictObject({
@@ -16,7 +17,8 @@ export const agentStepSchema = z.strictObject({
 });
 // A frontier is proposed by the model. No connector may supply or rewrite it.
 export const agentDecisionSchema = z.strictObject({
-  kind: z.enum(['prepare', 'execute', 'complete', 'clarify', 'no_feasible_plan']),
+  kind: z.enum(['prepare', 'execute', 'observe', 'complete', 'clarify', 'no_feasible_plan']),
+  observation: observationSelectionSchema.optional(),
   requestRevision: z.number().int().positive(), message: z.string().min(1).max(4000),
   steps: z.array(agentStepSchema).max(4), completionJson: z.string().max(16000),
   plannedCompletion: plannedCompletionSchema.optional(),

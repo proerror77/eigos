@@ -14,7 +14,7 @@ export function canResumeSource(job: Job, intents: Pick<ActionIntent, 'effect' |
     && intents.every(intent => ['read', 'local'].includes(intent.effect) || ['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state));
 }
 
-export type RecoveryCode = 'worker_interrupted' | 'worker_timeout' | 'model_unavailable' | 'provider_read_unavailable' | 'reasoning_incomplete' | 'validation_stalled';
+export type RecoveryCode = 'worker_interrupted' | 'worker_timeout' | 'model_unavailable' | 'provider_read_unavailable' | 'reasoning_incomplete' | 'validation_stalled' | 'observation_unavailable';
 export interface TaskRecovery {
   version: '1'; code: RecoveryCode; state: 'scheduled' | 'running' | 'blocked' | 'resolved';
   attempts: number; maxAttempts: number; fingerprint: string; lastFailureAt: string;
