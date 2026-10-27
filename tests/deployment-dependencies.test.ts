@@ -38,6 +38,9 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'scripts/run-local.mjs'), '');
     put(join(source, 'scripts/agent-request.mjs'), '');
     put(join(source, 'scripts/agent-enroll.mjs'), '');
+    put(join(source, 'scripts/ontology-operator.mjs'), "import {label} from '../dist/packages/members/ontology-operator.js'; console.log(label);");
+    put(join(source, 'packages/members/ontology-operator.ts'), "export const label = 'Operator transport fixture';");
+    put(join(source, 'dist/packages/members/ontology-operator.js'), "export const label = 'Operator transport fixture';");
     put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
     put(join(source, 'integrations/grok/eigos-native/client.mjs'), 'console.log("A2A transport fixture");');
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
@@ -48,6 +51,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     rmSync(source, { recursive: true });
     assert.equal(execFileSync(process.execPath, ['dist/apps/gateway/main.js'], { cwd: release, encoding: 'utf8' }).trim(), '15');
     assert.equal(execFileSync(process.execPath, ['integrations/grok/eigos-native/client.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'A2A transport fixture');
+    assert.equal(execFileSync(process.execPath, ['scripts/ontology-operator.mjs'], { cwd: release, encoding: 'utf8' }).trim(), 'Operator transport fixture');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
