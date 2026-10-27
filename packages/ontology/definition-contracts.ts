@@ -21,6 +21,8 @@ export interface OntologyDocument {
   formatVersion: 1; id: string; version: string;
   objects: SerializableObjectType[]; interfaces: SerializableInterface[];
   links: SerializableLink[]; actions: SerializableAction[]; functions: SerializableFunction[];
+  /** Optional to preserve the exact bytes/digests of historical releases. */
+  pipeline?: { serviceId: string; intakeDigest: string }[];
 }
 
 export const ontologyIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/);
@@ -69,6 +71,7 @@ export const ontologyDocumentSchema = z.strictObject({
   formatVersion: z.literal(1), id: ontologyIdSchema, version: versionSchema,
   objects: z.array(serializableObjectTypeSchema).max(2000), interfaces: z.array(serializableInterfaceSchema).max(500),
   links: z.array(serializableLinkSchema).max(10000), actions: z.array(serializableActionSchema).max(2000), functions: z.array(serializableFunctionSchema).max(1000),
+  pipeline: z.array(z.strictObject({ serviceId: resourceIdSchema, intakeDigest: z.string().regex(/^[a-f0-9]{64}$/) })).max(100).optional(),
 });
 
 /** Reject non-JSON/prototype-bearing values before any recursive schema compiler runs. */

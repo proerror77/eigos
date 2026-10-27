@@ -10,6 +10,6 @@ export function releaseFiles(root: string): string[] {
     return ['dist/' + relative(root, path).replace(/\.ts$/, '.js')];
   });
   return [...scan(join(root, 'apps')), ...scan(join(root, 'packages'))].sort()
-    .concat(['scripts/run-local.mjs', 'scripts/agent-request.mjs', 'scripts/agent-enroll.mjs',
+    .concat(['scripts/run-local.mjs', 'scripts/agent-request.mjs', 'scripts/agent-enroll.mjs', 'scripts/ontology-operator.mjs',
       'integrations/grok/eigos-native/client.mjs', 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py', 'package.json', 'package-lock.json']);
 }

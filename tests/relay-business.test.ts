@@ -27,7 +27,7 @@ import { didiFixture, input as rideInput, syntheticKey } from './fixtures/didi.j
 import { createNodeKeys } from '../packages/agent-transport/crypto.js';
 
 test('enabling the read-only Relay route preserves separately configured Mock capabilities', async () => {
-  const f = securityFixture(Date.now, { primary: true }), source = didiFixture();
+  const f = securityFixture(Date.now, { unified: true }), source = didiFixture();
   try {
     const peer = (await createNodeKeys('Synthetic source')).identity.card.agentId;
     const catalog = createExecutionCatalog({ store: f.jobs, personalSourceOwner: f.owner, didi: source.binding, didiRelayAgentId: peer, didiOrderTestEnabled: true });
@@ -63,7 +63,7 @@ const choice = (ctx: AgentPlanningContext, access: PlanningAccess): AgentDecisio
 };
 
 async function fixture() {
-  const transport = await relayFixture(), source = didiFixture(), base = securityFixture(Date.now, { primary: true });
+  const transport = await relayFixture(), source = didiFixture(), base = securityFixture(Date.now, { unified: true });
   const serviceNode = await transport.client('DiDi'), initialGateway = await transport.client('EIGOS'), pa = await transport.client('PA');
   const gatewayId = initialGateway.agentId, serviceConnection = await transport.connect(initialGateway, serviceNode), paConnection = await transport.connect(pa, initialGateway);
   initialGateway.close();

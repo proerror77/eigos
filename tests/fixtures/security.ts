@@ -11,17 +11,15 @@ import { AuthorizationCoordinator } from '../../packages/security/coordinator.js
 import { DatabaseSync } from 'node:sqlite';
 import { installRuntimeAuthority, type RuntimeAuthority } from '../../packages/core/runtime-authority.js';
 
-export function securityFixture(now: () => number = Date.now, options: { primary?: boolean } = {}) {
+export function securityFixture(now: () => number = Date.now, options: { unified?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-security-s1-')), database = join(directory, 'tasks.sqlite'), membership = join(directory, 'members.sqlite');
-  const authority: RuntimeAuthority | undefined = options.primary ? { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: 'https://primary.example', issuer: 'https://synthetic-issuer.example', ontologyId: 'eigos.business', databasePath: database, membershipDatabasePath: membership,
-    ingresses: [{ origin: 'https://primary.example', audience: 'https://primary.example', tenantClaim: 'tenant_id', agentClientId: 'registered-connector', agentClientIds: ['registered-connector'], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] } : undefined;
-  if (authority) {
-    const initial = new JobStore(database, { securityMode: 'foundation', securityNow: now }); initial.close();
-    const db = new DatabaseSync(database); try { installRuntimeAuthority(db, authority); } finally { db.close(); }
-  }
+  const principal = { issuer: 'https://synthetic-issuer.example', tenant: 'synthetic', subject: 'alice', clientId: 'registered-connector', scopes: [...SCOPES, 'members:write', 'openid'] };
+  const authority: RuntimeAuthority | undefined = options.unified ? { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: 'https://primary.example', issuer: principal.issuer,
+    ontologyId: 'eigos.business', databasePath: database, membershipDatabasePath: membership, ingresses: [{ origin: 'https://primary.example', audience: 'https://primary.example/',
+      tenantClaim: 'tenant_id', agentClientId: principal.clientId, agentClientIds: [principal.clientId], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] } : undefined;
+  if (authority) { const db = new DatabaseSync(database); try { installRuntimeAuthority(db, authority); } finally { db.close(); } }
   const jobs = new JobStore(database, { securityMode: 'foundation', securityNow: now, authority }), members = new MemberStore(membership);
   const coordinator = new AuthorizationCoordinator(jobs.security, members); coordinator.start();
-  const principal = { issuer: 'https://synthetic-issuer.example', tenant: 'synthetic', subject: 'alice', clientId: 'registered-connector', scopes: [...SCOPES, 'members:write', 'openid'] };
   const member = members.login(principal);
   members.apply(member.id, { displayName: 'Synthetic Alice', locale: 'zh-CN', timezone: 'Asia/Shanghai', consent: true }, false);
   const owner = ownerKey(principal);

@@ -32,7 +32,7 @@ async function result(action: () => unknown): Promise<CallToolResult> {
 
 export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
   const server = new McpServer({ name: 'eigos', version: '0.1.0' });
-  if (!tasks.secured && definitions) mountDefinitionMcp(server, definitions, principal);
+  if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (!tasks.secured && network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   if (options.runtime) server.registerTool('get_runtime_info', {

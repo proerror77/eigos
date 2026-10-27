@@ -10,7 +10,7 @@ import { securityFixture } from './fixtures/security.js';
 import { relayFixture } from './fixtures/relay.js';
 
 function setup() {
-  const f = securityFixture(Date.now, { primary: true }), tasks = new TaskService(f.jobs, { catalog: new ExecutionCatalog([], [], []) });
+  const f = securityFixture(Date.now, { unified: true }), tasks = new TaskService(f.jobs, { catalog: new ExecutionCatalog([], [], []) });
   const install = (name: string) => {
     const a = f.installation(name); f.approve(a.id);
     const policy = f.jobs.security.policies, expiresAt = new Date(Date.now() + 3600000).toISOString();

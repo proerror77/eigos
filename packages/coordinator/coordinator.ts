@@ -39,7 +39,7 @@ type ModelResult<T> = { decision: T; evidence: RunEvidence };
 const capabilitySelectionFeedback = 'Choose an exact capability reference and version listed by read_task_context for this task; the selected capability was not available.';
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
 export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[] }[]; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
-export interface AgentPlanningContext { request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; prepareContext?: boolean; preparedContextNavigation?: {id:string;programRef:{id:string;version:string};scope:{type:string;id:string};retired:boolean}[]; planningObservationTypes?: readonly string[]; components?: ReturnType<NonNullable<AgentProgram['describeComponents']>>; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
+export interface AgentPlanningContext { sourceChanges?: import('../ontology/pipeline/facts.js').PipelineFactChange[]; request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; prepareContext?: boolean; preparedContextNavigation?: {id:string;programRef:{id:string;version:string};scope:{type:string;id:string};retired:boolean}[]; planningObservationTypes?: readonly string[]; components?: ReturnType<NonNullable<AgentProgram['describeComponents']>>; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
 export interface Reasoner {
   readonly ontologyContextMode?: 'primitives' | 'task';
   readonly securityChannelId?: string;
@@ -241,7 +241,7 @@ export class Coordinator {
       if (!this.store.checkpoint(claim, job => { delete job.delegation!.suspendedAgent; })) return;
     }
     if (this.pauseForModelBudget(claim)) return;
-    const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live').items.filter(summary => !d.request.capabilityRef || digest(summary.ref) === digest(d.request.capabilityRef)).map(summary => {
+    const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job)).items.filter(summary => !d.request.capabilityRef || digest(summary.ref) === digest(d.request.capabilityRef)).map(summary => {
       const program = this.catalog.programForCapability(summary.ref, claim.owner);
       return program && !this.store.security.enabled && d.ontologyReadScope === 'owner' ? {...summary, verificationHistory:this.store.providerEvidenceView(claim.owner,program.ref,program.configurationDigest)} : summary;
     });
@@ -476,7 +476,7 @@ export class Coordinator {
       actionCatalog: this.catalog,
       priorReads: job.delegation?.ontologyReads,
       taskContext: !useTaskContext ? undefined : { purpose: purpose === 'request_interpreted' ? 'grounding' : state ? 'agent' : 'planning', refs,
-        capabilityDirectory: { bootstrapComplete: !this.catalog.summaryPage(claim.owner, 16, request.executionEnvironment ?? 'live').hasMore, discoveryTool: 'discover_actions' },
+        capabilityDirectory: { bootstrapComplete: !this.catalog.summaryPage(claim.owner, 16, request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job)).hasMore, discoveryTool: 'discover_actions' },
         ...(discoveryTypes ? { managedDiscoveryTypes: discoveryTypes } : {}),
         ...(state && program && !state.composition ? { program: { ref: state.programRef, configurationDigest: state.programDigest, actionIds: state.managedActionIds ?? program.actionIds } } : {}) },
     });

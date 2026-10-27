@@ -168,6 +168,10 @@ export class CompositionProgram implements AgentProgram {
     if (state.programDigest !== this.configurationDigest) fail('Composition configuration changed');
     return this.bound(node).configurationDigest;
   }
+  pipelineBinding(ctx: AgentProgramContext, action: string, input: Record<string, unknown>) {
+    const program = local(action) ? this : this.route(ctx, action, input).program;
+    return { ref: program.ref, configurationDigest: program.configurationDigest };
+  }
   describeComponents(ctx: AgentProgramContext) {
     return this.input(ctx).components.map(node => {
       const state = ctx.state.components![node.id]!, { result, ...scope } = state;

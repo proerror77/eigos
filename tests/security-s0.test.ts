@@ -28,7 +28,10 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 193); assert.equal(report.counts.properties, 1769);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 127);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 139);
+  for (const id of ['ontology-definition-contracts', 'ontology-definition-service', 'ontology-action-discovery-contract', 'ontology-pipeline-contract', 'ontology-pipeline-registry', 'ontology-pipeline-mapping', 'ontology-pipeline-facts', 'ontology-metadata-http', 'ontology-metadata-mcp']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed pipeline surface: ${id}`);
+  }
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));
   assert.deepEqual(businessModel.ref, before);

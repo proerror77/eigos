@@ -31,6 +31,7 @@ import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-bind
 import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { externalDraftScopeSchema } from '../ontology/external-draft.js';
+import { assertPipelineReady } from '../ontology/pipeline/contracts.js';
 
 export const AGENT_LIMITS = { modelTurns: 32, plans: 8, actions: 16 } as const;
 export function agentLimits(program?: AgentProgram) {
@@ -94,6 +95,12 @@ export class AgentRuntime {
     const context = this.context(claim, job);
     return context.state.composition ? resolveComposedStep(this.catalog, context, step) : { program, context };
   }
+  private pipelineStatus(program: AgentProgram, context: AgentProgramContext, action: string, input: Record<string, unknown>) {
+    const binding = program.pipelineBinding?.(context, action, input) ?? program;
+    const status = context.graph.pipelineStatus(context.owner, binding.ref, binding.configurationDigest, action);
+    assertPipelineReady(status);
+    return status;
+  }
   private feedback(job: Job, kind: AgentExecutionState['feedback'][number]['kind'], message: string, inputDigest: string) {
     const state = job.delegation!.agent!, at = new Date().toISOString();
     state.feedback.push({ at, kind, message, inputDigest });
@@ -120,6 +127,7 @@ export class AgentRuntime {
           const fresh = this.context(claim, current), reads = selection.ontologyPlanning, proposal = selection.proposal;
           assertGoalCoverage(current, program.capability());
           validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, reads, true);
+          this.store.pipelineFacts.assertFresh(claim.owner, fresh.graph.ontologyId, reads.objects.map(value => value.ref));
           const goal = fresh.state.composition ? assessGoal(this.catalog, fresh, proposal, reads) : undefined;
           if (goal) {
             current.delegation!.agent!.composition!.assessment = goal.assessment;
@@ -159,6 +167,10 @@ export class AgentRuntime {
   async run(claim: WorkClaim, signal: AbortSignal): Promise<void> {
     if (claim.recovery) { await this.recoverTerminal(claim, this.program(claim), signal); return; }
     if (!this.withinTaskBudget(claim)) return;
+    const revision = claim.job.delegation!.request.revision;
+    if (this.store.pipelineFacts.hasDependencies(claim.owner, claim.job.id, revision)) {
+      if (!this.store.checkpoint(claim, () => this.store.pipelineFacts.expireForTask(claim.owner, claim.job.id, revision))) return;
+    }
     const program = this.program(claim), ctx = this.context(claim);
     program.assertContext?.(ctx);
     if (!this.store.get(claim.owner, claim.job.id).delegation?.callerAction) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), program.capability());
@@ -175,7 +187,7 @@ export class AgentRuntime {
       this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', executionBudgetExceeded(current, 'modelTurns', MIN_REASONING_TURNS) ?? 'window')); return;
     }
     const access = this.access(claim, signal);
-    const reasoningContext = { request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: [...(ctx.state.managedActionIds ?? program.actionIds)], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object,
+    const reasoningContext = { sourceChanges: ctx.graph.pipelineChanges(claim.owner, ctx.request.id, ctx.request.revision), request: structuredClone(ctx.request), capability: program.capability(), state: structuredClone(ctx.state), components: program.describeComponents?.(ctx), prepareContext: program.preparePlanningContext, planningObservationTypes: program.planningObservationTypes, actionIds: [...(ctx.state.managedActionIds ?? program.actionIds)], guidance: program.guidance, completionSchema: program.completionSchema, limits, actionOutcomes: ctx.intents?.map(intent => ({ stepId: intent.stepId, intentId: intent.id, state: intent.state, object: intent.acceptedOutput?.object,
       ...(ctx.state.composition ? { ports: ((intent.acceptedOutput?.ports ?? []) as import('../ontology/composition-contract.js').AcceptedPortValue[]).map(port => ({ name: port.port, definition: port.definition, value: port.value, receiptDigest: port.digest })) } : {}) })) };
     signal.throwIfAborted();
     if (!this.store.claimActive(claim)) return;
@@ -531,6 +543,8 @@ export class AgentRuntime {
       }
       const current = this.boundStep(claim, program, step).context;
       validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, current.request, plan.ontologyPlanning, true);
+      this.pipelineStatus(program, current, step.action, input);
+      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       if (step.definitionDigest !== digest(program.definition(this.store.ontologyForJob(claim.owner, claim.job), step.action))) failure('Action definition changed');
       program.validate(current, step.action, input);
       if (program.privateInput && digest(program.privateInput(current, step.action, input) ?? {}) !== intent.privateDigest) failure('Prepared private input changed before dispatch');
@@ -554,6 +568,12 @@ export class AgentRuntime {
       }
       if (!this.store.checkpoint(claim, job => {
         let authorizationId: string | undefined;
+        const current = this.boundStep(claim, program, step, job).context;
+        const pipeline = this.pipelineStatus(program, current, step.action, input);
+        this.store.definitions.pipeline.recordUse(claim.owner, job.id, intent.id, this.store.ontologyReleaseForJob(claim.owner, job), pipeline);
+        for (const object of [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])].filter(value => value.ref.id.startsWith('pipeline:'))) {
+          this.store.pipelineFacts.track(claim.owner, current.graph.ontologyId, job.id, current.request.revision, step.contextId ?? program.ref.id, object.ref);
+        }
         if (!['read', 'local'].includes(step.effect)) {
           const grant = agentDispatchGrant(this.store, claim.owner, claim.job.id, plan, step) ?? failure('Action authority expired before dispatch');
           authorizationId = grant.id;
@@ -580,6 +600,8 @@ export class AgentRuntime {
       if (!this.store.claimActive(claim)) failure('Execution lease or task authority ended before the provider write');
       if (!this.withinTaskBudget(claim)) failure('Task waiting limit ended before the provider write');
       const current = this.boundStep(claim, program, step).context;
+      this.pipelineStatus(program, current, step.action, input);
+      this.store.pipelineFacts.assertSnapshots(claim.owner, current.graph, [...plan.ontologyPlanning.objects, ...(inputPlanning?.objects ?? [])]);
       validateAgentAuthority(program, current, plan, step);
       if (!plan.callerDecision) assertGoalCoverage(this.store.get(claim.owner, claim.job.id), this.program(claim).capability());
       if (plan.quote && !hasSimulationApproval(this.store.get(claim.owner, claim.job.id), plan)) failure('Exact local simulation approval expired or was revoked');

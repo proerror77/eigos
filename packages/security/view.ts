@@ -18,7 +18,7 @@ export const checkAccessSchema = z.strictObject({ taskId: z.uuid(), operation: z
   resource:z.strictObject({kind:z.enum(['objectType','interface','linkType','actionType','function']),id:nameSchema}).optional(),artifactId:z.uuid().optional() });
 
 export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: { search?: string; limit?: number; after?: string } = {}, model: OntologyObjectStore['model'] = security.model) {
-  if (digest(model.ref) !== digest(security.model.ref)) throw new SecurityError('POLICY_CHANGED');
+  security.policies.assertModel(model);
   const policy = security.policies, parent = security.agentGrant(scope.actor.installationId);
   const reviewedType = (id: string) => { try { return model.hasType(id) && model.fingerprint(id) === security.model.fingerprint(id); } catch { return false; } };
   const typeAllowed = (id: string) => reviewedType(id) && policy.resourceAllowed(scope, model.isInterface(id) ? 'interface' : 'objectType', id)
