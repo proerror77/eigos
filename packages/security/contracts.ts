@@ -6,6 +6,8 @@ import { objectRefSchema, nameSchema } from '../ontology/model.js';
 // identity and current grants before producing a server-side AccessContext.
 export const SECURITY_CONTRACT = 'eigos.security.v1' as const;
 export const POLICY_VERSION = 'eigos.security-baseline.v1' as const;
+// Cumulative evidence across bounded task runs, independent of grant input limits.
+export const MAX_SECURITY_LINEAGE_ITEMS = 2000;
 const id = z.string().min(1).max(200).refine(v => !v.includes('*'), 'Wildcard grants are not supported');
 const revision = z.number().int().positive();
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -91,7 +93,7 @@ export const securityEnvelopeSchema = z.strictObject({
   requiredMarkings: z.array(z.enum(['member_private', 'personal_data', 'precise_location', 'health', 'financial', 'account_private'])).max(6),
   classification: z.enum(['private', 'sensitive', 'internal']),
   channels: z.array(channelSchema).max(4), policyVersion: z.literal(POLICY_VERSION),
-  lineage: z.array(z.strictObject({ object: objectRefSchema, revision, contentDigest: sha, fields: z.array(nameSchema).max(200).optional() })).max(200),
+  lineage: z.array(z.strictObject({ object: objectRefSchema, revision, contentDigest: sha, fields: z.array(nameSchema).max(200).optional() })).max(MAX_SECURITY_LINEAGE_ITEMS),
   lineageComplete: z.boolean(),
   submission: z.strictObject({ taskId: z.uuid(), requestRevision: revision, contentDigest: sha }).optional(),
 });

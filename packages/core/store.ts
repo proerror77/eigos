@@ -28,7 +28,7 @@ import { actionSources } from '../security/component-authority.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
-import { SecurityStore, type SecurityMode } from '../security/store.js';
+import { SecurityStore, SecurityLineageLimitError, type SecurityMode } from '../security/store.js';
 import { authorizationScope } from '../security/context.js';
 import {agentDispatchGrant} from './agent-authorization.js';
 import { storedRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from './runtime-authority.js';
@@ -724,6 +724,24 @@ export class JobStore {
       return true;
     }
   }
+  private saveRecoveredWork(owner: string, job: Job, now: number): boolean {
+    try { this.save(owner, job); return true; }
+    catch (error) {
+      if (!(error instanceof SecurityLineageLimitError)) throw error;
+      const previous = { state: job.state, phase: job.delegation!.phase, question: job.question, error: job.error };
+      scheduleTaskRecovery(job, 'validation_stalled', '当前任务暂时无法完成安全核验。原任务与证据已保留，修复运行环境后可继续。', { now, automatic: false, operation: 'security_lineage_capacity' });
+      if (!['working', 'submitted'].includes(previous.state)) {
+        job.state = previous.state; job.delegation!.phase = previous.phase;
+        job.question = previous.question; job.error = previous.error;
+        delete job.delegation!.recoveryPending;
+      }
+      // The failed projection rolled back its savepoint. Persist only the
+      // technical pause; keep all evidence and deny output until repaired.
+      this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
+        .run(job.state, job.updatedAt, JSON.stringify(job), owner, job.id);
+      return false;
+    }
+  }
   private expireClaims(now: number): void {
     const rows = this.db.prepare(`SELECT j.owner,j.body,c.revision,c.token AS claim_token FROM work_claims c
       JOIN jobs j ON j.id=c.job_id WHERE c.expires_at<=?`).all(now);
@@ -737,11 +755,11 @@ export class JobStore {
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
         if (job.state === 'working') job.delegation.nextAt = now;
         else if (intents.some(i => ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(i.state))) job.delegation.recoveryPending = true;
-        job.updatedAt = new Date(now).toISOString(); this.save(owner, job); continue;
+        job.updatedAt = new Date(now).toISOString(); this.saveRecoveredWork(owner, job, now); continue;
       }
       if (job.state !== 'working' || (job.revision ?? 0) !== Number(row.revision)) continue;
       scheduleTaskRecovery(job, 'worker_interrupted', '运行进程中断，已保留原任务，恢复后继续处理。', { now });
-      this.save(String(row.owner), job);
+      this.saveRecoveredWork(String(row.owner), job, now);
     }
     this.db.prepare('DELETE FROM work_claims WHERE expires_at<=?').run(now);
   }
@@ -770,7 +788,10 @@ export class JobStore {
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
-      if (job.state === 'submitted') { job.state = 'working'; job.updatedAt = new Date(now ?? Date.now()).toISOString(); this.save(String(row.owner), job); }
+      if (job.state === 'submitted') {
+        job.state = 'working'; job.updatedAt = new Date(now ?? Date.now()).toISOString();
+        if (!this.saveRecoveredWork(String(row.owner), job, at)) return;
+      }
       const token = randomUUID();
       const claimedAt = now ?? Date.now();
       this.db.prepare('INSERT INTO work_claims VALUES(?,?,?,?)').run(job.id, token, job.revision ?? 0, claimedAt + leaseMs);

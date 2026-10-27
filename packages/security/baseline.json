@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "3fee38803a0bc9c5cb0112eadd9b1b5fef3b7146f549d2c5b974cd11d5eacea8",
+      "sourceDigest": "aab1296fa76f083d661449c32aeddf9b5968c80afced6be557a4163c38c1f7ea",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3177,7 +3177,7 @@
     {
       "id": "security-contracts",
       "file": "packages/security/contracts.ts",
-      "sourceDigest": "b7f5c9a5dca5d72be0c746001a4599381d4c6b9707b25e2b3e0b91859826f351",
+      "sourceDigest": "42faffa36df647c139edce30eae58282874a1c9f05a3f27666f134d256064ac1",
       "channels": [
         "authorization_control"
       ],
@@ -3201,7 +3201,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "4c11b558be544a9c1649c41fdc41957e7e05209c870ef26dc46dfcd2fd340cd9",
+      "sourceDigest": "ad706e8c64038bd52e1f0a93c6af462767157da0192cf496721a0d91dc040576",
       "channels": [
         "authorization_control"
       ],
@@ -3297,7 +3297,7 @@
     {
       "id": "security-envelope",
       "file": "packages/security/envelope.ts",
-      "sourceDigest": "6f7c198c5580299ec5f7775dbdddde9bae994cde094121dd7b5ec29f1976db7f",
+      "sourceDigest": "f54a2f6f0796ba7e36646724b5c475a03892204410ca282870b2260d8d5388bf",
       "channels": [
         "all-outputs"
       ],

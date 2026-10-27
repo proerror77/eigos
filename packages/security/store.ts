@@ -24,6 +24,9 @@ export interface Fence { ownerKey: string; kind: 'member' | 'connection' | 'inst
 export class SecurityError extends DomainError {
   constructor(readonly reason: 'AUTHORIZATION_REQUIRED' | 'ACCESS_REVOKED' | 'AUTHORITY_UNAVAILABLE' | 'REVOCATION_PENDING' | 'POLICY_CHANGED' | 'SOURCE_NOT_AUTHORIZED' | 'OUTPUT_NOT_ALLOWED' | 'INSUFFICIENT_ACCESS', message: string = reason) { super('FORBIDDEN', message); }
 }
+export class SecurityLineageLimitError extends SecurityError {
+  constructor() { super('OUTPUT_NOT_ALLOWED'); }
+}
 type Row = Record<string, unknown>;
 const subject = (r: Row): Subject => ({ ownerKey: String(r.owner), memberId: String(r.member_id), installationId: String(r.installation_id), clientId: String(r.client_id), active: r.state === 'active', epoch: Number(r.epoch), validUntil: Number(r.valid_until) });
 const fenceKey = (f: Pick<Fence, 'ownerKey' | 'kind' | 'targetId'>) => digest([f.ownerKey, f.kind, f.targetId]);
