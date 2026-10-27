@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "717baca4fb13f0c0b80991551b8d6a30ab0567eb714841dcaeafbb6fbd81652f",
+      "sourceDigest": "06aea1948fe6f7942f0477a0a656b5e189c30921f8629438b631c2eb8b797a7b",
       "channels": [
         "sqlite",
         "idempotency"
@@ -4332,7 +4332,7 @@
       "currentControl": "Shared business transactions, cumulative reservations, stable pending operation keys, revision/deadline fences and explicit freshness-gap status",
       "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
       "stage": "S3",
-      "sourceDigest": "995616ab86cbe9e229328db71a00ec121054160022f2f3a435a8486160b9ef8c"
+      "sourceDigest": "2b8bbe368dba3b400de479eab083ba555ec18e29363e73dd5a7f67f0c24bd85c"
     },
     {
       "id": "pipeline-source-projection",

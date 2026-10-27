@@ -145,7 +145,7 @@ export class JobStore {
     });
     try {
       const reviewedModel = currentKernelImplementation();
-      this.security = this.transaction(() => new SecurityStore(this.db, options.securityMode, options.securityNow, false, reviewedModel));
+      this.security = this.transaction(() => new SecurityStore(this.db, options.securityMode, options.securityNow ?? (() => Date.now()), false, reviewedModel));
     // Run the explicitly supported historical migrations once before the
     // persistent definition registry becomes the authority for every view.
     this.definitions = new DefinitionStore(this.db, options.securityNow ?? Date.now);
@@ -773,18 +773,22 @@ export class JobStore {
       const active=Number(this.db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n)
         +(this.security.enabled?Number(this.db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running' AND lease_until>?").get(at)!.n):0);
       if (active >= 2) return;
-      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1)
-        OR (state IN ('input-required','auth-required') AND EXISTS(SELECT 1 FROM pipeline_observation_watches w WHERE w.owner=jobs.owner AND w.task_id=jobs.id AND w.status='active' AND w.next_at<=:observationNow AND json_extract(w.body,'$.requestRevision')=json_extract(jobs.body,'$.delegation.request.revision'))))
-        AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
+      const eligibility = `AND COALESCE(json_extract(body,'$.executionMode'), 'worker')=?
         AND json_extract(body,'$.service') IN (${services.map(() => '?').join(',')})
         AND json_extract(body,'$.service')='eigos.delegate' AND json_extract(body,'$.delegation.backendVersion')=?
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims)
         ${this.authority ? "AND json_extract(body,'$.authorityId')=:runtimeAuthority" : ''}
-        ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
-      const named = { observationNow: at, ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
+        ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`;
+      // Preserve the established partial index for ordinary/recovery work.
+      // Background observation has its own indexed due-watch candidate query.
+      const query = this.db.prepare(`SELECT owner,body FROM jobs WHERE (state IN ('working','submitted') OR (state IN ('canceled','failed','rejected','completed','auth-required') AND json_extract(body,'$.delegation.recoveryPending')=1)) ${eligibility}`);
+      const named = { ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
       const values = [this.security.enabled ? 'worker-security-v2' : 'worker',...services,BACKEND_VERSION,at];
-      const row = Object.keys(named).length ? query.get(named,...values) : query.get(...values);
+      const row = (Object.keys(named).length ? query.get(named,...values) : query.get(...values)) ?? this.db.prepare(`SELECT jobs.owner,jobs.body FROM jobs WHERE id IN (
+        SELECT w.task_id FROM pipeline_observation_watches w JOIN jobs task ON task.id=w.task_id AND task.owner=w.owner
+        WHERE w.status='active' AND w.next_at<=:observationNow AND task.state IN ('input-required','auth-required')
+        AND json_extract(w.body,'$.requestRevision')=json_extract(task.body,'$.delegation.request.revision')) ${eligibility}`).get({ ...named, observationNow: at }, ...values);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;

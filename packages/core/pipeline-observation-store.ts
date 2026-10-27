@@ -14,6 +14,7 @@ export class PipelineObservationStore {
       CREATE TABLE IF NOT EXISTS pipeline_observation_contracts (owner TEXT NOT NULL,task_id TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,task_id));
       CREATE TABLE IF NOT EXISTS pipeline_observation_watches (owner TEXT NOT NULL,id TEXT NOT NULL,task_id TEXT NOT NULL,status TEXT NOT NULL,next_at INTEGER NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,id));
       CREATE INDEX IF NOT EXISTS pipeline_watch_due ON pipeline_observation_watches(owner,task_id,status,next_at);
+      CREATE INDEX IF NOT EXISTS pipeline_watch_queue ON pipeline_observation_watches(status,next_at,task_id,owner);
       CREATE TABLE IF NOT EXISTS pipeline_observation_reads (id TEXT PRIMARY KEY,owner TEXT NOT NULL,task_id TEXT NOT NULL,watch_id TEXT NOT NULL,status TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pipeline_observation_receipts (id TEXT PRIMARY KEY,owner TEXT NOT NULL,task_id TEXT NOT NULL,body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS pipeline_observation_hints (owner TEXT NOT NULL,watch_id TEXT NOT NULL,event_id TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner,watch_id,event_id,digest));
