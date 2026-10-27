@@ -12,7 +12,7 @@ process.on('SIGTERM', () => stop.abort()); process.on('SIGINT', () => stop.abort
 try {
   while (!stop.signal.aborted) {
     try {
-      const contact = await client.requestContact(config.gatewayAgentId);
+      const contact = await client.ensureContact(config.gatewayAgentId);
       if (contact.state === 'pending' && contact.recipient === client.agentId) await client.respondContact(contact.id, 'accept');
       await client.listen(message => service.handle(message, stop.signal), stop.signal);
     }

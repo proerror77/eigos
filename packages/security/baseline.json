@@ -4310,7 +4310,7 @@
     {
       "id": "primary-relay-entry",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "8292a5f04d15a2bb4bc7e6c54b1be38a1c712c6effd5206964db297ac37a5fa0",
+      "sourceDigest": "8f23947f92c67741fa714090446aeaff45dfb8bde3e546230db81da3efcb773b",
       "channels": [
         "http",
         "authorization_control"
@@ -4398,7 +4398,7 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "973d3062cbf4ab27e1700d29eb5a5781439030c0f164a1c192911f18ca6cd5c4",
+      "sourceDigest": "0d243ec04f6de5721525bbf6e0922c1408c5cdd7f0923a0f0654989901abacad",
       "channels": [
         "agent_transport",
         "private_file"
@@ -4473,7 +4473,7 @@
     {
       "id": "relay-service-process",
       "file": "apps/service-agent/main.ts",
-      "sourceDigest": "b3dfe3ab142edc7071a5b07d62454024d74b69925bacd06196895f0555cc00da",
+      "sourceDigest": "6db4f756cb55935e698a0cecf4d3bb8c2f779044b5ff8b0215a682692ddadc0e",
       "channels": [
         "runtime",
         "source"

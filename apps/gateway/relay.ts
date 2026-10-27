@@ -61,7 +61,7 @@ export class TaskRelayGateway {
       try {
         await this.client!.peer(this.client!.agentId);
         if (this.sourceAgentId) {
-          const contact = await this.client!.requestContact(this.sourceAgentId);
+          const contact = await this.client!.ensureContact(this.sourceAgentId);
           if (contact.state === 'pending' && contact.recipient === this.client!.agentId) await this.client!.respondContact(contact.id, 'accept');
         }
         this.state = 'connected';
@@ -109,7 +109,9 @@ export class TaskRelayGateway {
     const expiresAt = Math.min(tokenExpiry, now + 900000, Date.parse(parent.expiresAt));
     const binding = this.store.security.relay.bind(principal, card.card.agentId, expiresAt, checkedProof);
     // Contact acceptance only follows this installation's authenticated key binding.
-    const contact = await this.client.requestContact(card.card.agentId);
+    let contact = await this.client.ensureContact(card.card.agentId);
+    this.store.security.relay.principal(card.card.agentId);
+    if (contact.state === 'pending' && contact.recipient === this.client.agentId) contact = await this.client.respondContact(contact.id, 'accept');
     this.store.security.relay.principal(card.card.agentId);
     return { ...binding, ...this.metadata(), connectionId: contact.id };
   }

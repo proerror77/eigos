@@ -78,6 +78,37 @@ test('contact acceptance gates communication; node identity and registration sur
   } finally { await f.close(); }
 });
 
+test('simultaneous contact discovery and node restart reuse one connection without accepting it', async () => {
+  const f = await fixture(); let lookups = 0, release!: () => void;
+  const bothListed = new Promise<void>(resolve => { release = resolve; });
+  const fetcher: typeof fetch = async (url, init) => {
+    const response = await fetch(url, init);
+    if (String(url).endsWith('/v1/contacts') && init?.method === 'GET' && lookups < 2) {
+      if (++lookups === 2) release();
+      await bothListed;
+    }
+    return response;
+  };
+  try {
+    const a = await f.client('A', fetcher), b = await f.client('B', fetcher);
+    const [first, raced] = await Promise.all([a.ensureContact(b.agentId), b.ensureContact(a.agentId)]);
+    assert.equal(first.id, raced.id); assert.equal(first.state, 'pending'); assert.equal(raced.state, 'pending');
+    assert.equal((await a.contacts()).length, 1);
+    await assert.rejects(a.send(b.agentId, first.id, { value: 'not-yet-authorized' }), errorCode('CONTACT_NOT_ACCEPTED'));
+    const recipient = first.recipient === a.agentId ? a : b;
+    await recipient.respondContact(first.id, 'accept');
+    assert.equal((await a.ensureContact(b.agentId)).state, 'accepted');
+    b.close(); const reopened = await f.client('B');
+    assert.equal((await reopened.ensureContact(a.agentId)).id, first.id);
+    await a.respondContact(first.id, 'revoke');
+    const replacement = await reopened.ensureContact(a.agentId);
+    assert.notEqual(replacement.id, first.id); assert.equal(replacement.state, 'pending');
+    await assert.rejects(reopened.send(a.agentId, replacement.id, { value: 'still-needs-approval' }), errorCode('CONTACT_NOT_ACCEPTED'));
+    await a.revoke(ownerToken);
+    await assert.rejects(reopened.ensureContact(a.agentId), errorCode('PEER_REVOKED_OR_EXPIRED'));
+  } finally { await f.close(); }
+});
+
 test('a lost send response retries the exact stored envelope and cannot change the original message', async () => {
   const f = await fixture(); let lose = true;
   const fetcher: typeof fetch = async (input, init) => {

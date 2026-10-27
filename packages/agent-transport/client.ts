@@ -162,6 +162,22 @@ export class RelayClient {
     await this.peer(peerId);
     return connectionSchema.parse(await this.request('/v1/contacts', 'POST', { peerId, requestId: uuidSchema.parse(requestId) }));
   }
+  /** Reuse a live contact after reconnecting; approval remains with its recipient. */
+  async ensureContact(peerId: string): Promise<Connection> {
+    await this.peer(peerId);
+    const existing = async () => (await this.contacts()).find(c => ['pending', 'accepted'].includes(c.state)
+      && (c.requester === this.agentId && c.recipient === peerId || c.requester === peerId && c.recipient === this.agentId));
+    const contact = await existing();
+    if (contact) return contact;
+    try { return await this.requestContact(peerId); }
+    catch (error) {
+      if (error instanceof RelayError && error.code === 'CONNECTION_ALREADY_EXISTS') {
+        const raced = await existing();
+        if (raced) return raced;
+      }
+      throw error;
+    }
+  }
   async contacts(): Promise<Connection[]> { return z.strictObject({ connections: z.array(connectionSchema).max(256) }).parse(await this.request('/v1/contacts')).connections; }
   async respondContact(id: string, action: 'accept' | 'reject' | 'revoke'): Promise<Connection> {
     return connectionSchema.parse(await this.request(`/v1/contacts/${uuidSchema.parse(id)}`, 'POST', { action }));
