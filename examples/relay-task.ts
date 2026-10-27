@@ -16,7 +16,7 @@ const input = z.strictObject({
 const agent = await AgentConnector.open({ baseUrl: input.gatewayOrigin, credentialPath: input.paCredentialPath, displayName: 'Relay PA' });
 const node = await RelayClient.open({ baseUrl: input.relayUrl, credentialPath: input.nodeCredentialPath, displayName: 'Relay PA' });
 try {
-  if (input.operation === 'enroll' || input.operation === 'renew') console.log(JSON.stringify(await agent.enrollTaskRelay(node, { renew: input.operation === 'renew' })));
+  if (input.operation === 'enroll' || input.operation === 'renew') console.log(JSON.stringify(await agent.enrollTaskRelay(node, { renew: input.operation === 'renew', requestId: input.requestId })));
   else {
     const pa = new TaskRelayClient(node, agent), binding = await pa.bind();
     if (input.operation === 'bind') console.log(JSON.stringify(binding));

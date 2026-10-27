@@ -198,10 +198,11 @@ export class AgentConnector {
     if(value.installationId!==this.registrationId)throw new AgentConnectorError('installation_context_mismatch');return value;
   }
   /** Uses the existing OAuth installation to bind a transport key; refresh credentials stay here. */
-  async bindTaskRelay(relay: RelayClient) {
+  async bindTaskRelay(relay: RelayClient, expected?: { authorityId: string; gatewayAgentId: string }) {
     const context = await this.authorizationContext();
     const metadata = taskRelayMetadataSchema.parse(await this.json('/.well-known/eigos-task-relay'));
     if (metadata.gatewayOrigin !== this.baseUrl || metadata.relayUrl !== relay.baseUrl) throw new AgentConnectorError('relay_destination_mismatch');
+    if (expected && (metadata.authorityId !== expected.authorityId || metadata.gatewayAgentId !== expected.gatewayAgentId)) throw new AgentConnectorError('relay_authority_mismatch');
     const token = await this.accessToken(), proof = await relay.taskBindingProof(token, this.baseUrl);
     const response = await this.fetcher(this.baseUrl + metadata.bindingPath, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
       headers: { Authorization: `Bearer ${token}`, DPoP: proof, 'Content-Type': 'application/json' }, body: JSON.stringify({ signedCard: relay.identity.signedCard }) });
@@ -215,7 +216,8 @@ export class AgentConnector {
     else if (contact.state !== 'accepted') throw new AgentConnectorError('relay_contact_not_accepted');
     return value;
   }
-  async enrollTaskRelay(relay: RelayClient, options: { renew?: boolean } = {}) {
+  async enrollTaskRelay(relay: RelayClient, options: { renew?: boolean; requestId?: string } = {}) {
+    if (options.renew && !z.uuid().safeParse(options.requestId).success) throw new AgentConnectorError('relay_renewal_request_id_required');
     const metadata = taskRelayMetadataSchema.parse(await this.json('/.well-known/eigos-task-relay'));
     if (metadata.gatewayOrigin !== this.baseUrl || metadata.relayUrl !== relay.baseUrl || !metadata.enrollmentPath) throw new AgentConnectorError('relay_enrollment_unavailable');
     const token = await this.accessToken(), proof = await relay.enrollmentProof(token, this.baseUrl);
@@ -224,7 +226,7 @@ export class AgentConnector {
     if (!response.ok) throw new AgentConnectorError('relay_enrollment_rejected');
     const assertion = z.strictObject({ accessToken: z.string().max(8192), expiresAt: z.number().int(), agentId: z.string() }).parse(await response.json());
     if (assertion.agentId !== relay.agentId || assertion.expiresAt <= Date.now()) throw new AgentConnectorError('relay_enrollment_mismatch');
-    return options.renew ? relay.renew(assertion.accessToken) : relay.register(assertion.accessToken);
+    return options.renew ? relay.renew(assertion.accessToken, options.requestId) : relay.register(assertion.accessToken);
   }
   /** Explicit v2 calls have no owner-wide fallback after a denial or old server. */
   async queryOntology(taskId:string,query:unknown,expectedRequestRevision?:number) {

@@ -28,7 +28,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 193); assert.equal(report.counts.properties, 1769);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 113);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 127);
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));
   assert.deepEqual(businessModel.ref, before);

@@ -3539,7 +3539,7 @@
     {
       "id": "s5-packages-agent-client-client",
       "file": "packages/agent-client/client.ts",
-      "sourceDigest": "d1e069ae1defdb7add7a98a82ebfc5065effbe027a285f17703383c7526f854e",
+      "sourceDigest": "0091b440bb248ce9af48554f851583cd51cae93f05874a9a7c6ba7736aaab204",
       "channels": [
         "runtime"
       ],
@@ -4231,7 +4231,7 @@
     {
       "id": "relay-pa-client",
       "file": "packages/agent-client/relay.ts",
-      "sourceDigest": "c894fb9d284112ae645112b8889f6a516f411848b60621e1d08cc3c9ebadb4c2",
+      "sourceDigest": "9d88ccc47b59e0ee9c0a40f0051f0b814b08c4e7aaf7815ad53f616dd8ac3a6c",
       "channels": [
         "agent_transport"
       ],

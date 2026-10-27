@@ -87,6 +87,7 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     assert.equal(gateway.relay!.status, 'connected');
     const node = await RelayClient.open({ baseUrl: relayConfig.publicUrl, credentialPath: join(directory, 'pa-node.json'), displayName: 'Synthetic PA' }); nodes.push(node);
     await agent.enrollTaskRelay(node);
+    await assert.rejects(agent.bindTaskRelay(node, { authorityId: randomUUID(), gatewayAgentId: gateway.relay!.metadata().gatewayAgentId }), /relay_authority_mismatch/);
     const pa = new TaskRelayClient(node, agent), binding = await pa.bind();
     assert.equal(binding.installationId, installationId); assert.equal(binding.authorityId, authority.id);
     assert(!JSON.stringify(pa).includes(token)); assert(!JSON.stringify(pa).includes('synthetic-refresh-not-used'));

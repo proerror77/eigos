@@ -102,6 +102,8 @@ npm run example:relay-task -- /private/my-pa/relay-request.json
 
 文件包含 `gatewayOrigin`、`relayUrl`、`paCredentialPath`、`nodeCredentialPath` 和 `operation`。首次用 `enroll` 登记，再用 `bind` 建立安装路由。`submit` 另提供明确 `requestId` 与 `goal`；`get` 提供新的读取 `requestId` 和原 `taskId`。`renew` 仅续期通信资格。
 
+现有 `integrations/grok/eigos-native/client.mjs` 也支持 `relay-enroll`、`relay-renew`、`relay-bind` 和 `relay`。在原私有 PA profile 中增加 `relay` 对象，包含 `baseUrl`、`credentialPath`、准确的 `authorityId` 与 `gatewayAgentId`。客户端在写入前核对这些固定身份。`relay --input <file> --output <file>` 读取保存的任务命令并输出原任务视图；`relay-renew` 的输入文件必须包含固定的 UUID `requestId`。请求与回执中均不放凭据。
+
 - 短暂传输错误：使用已保存的 `messageId` 重发同一密文。
 - 消息或短期绑定已到期：重新认证绑定，保留业务 `requestId`，生成新的传输消息 ID。主实例仍执行原防重规则。
 - Gateway 在任务提交后中断：重放回到同一任务，发送前重新生成当前有权限的视图，不清空业务库或重发授权。

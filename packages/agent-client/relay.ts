@@ -14,8 +14,8 @@ export class TaskRelayError extends Error { constructor(readonly code: string) {
 export class TaskRelayClient {
   private binding?: Awaited<ReturnType<AgentConnector['bindTaskRelay']>>;
   #agent: AgentConnector;
-  constructor(readonly node: RelayClient, agent: AgentConnector) { this.#agent = agent; }
-  async bind() { return this.binding = await this.#agent.bindTaskRelay(this.node); }
+  constructor(readonly node: RelayClient, agent: AgentConnector, private expected?: { authorityId: string; gatewayAgentId: string }) { this.#agent = agent; }
+  async bind() { return this.binding = await this.#agent.bindTaskRelay(this.node, this.expected); }
 
   /** Keep requestId for business retries; a fresh messageId permits retry after transport expiry. */
   async send(request: TaskRelayCommand, options: { messageId?: string; signal?: AbortSignal } = {}) {
