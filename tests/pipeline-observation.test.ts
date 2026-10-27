@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { digest } from '../packages/core/delegation.js';
 import { observerFixture } from './fixtures/pipeline-observer.js';
 import { PipelineObserver } from '../packages/coordinator/pipeline-observer.js';
+
+// Keep source freshness and authorization independent of synchronous model CPU
+// time. Each case advances the fixture clock explicitly at the tested boundary.
+beforeEach(t => { assert('mock' in t); t.mock.timers.enable({ apis: ['Date'], now: Date.now() }); });
 
 for (const secured of [false, true]) test(`${secured ? 'foundation' : 'legacy'}: bounded source polling stays quiet on unchanged facts and re-enters planning on a meaningful change`, async () => {
   const f = observerFixture(secured);

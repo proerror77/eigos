@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { AgentCard, GetTaskRequest, SendMessageRequest, Task } from '@a2a-js/sdk';
@@ -9,6 +9,8 @@ import { A2AGateway, AgentUser } from '../apps/gateway/a2a.js';
 import { digest } from '../packages/core/delegation.js';
 import type { Job } from '../packages/core/domain.js';
 import { observerFixture } from './fixtures/pipeline-observer.js';
+
+beforeEach(t => { assert('mock' in t); t.mock.timers.enable({ apis: ['Date'], now: Date.now() }); });
 
 for (const secured of [false, true]) test(`${secured ? 'foundation' : 'legacy'} MCP/A2A share observation controls, task identity and safe readback`, async () => {
   const f = observerFixture(secured), server = createMcpServer(f.tasks, f.actor), client = new Client({ name: 'synthetic-observer', version: '1' });
