@@ -4017,7 +4017,7 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "2849b0c1612abdedad1d7db74c6874c40ed0726732f00996fbab0f0e7dd2f03e",
+      "sourceDigest": "1bf1b0d5bf24f8ed4c81321fbc673ead446e6593b28ccbfaf07e7a5b0ec931d9",
       "channels": [
         "model",
         "artifact"
