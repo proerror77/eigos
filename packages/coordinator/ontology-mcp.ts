@@ -13,7 +13,7 @@ import { objectRefSchema } from '../ontology/model.js';
 
 const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20), decisionJson: z.string().min(2).max(100000) }).strict();
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
-  read_task_context: 'Read the current owned task, exact instructions, facts, execution state and bounded Ontology definitions. Start each decision here.',
+  read_task_context: 'Read the current owned task, instructions, facts, execution state and bounded Ontology definitions once at the start of a decision. Reuse this successful receipt after paging read_task_instructions; paging does not change the context. Use focused queries for further facts. Repeating this full read consumes the same cumulative byte budget.',
   read_task_instructions: 'Read remaining original instruction pages for this task. Preserve exact user facts and read all required pages before interpreting the goal.',
   describe_ontology: 'Discover registered types, relationships, functions and action schemas. Definitions grant no authority.',
   discover_actions: 'Discover current task-bound service actions, exact binding pins, context input schemas and completion contracts.',
@@ -88,7 +88,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
       if (decision) throw new Error('This decision has already been submitted');
       const result = session.call(name, nativeArguments(name, args)), receipt = session.lastReceipt();
       if (!receipt) throw new Error('Ontology call produced no receipt');
-      return { result, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, inputDigest: receipt.inputDigest, outputDigest: receipt.outputDigest }, budget: { readsRemaining: 20 - session.receipts().length, finalResponseRequired: session.requiresFinalResponse() } };
+      return { result, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, inputDigest: receipt.inputDigest, outputDigest: receipt.outputDigest }, budget: session.readBudget() };
     }));
     server.registerTool('submit_decision', {
       description: 'Submit this model session\'s final structured decision and successful Ontology receipt IDs. The Worker separately validates and authorizes execution.',

@@ -12,6 +12,8 @@ import { SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import type { Principal } from '../packages/core/domain.js';
 import {syntheticOntology} from './fixtures/ontology-objects.js';
 import {authorizationScope} from '../packages/security/context.js';
+import {SecurityStore} from '../packages/security/store.js';
+import {combineEnvelopes} from '../packages/security/envelope.js';
 
 function fixture(extraTypes:string[]=[]) {
   const f = securityFixture(), rawDb = new DatabaseSync(f.database), raw = new OntologyObjectStore(rawDb,businessModel,Date.now,undefined,{skipLegacyMigration:true}), a = f.installation('A'), b = f.installation('B');
@@ -101,6 +103,50 @@ test('a rejected asynchronous read cannot retain the synchronous authorization c
     })),/must be synchronous/);
     await assert.rejects(late!,/AUTHORIZATION_REQUIRED/);
   }finally{f.close();}
+});
+
+test('shared lineage is hashed once per synchronous read while every expected digest is checked',t=>{
+  const f=fixture();try {
+    f.role(f.a.id);const root=f.place('shared'),leaves=Array.from({length:12},(_,i)=>f.place(`derived-${i}`)),top=f.place('top');
+    const task=f.task(f.a,[root,...leaves,top]),policy=f.jobs.security.policies;
+    const envelope=policy.envelope(f.owner,root.object,1,root.fields,f.raw.read(f.owner,root.object).properties,task.grant.channels);
+    for(const leaf of leaves)policy.bind(task.grant,leaf.object,leaf.fields,'member_asset',envelope);
+    const combined=combineEnvelopes(leaves.map(leaf=>policy.envelope(f.owner,leaf.object,1,leaf.fields,f.raw.read(f.owner,leaf.object).properties,task.grant.channels)));
+    policy.bind(task.grant,top.object,top.fields,'member_asset',combined);
+    const original=DatabaseSync.prototype.prepare;let reads=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+      if(sql==='SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?')reads++;
+      return original.call(this,sql);
+    });
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',outer=>{
+      policy.readSnapshot(()=>{
+        const scope=authorizationScope()!;
+        for(const leaf of leaves)assert(policy.binding(scope,leaf.object));
+        policy.validateLineage(scope,envelope);
+        assert.equal(reads,1,'Shared content is read once across all derived bindings and validation');
+        assert.throws(()=>policy.validateLineage(scope,{...envelope,lineage:envelope.lineage.map(dependency=>({...dependency,contentDigest:'0'.repeat(64)}))}),/OUTPUT_NOT_ALLOWED/);
+      });
+      policy.readSnapshot(()=>policy.validateLineage(authorizationScope()!,envelope));
+      assert.equal(reads,2,'A later read independently reloads the shared content');
+      assert(policy.binding(outer,top.object));
+      assert.equal(reads,2+leaves.length+1,'A standalone binding traversal also shares each dependency within its own synchronous boundary');
+    });
+  }finally{f.close();}
+});
+
+for(const connection of ['current','separate'] as const)test(`cached lineage content is invalidated by a write on the ${connection} connection`,()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);let writer:DatabaseSync|undefined;
+  try {
+    f.role(f.a.id);const root=f.place('shared'),task=f.task(f.a,[root]);
+    const security=new SecurityStore(db,'foundation',Date.now,true,businessModel),policy=security.policies;
+    const envelope=policy.envelope(f.owner,root.object,1,root.fields,f.raw.read(f.owner,root.object).properties,task.grant.channels);
+    writer=connection==='current'?db:new DatabaseSync(f.database);
+    security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      policy.validateLineage(authorizationScope()!,envelope);
+      writer!.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.name',?) WHERE owner=? AND type=? AND id=?").run('Changed content',f.owner,root.object.type,root.object.id);
+      assert.throws(()=>policy.validateLineage(authorizationScope()!,envelope),/OUTPUT_NOT_ALLOWED/,'An unchanged object revision cannot hide changed content behind the read cache');
+    }));
+  }finally{if(writer && writer!==db)writer.close();db.close();f.close();}
 });
 
 test('definition review separates edit/manage from execution and checks both old and new link endpoints',()=>{

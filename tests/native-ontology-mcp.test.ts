@@ -24,6 +24,29 @@ async function fixture(finalSchema?: object) {
 }
 const value = (response: Awaited<ReturnType<Client['callTool']>>) => (response.structuredContent as { result: any }).result;
 
+test('native read receipts expose the remaining byte budget without charging instruction pages twice', async () => {
+  const f = await fixture();
+  try {
+    const initial = f.session.readBudget();
+    assert.equal(initial.maxResultBytes, 200000);
+    const context = value(await f.client.callTool({ name: 'read_task_context', arguments: {} }));
+    assert.equal(context.receipt.status, 'ok');
+    const contextBytes = f.session.lastReceipt()!.outputBytes; assert(contextBytes && contextBytes > 0);
+    assert.equal(context.budget.remainingResultBytes, initial.remainingResultBytes - contextBytes);
+    assert.equal(context.budget.readsRemaining, 19);
+    const instructions = value(await f.client.callTool({ name: 'read_task_instructions', arguments: { limit: 1 } }));
+    assert.equal(instructions.receipt.status, 'ok');
+    assert.equal(instructions.budget.remainingResultBytes, context.budget.remainingResultBytes, 'Original instructions have their own bounded allowance');
+    const focused = value(await f.client.callTool({ name: 'query_ontology', arguments: { object: { type: 'ServiceRequest', id: f.job.id }, select: ['requestId'] } }));
+    assert.equal(focused.receipt.status, 'ok');
+    const focusedBytes = f.session.lastReceipt()!.outputBytes; assert(focusedBytes && focusedBytes > 0);
+    assert.equal(focused.budget.remainingResultBytes, instructions.budget.remainingResultBytes - focusedBytes);
+    assert.equal(focused.budget.readsRemaining, 17);
+    assert.equal(focused.budget.finalResponseRequired, false);
+    assert.equal(f.b.store.intents(owner, f.job.id).length, 0);
+  } finally { await f.close(); }
+});
+
 test('invalid final schema is corrected in the same native session before any decision freezes', async () => {
   const f = await fixture({ type: 'object', properties: { requestRevision: { type: 'integer', minimum: 1 } }, required: ['requestRevision'], additionalProperties: false });
   try {

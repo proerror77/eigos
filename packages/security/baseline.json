@@ -2894,7 +2894,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "bb313194da4991f2aa801258d984529b0ffda26055a86fcec79c4cc3a0a7b4e3",
+      "sourceDigest": "0b9c4dbd57dd55f66bcff3c58702f195688839869a5f60673b63ee93463ad15b",
       "channels": [
         "model",
         "query"
@@ -3285,7 +3285,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "a66c9cb9485a714af51423e17f250c4d97efdf6a2d56ac2a33c5248ae58a88c8",
+      "sourceDigest": "681652f1e4894abd9290ed3370ea133b42ad1ff09bb8a1f86690ac5dc1845ba7",
       "channels": [
         "internal"
       ],
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "a9dffec3b7e25426dd4197e1e9b8f9e3415c3acabed79f7d191fe32734352d5c",
+      "sourceDigest": "08577522d85c7e971952c446eab1d16bc60a5f58ec8a1692f4c6cc6ae5396bbf",
       "channels": [
         "all-reads"
       ],
@@ -4055,7 +4055,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "fbfb0f7c4e124e452da454a075b366668e838fd1b788ecd3316449cffac3c7a0",
+      "sourceDigest": "d8a64d2c3bfa6705a4b021db6fe1d07fc17ccd7bbd2e141cabee35b4e96fc9ad",
       "channels": [
         "model"
       ],

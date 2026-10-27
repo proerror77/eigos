@@ -355,12 +355,12 @@ export class SecurityPolicies {
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
     const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${this.db.prepare('SELECT total_changes() AS n').get()!.n}`;
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>();
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -372,6 +372,7 @@ export class SecurityPolicies {
     const members=taskContextMembers(this.db,owner,taskId,revision);cache?.set(key,members);return members;
   }
   binding(scope: AuthorizationScope, ref: ObjectRef, revision?: number): ObjectBinding | undefined {
+    if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.binding(authorizationScope()!,ref,revision)));
     scope.assertCurrent();
     if(!scope.grant)return;
     if(scope.readBindings?.has(refKey(ref))) {
@@ -422,8 +423,7 @@ export class SecurityPolicies {
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
         const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision);
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
-        const properties=this.lineageProperties(scope,dependency);
-        if(digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest){checked.set(key,undefined);return;}
+        if(this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
       }
       return binding;
     };
@@ -523,6 +523,17 @@ export class SecurityPolicies {
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return JSON.parse(String(old.body)).properties;
   }
+  private lineageDigest(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]) {
+    const cache=scope.readLineageDigests,key=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields]);
+    if(cache)scope.assertCurrent();
+    const cached=cache?.get(key);if(cached!==undefined)return cached;
+    const properties=this.lineageProperties(scope,dependency);
+    const value=digest(Object.fromEntries(dependency.fields!.map(field=>[field,this.value(dependency.object.type,field,properties)])));
+    // Shared ancestors repeat across derived objects. Reuse only their measured
+    // content within this synchronous read; each caller still checks its own
+    // current binding, field visibility and expected digest.
+    if(cache){cache.set(key,value);scope.assertCurrent();}return value;
+  }
   validateLineage(scope:AuthorizationScope,envelope:SecurityEnvelope):void {
     if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.validateLineage(authorizationScope()!,envelope)));
     scope.assertCurrent();
@@ -534,8 +545,7 @@ export class SecurityPolicies {
     for (const dependency of envelope.lineage) {
       const binding=this.binding(scope,dependency.object);
       if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const properties=this.lineageProperties(scope,dependency);
-      if (digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      if (this.lineageDigest(scope,dependency)!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
   }
   effectiveEnvelope(scope:AuthorizationScope,envelope:SecurityEnvelope):SecurityEnvelope {
