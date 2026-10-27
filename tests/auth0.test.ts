@@ -5,8 +5,32 @@ import { auth0Plan, ensureAuth0ConnectionClients } from '../packages/members/aut
 import { inviteBetaCodexConfig } from '../packages/members/native-mcp.js';
 import { generateKeyPair, SignJWT, createLocalJWKSet, exportJWK } from 'jose';
 import { jwtVerifier } from '../apps/gateway/auth.js';
+import { assertOntologyOperator, ontologyOperatorProfileSchema, ontologyOperatorScopes } from '../packages/members/ontology-operator.js';
 
 const { onExecutePostLogin } = createRequire(import.meta.url)('../integrations/auth0/post-login.cjs');
+const { onExecutePostLogin: operatorGuard } = createRequire(import.meta.url)('../integrations/auth0/ontology-operator.cjs');
+
+test('the separate operator guard preserves only issuer-granted scopes for the configured user and client',async()=>{
+  const secrets={EIGOS_RESOURCE:'https://eigos.example/',EIGOS_ONTOLOGY_OPERATOR_CLIENT_ID:'operator',EIGOS_ONTOLOGY_OPERATOR_SUBJECT:'auth0|member'};
+  for(const protocol of ['oidc-basic-profile','oauth2-refresh-token']){
+    const removed:string[]=[];let denied=false;
+    const event={secrets,client:{client_id:'operator'},user:{user_id:'auth0|member'},resource_server:{identifier:secrets.EIGOS_RESOURCE},transaction:{protocol}};
+    const api={access:{deny:()=>{denied=true;}},accessToken:{removeScope:(scope:string)=>removed.push(scope),addScope:()=>assert.fail('The operator guard must not manufacture token grants')}};
+    await operatorGuard(event,api);assert(!denied);assert.deepEqual(removed,[]);
+    await operatorGuard({...event,user:{user_id:'another-user',user_metadata:{user_id:'auth0|member'}}},api);assert(denied);
+    denied=false;await operatorGuard({...event,client:{client_id:'ordinary-pa'}},api);assert(!denied);assert.deepEqual(removed,ontologyOperatorScopes.filter(scope=>scope.startsWith('ontology:')));
+    removed.length=0;await operatorGuard({...event,client:{client_id:'other-app'},resource_server:{identifier:'https://other.example/'}},api);assert.deepEqual(removed,[]);
+    for(const missing of ['EIGOS_RESOURCE','EIGOS_ONTOLOGY_OPERATOR_SUBJECT'] as const){denied=false;await operatorGuard({...event,secrets:{...secrets,[missing]:undefined}},api);assert(denied);}
+  }
+});
+
+test('operator profiles require exact HTTPS identity and a loopback PKCE callback',()=>{
+  const profile=ontologyOperatorProfileSchema.parse({baseUrl:'https://eigos.example',issuer:'https://identity.example/',audience:'https://eigos.example/',clientId:'operator',subject:'auth0|member',tenant:'personal',tenantClaim:'https://eigos.example/claims/tenant',callbackUrl:'http://127.0.0.1:64518/callback'});
+  const p={issuer:profile.issuer,tenant:profile.tenant,subject:profile.subject,clientId:profile.clientId,scopes:[...ontologyOperatorScopes,'openid','offline_access']};
+  assert.doesNotThrow(()=>assertOntologyOperator(profile,p));
+  for(const changed of [{issuer:'https://other.example/'},{tenant:'other'},{subject:'other'},{clientId:'ordinary-pa'},{scopes:['tasks:read']},{scopes:[...p.scopes,'ontology:object_write']}]) assert.throws(()=>assertOntologyOperator(profile,{...p,...changed}));
+  for(const changed of [{baseUrl:'http://eigos.example'},{baseUrl:'https://eigos.example/path'},{audience:'https://attacker.example/'},{issuer:'https://identity.example/path/'},{callbackUrl:'http://0.0.0.0:64518/callback'},{callbackUrl:'https://attacker.example/callback'}]) assert.throws(()=>ontologyOperatorProfileSchema.parse({...profile,...changed}));
+});
 
 test('canonical public resource and explicit prior origin retain exact JWT audience and tenant binding', async () => {
   const keys = await generateKeyPair('RS256'), jwk = await exportJWK(keys.publicKey);

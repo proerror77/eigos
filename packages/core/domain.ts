@@ -9,7 +9,8 @@ import { executionBudgetProfileSchema } from './execution-budget.js';
 /** Existing PA onboarding requests task access only. Modeling and administration
  * are separately requested grants, never implicit upgrades to an installation. */
 export const TASK_SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
-export const SCOPES = [...TASK_SCOPES, 'ontology:read', 'ontology:write', 'ontology:publish', 'ontology:admin', 'ontology:object_write'] as const;
+export const ONTOLOGY_OPERATOR_SCOPES = ['ontology:read', 'ontology:write', 'ontology:publish', 'ontology:admin'] as const;
+export const SCOPES = [...TASK_SCOPES, ...ONTOLOGY_OPERATOR_SCOPES, 'ontology:object_write'] as const;
 export type Scope = (typeof SCOPES)[number] | 'sources:read' | 'sources:write';
 export interface Principal {
   issuer: string;

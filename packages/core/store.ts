@@ -200,7 +200,7 @@ export class JobStore {
       if (!ref) throw new DomainError('NOT_FOUND', 'Source mapping is not published in this release');
       const active = this.definitions.active(releaseRef.ontologyId).document.pipeline?.find(value => value.serviceId === serviceId);
       if (active?.intakeDigest !== ref.intakeDigest) throw new DomainError('CONFLICT', 'Only the active mapping may update current source facts; historical task evidence stays pinned');
-      const issues = this.definitions.pipeline.validateDocument(release.document, release.model);
+      const issues = this.definitions.pipeline.validateIntake(releaseRef.ontologyId, ref, release.model);
       if (issues.length) throw new DomainError('CONFLICT', 'Source mapping validation is not current');
       const intake = this.definitions.pipeline.intake(releaseRef.ontologyId, ref);
       return this.pipelineFacts.apply(owner, this.ontologyForRelease(releaseRef), intake, ref.intakeDigest, mappingId, sample, expectedRevision);

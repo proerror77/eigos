@@ -128,13 +128,21 @@ export class PipelineStore {
         if (!matched) continue;
         const actual = intent(matched.step.intentId), result = actual.lastVerifiedResult;
         if (actual.jobId !== job.id || actual.owner !== owner || actual.state !== 'effect_confirmed' || result?.kind !== 'confirmed' || !result.evidenceRefs.length || actual.planDigest !== matched.plan.digest) continue;
-        const source = result.output?.source as { evidenceLevel?: unknown; receipt?: { receivedAt?: unknown } } | undefined;
-        const level = typeof source?.evidenceLevel === 'string' ? source.evidenceLevel
+        const source = result.output?.source as { evidenceLevel?: unknown; evidenceKind?: unknown; observedAt?: unknown;
+          receipt?: { evidenceKind?: unknown; receivedAt?: unknown; observedAt?: unknown } } | undefined;
+        // Accepted programs use either a direct level (participant sources), a
+        // direct kind (DiDi), or a receipt kind (Meituan). Conflicting signals
+        // are not evidence, and a task-wide live label never fills a gap.
+        const levels = [source?.evidenceLevel, source?.evidenceKind, source?.receipt?.evidenceKind]
+          .filter(value => value !== undefined).map(value => value === 'fixture' ? 'synthetic' : value === 'provider_mock' ? 'provider_test' : value);
+        const level = levels.length ? levels.every(value => value === levels[0]) ? levels[0] : undefined
           : intake.environment === 'sandbox' && outcome!.evidenceLevel === 'synthetic' ? 'synthetic'
           : intake.environment === 'local' && outcome!.evidenceLevel === 'local_test' ? 'local_test' : undefined;
-        if (!level || !['synthetic', 'local_test', 'live_readonly', 'live_operation', 'live_fulfillment'].includes(level)) continue;
+        if (typeof level !== 'string' || !['synthetic', 'local_test', 'live_readonly', 'live_operation', 'live_fulfillment'].includes(level)) continue;
         if (intake.environment === 'live' ? !level.startsWith('live_') : intake.environment === 'sandbox' ? level !== 'synthetic' : !['local_test', 'synthetic'].includes(level)) continue;
-        const observedAt = typeof source?.receipt?.receivedAt === 'string' ? source.receipt.receivedAt : actual.createdAt;
+        const observations = [source?.receipt?.observedAt, source?.receipt?.receivedAt, source?.observedAt].filter((value): value is string => typeof value === 'string');
+        observations.forEach(value => instant.parse(value));
+        const observedAt = observations.length ? new Date(Math.min(...observations.map(value => Date.parse(value)))).toISOString() : actual.createdAt;
         instant.parse(observedAt); this.checkExpiry(expiresAt, Date.parse(observedAt));
         actionEvidence[entry.actionId] = { level, evidenceRefs: [...result.evidenceRefs], observedAt };
       }
@@ -150,24 +158,34 @@ export class PipelineStore {
       return verification;
     });
   }
-  private verifications(ontologyId: string, ref: IntakeRef, owner?: string): PipelineVerification[] {
-    // Mapping tests are definition-level evidence. Task proofs stay owner-bound.
+  private verifications(ontologyId: string, ref: IntakeRef, kind: PipelineVerification['kind'], owner = ''): PipelineVerification[] {
+    // Each evidence kind has its own bound. New owner-scoped task proofs must
+    // never evict the definition-level mapping validation from the read set.
     return this.db.prepare(`SELECT body FROM ontology_pipeline_verifications WHERE ontology_id=? AND intake_digest=?
-      AND (json_extract(body,'$.kind')='mapping_test' OR owner=?) ORDER BY rowid DESC LIMIT 200`).all(ontologyId, ref.intakeDigest, owner ?? '').map(row => JSON.parse(String(row.body)));
+      AND json_extract(body,'$.kind')=? AND (?='mapping_test' OR owner=?) ORDER BY rowid DESC LIMIT 200`).all(ontologyId, ref.intakeDigest, kind, kind, owner).map(row => JSON.parse(String(row.body)));
+  }
+  private intakeIssues(ontologyId: string, ref: IntakeRef, intake: PipelineIntake, model: OntologyModel): string[] {
+    const errors = this.check(model, intake);
+    if (!this.sourceMatches(ontologyId, intake)) errors.push('Latest observed source contract differs from this intake');
+    const contract = this.contract(model, intake);
+    if (!this.verifications(ontologyId, ref, 'mapping_test').some(value => value.contractDigest === contract && Date.parse(value.expiresAt) > this.now() && !this.revoked(ontologyId, intake.serviceId, value.id))) errors.push('Current intake needs a fresh mapping validation');
+    return errors;
+  }
+  validateIntake(ontologyId: string, ref: IntakeRef, model: OntologyModel): { code: string; message: string }[] {
+    try {
+      return this.intakeIssues(ontologyId, ref, this.intake(ontologyId, ref), model).map(message => ({ code: 'pipeline_validation_required', message: `${ref.serviceId}: ${message}` }));
+    } catch (error) { return [{ code: 'pipeline_invalid', message: error instanceof Error ? error.message : 'Invalid intake' }]; }
   }
   validateDocument(document: OntologyDocument, model: OntologyModel): { code: string; message: string }[] {
     const issues: { code: string; message: string }[] = [], keys = new Set<string>(), services = new Set<string>();
     for (const ref of document.pipeline ?? []) {
       try {
         if (services.has(ref.serviceId)) fail('Duplicate service intake'); services.add(ref.serviceId);
-        const intake = this.intake(document.id, ref), errors = this.check(model, intake);
-        if (!this.sourceMatches(document.id, intake)) errors.push('Latest observed source contract differs from this intake');
+        const intake = this.intake(document.id, ref), errors = this.intakeIssues(document.id, ref, intake, model);
         for (const action of intake.actions) {
           const key = digest({ program: intake.programRef, configuration: intake.configurationDigest, action: action.actionId });
           if (keys.has(key)) errors.push('Two intakes claim the same exact executable binding'); keys.add(key);
         }
-        const contract = this.contract(model, intake);
-        if (!this.verifications(document.id, ref).some(value => value.kind === 'mapping_test' && value.contractDigest === contract && Date.parse(value.expiresAt) > this.now() && !this.revoked(document.id, intake.serviceId, value.id))) errors.push('Current intake needs a fresh mapping validation');
         issues.push(...errors.map(message => ({ code: 'pipeline_validation_required', message: `${ref.serviceId}: ${message}` })));
       } catch (error) { issues.push({ code: 'pipeline_invalid', message: error instanceof Error ? error.message : 'Invalid intake' }); }
     }
@@ -206,7 +224,7 @@ export class PipelineStore {
     let contract: string;
     try { contract = this.contract(model, intake); if (digest(model.action(actionId)) !== entry.definitionDigest) fail('Changed definition'); }
     catch { return { ...detail, status: 'contract_changed', reason: 'Published action or mapped object contract changed' }; }
-    const all = this.verifications(document.id, ref, owner).filter(value => value.contractDigest === contract),
+    const all = [...this.verifications(document.id, ref, 'mapping_test'), ...this.verifications(document.id, ref, 'task_evidence', owner)].filter(value => value.contractDigest === contract),
       fresh = all.filter(value => Date.parse(value.expiresAt) > this.now() && !this.revoked(document.id, intake.serviceId, value.id));
     const structure = fresh.find(value => value.kind === 'mapping_test');
     const proof = fresh.find(value => verificationCoversAction(entry, intake.actions, value));
@@ -225,7 +243,7 @@ export class PipelineStore {
     if ((programRef.id === 'eigos.goal' || programRef.id.startsWith('services.compose.')) && actionEffects(model.action(actionId)).every(effect => effect === 'local')) return { ...closed, status: 'unmanaged', reason: 'Local goal bookkeeping' };
     if (digest(programRef) !== digest(intake.programRef) || configurationDigest !== intake.configurationDigest
       || !intake.actions.some(action => action.actionId === actionId && action.definitionDigest === digest(model.action(actionId)))) return closed;
-    const contract = this.contract(model, intake), structural = this.verifications(document.id, ref).find(value => value.kind === 'mapping_test'
+    const contract = this.contract(model, intake), structural = this.verifications(document.id, ref, 'mapping_test').find(value => value.kind === 'mapping_test'
       && value.contractDigest === contract && Date.parse(value.expiresAt) > this.now() && !this.revoked(document.id, intake.serviceId, value.id));
     if (!structural) return closed;
     return { ...closed, status: 'validation_only', serviceId: ref.serviceId, intakeDigest: ref.intakeDigest, mappingDigest: scope.mappingDigest,

@@ -2782,27 +2782,27 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "797751c09bedfabe79e4e597f6478752b9158c8183034658f15b10ab99b54d29",
+      "sourceDigest": "63930fa8acd211f7bcca273778e5bcfd216e1b64944440ff1147a76dea402b8e",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; validation preparation atomically binds the exact release and runtime to a task window capped at ten minutes",
+      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "e56f0198bb2169cd80a7c8a326f7f40ee2b298e6bf249e9adcb72d723c6f543a",
+      "sourceDigest": "16f9607a082f5680a56302642a2be4434553cd33572abca6e5a3d1e571169c77",
       "channels": [
         "sqlite",
         "idempotency"
       ],
       "content": "Job bodies, action observations, private intent data, cached responses and claim lifecycle",
-      "currentControl": "One runtime authority and immutable task/release pins; shared authorization/freshness clock, atomic source ingestion, claim fences and historical read projections",
+      "currentControl": "One runtime authority and immutable task/release pins; selected-service mapping validation, atomic source ingestion, claim fences and historical read projections",
       "targetControl": "Current authorization on cached response; auth epoch at claim/dispatch",
       "stage": "S3"
     },
@@ -3261,7 +3261,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "8d33c7318d0751b6f7bf16df42744adf39e31d6e8da0de999322a93f7fa688bd",
+      "sourceDigest": "c6c9c6ca398a670b58fe1b54f8ec7e417005cc671a31ecbf6748fab135da10a7",
       "channels": [
         "authorization_control"
       ],
@@ -3659,7 +3659,7 @@
     {
       "id": "s5-packages-security-inventory",
       "file": "packages/security/inventory.ts",
-      "sourceDigest": "1d8f9b57bd267cf147b945a705f06b919cc02242edd7e31a58eebc3acc598f41",
+      "sourceDigest": "8c25ff4b79eb38e52b26f4ccac8ea6be8e9c2ced4f773d7f1a869436cea41910",
       "channels": [
         "runtime"
       ],
@@ -4132,13 +4132,13 @@
     {
       "id": "ontology-pipeline-registry",
       "file": "packages/ontology/pipeline/store.ts",
-      "sourceDigest": "6c1a7938a0a47440c5addb6d9bd7289faef310486c03c07611caf0fb8c7344f1",
+      "sourceDigest": "0db6aa3193fa5cc3081572c51c304bd4539d49940a4ff11f31d4aa3663ad729d",
       "channels": [
         "sqlite",
         "dispatch"
       ],
       "content": "Immutable intake/proof/event/use ledger and current eligibility",
-      "currentControl": "Exact source/mapping/program/action digests, owner-scoped accepted task evidence, per-action levels, expiry and revocation; no automatic authority or availability proof",
+      "currentControl": "Independent bounded mapping/task evidence reads; selected-intake checks, owner-scoped accepted action receipts with normalized non-conflicting levels, original observation times, expiry and revocation",
       "targetControl": "Preserve current source, task, field and effect authorization; no automatic historical grants",
       "stage": "S3"
     },
@@ -4172,26 +4172,26 @@
     {
       "id": "runtime-authority",
       "file": "packages/core/runtime-authority.ts",
-      "sourceDigest": "4eda6a17a0ea14307ef23f99712774c80005d6d979c9d5e063143c5268241fde",
+      "sourceDigest": "89f51977e583138d6f761528b1714f3b01195fa68cc2d336a77b3d7bf38a891b",
       "channels": [
         "runtime"
       ],
       "content": "Operator-owned canonical store and ingress descriptor; immutable configuration history and lease fence",
-      "currentControl": "Exact descriptor digest, database path and revision; no automatic adoption",
+      "currentControl": "Exact descriptor digest, database path and revision; optional native operator client/tenant/subject allowlist; no automatic adoption or grant issuance",
       "targetControl": "Exact descriptor digest, database path and revision; no automatic adoption",
       "stage": "S5"
     },
     {
       "id": "runtime-ingress",
       "file": "apps/gateway/ingress.ts",
-      "sourceDigest": "80a94611a7ae1d63de3d721498201a83784d788efb55763cc41af84d70afb588",
+      "sourceDigest": "cde1c77953a2f36a7aeb1bdfce3f61d3a4c2b94675233f65dfdf918532521781",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Per-ingress JWT audiences and registered/native client admission",
-      "currentControl": "Actual Host only; same shared TaskService and stores",
+      "currentControl": "Actual Host and verified issuer/audience; task scopes by default, exact native operator client/tenant/subject admits only signed metadata scopes; shared TaskService and stores",
       "targetControl": "Actual Host only; same shared TaskService and stores",
       "stage": "S5"
     },
@@ -4267,6 +4267,45 @@
       "currentControl": "Foundation schemas advertise only Pipeline operations to callers with ontology scopes; shared service checks remain mandatory",
       "targetControl": "Foundation schemas advertise only Pipeline operations to callers with ontology scopes; shared service checks remain mandatory",
       "stage": "S5"
+    },
+    {
+      "id": "ontology-operator-profile",
+      "file": "packages/members/ontology-operator.ts",
+      "channels": [
+        "oauth",
+        "cli"
+      ],
+      "content": "Exact member identity, primary audience and fixed loopback callback for the separate operator client",
+      "currentControl": "Owned profile is checked against verified issuer/client/subject/tenant and the fixed task plus metadata scope set; object_write and unrelated grants are rejected",
+      "targetControl": "Identity-bound management access with no implicit source, task-data or business-effect authority",
+      "stage": "S5",
+      "sourceDigest": "0358e502ab13893a4580b299e66bf59aff3b9efab4846449e25cd7c799711855"
+    },
+    {
+      "id": "ontology-operator-client",
+      "file": "scripts/ontology-operator.mjs",
+      "channels": [
+        "oauth",
+        "cli",
+        "http"
+      ],
+      "content": "Independent operator login, credential refresh and explicit metadata requests",
+      "currentControl": "PKCE/state/nonce, signed exact identity, private atomic locked credential files, fixed primary paths, redirect denial, bounded response and callback; credentials never printed",
+      "targetControl": "Reusable authenticated management entry retaining current member, installation, source and task checks",
+      "stage": "S5",
+      "sourceDigest": "8d3f5cda6cac9b7b07da747eb217c94bfeb57a84b8e4132530b93889aa9b6ec9"
+    },
+    {
+      "id": "ontology-operator-issuer-guard",
+      "file": "integrations/auth0/ontology-operator.cjs",
+      "channels": [
+        "oauth"
+      ],
+      "content": "Dedicated trusted-issuer operator admission policy",
+      "currentControl": "Exact API/client/user binding; denies wrong operator identities and removes metadata scopes from other clients without adding token grants",
+      "targetControl": "Preserve ordinary PA task access and unrelated identity applications; no self-service ontology administration",
+      "stage": "S5",
+      "sourceDigest": "8c791ab2a55d23677a652afb7440c4c60532bc76f162c74f9a961b47f58160b1"
     }
   ]
 }

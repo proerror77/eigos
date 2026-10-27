@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { Config } from '../../packages/core/config.js';
 import { runtimeIngress, type RuntimeIngress } from '../../packages/core/runtime-authority.js';
-import { TASK_SCOPES, type Principal } from '../../packages/core/domain.js';
+import { TASK_SCOPES, ONTOLOGY_OPERATOR_SCOPES, type Principal } from '../../packages/core/domain.js';
 import { createVerifier, type VerifyToken } from './auth.js';
 
 /** Transport adaptation only: every ingress reaches the same TaskService,
@@ -32,7 +32,11 @@ export function createIngressRouter(config: Config, override?: VerifyToken, fact
       const ingress = selected(request);
       if (!ingress) return principal;
       if (![...ingress.agentClientIds, ...ingress.nativeClientIds].includes(principal.clientId)) return;
-      return { ...principal, scopes: principal.scopes.filter(scope => (TASK_SCOPES as readonly string[]).includes(scope)) };
+      const operator = principal.issuer === config.authority!.issuer && ingress.ontologyOperators?.some(binding => binding.clientId === principal.clientId && binding.subject === principal.subject && binding.tenant === principal.tenant);
+      const scopes: readonly string[] = operator ? [...TASK_SCOPES, ...ONTOLOGY_OPERATOR_SCOPES] : TASK_SCOPES;
+      // Configuration only admits scopes already signed by the trusted issuer.
+      // It never manufactures a grant, source permission or business effect.
+      return { ...principal, scopes: principal.scopes.filter(scope => scopes.includes(scope)) };
     },
   };
 }

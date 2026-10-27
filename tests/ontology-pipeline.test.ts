@@ -13,9 +13,120 @@ import { parsePipelineIntake, verificationCoversAction, type PipelineIntake, typ
 import { mapPipelineFields, mapPipelineObservation } from '../packages/ontology/pipeline/mapping.js';
 import { participantFixture } from './fixtures/free-booking.js';
 import { eventIntake, participantIntake, pipelineEventType } from './fixtures/ontology-pipeline.js';
-import { owner, principal } from './backend-fixture.js';
+import { meituanPrimitiveFixture, meituanReasoner } from './fixtures/meituan-agent.js';
+import { didiFixture, didiModel } from './fixtures/didi.js';
+import { DidiMcpConnector } from '../packages/capabilities/didi/connector.js';
+import { DIDI_PROGRAM_REF } from '../packages/capabilities/didi/program.js';
+import type { MeituanPrimitiveReader } from '../packages/capabilities/meituan-primitives.js';
+import { backend, owner, principal } from './backend-fixture.js';
 
 const expiry = () => new Date(Date.now() + 3600000).toISOString();
+
+test('pipeline regression: newer task proofs cannot crowd out valid mapping evidence', async () => {
+  const f = participantFixture();
+  try {
+    f.submit(); const job = await f.until(value => value.state === 'completed');
+    const program = f.catalog.agentProgram({ id: 'booking.participant.free', version: '1' }, owner)!;
+    const intake = participantIntake(f.store.ontology.model, program), namespace = f.store.definitions.namespace('eigos.business');
+    let draft = f.store.definitions.createDraft(owner, namespace.id, 'Bound evidence by kind', true);
+    draft = f.store.definitions.putPipeline(owner, draft.id, draft.revision, intake, true);
+    const mapping = f.store.definitions.validatePipeline(owner, draft.id, draft.revision, intake.serviceId, expiry(), true);
+    assert(mapping.valid);
+    const current = f.store.definitions.pipelineDraft(owner, draft.id, draft.revision, intake.serviceId, true);
+    const until = Date.now() + 3600000;
+    for (let index = 0; index < 205; index++) f.store.definitions.pipeline.verifyTask(namespace.id, owner, current.ref, current.model, job, id => f.store.intent(owner, id), new Date(until + index).toISOString());
+    const release = f.store.definitions.publish(owner, draft.id, draft.revision, true).release;
+    f.store.definitions.activate(owner, release, namespace.generation, true);
+    const status = f.store.ontology.pipelineStatus(owner, program.ref, program.configurationDigest, 'ReadParticipantRegistration');
+    assert.equal(status.status, 'verified');
+    assert(status.verificationIds.includes(mapping.verification.id));
+    assert.equal(f.store.ontology.pipelineStatus('another-owner', program.ref, program.configurationDigest, 'ReadParticipantRegistration').status, 'verification_required');
+  } finally { f.store.close(); }
+});
+
+for (const invalidation of ['source_changed', 'expired', 'revoked'] as const) test(`pipeline regression: ${invalidation} service B cannot prevent service A observations`, () => {
+  let now = Date.now();
+  const store = new JobStore(':memory:', { securityNow: () => now });
+  try {
+    const a = eventIntake(store.ontology.model, 'a'), b = eventIntake(store.ontology.model, 'b'), f = eventDraft(store, pipelineEventType, a);
+    const draft = store.definitions.putPipeline(owner, f.draft.id, f.draft.revision, b);
+    store.definitions.validatePipeline(owner, draft.id, draft.revision, a.serviceId, new Date(now + 3600000).toISOString());
+    const mapping = store.definitions.validatePipeline(owner, draft.id, draft.revision, b.serviceId, new Date(now + 30000).toISOString());
+    assert(mapping.valid);
+    const release = store.definitions.publish(owner, draft.id, draft.revision).release;
+    store.definitions.activate(owner, release, f.namespace.generation);
+    if (invalidation === 'expired') now += 30001;
+    else store.definitions.pipeline.event(f.namespace.id, owner, b.serviceId, invalidation === 'source_changed'
+      ? { kind: 'source_changed', sourceDigest: digest('changed-service-b') }
+      : { kind: 'verification_revoked', verificationId: mapping.verification.id });
+    const sample = (intake: PipelineIntake) => ({ eventId: 'independent-service', sourceAccount: 'synthetic-account', sourceRevision: intake.source.revision, sourceDigest: intake.source.digest,
+      providerVersion: 1, observedAt: new Date(now).toISOString(), receivedAt: new Date(now).toISOString(), evidenceRefs: ['synthetic:observation'], evidenceLevel: 'synthetic' as const, payload: intake.fixtures[0]!.input });
+    const observed = store.ingestPipelineObservation(owner, release, a.serviceId, 'event', sample(a), 0);
+    assert.equal(store.ontologyForRelease(release).read(owner, observed.object).properties.title, '合成展览');
+    assert.throws(() => store.ingestPipelineObservation(owner, release, b.serviceId, 'event', sample(b), 0), /validation is not current/);
+    const published = store.definitions.resolve(release);
+    assert(store.definitions.pipeline.validateDocument(published.document, published.model).some(issue => issue.message.includes(b.serviceId)), 'Publication still validates the complete document');
+  } finally { store.close(); }
+});
+
+for (const kind of ['meituan', 'didi'] as const) test(`pipeline regression: trusted ${kind} per-action receipt formats retain their evidence level`, async () => {
+  // These transports are entirely synthetic. The live-shaped receipts exercise
+  // the real programs' evidence contracts, not a real provider or account.
+  const store = new JobStore(':memory:'), meituan = meituanPrimitiveFixture(), didi = didiFixture();
+  const reader: MeituanPrimitiveReader = { ...meituan.reader, evidenceKind: 'live_readonly', invoke: async (...args) => {
+    const result = await meituan.reader.invoke(...args);
+    return { ...result, receipt: { ...result.receipt, evidenceKind: 'live_readonly' } };
+  } };
+  const catalog = createExecutionCatalog({ store, ...(kind === 'meituan' ? { meituan: reader } : { didi: { ...didi.binding, connector: new DidiMcpConnector(didi.binding, didi.fetcher, false) } }) });
+  const runner = backend(catalog, kind === 'meituan' ? meituanReasoner('geo') : didiModel(), store);
+  try {
+    const task = runner.submit({ goal: kind === 'meituan' ? '只查北京天安门公开地点' : '只查北京西站到西二旗地铁站的打车预估价，不下单、不付款', executionEnvironment: 'live' });
+    for (let turn = 0; turn < 16 && ['submitted', 'working'].includes(store.get(owner, task.id).state); turn++) await runner.run();
+    const job = store.get(owner, task.id);
+    assert.equal(job.state, 'completed', JSON.stringify(job.delegation?.agent?.feedback));
+    assert.equal(job.delegation!.outcome!.evidenceLevel, 'live_readonly');
+    const program = catalog.agentProgram(kind === 'meituan' ? { id: 'geo.search', version: '1' } : DIDI_PROGRAM_REF, owner)!;
+    const intake = parsePipelineIntake({ format: 'eigos.ontology.pipeline.v1', serviceId: `${kind}.receipt-contract`,
+      source: { id: `${kind}.receipt-contract`, revision: '1', digest: digest(`synthetic-${kind}-receipt-contract`), observedAt: new Date(Date.now() - 60000).toISOString(), reference: `urn:eigos:synthetic:${kind}-receipt-contract` },
+      programRef: program.ref, configurationDigest: program.configurationDigest, environment: 'live', vocabulary: [], mappings: [], fixtures: [],
+      actions: program.actionIds.map(actionId => ({ actionId, definitionDigest: digest(store.ontology.model.action(actionId)), requiredEvidence: 'live_readonly' })),
+      conditions: { regions: ['CN'], payment: 'not_required', operatorRequired: false } });
+    const namespace = store.definitions.namespace('eigos.business');
+    let draft = store.definitions.createDraft(owner, namespace.id, 'Synthetic receipt format verification', true);
+    draft = store.definitions.putPipeline(owner, draft.id, draft.revision, intake, true);
+    store.definitions.validatePipeline(owner, draft.id, draft.revision, intake.serviceId, expiry(), true);
+    const current = store.definitions.pipelineDraft(owner, draft.id, draft.revision, intake.serviceId, true);
+    const proof = store.definitions.pipeline.verifyTask(namespace.id, owner, current.ref, current.model, job, id => store.intent(owner, id), expiry());
+    assert(program.actionIds.every(id => proof.actionEvidence?.[id]?.level === 'live_readonly'));
+    for (const actionId of program.actionIds) {
+      const step = job.delegation!.agent!.plans.flatMap(plan => plan.steps).filter(step => step.action === actionId).at(-1)!;
+      const source = store.intent(owner, step.intentId).lastVerifiedResult!.output!.source as { observedAt: string; receipt: { observedAt?: string; receivedAt?: string } };
+      assert.equal(proof.actionEvidence![actionId]!.observedAt, source.receipt.observedAt ?? source.receipt.receivedAt ?? source.observedAt);
+    }
+    const stripLevel = (id: string) => {
+      const intent = structuredClone(store.intent(owner, id)), source = intent.lastVerifiedResult!.output!.source as { evidenceLevel?: unknown; evidenceKind?: unknown; receipt: { evidenceKind?: unknown } };
+      delete source.evidenceLevel; delete source.evidenceKind; delete source.receipt.evidenceKind;
+      return intent;
+    };
+    assert.throws(() => store.definitions.pipeline.verifyTask(namespace.id, owner, current.ref, current.model, job, stripLevel, expiry()), /no verified matching action/, 'A task-wide live level cannot promote missing action evidence');
+    const conflict = (id: string) => {
+      const intent = structuredClone(store.intent(owner, id));
+      (intent.lastVerifiedResult!.output!.source as { evidenceLevel?: unknown }).evidenceLevel = 'synthetic';
+      return intent;
+    };
+    assert.throws(() => store.definitions.pipeline.verifyTask(namespace.id, owner, current.ref, current.model, job, conflict, expiry()), /no verified matching action/);
+    const simulated = (id: string) => {
+      const intent = structuredClone(store.intent(owner, id)), source = intent.lastVerifiedResult!.output!.source as { evidenceKind?: unknown; receipt: { evidenceKind?: unknown } };
+      if (kind === 'meituan') source.receipt.evidenceKind = 'fixture'; else source.evidenceKind = 'provider_mock';
+      return intent;
+    };
+    assert.throws(() => store.definitions.pipeline.verifyTask(namespace.id, owner, current.ref, current.model, job, simulated, expiry()), /no verified matching action/);
+    assert(store.intents(owner, job.id).every(intent => ['read', 'local'].includes(intent.effect)));
+    const release = store.definitions.publish(owner, draft.id, draft.revision, true).release;
+    store.definitions.activate(owner, release, namespace.generation, true);
+    assert.equal(store.ontology.pipelineStatus(owner, program.ref, program.configurationDigest, program.actionIds[0]!).status, 'verified');
+  } finally { store.close(); didi.close(); }
+});
 
 test('an independently read final task result does not erase or promote individual action evidence levels', () => {
   // Synthetic DTOs exercise evidence classification only; no live operation.
@@ -308,9 +419,13 @@ test('a bounded operator validation task bootstraps evidence without promoting a
     const intake = participantIntake(f.store.ontology.model, program), namespace = f.store.definitions.namespace('eigos.business');
     let draft = f.store.definitions.createDraft(owner, namespace.id, 'New unverified service', true);
     draft = f.store.definitions.putPipeline(owner, draft.id, draft.revision, intake, true);
+    const other = { ...structuredClone(intake), serviceId: 'participant.unrelated', programRef: { id: 'participant.unrelated', version: '1' } };
+    draft = f.store.definitions.putPipeline(owner, draft.id, draft.revision, other, true);
     f.store.definitions.validatePipeline(owner, draft.id, draft.revision, intake.serviceId, expiry(), true);
+    f.store.definitions.validatePipeline(owner, draft.id, draft.revision, other.serviceId, expiry(), true);
     const published = f.store.definitions.publish(owner, draft.id, draft.revision, true);
     f.store.definitions.activate(owner, published.release, namespace.generation, true);
+    f.store.definitions.pipeline.event(namespace.id, owner, other.serviceId, { kind: 'source_changed', sourceDigest: digest('unrelated-source-drift') });
     const status = () => f.store.ontology.pipelineStatus(owner, program.ref, program.configurationDigest, 'SubmitFreeRegistrationSandbox');
     assert.equal(status().status, 'verification_required');
     const args = { ontologyId: namespace.id, release: published.release, serviceId: intake.serviceId, requestId: randomUUID(),

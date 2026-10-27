@@ -177,7 +177,7 @@ export class TaskService {
       if (remaining <= 0 || remaining > 600000) throw new DomainError('INVALID_INPUT', 'An operator validation window is at most ten minutes');
       const release = this.store.definitions.resolve(args.release), ref = release.document.pipeline?.find(value => value.serviceId === args.serviceId);
       if (!ref) throw new DomainError('NOT_FOUND', 'Published service intake is unavailable');
-      if (this.store.definitions.pipeline.validateDocument(release.document, release.model).length) throw new DomainError('CONFLICT', 'Validate the current source mapping before preparing an execution test');
+      if (this.store.definitions.pipeline.validateIntake(args.ontologyId, ref, release.model).length) throw new DomainError('CONFLICT', 'Validate the current source mapping before preparing an execution test');
       const intake = this.store.definitions.pipeline.intake(args.ontologyId, ref), program = this.options.catalog.configuredProgram(intake.programRef, owner);
       if (!program || program.configurationDigest !== intake.configurationDigest || program.environment !== intake.environment
         || intake.actions.some(action => !program.actionIds.includes(action.actionId))) throw new DomainError('CONFLICT', 'No exact permitted runtime is configured for this intake');
