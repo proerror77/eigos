@@ -50,9 +50,11 @@ const choice = (ctx: AgentPlanningContext, access: PlanningAccess): AgentDecisio
     return { ref, data: result.items[0]!.properties.observedData.data };
   });
   const step = (id: string, action: string, args: object): AgentStep => ({ id, action, argumentsJson: JSON.stringify(args), dependsOn: [], inputRefs: [] });
-  const completed = observations.find(o => o.data.kind === 'estimate');
+  const placesOnly = (ctx.state.input as { mode?: string }).mode === 'places';
+  const completed = observations.find(o => o.data.kind === (placesOnly ? 'places' : 'estimate'));
   let steps: AgentStep[];
-  if (!observations.length) steps = [step('origin', 'SearchDidiPlaces', { scope: ctx.state.scope, role: 'origin', keywords: rideInput.origin }), step('destination', 'SearchDidiPlaces', { scope: ctx.state.scope, role: 'destination', keywords: rideInput.destination })];
+  if (!observations.length) steps = placesOnly ? [step('search', 'SearchDidiPlaces', { scope: ctx.state.scope, role: 'search', keywords: rideInput.origin })]
+    : [step('origin', 'SearchDidiPlaces', { scope: ctx.state.scope, role: 'origin', keywords: rideInput.origin }), step('destination', 'SearchDidiPlaces', { scope: ctx.state.scope, role: 'destination', keywords: rideInput.destination })];
   else if (completed) steps = [];
   else {
     const endpoint = (name: string) => {
@@ -63,10 +65,10 @@ const choice = (ctx: AgentPlanningContext, access: PlanningAccess): AgentDecisio
     steps = [step('estimate', 'EstimateDidiRide', { scope: ctx.state.scope, originObservation: origin.ref, originPlaceId: origin.place.id, destinationObservation: destination.ref, destinationPlaceId: destination.place.id })];
   }
   return { kind: completed ? 'complete' : 'execute', requestRevision: ctx.request.revision, message: 'Synthetic choices from independently evaluated source facts', steps,
-    completionJson: completed ? JSON.stringify({ observation: completed.ref, rationale: 'The requested route has a current synthetic estimate' }) : '' };
+    completionJson: completed ? JSON.stringify({ observation: completed.ref, rationale: placesOnly ? 'The requested place has a current synthetic search result' : 'The requested route has a current synthetic estimate' }) : '' };
 };
 
-async function fixture(options: { managed?: boolean; signal: AbortSignal }) {
+async function fixture(options: { managed?: boolean; placesOnly?: boolean; signal: AbortSignal }) {
   const stop = new AbortController();
   const abort = () => stop.abort(options.signal.reason);
   options.signal.addEventListener('abort', abort, { once: true });
@@ -77,7 +79,8 @@ async function fixture(options: { managed?: boolean; signal: AbortSignal }) {
   const serviceNode = await transport.client('DiDi'), initialGateway = await transport.client('EIGOS'), pa = await transport.client('PA');
   const gatewayId = initialGateway.agentId, serviceConnection = await transport.connect(initialGateway, serviceNode), paConnection = await transport.connect(pa, initialGateway);
   initialGateway.close();
-  const f = securedProgramFixture(() => new DidiAgentProgram(source.binding, { connector: new DidiRelayConnector(base.jobs, serviceNode.agentId, source.binding) }), rideInput, choice, base, { nativeTaskContext: options.managed, leaseMs: options.managed ? 120000 : 30000, signal: stop.signal });
+  const input = options.placesOnly ? { mode: 'places', city: rideInput.city, keywords: rideInput.origin } : rideInput;
+  const f = securedProgramFixture(() => new DidiAgentProgram(source.binding, { connector: new DidiRelayConnector(base.jobs, serviceNode.agentId, source.binding) }), input, choice, base, { nativeTaskContext: options.managed, leaseMs: options.managed ? 120000 : 30000, signal: stop.signal, renewLease: true });
   f.jobs.security.relay.bind(f.p, pa.agentId, Date.now() + 600000, { jti: randomUUID(), expiresAt: Date.now() + 60000 });
   const gateway = new TaskRelayGateway(f.jobs, f.tasks, base.authority!.canonicalOrigin, { version: 1, relayUrl: transport.baseUrl, credentialPath: join(transport.directory, 'EIGOS.json'), displayName: 'EIGOS' });
   const app = express(); app.use(express.json());
@@ -109,7 +112,7 @@ async function fixture(options: { managed?: boolean; signal: AbortSignal }) {
     }
     throw new Error('Synthetic task response deadline elapsed');
   }
-  return { ...f, transport, source, gateway, pa, gatewayId, paConnection, serviceConnection, serviceNode, service, reads, failures, receive, now,
+  return { ...f, transport, source, gateway, pa, gatewayId, paConnection, serviceConnection, serviceNode, service, reads, failures, receive, now, placesOnly: options.placesOnly ?? false,
     elapse(milliseconds: number) { clockOffset += milliseconds; },
     beforeAuthorization(fn: () => void) { beforeAuthorization = fn; },
     async close() {
@@ -160,8 +163,8 @@ function manageDidi(f: Awaited<ReturnType<typeof fixture>>) {
   f.jobs.definitions.activate(f.owner, release, namespace.generation, true);
   const definitions = new DefinitionService(f.jobs, f.tasks, f.catalog);
   const validation = () => f.tasks.preparePipelineValidation(f.p, { ontologyId: namespace.id, release, serviceId: intake.serviceId, requestId: randomUUID(),
-    goal: 'Read the synthetic route estimate without ordering or payment', expiresAt: new Date(f.now() + 300000).toISOString() });
-  const status = () => f.jobs.ontology.pipelineStatus(f.owner, f.program.ref, f.program.configurationDigest, 'SearchDidiPlaces');
+    goal: f.placesOnly ? 'Read the synthetic public place information without ordering or payment' : 'Read the synthetic route estimate without ordering or payment', expiresAt: new Date(f.now() + 300000).toISOString() });
+  const status = (action = 'SearchDidiPlaces') => f.jobs.ontology.pipelineStatus(f.owner, f.program.ref, f.program.configurationDigest, action);
   const verify = (taskId: string, lifetimeMs = 300000) => {
     const review = f.jobs.definitions.createDraft(f.owner, namespace.id, 'Review synthetic source receipt', true);
     const expiresAt = new Date(f.now() + lifetimeMs).toISOString();
@@ -179,19 +182,23 @@ test('Pipeline validation traverses encrypted source dispatch without enabling t
     assert.equal(completed.state, 'completed', JSON.stringify(completed.delegation?.agent?.feedback));
     assert.equal(pipeline.status().status, 'verification_required');
     pipeline.verify(task.id); assert.equal(pipeline.status().status, 'verified');
+    assert.equal(pipeline.status('EstimateDidiRide').status, 'verified');
     assert.equal(f.source.calls.filter(c => c.name).length, 3);
   } finally { await f.close(); }
 });
 
+// The full estimate path above verifies both source actions. Each boundary
+// injection below needs one queued read and must not enable the untested action.
 for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evidence ${invalidation} after Relay dispatch prevents the provider call`, { timeout: 180000 }, async t => {
-  const f = await fixture({ managed: true, signal: t.signal });
+  const f = await fixture({ managed: true, placesOnly: true, signal: t.signal });
   try {
     const pipeline = manageDidi(f), task = pipeline.validation();
     assert.equal((await f.advance(task.id)).state, 'completed');
     // Keep the short expiry within the 60-second proof window while allowing
     // the full native planning turn to finish on a slower CI runner.
     const verification = pipeline.verify(task.id, invalidation === 'expired' ? 55000 : 300000), originalReads = f.source.calls.filter(c => c.name).length;
-    const ordinary = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read the synthetic route again; no order or payment' });
+    assert.equal(pipeline.status('EstimateDidiRide').status, 'verification_required');
+    const ordinary = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read the synthetic public place again; no order or payment' });
     await f.tick(); let invalidated = false, sourceRequestCurrent = false, workerLeaseCurrent = false, pipelineDenial: unknown;
     f.beforeAuthorization(() => {
       const queued = f.jobs.security.relayReads.authorize(f.reads.at(-1)!, f.serviceNode.agentId);
@@ -218,12 +225,13 @@ for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evide
 });
 
 test('Pipeline revocation during a provider response prevents late source facts from reaching the task', { timeout: 180000 }, async t => {
-  const f = await fixture({ managed: true, signal: t.signal });
+  const f = await fixture({ managed: true, placesOnly: true, signal: t.signal });
   try {
     const pipeline = manageDidi(f), validation = pipeline.validation();
     assert.equal((await f.advance(validation.id)).state, 'completed');
     const verification = pipeline.verify(validation.id), originalReads = f.source.calls.filter(c => c.name).length;
-    const task = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read the synthetic route again without ordering' });
+    assert.equal(pipeline.status('EstimateDidiRide').status, 'verification_required');
+    const task = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read the synthetic public place again without ordering' });
     await f.tick(); let invalidated = false;
     f.source.flags.before = async () => {
       if (invalidated) return;
