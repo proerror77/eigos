@@ -63,7 +63,7 @@ export function buildSecurityInventory(input: unknown, definition?: ModelDefinit
   }).sort((a, b) => a.id.localeCompare(b.id));
   if (new Set(baseline.surfaces.map(s => s.id)).size !== baseline.surfaces.length) issues.push('duplicate_surface');
   if (root) for (const s of baseline.surfaces) {
-    if (!/^(apps|packages|scripts|integrations)\/[A-Za-z0-9_./-]+\.(ts|mjs|py)$/.test(s.file) || s.file.split('/').includes('..')) { issues.push(`invalid_surface_path:${s.id}`); continue; }
+    if (!/^(apps|packages|scripts|integrations)\/[A-Za-z0-9_./-]+\.(ts|mjs|cjs|py)$/.test(s.file) || s.file.split('/').includes('..')) { issues.push(`invalid_surface_path:${s.id}`); continue; }
     try { if (digest(readFileSync(resolve(root, s.file), 'utf8')) !== s.sourceDigest) issues.push(`surface_changed:${s.id}`); }
     catch { issues.push(`surface_unavailable:${s.id}`); }
   }

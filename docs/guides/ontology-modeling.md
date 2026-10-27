@@ -24,6 +24,8 @@
 
 草稿基于准确发布版本和 namespace generation 创建。逐资源修改需要预期 revision；发布生成不可变完整版本，激活单独进行。两个基于同一版本的草稿即使都先发布，激活第二个时也会检查其基线，不能覆盖已经激活的第一个。
 
+草稿也可绑定[服务接入记录](ontology-pipeline.md)。接入摘要进入同一不可变发布，结构和映射需有当前验证；任务级执行证据另行核对。激活及回退不能移除已经治理的服务策略，退役执行使用明确的 `definition_only` 声明。未登记 Pipeline 的历史发布保持原有解释。
+
 发布前检查端点、继承、接口动作映射、声明式写入范围和数据兼容。原子激活前再次检查现有对象和关系的实际写入指纹及完整属性，防止草稿验证后数据变化。来源、主键、写入权或不兼容 schema 的改变返回 `migration_required`；本版没有自动迁移执行器，不丢弃字段、补默认值或批量改旧摘要。
 
 历史发布可以回退，但须兼容当前全部有效事实；不能通过回退隐藏新增类型的现存对象、恢复旧权限或删除执行历史。空且未被在途任务使用的自定义资源可退役，原 API 名称仍保留，不能借同一或另一个资源 ID 重新定义；需要恢复时显式激活兼容的历史发布。系统生成的执行关联只有在规范定义与原修订完全一致时才可自动恢复。历史发布、资源修订、身份占用和审计表通过数据库约束禁止原地更新／删除。
@@ -46,6 +48,12 @@ HTTP 均返回 `{version:1,result:...}`，错误返回有界的 `{version:1,erro
 管理权限：`ontology:read` 查看；`ontology:write` 编辑；`ontology:publish` 发布／激活；编辑者和发布者均可执行只读发布前校验；`ontology:admin` 管理共享默认本体或跨 owner 元数据。写入实例仍需要 `tasks:write` 与 `ontology:object_write` 的准确任务授权。管理员查看另一人的定义不改变对象实例的 owner。
 
 现有 PA 自动接入仍默认请求原有任务 scopes，不自动申请建模、发布或管理员权限。建模客户端需要单独取得相应 OAuth scope。默认 Auth0 配置不登记 `ontology:admin`，共享本体管理员必须由可信发行者另行配置明确的操作人策略。
+
+统一主实例的独立本体管理入口使用专用原生 OAuth 客户端。操作员在该入口的 `nativeClientIds` 中登记，并由可选的 `ontologyOperators: [{clientId, subject, tenant}]` 精确绑定现有会员身份；新增配置通过 authority 修订和原摘要校验安装。只有发行者已经签发的 `ontology:read/write/publish/admin` 能保留，`ontology:object_write` 不在此入口的管理权限中。安装、来源、任务数据与效果授权仍分别检查。
+
+Auth0 操作员保护 Action 为 `integrations/auth0/ontology-operator.cjs`，单独部署并配置 `EIGOS_RESOURCE`、`EIGOS_ONTOLOGY_OPERATOR_CLIENT_ID` 和 `EIGOS_ONTOLOGY_OPERATOR_SUBJECT`。它只保留指定客户端与会员已获准的 scopes，不自动加权；其他客户端不能取得该入口的本体管理权限。先安装保护策略再开放 API scopes，保留现有身份 Action、连接和其他应用配置。
+
+本机入口为 `node scripts/ontology-operator.mjs --profile /private/operator/profile.json login|status|query|command`。`query`／`command` 使用明确的 `--input` JSON 文件。profile 包含规范 `baseUrl`、`issuer`、`audience`、`clientId`、`subject`、`tenant`、`tenantClaim` 和 `callbackUrl`；回调须为固定端口的 `http://127.0.0.1:<port>/callback`。目录权限为 0700，profile 与独立 credentials 文件为 0600。登录使用授权码、PKCE、state 和 nonce，验证签名及精确会员身份后才保存令牌；登录不会发放来源或任务授权。
 
 现有 `/ontology/describe`、`query`、`evaluate` 和对应工具支持 `ontologyId`、准确 `release` 或 `taskId` 上下文；任务引用和显式版本不能相互冲突。MCP 与 A2A 的业务任务共用 TaskService 版本解析。
 

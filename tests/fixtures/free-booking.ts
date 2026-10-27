@@ -77,5 +77,5 @@ export function participantFixture(options: { target?: 'submitted' | 'confirmed'
     }
     throw new Error('Synthetic participant budget exceeded');
   };
-  return { ...b, catalog, model, source, flags, input, approve, until, counters: () => ({ submits, recoveries }), release: () => { pending = false; }, setState: (next: RegistrationData['state']) => { state = next; }, submit: (extra: object = {}) => b.submit({ goal: '合成验证：免费报名并独立确认参加资格，不付款。', executionEnvironment: 'sandbox', ...extra }), last: (job: Job, type: string): ObjectRef => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1)! };
+  return { ...b, catalog, model, source, flags, input, event: terms, approve, until, counters: () => ({ submits, recoveries }), release: () => { pending = false; }, setState: (next: RegistrationData['state']) => { state = next; }, submit: (extra: object = {}) => b.submit({ goal: '合成验证：免费报名并独立确认参加资格，不付款。', executionEnvironment: 'sandbox', ...extra }), last: (job: Job, type: string): ObjectRef => job.delegation!.agent!.observations.filter(ref => ref.type === type).at(-1)! };
 }

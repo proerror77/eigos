@@ -138,7 +138,10 @@ test('A canceled in-flight order retains source evidence and only reads recovery
     let entered!:()=>void;const reached=new Promise<void>(r=>{entered=r;}),held=new Promise<void>(r=>{release=r;});
     t.provider.flags.beforeResponse=async action=>{if(action==='SubmitCommerceOrder'){entered();await held;}};
     const claim=t.store.claim(['eigos.delegate'],15000)!;
-    running=t.b.coordinator.run(claim,controller.signal).finally(()=>t.store.release(claim));await awaitSourceBarrier(reached,running,'Committed sandbox order',()=>sourceBarrierSnapshot(t.store,id),3000);
+    // Cancellation is synchronized with the provider commit, not a three-second
+    // dispatch target. Leave room for the preceding source checks on CI while
+    // keeping the barrier deadline shorter than this claim's lease.
+    running=t.b.coordinator.run(claim,controller.signal).finally(()=>t.store.release(claim));await awaitSourceBarrier(reached,running,'Committed sandbox order',()=>sourceBarrierSnapshot(t.store,id),10000);
     t.b.tasks.cancel(principal,id);release();await running;delete t.provider.flags.beforeResponse;
     const canceled=t.store.get(owner,id);assert.equal(canceled.state,'canceled');assert.equal(canceled.artifact,undefined);assert.equal(t.store.ontology.query(owner,{type:'Order'}).items.length,0);
     assert.equal(t.provider.counts().SubmitCommerceOrder,1);

@@ -309,18 +309,27 @@ test('configuration fails closed and development mode cannot bind publicly', () 
 });
 
 
-test('foundation discovery excludes unreviewed native registry, network, source and usage surfaces', async () => {
+test('foundation discovery exposes only reviewed Pipeline management and keeps unreviewed surfaces closed', async () => {
   const f = await securityGatewayFixture(), actor = f.install(), client = new Client({ name: 'foundation-boundary-test', version: '1' });
+  const taskClient = new Client({ name: 'foundation-task-boundary-test', version: '1' });
   try {
     const grant = await f.post('/members/security/grants', f.control(f.grantInput(actor.id)), f.memberHeaders);
     assert.equal(grant.status, 200);
     await client.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${actor.token}` } } }));
     const names = (await client.listTools()).tools.map(tool => tool.name);
-    for (const name of ['query_ontology_definitions', 'manage_ontology_definitions', 'prepare_ontology_action', 'approve_ontology_action', 'network_query', 'network_command', 'list_source_connections', 'begin_source_connection', 'get_member_usage', 'amend_task', 'resume_task', 'authorize_checkout_draft']) assert(!names.includes(name), name);
+    for (const name of ['prepare_ontology_action', 'approve_ontology_action', 'network_query', 'network_command', 'list_source_connections', 'begin_source_connection', 'get_member_usage', 'amend_task', 'resume_task', 'authorize_checkout_draft']) assert(!names.includes(name), name);
     assert(names.includes('check_access')); assert(names.includes('submit_task')); assert(names.includes('reply_to_task'));
-    for (const path of ['/ontology/v1/query', '/ontology/v1/commands', '/network/v1/query', '/sources/meituan-paotui/begin']) {
+    assert(names.includes('query_ontology_definitions')); assert(names.includes('manage_ontology_definitions'));
+    assert.equal((await f.post('/ontology/v1/query', { operation: 'list_definitions' }, { authorization: `Bearer ${actor.token}` })).status, 403);
+    assert.equal((await f.post('/ontology/v1/commands', { operation: 'create_ontology', name: 'Unreviewed namespace' }, { authorization: `Bearer ${actor.token}` })).status, 403);
+    for (const path of ['/ontology/v1/actions/prepare', '/ontology/v1/actions/approve', '/network/v1/query', '/sources/meituan-paotui/begin']) {
       const response = await f.post(path, {}, { authorization: `Bearer ${actor.token}` });
       assert.equal(response.status, 404, path);
     }
-  } finally { await client.close(); await f.close(); }
+    const taskOnly = f.install({ ...f.p, scopes: ['services:read', 'tasks:read', 'tasks:write'] });
+    assert.equal((await f.post('/members/security/grants', f.control(f.grantInput(taskOnly.id)), f.memberHeaders)).status, 200);
+    await taskClient.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${taskOnly.token}` } } }));
+    const taskTools = (await taskClient.listTools()).tools.map(tool => tool.name);
+    assert(!taskTools.includes('query_ontology_definitions') && !taskTools.includes('manage_ontology_definitions'));
+  } finally { await taskClient.close(); await client.close(); await f.close(); }
 });

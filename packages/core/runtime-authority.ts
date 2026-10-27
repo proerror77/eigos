@@ -17,8 +17,16 @@ const clients = z.array(z.string().min(1).max(200)).max(20).refine(values => new
 export const runtimeIngressSchema = z.strictObject({
   origin, audience, tenantClaim: z.string().trim().min(1).max(400).default('tenant_id'), agentClientId: z.string().min(1).max(200),
   agentClientIds: clients, nativeClientIds: clients.default([]),
+  // Optional preserves the digest of existing descriptors. Each privileged
+  // client is bound to one explicitly reviewed member identity at this ingress.
+  ontologyOperators: z.array(z.strictObject({ clientId: z.string().trim().min(1).max(200), subject: z.string().trim().min(1).max(500), tenant: z.string().trim().min(1).max(200) })).max(20).optional(),
   browserRedirect: z.boolean().default(false), newRegistrations: z.boolean().default(true),
-}).refine(value => value.agentClientIds.includes(value.agentClientId), 'Registration client must be an admitted Agent client');
+}).refine(value => value.agentClientIds.includes(value.agentClientId), 'Registration client must be an admitted Agent client')
+  .superRefine((value, ctx) => {
+    if (value.ontologyOperators?.some(operator => !value.nativeClientIds.includes(operator.clientId))) ctx.addIssue({ code: 'custom', message: 'Ontology operators require an admitted native client' });
+    const operators = (value.ontologyOperators ?? []).map(operator => JSON.stringify([operator.clientId, operator.tenant, operator.subject]));
+    if (new Set(operators).size !== operators.length) ctx.addIssue({ code: 'custom', message: 'Ontology operator identities must be unique' });
+  });
 
 /** Non-secret, operator-owned routing identity. An ingress cannot choose a
  * different database, policy store, catalog or executable task authority. */
