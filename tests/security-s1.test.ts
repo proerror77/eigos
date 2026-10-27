@@ -7,7 +7,7 @@ import { Worker } from '../apps/worker/worker.js';
 import { JobStore } from '../packages/core/store.js';
 import { AuthorizationCoordinator } from '../packages/security/coordinator.js';
 import { openMembershipAdministration } from '../packages/security/admin.js';
-import { SecurityError } from '../packages/security/store.js';
+import { SecurityError, SecurityStore } from '../packages/security/store.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { securityFixture } from './fixtures/security.js';
 import {historicalAttempt} from './fixtures/security-ledger.js';
@@ -249,6 +249,71 @@ test('S1 task grant and authority cannot exceed parent fields, cross installatio
     assert.equal(f.jobs.security.workAuthority(f.owner, t.job.id), undefined);
     assert.throws(() => f.jobs.security.issueTaskGrant({ ...t.grant, id: randomUUID() }), /request revision/);
   } finally { f.close(); }
+});
+
+test('S1 current authority uses the request index and still observes concurrent revisions and revocation', t => {
+  const now = Date.now(), f = securityFixture(() => now), peer = new DatabaseSync(f.database);
+  try {
+    const installation = f.installation('large execution history'); f.approve(installation.id);
+    const task = f.task(installation.id), job = f.jobs.get(f.owner, task.job.id);
+    job.messages.push({ id: randomUUID(), role: 'agent', text: 'Synthetic execution history. '.repeat(30000), at: new Date(now).toISOString() });
+    f.jobs.save(f.owner, job);
+    const actor = f.coordinator.authenticate(f.principal, installation.token);
+    if (actor.actorKind !== 'agent') assert.fail();
+    const reader = new SecurityStore(peer, 'foundation', () => now, true, f.jobs.security.model);
+    const prepare = peer.prepare.bind(peer), queries: string[] = [];
+    t.mock.method(peer, 'prepare', (sql: string) => {
+      if (sql.startsWith('SELECT a.body') || sql.startsWith('SELECT d.*')) queries.push(sql);
+      return prepare(sql);
+    });
+    assert.equal(reader.workAuthority(f.owner, task.job.id)?.id, task.authority.id);
+    assert.equal(reader.taskGrant(actor, task.job.id).id, task.grant.id);
+    const authoritySql = queries.find(sql => sql.startsWith('SELECT a.body'))!;
+    const grantSql = queries.find(sql => sql.startsWith('SELECT d.*'))!;
+    const authorityPlan = prepare('EXPLAIN QUERY PLAN ' + authoritySql).all({ securityNow: now, securityDefinition: reader.policies.definitionDigest }, f.owner, task.job.id);
+    const grantPlan = prepare('EXPLAIN QUERY PLAN ' + grantSql).all(f.owner, installation.id, now, task.grant.parentGrant.id, task.grant.parentGrant.revision, task.job.id);
+    for (const plan of [authorityPlan, grantPlan]) assert(plan.some(row => String(row.detail).includes('USING COVERING INDEX security_job_request_revision')), 'Repeated authority checks must not parse the execution history');
+
+    job.delegation!.request.revision = 2; f.jobs.save(f.owner, job);
+    assert.equal(reader.workAuthority(f.owner, task.job.id), undefined);
+    assert.throws(() => reader.taskGrant(actor, task.job.id), /AUTHORIZATION_REQUIRED/);
+    peer.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.request.revision',1) WHERE id=?").run(task.job.id);
+    assert.equal(reader.workAuthority(f.owner, task.job.id)?.id, task.authority.id);
+    assert.equal(reader.taskGrant(actor, task.job.id).id, task.grant.id);
+    f.coordinator.revokeGrant(f.member.id, task.grant.id, task.grant.revision);
+    assert.equal(reader.workAuthority(f.owner, task.job.id), undefined);
+    assert.throws(() => reader.taskGrant(actor, task.job.id), /AUTHORIZATION_REQUIRED/);
+  } finally { peer.close(); f.close(); }
+});
+
+test('S1 request index upgrades preserve grants and deny malformed or missing request revisions', () => {
+  const now = Date.now(), f = securityFixture(() => now), peer = new DatabaseSync(f.database);
+  try {
+    const installation = f.installation('request index upgrade'); f.approve(installation.id);
+    const task = f.task(installation.id), actor = f.coordinator.authenticate(f.principal, installation.token);
+    if (actor.actorKind !== 'agent') assert.fail();
+    const original = peer.prepare('SELECT body FROM jobs WHERE id=?').get(task.job.id)!.body;
+    assert(typeof original === 'string');
+    const grants = peer.prepare('SELECT * FROM security_grants ORDER BY id').all();
+    peer.exec('DROP INDEX security_job_request_revision');
+    const reader = new SecurityStore(peer, 'foundation', () => now, true, f.jobs.security.model);
+    assert.equal(reader.workAuthority(f.owner, task.job.id)?.id, task.authority.id);
+    assert.equal(reader.taskGrant(actor, task.job.id).id, task.grant.id);
+    assert.equal(peer.prepare("SELECT name FROM sqlite_master WHERE name='security_job_request_revision'").get(), undefined, 'Read-only readers must not install an index');
+    // Keep malformed historical rows outside the existing worker-ready index.
+    peer.prepare("UPDATE jobs SET state='input-required',body='{' WHERE id=?").run(task.job.id);
+    assert.doesNotThrow(() => new SecurityStore(peer, 'foundation', () => now, false, f.jobs.security.model));
+    assert(peer.prepare("SELECT name FROM sqlite_master WHERE name='security_job_request_revision'").get());
+    assert.deepEqual(peer.prepare('SELECT * FROM security_grants ORDER BY id').all(), grants);
+    for (const body of ['{', 'null', '{}', '{"delegation":{"request":{}}}']) {
+      peer.prepare('UPDATE jobs SET body=? WHERE id=?').run(body, task.job.id);
+      assert.equal(reader.workAuthority(f.owner, task.job.id), undefined);
+      assert.throws(() => reader.taskGrant(actor, task.job.id), /AUTHORIZATION_REQUIRED/);
+    }
+    peer.prepare('UPDATE jobs SET body=? WHERE id=?').run(original, task.job.id);
+    assert.equal(reader.workAuthority(f.owner, task.job.id)?.id, task.authority.id);
+    assert.equal(reader.taskGrant(actor, task.job.id).id, task.grant.id);
+  } finally { peer.close(); f.close(); }
 });
 
 test('S1 missing persistent security configuration cannot fall back to legacy or keep a Worker eligible', () => {

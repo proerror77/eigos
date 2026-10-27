@@ -28,6 +28,10 @@ type Row = Record<string, unknown>;
 const subject = (r: Row): Subject => ({ ownerKey: String(r.owner), memberId: String(r.member_id), installationId: String(r.installation_id), clientId: String(r.client_id), active: r.state === 'active', epoch: Number(r.epoch), validUntil: Number(r.valid_until) });
 const fenceKey = (f: Pick<Fence, 'ownerKey' | 'kind' | 'targetId'>) => digest([f.ownerKey, f.kind, f.targetId]);
 const grant = (r: Row) => ({ ...JSON.parse(String(r.body)), revision: Number(r.revision), status: String(r.state) });
+// SQLite maintains this projection on every body update. Authority checks can
+// use its covering index without parsing a growing execution history; malformed
+// JSON has no current request revision and cannot match an authorization.
+const requestRevisionSql = (body: 'body' | 'j.body') => `CASE WHEN json_valid(${body}) THEN json_extract(${body},'$.delegation.request.revision') END`;
 const authorityQuery = `FROM security_task_authorities a
  JOIN jobs j ON j.id=a.task_id AND j.owner=a.owner
  JOIN security_subjects s ON s.installation_id=a.installation_id AND s.owner=a.owner AND s.member_id=a.member_id
@@ -39,7 +43,7 @@ const authorityQuery = `FROM security_task_authorities a
  JOIN security_policy_definitions pd ON pd.slot=1 AND pd.digest=:securityDefinition
  WHERE a.state='active' AND s.state='active' AND g.state='active' AND d.state='active'
  AND s.epoch=a.auth_epoch AND g.revision=a.agent_grant_revision AND d.revision=a.data_grant_revision
- AND a.request_revision=json_extract(j.body,'$.delegation.request.revision')
+ AND a.request_revision=${requestRevisionSql('j.body')}
  AND json_extract(d.body,'$.purpose')='delegated_task'
  AND a.expires_at>:securityNow AND s.valid_until>:securityNow AND g.expires_at>:securityNow AND d.expires_at>:securityNow AND m.expires_at>:securityNow`;
 
@@ -78,6 +82,7 @@ export class SecurityStore {
       CREATE TABLE IF NOT EXISTS security_task_authorities(id TEXT PRIMARY KEY,owner TEXT NOT NULL,member_id TEXT NOT NULL,installation_id TEXT NOT NULL,task_id TEXT NOT NULL,request_revision INTEGER NOT NULL,agent_grant_id TEXT NOT NULL,agent_grant_revision INTEGER NOT NULL,data_grant_id TEXT NOT NULL,data_grant_revision INTEGER NOT NULL,auth_epoch INTEGER NOT NULL,state TEXT NOT NULL,expires_at INTEGER NOT NULL,body TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS security_active_task_authority ON security_task_authorities(task_id) WHERE state='active';
       CREATE TABLE IF NOT EXISTS security_events(id TEXT PRIMARY KEY,at INTEGER NOT NULL,kind TEXT NOT NULL,subject_digest TEXT NOT NULL,revision INTEGER NOT NULL);`);
+      if (this.enabled) db.exec(`CREATE INDEX IF NOT EXISTS security_job_request_revision ON jobs(id,owner,${requestRevisionSql('body')})`);
       db.prepare('INSERT OR IGNORE INTO security_settings VALUES(1,?,?)').run(version,mode);
       if (db.prepare('SELECT mode FROM security_settings WHERE slot=1').get()?.mode !== mode) throw new Error('Security mode changed concurrently');
     });
@@ -280,7 +285,7 @@ export class SecurityStore {
   taskGrant(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string): TaskDataGrant {
     this.requireSubject(actor.installationId, actor.authEpoch);
     const parent = this.agentGrant(actor.installationId);
-    const rows = this.db.prepare("SELECT d.* FROM security_grants d JOIN jobs j ON j.id=json_extract(d.body,'$.taskId') AND j.owner=d.owner WHERE d.owner=? AND d.installation_id=? AND d.kind='task_data' AND d.state='active' AND d.expires_at>? AND d.parent_id=? AND d.parent_revision=? AND json_extract(d.body,'$.taskId')=? AND json_extract(d.body,'$.requestRevision')=json_extract(j.body,'$.delegation.request.revision') ORDER BY d.rowid DESC")
+    const rows = this.db.prepare(`SELECT d.* FROM security_grants d JOIN jobs j ON j.id=json_extract(d.body,'$.taskId') AND j.owner=d.owner WHERE d.owner=? AND d.installation_id=? AND d.kind='task_data' AND d.state='active' AND d.expires_at>? AND d.parent_id=? AND d.parent_revision=? AND json_extract(d.body,'$.taskId')=? AND json_extract(d.body,'$.requestRevision')=${requestRevisionSql('j.body')} ORDER BY d.rowid DESC`)
       .all(actor.ownerKey, actor.installationId, this.now(), parent.id, parent.revision, taskId);
     if (rows.length !== 1) throw new SecurityError('AUTHORIZATION_REQUIRED');
     return taskDataGrantSchema.parse(grant(rows[0]!));
