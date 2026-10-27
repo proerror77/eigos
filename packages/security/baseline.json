@@ -4256,7 +4256,7 @@
     {
       "id": "relay-task-contract",
       "file": "packages/agent-transport/task-contracts.ts",
-      "sourceDigest": "d15dd83ce8ac907de7d297de34ee555ddd079cb26f2c2b94f58d5068460ff760",
+      "sourceDigest": "01877bc3b2e5a9d9c4bb037bf3c576b578d26a33d7e1bdcbe47ecbb479cbd321",
       "channels": [
         "agent_transport"
       ],

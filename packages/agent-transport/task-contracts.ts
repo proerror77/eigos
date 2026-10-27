@@ -1,8 +1,10 @@
 import { z } from 'zod';
+import { isAbsolute } from 'node:path';
 import { submitSchema, versionedReplySchema } from '../core/domain.js';
 import { agentIdSchema, relayOrigin } from '../relay/contracts.js';
 
 export const TASK_RELAY_PROTOCOL = 'eigos.task-relay/1' as const;
+export const taskRelayProfileSchema = z.strictObject({ baseUrl: z.string().transform(relayOrigin), credentialPath: z.string().refine(isAbsolute), authorityId: z.uuid(), gatewayAgentId: agentIdSchema });
 const base = { protocol: z.literal(TASK_RELAY_PROTOCOL), authorityId: z.uuid(), requestId: z.uuid() };
 export const taskRelayRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({ ...base, kind: z.literal('task.submit'), input: submitSchema.refine(v => v.service === 'eigos.delegate') }),

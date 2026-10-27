@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { primaryRelease } from '../dist/packages/deployment/primary.js';
+import { taskRelayMetadataSchema, taskRelayProfileSchema } from '../dist/packages/agent-transport/task-contracts.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const {release} = primaryRelease();
@@ -13,8 +14,17 @@ const health = await fetch(endpoint + '/health', { redirect: 'error', signal: Ab
 if (health.instance !== endpoint || health.releaseDigest !== release.buildDigest || health.ontologyTransport !== 'native-mcp') throw new Error('Primary runtime does not match its native MCP release');
 const directory = join(homedir(), '.local/share/eigos/primary-pa'); mkdirSync(directory, { recursive: true, mode: 0o700 }); chmodSync(directory, 0o700);
 const profilePath = join(directory, 'profile.json');
-if (existsSync(profilePath) && JSON.parse(readFileSync(profilePath, 'utf8')).baseUrl !== endpoint) throw new Error('Existing PA profile belongs to another origin');
-const profile = { baseUrl: endpoint, credentialPath: join(directory, 'oauth-credentials.json'), displayName: 'Grok Bot A2A on primary EIGOS' };
+const existing = existsSync(profilePath) ? JSON.parse(readFileSync(profilePath, 'utf8')) : undefined;
+if (existing && existing.baseUrl !== endpoint) throw new Error('Existing PA profile belongs to another origin');
+const relay = existing?.relay ? taskRelayProfileSchema.parse(existing.relay) : undefined;
+if (relay) {
+  const response = await fetch(endpoint + '/.well-known/eigos-task-relay', { redirect: 'error', signal: AbortSignal.timeout(15000) });
+  if (!response.ok) throw new Error('The configured PA Relay is unavailable; preserve the existing profile');
+  const metadata = taskRelayMetadataSchema.parse(await response.json());
+  if (metadata.authorityId !== health.authorityId || metadata.authorityId !== relay.authorityId || metadata.gatewayOrigin !== endpoint
+    || metadata.gatewayAgentId !== relay.gatewayAgentId || metadata.relayUrl !== relay.baseUrl) throw new Error('The configured PA Relay identity changed; review it before updating the profile');
+}
+const profile = { baseUrl: endpoint, credentialPath: join(directory, 'oauth-credentials.json'), displayName: 'Grok Bot A2A on primary EIGOS', ...(relay ? { relay } : {}) };
 const write = (path, text) => { const temporary = path + '.' + randomUUID() + '.tmp'; writeFileSync(temporary, text, { mode: 0o600, flag: 'wx' }); renameSync(temporary, path); };
 const target = join(release.release, 'integrations/grok/eigos-native/client.mjs'), link = join(directory, 'eigos.mjs');
 if (!existsSync(target) || (existsSync(link) && !lstatSync(link).isSymbolicLink())) throw new Error('PA client release or managed link is invalid');

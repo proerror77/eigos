@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { AgentConnector, AgentConnectorError } from '../../../dist/packages/agent-client/client.js';
 import { TaskRelayClient, TaskRelayError } from '../../../dist/packages/agent-client/relay.js';
 import { RelayClient } from '../../../dist/packages/agent-transport/client.js';
-import { taskRelayMetadataSchema } from '../../../dist/packages/agent-transport/task-contracts.js';
+import { taskRelayMetadataSchema, taskRelayProfileSchema } from '../../../dist/packages/agent-transport/task-contracts.js';
 import { z } from 'zod';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
@@ -39,7 +39,13 @@ try {
     };
     const [runtime, agentCard] = await Promise.all([read('/health'), read('/.well-known/agent-card.json')]);
     if (runtime.instance !== profile.baseUrl || !agentCard.supportedInterfaces?.some(i => i.protocolBinding === 'JSONRPC' && i.protocolVersion === '1.0' && i.url === profile.baseUrl + '/a2a')) throw new Error('deployment_mismatch');
-    emit({ baseUrl: profile.baseUrl, runtime, agentCard });
+    let taskRelay;
+    if (profile.relay) {
+      const settings = taskRelayProfileSchema.parse(profile.relay);
+      taskRelay = taskRelayMetadataSchema.parse(await read('/.well-known/eigos-task-relay'));
+      if (taskRelay.gatewayOrigin !== profile.baseUrl || taskRelay.relayUrl !== settings.baseUrl || taskRelay.authorityId !== settings.authorityId || taskRelay.gatewayAgentId !== settings.gatewayAgentId) throw new Error('relay_authority_mismatch');
+    }
+    emit({ baseUrl: profile.baseUrl, runtime, agentCard, ...(taskRelay ? { taskRelay } : {}) });
   } else {
     const agent = await AgentConnector.open(profile);
     if (command === 'login') {
@@ -52,7 +58,7 @@ try {
       }
     } else if (command === 'status') emit(await agent.status());
     else if (command.startsWith('relay')) {
-      const settings = z.strictObject({ baseUrl: z.url(), credentialPath: z.string().refine(value => value.startsWith('/')), authorityId: z.uuid(), gatewayAgentId: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/) }).parse(profile.relay);
+      const settings = taskRelayProfileSchema.parse(profile.relay);
       const metadataResponse = await agent.fetch('/.well-known/eigos-task-relay', { signal: AbortSignal.timeout(15000) });
       if (!metadataResponse.ok) throw new Error('relay_metadata_unavailable');
       const metadata = taskRelayMetadataSchema.parse(await metadataResponse.json());
