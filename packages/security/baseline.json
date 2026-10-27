@@ -2746,7 +2746,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "6ea2258e766e0954ff11773dac88722575cb5f427732f2aa6068eaf0e0eb3046",
+      "sourceDigest": "6789582c5d685745cadc88eb1ae5539bbc27cce3eed6b05e4f9a810fa66bc57f",
       "channels": [
         "http"
       ],
@@ -3007,7 +3007,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "0faf73635422fdbc6b61b04d95f81ac1885008e4ec6530a7c191f2ae2620bc57",
+      "sourceDigest": "cff5f12730cc1cf8e8e130ea1d7bcfb1d58b99a389a628c3564731eb93b8ad99",
       "channels": [
         "source",
         "dispatch"
@@ -3045,7 +3045,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "38c897c1f047092ea869e384694022ec92f43537aab8c48645b34e2203c0d4bc",
+      "sourceDigest": "327d918cc3b3e60fa7e7b4552943576bb3076891a5c9e41000d815ad69e15b90",
       "channels": [
         "source",
         "private_file"
@@ -3201,7 +3201,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "610693ef9af20fd983090a4c018f234801d32653536db261a82c23c2fbdd8e99",
+      "sourceDigest": "14e261733b77d62593a1890cba61962340b3737dbc2f7482b0e29ae409371faa",
       "channels": [
         "authorization_control"
       ],
@@ -3225,7 +3225,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "fab862a4944149ae25ef7dd22708c895a5ea2f09ff47b3fe0939c93b966a38a0",
+      "sourceDigest": "3aef9af93d4e00621ac4da23c09438e1f91ce40fb29d561f8b0a30026b336a5c",
       "channels": [
         "authorization_control"
       ],
@@ -3237,7 +3237,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "f6055f35aac8d5969b4e61ea10df1ac98ad5537d9d0bafd96ce8c2ad880f7e34",
+      "sourceDigest": "270700789e4e1b5ea9bb418b1ea9a293c8d220f36bee29fa8fc20437a108b9da",
       "channels": [
         "authorization_control"
       ],
@@ -3539,7 +3539,7 @@
     {
       "id": "s5-packages-agent-client-client",
       "file": "packages/agent-client/client.ts",
-      "sourceDigest": "58a16bf57af069bd212203c97dc40a1f804ae0d5d6bd6086dda756f22e8a1de3",
+      "sourceDigest": "d1e069ae1defdb7add7a98a82ebfc5065effbe027a285f17703383c7526f854e",
       "channels": [
         "runtime"
       ],
@@ -3599,7 +3599,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "961c766a974eefd0e8da4d59f432430fd9355ed9f15d3a5c833b25a20bed826f",
+      "sourceDigest": "e734071a7a128ebe145042f0f0d6ff2024dbadc8191e1a922b46a143ee6a9cba",
       "channels": [
         "runtime"
       ],
@@ -4150,6 +4150,182 @@
       "content": "Explicit copy-only migration entry",
       "currentControl": "Explicit reviewed source digest and private authority descriptor",
       "targetControl": "Explicit reviewed source digest and private authority descriptor",
+      "stage": "S5"
+    },
+    {
+      "id": "primary-relay-entry",
+      "file": "apps/gateway/relay.ts",
+      "sourceDigest": "8292a5f04d15a2bb4bc7e6c54b1be38a1c712c6effd5206964db297ac37a5fa0",
+      "channels": [
+        "http",
+        "authorization_control"
+      ],
+      "content": "Node enrollment, installation binding, current source authorization and dispatch",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-identity-authority",
+      "file": "packages/security/relay.ts",
+      "sourceDigest": "4d7ba785d877464649067b9e45aa33007bc668ca424028c573569149090d5aea",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Public-key installation routes, short bindings, proof replay and command idempotency",
+      "currentControl": "Current subject, parent grant, task-only scopes and immutable installation ownership",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-read-authority",
+      "file": "packages/security/relay-service.ts",
+      "sourceDigest": "cb9977ade80cd8c64137149a965421a43cf91a6cab6a14a1308c6beab6f643bb",
+      "channels": [
+        "authorization_control",
+        "source"
+      ],
+      "content": "Durable source requests, task/plan/attempt binding and response acceptance",
+      "currentControl": "Current task/source/action authority, Worker claim, exact input and pinned source peer",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-task-host",
+      "file": "packages/agent-transport/task-host.ts",
+      "sourceDigest": "b22d557b993dc86b0921cbbb4477ab539603eb2c030f9c16367d2620ff55f837",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Encrypted task intake and business result projection",
+      "currentControl": "Original TaskService idempotency and current TaskView disclosure at send boundary",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-source-service",
+      "file": "packages/agent-transport/didi-service.ts",
+      "sourceDigest": "2fc8e498dda1ce074df970d35ea90857ade9f9d45beece643b6c50eaf9d9030e",
+      "channels": [
+        "agent_transport",
+        "source",
+        "private_file"
+      ],
+      "content": "Provider credential custody and durable source read receipts",
+      "currentControl": "Pinned primary and source binding; DPoP online authorization before read and return; no order tools",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-enrollment-issuer",
+      "file": "packages/agent-transport/enrollment.ts",
+      "sourceDigest": "b200342ae8f586bc3c5370d4d77951bf906afcf0942cd4d6bc6c8f933fd47237",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Short-lived primary assertions for a specific transport public key",
+      "currentControl": "Current Foundation installation and grant, one-minute expiry, runtime-private signing key",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-pa-client",
+      "file": "packages/agent-client/relay.ts",
+      "sourceDigest": "c894fb9d284112ae645112b8889f6a516f411848b60621e1d08cc3c9ebadb4c2",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "PA request correlation, peer binding and result receive",
+      "currentControl": "Pinned primary authority and contact, encrypted persisted messages, no model credentials",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-node-client",
+      "file": "packages/agent-transport/client.ts",
+      "sourceDigest": "5b78d98080a5f496d835f2b84d1575661c67b0cd56e5aa60c65e406ffc67bc36",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Node keys, signed proofs, encrypted inbox and outbox",
+      "currentControl": "Runtime-private keys, fixed envelope retries, peer/contact/expiry and last-send callback",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-task-contract",
+      "file": "packages/agent-transport/task-contracts.ts",
+      "sourceDigest": "d15dd83ce8ac907de7d297de34ee555ddd079cb26f2c2b94f58d5068460ff760",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Task request and response shapes",
+      "currentControl": "Strict protocol, bounded operations, authority and request identity",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-source-contract",
+      "file": "packages/agent-transport/service-contracts.ts",
+      "sourceDigest": "b6b4655dc0b6fd48b2ece485702d9b8afdaab51d37ff6e2295324662b5f79988",
+      "channels": [
+        "agent_transport",
+        "source"
+      ],
+      "content": "Read-only provider request and response shapes",
+      "currentControl": "Strict protocol, two read tools, source/task/plan/input and response digest",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-didi-adapter",
+      "file": "packages/capabilities/didi/relay-connector.ts",
+      "sourceDigest": "3d8a4fa39c846605f37e651bb519124a59834a0347c10ad2b7861bac6f8ad72e",
+      "channels": [
+        "source"
+      ],
+      "content": "Worker source read delegation through primary transport work",
+      "currentControl": "Explicit transport digest, worker-only authority, current permission before result projection",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-enrollment-verifier",
+      "file": "apps/relay/config.ts",
+      "sourceDigest": "b434f1849cfe4e778fbdf9d3818a6e0687556a8186010a47f600c106ee48269d",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "External or primary-issued enrollment assertion validation",
+      "currentControl": "Exact JWT issuer/audience/client/scope/lifetime and optional single-node restriction",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-mailbox-authority",
+      "file": "packages/relay/store.ts",
+      "sourceDigest": "2f61b806c74ce62c2d892be75dd6a352eb3778fdfa99615e240280c244679317",
+      "channels": [
+        "agent_transport",
+        "authorization_control"
+      ],
+      "content": "Node ownership, contacts, durable ciphertext and receipts",
+      "currentControl": "Owner/node-bound enrollment, DPoP replay, contact consent, bounded retention and revocation",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-service-process",
+      "file": "apps/service-agent/main.ts",
+      "sourceDigest": "b3dfe3ab142edc7071a5b07d62454024d74b69925bacd06196895f0555cc00da",
+      "channels": [
+        "runtime",
+        "source"
+      ],
+      "content": "Independent source Agent process",
+      "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     }
   ]

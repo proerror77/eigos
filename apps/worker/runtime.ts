@@ -19,7 +19,7 @@ export function createWorker(config: Config, overrides: {
     const model = new CodexExecutor(config.EIGOS_CODEX_BIN, config.EIGOS_EXECUTOR_TIMEOUT_MS, {
       model: config.EIGOS_CODEX_MODEL, reasoningEffort: config.EIGOS_CODEX_REASONING_EFFORT, serviceTier: config.EIGOS_CODEX_SERVICE_TIER,
     });
-    const catalog = createExecutionCatalog({ store, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    const catalog = createExecutionCatalog({ store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', documentExecutor: overrides.executor ?? model,
       paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR, paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'worker', ontologyAuditPath: config.EIGOS_ONTOLOGY_AUDIT_PATH,
       publicGeoDiscoveryQueries: config.EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES,

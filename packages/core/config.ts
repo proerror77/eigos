@@ -40,6 +40,8 @@ const schema = z.object({
   EIGOS_NETWORK_MAX_CLARIFICATION_ROUNDS: z.coerce.number().int().min(1).max(10).default(2),
   EIGOS_RELEASE_DIGEST: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_AUTHORITY_FILE: z.string().optional(),
+  EIGOS_TASK_RELAY_FILE: z.string().optional(),
+  EIGOS_DIDI_RELAY_AGENT_ID: z.string().regex(/^agent_[A-Za-z0-9_-]{43}$/).optional(),
   EIGOS_COORDINATOR: z.literal('codex').default('codex'),
   EIGOS_CSV_INPUT_DIR: z.string().optional(),
   EIGOS_CSV_PILOT: z.enum(['false', 'true']).optional(),
@@ -124,6 +126,8 @@ export function allowsBoundPersonalSource(config: Config, nodeEnv: string | unde
 function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config {
   const parsed = schema.parse(env);
   const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
+  if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
+  if (c.EIGOS_DIDI_RELAY_AGENT_ID && (!c.EIGOS_TASK_RELAY_FILE || !c.authority || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Relay source reads require the primary task relay and production read-only DiDi configuration');
   if (c.authority) {
     const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;
     if (c.EIGOS_SECURITY_MODE !== 'foundation' || c.EIGOS_AUTH_MODE !== 'jwt' || c.HOST !== '127.0.0.1'

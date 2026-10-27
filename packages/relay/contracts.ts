@@ -28,7 +28,7 @@ export type MessageStatus = 'queued' | 'received' | 'expired' | 'revoked';
 export interface Receipt { id: string; senderId: string; recipientId: string; digest: string; status: MessageStatus; expiresAt: number }
 export interface MailItem { receipt: Receipt; signedEnvelope: string; signedSenderCard: string }
 export interface Connection { id: string; requester: string; recipient: string; state: 'pending' | 'accepted' | 'rejected' | 'revoked'; createdAt: number }
-export interface RelayOwner { issuer: string; subject: string; tenant: string }
+export interface RelayOwner { issuer: string; subject: string; tenant: string; enrollmentAgentId?: string }
 export const receiptSchema = z.strictObject({ id: uuidSchema, senderId: agentIdSchema, recipientId: agentIdSchema, digest: hashSchema,
   status: z.enum(['queued', 'received', 'expired', 'revoked']), expiresAt: z.number().int().positive() });
 export const connectionSchema = z.strictObject({ id: uuidSchema, requester: agentIdSchema, recipient: agentIdSchema,

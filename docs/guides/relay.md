@@ -112,6 +112,6 @@ Relay 不持有节点私钥，但可见公开名片、联系关系、收发身�
 
 ## 与业务协议的关系
 
-本模块承载有限 JSON 消息，没有将入站消息自动转成 `eigos.delegate` 或授权。连接现有任务入口时，必须验证主体、参与者、披露与动作许可，并复用原任务防重和版本保护。MCP/A2A 的共同任务核心保持不变；此前未启用的 foundation 功能不会因此开放。
+Relay 本身承载有限 JSON 消息。可选的[主实例任务适配器](relay-tasks.md)通过当前安装、公钥绑定与任务授权，把限定消息交给原 `TaskService`，并支持独立滴滴只读服务 Agent。它复用原任务防重、版本和输出保护；MCP/A2A 与 Relay 访问同一业务核心。未配置适配器时，收到普通消息不会创建任务或授权。
 
 相关资料：[任务验收](../architecture/task-closure.md)、[会员来源凭据](member-sources.md)、[JOSE](https://github.com/panva/jose)、[JWE](https://www.rfc-editor.org/rfc/rfc7516.html)、[DPoP](https://www.rfc-editor.org/rfc/rfc9449.html)。

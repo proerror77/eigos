@@ -54,7 +54,7 @@ export class DidiAgentProgram implements AgentProgram {
     this.ref = options.ref ?? DIDI_PROGRAM_REF;
     this.binding = didiBindingSchema.parse(binding);
     this.connector = options.connector ?? new DidiMcpConnector(this.binding);
-    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1', ...(options.memberAccess ? { memberConnection: options.memberAccess.configurationDigest } : {}) });
+    this.configurationDigest = digest({ program: this.ref, binding: { bindingId: binding.bindingId, keyFile: binding.keyFile, keySha256: binding.keySha256, environment: binding.environment }, evidenceKind: this.connector.evidenceKind, ontology: didiReadDefinitionRef, policy: 'ontology-mcp-reads-v1', ...(this.connector.transportDigest ? { transportDigest: this.connector.transportDigest } : {}), ...(options.memberAccess ? { memberConnection: options.memberAccess.configurationDigest } : {}) });
   }
   permitted(owner: string) { return this.options.memberAccess ? this.options.memberAccess.permitted(owner) : permitsPersonalSource(this,owner) && (!this.options.accountAccess || this.options.accountAccess.permitted(owner)); }
   capability(): ServiceCapability {
@@ -156,7 +156,7 @@ export class DidiAgentProgram implements AgentProgram {
   async invoke(ctx: AgentActionContext, action: string, input: Record<string, unknown>, signal: AbortSignal): Promise<AgentActionResult> {
     this.validate(ctx, action, input); const call = this.call(ctx, action, input);
     if (this.definition(ctx.graph, action).read!.mcp!.requires.length) this.validatePlanning(ctx, action, input, ctx.inputPlanning ?? ctx.state.plans.find(p => p.id === ctx.planId)?.ontologyPlanning ?? invalid('A persisted, source-read model plan is required'));
-    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision') }, call.tool, call.args, signal, () => { this.scope(ctx); });
+    const result = await this.connector.invoke({ requestId: ctx.request.id, requestRevision: ctx.request.revision, actionInputDigest: digest(input), planId: ctx.planId, intentId: ctx.intentId, attemptId: ctx.attemptId, modelRunId: ctx.modelRunId ?? invalid('DiDi requires a recorded model decision'), programId: this.ref.id, programDigest: this.configurationDigest, action }, call.tool, call.args, signal, () => { this.scope(ctx); });
     // Revocation or rotation during the provider read must also reject its late result.
     this.scope(ctx);
     const data = didiDataSchema.parse(result.data), receipt = didiReceiptSchema.parse(result.receipt);

@@ -72,7 +72,7 @@ export class RelayStore {
     const row = this.agent(id);
     return { signedCard: String(row.signed_card), state: row.state === 'revoked' ? 'revoked' : Number(row.expires_at) <= this.now() ? 'expired' : 'active', expiresAt: Number(row.expires_at) };
   }
-  owned(owner: RelayOwner) { return this.db.prepare('SELECT id FROM relay_agents WHERE owner=? ORDER BY id').all(ownerKey(owner)).map(row => ({ agentId: String(row.id), ...this.publicAgent(String(row.id)) })); }
+  owned(owner: RelayOwner) { return this.db.prepare('SELECT id FROM relay_agents WHERE owner=? ORDER BY id').all(ownerKey(owner)).filter(row => !owner.enrollmentAgentId || owner.enrollmentAgentId === row.id).map(row => ({ agentId: String(row.id), ...this.publicAgent(String(row.id)) })); }
   authenticate(agentId: string, token: string) {
     this.assertActive(agentId);
     const row = this.agent(agentId), expected = Buffer.from(String(row.credential_hash)), supplied = Buffer.from(sha256(token));
@@ -107,6 +107,7 @@ export class RelayStore {
     return result;
   }
   register(owner: RelayOwner, identity: VerifiedCard, credentialHash: string, requestId: string) {
+    if (owner.enrollmentAgentId && owner.enrollmentAgentId !== identity.card.agentId) fail('ENROLLMENT_NODE_MISMATCH', 403);
     return this.atomic(() => {
       this.cleanup();
       const id = identity.card.agentId, actor = ownerKey(owner), existing = this.db.prepare('SELECT * FROM relay_agents WHERE id=?').get(id);
@@ -122,6 +123,7 @@ export class RelayStore {
     });
   }
   renew(owner: RelayOwner, id: string, requestId: string) {
+    if (owner.enrollmentAgentId && owner.enrollmentAgentId !== id) fail('ENROLLMENT_NODE_MISMATCH', 403);
     return this.atomic(() => {
       this.cleanup(); const row = this.agent(id);
       if (row.owner !== ownerKey(owner)) fail('AGENT_NOT_FOUND', 404);
@@ -134,6 +136,7 @@ export class RelayStore {
     });
   }
   revoke(owner: RelayOwner, id: string) {
+    if (owner.enrollmentAgentId && owner.enrollmentAgentId !== id) fail('ENROLLMENT_NODE_MISMATCH', 403);
     this.atomic(() => {
       if (this.agent(id).owner !== ownerKey(owner)) fail('AGENT_NOT_FOUND', 404);
       this.db.prepare("UPDATE relay_agents SET state='revoked' WHERE id=?").run(id);

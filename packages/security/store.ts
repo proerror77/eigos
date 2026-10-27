@@ -10,6 +10,8 @@ import { agentAccessGrantSchema, taskDataGrantSchema, taskExecutionAuthoritySche
 import { SecurityPolicies } from './policy-store.js';
 import { withAuthorization, type AuthorizationScope } from './context.js';
 import {RecoveryStore} from './recovery.js';
+import { RelayAuthority } from './relay.js';
+import { RelayReadAuthority } from './relay-service.js';
 import {businessTransaction,hasTransaction} from '../core/transaction.js';
 
 export type SecurityMode = 'legacy' | 'foundation';
@@ -50,6 +52,8 @@ export class SecurityStore {
   readonly enabled: boolean;
   readonly policies: SecurityPolicies;
   readonly recoveries: RecoveryStore;
+  readonly relay: RelayAuthority;
+  readonly relayReads: RelayReadAuthority;
   constructor(private db: DatabaseSync, mode: SecurityMode = 'legacy', readonly now: () => number = Date.now,readOnly=false, readonly model: OntologyModel = businessModel) {
     const version=mode==='foundation'?2:1;
     const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='security_settings'").get();
@@ -79,6 +83,8 @@ export class SecurityStore {
     });
     this.policies = new SecurityPolicies(db, this,readOnly);
     this.recoveries = new RecoveryStore(db,this,readOnly);
+    this.relay = new RelayAuthority(db,this,readOnly);
+    this.relayReads = new RelayReadAuthority(db,this,readOnly);
   }
   atomic<T>(fn: () => T): T {
     // A top-level deferred SAVEPOINT can lose its read snapshot to another WAL

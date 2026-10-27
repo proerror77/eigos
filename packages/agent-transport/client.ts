@@ -91,10 +91,13 @@ export class RelayClient {
     } catch (error) { unlock(); throw error; }
   }
   close() { if (!this.closed) { this.closed = true; this.db.close(); this.unlock(); } }
-  private async request(path: string, method = 'GET', body?: unknown, ownerToken?: string, signal?: AbortSignal): Promise<unknown> {
+  private async request(path: string, method = 'GET', body?: unknown, ownerToken?: string, signal?: AbortSignal, beforeSend?: () => void | Promise<void>): Promise<unknown> {
     if (this.closed) throw new Error('Node client is closed');
     const token = ownerToken ?? this.#credentials.secret, url = this.baseUrl + path;
     const proof = await createProof(this.#keys, token, method, url);
+    signal?.throwIfAborted();
+    await beforeSend?.();
+    signal?.throwIfAborted();
     const response = await this.fetcher(url, { method, redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(35000)]) : AbortSignal.timeout(35000),
       headers: { Authorization: `${ownerToken ? 'Bearer' : 'DPoP'} ${token}`, DPoP: proof, 'X-EIGOS-Agent-ID': this.agentId, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -114,6 +117,22 @@ export class RelayClient {
     return z.strictObject({ agentId: agentIdSchema, expiresAt: z.number().int() }).parse(await this.request(`/v1/agents/${this.agentId}/renew`, 'POST', { requestId: uuidSchema.parse(requestId) }, ownerAccessToken));
   }
   async revoke(ownerAccessToken: string) { return this.request(`/v1/agents/${this.agentId}/revoke`, 'POST', {}, ownerAccessToken); }
+  /** Bind this public key to an already authenticated installation; the token never enters Relay. */
+  async taskBindingProof(accessToken: string, gatewayOrigin: string): Promise<string> {
+    const target = new URL(gatewayOrigin);
+    if (target.protocol !== 'https:' || target.origin !== gatewayOrigin) throw new Error('A pinned HTTPS gateway origin is required');
+    return createProof(this.#keys, accessToken, 'POST', gatewayOrigin + '/relay/bind');
+  }
+  async sourceReadProof(callId: string, gatewayOrigin: string): Promise<string> {
+    const target = new URL(gatewayOrigin);
+    if (target.protocol !== 'https:' || target.origin !== gatewayOrigin) throw new Error('A pinned HTTPS gateway origin is required');
+    return createProof(this.#keys, uuidSchema.parse(callId), 'POST', gatewayOrigin + `/relay/source-reads/${callId}/authorize`);
+  }
+  async enrollmentProof(accessToken: string, gatewayOrigin: string): Promise<string> {
+    const target = new URL(gatewayOrigin);
+    if (target.protocol !== 'https:' || target.origin !== gatewayOrigin) throw new Error('A pinned HTTPS gateway origin is required');
+    return createProof(this.#keys, accessToken, 'POST', gatewayOrigin + '/relay/enrollment');
+  }
   async peer(peerId: string): Promise<VerifiedCard> {
     const result = z.strictObject({ signedCard: z.string().max(4096), state: z.enum(['active', 'expired', 'revoked']), expiresAt: z.number().int() })
       .parse(await this.request(`/v1/agents/${agentIdSchema.parse(peerId)}`));
@@ -145,9 +164,9 @@ export class RelayClient {
     });
     return id;
   }
-  async deliver(id: string): Promise<Receipt> {
+  async deliver(id: string, options: { signal?: AbortSignal; beforeSend?: () => void | Promise<void> } = {}): Promise<Receipt> {
     const row = this.db.prepare('SELECT * FROM node_outbox WHERE id=?').get(uuidSchema.parse(id)) ?? fail('OUTBOX_MESSAGE_NOT_FOUND', 404);
-    const result = receiptSchema.parse(await this.request('/v1/messages', 'POST', { signedEnvelope: String(row.envelope) }));
+    const result = receiptSchema.parse(await this.request('/v1/messages', 'POST', { signedEnvelope: String(row.envelope) }, undefined, options.signal, options.beforeSend));
     if (result.id !== id || result.senderId !== this.agentId || result.recipientId !== row.recipient || result.digest !== sha256(String(row.envelope))) fail('INVALID_RELAY_RECEIPT', 502);
     this.db.prepare('UPDATE node_outbox SET receipt=? WHERE id=?').run(JSON.stringify(result), id); return result;
   }

@@ -4,6 +4,7 @@ import { readConfig } from '../../packages/core/config.js';
 const config = readConfig();
 if (config.DATABASE_PATH === ':memory:') throw new Error('Separate Gateway and Worker require a shared database file');
 const gateway = createApp(config);
+await gateway.relay?.start();
 const server = gateway.app.listen(config.PORT, config.HOST, () => {
   console.log(`EIGOS Gateway listening at ${config.PUBLIC_URL}; auth=${config.EIGOS_AUTH_MODE}`);
 });

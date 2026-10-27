@@ -1,6 +1,16 @@
-import { closeSync, constants, existsSync, lstatSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+
+export function readPrivateJson(path: string, maxBytes = 16384): unknown {
+  if (resolve(path) !== path) throw new Error('An absolute private file is required');
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.nlink !== 1 || info.mode & 0o077 || info.size > maxBytes || process.getuid && info.uid !== process.getuid()) throw new Error('An owned private regular file is required');
+    return JSON.parse(readFileSync(fd, 'utf8'));
+  } finally { closeSync(fd); }
+}
 
 /** Dedicated stores must never initialize inside a task, membership, or another node database. */
 export function openPrivateDatabase(path: string, applicationId: number): DatabaseSync {

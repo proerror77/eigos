@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { z } from 'zod';
-import { relayOrigin, type RelayOwner } from '../../packages/relay/contracts.js';
+import { agentIdSchema, relayOrigin, type RelayOwner } from '../../packages/relay/contracts.js';
 
 export interface RelayConfig {
   host: string; port: number; publicUrl: string; databasePath: string;
@@ -35,10 +35,10 @@ export function relayJwtVerifier(config: RelayConfig, keys: JWTVerifyGetKey): Ve
   return async token => {
     const { payload } = await jwtVerify(token, keys, { issuer: config.issuer!, audience: config.audience!, algorithms: ['RS256', 'ES256', 'EdDSA'],
       typ: 'at+jwt', requiredClaims: ['sub', 'iat', 'exp', 'client_id', 'scope', config.tenantClaim], maxTokenAge: '15m', clockTolerance: 5 });
-    const claims = z.object({ sub: z.string().min(1), iat: z.number(), exp: z.number(), client_id: z.string(), scope: z.string() }).parse(payload);
+    const claims = z.object({ sub: z.string().min(1), iat: z.number(), exp: z.number(), client_id: z.string(), scope: z.string(), eigos_agent_id: agentIdSchema.optional() }).parse(payload);
     const tenant = z.string().min(1).parse(payload[config.tenantClaim]);
     if (claims.exp - claims.iat > 900 || !config.clientIds.includes(claims.client_id) || !claims.scope.split(/\s+/).includes('relay:enroll')) throw new Error('Relay enrollment authority required');
-    return { issuer: config.issuer!, subject: claims.sub, tenant };
+    return { issuer: config.issuer!, subject: claims.sub, tenant, ...(claims.eigos_agent_id ? { enrollmentAgentId: claims.eigos_agent_id } : {}) };
   };
 }
 export function createOwnerVerifier(config: RelayConfig): VerifyOwner {
