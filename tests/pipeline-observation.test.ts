@@ -215,3 +215,21 @@ test('a trusted shared-fact update wakes the same task and is independently read
     assert.equal(f.store.observationWatches.contract(f.owner, task.id)!.reads, 1);
   } finally { f.close(); }
 });
+
+for (const state of ['input-required', 'auth-required'] as const) test(`a paused background watch preserves the original ${state} question`, async () => {
+  const f = observerFixture();
+  try {
+    await f.install(); const task = f.submit(); await f.until(task.id, job => job.delegation?.phase === 'observing');
+    const pending = f.store.get(f.owner, task.id); pending.state = state; pending.question = 'Original pending business question';
+    pending.delegation!.phase = state === 'input-required' ? 'clarifying' : 'awaiting_authorization'; f.store.save(f.owner, pending);
+    const models = f.modelCalls(); f.program.failReads = true;
+    for (let i = 0; i < 3; i++) { f.elapse(10000); await f.tick(); }
+    assert.equal(f.modelCalls(), models);
+    assert.equal(f.store.get(f.owner, task.id).state, state);
+    assert.equal(f.store.get(f.owner, task.id).question, pending.question);
+    assert.equal(f.store.observationWatches.watches(f.owner, task.id)[0]!.status, 'paused');
+    f.control(task.id, 'stop_observation');
+    assert.equal(f.store.get(f.owner, task.id).state, state);
+    assert.equal(f.store.get(f.owner, task.id).question, pending.question);
+  } finally { f.close(); }
+});

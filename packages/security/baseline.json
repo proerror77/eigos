@@ -4359,7 +4359,7 @@
       "currentControl": "Current task/lease/source/field authority; late replies cannot mutate facts; no-change polls skip model calls; business completion remains independently gated",
       "targetControl": "Preserve current task, source, field and effect authority; no automatic historical grants",
       "stage": "S3",
-      "sourceDigest": "a8a3ecc273002ae0a310b379f11defede903dd49c710b7450a388f72430a0e19"
+      "sourceDigest": "47ed8070bb26e840e556661a0a463a981e949298650a3a84b6889a4e29433607"
     },
     {
       "id": "native-goal-completion",

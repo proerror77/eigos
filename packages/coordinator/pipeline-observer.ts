@@ -94,7 +94,12 @@ export class PipelineObserver {
     if (!this.store.claimActive(claim)) return true;
     watches = this.store.observationWatches.watches(claim.owner, before.id).filter(watch => watch.requestRevision === before.delegation!.request.revision);
     if (watches.some(watch => watch.status === 'paused')) {
-      this.store.finish(claim, job => scheduleTaskRecovery(job, 'observation_unavailable', '持续观察已暂停；来源、权限或累计观察预算需要处理。原任务和已发生操作均已保留。', { automatic: false }));
+      this.store.finish(claim, job => {
+        // A background read cannot erase an outstanding business question or
+        // approval. Its paused watch is visible without taking over that state.
+        if (['input-required', 'auth-required'].includes(job.state)) { job.delegation!.nextAt = 0; return; }
+        scheduleTaskRecovery(job, 'observation_unavailable', '持续观察已暂停；来源、权限或累计观察预算需要处理。原任务和已发生操作均已保留。', { automatic: false });
+      });
       return true;
     }
     if (due.slice(2).some(watch => this.store.observationWatches.watch(claim.owner, watch.id).status === 'active')) {
