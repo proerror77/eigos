@@ -162,10 +162,11 @@ function manageDidi(f: Awaited<ReturnType<typeof fixture>>) {
   const validation = () => f.tasks.preparePipelineValidation(f.p, { ontologyId: namespace.id, release, serviceId: intake.serviceId, requestId: randomUUID(),
     goal: 'Read the synthetic route estimate without ordering or payment', expiresAt: new Date(f.now() + 300000).toISOString() });
   const status = () => f.jobs.ontology.pipelineStatus(f.owner, f.program.ref, f.program.configurationDigest, 'SearchDidiPlaces');
-  const verify = (taskId: string, lifetimeMs = 60000) => {
+  const verify = (taskId: string, lifetimeMs = 300000) => {
     const review = f.jobs.definitions.createDraft(f.owner, namespace.id, 'Review synthetic source receipt', true);
-    return z.object({ id: z.string() }).parse(definitions.command(f.p, { operation: 'verify_pipeline_task', ontologyId: namespace.id, draftId: review.id,
-      expectedRevision: review.revision, serviceId: intake.serviceId, taskId, expiresAt: new Date(f.now() + lifetimeMs).toISOString() }).result);
+    const expiresAt = new Date(f.now() + lifetimeMs).toISOString();
+    return { ...z.object({ id: z.string() }).parse(definitions.command(f.p, { operation: 'verify_pipeline_task', ontologyId: namespace.id, draftId: review.id,
+      expectedRevision: review.revision, serviceId: intake.serviceId, taskId, expiresAt }).result), expiresAt };
   };
   return { intake, definitions, validation, status, verify };
 }
@@ -187,17 +188,30 @@ for (const invalidation of ['revoked', 'expired'] as const) test(`Pipeline evide
   try {
     const pipeline = manageDidi(f), task = pipeline.validation();
     assert.equal((await f.advance(task.id)).state, 'completed');
-    const verification = pipeline.verify(task.id, 20000), originalReads = f.source.calls.filter(c => c.name).length;
+    // Keep the short expiry within the 60-second proof window while allowing
+    // the full native planning turn to finish on a slower CI runner.
+    const verification = pipeline.verify(task.id, invalidation === 'expired' ? 55000 : 300000), originalReads = f.source.calls.filter(c => c.name).length;
     const ordinary = f.tasks.submit(f.p, { service: 'eigos.delegate', requestId: randomUUID(), goal: 'Read the synthetic route again; no order or payment' });
-    await f.tick(); let invalidated = false;
+    await f.tick(); let invalidated = false, sourceRequestCurrent = false, workerLeaseCurrent = false, pipelineDenial: unknown;
     f.beforeAuthorization(() => {
+      const queued = f.jobs.security.relayReads.authorize(f.reads.at(-1)!, f.serviceNode.agentId);
       invalidated = true;
-      if (invalidation === 'expired') f.elapse(25000);
+      if (invalidation === 'expired') {
+        assert(f.now() < Date.parse(verification.expiresAt), 'Verification must remain current until its queued source request');
+        f.coordinator.refresh();
+        f.elapse(Date.parse(verification.expiresAt) - f.now() + 1);
+      }
       else pipeline.definitions.command(f.p, { operation: 'revoke_pipeline_verification', ontologyId: 'eigos.business', serviceId: pipeline.intake.serviceId, verificationId: verification.id });
+      sourceRequestCurrent = queued.expiresAt > f.now(); workerLeaseCurrent = f.jobs.hasActiveClaim(ordinary.id);
+      try { f.jobs.security.relayReads.authorize(queued.callId, f.serviceNode.agentId); }
+      catch (error) { pipelineDenial = error instanceof Error && 'reason' in error ? error.reason : error; }
     });
     await f.tick();
     assert(invalidated, 'Invalidation must happen at the remote source authorization boundary');
     assert.equal(pipeline.status().status, invalidation);
+    assert(sourceRequestCurrent, 'The source request itself must remain unexpired');
+    assert(workerLeaseCurrent, 'The Worker lease must remain active; only Pipeline evidence changes');
+    assert.equal(pipelineDenial, 'SOURCE_NOT_AUTHORIZED', 'The exact primary authorization guard must reject Pipeline evidence before another fence can revoke the queued read');
     assert(f.jobs.security.taskGrant(f.jobs.security.agentContext(f.p), ordinary.id), 'The task grant remains active; the Pipeline gate must deny this read');
     assert.equal(f.source.calls.filter(c => c.name).length, originalReads, 'No provider call may cross expired or revoked Pipeline evidence');
   } finally { await f.close(); }
