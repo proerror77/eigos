@@ -11,6 +11,7 @@ import { ModelSessionPool } from './model-session-pool.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
 import type { ModelTiming } from './model-timing.js';
 import { modelUsageRecorder } from '../core/model-usage-context.js';
+import { NativeModelTrace, type NativeModelTiming, type NativeModelOutcome } from './native-model-timing.js';
 
 export const decisionSchema = z.object({
   decision: z.enum(['ask_user', 'complete']),
@@ -30,6 +31,7 @@ export interface RunEvidence {
   decisionDigest?: string;
   decisionDecoding?: { encoding: 'fixed_scope_message_refs_v1'; rawDecisionDigest: string };
   timing?: ModelTiming;
+  nativeTiming?: NativeModelTiming;
   outputSchemaDigest?: string;
   model?: string;
   reasoningEffort?: string;
@@ -55,7 +57,7 @@ export interface RunEvidence {
   ontologyMcp?: { server: 'eigos_ontology'; transport: 'streamable-http'; sessionId: string; taskId: string; toolAttempts: number;
     calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
 }
-export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[] }
+export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[]; trace?: NativeModelTrace }
 export interface ModelRunOptions { mcp?: NativeMcpConnection }
 export interface CodexModelConfiguration {
   model: string;
@@ -112,6 +114,13 @@ export class CodexExecutor implements Executor {
     const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-exec', startedAt);
     let recorded: RunEvidence | undefined, succeeded = false;
     let directory: string | undefined;
+    const trace = options.mcp?.trace ?? new NativeModelTrace(), started = performance.now(); trace.mark('runStarted'); trace.inputBytes(Buffer.byteLength(prompt));
+    let outcome: NativeModelOutcome = 'failed', stderr = '';
+    const events: Record<string, unknown>[] = [];
+    const usage = () => {
+      const value = events.findLast(event => event.type === 'turn.completed')?.usage;
+      return value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter((entry): entry is [string, number] => typeof entry[1] === 'number')) : undefined;
+    };
     try {
       directory = await mkdtemp(join(tmpdir(), 'eigos-executor-'));
       const schemaPath = join(directory, 'output-schema.json');
@@ -135,32 +144,45 @@ export class CodexExecutor implements Executor {
           '-c', 'mcp_servers.eigos_ontology.startup_timeout_sec=15',
           '-c', 'mcp_servers.eigos_ontology.tool_timeout_sec=30');
       }
-      const events: Record<string, unknown>[] = [];
       const nativeMcpCalls: NonNullable<RunEvidence['nativeMcpCalls']> = [];
-      let stderr = '';
       await new Promise<void>((resolve, reject) => {
         if (signal.aborted) { reject(new Error('Executor canceled')); return; }
         // A small allowlist prevents gateway credentials from entering the child.
         const env = modelEnvironment();
         if (options.mcp) env.EIGOS_ONTOLOGY_MCP_TOKEN = options.mcp.token;
+        trace.mark('spawnRequested');
         const child = spawn(this.binary, args, { cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' });
+        child.once('spawn', () => trace.mark('spawned'));
         let buffer = '';
         let bytes = 0;
         let failure: Error | undefined;
         const kill = () => {
           try { if (child.pid && process.platform !== 'win32') process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { /* Already exited. */ }
         };
-        const cancel = () => { failure = new Error('Executor canceled'); kill(); };
+        const cancel = () => { outcome = 'interrupted'; failure = new Error('Executor canceled'); kill(); };
         signal.addEventListener('abort', cancel, { once: true });
-        const timer = setTimeout(() => { failure = new Error('Executor timed out'); kill(); }, this.timeoutMs);
+        const timer = setTimeout(() => { outcome = 'timed_out'; failure = new Error('Executor timed out'); kill(); }, this.timeoutMs);
         child.stdout.on('data', (chunk: Buffer) => {
           bytes += chunk.length;
-          if (bytes > 2_000_000) { failure = new Error('Executor output limit reached'); kill(); return; }
+          if (bytes > 2_000_000) { outcome = 'output_limit'; failure = new Error('Executor output limit reached'); kill(); return; }
           buffer += chunk.toString();
           const lines = buffer.split('\n'); buffer = lines.pop() ?? '';
           for (const line of lines) {
             try {
               const event = JSON.parse(line) as Record<string, unknown>;
+              if (event.type === 'thread.started') trace.mark('threadStarted');
+              if (event.type === 'turn.started') trace.mark('turnStarted');
+              if (event.type === 'turn.completed') trace.mark('turnCompleted');
+              if (event.item && typeof event.item === 'object') {
+                const item = event.item as Record<string, unknown>;
+                if (item.type === 'mcp_tool_call' && item.server === 'eigos_ontology' && typeof item.id === 'string' && typeof item.tool === 'string') {
+                  if (event.type === 'item.started') trace.clientToolStarted(item.id, item.tool);
+                  if (event.type === 'item.completed') trace.clientToolCompleted(item.id, item.tool, item.status === 'failed' || !!(item.result && typeof item.result === 'object' && (item.result as Record<string, unknown>).isError === true));
+                }
+                if (event.type === 'item.completed' && item.type === 'agent_message' && typeof item.text === 'string' && item.text.length) {
+                  if (item.phase === 'final_answer') trace.mark('firstOutput', 'lastOutput', 'finalOutput'); else trace.mark('firstOutput', 'lastOutput');
+                }
+              }
               // Persist only receipt metadata, never hidden reasoning or tool contents.
               if (['thread.started', 'turn.completed', 'turn.failed', 'error'].includes(String(event.type))) events.push(event);
               if (event.type === 'item.completed' && event.item && typeof event.item === 'object') {
@@ -178,32 +200,34 @@ export class CodexExecutor implements Executor {
         });
         child.stderr.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-16000); });
         child.stdin.on('error', () => { /* Exit path handles a closed pipe. */ });
-        child.on('error', () => { failure = new Error('Executor could not start'); });
+        child.on('error', () => { outcome = 'spawn_failed'; failure = new Error('Executor could not start'); });
         child.on('close', code => {
+          trace.mark('processExited');
           clearTimeout(timer); signal.removeEventListener('abort', cancel);
           if (failure) reject(failure);
-          else if (code !== 0) reject(new Error('Executor process failed; check local Codex login and provider availability'));
+          else if (code !== 0) { outcome = 'process_failed'; reject(new Error('Executor process failed; check local Codex login and provider availability')); }
           else resolve();
         });
         child.stdin.end(prompt);
       });
+      outcome = 'invalid_result';
       if (!events.some(e => e.type === 'turn.completed') || events.some(e => e.type === 'turn.failed')) throw new Error('No successful model turn receipt');
       const text = await readFile(outputPath, 'utf8');
       const threadId = events.find(e => e.type === 'thread.started')?.thread_id;
-      const usage = events.findLast(e => e.type === 'turn.completed')?.usage;
       const model = /^model:\s*(\S+)/m.exec(stderr)?.[1];
+      const output: unknown = JSON.parse(text); trace.mark('outputParsed');
       recorded = {
         id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(),
         outputSha256: createHash('sha256').update(text).digest('hex'), model,
-        modelConfiguration: { ...this.configuration }, durationMs: Date.now() - Date.parse(startedAt),
+        modelConfiguration: { ...this.configuration }, durationMs: performance.now() - started, promptBytes: Buffer.byteLength(prompt), nativeTiming: trace.finish('succeeded'),
         threadId: typeof threadId === 'string' ? threadId : undefined,
-        usage: usage && typeof usage === 'object' ? Object.fromEntries(Object.entries(usage).filter((entry): entry is [string, number] => typeof entry[1] === 'number')) : undefined,
+        usage: usage(),
         ...(options.mcp ? { nativeMcpCalls } : {}),
       };
-      const output: unknown = JSON.parse(text); succeeded = true;
+      succeeded = true;
       return { output, evidence: recorded };
     } finally {
-      try { recorder?.finish(id, recorded, succeeded ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
+      try { recorder?.finish(id, recorded ?? { id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(), model: /^model:\s*(\S+)/m.exec(stderr)?.[1], usage: usage(), nativeTiming: trace.finish(signal.aborted ? 'interrupted' : outcome) }, succeeded ? 'completed' : signal.aborted ? 'interrupted' : 'failed'); }
       finally { if (directory) await rm(directory, { recursive: true, force: true }); }
     }
   }

@@ -1,9 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from './domain.js';
 import type { RunEvidence } from '../capabilities/executor.js';
+import type { ModelUsageEvidence } from './model-usage-context.js';
+import { nativeModelTimingSchema, type NativeModelTiming } from '../capabilities/native-model-timing.js';
 
-type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string };
+type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string; nativeTiming?: NativeModelTiming };
 const cleanUsage = (value: RunEvidence['usage']) => value ? Object.fromEntries(Object.entries(value).filter(([key, n]) => /^[a-z_]{1,80}$/.test(key) && Number.isSafeInteger(n) && n >= 0)) : undefined;
+const cleanTiming = (value: unknown) => { const parsed = nativeModelTimingSchema.safeParse(value); return parsed.success ? parsed.data : undefined; };
 
 export function initializeMemberUsage(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS member_model_usage (run_id TEXT PRIMARY KEY, owner TEXT NOT NULL, job_id TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL);
@@ -29,15 +32,15 @@ export function beginModelUsage(db: DatabaseSync, owner: string, jobId: string, 
   const value: ModelUsage = { id, runtime, startedAt, claimTokenDigest, usageReported: false };
   db.prepare('INSERT INTO member_model_usage VALUES(?,?,?,?,?)').run(id, owner, jobId, 'running', JSON.stringify(value));
 }
-export function finishModelUsage(db: DatabaseSync, owner: string, jobId: string, id: string, evidence: RunEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
+export function finishModelUsage(db: DatabaseSync, owner: string, jobId: string, id: string, evidence: ModelUsageEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
   const row = existing(db, owner, jobId, id); if (!row) throw new DomainError('CONFLICT', 'Model attempt was not recorded before dispatch');
   const old: ModelUsage = JSON.parse(String(row.body)), usage = cleanUsage(evidence?.usage);
   // Late receipts improve accounting only; they never advance a task or lease.
-  const value: ModelUsage = { ...old, completedAt: evidence?.completedAt ?? new Date().toISOString(), model: evidence?.model, usage, usageReported: !!usage && Object.keys(usage).length > 0 };
+  const value: ModelUsage = { ...old, completedAt: evidence?.completedAt ?? new Date().toISOString(), model: evidence?.model, usage, usageReported: !!usage && Object.keys(usage).length > 0, nativeTiming: old.nativeTiming ?? cleanTiming(evidence?.nativeTiming) };
   db.prepare('UPDATE member_model_usage SET state=?,body=? WHERE run_id=? AND owner=?').run(outcome, JSON.stringify(value), id, owner);
 }
 export function recordModelResponse(db: DatabaseSync, owner: string, jobId: string, evidence: RunEvidence) {
-  const usage = cleanUsage(evidence.usage), value: ModelUsage = { id: evidence.id, runtime: evidence.runtime, startedAt: evidence.startedAt, completedAt: evidence.completedAt, model: evidence.model, usage, usageReported: !!usage && Object.keys(usage).length > 0 };
+  const usage = cleanUsage(evidence.usage), value: ModelUsage = { id: evidence.id, runtime: evidence.runtime, startedAt: evidence.startedAt, completedAt: evidence.completedAt, model: evidence.model, usage, usageReported: !!usage && Object.keys(usage).length > 0, nativeTiming: cleanTiming(evidence.nativeTiming) };
   const row = existing(db, owner, jobId, evidence.id);
   if (row) {
     const old: ModelUsage = JSON.parse(String(row.body));

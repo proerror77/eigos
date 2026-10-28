@@ -9,6 +9,9 @@ import { TaskService } from '../packages/core/tasks.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { CodexExecutor } from '../packages/capabilities/executor.js';
 import { withModelUsage } from '../packages/core/model-usage-context.js';
+import { DatabaseSync } from 'node:sqlite';
+import { initializeMemberUsage, beginModelUsage, finishModelUsage } from '../packages/core/member-usage.js';
+import { NativeModelTrace } from '../packages/capabilities/native-model-timing.js';
 import { ownerKey } from '../packages/core/domain.js';
 import { evidence, principal } from './backend-fixture.js';
 
@@ -30,6 +33,25 @@ test('member usage spans tasks and installations, stays isolated, and imposes no
   } finally { store.close(); }
 });
 
+test('private attempt diagnostics reject payload fields and preserve the first valid timing across late accounting', () => {
+  const db = new DatabaseSync(':memory:');
+  try {
+    db.exec('CREATE TABLE jobs(owner TEXT,id TEXT,body TEXT)'); initializeMemberUsage(db);
+    const at = '2026-01-01T00:00:00.000Z'; let now = 0;
+    const trace = new NativeModelTrace(() => now, at); trace.mark('spawnRequested'); now = 10; trace.mark('processExited');
+    const timing = trace.finish('process_failed'), evidence = { id: 'attempt', runtime: 'codex-exec', startedAt: at, completedAt: at, nativeTiming: timing };
+    beginModelUsage(db, 'owner', 'task', evidence.id, evidence.runtime, at, 'claim-digest');
+    const read = () => JSON.parse(String(db.prepare('SELECT body FROM member_model_usage WHERE run_id=?').get(evidence.id)!.body));
+    const unexpectedPayload = { ...timing, prompt: 'PRIVATE_PROMPT' };
+    finishModelUsage(db, 'owner', 'task', evidence.id, { ...evidence, nativeTiming: unexpectedPayload }, 'failed');
+    assert.equal(read().nativeTiming, undefined); assert(!JSON.stringify(read()).includes('PRIVATE_PROMPT'));
+    finishModelUsage(db, 'owner', 'task', evidence.id, evidence, 'failed'); assert.deepEqual(read().nativeTiming, timing);
+    finishModelUsage(db, 'owner', 'task', evidence.id, undefined, 'failed'); assert.deepEqual(read().nativeTiming, timing);
+    assert.throws(() => finishModelUsage(db, 'other-owner', 'task', evidence.id, evidence, 'failed'), /another execution/);
+    assert.equal(db.prepare('SELECT count(*) n FROM jobs').get()!.n, 0, 'Diagnostics cannot create or advance business work');
+  } finally { db.close(); }
+});
+
 test('concurrent model execution records the correct owner, including failed attempts with unknown usage', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-usage-')), store = new JobStore(join(dir, 'tasks.sqlite')), tasks = new TaskService(store, { catalog: createExecutionCatalog() });
   const binary = join(dir, 'fixture-model');
@@ -40,7 +62,16 @@ test('concurrent model execution records the correct owner, including failed att
     const run = (claim: typeof a, prompt: string) => withModelUsage({ begin: (id, runtime, at) => store.beginModelUsage(claim, id, runtime, at), finish: (id, receipt, state) => store.finishModelUsage(claim, id, receipt, state) }, () => new CodexExecutor(binary).runStructured(prompt, {}, new AbortController().signal));
     await Promise.all([run(a, a.owner === ownerKey(principal) ? 'alice' : 'bob'), run(b, b.owner === ownerKey(principal) ? 'alice' : 'bob')]);
     const alice = a.owner === ownerKey(principal) ? a : b;
+    const beforeFailedAttempt = store.get(alice.owner, alice.job.id);
     await assert.rejects(run(alice, 'fail'));
+    assert.deepEqual(store.get(alice.owner, alice.job.id), beforeFailedAttempt, 'Failure diagnostics only update accounting, never the task or lease');
+    const reader = new DatabaseSync(join(dir, 'tasks.sqlite'), { readOnly: true });
+    try {
+      const row = JSON.parse(String(reader.prepare("SELECT body FROM member_model_usage WHERE job_id=? AND state='failed'").get(alice.job.id)!.body));
+      assert.equal(row.nativeTiming.outcome, 'process_failed'); assert.equal(row.nativeTiming.stage, 'cli_or_mcp_startup');
+      assert(row.nativeTiming.markers.processExited >= row.nativeTiming.markers.spawnRequested);
+      assert.equal(row.nativeTiming.durations.turnMs, null); assert.equal(row.usageReported, false);
+    } finally { reader.close(); }
     const usage = tasks.usage(principal); assert.equal(usage.models.attempts, 2); assert.equal(usage.models.states.failed, 1); assert.equal(usage.models.attemptsWithoutReportedUsage, 1); assert.equal(usage.models.reportedUsage.input_tokens, 10);
     assert.equal(tasks.usage(bob).models.reportedUsage.input_tokens, 20);
     tasks.cancel(principal, alice.job.id); await assert.rejects(run(alice, 'alice'), /lease/);

@@ -10,6 +10,7 @@ import { DomainError } from '../core/domain.js';
 import { planningToolSchemas, type OntologyPlanningSession } from './planning-session.js';
 import type { NativeMcpConnection } from '../capabilities/executor.js';
 import { objectRefSchema } from '../ontology/model.js';
+import { NativeModelTrace } from '../capabilities/native-model-timing.js';
 
 const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20), decisionJson: z.string().min(2).max(100000) }).strict();
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
@@ -61,6 +62,7 @@ function nativeArguments(name: string, raw: unknown): unknown {
 /** A native MCP endpoint owned by one Worker model session, never a public gateway. */
 export async function openOntologyMcp(session: OntologyPlanningSession, signal: AbortSignal, onBudgetExceeded?: () => void, finalSchema?: object, modelChannelId?: string) {
   signal.throwIfAborted();
+  const trace = new NativeModelTrace();
   const authority = authorizationScope();
   const authorized = <T>(action: () => T): T => authority ? withAuthorization(authority, action) : action();
   const finalDecision = finalSchema ? z.fromJSONSchema(finalSchema as Parameters<typeof z.fromJSONSchema>[0]) : undefined;
@@ -71,20 +73,22 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   let closed = false;
   let toolAttempts = 0, readAttempts = 0;
   const active = () => { signal.throwIfAborted(); if (closed) throw new Error('Ontology MCP session closed'); };
-  const respond = (action: () => unknown): CallToolResult => {
+  const respond = (name: string, action: () => unknown): CallToolResult => {
+    const span = trace.start('server_tool', name); let failed = false;
     try {
       active(); const result = authorized(() => { authority?.assertCurrent(); const value = action(); session.authorizeModel(modelChannelId); return value; });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
     } catch (error) {
+      failed = true;
       return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error instanceof DomainError ? error.code : 'REJECTED', message: error instanceof Error ? error.message : 'Ontology request rejected' }) }] };
-    }
+    } finally { trace.end(span, failed ? 'failed' : 'completed'); }
   };
   const makeServer = () => {
     const server = new McpServer({ name: 'eigos-ontology', version: '1.0.0' });
     for (const name of offered) server.registerTool(name, {
       description: descriptions[name], inputSchema: name === 'evaluate_ontology' && authorizedFunctions ? (nativeSchemas[name] as z.ZodObject).extend({ function: z.enum(authorizedFunctions as [string,...string[]]) }) : nativeSchemas[name]!,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    }, (args: unknown) => respond(() => {
+    }, (args: unknown) => respond(name, () => {
       if (decision) throw new Error('This decision has already been submitted');
       const result = session.call(name, nativeArguments(name, args)), receipt = session.lastReceipt();
       if (!receipt) throw new Error('Ontology call produced no receipt');
@@ -93,7 +97,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     server.registerTool('submit_decision', {
       description: 'Submit this model session\'s final structured decision and successful Ontology receipt IDs. The Worker separately validates and authorizes execution.',
       inputSchema: decisionSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    }, args => respond(() => {
+    }, args => respond('submit_decision', () => {
       const output: unknown = JSON.parse(args.decisionJson);
       if (!output || typeof output !== 'object' || Array.isArray(output)) throw new Error('Decision must be a JSON object');
       const validation = finalDecision?.safeParse(output);
@@ -115,6 +119,10 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   app.all('/mcp', async (req, res) => {
     const provided = Buffer.from(req.headers.authorization ?? ''), expected = Buffer.from(`Bearer ${token}`);
     if (closed || signal.aborted || provided.length !== expected.length || !timingSafeEqual(provided, expected)) { res.status(401).json({ error: 'invalid_session' }); return; }
+    const phase = req.body?.method === 'initialize' ? 'initialize' : req.body?.method === 'tools/list' ? 'tools_list' : req.body?.method === 'tools/call' ? 'tool_request' : undefined;
+    const span = phase ? trace.start(phase, phase === 'tool_request' ? typeof req.body.params?.name === 'string' ? req.body.params.name : 'other' : undefined) : undefined;
+    res.once('finish', () => trace.end(span, res.statusCode >= 400 ? 'failed' : 'completed', res.statusCode));
+    res.once('close', () => trace.end(span, 'interrupted'));
     try { authorized(() => { authority?.assertCurrent(); session.authorizeModel(modelChannelId); }); }
     catch { res.status(403).json({error:'session_authority_ended'}); return; }
     if (req.body?.method === 'tools/call') {
@@ -130,6 +138,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   const http = await new Promise<ReturnType<typeof app.listen>>((resolve, reject) => {
     const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); listener.once('error', reject);
   });
+  trace.mark('mcpReady');
   const close = async () => {
     if (closed) return;
     closed = true; signal.removeEventListener('abort', abort);
@@ -138,7 +147,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   const abort = () => { void close(); };
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) { await close(); signal.throwIfAborted(); }
-  const connection: NativeMcpConnection = { name: 'eigos_ontology', url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, token, tools: [...offered, 'submit_decision'] };
+  const connection: NativeMcpConnection = { name: 'eigos_ontology', url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, token, tools: [...offered, 'submit_decision'], trace };
   return { connection, close, result: () => { active(); if (!decision) throw new Error('The model did not submit a decision through native Ontology MCP'); return decision; },
     evidence: () => ({ server: 'eigos_ontology' as const, transport: 'streamable-http' as const, sessionId, taskId: session.request.id, toolAttempts,
       calls: session.receipts().map(r => ({ tool: r.tool, receiptId: r.id, status: r.status, inputDigest: r.inputDigest, outputDigest: r.outputDigest })), decisionSubmitted: !!decision }) };

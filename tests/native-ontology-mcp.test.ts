@@ -34,6 +34,12 @@ test('native read receipts expose the remaining byte budget without charging ins
     const contextBytes = f.session.lastReceipt()!.outputBytes; assert(contextBytes && contextBytes > 0);
     assert.equal(context.budget.remainingResultBytes, initial.remainingResultBytes - contextBytes);
     assert.equal(context.budget.readsRemaining, 19);
+    const timing = f.mcp.connection.trace!.snapshot();
+    assert(timing.markers.mcpReady !== undefined);
+    assert(timing.spans.some(span => span.kind === 'initialize' && span.httpStatus === 200));
+    assert(timing.spans.some(span => span.kind === 'tool_request' && span.tool === 'read_task_context' && span.httpStatus === 200));
+    assert(timing.spans.some(span => span.kind === 'server_tool' && span.tool === 'read_task_context' && span.durationMs !== undefined));
+    assert(!JSON.stringify(timing).includes(f.mcp.connection.token)); assert(!JSON.stringify(timing).includes(f.job.id));
     const instructions = value(await f.client.callTool({ name: 'read_task_instructions', arguments: { limit: 1 } }));
     assert.equal(instructions.receipt.status, 'ok');
     assert.equal(instructions.budget.remainingResultBytes, context.budget.remainingResultBytes, 'Original instructions have their own bounded allowance');

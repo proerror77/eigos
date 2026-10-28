@@ -18,6 +18,7 @@ import { OntologyObjectStore } from '../ontology/object-store.js';
 import { projectTask } from '../ontology/task-projection.js';
 import { scheduleTaskRecovery } from './task-recovery.js';
 import { initializeMemberUsage, beginModelUsage, finishModelUsage, recordModelResponse, markModelUsageUnknown, memberUsage } from './member-usage.js';
+import type { ModelUsageEvidence } from './model-usage-context.js';
 import type { RunEvidence } from '../capabilities/executor.js';
 import { projectBusinessChain } from '../ontology/business-chain-projection.js';
 import { projectExecution, type ExecutionLedger } from '../ontology/execution-projection.js';
@@ -306,7 +307,7 @@ export class JobStore {
   beginModelUsage(claim: WorkClaim, id: string, runtime: string, startedAt: string) {
     this.transaction(() => { if (!this.active(claim, Date.now())) throw new DomainError('CONFLICT', 'Model dispatch lease is no longer active'); beginModelUsage(this.db, claim.owner, claim.job.id, id, runtime, startedAt, digest(claim.token)); });
   }
-  finishModelUsage(claim: WorkClaim, id: string, evidence: RunEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
+  finishModelUsage(claim: WorkClaim, id: string, evidence: ModelUsageEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
     this.transaction(() => finishModelUsage(this.db, claim.owner, claim.job.id, id, evidence, outcome));
   }
   recordModelUsage(owner: string, jobId: string, evidence: RunEvidence) { this.assertOwnedJob(owner, jobId); recordModelResponse(this.db, owner, jobId, evidence); }

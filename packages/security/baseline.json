@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "aab1296fa76f083d661449c32aeddf9b5968c80afced6be557a4163c38c1f7ea",
+      "sourceDigest": "ab6812f99c35fbb91d53d5db5f2767ceb647c77ed0ce7a3735fbf715b96fcc32",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2994,7 +2994,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "127a2e134d58b43386c63e0c4dea96bfc6ec798aef62ef999c786a9e5c079ac3",
+      "sourceDigest": "8d331f2cbeac9c161abbb12b4b285856ff7483571a5c2bb372008221ce0d4ecc",
       "channels": [
         "registered_model",
         "private_file"
@@ -4055,7 +4055,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "d8a64d2c3bfa6705a4b021db6fe1d07fc17ccd7bbd2e141cabee35b4e96fc9ad",
+      "sourceDigest": "d46e9e2ff87a5652cf1fedbb96529718e80c100be737e40fe9c08a83d7b677ed",
       "channels": [
         "model"
       ],
@@ -4534,6 +4534,31 @@
       "targetControl": "Prevent state aliasing and concurrent node ownership without creating business authority",
       "stage": "S5",
       "sourceDigest": "43e04fa0677b6d9cc517e2b71d6526103bd74231e4ba8892928685465ebffca1"
+    },
+    {
+      "id": "native-model-timing",
+      "file": "packages/capabilities/native-model-timing.ts",
+      "channels": [
+        "private_diagnostics"
+      ],
+      "content": "Bounded monotonic CLI and MCP phase metadata without prompts, arguments, results, IDs or credentials",
+      "currentControl": "Fixed phase and tool enums; numeric boundaries and statuses; maximum 96 spans; missing endpoints remain unknown; strict schema rejects extra fields",
+      "targetControl": "Private attempt diagnostics separate from business completion and provider inference claims",
+      "stage": "S3",
+      "sourceDigest": "a88b4dc35ce463bc9f5a604e311edc87039c3620c90f7dfd02b5c37f51128518"
+    },
+    {
+      "id": "model-usage-accounting",
+      "file": "packages/core/member-usage.ts",
+      "channels": [
+        "sqlite",
+        "task_usage"
+      ],
+      "content": "Owned model-attempt accounting and optional private phase timing, including failed attempts",
+      "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated",
+      "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
+      "stage": "S3",
+      "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
     }
   ]
 }
