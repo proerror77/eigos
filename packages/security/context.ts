@@ -14,6 +14,8 @@ export interface AuthorizationScope {
   operation: 'task.query' | 'task.process' | 'task.result.read';
   lineage: Map<string, SecurityEnvelope>;
   assertCurrent: () => void;
+  /** Server-owned progress only; renewals still validate the original claim. */
+  onProgress?: () => void;
   projection?: { programId: string; programDigest: string; sourceBindingId: string };
   inference?: boolean;
   integrity?: boolean;
