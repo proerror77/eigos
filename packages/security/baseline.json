@@ -2994,13 +2994,13 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "5662939b1f77e90fd8cdbf1a54a4c086e01bc2d8924eaeb5254c407830d0c1c6",
+      "sourceDigest": "127a2e134d58b43386c63e0c4dea96bfc6ec798aef62ef999c786a9e5c079ac3",
       "channels": [
         "registered_model",
         "private_file"
       ],
       "content": "Goal/messages to model process; temporary schema/output files",
-      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
+      "currentControl": "Explicit codex model-channel identity; task-bound native MCP must initialize within its existing deadline before planning; qualification remains separately configured",
       "targetControl": "Model channel approval and label propagation; files stay private",
       "stage": "S3"
     },

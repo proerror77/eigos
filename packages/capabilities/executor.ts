@@ -130,6 +130,8 @@ export class CodexExecutor implements Executor {
           '-c', `mcp_servers.eigos_ontology.url=${JSON.stringify(options.mcp.url)}`,
           '-c', 'mcp_servers.eigos_ontology.bearer_token_env_var="EIGOS_ONTOLOGY_MCP_TOKEN"',
           '-c', `mcp_servers.eigos_ontology.enabled_tools=${JSON.stringify(options.mcp.tools)}`,
+          // Optional MCP startup may finish after Codex builds its initial tool catalog.
+          '-c', 'mcp_servers.eigos_ontology.required=true',
           '-c', 'mcp_servers.eigos_ontology.startup_timeout_sec=15',
           '-c', 'mcp_servers.eigos_ontology.tool_timeout_sec=30');
       }
