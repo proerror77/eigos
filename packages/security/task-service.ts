@@ -64,6 +64,16 @@ export class TaskSecurity {
       return this.project(p,job);
     }));
   }
+  resume(p:Principal,taskId:string,action:()=>Job):TaskView {
+    return this.mutate(p,taskId,()=>{
+      const scope=authorizationScope()!,authority=this.store.security.workAuthority(scope.actor.ownerKey,taskId);
+      if(!authority || authority.installationId!==scope.actor.installationId || authority.dataGrant.id!==scope.grant!.id
+        || authority.dataGrant.revision!==scope.grant!.revision)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      // The request revision is unchanged, so mutate keeps the exact grant and
+      // authority, including their fixed expiration. This issues no permission.
+      return action();
+    });
+  }
   assertTask(p:Principal,taskId:string) {return this.store.security.taskGrant(this.store.security.agentContext(p),taskId);}
   get(p: Principal, taskId: string) { requireScope(p,'tasks:read');this.assertTask(p,taskId);return this.project(p,this.store.get(ownerKey(p),taskId),true); }
   download(p:Principal,taskId:string,artifactId:string) {
