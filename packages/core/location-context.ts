@@ -16,6 +16,9 @@ export type TaskLocation = z.infer<typeof taskLocationSchema>;
 const prefix = 'PA 已取得的任务地址上下文（仅为地址事实，不授予业务操作权限）：';
 const idPrefix = (id: string) => `location-context:${id}:`;
 const normalize = (value: string) => value.normalize('NFKC').replace(/\s+/g, '').toLowerCase();
+// Equivalent terminal notation must retain the whole airport name and number.
+// Entrances, parking areas and other suffixes remain distinct source places.
+const normalizePlaceName = (value: string) => normalize(value).replace(/^(.*机场)(?:t([1-9]\d*)|([1-9]\d*)号)航站楼$/, (_, airport: string, terminal?: string, number?: string) => `${airport}t${terminal ?? number}航站楼`);
 export const sameCity = (a: string, b: string) => normalize(a).replace(/市$/, '') === normalize(b).replace(/市$/, '');
 
 /** Keep the original goal untouched. The authenticated PA context is an actual
@@ -50,8 +53,8 @@ export function requestLocations(request: ServiceRequest): { city?: string; orig
 export function locationMatchesSource(location: TaskLocation, city: string, place: { name: string; address: string; addressAll: string; city: string }): boolean {
   if (!sameCity(city, place.city)) return false;
   const cityPrefixes = [...new Set([city, place.city].flatMap(value => [normalize(value), normalize(value).replace(/市$/, '')]))];
-  const matches = (value: string, candidates: string[]) => candidates.filter(Boolean).flatMap(item => [normalize(item), ...cityPrefixes.map(prefix => prefix + normalize(item))]).includes(normalize(value));
-  if (matches(location.name, [place.name, place.addressAll]) && (!location.address || matches(location.address, [place.address, place.addressAll]))) return true;
+  const matches = (value: string, candidates: string[], normalized = normalize) => candidates.filter(Boolean).flatMap(item => [normalized(item), ...cityPrefixes.map(prefix => prefix + normalized(item))]).includes(normalized(value));
+  if (matches(location.name, [place.name, place.addressAll], normalizePlaceName) && (!location.address || matches(location.address, [place.address, place.addressAll]))) return true;
   if (!location.address) return false;
   // A saved address may omit administrative prefixes or repeat the compound
   // after the street. Keep the compound, street and every numbered unit exact.
