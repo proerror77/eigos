@@ -1,5 +1,5 @@
 import { Worker } from '../apps/worker/worker.js';
-import { Coordinator } from '../packages/coordinator/coordinator.js';
+import { Coordinator, type Reasoner } from '../packages/coordinator/coordinator.js';
 import { briefReasoner } from './local-tasks.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -15,11 +15,17 @@ import { createApp } from '../apps/gateway/app.js';
 import { jwtVerifier } from '../apps/gateway/auth.js';
 import { enrollmentClaim } from '../apps/gateway/members/agent-routes.js';
 import { readConfig, type Config } from '../packages/core/config.js';
-import { SCOPES } from '../packages/core/domain.js';
+import { SCOPES, ownerKey } from '../packages/core/domain.js';
 import { MemberStore } from '../packages/members/store.js';
 import { MEMBERSHIP_SCOPE, type AdmissionPolicy } from '../packages/members/agents.js';
 import { AgentConnector } from '../packages/agent-client/client.js';
 import {businessModel} from '../packages/ontology/business-model.js';
+import { discoverA2A } from '../packages/agent-client/a2a.js';
+import { SendMessageRequest, GetTaskRequest, ListTasksRequest, TaskState, type Task } from '@a2a-js/sdk';
+import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import { participantFixture } from './fixtures/free-booking.js';
+import { taskContextFields } from '../packages/security/task-context-contract.js';
+import { commerceDecision, commerceStep } from './fixtures/commerce-agent.js';
 
 const profile = { displayName: 'Delegated member', locale: 'zh-CN' as const, timezone: 'Asia/Shanghai' };
 const identity = { issuer: 'https://idp.fixture', subject: 'alice', tenant: 'one' };
@@ -63,7 +69,7 @@ test('registration and invitation credentials are hashed; owner-bound invitation
   assert.equal(statSync(path).mode & 0o777, 0o600); rmSync(directory, { recursive: true, force: true });
 });
 
-async function fixture(policy: AdmissionPolicy = 'self-service',foundation=false) {
+async function fixture(policy: AdmissionPolicy = 'self-service',foundation=false, nativeModel?: Reasoner, source?: ReturnType<typeof participantFixture>['source']) {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-agent-http-'));
   const keys = await generateKeyPair('ES256');
   const jwk = { ...await exportJWK(keys.publicKey), kid: 'onboarding', alg: 'ES256', use: 'sig' };
@@ -71,9 +77,13 @@ async function fixture(policy: AdmissionPolicy = 'self-service',foundation=false
   const address = server.address(); assert(address && typeof address !== 'string');
   const http = `http://127.0.0.1:${address.port}`, base = `https://127.0.0.1:${address.port}`, issuer = identity.issuer;
   const config: Config = { ...readConfig({ EIGOS_AUTH_MODE: 'development', EIGOS_DEV_TOKEN: 'x'.repeat(32), DATABASE_PATH: join(directory, 'tasks.sqlite') }),
-    EIGOS_AUTH_MODE: 'jwt', EIGOS_SECURITY_MODE:foundation?'foundation':'legacy', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: base, OAUTH_JWKS_URL: issuer + '/jwks', OIDC_AGENT_CLIENT_ID: 'connector', EIGOS_MEMBERSHIP_APPROVAL: policy };
-  const gateway = createApp(config, jwtVerifier(issuer, base, createLocalJWKSet({ keys: [jwk] }))); server.on('request', gateway.app);
-  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, briefReasoner(), gateway.catalog), pollMs: 10 }); if(!foundation)worker.start();
+    EIGOS_AUTH_MODE: 'jwt', EIGOS_SECURITY_MODE:foundation?'foundation':'legacy', EIGOS_ACTION_SANDBOX: source ? 'true' : 'false', PUBLIC_URL: base, OAUTH_ISSUER: issuer, OAUTH_AUDIENCE: base, OAUTH_JWKS_URL: issuer + '/jwks', OIDC_AGENT_CLIENT_ID: 'connector', EIGOS_MEMBERSHIP_APPROVAL: policy };
+  const gateway = createApp(config, jwtVerifier(issuer, base, createLocalJWKSet({ keys: [jwk] })), source ? store => createExecutionCatalog({ store, participantBookingSource: source, personalSourceOwner: ownerKey(principal) }) : undefined); server.on('request', gateway.app);
+  const modelErrors: string[] = [];
+  const model = nativeModel ? { ...nativeModel, act: async (...args: Parameters<NonNullable<Reasoner['act']>>) => {
+    try { return await nativeModel.act!(...args); } catch (error) { modelErrors.push(error instanceof Error ? error.stack ?? error.message : String(error)); throw error; }
+  } } : briefReasoner();
+  const worker = new Worker(gateway.store, { coordinator: new Coordinator(gateway.store, model, gateway.catalog, { allowSandbox: !!source }), pollMs: 10 }); if(!foundation)worker.start();
   let exchanges = 0, refreshes = 0, failRefresh = false;
   const sign = (subject = 'alice', enroll = true, scopes: string[] = [...SCOPES, MEMBERSHIP_SCOPE], expires = 300) => new SignJWT({ tenant_id: 'one', client_id: 'connector', scope: scopes.join(' '), [enrollmentClaim(base)]: enroll })
     .setProtectedHeader({ alg: 'ES256', kid: jwk.kid, typ: 'at+jwt' }).setIssuer(issuer).setAudience(base).setSubject(subject).setJti(randomUUID()).setIssuedAt().setExpirationTime(Math.floor(Date.now() / 1000) + expires).sign(keys.privateKey);
@@ -97,7 +107,7 @@ async function fixture(policy: AdmissionPolicy = 'self-service',foundation=false
   };
   const call = (path: string, init?: RequestInit) => fetch(http + path, init);
   const request = (path: string, secret: string, token?: string, body?: unknown) => call(path, { method: body === undefined ? 'GET' : 'POST', headers: { 'X-EIGOS-Registration-Token': secret, ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
-  return { directory, gateway, base, call, request, fetcher, sign, counts: () => ({ exchanges, refreshes }), failRefresh: () => { failRefresh = true; },
+  return { directory, gateway, worker, modelErrors, base, call, request, fetcher, sign, counts: () => ({ exchanges, refreshes }), failRefresh: () => { failRefresh = true; },
     close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); await worker.close(); await gateway.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
@@ -264,4 +274,147 @@ test('two independently enrolled JWT connectors use foundation v2 and never fall
     assert.equal((await clients[0]!.checkAccess({taskId:tasks[0].id,operation:'task.query',object:{type:'ServiceRequest',id:tasks[0].id}})).allowed,true);
     await clients[0]!.revoke();await assert.rejects(clients[0]!.authorizationContext(),/revoked/);assert.equal((await clients[1]!.authorizationContext()).installationId,clients[1]!.registrationId);
   }finally{await f.close();}
+});
+
+async function readUntil(client: Awaited<ReturnType<AgentConnector['a2a']>>, task: Task, state: TaskState): Promise<Task> {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const current = await client.getTask(GetTaskRequest.fromJSON({ id: task.id }));
+    assert.equal(current.contextId, task.contextId);
+    if (current.status?.state === state) return current;
+    assert([TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING].includes(current.status!.state), JSON.stringify(current));
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.fail('The original A2A task did not reach its expected state');
+}
+
+test('official A2A SDK connects from public discovery through OAuth, clarification, refresh and independent readback', async () => {
+  const f = await fixture();
+  const seen: { path: string; method: string; authorized: boolean }[] = [];
+  try {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      seen.push({ path: url.pathname, method: init?.method ?? 'GET', authorized: new Headers(init?.headers).has('Authorization') });
+      return f.fetcher(input, init);
+    };
+    const card = await discoverA2A(f.base, fetcher);
+    assert.equal(card.supportedInterfaces[0]!.url, f.base + '/a2a');
+    const options = { baseUrl: f.base, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Independent A2A Agent', fetch: fetcher };
+    const agent = await AgentConnector.open(options);
+    await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
+    const client = await agent.a2a(), messageId = randomUUID();
+    const request = SendMessageRequest.fromJSON({ message: { messageId, role: 'ROLE_USER', parts: [{ text: 'Prepare only a synthetic task brief; ask for its deliverable.' }] } });
+    const sent = await client.sendMessage(request); assert('id' in sent);
+    const question = await readUntil(client, sent, TaskState.TASK_STATE_INPUT_REQUIRED);
+    const reply = (revision: unknown) => SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), taskId: question.id, contextId: question.contextId,
+      metadata: { expectedRevision: revision }, role: 'ROLE_USER', parts: [{ text: 'A one-page task brief with acceptance criteria.' }] } });
+    await assert.rejects(client.sendMessage(reply(Number(question.metadata?.revision) - 1)));
+    const continued = await client.sendMessage(reply(question.metadata?.revision)); assert('id' in continued); assert.equal(continued.id, sent.id);
+    const completed = await readUntil(client, continued, TaskState.TASK_STATE_COMPLETED);
+    assert.equal(completed.artifacts[0]?.name, 'task-brief.json');
+    const artifact = completed.artifacts[0]!.parts[0]!.content;
+    assert.equal(artifact?.$case, 'data');
+    assert.equal((artifact!.value as Record<string, unknown>).execution, 'not_started');
+    const resumed = await AgentConnector.open(options), cached = JSON.parse(readFileSync(options.credentialPath, 'utf8'));
+    cached.expiresAt = 0; writeFileSync(options.credentialPath, JSON.stringify(cached), { mode: 0o600 });
+    const beforeRefresh = f.counts().refreshes;
+    const read = await (await resumed.a2a()).getTask(GetTaskRequest.fromJSON({ id: completed.id }));
+    assert.equal(read.id, completed.id); assert.equal(read.status?.state, TaskState.TASK_STATE_COMPLETED);
+    assert.equal(f.counts().refreshes, beforeRefresh + 1);
+    assert(seen.filter(value => value.path === '/.well-known/agent-card.json').every(value => !value.authorized));
+    assert(seen.filter(value => value.path === '/a2a').every(value => value.authorized));
+    await resumed.revoke(); await assert.rejects(client.getTask(GetTaskRequest.fromJSON({ id: completed.id })), /revoked/);
+  } finally { await f.close(); }
+});
+
+test('A2A discovery pins the origin and issuer; a lost POST response is not replayed and can be reconciled by context', async () => {
+  const f = await fixture();
+  let foreignOnly = false, wrongIssuer = false, loseResponse = false, sends = 0;
+  try {
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : input.toString());
+      if (url.pathname === '/.well-known/agent-card.json') {
+        const response = await f.fetcher(input, init), card = await response.json();
+        const foreign = { ...card.supportedInterfaces[0], url: 'https://foreign.example/a2a' };
+        card.supportedInterfaces = foreignOnly ? [foreign] : [foreign, ...card.supportedInterfaces];
+        if (wrongIssuer) card.securitySchemes.eigos.openIdConnectSecurityScheme.openIdConnectUrl = 'https://foreign.example/.well-known/openid-configuration';
+        return new Response(JSON.stringify(card), { headers: { 'Content-Type': 'application/json' } });
+      }
+      const isSend = url.pathname === '/a2a' && JSON.parse(String(init?.body)).method === 'SendMessage';
+      if (isSend) sends++;
+      const response = await f.fetcher(input, init);
+      if (isSend && loseResponse) { loseResponse = false; throw new Error('synthetic_response_lost'); }
+      return response;
+    };
+    const agent = await AgentConnector.open({ baseUrl: f.base, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Resumable SDK Agent', fetch: fetcher });
+    await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
+    foreignOnly = true; await assert.rejects(agent.a2a(), /compatible_a2a_interface_required/);
+    foreignOnly = false; wrongIssuer = true; await assert.rejects(agent.a2a(), /a2a_identity_provider_mismatch/);
+    wrongIssuer = false;
+    const client = await agent.a2a();
+    const first = await client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'Prepare the first synthetic task brief only' }] } })); assert('id' in first);
+    const contextId = first.contextId, messageId = randomUUID(); loseResponse = true;
+    await assert.rejects(client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId, contextId, role: 'ROLE_USER', parts: [{ text: 'Prepare a synthetic task brief only' }] } })));
+    assert.equal(sends, 2, 'An uncertain task POST must not be retried by authentication or SDK transport');
+    const listed = await client.listTasks(ListTasksRequest.fromJSON({ contextId, pageSize: 10 }));
+    assert.equal(listed.tasks.length, 2); const original = listed.tasks.find(task => task.id !== first.id)!; assert(original); assert.equal(original.contextId, contextId);
+    const read = await client.getTask(GetTaskRequest.fromJSON({ id: original.id })); assert.equal(read.id, original.id);
+    assert.equal(sends, 2);
+  } finally { await f.close(); }
+});
+
+test('foundation A2A completes a native read through enrolled JWT identity, explicit member grants, durable Worker and protected readback', async () => {
+  const source = participantFixture({ choice: (ctx, access) => {
+    access.session.call('query_ontology', { object: ctx.state.scope });
+    const record = ctx.state.observations.find(value => value.type === 'RegistrationRecord');
+    if (!record) return commerceDecision(ctx, [commerceStep('read', 'ReadParticipantRegistration', { scope: ctx.state.scope })]);
+    // Foundation exposes authorized observedData, not the fixture's raw data.
+    // Complete only after reading and evaluating the independently read record.
+    access.session.call('query_ontology', { object: record });
+    access.session.call('evaluate_ontology', { function: 'registrationStatus', object: record });
+    return commerceDecision(ctx, [], { registration: record, rationale: 'Independently read the original synthetic registration' });
+  } });
+  const f = await fixture('self-service', true, { ...source.model, ontologyContextMode: 'task', securityChannelId: 'a2a-synthetic' }, source.source);
+  try {
+    const agent = await AgentConnector.open({ baseUrl: f.base, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Protected A2A Agent', fetch: f.fetcher });
+    await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
+    const admission = await agent.status(); assert.equal(admission.status, 'data_authorization_required');
+    assert.equal(admission.links.permissions, f.base + '/members/permissions');
+    await assert.rejects(agent.accessToken(), /data_authorization_required/);
+    const metadata = await f.call('/.well-known/eigos-agent-registration').then(r => r.json()); assert.equal(metadata.permissions_url, admission.links.permissions);
+    const member = f.gateway.members.list()[0]!, session = f.gateway.members.createSession(member.id);
+    const policy = f.gateway.store.security.policies, until = new Date(Date.now() + 3600000).toISOString();
+    const program = f.gateway.catalog.securityProfiles(ownerKey(principal)).find(value => value.programId === 'booking.participant.free')!; assert(program);
+    const resources = [...new Set(['ServiceRequest', ...program.outputTypes, ...Object.keys(taskContextFields)])].map(type => ({ type,
+      fields: Object.keys(policy.fields(type)).filter(field => policy.fieldPolicy(type, field) !== 'internal_only') }));
+    const memberPost = (path: string, body: object) => f.call(path, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/json', Origin: f.base, Cookie: `__Host-eigos-member=${session.token}` }, body: JSON.stringify({ ...body, _csrf: session.csrf }) });
+    const grantResponse = await memberPost('/members/security/grants', { installationId: agent.registrationId, capabilityIds: [program.programId], resources, sourceBindingIds: [program.bindingId], channels: ['agent_response', 'registered_model'], expiresAt: until });
+    assert.equal(grantResponse.status, 200, await grantResponse.clone().text());
+    const grant = (await grantResponse.json()).grants.find((value: { kind: string }) => value.kind === 'agent_access'); assert(grant);
+    policy.setRole({ subjectKind: 'installation', subjectId: agent.registrationId, resource: { kind: 'namespace', id: policy.model.ref.id, version: policy.model.ref.digest }, role: 'Viewer', executeActions: program.operations, invokeFunctions: policy.model.definitionSnapshot().functions.map(value => value.id), expiresAt: until }, policy.revision());
+    const markings = ['member_private', 'personal_data', 'precise_location', 'financial', 'account_private', 'health'];
+    policy.setRecipient(agent.registrationId, { classification: 'sensitive', markings, channels: ['agent_response', 'registered_model'], expiresAt: until }, policy.revision());
+    policy.setModelChannel('a2a-synthetic', { classification: 'sensitive', markings, expiresAt: until }, policy.revision());
+    const sourceResponse = await memberPost('/members/security/sources', { installationId: agent.registrationId, bindingId: program.bindingId, programId: program.programId, operations: program.operations.filter(value => !value.startsWith('Submit')), outputTypes: program.outputTypes,
+      expiresAt: until, expectedRevision: policy.revision(), expectedAgentGrant: { id: grant.id, revision: grant.revision } });
+    assert.equal(sourceResponse.status, 200, await sourceResponse.clone().text());
+    assert.equal((await agent.status()).status, 'foundation_ready');
+    const client = await agent.a2a(); f.worker.start();
+    const submitted = await client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: { service: 'eigos.delegate', goal: 'Read the existing synthetic registration; do not submit or pay.', executionEnvironment: 'sandbox' } }] } })); assert('id' in submitted);
+    const completed = await readUntil(client, submitted, TaskState.TASK_STATE_COMPLETED).catch(error => {
+      const job = f.gateway.store.get(ownerKey(principal), submitted.id);
+      throw new Error(JSON.stringify({ state: job.state, phase: job.delegation?.phase, recovery: job.delegation?.recovery, events: job.delegation?.events.slice(-6), feedback: job.delegation?.agent?.feedback.slice(-4), error: job.error, modelErrors: f.modelErrors }), { cause: error });
+    });
+    assert.equal(completed.metadata?.view, 'eigos.task.v2'); assert.equal(completed.metadata?.accepted, true); assert.equal(completed.metadata?.outputStatus, 'available');
+    assert(completed.artifacts.length > 0); assert(JSON.stringify(completed.artifacts).includes('synthetic-registration'));
+    assert(!JSON.stringify(completed).includes(source.source.attendeeRef)); assert.equal(source.counters().submits, 0);
+    const mcp = new Client({ name: 'same-installation-readback', version: '1' });
+    try {
+      await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
+      const result = await mcp.callTool({ name: 'get_task', arguments: { taskId: completed.id } }); assert.equal(result.isError ?? false, false);
+      assert.equal((result.structuredContent as { result: { id: string; accepted: boolean } }).result.id, completed.id);
+      assert.equal((result.structuredContent as { result: { accepted: boolean } }).result.accepted, true);
+    } finally { await mcp.close(); }
+    await agent.revoke(); await assert.rejects(client.getTask(GetTaskRequest.fromJSON({ id: completed.id })), /revoked/);
+  } finally { await f.close(); source.store.close(); }
 });

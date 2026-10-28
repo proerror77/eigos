@@ -26,7 +26,8 @@ try {
 
   const a2a = await new ClientFactory().createFromUrl(base);
   const completed = await a2a.sendMessage(SendMessageRequest.fromJSON({ message: {
-    messageId: randomUUID(), taskId: job.id, role: 'ROLE_USER',
+    messageId: randomUUID(), taskId: job.id, contextId: job.contextId,
+    metadata: { expectedRevision: job.revision }, role: 'ROLE_USER',
     parts: [{ text: 'Record a comparison table with capacity, price and sources as the required deliverable.' }],
   } }), { serviceParameters: { Authorization: `Bearer ${token}` } });
   if (!('id' in completed) || completed.status?.state !== TaskState.TASK_STATE_COMPLETED) throw new Error('Expected a completed task brief');
