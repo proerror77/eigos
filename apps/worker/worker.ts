@@ -16,10 +16,11 @@ export interface WorkerOptions {
   leaseMs?: number;
   timeoutMs?: number;
 }
+type RunningWork = { controller: AbortController; done: Promise<void>; renewIfDue?: () => boolean };
 
 // No HTTP listener or user Bearer token. Claims and fenced writes are in the shared core.
 export class Worker {
-  private running = new Map<string, { controller: AbortController; done: Promise<void> }>();
+  private running = new Map<string, RunningWork>();
   private timer?: ReturnType<typeof setInterval>;
   private stopping = false;
   private readonly leaseMs: number;
@@ -54,6 +55,16 @@ export class Worker {
       this.execute(claim);
     }
   }
+  private renewDueClaims(): void {
+    // Synchronous work can delay every timer in this process. Progress by one
+    // task must also keep a model-waiting task's current claim alive. Each
+    // renewal independently checks its original lease, authority and policy.
+    for (const run of this.running.values()) {
+      if (!run.renewIfDue) continue;
+      try { if (!run.renewIfDue()) run.controller.abort(); }
+      catch { run.controller.abort(); }
+    }
+  }
   private executeRecovery(work:RecoveryWork) {
     const key=`recovery:${work.permit.id}`,controller=new AbortController(),run={controller,done:Promise.resolve()};this.running.set(key,run);
     const heartbeat=setInterval(()=>{if(!this.store.security.recoveries.renew(work))controller.abort();},Math.min(this.pollMs,5000));
@@ -68,13 +79,14 @@ export class Worker {
     const { job, owner } = claim;
     const controller = new AbortController();
     let scope:AuthorizationScope|undefined;
-    const run = { controller, done: Promise.resolve() };
+    const run: RunningWork = { controller, done: Promise.resolve() };
     const inScope = <T>(action: () => T): T => scope ? withAuthorization(scope, action) : action();
     let renewAt = Date.now() + Math.floor(this.leaseMs / 3);
     const renew = () => {
       if (!this.store.renew(claim, this.leaseMs)) return false;
       renewAt = Date.now() + Math.floor(this.leaseMs / 3); return true;
     };
+    run.renewIfDue = () => Date.now() < renewAt || renew();
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
       try { scope?.assertCurrent(); if (!renew()) controller.abort(); }
@@ -90,7 +102,8 @@ export class Worker {
           assertCurrent();
           // Bounded synchronous metadata work can delay the timer. Renew only
           // while the original lease and all authority checks are still valid.
-          if (Date.now() >= renewAt && !renew()) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
+          this.renewDueClaims();
+          if (controller.signal.aborted) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
         };
       }
       const execute = async () => {
