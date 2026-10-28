@@ -490,7 +490,10 @@ export class SecurityPolicies {
     return value;
   }
   predicate(owner: string, alias: string, fields: string[] = [], selection?: { types: readonly string[]; objectId?: string }) {
-    const scope = this.scope(owner),rows=this.db.prepare('SELECT type,object_id FROM security_bindings WHERE grant_id=? LIMIT 2001').all(scope.grant!.id);
+    const scope = this.scope(owner),g=scope.grant!;
+    const rows=this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
+      WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' LIMIT 2001`)
+      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId);
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
     // Narrow by the query's public schema/identity before checking candidates.
     // Data predicates, visibility and transitive dependencies are still checked
