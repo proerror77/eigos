@@ -141,7 +141,7 @@ test('synchronous progress keeps a second model-waiting claim alive without rene
   }
 });
 
-test('task projection binding reports progress before a long checkpoint loses its original lease', async t => {
+for(const mutation of ['checkpoint','finish','finish-expired'] as const)test(`task projection binding reports progress before a long ${mutation} loses its original lease`, async t => {
   let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const f = securityFixture(() => clock), install = f.installation('Projection progress');
   f.coordinator.approveAgentGrant(f.member.id, { installationId: install.id, capabilityIds: ['brief.prepare'],
@@ -152,14 +152,21 @@ test('task projection binding reports progress before a long checkpoint loses it
   f.jobs.save(f.owner, job);
   const policy = f.jobs.security.policies, bind = policy.bind.bind(policy);
   let bindings = 0, applied = false;
-  t.mock.method(policy, 'bind', (...args: Parameters<typeof policy.bind>) => { bind(...args); bindings++; clock += 6000; });
+  t.mock.method(policy, 'bind', (...args: Parameters<typeof policy.bind>) => { bind(...args); bindings++; clock += mutation==='finish-expired'?16000:6000; });
   const worker = new Worker(f.jobs, { leaseMs: 15000, pollMs: 60000, coordinator: { run: async claim => {
-    applied = f.jobs.checkpoint(claim, () => {});
+    applied = f.jobs[mutation==='checkpoint'?'checkpoint':'finish'](claim, current => { if(mutation!=='checkpoint')current.state='input-required'; });
+    if(mutation==='finish')assert.equal(f.jobs.renew(claim,15000),false,'Completed finalization cannot renew its released claim');
   } } });
   try {
     worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
-    assert(bindings >= 4, 'The checkpoint must bind the submission and all three instruction records');
+    if(mutation==='finish-expired'){
+      assert.equal(applied,false,'Projection progress cannot revive a lease which already expired');
+      assert.equal(f.jobs.get(f.owner,task.job.id).state,'working','Expired finalization must roll back its staged state');
+      return;
+    }
+    assert(bindings >= 4, 'The mutation must bind the submission and all three instruction records');
     assert.equal(applied, true, 'Projection progress must renew the still-current claim before its timer can run');
+    if(mutation==='finish')assert.equal(f.jobs.get(f.owner,task.job.id).state,'input-required');
   } finally { await worker.close(); f.close(); }
 });
 
