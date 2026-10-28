@@ -318,7 +318,12 @@ export class SecurityPolicies {
     this.bind(grant, { type: 'ServiceRequest', id: grant.taskId }, fields, 'task_submission');
   }
   bindTaskProjection(owner: string, taskId: string) {
+    // A long historical projection must keep making checked progress. In a
+    // Worker scope this also renews its still-valid lease between records.
+    const progress = () => authorizationScope()?.onProgress?.();
+    authorizationScope()?.assertCurrent();
     for (const g of this.security.listGrants(owner)) if (g.kind === 'task_data' && g.taskId === taskId && g.status === 'active') {
+      progress();
       const row = this.db.prepare('SELECT body FROM jobs WHERE id=? AND owner=?').get(taskId, owner);
       if (row && JSON.parse(String(row.body)).delegation?.request.revision === g.requestRevision) {
         const job=JSON.parse(String(row.body)) as Job,parent=this.security.agentGrant(g.installationId);
@@ -331,12 +336,14 @@ export class SecurityPolicies {
           ...(properties.currentAssessment?[objectRefSchema.parse(properties.currentAssessment)]:[]),
           ...(bindingRef?[{type:'ExecutionFeedback',id:digest({request:taskId,revision:g.requestRevision,bindingRef})}]:[])];
         const inherited=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
-          ...this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?").all(owner,taskId,g.requestRevision).map(row=>securityEnvelopeSchema.parse(JSON.parse(String(row.body))))]);
+          ...this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?").all(owner,taskId,g.requestRevision).map(row=>{progress();return securityEnvelopeSchema.parse(JSON.parse(String(row.body)));})]);
         for(const ref of this.contextMembers(owner,taskId,g.requestRevision).values()) {
+          progress();
           const fields=(parent.resources.find(r=>r.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]!.includes(field));
           if(fields.length)this.bind(g,ref,fields,'task_context',inherited);
         }
         for(const ref of refs) {
+          progress();
           const resource=parent.resources.find(r=>r.type===ref.type);
           if(!resource || !TASK_PROJECTION_TYPES.includes(ref.type))continue;
           const object=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,ref.type,ref.id);
@@ -347,6 +354,7 @@ export class SecurityPolicies {
         }
       }
     }
+    authorizationScope()?.assertCurrent();
   }
   /** A single synchronous read keeps repeated authority checks cheap. Local DB
    * writes and commits from another connection invalidate it immediately; time

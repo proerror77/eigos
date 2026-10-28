@@ -141,6 +141,28 @@ test('synchronous progress keeps a second model-waiting claim alive without rene
   }
 });
 
+test('task projection binding reports progress before a long checkpoint loses its original lease', async t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+  const f = securityFixture(() => clock), install = f.installation('Projection progress');
+  f.coordinator.approveAgentGrant(f.member.id, { installationId: install.id, capabilityIds: ['brief.prepare'],
+    resources: [{ type: 'ServiceRequest', fields: ['requestId', 'originalGoal'] }, { type: 'RequestInstruction', fields: ['id', 'messageId', 'text'] }],
+    sourceBindingIds: [], channels: ['agent_response', 'registered_model'], expiresAt: new Date(clock + 3600000).toISOString() });
+  const task = f.task(install.id), job = f.jobs.get(f.owner, task.job.id);
+  job.delegation!.request.messages = ['first', 'second', 'third'].map(id => ({ id, text: `Synthetic ${id} instruction`, receivedAt: new Date(clock).toISOString() }));
+  f.jobs.save(f.owner, job);
+  const policy = f.jobs.security.policies, bind = policy.bind.bind(policy);
+  let bindings = 0, applied = false;
+  t.mock.method(policy, 'bind', (...args: Parameters<typeof policy.bind>) => { bind(...args); bindings++; clock += 6000; });
+  const worker = new Worker(f.jobs, { leaseMs: 15000, pollMs: 60000, coordinator: { run: async claim => {
+    applied = f.jobs.checkpoint(claim, () => {});
+  } } });
+  try {
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert(bindings >= 4, 'The checkpoint must bind the submission and all three instruction records');
+    assert.equal(applied, true, 'Projection progress must renew the still-current claim before its timer can run');
+  } finally { await worker.close(); f.close(); }
+});
+
 test('migration never automatically replays legacy in-flight work', () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-migration-')); const path = join(dir, 'tasks.sqlite');
   const a = new JobStore(path), now = new Date().toISOString();
