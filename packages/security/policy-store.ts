@@ -385,12 +385,50 @@ export class SecurityPolicies {
     if(cached)return cached;
     const members=taskContextMembers(this.db,owner,taskId,revision);cache?.set(key,members);return members;
   }
+  /** A replacement consent may read retained outputs of this exact request,
+   * only within its newly approved output fields. A prior binding is evidence
+   * of task membership, never a substitute for current source authority. */
+  private retainedBinding(scope:AuthorizationScope,ref:ObjectRef,historicalCapability:boolean):ObjectBinding|undefined {
+    const g=scope.grant!;
+    const row=this.db.prepare(`SELECT b.body,o.body AS object_body FROM security_bindings b
+      JOIN security_grants issued ON issued.id=b.grant_id
+      JOIN ontology_objects o ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
+      WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data'
+      AND b.type=? AND b.object_id=? ORDER BY issued.rowid DESC LIMIT 1`).get(g.ownerKey,g.taskId,g.requestRevision,g.installationId,ref.type,ref.id);
+    if(!row)return;
+    const binding=JSON.parse(String(row.body)) as ObjectBinding,object=JSON.parse(String(row.object_body));
+    if(historicalCapability && ref.type==='RegisteredCapability' && binding.sourceBindingId==='task_context'
+      && object.source.kind==='task' && ref.id===`capability:${object.properties.definitionDigest}`)return binding;
+    if(binding.sourceBindingId==='task_projection' && ['GoalCoverage','OutcomeAssessment','ExecutionFeedback'].includes(ref.type)
+      && object.source.kind==='task' && object.source.id===g.taskId && object.properties.requestRevision===g.requestRevision)return binding;
+    if(['task_context','task_submission','member_asset','task_projection'].includes(binding.sourceBindingId))return;
+    const originRow=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(g.ownerKey,ref.type,ref.id,binding.revision);
+    const origin=originRow?JSON.parse(String(originRow.body)) as {programId:string;programDigest:string;sourceBindingId:string;inputEnvelope?:SecurityEnvelope}:undefined;
+    const submission=origin?.inputEnvelope?.submission;
+    if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !submission || submission.taskId!==g.taskId || submission.requestRevision!==g.requestRevision)return;
+    const cacheKey=JSON.stringify(['retained-submission',g.taskId,g.requestRevision]);
+    const cached=scope.readBindings?.get(cacheKey);let current=typeof cached==='string'?cached:undefined;
+    if(current===undefined) {
+      const request=this.db.prepare("SELECT json_extract(body,'$.delegation.request') AS body FROM jobs WHERE owner=? AND id=?").get(g.ownerKey,g.taskId);
+      if(!request)return;
+      current=submissionDigest(JSON.parse(String(request.body)));scope.readBindings?.set(cacheKey,current);
+    }
+    if(current!==submission.contentDigest)return;
+    const output=g.outputs.find(o=>o.type===ref.type && o.programId===origin.programId && o.programDigest===origin.programDigest && o.sourceBindingId===origin.sourceBindingId);
+    if(!output)return;
+    binding.fields=binding.fields.filter(field=>output.fields.includes(field));
+    return binding;
+  }
   binding(scope: AuthorizationScope, ref: ObjectRef, revision?: number): ObjectBinding | undefined {
-    if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.binding(authorizationScope()!,ref,revision)));
+    return this.readBinding(scope,ref,revision);
+  }
+  private readBinding(scope:AuthorizationScope,ref:ObjectRef,revision?:number,historicalCapability=false):ObjectBinding|undefined {
+    if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.readBinding(authorizationScope()!,ref,revision,historicalCapability)));
     scope.assertCurrent();
     if(!scope.grant)return;
-    if(scope.readBindings?.has(refKey(ref))) {
-      const cached=scope.readBindings.get(refKey(ref)) as ObjectBinding | undefined;
+    const key=historicalCapability?JSON.stringify(['historical-capability',ref.type,ref.id]):refKey(ref);
+    if(scope.readBindings?.has(key)) {
+      const cached=scope.readBindings.get(key) as ObjectBinding | undefined;
       return cached && (revision===undefined || cached.revision===revision)?cached:undefined;
     }
     // One bounded read shares verified authority and dependency results. Recheck
@@ -398,13 +436,15 @@ export class SecurityPolicies {
     const parent=this.security.agentGrant(scope.actor.installationId),clearance=this.recipient(scope.actor.installationId);
     const sources=this.sources(scope.actor.ownerKey,scope.actor.installationId),roles=this.roles(scope.actor.memberId,scope.actor.installationId);
     const checked=scope.readBindings as Map<string,ObjectBinding|undefined> | undefined ?? new Map<string,ObjectBinding|undefined>();
-    const read=(ref:ObjectRef,revision?:number):ObjectBinding|undefined=>{
-      const key=refKey(ref);
+    const read=(ref:ObjectRef,revision?:number,historicalCapability=false):ObjectBinding|undefined=>{
+      // Historical discovery metadata may explain an existing dependency, but
+      // never reappear in current discovery or gain dispatch authority.
+      const key=historicalCapability?JSON.stringify(['historical-capability',ref.type,ref.id]):refKey(ref);
       if(checked.has(key)){const cached=checked.get(key);return cached && (revision===undefined || cached.revision===revision)?cached:undefined;}
       if(!this.roleAllows(roles,scope.actor.memberId,scope.actor.installationId,'objectType',ref.type,'resource.view'))return;
       const row=this.db.prepare('SELECT b.body FROM security_bindings b JOIN ontology_objects o ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision WHERE b.grant_id=? AND b.type=? AND b.object_id=?').get(scope.grant!.id,ref.type,ref.id);
-      if(!row)return;
-      const binding=JSON.parse(String(row.body)) as ObjectBinding;
+      const binding=row?JSON.parse(String(row.body)) as ObjectBinding:this.retainedBinding(scope,ref,historicalCapability);
+      if(!binding)return;
       if(revision!==undefined && binding.revision!==revision)return;
       const allowed=parent.resources.find(r=>r.type===ref.type)?.fields??[];
       binding.fields=binding.fields.filter(field=>{
@@ -419,7 +459,8 @@ export class SecurityPolicies {
         const body=row?JSON.parse(String(row.body)):undefined;
         if(!TASK_PROJECTION_TYPES.includes(ref.type) || body?.source.kind!=='task' || body.source.id!==scope.grant!.taskId || body.properties.requestRevision!==scope.grant!.requestRevision)return;
       } else if(binding.sourceBindingId==='task_context') {
-        if(!this.contextMembers(scope.actor.ownerKey,scope.grant!.taskId,scope.grant!.requestRevision).has(refKey(ref)))return;
+        if(!this.contextMembers(scope.actor.ownerKey,scope.grant!.taskId,scope.grant!.requestRevision).has(refKey(ref))
+          && !(historicalCapability && this.retainedBinding(scope,ref,true)))return;
         const row=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,ref.type,ref.id),properties=row?JSON.parse(String(row.body)).properties:{};
         if(ref.type==='RegisteredActionType' && !this.resourceAllowed(scope,'actionType',String(properties.actionId)))return;
         if(ref.type==='RegisteredCapability' && !parent.capabilityIds.includes(properties.capabilityRef?.id))return;
@@ -435,13 +476,13 @@ export class SecurityPolicies {
       // WHERE miss could reveal a bit about data whose inputs were revoked.
       checked.set(key,binding);
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
-        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision);
+        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
         if(this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
       }
       return binding;
     };
-    const result=read(ref,revision);scope.assertCurrent();return result;
+    const result=read(ref,revision,historicalCapability);scope.assertCurrent();return result;
   }
   requireObject(owner: string, ref: ObjectRef, revision?: number) {
     const scope = this.scope(owner), value = this.binding(scope, ref, revision);
@@ -565,7 +606,7 @@ export class SecurityPolicies {
       if (!request || scope.grant?.taskId!==envelope.submission.taskId || request.revision!==envelope.submission.requestRevision || submissionDigest(request)!==envelope.submission.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
     for (const dependency of envelope.lineage) {
-      const binding=this.binding(scope,dependency.object);
+      const binding=this.readBinding(scope,dependency.object,undefined,dependency.object.type==='RegisteredCapability');
       if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       if (this.lineageDigest(scope,dependency)!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
