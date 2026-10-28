@@ -92,7 +92,11 @@ test(`replacement consent checks retained source lineage: ${mode}`,()=>{
    const graph=f.jobs.ontologyForJob(f.owner,job.id);
    if(mode==='allowed'){
     const result=graph.read(f.owner,object);assert.equal(result.properties.name,'Retained name');
-   }else assert.throws(()=>graph.read(f.owner,object),/not available|not found/i);
+    assert.deepEqual(graph.query(f.owner,{type:'Provider',limit:10}).items.map(value=>value.ref),[object],'Typed relationships and enumeration must use the same retained authority as direct reads');
+   }else {
+    assert.throws(()=>graph.read(f.owner,object),/not available|not found/i);
+    assert.deepEqual(graph.query(f.owner,{type:'Provider',limit:10}).items,[],'Hidden retained records cannot affect filters or counts');
+   }
   });
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM security_bindings WHERE grant_id=?').get(current.id)!.n,before,'Reading cannot manufacture a new binding or grant');
  }finally{db.close();f.close();}

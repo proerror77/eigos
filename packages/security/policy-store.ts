@@ -485,7 +485,10 @@ export class SecurityPolicies {
     return value;
   }
   predicate(owner: string, alias: string, fields: string[] = []) {
-    const scope = this.scope(owner),rows=this.db.prepare('SELECT type,object_id FROM security_bindings WHERE grant_id=? LIMIT 2001').all(scope.grant!.id);
+    const scope = this.scope(owner),g=scope.grant!;
+    const rows=this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
+      WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' LIMIT 2001`)
+      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId);
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
     const refs=rows.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
     return {sql:` AND EXISTS(SELECT 1 FROM json_each(?) visible WHERE json_extract(visible.value,'$.type')=${alias}.type AND json_extract(visible.value,'$.id')=${alias}.id)`,params:[JSON.stringify(refs)]};
