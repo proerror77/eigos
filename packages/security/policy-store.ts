@@ -320,8 +320,9 @@ export class SecurityPolicies {
   bindTaskProjection(owner: string, taskId: string) {
     // A long historical projection must keep making checked progress. In a
     // Worker scope this also renews its still-valid lease between records.
-    const progress = () => authorizationScope()?.onProgress?.();
-    authorizationScope()?.assertCurrent();
+    const scope=authorizationScope(),workerScope=scope?.actor.actorKind==='worker'?scope:undefined;
+    const progress = () => workerScope?.onProgress?.();
+    workerScope?.assertCurrent();
     for (const g of this.security.listGrants(owner)) if (g.kind === 'task_data' && g.taskId === taskId && g.status === 'active') {
       progress();
       const row = this.db.prepare('SELECT body FROM jobs WHERE id=? AND owner=?').get(taskId, owner);
@@ -354,7 +355,7 @@ export class SecurityPolicies {
         }
       }
     }
-    authorizationScope()?.assertCurrent();
+    workerScope?.assertCurrent();
   }
   /** A single synchronous read keeps repeated authority checks cheap. Local DB
    * writes and commits from another connection invalidate it immediately; time

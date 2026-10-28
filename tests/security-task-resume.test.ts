@@ -10,6 +10,7 @@ import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
 function fixture() {
   const f=securityFixture(),install=f.installation('Original PA');f.approve(install.id);
   const task=f.task(install.id),job=f.jobs.get(f.owner,task.job.id);
+  job.delegation!.request.messages=[{id:randomUUID(),text:job.goal,receivedAt:job.createdAt}];
   scheduleTaskRecovery(job,'worker_interrupted','Synthetic technical pause',{automatic:false});f.jobs.save(f.owner,job);
   const access=f.coordinator.authenticate(f.principal,install.token);if(access.actorKind!=='agent')assert.fail();
   const principal={...f.principal,access};
@@ -62,4 +63,17 @@ test('Foundation technical resume rejects expired or revoked task grants and gra
       assert.equal(f.jobs.get(f.owner,f.task.job.id).state,'paused');
     }finally{db.close();f.close();}
   }
+});
+
+test('a Foundation reply can rotate the old scope inside its protected request revision transition',()=>{
+  const f=fixture();try {
+    const job=f.jobs.get(f.owner,f.task.job.id);job.state='input-required';job.question='Synthetic public destination?';
+    job.delegation!.phase='clarifying';f.jobs.save(f.owner,job);
+    const reply=f.tasks.reply(f.principal,{taskId:job.id,requestId:randomUUID(),expectedRevision:job.revision!,answer:'Synthetic public destination confirmed'});
+    assert.equal(reply.id,job.id);assert.equal(reply.state,'submitted');
+    const current=f.jobs.get(f.owner,job.id),grant=f.jobs.security.taskGrant(f.principal.access,job.id);
+    assert.equal(current.delegation!.request.revision,job.delegation!.request.revision+1);
+    assert.notEqual(grant.id,f.task.grant.id);assert.equal(grant.requestRevision,current.delegation!.request.revision);
+    assert.equal(grant.expiresAt,f.task.grant.expiresAt,'A reply cannot extend the original permission window');
+  }finally{f.close();}
 });
