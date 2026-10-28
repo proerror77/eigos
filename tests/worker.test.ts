@@ -11,7 +11,9 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
-import { JobStore } from '../packages/core/store.js';
+import { JobStore, type WorkClaim } from '../packages/core/store.js';
+import { securityFixture } from './fixtures/security.js';
+import { authorizationScope } from '../packages/security/context.js';
 import { TaskService } from '../packages/core/tasks.js';
 import { SCOPES, ownerKey, type Job, type Principal } from '../packages/core/domain.js';
 import { readWorkerConfig } from '../packages/core/config.js';
@@ -99,6 +101,44 @@ test('The actual idle Worker query uses its pending/recovery index instead of sc
     assert(plan.some(row => String(row.detail).includes('jobs_worker_ready')), JSON.stringify(plan));
     assert(!plan.some(row => String(row.detail).includes('SCAN jobs')), JSON.stringify(plan));
   } finally { store.close(); }
+});
+
+test('synchronous progress keeps a second model-waiting claim alive without renewing revoked or expired work', async t => {
+  const started = Date.now(); let clock = started;
+  t.mock.method(Date, 'now', () => clock);
+  const f = securityFixture(() => clock), active = new Map<string, { claim: WorkClaim; signal: AbortSignal; progress: () => void; release: () => void }>();
+  const a = f.installation('Synchronous task'), b = f.installation('Waiting task');
+  f.approve(a.id); f.approve(b.id);
+  const heavy = f.task(a.id), waiting = f.task(b.id);
+  const worker = new Worker(f.jobs, { leaseMs: 30000, pollMs: 60000, timeoutMs: 50000, coordinator: {
+    run: async (claim, signal) => new Promise<void>(resolve => {
+      active.set(claim.job.id, { claim, signal, progress: authorizationScope()!.assertCurrent, release: resolve });
+    }),
+  } });
+  try {
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(active.size, 2);
+    const busy = active.get(heavy.job.id)!, idle = active.get(waiting.job.id)!;
+    // Native synchronous work still asserts its authority, while the event-loop
+    // heartbeat for the other task cannot run. Advance time without timer ticks.
+    for (const elapsed of [12000, 24000, 36000]) { clock = started + elapsed; busy.progress(); }
+    assert.equal(f.jobs.claimActive(idle.claim), true, 'Progress must preserve the other unexpired claim before its timer can run');
+    clock = started + 40000; f.coordinator.refresh();
+    f.coordinator.revokeInstallation(f.member.id, b.id);
+    clock = started + 48000; busy.progress();
+    assert.equal(idle.signal.aborted, true); assert.equal(f.jobs.claimActive(idle.claim), false);
+    assert.equal(busy.signal.aborted, false); assert.equal(f.jobs.claimActive(busy.claim), true);
+    clock = started + 51000;
+    assert.throws(busy.progress, /lease/i, 'Synchronous progress must also enforce the original execution timeout before its timer can run');
+    assert.equal(busy.signal.aborted, true);
+    clock = started + 79000;
+    assert.throws(busy.progress, /ACCESS_REVOKED|lease/i);
+    assert.equal(f.jobs.renew(busy.claim, 30000), false);
+    assert.equal(f.jobs.finish(idle.claim, job => { job.state = 'completed'; }), false);
+  } finally {
+    for (const entry of active.values()) entry.release();
+    await worker.close(); f.close();
+  }
 });
 
 test('migration never automatically replays legacy in-flight work', () => {
