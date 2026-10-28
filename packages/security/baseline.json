@@ -2782,7 +2782,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "63930fa8acd211f7bcca273778e5bcfd216e1b64944440ff1147a76dea402b8e",
+      "sourceDigest": "17a8167b790df87901ffd5443416256aba503026c3d1b7c622aabef3bdebadc9",
       "channels": [
         "http",
         "mcp",
@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "aaf876acc915c3fba793437a53c6e518dc6f811c0cd29ce013721ba462861967",
+      "sourceDigest": "2cb338c4f7ec14276344a81ed4fef573e964c28669d04100c5ff227cc6ff3394",
       "channels": [
         "http-mcp-a2a"
       ],
