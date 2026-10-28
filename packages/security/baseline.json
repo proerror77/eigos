@@ -2782,7 +2782,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "63930fa8acd211f7bcca273778e5bcfd216e1b64944440ff1147a76dea402b8e",
+      "sourceDigest": "17a8167b790df87901ffd5443416256aba503026c3d1b7c622aabef3bdebadc9",
       "channels": [
         "http",
         "mcp",
@@ -3249,7 +3249,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "34c24601b42f1af05f066088f57ac4b570e1f36aacdeed584698858ac857abb8",
+      "sourceDigest": "947fced35086a8b037faa210ee31cfa7eebb8e34f19727c59283cbe3d3e26957",
       "channels": [
         "authorization_control"
       ],
@@ -3285,7 +3285,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "a66c9cb9485a714af51423e17f250c4d97efdf6a2d56ac2a33c5248ae58a88c8",
+      "sourceDigest": "1ff6f80a555c42d310d982ea4034965009bbdebb7826c8a47461605dc327bc68",
       "channels": [
         "internal"
       ],
@@ -3333,12 +3333,12 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "a9dffec3b7e25426dd4197e1e9b8f9e3415c3acabed79f7d191fe32734352d5c",
+      "sourceDigest": "d08e50659933d38adc35969e44fc5f6470892a99fdd8357518699391adc1029f",
       "channels": [
         "all-reads"
       ],
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations",
+      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "aaf876acc915c3fba793437a53c6e518dc6f811c0cd29ce013721ba462861967",
+      "sourceDigest": "2cb338c4f7ec14276344a81ed4fef573e964c28669d04100c5ff227cc6ff3394",
       "channels": [
         "http-mcp-a2a"
       ],

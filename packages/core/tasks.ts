@@ -292,7 +292,14 @@ export class TaskService {
   amend(p: Principal, input: unknown, contextId?: string): Job { if (this.security) throw new DomainError('FORBIDDEN', 'Foundation amendments require a reviewed task grant transition'); return this.reply(p, versionedReplySchema.parse(input), contextId, undefined, true); }
 
   resume(p: Principal, input: unknown, contextId?: string): Job {
-    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation technical resumption requires reviewed task authority');
+    if (this.security) {
+      const args=resumeTaskSchema.parse(input);
+      if(args.executionBudget)throw new DomainError('FORBIDDEN','Foundation recovery uses the current task budget');
+      return this.security.resume(p,args.taskId,()=>this.resumeRaw(p,args,contextId));
+    }
+    return this.resumeRaw(p,input,contextId);
+  }
+  private resumeRaw(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write');
     const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {

@@ -99,13 +99,17 @@ export class Worker {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
       scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
       if (scope) {
+        const onProgress = () => {
+          this.renewDueClaims();
+          if (controller.signal.aborted) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
+        };
+        scope.onProgress = onProgress;
         const assertCurrent = scope.assertCurrent;
         scope.assertCurrent = () => {
           assertCurrent();
           // Bounded synchronous metadata work can delay the timer. Renew only
           // while the original lease and all authority checks are still valid.
-          this.renewDueClaims();
-          if (controller.signal.aborted) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
+          onProgress();
         };
       }
       const execute = async () => {
