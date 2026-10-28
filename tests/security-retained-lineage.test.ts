@@ -15,7 +15,8 @@ import {digest} from '../packages/core/delegation.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
 import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
 
-test('replaced discovery remains usable only as existing lineage, without restoring a removed capability to discovery',()=>{
+for(const firstWriter of ['same_task','other_task'] as const)
+test(`replaced discovery remains usable only as existing lineage, without restoring a removed capability to discovery: ${firstWriter}`,()=>{
  const f=securityFixture(),db=new DatabaseSync(f.database);let manager:AuthorizationCoordinator|undefined;
  try {
   const catalog=new ExecutionCatalog([BRIEF_CAPABILITY],[BRIEF_BINDING],[new BriefAdapter()]),policy=f.jobs.security.policies,original=catalog.summaries(f.owner);
@@ -29,21 +30,29 @@ test('replaced discovery remains usable only as existing lineage, without restor
   policy.setRecipient(install.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
   const principal={...f.principal,access:manager.authenticate(f.principal,install.token)},tasks=new TaskService(f.jobs,{catalog});
   const task=tasks.submit(principal,{service:'eigos.delegate',goal:'Synthetic retained discovery',requestId:randomUUID()});
-  // Immutable descriptions are shared; their original writer can be another task.
-  const oldId=randomUUID(),raw=new OntologyObjectStore(db,policy.model,Date.now,undefined,{skipLegacyMigration:true});
-  const root=JSON.parse(String(db.prepare("SELECT body FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(f.owner,task.id)!.body)).properties;
-  raw.ingest(f.owner,{objects:[{ref:{type:'ServiceRequest',id:oldId},properties:{...root,requestId:oldId}}]},{kind:'task',id:oldId,observedAt:new Date().toISOString()});
-  projectCapabilityCatalog(raw,f.owner,oldId,original);
+  // Current discovery membership must be the same regardless of the immutable card's first writer.
+  const writerTaskId=firstWriter==='same_task'?task.id:randomUUID();
+  if(firstWriter==='other_task'){
+   const raw=new OntologyObjectStore(db,policy.model,Date.now,undefined,{skipLegacyMigration:true});
+   const root=JSON.parse(String(db.prepare("SELECT body FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(f.owner,task.id)!.body)).properties;
+   raw.ingest(f.owner,{objects:[{ref:{type:'ServiceRequest',id:writerTaskId},properties:{...root,requestId:writerTaskId}}]},{kind:'task',id:writerTaskId,observedAt:new Date().toISOString()});
+   projectCapabilityCatalog(raw,f.owner,writerTaskId,original);
+  }
   const claim=f.jobs.claim(['eigos.delegate'],30000)!,scope=f.jobs.security.workerScope(f.owner,task.id,claim.securityAuthorityId!,claim.token);
   withAuthorization(scope,()=>{
    const graph=f.jobs.ontologyForJob(f.owner,task.id);
    assert(f.jobs.checkpoint(claim,()=>f.jobs.projectCapabilities(f.owner,task.id,original)));
    const old=graph.related(f.owner,{type:'ServiceRequest',id:task.id},'capabilities',{remaining:16})![0]!.ref;
+   assert.equal(db.prepare("SELECT json_extract(body,'$.source.id') AS writer FROM ontology_objects WHERE owner=? AND type=? AND id=?").get(f.owner,old.type,old.id)!.writer,writerTaskId);
    graph.read(f.owner,old); // Persist a real task-scoped metadata read.
    assert(f.jobs.checkpoint(claim,()=>f.jobs.projectCapabilities(f.owner,task.id,original.map(s=>({...s,description:s.description+' Updated synthetic description.'})))));
    assert.throws(()=>graph.read(f.owner,old),/not available|not found/i);
+   const current=graph.related(f.owner,{type:'ServiceRequest',id:task.id},'capabilities',{remaining:16})!;
+   assert.equal(current.length,1);assert.notEqual(current[0]!.ref.id,old.id);
+   assert.deepEqual(graph.query(f.owner,{type:'RegisteredCapability',limit:10}).items.map(item=>item.ref),current.map(item=>item.ref),'Only the newly linked card remains in current discovery queries');
    assert.equal(readOntologyRequest(graph,f.owner,task.id).id,task.id);
    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ontology_links WHERE type='CapabilityRequest' AND from_id=? AND to_id=?").get(old.id,task.id)!.n,0);
+   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,old.type,old.id)!.n,1,'The historical card remains available for dependency validation');
    policy.restrictObject({ownerKey:f.owner,object:old,expectedObjectRevision:1,classification:'sensitive',requiredMarkings:['account_private'],channels:['agent_response','registered_model']},policy.revision());
   });
   // A fresh scope still applies the new label to the historical dependency.
