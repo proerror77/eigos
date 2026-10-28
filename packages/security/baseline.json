@@ -3249,12 +3249,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "2e4088b884ab5c7a6420bedfe6b76401bb93e310a020abef6586ccffcd2024e5",
+      "sourceDigest": "34c24601b42f1af05f066088f57ac4b570e1f36aacdeed584698858ac857abb8",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },

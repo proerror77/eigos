@@ -277,7 +277,9 @@ test('two independently enrolled JWT connectors use foundation v2 and never fall
 });
 
 async function readUntil(client: Awaited<ReturnType<AgentConnector['a2a']>>, task: Task, state: TaskState): Promise<Task> {
-  const deadline = Date.now() + 15000;
+  // This checks protocol completion, not wall-clock performance. Native
+  // authorization/projection work shares CPU with other CI test processes.
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
     const current = await client.getTask(GetTaskRequest.fromJSON({ id: task.id }));
     assert.equal(current.contextId, task.contextId);
