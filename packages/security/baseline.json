@@ -2809,7 +2809,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "aed7e0c141720b8764844e0ae99de2e09382201b8c521b18ae0e8487f1d2d583",
+      "sourceDigest": "0eeba1e85afbfc9d70c3314037e45155263035b1a64c6c17238d93eecd59f1b9",
       "channels": [
         "query",
         "function"
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "08577522d85c7e971952c446eab1d16bc60a5f58ec8a1692f4c6cc6ae5396bbf",
+      "sourceDigest": "e1fbb51c9cdc3666f6ba2f5c298a7b1873e39ce022b36ac28a9a7369e79e06c1",
       "channels": [
         "all-reads"
       ],

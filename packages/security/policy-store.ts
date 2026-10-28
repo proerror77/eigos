@@ -21,6 +21,11 @@ import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
 
+// Only this connection's direct append-only audit inserts are inert for read
+// bindings. Other writes, trigger side effects and other connections still
+// invalidate the snapshot; every authority/time check remains in place.
+const readAuditChanges = new WeakMap<DatabaseSync, number>();
+
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
   resource: z.union([resourceRefSchema, z.strictObject({ kind: z.literal('namespace'), id, version: id })]),
@@ -354,7 +359,7 @@ export class SecurityPolicies {
    * It never spans source calls, promises, dispatch or another model tool call. */
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
-    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${this.db.prepare('SELECT total_changes() AS n').get()!.n}`;
+    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${Number(this.db.prepare('SELECT total_changes() AS n').get()!.n)-(readAuditChanges.get(this.db)??0)}`;
     scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
@@ -434,10 +439,15 @@ export class SecurityPolicies {
     if (!value) throw new DomainError('NOT_FOUND', 'Object is not available in this task');
     return value;
   }
-  predicate(owner: string, alias: string, fields: string[] = []) {
+  predicate(owner: string, alias: string, fields: string[] = [], selection?: { types: readonly string[]; objectId?: string }) {
     const scope = this.scope(owner),rows=this.db.prepare('SELECT type,object_id FROM security_bindings WHERE grant_id=? LIMIT 2001').all(scope.grant!.id);
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
-    const refs=rows.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
+    // Narrow by the query's public schema/identity before checking candidates.
+    // Data predicates, visibility and transitive dependencies are still checked
+    // before result filtering/counting; the whole-task binding bound is unchanged.
+    const types=selection?new Set(selection.types):undefined;
+    const candidates=rows.filter(row=>(!types || types.has(String(row.type))) && (selection?.objectId===undefined || row.object_id===selection.objectId));
+    const refs=candidates.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
     return {sql:` AND EXISTS(SELECT 1 FROM json_each(?) visible WHERE json_extract(visible.value,'$.type')=${alias}.type AND json_extract(visible.value,'$.id')=${alias}.id)`,params:[JSON.stringify(refs)]};
   }
   project(owner: string, value: ObjectView, selected?: string[]): ObjectView {
@@ -505,7 +515,10 @@ export class SecurityPolicies {
   capture(scope:AuthorizationScope,envelope:SecurityEnvelope) {
     if (!scope.grant) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const key=digest(envelope);if(scope.lineage.has(key))return;scope.lineage.set(key,envelope);
-    if (scope.actor.actorKind==='worker') this.db.prepare('INSERT OR IGNORE INTO security_reads VALUES(?,?,?)').run(scope.grant.id,key,JSON.stringify(envelope));
+    if (scope.actor.actorKind==='worker') {
+      const written=this.db.prepare('INSERT OR IGNORE INTO security_reads VALUES(?,?,?)').run(scope.grant.id,key,JSON.stringify(envelope));
+      readAuditChanges.set(this.db,(readAuditChanges.get(this.db)??0)+Number(written.changes));
+    }
   }
   loadLineage(scope:AuthorizationScope) {
     if (!scope.grant) return;
