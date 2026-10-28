@@ -844,6 +844,14 @@ export class JobStore {
     this.claimMutations.add(claim);
     try{return action();}finally{this.claimMutations.delete(claim);}
   }
+  private mutationCurrent(claim:WorkClaim,now?:number):boolean {
+    // Projection/output work can outlast its last checked record. Recheck the
+    // original Worker deadline and authorization immediately before committing,
+    // while allowing this transaction's own terminal task state.
+    const scope=authorizationScope();
+    if(scope?.actor.actorKind==='worker' && scope.actor.taskId===claim.job.id)scope.assertCurrent();
+    return this.leaseOwned(claim,now??Date.now()) && this.processingAuthorityCurrent(claim,now??Date.now());
+  }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
     try { return this.transaction(() => {
@@ -855,7 +863,7 @@ export class JobStore {
         // The callback may intentionally complete/pause/revise the task. The
         // initial active check plus SQLite's write transaction fences that state;
         // the token and wall-clock deadline must still hold at commit.
-        if (!this.leaseOwned(claim, now ?? Date.now())) throw lostClaimFence;
+        if (!this.mutationCurrent(claim, now)) throw lostClaimFence;
         this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
         return true;
       });
@@ -868,7 +876,7 @@ export class JobStore {
       return this.withClaimMutation(claim,()=>{
         const job = this.get(claim.owner, claim.job.id);
         update(job); this.save(claim.owner, job);
-        if (!this.leaseOwned(claim, Date.now())) throw lostClaimFence;
+        if (!this.mutationCurrent(claim)) throw lostClaimFence;
         return true;
       });
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }

@@ -51,7 +51,7 @@ test('replaced discovery remains usable only as existing lineage, without restor
  }finally{db.close();manager?.close();f.close();}
 });
 
-for(const mode of ['allowed','fields','no_output','source_revoked','source_version','label','object_revision','other_task','other_request','withdrawn_asset','submission_changed','tampered_dependency'] as const)
+for(const mode of ['allowed','readback_allowed','readback_output_denied','fields','no_output','source_revoked','source_version','label','object_revision','other_task','other_request','withdrawn_asset','submission_changed','tampered_dependency'] as const)
 test(`replacement consent checks retained source lineage: ${mode}`,()=>{
  const f=securityFixture(),db=new DatabaseSync(f.database);
  try {
@@ -83,14 +83,21 @@ test(`replacement consent checks retained source lineage: ${mode}`,()=>{
   if(mode==='withdrawn_asset')db.prepare("UPDATE security_bindings SET body=json_set(body,'$.sourceBindingId','member_asset') WHERE grant_id=? AND type=? AND object_id=?").run(old.id,object.type,object.id);
   if(mode==='source_revoked')policy.revokeSource(f.owner,install.id,bindingId,policy.revision());
   if(mode==='source_version')policy.setSource(f.owner,{...source,programDigest:digest('unreviewed source replacement')},policy.revision());
+  const replacementDigest=digest('reviewed source replacement');
+  if(mode==='readback_allowed' || mode==='readback_output_denied'){
+   policy.setSource(f.owner,{...source,programDigest:replacementDigest},policy.revision());
+   // Only the operator migration can pin a reviewed predecessor; public source input rejects this field.
+   db.prepare("UPDATE security_sources SET body=json_set(body,'$.readbackVersions',json(?)) WHERE installation_id=? AND program_id=?")
+    .run(JSON.stringify([{sourceBindingId:bindingId,programDigest}]),install.id,source.programId);
+  }
   if(mode==='label')policy.restrictObject({ownerKey:f.owner,object,expectedObjectRevision:1,classification:'sensitive',requiredMarkings:['account_private'],channels:['agent_response','registered_model']},policy.revision());
   if(mode==='object_revision')db.prepare("UPDATE ontology_objects SET revision=revision+1 WHERE owner=? AND type=? AND id=?").run(f.owner,object.type,object.id);
   const current=f.jobs.security.issueTaskGrant({...old,id:randomUUID(),taskId:job.id,requestRevision:job.delegation!.request.revision,
-   outputs:mode==='no_output'?[]:[{...output,fields:mode==='fields'?fields.filter(f=>f!=='name'):fields}]});
+   outputs:mode==='no_output'?[]:[{...output,programDigest:mode==='readback_output_denied'?replacementDigest:programDigest,fields:mode==='fields'?fields.filter(f=>f!=='name'):fields}]});
   const principal={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)},before=db.prepare('SELECT COUNT(*) AS n FROM security_bindings WHERE grant_id=?').get(current.id)!.n;
   f.jobs.security.withAgent(principal,job.id,'task.query',()=>{
    const graph=f.jobs.ontologyForJob(f.owner,job.id);
-   if(mode==='allowed'){
+   if(mode==='allowed' || mode==='readback_allowed'){
     const result=graph.read(f.owner,object);assert.equal(result.properties.name,'Retained name');
     assert.deepEqual(graph.query(f.owner,{type:'Provider',limit:10}).items.map(value=>value.ref),[object],'Typed relationships and enumeration must use the same retained authority as direct reads');
    }else {
