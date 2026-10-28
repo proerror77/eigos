@@ -206,3 +206,17 @@ test('saved street addresses match the primary provider place without requiring 
   assert(!locationMatchesSource(supplied, '合成市', { ...place, address: '测试区测试镇新合成路257弄' }));
   assert(!locationMatchesSource({ ...supplied, address: '另一市合成路257弄' }, '合成市', { ...place, address: '合成路257弄' }));
 });
+
+test('airport terminal spellings match without merging terminals, entrances or other places', () => {
+  const supplied = { name: '合成国际机场 T2 航站楼', source: 'user_provided' as const };
+  const place = { name: '合成国际机场2号航站楼', address: '测试区机场路900号', addressAll: '测试区机场路900号合成国际机场2号航站楼', city: '合成市' };
+  assert(locationMatchesSource(supplied, '合成市', place));
+  assert(locationMatchesSource({ ...supplied, name: place.name }, '合成市', { ...place, name: supplied.name }));
+  assert(locationMatchesSource({ ...supplied, name: '合成市合成国际机场Ｔ２航站楼' }, '合成市', place));
+  for (const name of ['合成国际机场1号航站楼', '另一国际机场2号航站楼', '合成国际机场2号航站楼-23号门', '合成国际机场T2航站楼停车场', '合成国际机场T20航站楼']) {
+    assert(!locationMatchesSource(supplied, '合成市', { ...place, name, addressAll: place.address + name }), name);
+  }
+  assert(!locationMatchesSource(supplied, '另一市', place));
+  assert(!locationMatchesSource({ ...supplied, address: '机场路901号' }, '合成市', place));
+  assert(!locationMatchesSource({ ...supplied, name: '合成T2大楼' }, '合成市', { ...place, name: '合成2号大楼' }));
+});
