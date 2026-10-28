@@ -51,14 +51,14 @@ test('HTTP, MCP and A2A share task grants, safe metadata and current replay auth
     const body={service:'eigos.delegate',requestId:'same-request',goal:'Private A goal'};
     const created=await f.post('/tasks',body,headers(a.token));assert.equal(created.status,200);assert.equal(created.value.view,'eigos.task.v2');
     const x=created.value.id as string;
-    const raw=f.gateway.store.get(ownerKey(f.p),x);raw.question='UNSEALED_PRIVATE_QUESTION';raw.delegation!.events.push({at:new Date().toISOString(),event:'PRIVATE_LEDGER'});f.gateway.store.save(ownerKey(f.p),raw);
+    const raw=f.gateway.store.get(ownerKey(f.p),x);raw.state='paused';raw.question='UNSEALED_PRIVATE_QUESTION';raw.delegation!.events.push({at:new Date().toISOString(),event:'PRIVATE_LEDGER'});f.gateway.store.save(ownerKey(f.p),raw);
     const get=await ca.callTool({name:'get_task',arguments:{taskId:x}});assert.ok(!get.isError);assert.ok(!JSON.stringify(get).includes('PRIVATE_'));
     const query=await ca.callTool({name:'query_ontology',arguments:{version:2,taskId:x,query:{object:{type:'ServiceRequest',id:x}}}});assert.ok(!query.isError);
     assert.ok(JSON.stringify(query).includes('Private A goal'));assert.ok(!JSON.stringify(query).includes('datasetRevision'));assert.ok(!JSON.stringify(query).includes('scanned'));
     const other=await cb.callTool({name:'get_task',arguments:{taskId:x}});assert.equal(other.isError,true);
     const unknown=await ca.callTool({name:'evaluate_ontology',arguments:{version:2,taskId:x,call:{function:'HiddenFunction',object:{type:'ServiceRequest',id:x}}}});assert.equal(unknown.isError,true);assert.ok(!JSON.stringify(unknown).includes('bookingObservationStatus'));
     const rpc=(method:string,params:object,token=a.token)=>f.post('/a2a',{jsonrpc:'2.0',id:randomUUID(),method,params},headers(token));
-    const task=await rpc('GetTask',{id:x});assert.equal(task.status,200);assert.equal(task.value.result.id,x);assert.equal(task.value.result.metadata.view,'eigos.task.v2');assert.ok(!JSON.stringify(task.value).includes('PRIVATE_'));assert.ok(!('delegation' in task.value.result.metadata));
+    const task=await rpc('GetTask',{id:x});assert.equal(task.status,200);assert.equal(task.value.result.id,x);assert.equal(task.value.result.metadata.view,'eigos.task.v2');assert.equal(task.value.result.status.state,'TASK_STATE_WORKING');assert.equal(task.value.result.metadata.internalState,'paused');assert.ok(!JSON.stringify(task.value).includes('PRIVATE_'));assert.ok(!('delegation' in task.value.result.metadata));
     assert.ok((await rpc('GetTask',{id:x},b.token)).value.error);
     const byB=await cb.callTool({name:'submit_task',arguments:body});assert.ok(!byB.isError);const y=(byB.structuredContent as {result:{id:string}}).result.id;assert.notEqual(x,y);
     const listed=await rpc('ListTasks',{pageSize:10,includeArtifacts:true});assert.equal(listed.value.result.totalSize,1);assert.equal(listed.value.result.tasks[0].id,x);

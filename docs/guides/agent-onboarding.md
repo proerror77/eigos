@@ -45,6 +45,8 @@
 
 `packages/agent-client/client.ts` 提供可组合的登记、授权、申请、查询、邀请兑换、访问及停用方法。每个 Agent 使用独立的私有凭据文件，不将凭据放进模型提示词。
 
+纯 A2A 接入可直接使用 `agent.a2a()`，它返回配置好安装认证和续期的官方 A2A 客户端，完整示例见 [A2A 接入](a2a-agent.md)。受保护模式缺少安装许可时，状态中的 `links.permissions` 指向本人授权页；按同一登记等待，不能把 OAuth 登录成功当作已有业务权限。
+
 ```ts
 const agent = await AgentConnector.open({
   baseUrl: 'https://your-eigos-origin',

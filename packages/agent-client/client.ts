@@ -5,6 +5,8 @@ import { decodeJwt } from 'jose';
 import * as oidc from 'openid-client';
 import { z } from 'zod';
 import type { Profile } from '../members/store.js';
+import { ClientFactory, JsonRpcTransportFactory, type Client } from '@a2a-js/sdk/client';
+import { discoverA2A } from './a2a.js';
 
 const metadataSchema = z.object({ version: z.literal(1), registration_endpoint: z.url(), issuer: z.url(), client_id: z.string().min(1), audience: z.url(), scopes: z.array(z.string()) });
 const admissionSchema = z.object({ registrationId: z.uuid(), status: z.string(), nextAction: z.string(), pollAfterSeconds: z.number(), links: z.record(z.string(), z.url()) });
@@ -185,6 +187,23 @@ export class AgentConnector {
     const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${await this.accessToken()}`);
     // No automatic replay of task-creating POSTs after errors or token races.
     return this.fetcher(url, { ...init, headers, redirect: 'error' });
+  }
+  /** Official A2A SDK, using the same installed identity and rotating OAuth
+   * credentials as MCP. Discovery is public; task POSTs are never replayed. */
+  async a2a(): Promise<Client> {
+    const card = await discoverA2A(this.baseUrl, this.fetcher);
+    const scheme = card.securitySchemes.eigos?.scheme;
+    const issuerMetadata = this.metadata.issuer.replace(/\/$/, '') + '/.well-known/openid-configuration';
+    if (scheme?.$case !== 'openIdConnectSecurityScheme' || scheme.value.openIdConnectUrl !== issuerMetadata) {
+      throw new AgentConnectorError('a2a_identity_provider_mismatch');
+    }
+    return new ClientFactory({
+      clientConfig: { polling: true },
+      transports: [new JsonRpcTransportFactory({ fetchImpl: (input, init) => this.fetch(
+        input instanceof Request ? input.url : input.toString(),
+        { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) },
+      ) })],
+    }).createFromAgentCard(card);
   }
   private async json(path:string,body?:unknown) {
     const response=await this.fetch(path,{method:body===undefined?'GET':'POST',...(body===undefined?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});
