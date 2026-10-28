@@ -4360,14 +4360,14 @@
     {
       "id": "relay-source-service",
       "file": "packages/agent-transport/didi-service.ts",
-      "sourceDigest": "23f517a316c2c9e32739e2dd6fc83dfa30b3faa5c2bc4a6b1a05e371110d1ca8",
+      "sourceDigest": "a35684437c85afbe3b1cde2da7f1f036015ce59e2d33567b9def4411c099cb09",
       "channels": [
         "agent_transport",
         "source",
         "private_file"
       ],
       "content": "Provider credential custody and durable source read receipts",
-      "currentControl": "Pinned primary and source binding; DPoP online authorization before read and return; no order tools",
+      "currentControl": "Pinned primary and source binding; current DPoP authorization before provider dispatch and every result delivery; private completed receipts survive unavailable authorization without repeating provider reads or extending original deadlines; no order tools",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4473,13 +4473,14 @@
     {
       "id": "relay-service-process",
       "file": "apps/service-agent/main.ts",
-      "sourceDigest": "6db4f756cb55935e698a0cecf4d3bb8c2f779044b5ff8b0215a682692ddadc0e",
+      "sourceDigest": "2c3dafcf73c6fd145d70c8fd0b52d89975b286fb0ec860265fa37e39d14d19c5",
       "channels": [
         "runtime",
-        "source"
+        "source",
+        "diagnostics"
       ],
       "content": "Independent source Agent process",
-      "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store",
+      "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store; diagnostics expose only call ID, check stage, elapsed time, HTTP status and fixed outcome codes, never proofs or source data",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },

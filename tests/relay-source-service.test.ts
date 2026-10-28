@@ -2,9 +2,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { digest } from '../packages/core/delegation.js';
-import { DidiRelayService, type DidiServiceConfig } from '../packages/agent-transport/didi-service.js';
+import { DidiRelayService, type DidiServiceConfig, type SourceAuthorizationEvent } from '../packages/agent-transport/didi-service.js';
 import { sourceReadRequestSchema, sourceReadResponseSchema, SOURCE_RELAY_PROTOCOL } from '../packages/agent-transport/service-contracts.js';
 import { DidiMcpConnector, type DidiConnector } from '../packages/capabilities/didi/connector.js';
 import { relayFixture } from './fixtures/relay.js';
@@ -82,4 +83,94 @@ test('provider rate limits retain their bounded error code instead of encouragin
     assert.equal(response.error, 'RATE_LIMITED'); assert.equal(response.result, undefined);
     assert.equal(f.source.calls.filter(c => c.name).length, 0);
   } finally { service.close(); await f.close(); }
+});
+
+for (const failure of ['network', 'timeout', 'http'] as const) for (const failedCheck of [4, 5]) test(`${failure} at authorization check ${failedCheck} preserves the original provider receipt for a source restart`, async () => {
+  const f = await fixture(); let checks = 0; const events: SourceAuthorizationEvent[] = [];
+  const authorize: typeof fetch = async (...args) => {
+    if (++checks === failedCheck) {
+      if (failure === 'http') return new Response('synthetic-private-upstream-body', { status: 503 });
+      if (failure === 'timeout') throw new DOMException('synthetic-private-timeout', 'TimeoutError');
+      throw new TypeError('synthetic-private-network-failure');
+    }
+    return f.authorize(...args);
+  };
+  let service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), authorize, event => events.push(event));
+  try {
+    await assert.rejects(service.handle(f.message, AbortSignal.timeout(10000)), /authorization.*unavailable/i);
+    assert.equal((await f.gateway.poll()).length, 0, 'An unavailable permission check cannot deliver a result or claim permission was denied');
+    assert.equal(f.source.calls.filter(c => c.name).length, 1);
+    const saved = JSON.parse(readFileSync(join(f.source.binding.auditDirectory!, 'reads.jsonl'), 'utf8').trim()).receipt;
+    const unavailable = events.find(event => event.outcome === 'unavailable'); assert(unavailable);
+    assert.equal(unavailable.callId, f.request.callId); assert.equal(unavailable.reason, failure);
+    assert.equal(unavailable.stage, failedCheck === 4 ? 'provider_result' : 'result');
+    assert.equal(unavailable.status, failure === 'http' ? 503 : undefined); assert(unavailable.elapsedMs >= 0);
+    assert(!JSON.stringify(events).includes('synthetic-private'));
+    service.close(); service = new DidiRelayService(await f.reopen(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), f.authorize);
+    await service.handle((await f.node().pending())[0]!, AbortSignal.timeout(10000));
+    const response = sourceReadResponseSchema.parse((await f.gateway.poll())[0]!.content);
+    assert(response.result); assert.equal(response.error, undefined);
+    assert.equal(response.callId, f.request.callId); assert.equal(response.requestDigest, digest(f.request));
+    assert.deepEqual(response.result.receipt, saved);
+    assert.equal(f.source.calls.filter(c => c.name).length, 1, 'Recover the saved receipt without another provider read');
+  } finally { service.close(); await f.close(); }
+});
+
+test('a source receipt retained after an unavailable authorization is withheld when the task is revoked before retry', async () => {
+  const f = await fixture(); let checks = 0;
+  const authorize: typeof fetch = async (...args) => ++checks === 4 ? new Response(null, { status: 503 }) : f.authorize(...args);
+  let service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), authorize);
+  try {
+    await assert.rejects(service.handle(f.message, AbortSignal.timeout(10000)), /authorization.*unavailable/i);
+    f.revoke(); service.close();
+    const events: SourceAuthorizationEvent[] = [];
+    service = new DidiRelayService(await f.reopen(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), f.authorize, event => events.push(event));
+    await service.handle((await f.node().pending())[0]!, AbortSignal.timeout(10000));
+    const response = sourceReadResponseSchema.parse((await f.gateway.poll())[0]!.content);
+    assert.equal(response.error, 'AUTHORIZATION_REJECTED'); assert.equal(response.result, undefined);
+    assert.equal(f.source.calls.filter(c => c.name).length, 1);
+    assert.equal(events.at(-1)?.outcome, 'denied'); assert.equal(events.at(-1)?.status, 403);
+  } finally { service.close(); await f.close(); }
+});
+
+test('an invalid authorization response never releases a saved provider receipt', async () => {
+  const f = await fixture(); let checks = 0; const events: SourceAuthorizationEvent[] = [];
+  const authorize: typeof fetch = async (...args) => ++checks === 4 ? new Response('synthetic-private-invalid-json') : f.authorize(...args);
+  const service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), authorize, event => events.push(event));
+  try {
+    await service.handle(f.message, AbortSignal.timeout(10000));
+    const response = sourceReadResponseSchema.parse((await f.gateway.poll())[0]!.content);
+    assert.equal(response.error, 'AUTHORIZATION_REJECTED'); assert.equal(response.result, undefined);
+    assert.equal(f.source.calls.filter(c => c.name).length, 1);
+    assert.equal(events.at(-1)?.outcome, 'denied'); assert.equal(events.at(-1)?.reason, 'invalid_response');
+    assert(!JSON.stringify(events).includes('synthetic-private'));
+  } finally { service.close(); await f.close(); }
+});
+
+test('authorization unavailable before a source read leaves the original message retryable without a provider call', async () => {
+  const f = await fixture();
+  let service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), async () => new Response(null, { status: 503 }));
+  try {
+    await assert.rejects(service.handle(f.message, AbortSignal.timeout(10000)), /authorization.*unavailable/i);
+    assert.equal(f.source.calls.filter(c => c.name).length, 0); assert.equal((await f.gateway.poll()).length, 0);
+    service.close(); service = new DidiRelayService(await f.reopen(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), f.authorize);
+    await service.handle((await f.node().pending())[0]!, AbortSignal.timeout(10000));
+    const response = sourceReadResponseSchema.parse((await f.gateway.poll())[0]!.content);
+    assert(response.result); assert.equal(response.callId, f.request.callId); assert.equal(response.requestDigest, digest(f.request));
+    assert.equal(f.source.calls.filter(c => c.name).length, 1);
+  } finally { service.close(); await f.close(); }
+});
+
+test('a saved source receipt cannot outlive its original message deadline', async t => {
+  const f = await fixture(); let checks = 0;
+  const authorize: typeof fetch = async (...args) => ++checks === 4 ? new Response(null, { status: 503 }) : f.authorize(...args);
+  const service = new DidiRelayService(f.node(), f.config, new DidiMcpConnector(f.source.binding, f.source.fetcher), authorize);
+  try {
+    await assert.rejects(service.handle(f.message, AbortSignal.timeout(10000)), /authorization.*unavailable/i);
+    t.mock.method(Date, 'now', () => f.request.expiresAt + 1);
+    assert.equal((await f.node().pending()).length, 0);
+    await service.handle(f.message, AbortSignal.timeout(10000));
+    assert.equal(checks, 4); assert.equal(f.source.calls.filter(c => c.name).length, 1);
+    assert.equal(f.node().outbox().length, 0);
+  } finally { t.mock.restoreAll(); service.close(); await f.close(); }
 });
