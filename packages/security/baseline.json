@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8385f48ce49e12cf91e2225296dfab142f47d9db0ecae225896d220d5efb4372",
+      "sourceDigest": "6a8a4f5eec7c010469d087706b6e6f066c1cb2cf028d84d13f9b107df0cc2432",
       "channels": [
         "model",
         "dispatch"
