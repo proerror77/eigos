@@ -36,7 +36,7 @@ export function mountAgentRoutes(app: Express, base: Config, members: MemberStor
   app.get('/.well-known/eigos-agent-registration', (req, res) => {
     const c = ingress?.(req).config ?? base;
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'agent_onboarding_not_configured' }); return; }
-    res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S5', businessAccess: 'task_grant_required', authorizationContext: `${c.PUBLIC_URL}/security/context` } : {}) });
+    res.json({ ...agentOnboardingMetadata(c), ...(security ? { securityStage: 'S5', businessAccess: 'task_grant_required', authorizationContext: `${c.PUBLIC_URL}/security/context`, permissions_url: `${base.PUBLIC_URL}/members/permissions` } : {}) });
   });
   const view = (value: AgentRegistration, c: Config) => {
     let status = members.agents.status(value, c.EIGOS_MEMBERSHIP_APPROVAL);
@@ -44,10 +44,10 @@ export function mountAgentRoutes(app: Express, base: Config, members: MemberStor
       try { security.store.agentGrant(value.id); status = 'foundation_ready'; }
       catch { status = 'data_authorization_required'; }
     }
-    const base = `${c.PUBLIC_URL}/agents/registrations/${value.id}`;
+    const registration = `${c.PUBLIC_URL}/agents/registrations/${value.id}`;
     return { registrationId: value.id, displayName: value.displayName, status,
       nextAction: ({ authorization_required: 'authorize_user', registration_required: 'submit_membership', waiting_invitation: 'wait_for_invitation', pending_approval: 'wait_for_approval', active: 'call_services', foundation_ready: 'inspect_authorization', data_authorization_required: 'request_member_grant', registration_expired: 'start_new_registration' } as Record<string, string>)[status] ?? 'contact_member',
-      pollAfterSeconds: 5, links: { status: base, bind: `${base}/token`, application: `${base}/application`, invitation: `${base}/invitation`, revoke: `${base}/revoke`, membership: `${c.PUBLIC_URL}/members`, mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
+      pollAfterSeconds: 5, links: { status: registration, bind: `${registration}/token`, application: `${registration}/application`, invitation: `${registration}/invitation`, revoke: `${registration}/revoke`, membership: `${c.PUBLIC_URL}/members`, ...(security ? { permissions: `${base.PUBLIC_URL}/members/permissions` } : {}), mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
   };
   app.all(['/agents/registrations', '/agents/registrations/:id', '/agents/registrations/:id/:action'], async (req, res, next) => {
     const entry = ingress?.(req), c = entry?.config ?? base, verify = entry?.verify ?? defaultVerify;

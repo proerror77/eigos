@@ -5,6 +5,7 @@
 ## 开始使用
 
 - [Agent 接入](integration.md)：MCP、A2A、任务续接与准确授权。
+- [外部 Agent 的 A2A 完整链路](guides/a2a-agent.md)：发现、OAuth、安装授权、任务补问和结果回读。
 - [开发与运行](gateway-worker.md)：本地启动、共享存储和验证命令。
 - [仓库结构](architecture/repository.md)：模块职责、分支和提交约定。
 - [能力目录](architecture/capabilities.md)：配置条件与完成范围。

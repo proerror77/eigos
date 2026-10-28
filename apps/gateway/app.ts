@@ -179,8 +179,9 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
           } else if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
           principal.access = security.authenticate(principal, match[1]);
         } catch(error) {
-          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason});
-          else if(error instanceof AgentAccessError||error instanceof MemberAccessError) res.status(403).json({error:error.code});
+          const guidance = { onboarding_url: `${ingress.config(req).PUBLIC_URL}/.well-known/eigos-agent-registration`, permissions_url: `${config.PUBLIC_URL}/members/permissions` };
+          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason,...guidance});
+          else if(error instanceof AgentAccessError||error instanceof MemberAccessError) res.status(403).json({error:error.code,...guidance});
           else if(error instanceof DomainError) res.status(403).json({error:error.code});
           else next(error);
           return;
