@@ -2994,7 +2994,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "8d331f2cbeac9c161abbb12b4b285856ff7483571a5c2bb372008221ce0d4ecc",
+      "sourceDigest": "63aa7114a678fed188a931bf25a997606960229abe4dcf54af1a0bc1d24d3327",
       "channels": [
         "registered_model",
         "private_file"

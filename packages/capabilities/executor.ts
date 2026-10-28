@@ -111,10 +111,11 @@ export class CodexExecutor implements Executor {
   async runStructured(prompt: string, schema: object, signal: AbortSignal, options: ModelRunOptions = {}): Promise<{ output: unknown; evidence: RunEvidence }> {
     const id = randomUUID();
     const startedAt = new Date().toISOString();
+    const started = performance.now(), trace = options.mcp?.trace ?? new NativeModelTrace();
+    trace.mark('runStarted'); trace.inputBytes(Buffer.byteLength(prompt));
     const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-exec', startedAt);
     let recorded: RunEvidence | undefined, succeeded = false;
     let directory: string | undefined;
-    const trace = options.mcp?.trace ?? new NativeModelTrace(), started = performance.now(); trace.mark('runStarted'); trace.inputBytes(Buffer.byteLength(prompt));
     let outcome: NativeModelOutcome = 'failed', stderr = '';
     const events: Record<string, unknown>[] = [];
     const usage = () => {

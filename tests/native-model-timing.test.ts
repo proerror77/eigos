@@ -87,6 +87,17 @@ test('successful exec receipts include phase timing without copying model or too
   } finally { fixture.close(); }
 });
 
+test('native preparation includes durable attempt registration before spawning the model', async () => {
+  const fixture = executableFixture(); let now = 0;
+  const trace = new NativeModelTrace(() => now);
+  try {
+    const result = await withModelUsage({ begin: () => { now = 40; }, finish: () => {} }, () => new CodexExecutor(fixture.binary, 5000).runStructured('success', {}, new AbortController().signal,
+      { mcp: { name: 'eigos_ontology', url: 'http://127.0.0.1:43210/mcp', token: 'synthetic-token', tools: ['read_task_context'], trace } }));
+    assert.equal(result.evidence.nativeTiming!.markers.runStarted, 0);
+    assert.equal(result.evidence.nativeTiming!.durations.localPreparationMs, 40, 'Registration latency must not disappear before the preparation boundary');
+  } finally { fixture.close(); }
+});
+
 for (const mode of ['timeout', 'interrupt', 'invalid'] as const) test(`exec ${mode} retains observed timing without fabricating a successful output receipt`, async () => {
   const fixture = executableFixture(), controller = new AbortController(); let recorded: ModelUsageEvidence | undefined, state: string | undefined;
   class InterruptingTrace extends NativeModelTrace {
