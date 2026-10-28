@@ -9,6 +9,8 @@ MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实�
 - `GET /.well-known/oauth-protected-resource` 返回 OAuth 资源与 scope 元数据。
 - MCP 使用 `/mcp`，A2A JSON-RPC 使用 `/a2a`。
 
+外部 Agent 使用官方 SDK 完成发现、用户授权、提交、补问和结果回读，见 [A2A 完整接入](guides/a2a-agent.md)。
+
 缺失认证配置默认拒绝。开发 Bearer 令牌只用于 loopback；会员使用受信发行者的 OAuth 身份。会员资格、令牌 scope、具体来源连接和准确业务许可都不能相互替代。令牌不得放入目标文本、模型参数或日志。
 
 ## 任务接口
