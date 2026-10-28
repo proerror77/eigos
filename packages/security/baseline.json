@@ -2746,12 +2746,12 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "9c9217045de8d723dc3de9ec09f5bd2c6faef1036d736e34e98bc9926650b5e3",
+      "sourceDigest": "5c09efe40cfda582e7b3d7680551b654ec515a2e6131ddf8046a627b0e2a6299",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority",
+      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
@@ -2770,12 +2770,12 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "1a6145c90be237d0396443cdf9becaae8cbfa5bb6d5861c672557fcd04d31c76",
+      "sourceDigest": "42e3266c6a1da1aa5781d7bb7e05251af2ac7b85eeeadb36d0a34b8ea9764373",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Foundation v2 safe metadata and current read/replay checks; no raw Job delegation",
+      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
@@ -2870,12 +2870,12 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "2f4ca7d3a0a95c87c3c24d3add21a627de09fc995df6e3d6126609c37aaf92ff",
+      "sourceDigest": "fddc6e06c86f44d7d1f4d3ce33aff74ccfcc772cb572fd82ba3cb9916277b340",
       "channels": [
         "http"
       ],
       "content": "Registration status, binding and revoke",
-      "currentControl": "Existing installation binding and revocation; S4 task-grant readiness metadata",
+      "currentControl": "Existing installation binding and revocation; S5 readiness and canonical permission-page discovery never self-issue data or source grants",
       "targetControl": "No self-issued data grant; coordinate revoke",
       "stage": "S1"
     },
@@ -3537,14 +3537,26 @@
       "stage": "S5"
     },
     {
+      "id": "s5-packages-agent-client-a2a",
+      "file": "packages/agent-client/a2a.ts",
+      "sourceDigest": "d8edb71670959829bfa8428f3fd414525f23b538ae52768e43747a818d701cf8",
+      "channels": [
+        "PA client"
+      ],
+      "content": "Public official-SDK Agent Card discovery and eligible A2A interface selection",
+      "currentControl": "Credential-free discovery rejects redirects and non-HTTPS origins; only same-origin A2A 1.0 JSON-RPC is eligible for later authenticated calls",
+      "targetControl": "Keep discovery separate from installation credentials and restrict the SDK to the verified interface",
+      "stage": "S5"
+    },
+    {
       "id": "s5-packages-agent-client-client",
       "file": "packages/agent-client/client.ts",
-      "sourceDigest": "58a16bf57af069bd212203c97dc40a1f804ae0d5d6bd6086dda756f22e8a1de3",
+      "sourceDigest": "1f2d7c401ccaed8d0a830d673f2745858b039511c46812e3f593f259d684fba6",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "currentControl": "Official A2A SDK uses the existing installation-bound rotating OAuth flow; same-origin endpoint and onboarding issuer are pinned, task POSTs are not automatically replayed",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
