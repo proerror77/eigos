@@ -10,7 +10,9 @@ const key=(ref:ObjectRef)=>JSON.stringify([ref.type,ref.id]);
 /** Recompute membership from the current request's exact specification/context.
  * No source-backed business object enters through this task metadata path. */
 export function taskContextMembers(db:DatabaseSync,owner:string,taskId:string,revision:number):Map<string,ObjectRef> {
- const types=Object.keys(taskContextFields), rows=db.prepare(`SELECT type,id,body FROM ontology_objects WHERE owner=? AND type IN (${types.map(()=>'?').join(',')}) AND (json_extract(body,'$.source.kind')='task' AND json_extract(body,'$.source.id')=? OR type='RegisteredCapability' AND EXISTS(SELECT 1 FROM ontology_links l WHERE l.owner=ontology_objects.owner AND l.type='CapabilityRequest' AND l.from_type=ontology_objects.type AND l.from_id=ontology_objects.id AND l.to_type='ServiceRequest' AND l.to_id=?)) LIMIT 2001`).all(owner,...types,taskId,taskId);
+ // A card's first writer is provenance, not current discovery membership.
+ // Even cards originally written by this task need its current exact link.
+ const types=Object.keys(taskContextFields), rows=db.prepare(`SELECT type,id,body FROM ontology_objects WHERE owner=? AND type IN (${types.map(()=>'?').join(',')}) AND (type<>'RegisteredCapability' AND json_extract(body,'$.source.kind')='task' AND json_extract(body,'$.source.id')=? OR type='RegisteredCapability' AND EXISTS(SELECT 1 FROM ontology_links l WHERE l.owner=ontology_objects.owner AND l.type='CapabilityRequest' AND l.from_type=ontology_objects.type AND l.from_id=ontology_objects.id AND l.to_type='ServiceRequest' AND l.to_id=?)) LIMIT 2001`).all(owner,...types,taskId,taskId);
  if(rows.length>2000)throw new SecurityError('INSUFFICIENT_ACCESS');
  const candidates=new Map<string,{ref:ObjectRef;properties:Record<string,unknown>}>();
  for(const row of rows) {

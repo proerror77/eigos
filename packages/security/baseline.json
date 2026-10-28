@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "451bdea4a2719128c34721c16a3e4592ad4b32a6220a13603dfb3758657f06d1",
+      "sourceDigest": "d8a8c711c06d5ed801b8a0682c7755d637459291c6b2d8e08ae65b3d259476e7",
       "channels": [
         "sqlite",
         "idempotency"
@@ -4029,7 +4029,7 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "2849b0c1612abdedad1d7db74c6874c40ed0726732f00996fbab0f0e7dd2f03e",
+      "sourceDigest": "6ba7a88f30b5169774f2f212d681b47d89a506d6c05234797c76a1becfc839b2",
       "channels": [
         "model",
         "artifact"
