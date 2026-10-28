@@ -3249,7 +3249,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "34c24601b42f1af05f066088f57ac4b570e1f36aacdeed584698858ac857abb8",
+      "sourceDigest": "947fced35086a8b037faa210ee31cfa7eebb8e34f19727c59283cbe3d3e26957",
       "channels": [
         "authorization_control"
       ],
@@ -3285,7 +3285,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "681652f1e4894abd9290ed3370ea133b42ad1ff09bb8a1f86690ac5dc1845ba7",
+      "sourceDigest": "3ae96f93aea1f26ddbb2bc49b139b34021bdf5521073525ebe744bfd62c97f92",
       "channels": [
         "internal"
       ],
@@ -3333,12 +3333,12 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "e1fbb51c9cdc3666f6ba2f5c298a7b1873e39ce022b36ac28a9a7369e79e06c1",
+      "sourceDigest": "8d453a6fb35b5053933df80c10627400d09d61b17fcf220ecb87dbca8561de6b",
       "channels": [
         "all-reads"
       ],
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations",
+      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
