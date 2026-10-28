@@ -110,7 +110,7 @@ test('synchronous progress keeps a second model-waiting claim alive without rene
   const a = f.installation('Synchronous task'), b = f.installation('Waiting task');
   f.approve(a.id); f.approve(b.id);
   const heavy = f.task(a.id), waiting = f.task(b.id);
-  const worker = new Worker(f.jobs, { leaseMs: 30000, pollMs: 60000, coordinator: {
+  const worker = new Worker(f.jobs, { leaseMs: 30000, pollMs: 60000, timeoutMs: 50000, coordinator: {
     run: async (claim, signal) => new Promise<void>(resolve => {
       active.set(claim.job.id, { claim, signal, progress: authorizationScope()!.assertCurrent, release: resolve });
     }),
@@ -128,6 +128,9 @@ test('synchronous progress keeps a second model-waiting claim alive without rene
     clock = started + 48000; busy.progress();
     assert.equal(idle.signal.aborted, true); assert.equal(f.jobs.claimActive(idle.claim), false);
     assert.equal(busy.signal.aborted, false); assert.equal(f.jobs.claimActive(busy.claim), true);
+    clock = started + 51000;
+    assert.throws(busy.progress, /lease/i, 'Synchronous progress must also enforce the original execution timeout before its timer can run');
+    assert.equal(busy.signal.aborted, true);
     clock = started + 79000;
     assert.throws(busy.progress, /ACCESS_REVOKED|lease/i);
     assert.equal(f.jobs.renew(busy.claim, 30000), false);

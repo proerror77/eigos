@@ -81,18 +81,20 @@ export class Worker {
     let scope:AuthorizationScope|undefined;
     const run: RunningWork = { controller, done: Promise.resolve() };
     const inScope = <T>(action: () => T): T => scope ? withAuthorization(scope, action) : action();
+    const timeoutMs = this.options.timeoutMs ?? 300000;
+    const executionDeadline = Date.now() + timeoutMs;
     let renewAt = Date.now() + Math.floor(this.leaseMs / 3);
     const renew = () => {
       if (!this.store.renew(claim, this.leaseMs)) return false;
       renewAt = Date.now() + Math.floor(this.leaseMs / 3); return true;
     };
-    run.renewIfDue = () => Date.now() < renewAt || renew();
+    run.renewIfDue = () => !controller.signal.aborted && Date.now() < executionDeadline && (Date.now() < renewAt || renew());
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
       try { scope?.assertCurrent(); if (!renew()) controller.abort(); }
       catch { controller.abort(); }
     }, Math.min(this.pollMs, Math.floor(this.leaseMs / 3)));
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 300000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     run.done = Promise.resolve().then(async () => {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
       scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
