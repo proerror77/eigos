@@ -111,3 +111,14 @@ test('primary health still rejects an oversized response', async () => {
     await assert.rejects(readPrimaryHealth(port, 'primary.example'), /exceeds its bound/);
   });
 });
+
+test('a configured Relay cannot silently disappear from an otherwise healthy deployment', async () => {
+  for (const taskRelay of [undefined, {status:'unavailable'}]) {
+    await withServer((_request,response)=>response.end(JSON.stringify({status:'ok',...expected,...(taskRelay?{taskRelay}:{})})), async port=>{
+      await assert.rejects(waitForPrimaryHealth(port,'primary.example',{...expected,taskRelay:'connected'},{timeoutMs:150,requestTimeoutMs:100,retryDelayMs:150}),/Configured Task Relay is not connected/);
+    });
+  }
+  await withServer((_request,response)=>response.end(JSON.stringify({status:'ok',...expected,taskRelay:{status:'connected'}})),async port=>{
+    assert.equal((await waitForPrimaryHealth(port,'primary.example',{...expected,taskRelay:'connected'})).status,'ok');
+  });
+});
