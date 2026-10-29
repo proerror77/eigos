@@ -5,8 +5,37 @@ import { POLICY_VERSION, SECURITY_CONTRACT, securityDefaults } from './contracts
 import { SecurityError, type TaskDataGrant } from './store.js';
 import { withAuthorization,authorizationScope } from './context.js';
 import {z} from 'zod';
-import {objectRefSchema} from '../ontology/model.js';
+import {objectRefSchema,type ObjectRef} from '../ontology/model.js';
 import {projectionFields} from './projections.js';
+
+const evidenceMetadata=z.object({securityEvidenceRefs:z.array(objectRefSchema).max(20).optional()});
+const goalResult=z.object({version:z.literal('1'),goalDigest:z.string().regex(/^[a-f0-9]{64}$/),components:z.array(z.object({
+  contextId:z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/),status:z.enum(['verified','unverified']),artifact:z.unknown().optional(),
+})).max(16)});
+const componentArtifact=z.object({data:z.object({execution:z.literal('completed'),result:evidenceMetadata.optional()})});
+const partialGoalResult=z.object({version:z.literal('1'),goalDigest:z.string().regex(/^[a-f0-9]{64}$/),accepted:z.literal(false),
+  observedResults:z.array(z.object({object:objectRefSchema,currentObjectUnavailable:z.boolean().optional()})).max(12)});
+
+/** Read only reviewed reference slots from the sealed delivery. Child payloads
+ * are never public data; every extracted ref still passes the current graph ACL. */
+function deliveryEvidence(artifact:NonNullable<Job['artifact']>):ObjectRef[]|undefined {
+  const metadata=evidenceMetadata.safeParse(artifact.data.result??{});
+  if(!metadata.success)return;
+  const refs=[...(metadata.data.securityEvidenceRefs??[])];
+  if(artifact.name==='goal-result.json') {
+    const result=goalResult.safeParse(artifact.data.result);if(!result.success)return;
+    for(const component of result.data.components) {
+      if(component.status!=='verified')continue;
+      const child=componentArtifact.safeParse(component.artifact);if(!child.success)return;
+      refs.push(...(child.data.data.result?.securityEvidenceRefs??[]));
+    }
+  } else if(artifact.name==='partial-goal-result.json') {
+    const result=partialGoalResult.safeParse(artifact.data.result);if(!result.success)return;
+    refs.push(...result.data.observedResults.filter(item=>!item.currentObjectUnavailable).map(item=>item.object));
+  }
+  const unique=[...new Map(refs.map(ref=>[JSON.stringify(ref),ref])).values()];
+  return unique.length<=20?unique:undefined;
+}
 
 /** Strict construction, never a spread of Job/delegation/RunEvidence. */
 export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'state' | 'goal' | 'messages' | 'createdAt' | 'updatedAt'> {
@@ -126,9 +155,9 @@ export class TaskSecurity {
         // Arbitrary result payloads and provider locators have no public contract.
         // Text deliverables are sealed and delivered through the same lineage check.
         const markdown=job.artifact.data.markdown;
-        if (allowed('artifact',job.artifact)) {
-          const metadata=z.object({securityEvidenceRefs:z.array(objectRefSchema).max(20).optional()}).safeParse(job.artifact.data.result);
-          const observations=(metadata.success?metadata.data.securityEvidenceRefs??[]:[]).map(ref=>{const object=graph.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field)))};});
+        const refs=allowed('artifact',job.artifact)?deliveryEvidence(job.artifact):undefined;
+        if (refs) {
+          const observations=refs.map(ref=>{const object=graph.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field)))};});
           if(observations.length)security.policies.requireRecipient(scope,security.policies.outputEnvelope(actor.ownerKey),'agent_response');
           base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof markdown==='string'?{markdown}:{}),goal:job.artifact.data.goal,deliverable:job.artifact.data.deliverable,execution:job.artifact.data.execution,...(observations.length?{result:{observations}}:{})}};
           if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;

@@ -12,6 +12,57 @@ import {TaskService} from '../packages/core/tasks.js';
 import {currentKernelImplementation} from '../packages/ontology/definition-store.js';
 const businessModel=currentKernelImplementation();
 import {securityDefaults} from '../packages/security/contracts.js';
+import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
+import {taskContextFields} from '../packages/security/task-context-contract.js';
+import {securedDidiReasoner,runNativeDidiTask} from './fixtures/secured-didi.js';
+import {Coordinator} from '../packages/coordinator/coordinator.js';
+import {didiBusinessViewSchema} from '../packages/security/projections.js';
+
+test('HTTP, MCP and A2A return the same sealed native goal observations for the original task',{timeout:300000},async t=>{
+  // Field/authority semantics use a controlled clock. CI CPU scheduling must
+  // not expire the fixture's Gateway eligibility lease mid-synchronous read.
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});
+  let configured:DidiAgentProgram|undefined;
+  const source=didiFixture({booking:true}),f=await securityGatewayFixture((store,p)=>{
+    const program=new DidiAgentProgram(source.binding,{connector:source.connector});bindPersonalSourceOwner(program,ownerKey(p));
+    configured=program;
+    return new ExecutionCatalog([program.capability()],[],[],[],[program],undefined,store.security);
+  }),a=f.install(),client=new Client({name:'goal-readback',version:'1'});
+  try {
+    assert(configured);const program=configured,store=f.gateway.store,owner=ownerKey(f.p),policy=store.security.policies;
+    const profile=f.gateway.catalog.securityProfiles(owner)[0]!,until=new Date(Date.now()+3600000).toISOString(),channels=['agent_response','registered_model'];
+    const resources=[...new Set(['ServiceRequest',...profile.outputTypes,...Object.keys(taskContextFields)])].map(type=>({type,fields:Object.keys(policy.fields(type)).filter(field=>policy.fieldPolicy(type,field)!=='internal_only')}));
+    f.gateway.security!.approveAgentGrant(f.member.id,{installationId:a.id,capabilityIds:[program.ref.id],resources,sourceBindingIds:[profile.bindingId],channels,expiresAt:until});
+    policy.setRole({subjectKind:'installation',subjectId:a.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',executeActions:program.actionIds,invokeFunctions:policy.model.definitionSnapshot().functions.map(fn=>fn.id),expiresAt:until},policy.revision());
+    const markings=['member_private','personal_data','precise_location','financial','account_private'];
+    policy.setRecipient(a.id,{classification:'sensitive',markings,channels,expiresAt:until},policy.revision());
+    policy.setModelChannel('synthetic-didi',{classification:'sensitive',markings,expiresAt:until},policy.revision());
+    policy.setSource(owner,{installationId:a.id,bindingId:profile.bindingId,programId:program.ref.id,programDigest:program.configurationDigest,operations:program.actionIds,outputTypes:profile.outputTypes,expiresAt:until},policy.revision());
+    const headers={authorization:`Bearer ${a.token}`};
+    await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers}}));
+    const created=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'查询北京西站到西二旗地铁站的预估车费，不叫车、不付款',executionEnvironment:'sandbox'},headers),id=created.value.id as string;
+    assert.equal(created.status,200);
+    const {reasoner}=securedDidiReasoner(program,'native-goal'),coordinator=new Coordinator(store,reasoner,f.gateway.catalog,{allowSandbox:true});
+    await runNativeDidiTask(store,coordinator,owner,id,t.signal,()=>t.mock.timers.tick(20));
+    const done=store.get(owner,id);assert.equal(done.state,'completed',JSON.stringify({state:done.state,error:done.error,recovery:done.delegation?.recovery,feedback:done.delegation?.agent?.feedback,intents:store.intents(owner,id).map(intent=>({state:intent.state,result:intent.lastResult?.message}))}));assert.equal(done.delegation!.agent!.programRef.id,'eigos.goal');
+    assert.deepEqual(source.calls.filter(call=>call.name).map(call=>call.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
+    const queried=await f.post('/ontology/query',{version:2,taskId:id,query:{type:'RideEstimateObservation'}},headers);assert.equal(queried.status,200);
+    const expected=didiBusinessViewSchema.parse(queried.value.items[0].properties.observedData);assert.equal(expected.data.kind,'estimate');
+    const http=await fetch(f.base+'/tasks/'+id,{headers}).then(r=>r.json());
+    const mcp=await client.callTool({name:'get_task',arguments:{taskId:id}});assert(!mcp.isError);
+    const rpc=await f.post('/a2a',{jsonrpc:'2.0',id:randomUUID(),method:'GetTask',params:{id}},headers);assert.equal(rpc.status,200);
+    const native=(mcp.structuredContent as {result:{artifact:{data:unknown}}}).result.artifact.data;
+    const a2a=rpc.value.result.artifacts[0].parts[0].data;
+    assert.deepEqual(native,http.artifact.data);assert.deepEqual(a2a,http.artifact.data);
+    for(const data of [http.artifact.data,native,a2a] as {result:{observations:{properties:{observedData:unknown}}[]}}[]) {
+      const actual=didiBusinessViewSchema.parse(data.result.observations[0]!.properties.observedData);assert.deepEqual(actual,expected);
+      assert.equal(actual.data.kind,'estimate');assert(actual.data.kind==='estimate');
+      assert.equal(actual.data.items[0]!.productName,'快车');assert.equal(actual.data.items[0]!.estimatedMoney?.currency,'CNY');assert.equal(actual.data.items[0]!.estimatedMoney?.minor,'7305');
+      assert.equal(actual.observedAt,expected.observedAt);assert.equal(actual.expiresAt,expected.expiresAt);assert.equal(Date.parse(actual.expiresAt)-Date.parse(actual.observedAt)<=300000,true);assert.equal(actual.noBusinessWrites,true);
+    }
+    for(const result of [http,mcp,rpc.value])for(const hidden of ['"snapshot":','"components":','PRIVATE_TRACE_NEVER_TO_MODEL','didiAnswer'])assert(!JSON.stringify(result).includes(hidden));
+  }finally{await client.close();await f.close();source.close();}
+});
 
 test('foundation health becomes unavailable when its authorization publisher stops',async()=>{
   const f=await securityGatewayFixture();
