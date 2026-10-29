@@ -14,6 +14,7 @@ import { SECURITY_CONTRACT,POLICY_VERSION } from '../packages/security/contracts
 import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import {JobStore} from '../packages/core/store.js';
+import type {Job} from '../packages/core/domain.js';
 
 function fixture(now:()=>number=Date.now) {
   const f=securityFixture(now),a=f.installation('A'),b=f.installation('B'),policy=f.jobs.security.policies,until=new Date(Date.now()+3600000).toISOString();
@@ -25,16 +26,63 @@ function fixture(now:()=>number=Date.now) {
   const principal=(install:typeof a,scopes=f.principal.scopes)=>({...f.principal,scopes,access:f.coordinator.authenticate({...f.principal,scopes},install.token)});
   const pa=principal(a),pb=principal(b),tasks=new TaskService(f.jobs,{catalog:new ExecutionCatalog([],[],[]),waitTimeoutMs:500});
   function claim(id:string) {const claim=f.jobs.claim(['eigos.delegate'],10000)!;assert.equal(claim.job.id,id);return {claim,scope:f.jobs.security.workerScope(f.owner,id,claim.securityAuthorityId!,claim.token)};}
-  function publish(id:string) {
+  function publish(id:string,artifact?:NonNullable<Job['artifact']>) {
     const work=claim(id);
     withAuthorization(work.scope,()=>{
       secureRequest(f.jobs.ontology,f.owner,f.jobs.get(f.owner,id).delegation!.request);
-      assert.equal(f.jobs.finish(work.claim,job=>{job.state='completed';job.question='A scoped question';job.artifact={id:randomUUID(),name:'Result',data:{goal:job.goal,deliverable:'report',execution:'completed',markdown:'Scoped report',result:{privatePayload:'PRIVATE_RESULT'}}};job.delegation!.events.push({at:new Date().toISOString(),event:'PRIVATE_LEDGER'});}),true);
+      assert.equal(f.jobs.finish(work.claim,job=>{job.state='completed';job.question='A scoped question';job.artifact=artifact??{id:randomUUID(),name:'Result',data:{goal:job.goal,deliverable:'report',execution:'completed',markdown:'Scoped report',result:{privatePayload:'PRIVATE_RESULT'}}};job.delegation!.events.push({at:new Date().toISOString(),event:'PRIVATE_LEDGER'});}),true);
     });
     return work;
   }
   return {...f,a,b,pa,pb,policy,until,principal,tasks,claim,publish};
 }
+
+test('sealed native goal delivery extracts only bounded verified typed references and never child payloads',()=>{
+  const f=fixture();try {
+    const task=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:randomUUID(),goal:'Scoped goal result'}),ref={type:'ServiceRequest',id:task.id};
+    const child={data:{execution:'completed',result:{securityEvidenceRefs:[ref,ref],privatePayload:'PRIVATE_CHILD'}}};
+    const artifact:NonNullable<Job['artifact']>={id:randomUUID(),name:'goal-result.json',data:{goal:task.goal,deliverable:'Verified goal',execution:'completed',result:{version:'1',goalDigest:'a'.repeat(64),securityEvidenceRefs:[ref],components:[
+      {contextId:'verified',status:'verified',artifact:child},
+      {contextId:'unverified',status:'unverified',artifact:{data:{result:{securityEvidenceRefs:[{type:'ServiceRequest',id:'another-task'}]}}}},
+    ],privateNested:{securityEvidenceRefs:[{type:'ServiceRequest',id:'not-a-reviewed-slot'}]}}}};
+    f.publish(task.id,artifact);
+    const result=f.tasks.get(f.pa,task.id),observations=(result.artifact!.data.result as {observations:{ref:unknown}[]}).observations;
+    assert.deepEqual(observations.map(value=>value.ref),[ref]);assert(!JSON.stringify(result).includes('PRIVATE_'));assert(!JSON.stringify(result).includes('components'));
+    assert.throws(()=>f.tasks.get(f.pb,task.id),/AUTHORIZATION_REQUIRED/);
+    const db=new DatabaseSync(f.database);try {
+      const job=f.jobs.get(f.owner,task.id);job.artifact!.data.deliverable='Tampered after sealing';
+      db.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(job),f.owner,task.id);
+      assert.equal(f.tasks.get(f.pa,task.id).artifact,undefined,'Reference extraction never bypasses the original artifact seal');
+    }finally{db.close();}
+  }finally{f.close();}
+});
+
+test('native delivery refuses malformed or oversized evidence without accepting a generic summary',()=>{
+  const f=fixture();try {
+    const cases=[
+      {components:[{contextId:'bad',status:'verified',artifact:{data:{execution:'completed',result:{securityEvidenceRefs:['receipt-id']}}}}]},
+      {components:Array.from({length:17},(_,i)=>({contextId:`c${i}`,status:'unverified'}))},
+      {components:[{contextId:'many',status:'verified',artifact:{data:{execution:'completed',result:{securityEvidenceRefs:Array.from({length:20},(_,i)=>({type:'ServiceRequest',id:`ref-${i}`}))}}}}],securityEvidenceRefs:[{type:'ServiceRequest',id:'ref-20'}]},
+    ];
+    for(const value of cases) {
+      const task=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:randomUUID(),goal:'Bounded result'});
+      f.publish(task.id,{id:randomUUID(),name:'goal-result.json',data:{goal:task.goal,deliverable:'Summary is not evidence',execution:'completed',result:{version:'1',goalDigest:'a'.repeat(64),...value}}});
+      const view=f.tasks.get(f.pa,task.id);assert.equal(view.artifact,undefined);assert.equal('outputStatus' in view?view.outputStatus:undefined,'restricted');assert(!('accepted' in view));
+    }
+  }finally{f.close();}
+});
+
+test('sealed partial goal observations remain task-bound and do not imply whole-goal acceptance',()=>{
+  const f=fixture();try {
+    const task=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:randomUUID(),goal:'Partial source result'}),ref={type:'ServiceRequest',id:task.id};
+    f.publish(task.id,{id:randomUUID(),name:'partial-goal-result.json',data:{goal:task.goal,deliverable:'Partial observation',execution:'partial',result:{version:'1',goalDigest:'a'.repeat(64),accepted:false,observedResults:[{object:ref,properties:{privatePayload:'PRIVATE_SNAPSHOT'}},{object:{type:'ServiceRequest',id:'unavailable'},currentObjectUnavailable:true}]}}});
+    const view=f.tasks.get(f.pa,task.id);assert.equal(view.artifact!.data.execution,'partial');assert(!('accepted' in view));
+    assert.deepEqual((view.artifact!.data.result as {observations:{ref:unknown}[]}).observations.map(item=>item.ref),[ref]);assert(!JSON.stringify(view).includes('PRIVATE_'));
+    const other=f.tasks.submit(f.pa,{service:'eigos.delegate',requestId:randomUUID(),goal:'Different task'});
+    f.publish(other.id,{id:randomUUID(),name:'goal-result.json',data:{goal:other.goal,deliverable:'Cross-task ref',execution:'completed',result:{version:'1',goalDigest:'a'.repeat(64),components:[{contextId:'wrong',status:'verified',artifact:{data:{execution:'completed',result:{securityEvidenceRefs:[ref]}}}}]}}});
+    assert.throws(()=>f.tasks.get(f.pa,other.id),/AUTHORIZATION_REQUIRED|not available/);
+  }finally{f.close();}
+});
 
 test('TaskView shares one bounded authorization read while retaining output lineage checks',()=>{
   let now=Date.now();const f=fixture(()=>now);try {
