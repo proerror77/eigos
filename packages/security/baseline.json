@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8385f48ce49e12cf91e2225296dfab142f47d9db0ecae225896d220d5efb4372",
+      "sourceDigest": "3a807fa57935ec2e1975a4ad1c1b6fb2f653cb444dace5c8a9a6db19b5f35462",
       "channels": [
         "model",
         "dispatch"
@@ -3465,7 +3465,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "dfe2b1445b557a2302b45f9be99292387ee19354e7fd4245867e78831408a94f",
+      "sourceDigest": "bcf1015644b56e5ea7b0db109c487a6fa8aab627723e7cd5d386031bbb4f8b4f",
       "channels": [
         "model"
       ],
@@ -4067,7 +4067,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "fbfb0f7c4e124e452da454a075b366668e838fd1b788ecd3316449cffac3c7a0",
+      "sourceDigest": "22842c21595903232d81a8f6497f185f43e0da9ea69f1d585f5cae1370ab297a",
       "channels": [
         "model"
       ],
