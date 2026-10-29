@@ -17,7 +17,9 @@ const expiry=(member:Member,value:unknown)=>new Intl.DateTimeFormat(member.local
 const serviceNames:Record<string,string>={
   'brief.prepare.atomic':'整理任务说明','document.compose':'生成文档','ride.estimate.query':'地点与出行估价',
   'geo.search':'查询公开地点','address.book.read':'读取已保存地址','delivery.quote':'同城配送估价',
-  'services.compose.live':'组合处理多个服务',
+  'services.compose.live':'组合处理多个服务','services.compose.sandbox':'组合处理多个服务',
+  'booking.participant.free':'活动与预约','commerce.catalog.query':'查询与比较公开商品',
+  'commerce.journey.sandbox':'交易与配送演练（测试服务）','ride.order.test':'叫车下单演练（测试服务）',
 };
 const operationNames:Record<string,string>={
   PrepareTaskBrief:'整理任务说明',ComposeDocument:'生成有来源的文档',SearchDidiPlaces:'查询出发地和目的地',EstimateDidiRide:'查询车型与预估价',
