@@ -53,6 +53,14 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
           .properties.originalGoal,
         'Prepare a synthetic task brief',
       );
+      const before = store.definitions.namespace();
+      assert.throws(() => store.definitions.installRollingGoReadonly(before.active, before.generation + 1), /changed/);
+      const installed = store.definitions.installRollingGoReadonly(before.active, before.generation);
+      assert.equal(installed.generation, before.generation + 1);
+      assert.equal(store.definitions.active().model.action('SearchRollingGoHotels').read?.effect, 'read');
+      assert.deepEqual(store.definitions.installRollingGoReadonly(installed.active, installed.generation), installed);
+      assert.deepEqual(store.get(fixture.owner, fixture.taskId).delegation!.ontologyRelease, fixture.release);
+      assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
       assert.equal(store.definitions.legacy().model.ref.version, '15');
       assert.equal(CURRENT_KERNEL_VERSION, '23');
     } finally {

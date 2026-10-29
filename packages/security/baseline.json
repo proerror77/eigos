@@ -3971,7 +3971,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "07f6c85cff849087f747b13be845f6a55673bf9b86ffd3ec34c32b3abb79d694",
+      "sourceDigest": "4ca4fc52d4b4adb7effdbff562ca3b79a7aa8ad265799d6dc772dc62437d3301",
       "channels": [
         "model",
         "artifact"
@@ -4402,6 +4402,18 @@
       "content": "Private hotel search criteria, reference prices and task-bound source observations",
       "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
       "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-definition-installer",
+      "file": "scripts/install-rollinggo-readonly.mjs",
+      "sourceDigest": "56c4d47959d4a780b2f14d578c2d3ca741424fc37a39f5a1d7391fb67e4cc1e3",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Additive RollingGo metadata publication and activation; no credentials or business effects",
+      "currentControl": "Owned private database, existing runtime authority, expected release digest and generation",
+      "targetControl": "Explicit operator deployment authority; existing facts, task pins and source permissions preserved",
       "stage": "S4"
     }
   ]
