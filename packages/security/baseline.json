@@ -3189,7 +3189,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "0cb050dfca4732365204afd18a07789e49e3bbdf584e7af91f7eef7f7b32388f",
+      "sourceDigest": "23f165f01582d170d6dc5280826f4d8d551f24b01adb7abb4e20d0d92b381364",
       "channels": [
         "authorization_control"
       ],
@@ -3273,7 +3273,7 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "3835caf2cf6f55bf34696bc921374dff05aac6fb2bf3cb5b8e3f321c4261160d",
+      "sourceDigest": "0ec16d8ab8bd667d2d6f0f904e7496f8c162e3a60c2a400536872b0f978c7b53",
       "channels": [
         "member-ui"
       ],
