@@ -2939,7 +2939,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "32e3ac5a8ffe332c29a7452b79116c78a2a29a95930b0e090d393661c279bd87",
+      "sourceDigest": "4ce29dae9439e29b6d6e84115a29e18305e00a2e5f7369a542cb6f411c90f2b6",
       "channels": [
         "model",
         "dispatch"
@@ -3182,7 +3182,7 @@
     {
       "id": "initial-selection",
       "file": "packages/coordinator/initial-selection.ts",
-      "sourceDigest": "814521188bee5d3802af07c60a8eb59eca69d4c45aa97ccfc2233915dd71133c",
+      "sourceDigest": "d5c7fd4c4d0733baa4f1f2366ce2b4d6753e7547589ae78464ba0c54a5d7463e",
       "channels": [
         "model",
         "dispatch",
@@ -3438,7 +3438,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "1baafb758f92b8bcd68b5b3513faa66b10c37752ea4b51737e20a6d2d7031726",
+      "sourceDigest": "2fdf947c4674c2b1413ab7e9fabc86562266d4076d7f0ee05b6fe9bc4a6b41ae",
       "channels": [
         "worker"
       ],
@@ -3825,7 +3825,7 @@
     {
       "id": "agent-action-binding",
       "file": "packages/core/agent-action-binding.ts",
-      "sourceDigest": "ed7bbb482f8894d9568c9c15deae2d3883598c5cecc611b39baece8a1d057c43",
+      "sourceDigest": "23d00a8755dd5ac1a50664952cd157d55f91c7c422d6950be84ee10c6e7971e1",
       "channels": [
         "model",
         "artifact"
