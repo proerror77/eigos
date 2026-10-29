@@ -2919,7 +2919,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8385f48ce49e12cf91e2225296dfab142f47d9db0ecae225896d220d5efb4372",
+      "sourceDigest": "3a807fa57935ec2e1975a4ad1c1b6fb2f653cb444dace5c8a9a6db19b5f35462",
       "channels": [
         "model",
         "dispatch"
@@ -2932,7 +2932,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "3710f4e93ec2ee69f03c7389aed5c674976cfeaa8777aa02bd07084bdcd1e841",
+      "sourceDigest": "f9f463265f197ae7b3c9c4eb21d28c0e900cf788f7ce884aba881e78504fedef",
       "channels": [
         "model",
         "dispatch",
