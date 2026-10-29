@@ -63,6 +63,7 @@ test('brief and actual CSV audit compose with exact simulated approval and froze
     assert.equal(waiting.state, 'auth-required', JSON.stringify(waiting.delegation?.agent?.feedback));
     const summary = taskSummary(waiting), quote = summary.delegation!.plan!.quote!;
     assert.equal(quote.environment, 'local_simulation'); assert.equal(quote.amount.minor, '100');
+    assert.equal(quote.requestDigest, digest(waiting.delegation!.request), 'The original request, prepared graph and exact approval must use the same representation');
     assert(!JSON.stringify(t.store.ontology.query(owner, { type: 'CsvSnapshot' })).includes('base64'));
     const approval = { action: 'confirm_simulated_payment', requestId: randomUUID(), quoteId: quote.id, quoteDigest: quote.digest };
     assert.throws(() => t.b.tasks.authorize(principal, waiting.id, { ...approval, requestId: randomUUID(), quoteDigest: '0'.repeat(64) }), /Exact local/);
