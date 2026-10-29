@@ -127,7 +127,9 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const predecessor = createConsolidatedKernelDefinition(registry);
-  return complete(extendRollingGoKernel(extendTaskClosureKernel(predecessor.document, registry, BUSINESS_MODEL_DEFINITION), registry), registry, false);
+  const closure = complete(extendTaskClosureKernel(predecessor.document, registry, BUSINESS_MODEL_DEFINITION), registry, false);
+  if (closure.audit.model.digest !== 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4') throw new DomainError('CONFLICT', 'The original v22 kernel fingerprint changed');
+  return complete(extendRollingGoKernel(closure.document, registry), registry, false);
 }
 export function createProviderReadKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   const payment = createPAPaymentKernelDefinition(registry);

@@ -4,7 +4,7 @@
   "model": {
     "id": "eigos.business",
     "version": "23",
-    "digest": "eff6798f80bc07f3a9386c90b6356cf26ae28e6217013ef192c2d6a5a83cfe3c"
+    "digest": "2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127"
   },
   "types": {
     "ServiceRequest": {
@@ -3365,7 +3365,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "9a6dff872e51dfacf01b846e9de43d102be9973b1ce4e04c018a9203c69cdc1b",
+      "sourceDigest": "9b8253a7643b2132433b8ecfa070517f3ad20f51e8f3057267e9a0761970648a",
       "channels": [
         "model-and-agent"
       ],

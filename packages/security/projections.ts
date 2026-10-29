@@ -1,3 +1,4 @@
+import { rollingGoObservationSchema } from '../ontology/rollinggo.js';
 import {compositionContractSchema} from '../ontology/composition-contract.js';
 import {requirementSchema} from '../ontology/execution.js';
 import {z} from 'zod';
@@ -52,6 +53,8 @@ const goalAssessmentView=z.object({version:z.literal('1'),goalDigest:z.string(),
 add(['ExecutionContext'],'goalAssessment',{schema:goalAssessmentView,inputs:['goalAssessment'],markings:['personal_data'],value:p=>goalAssessmentView.parse(p.goalAssessment)});
 const snapshotPaths=['data','route','observedAt','expiresAt','evidenceKind','noBusinessWrites'];
 add(['DidiPlaceObservation','RideEstimateObservation'],'observedData',{schema:didiBusinessViewSchema,inputs:['snapshot'],markings:['precise_location','financial'],value:p=>didiBusinessViewSchema.parse(pick(p.snapshot,snapshotPaths))});
+const rollingGoView=rollingGoObservationSchema.pick({input:true,hotels:true,observedAt:true,expiresAt:true,evidenceKind:true}).extend({priceKind:z.literal('reference'),providerExpiry:z.literal('unknown'),noBusinessWrites:z.literal(true)});
+add(['RollingGoSearchObservation'],'observedData',{schema:rollingGoView,inputs:['snapshot'],markings:['precise_location','financial','account_private'],value:p=>rollingGoView.parse({...pick(p.snapshot,['input','hotels','observedAt','expiresAt','evidenceKind']),priceKind:'reference',providerExpiry:'unknown',noBusinessWrites:true})});
 const catalogView=catalogObservationSchema.pick({action:true,merchant:true,country:true,items:true,observedAt:true,expiresAt:true,evidenceKind:true,completeness:true,stockQuantity:true,deliveryCommitment:true,partnerTrust:true,noBusinessWrites:true});
 add(['CatalogObservation','CatalogEndpoint'],'observedData',{schema:catalogView,inputs:['snapshot'],markings:['financial'],value:p=>catalogView.parse(pick(p.snapshot,Object.keys(catalogView.shape)))});
 const meituanView=z.strictObject({data:meituanSafeDataSchema,observedAt:time,expiresAt:time,noBusinessWrites:z.literal(true)});
@@ -106,7 +109,7 @@ export function integrityField(type:string,field:string,allowed:string[]):boolea
   if(type==='ServiceComponentResult' && field==='output')return allowed.includes('observedData');
   return allowed.includes('observedData') && !!registry[type]?.observedData && ['snapshot','data'].includes(field) || type==='MeituanReadTask' && field==='input' && allowed.includes('authorizedInput');
 }
-export const integrityFunctions=new Set(['rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);
+export const integrityFunctions=new Set(['rollingGoSearchStatus','rideEstimateStatus','selectDidiPlace','catalogObservationStatus','meituanReadStatus','registrationStatus','bookingObservationStatus','commerceObservationStatus','commerceJourneyStatus','shippingGateStatus','customsGateStatus']);
 /** Registered status functions may validate private source records internally;
  * their returned data uses the same field projection as ordinary queries. */
 export function projectFunctionValue(functionId:string,type:string,value:unknown):unknown {

@@ -12,6 +12,8 @@ Input includes `originQuery`, `place`, `placeType`, explicit future `checkInPara
 
 The model selects the read action from the published ontology. Execution pins the task revision, scope, account configuration and action attempt. The result is projected with a source receipt and must be read and evaluated before completion. The five-minute local freshness limit is not a provider price guarantee. Prices are source reference amounts, not confirmed availability or full checkout totals.
 
-For an existing published business database, publish and activate the current kernel using the established ontology migration process before enabling the capability. Gateway and Worker must use the same active release. Do not create a parallel production store.
+Under Foundation, authorize `RollingGoSearchObservation.observedData` and the `rollingGoSearchStatus` function for the task. The business view contains hotel facts, search criteria and observation times; the raw snapshot and execution bindings remain internal. Source, namespace, task, recipient and model-channel permissions still apply. The hotel search scope is a request input with managed/user origins, not a provider observation.
+
+For an existing published business database, publish and activate the current kernel using the established ontology migration process before enabling the capability. Gateway and Worker must use the same active release. Existing active v22 and task-pinned releases remain resolvable without enabling RollingGo or rewriting their metadata. Do not create a parallel production store.
 
 Official references: [Quick start](https://global.rollinggo.store/docs/mcp-docs/quick-start/), [tool reference](https://global.rollinggo.store/docs/mcp-docs/mcp-tool-reference/). The live international `tools/list` schema caps search results at 10 and uses lower-case place types; it takes precedence over older examples. Unit tests use synthetic source data.
