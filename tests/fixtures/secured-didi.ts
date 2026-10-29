@@ -9,9 +9,24 @@ import type {DidiData} from '../../packages/capabilities/didi/contracts.js';
 import type {ActionDiscoveryPage} from '../../packages/core/action-bindings.js';
 import {evidence,interpretation,syntheticGoalReview,observeTaskContext,acknowledgeReads} from '../backend-fixture.js';
 import {input as rideInput} from './didi.js';
+import {Worker} from '../../apps/worker/worker.js';
+import type {Coordinator} from '../../packages/coordinator/coordinator.js';
+import type {JobStore} from '../../packages/core/store.js';
+
+/** Real Worker ownership includes synchronous progress renewals and heartbeat.
+ * The test signal bounds waiting; production execution/authority limits apply. */
+export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal) {
+  const worker=new Worker(store,{coordinator,pollMs:20,leaseMs:10000});
+  try {
+    worker.start();
+    while(['submitted','working'].includes(store.get(owner,taskId).state)) {
+      signal.throwIfAborted();await new Promise(resolve=>setTimeout(resolve,20));
+    }
+  }finally{await worker.close();}
+}
 
 export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'native-goal') {
-  const modelInputs:string[]=[];let closed=0;
+  const modelInputs:string[]=[];let closed=0,turns=0;
   const reasoner:Reasoner={ontologyContextMode:mode==='native-goal'?'task':'primitives',securityChannelId:'synthetic-didi',reviewGoal:syntheticGoalReview,closeTask:async()=>{closed++;},ground:async(request,capabilities,_signal,access)=>{
     modelInputs.push(JSON.stringify({request,capabilities}));
     if(mode==='native-goal') {
@@ -22,6 +37,7 @@ export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'nati
     access.session.call('describe_ontology',{search:'ServiceRequest'});access.session.call('query_ontology',{object:{type:'ServiceRequest',id:request.id}});
     return {decision:{...interpretation(request,program.ref.id,rideInput),capabilityRef:program.ref},evidence:evidence()};
   },plan:async()=>{throw new Error('Agent program must keep model-selected actions');},act:async(ctx,_signal,access)=>{
+    if(mode==='native-goal')assert(++turns<=8,'The synthetic native goal exceeded its bounded decision count');
     modelInputs.push(JSON.stringify(ctx));
     const root=ctx;
     const pin=(actionId:string)=>(access.session.call('discover_actions',{actionId,programRef:program.ref}) as ActionDiscoveryPage).items[0]!.bindings[0]!.pin;
