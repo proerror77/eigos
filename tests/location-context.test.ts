@@ -17,6 +17,7 @@ import { backend, owner, principal, observeTaskContext, acknowledgeReads, eviden
 import { didiFixture, didiModel, chooseDidi, input, sourcePlace } from './fixtures/didi.js';
 import { componentContext } from '../packages/core/composed-actions.js';
 import { digest } from '../packages/core/delegation.js';
+import { currentInputs } from '../packages/core/current-inputs.js';
 import type { Reasoner } from '../packages/coordinator/coordinator.js';
 import type { AgentDecision } from '../packages/ontology/agent-actions.js';
 import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
@@ -59,9 +60,12 @@ test('PA address context is a current, owner-scoped Ontology fact before any mod
   } finally { store.close(); f.close(); }
 });
 
-test('the whole-goal Ontology planner consumes the address facts and verifies the original aliases in one task revision', async () => {
+for (const addsFacts of [false, true]) test(`the whole-goal Ontology planner reviews ${addsFacts ? 'new prepared facts again' : 'an unchanged route only once'} and verifies the original aliases`, async () => {
   const f = didiFixture({ booking: true }), store = new JobStore(':memory:'), catalog = createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector } });
   const program = catalog.agentProgram({ id: 'ride.estimate.query', version: '1' }, owner)!;
+  if (addsFacts) program.prepareRequest = request => ({ ...request, confirmedInputs: { ...request.confirmedInputs,
+    ride: currentInputs(request, text => text.includes('估价') ? [{ field: 'mode', status: 'confirmed', value: 'estimate', quote: '估价' }] : []),
+  } });
   const model: Reasoner = {
     ground: async (request, _caps, _signal, access) => {
       const read = observeTaskContext(access)!; assert.deepEqual(requestLocations(read), context);
@@ -92,6 +96,10 @@ test('the whole-goal Ontology planner consumes the address facts and verifies th
     for (let i = 0; i < 12 && ['submitted', 'working'].includes(done.state); i++) done = await b.run();
     assert.equal(done.state, 'completed', JSON.stringify({ error: done.error, grounding: done.delegation?.groundingFeedback, feedback: done.delegation?.agent?.feedback, assessment: { criteria: done.delegation?.agent?.composition?.assessment?.criteria, requirements: done.delegation?.agent?.composition?.assessment?.requirements } }));
     assert.equal(done.delegation!.agent!.programRef.id, 'eigos.goal'); assert.equal(done.delegation!.agent!.composition!.assessment!.accepted, true);
+    assert.equal(done.runs!.filter(run => run.purpose === 'goal_coverage').length, addsFacts ? 2 : 1, 'Only actual prepared fact changes require another independent goal review');
+    assert.equal(done.runs!.length, addsFacts ? 7 : 6, 'Grounding, independent review, preparation, two action decisions and completion all remain accounted for');
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 3);
+    assert.equal(!!done.delegation!.request.confirmedInputs?.ride, addsFacts);
     assert(done.delegation!.agent!.plans.every(plan => plan.version === '3' && plan.steps.every(step => step.binding?.programRef.id === program.ref.id)));
     assert.equal(done.delegation!.request.revision, 1); assert.equal(done.messages.filter(message => message.role === 'user').length, 1);
   } finally { store.close(); f.close(); }
