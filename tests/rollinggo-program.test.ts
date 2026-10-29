@@ -127,6 +127,7 @@ test('hotel search completes through the task model with source evidence and no 
             state: job.state,
             feedback: job.delegation?.groundingFeedback,
             events: job.delegation?.events,
+            actionFeedback: job.delegation?.agent?.feedback,
           }),
         );
         assert.equal(calls, 1);

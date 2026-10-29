@@ -76,7 +76,7 @@ export class RollingGoProgram implements AgentProgram {
       ontologyRef: { id: rollingGoModule.id, version: rollingGoModule.version },
       name: 'RollingGo 酒店搜索',
       description:
-        'Search hotels using explicit place, placeType, checkInParam (future checkInDate, stayNights, adultCount), localeParam (currency and language), originQuery and size. Preserve user dates, occupancy and currency; clarify missing criteria. Returns reference prices and hotel information only. Cannot book, order or pay.',
+        'Search hotels using explicit place, placeType, checkInParam (future checkInDate, stayNights, adultCount), localeParam (currency and language), originQuery and size. Preserve user dates, occupancy and currency; clarify missing criteria. Searches one room for adults only; additional rooms or children require another supported capability. Returns reference prices and hotel information only. Cannot book, order or pay.',
       tags: ['hotel', 'rollinggo', 'read-only'],
       environment: this.options.evidenceKind ? 'sandbox' : 'live',
       completion: 'artifact',

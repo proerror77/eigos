@@ -2,7 +2,10 @@
   "format": "eigos.ontology.mcp-reads.v1",
   "id": "rollinggo.hotel-search",
   "version": "1",
-  "completion": { "evaluate": "rollingGoSearchStatus", "planned": true },
+  "completion": {
+    "evaluate": "rollingGoSearchStatus",
+    "planned": true
+  },
   "actions": [
     {
       "id": "SearchRollingGoHotels",
@@ -12,15 +15,46 @@
         "server": "rollinggo",
         "tool": "searchHotels",
         "arguments": {
-          "originQuery": { "from": "scope", "path": ["originQuery"] },
-          "place": { "from": "scope", "path": ["place"] },
-          "placeType": { "from": "scope", "path": ["placeType"] },
-          "checkInParam": { "from": "scope", "path": ["checkInParam"] },
-          "localeParam": { "from": "scope", "path": ["localeParam"] },
-          "size": { "from": "scope", "path": ["size"] }
+          "originQuery": {
+            "from": "scope",
+            "path": [
+              "originQuery"
+            ]
+          },
+          "place": {
+            "from": "scope",
+            "path": [
+              "place"
+            ]
+          },
+          "placeType": {
+            "from": "scope",
+            "path": [
+              "placeType"
+            ]
+          },
+          "checkInParam": {
+            "from": "scope",
+            "path": [
+              "checkInParam"
+            ]
+          },
+          "localeParam": {
+            "from": "scope",
+            "path": [
+              "localeParam"
+            ]
+          },
+          "size": {
+            "from": "scope",
+            "path": [
+              "size"
+            ]
+          }
         },
         "requires": [],
-        "inputMatchesScope": []
+        "inputMatchesScope": [],
+        "encoding": "json"
       }
     }
   ]
