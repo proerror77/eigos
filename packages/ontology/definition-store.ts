@@ -201,6 +201,11 @@ export class DefinitionStore {
     return this.db.prepare('SELECT * FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId, ref.ontologyId, ref.digest)
       ?? this.db.prepare('SELECT r.* FROM ontology_definition_release_aliases a JOIN ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=? AND a.ontology_id=? AND a.digest=?').get(ref.releaseId, ref.ontologyId, ref.digest);
   }
+  private releaseModelDigest(ref: OntologyReleaseRef): unknown {
+    const row=this.db.prepare('SELECT model_digest FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId,ref.ontologyId,ref.digest)
+      ?? this.db.prepare('SELECT r.model_digest FROM ontology_definition_release_aliases a JOIN ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=? AND a.ontology_id=? AND a.digest=?').get(ref.releaseId,ref.ontologyId,ref.digest);
+    return row?.model_digest;
+  }
   /** Offline consolidation preserves original task pins, even when independent
    * registries assigned different IDs to byte-identical definitions. There is
    * one canonical content record; aliases never publish or activate a model. */
@@ -227,8 +232,7 @@ export class DefinitionStore {
     const ref = ontologyReleaseRefSchema.parse(input), key = JSON.stringify(ref);
     const cached = this.models.get(key);
     if (cached) {
-      const durable = this.releaseRecord(ref);
-      if (!durable || durable.model_digest !== cached.model.ref.digest) return conflict('The exact ontology release is unavailable');
+      if (this.releaseModelDigest(ref) !== cached.model.ref.digest) return conflict('The exact ontology release is unavailable');
       this.models.delete(key); this.models.set(key, cached);
       return cached;
     }

@@ -204,8 +204,12 @@ export class OntologyObjectStore {
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
-    this.guard()?.requireObject(owner, ref);
-    return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    const guard=this.guard();
+    const read=()=>{
+      guard?.requireObject(owner, ref);
+      return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    };
+    return guard ? guard.readSnapshot(read) : read();
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
@@ -540,7 +544,8 @@ export class OntologyObjectStore {
     }
     if (guard && scope) {
       guard.requireResource(scope, this.model.isInterface(target) ? 'interface' : 'objectType', target);
-      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property));
+      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property),
+        { types: this.model.concreteTypes(target), ...('object' in args ? { objectId: args.object.id } : {}) });
       sql += bound.sql; params.push(...bound.params);
     }
     const properties = this.properties(target);

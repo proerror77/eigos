@@ -116,6 +116,25 @@ test('draft CAS and publication retries are exact while stale active-base drafts
   } finally { store.close(); }
 });
 
+test('a cached immutable definition still detects a removed or changed durable release', () => {
+  const fixture=disk(),store=new JobStore(fixture.path),db=new DatabaseSync(fixture.path);
+  try {
+    const published=publishManagedFixture(store,owner,'cached.definition'),ref=published.release;
+    const cached=store.definitions.resolve(ref);
+    assert.equal(store.definitions.resolve(ref),cached);
+    // Simulate storage corruption on an isolated fixture; normal writes remain
+    // blocked by the immutable-history triggers.
+    db.exec('DROP TRIGGER ontology_definition_releases_immutable_update');
+    db.prepare('UPDATE ontology_definition_releases SET model_digest=? WHERE id=?').run('0'.repeat(64),ref.releaseId);
+    assert.throws(()=>store.definitions.resolve(ref),/exact ontology release is unavailable/);
+    db.prepare('UPDATE ontology_definition_releases SET model_digest=? WHERE id=?').run(cached.model.ref.digest,ref.releaseId);
+    assert.equal(store.definitions.resolve(ref),cached);
+    db.exec('DROP TRIGGER ontology_definition_releases_immutable_delete');
+    db.prepare('DELETE FROM ontology_definition_releases WHERE id=?').run(ref.releaseId);
+    assert.throws(()=>store.definitions.resolve(ref),/exact ontology release is unavailable/);
+  }finally{db.close();store.close();rmSync(fixture.directory,{recursive:true,force:true});}
+});
+
 test('separately published siblings cannot overwrite their changed parent and activation retry appends no event', () => {
   const store = new JobStore(':memory:');
   try {
