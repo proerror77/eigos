@@ -15,7 +15,7 @@ import { NativeModelTrace } from '../capabilities/native-model-timing.js';
 const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20), decisionJson: z.string().min(2).max(100000) }).strict();
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
   read_task_context: 'Read the current owned task, instructions, facts, execution state and bounded Ontology definitions once at the start of a decision. Reuse this successful receipt after paging read_task_instructions; paging does not change the context. Use focused queries for further facts. Repeating this full read consumes the same cumulative byte budget.',
-  read_task_instructions: 'Read remaining original instruction pages for this task. Preserve exact user facts and read all required pages before interpreting the goal.',
+  read_task_instructions: 'Read original instructions missing from read_task_context, following instructions.nextCursor. When instructions.complete is true, all exact instructions are already delivered; do not reread them unless an explicitly needed message is absent from the current model context.',
   describe_ontology: 'Discover registered types, relationships, functions and action schemas. Definitions grant no authority.',
   discover_actions: 'Discover current task-bound service actions, exact binding pins, context input schemas and completion contracts.',
   query_ontology: 'Read current task-owned objects or named relationships. Only authorized evidence can support decisions.',
