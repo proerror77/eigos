@@ -1,0 +1,27 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "rollinggo.hotel-search",
+  "version": "1",
+  "completion": { "evaluate": "rollingGoSearchStatus", "planned": true },
+  "actions": [
+    {
+      "id": "SearchRollingGoHotels",
+      "description": "Search hotels for the exact task dates, occupancy and currency. Results are reference prices only. No reservation, order or payment.",
+      "resultType": "RollingGoSearchObservation",
+      "mcp": {
+        "server": "rollinggo",
+        "tool": "searchHotels",
+        "arguments": {
+          "originQuery": { "from": "scope", "path": ["originQuery"] },
+          "place": { "from": "scope", "path": ["place"] },
+          "placeType": { "from": "scope", "path": ["placeType"] },
+          "checkInParam": { "from": "scope", "path": ["checkInParam"] },
+          "localeParam": { "from": "scope", "path": ["localeParam"] },
+          "size": { "from": "scope", "path": ["size"] }
+        },
+        "requires": [],
+        "inputMatchesScope": []
+      }
+    }
+  ]
+}
