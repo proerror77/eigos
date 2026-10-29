@@ -39,24 +39,33 @@ test(`replaced discovery remains usable only as existing lineage, without restor
    projectCapabilityCatalog(raw,f.owner,writerTaskId,original);
   }
   const claim=f.jobs.claim(['eigos.delegate'],30000)!,scope=f.jobs.security.workerScope(f.owner,task.id,claim.securityAuthorityId!,claim.token);
+  let observed:ReturnType<typeof policy.outputEnvelope>|undefined,replacement:{type:string;id:string}|undefined;
   withAuthorization(scope,()=>{
    const graph=f.jobs.ontologyForJob(f.owner,task.id);
    assert(f.jobs.checkpoint(claim,()=>f.jobs.projectCapabilities(f.owner,task.id,original)));
    const old=graph.related(f.owner,{type:'ServiceRequest',id:task.id},'capabilities',{remaining:16})![0]!.ref;
    assert.equal(db.prepare("SELECT json_extract(body,'$.source.id') AS writer FROM ontology_objects WHERE owner=? AND type=? AND id=?").get(f.owner,old.type,old.id)!.writer,writerTaskId);
    graph.read(f.owner,old); // Persist a real task-scoped metadata read.
+   observed=policy.outputEnvelope(f.owner);
    assert(f.jobs.checkpoint(claim,()=>f.jobs.projectCapabilities(f.owner,task.id,original.map(s=>({...s,description:s.description+' Updated synthetic description.'})))));
    assert.throws(()=>graph.read(f.owner,old),/not available|not found/i);
    const current=graph.related(f.owner,{type:'ServiceRequest',id:task.id},'capabilities',{remaining:16})!;
    assert.equal(current.length,1);assert.notEqual(current[0]!.ref.id,old.id);
+   replacement=current[0]!.ref;
    assert.deepEqual(graph.query(f.owner,{type:'RegisteredCapability',limit:10}).items.map(item=>item.ref),current.map(item=>item.ref),'Only the newly linked card remains in current discovery queries');
    assert.equal(readOntologyRequest(graph,f.owner,task.id).id,task.id);
    assert.equal(db.prepare("SELECT COUNT(*) AS n FROM ontology_links WHERE type='CapabilityRequest' AND from_id=? AND to_id=?").get(old.id,task.id)!.n,0);
    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,old.type,old.id)!.n,1,'The historical card remains available for dependency validation');
    policy.restrictObject({ownerKey:f.owner,object:old,expectedObjectRevision:1,classification:'sensitive',requiredMarkings:['account_private'],channels:['agent_response','registered_model']},policy.revision());
   });
-  // A fresh scope still applies the new label to the historical dependency.
-  f.jobs.security.withAgent(principal,task.id,'task.query',()=>assert.throws(()=>readOntologyRequest(f.jobs.ontologyForJob(f.owner,task.id),f.owner,task.id),/missing or ambiguous/));
+  // Historical inputs still constrain actual consumers, not a pre-existing
+  // owner instruction whose content did not originate from the later read.
+  f.jobs.security.withAgent(principal,task.id,'task.query',current=>{
+   const graph=f.jobs.ontologyForJob(f.owner,task.id);
+   assert.equal(readOntologyRequest(graph,f.owner,task.id).id,task.id);
+   assert.throws(()=>policy.validateLineage(current,observed!),/OUTPUT_NOT_ALLOWED/);
+   assert.throws(()=>graph.read(f.owner,replacement!),/not available|INSUFFICIENT_ACCESS|OUTPUT_NOT_ALLOWED/);
+  });
  }finally{db.close();manager?.close();f.close();}
 });
 

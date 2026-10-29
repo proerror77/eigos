@@ -13,6 +13,22 @@ import { securityFixture } from './fixtures/security.js';
 import {historicalAttempt} from './fixtures/security-ledger.js';
 import {authorizationScope} from '../packages/security/context.js';
 
+test('S1 subject eligibility reads one current database snapshot and never caches a prior allowance', t => {
+  const f=securityFixture();
+  try {
+    const install=f.installation('subject snapshot');f.approve(install.id);
+    const expected=f.jobs.security.getSubject(install.id)!,prepare=DatabaseSync.prototype.prepare;
+    let reads=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){reads++;return prepare.call(this,sql);});
+    assert.deepEqual(f.jobs.security.requireSubject(install.id,expected.epoch),expected);
+    assert.equal(reads,1,'Policy, manager, subject and deny fences must be read together');
+    f.jobs.security.deny({ownerKey:f.owner,kind:'installation',targetId:install.id});
+    reads=0;
+    assert.throws(()=>f.jobs.security.requireSubject(install.id,expected.epoch),/ACCESS_REVOKED/);
+    assert.equal(reads,1,'The next call reads the current denial instead of reusing eligibility');
+  }finally{f.close();}
+});
+
 test('S1 eligibility publication reserves its WAL writer before reading mutable authority', () => {
   const f = securityFixture(), peer = new DatabaseSync(f.database);
   try {
