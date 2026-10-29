@@ -12,6 +12,32 @@ import {TaskService} from '../packages/core/tasks.js';
 import {currentKernelImplementation} from '../packages/ontology/definition-store.js';
 const businessModel=currentKernelImplementation();
 import {securityDefaults} from '../packages/security/contracts.js';
+import {withAuthorization} from '../packages/security/context.js';
+import {secureRequest} from '../packages/security/model.js';
+
+test('HTTP, MCP and A2A return the same sealed native goal observations for the original task',async()=>{
+  const f=await securityGatewayFixture(),a=f.install(),client=new Client({name:'goal-readback',version:'1'});
+  try {
+    f.gateway.security!.approveAgentGrant(f.member.id,f.grantInput(a.id));f.qualify(a.id);
+    const headers={authorization:`Bearer ${a.token}`};
+    await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers}}));
+    const created=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic goal readback'},headers),id=created.value.id as string;
+    assert.equal(created.status,200);
+    const store=f.gateway.store,owner=ownerKey(f.p),claim=store.claim(['eigos.delegate'],10000)!;assert.equal(claim.job.id,id);
+    withAuthorization(store.security.workerScope(owner,id,claim.securityAuthorityId!,claim.token),()=>{
+      secureRequest(store.ontology,owner,claim.job.delegation!.request);
+      assert(store.finish(claim,job=>{job.state='completed';job.artifact={id:randomUUID(),name:'goal-result.json',data:{goal:job.goal,deliverable:'Verified synthetic result',execution:'completed',result:{version:'1',goalDigest:'a'.repeat(64),components:[{contextId:'verified',status:'verified',artifact:{data:{execution:'completed',result:{securityEvidenceRefs:[{type:'ServiceRequest',id}],privatePayload:'PRIVATE_CHILD_RESULT'}}}}]}}};}));
+    });
+    const http=await fetch(f.base+'/tasks/'+id,{headers}).then(r=>r.json());
+    const mcp=await client.callTool({name:'get_task',arguments:{taskId:id}});assert(!mcp.isError);
+    const rpc=await f.post('/a2a',{jsonrpc:'2.0',id:randomUUID(),method:'GetTask',params:{id}},headers);assert.equal(rpc.status,200);
+    const native=(mcp.structuredContent as {result:{artifact:{data:unknown}}}).result.artifact.data;
+    const a2a=rpc.value.result.artifacts[0].parts[0].data;
+    assert.deepEqual(native,http.artifact.data);assert.deepEqual(a2a,http.artifact.data);
+    assert.deepEqual(http.artifact.data.result.observations.map((value:{ref:unknown})=>value.ref),[{type:'ServiceRequest',id}]);
+    for(const result of [http,mcp,rpc.value])assert(!JSON.stringify(result).includes('PRIVATE_CHILD_RESULT'));
+  }finally{await client.close();await f.close();}
+});
 
 test('foundation health becomes unavailable when its authorization publisher stops',async()=>{
   const f=await securityGatewayFixture();
