@@ -1,3 +1,4 @@
+import { rollingGoObjects, rollingGoActions, rollingGoFunctions } from './rollinggo.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from '../core/domain.js';
@@ -160,6 +161,31 @@ export class DefinitionStore {
       document.version = `didi-readonly-${namespace.generation + 1}`;
       const release = this.insertRelease(document, 'system:install-didi-readonly', namespace.active);
       return this.activate('system:install-didi-readonly', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Explicit additive provider installation. Existing facts, task pins and
+   * non-RollingGo definitions remain unchanged; no source permissions are granted. */
+  installRollingGoReadonly(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the RollingGo installation');
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const types = new Set(rollingGoObjects.map(value => value.id));
+      const availableTypes = new Set([...document.objects, ...document.interfaces, ...rollingGoObjects].map(value => value.id));
+      const actions = new Set(rollingGoActions.map(value => value.id)), functions = new Set(rollingGoFunctions.map(value => value.id));
+      const additions = { objects: kernel.objects.filter(value => types.has(value.id)),
+        links: kernel.links.filter(value => (types.has(value.from.type) || types.has(value.to.type)) && availableTypes.has(value.from.type) && availableTypes.has(value.to.type)),
+        actions: kernel.actions.filter(value => actions.has(value.id)), functions: kernel.functions.filter(value => functions.has(value.id)) };
+      let changed = false;
+      for (const key of ['objects', 'links', 'actions', 'functions'] as const) for (const value of additions[key]) {
+        const current = document[key].find(item => item.id === value.id);
+        if (current && digest(current) !== digest(value)) return conflict('RollingGo installation would replace an existing definition');
+        if (!current) { (document[key] as unknown[]).push(structuredClone(value)); changed = true; }
+      }
+      if (!changed) return namespace;
+      document.version = `rollinggo-readonly-${namespace.generation + 1}`;
+      const release = this.insertRelease(document, 'system:install-rollinggo-readonly', namespace.active);
+      return this.activate('system:install-rollinggo-readonly', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {
