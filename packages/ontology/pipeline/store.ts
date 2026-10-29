@@ -9,6 +9,13 @@ import type { OntologyDocument, OntologyReleaseRef } from '../definition-contrac
 import type { OntologyModel } from '../model.js';
 import { actionEffects } from '../composition-contract.js';
 import { BACKEND_VERSION } from '../execution.js';
+import { assertGoalContract } from '../../core/goal-contract.js';
+import { assertAgentDecisionOrigin } from '../../core/agent-authorization.js';
+import { GoalProgram } from '../../coordinator/goal-program.js';
+import { stepBindingRef, stepInputDigest } from '../../core/composed-actions.js';
+import type { ActionBindingPin } from '../../core/action-bindings.js';
+import type { AgentActionPlan } from '../agent-actions.js';
+import type { AcceptedPortValue } from '../composition-contract.js';
 import { mapPipelineFields } from './mapping.js';
 import { parsePipelineIntake, pipelineMappingDigest, verificationCoversAction, type PipelineIntake, type PipelineStatus, type PipelineVerification, type PipelineValidationScope } from './contracts.js';
 
@@ -105,17 +112,93 @@ export class PipelineStore {
   private saveVerification(ontologyId: string, owner: string, verification: PipelineVerification): void {
     this.db.prepare('INSERT INTO ontology_pipeline_verifications VALUES(?,?,?,?,?)').run(verification.id, ontologyId, verification.intakeDigest, owner, JSON.stringify(verification));
   }
+  private taskExecution(owner: string, intake: PipelineIntake, model: OntologyModel, job: Job, intent: (id: string) => ActionIntent) {
+    const d = job.delegation!, state = d.agent!, outcome = d.outcome!;
+    const steps = state.plans.filter(plan => plan.requestRevision === d.request.revision).flatMap(plan => plan.steps.map(step => ({ plan, step })));
+    if (!state.composition) {
+      if (state.components || digest(state.programRef) !== digest(intake.programRef) || state.programDigest !== intake.configurationDigest)
+        fail('Verification needs a completed independent task for this exact program and configuration');
+      return { steps, evidenceRefs: outcome.evidenceRefs, level: outcome.evidenceLevel, contextDigest: undefined as string | undefined, nativeIntents: undefined as Map<string, ActionIntent> | undefined };
+    }
+    const composition = state.composition, assessment = composition.assessment;
+    assertGoalContract(composition.goal, d.request, d.ontologyRelease);
+    if (state.version !== '2' || state.components || state.programRef.id !== 'eigos.goal' || state.programRef.version !== '1'
+      || state.programDigest !== digest({ engine: 'eigos.goal@1', goal: composition.goal.digest, release: composition.goal.ontologyRelease })
+      || state.requestRevision !== d.request.revision || !assessment?.accepted || assessment.goalDigest !== composition.goal.digest
+      || job.artifact?.id !== digest({ goal: composition.goal.digest, assessment }))
+      fail('Verification needs the current independently accepted native goal');
+    // Select by identity before looking at success; never choose a convenient
+    // successful instance or combine multiple contexts into one program proof.
+    const candidates = composition.contexts.filter(context => !composition.retiredContexts?.some(value => value.id === context.id)
+      && digest(context.programRef) === digest(intake.programRef) && context.programDigest === intake.configurationDigest);
+    if (candidates.length !== 1) fail('Verification needs one unambiguous target program context');
+    const context = candidates[0]!, { digest: contextDigest, ...body } = context;
+    if (digest(body) !== contextDigest || context.requestRevision !== d.request.revision || composition.retiredContexts?.some(value => value.id === context.id)
+      || !job.runs?.some(run => run.id === context.initializedBy.modelRunId && run.decisionDigest === digest(context.initializedBy.decision)))
+      fail('Verification target context is retired or differs from its original decision');
+    const pinMatches = (pin: ActionBindingPin) => {
+      const { digest: expected, ...body } = pin;
+      return digest(body) === expected && pin.ownerDigest === digest(owner) && pin.requestId === job.id && pin.requestRevision === d.request.revision
+        && digest(pin.ontologyRelease) === digest(d.ontologyRelease) && digest(pin.programRef) === digest(intake.programRef) && pin.configurationDigest === intake.configurationDigest;
+    };
+    if (!pinMatches(context.initializedBy.binding)) fail('Verification target binding differs from its owned execution');
+    const proofs = assessment!.components.filter(value => value.contextId === context.id), delivery = proofs.length === 1 && proofs[0]!.status === 'verified' ? proofs[0]!.delivery : undefined;
+    if (!delivery?.evidenceRefs.length || !assessment!.criteria.some(value => value.result === 'pass' && value.contextIds.includes(context.id)
+      && composition.goal.criteria.some(criterion => criterion.id === value.id))
+      || delivery.evidenceRefs.some(ref => !outcome.evidenceRefs.includes(ref) || !d.acceptance!.evidenceRefs.includes(ref)))
+      fail('Verification target has no independently verified component delivery');
+    const selected = steps.filter(({ step }) => step.contextId === context.id), nativeIntents = new Map<string, ActionIntent>();
+    const evidence = new Set<string>(), assessedAt = Date.parse(outcome.assessedAt), goalProgram = new GoalProgram(composition.goal), checkedPlans = new Set<AgentActionPlan>();
+    for (const { plan, step } of selected) {
+      if (!checkedPlans.has(plan)) {
+        const { digest: expected, ...body } = plan;
+        if (digest(body) !== expected) fail('Verification executable plan seal changed');
+        assertAgentDecisionOrigin(goalProgram, job, owner, plan);
+        checkedPlans.add(plan);
+      }
+      if (plan.version !== '3' || plan.requestId !== job.id || digest(plan.programRef) !== digest(state.programRef) || plan.programDigest !== state.programDigest
+        || step.contextDigest !== contextDigest || digest(step.contextScope) !== digest(context.scope) || !step.binding || !pinMatches(step.binding)
+        || step.bindingDigest !== step.binding.digest || step.binding.actionId !== step.action || step.definitionDigest !== step.binding.definitionDigest)
+        fail('Verification action differs from its exact target context and binding');
+      const actual = intent(step.intentId), result = actual.lastVerifiedResult;
+      if (actual.owner !== owner || actual.jobId !== job.id || actual.stepId !== step.id || actual.planDigest !== plan.digest || digest(actual.bindingRef) !== digest(stepBindingRef(plan, step))
+        || actual.inputDigest !== stepInputDigest(step) || actual.state !== 'effect_confirmed' || result?.kind !== 'confirmed' || !result.evidenceRefs.length) continue;
+      const ports = actual.acceptedOutput?.ports as AcceptedPortValue[] | undefined;
+      if (!Array.isArray(ports) || !ports.some(port => this.originalPort(port, actual, step, model, owner, job, assessedAt))) continue;
+      nativeIntents.set(step.intentId, actual);
+      evidence.add(actual.id); result.evidenceRefs.forEach(ref => evidence.add(ref));
+    }
+    if (delivery!.evidenceRefs.some(ref => !evidence.has(ref))) fail('Component delivery does not cite its original accepted target observations');
+    return { steps: selected, evidenceRefs: delivery!.evidenceRefs, level: delivery!.evidenceLevel, contextDigest, nativeIntents };
+  }
+  private originalPort(port: AcceptedPortValue, actual: ActionIntent, step: AgentActionPlan['steps'][number], model: OntologyModel, owner: string, job: Job, assessedAt: number): boolean {
+    const { digest: expected, ...body } = port, definition = model.action(step.action).composition?.outputs[port.port];
+    if (digest(body) !== expected || port.version !== '1' || port.owner !== owner || port.requestId !== job.id || port.requestRevision !== job.delegation!.request.revision
+      || digest(port.ontologyRelease) !== digest(job.delegation!.ontologyRelease) || port.actionId !== step.action || port.actionVersion !== step.binding!.actionVersion
+      || digest(port.binding) !== digest({ ...step.binding!.ref, configurationDigest: step.binding!.configurationDigest })
+      || port.intentId !== actual.id || !actual.latestObservationId || port.observationId !== actual.latestObservationId
+      || !definition || digest(port.definition) !== digest(definition) || !port.evidence.refs.length || port.evidence.refs.some(ref => !actual.lastVerifiedResult!.evidenceRefs.includes(ref))
+      || !definition.evidence.origins.includes(port.evidence.origin)) return false;
+    // Historical execution is checked at its original acceptance, not at the
+    // current quote freshness boundary. This never refreshes an observation.
+    const observedAt = Date.parse(port.evidence.observedAt), expiresAt = port.evidence.expiresAt ? Date.parse(port.evidence.expiresAt) : undefined;
+    return Number.isFinite(assessedAt) && Number.isFinite(observedAt) && observedAt <= assessedAt
+      && (expiresAt === undefined || Number.isFinite(expiresAt) && expiresAt > assessedAt)
+      && (definition.evidence.maxAgeMs === undefined || assessedAt - observedAt <= definition.evidence.maxAgeMs);
+  }
   /** Only a server-loaded, independently accepted task may supply operation
    * evidence. HTTP/MCP clients provide the task ID, never this evidence body. */
   verifyTask(ontologyId: string, owner: string, ref: IntakeRef, model: OntologyModel, job: Job, intent: (id: string) => ActionIntent, expiresAt: string): PipelineVerification {
     return this.atomic(() => {
       const intake = this.intake(ontologyId, ref), d = job.delegation, state = d?.agent, outcome = d?.outcome;
       const issues = this.check(model, intake); if (issues.length) fail(issues.join('; '));
-      if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'completed' || d.acceptance?.accepted !== true || outcome?.status !== 'satisfied' || !outcome.evidenceRefs.length || !state || state.composition || state.components
-        || digest(state.programRef) !== digest(intake.programRef) || state.programDigest !== intake.configurationDigest) fail('Verification needs a completed independent task for this exact program and configuration');
+      if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'completed' || d.acceptance?.accepted !== true || outcome?.status !== 'satisfied' || !outcome.evidenceRefs.length || !state
+        || outcome.requestId !== job.id || outcome.requestRevision !== d.request.revision) fail('Verification needs a completed independent task for this exact program and configuration');
+      const execution = this.taskExecution(owner, intake, model, job, intent);
       if (intake.environment === 'sandbox' ? d!.request.executionEnvironment !== 'sandbox' : d!.request.executionEnvironment === 'sandbox') fail('Verification task environment does not match the intake');
       const verifiedAt = outcome!.assessedAt;
       if (d!.pipelineValidation && (d!.pipelineValidation.mappingDigest !== pipelineMappingDigest(intake) || d!.pipelineValidation.requestRevision !== d!.request.revision
+        || d!.pipelineValidation.serviceId !== ref.serviceId || d!.pipelineValidation.intakeDigest !== ref.intakeDigest || digest(d!.pipelineValidation.release) !== digest(d!.ontologyRelease)
         || d!.pipelineValidation.ownerDigest !== digest(owner) || Date.parse(verifiedAt) > Date.parse(d!.pipelineValidation.expiresAt))) fail('Validation task belongs to another mapping, revision or time window');
       if (Date.parse(intake.source.observedAt) > Date.parse(verifiedAt)) fail('Execution predates the intake source contract');
       const anchored = this.db.prepare("SELECT 1 FROM ontology_pipeline_verifications WHERE owner=? AND ontology_id=? AND json_extract(body,'$.taskId')=? AND json_extract(body,'$.mappingDigest')<>? LIMIT 1")
@@ -124,9 +207,11 @@ export class PipelineStore {
       this.checkExpiry(expiresAt, Date.parse(verifiedAt));
       const actionEvidence: NonNullable<PipelineVerification['actionEvidence']> = {};
       for (const entry of intake.actions) {
-        const matched = state!.plans.filter(plan => plan.requestRevision === d!.request.revision).flatMap(plan => plan.steps.filter(step => step.action === entry.actionId && step.definitionDigest === entry.definitionDigest).map(step => ({ plan, step }))).at(-1);
+        const matched = execution.steps.filter(({ step }) => step.action === entry.actionId && step.definitionDigest === entry.definitionDigest).at(-1);
         if (!matched) continue;
-        const actual = intent(matched.step.intentId), result = actual.lastVerifiedResult;
+        const actual = execution.nativeIntents ? execution.nativeIntents.get(matched.step.intentId) : intent(matched.step.intentId);
+        if (!actual) continue;
+        const result = actual.lastVerifiedResult;
         if (actual.jobId !== job.id || actual.owner !== owner || actual.state !== 'effect_confirmed' || result?.kind !== 'confirmed' || !result.evidenceRefs.length || actual.planDigest !== matched.plan.digest) continue;
         const source = result.output?.source as { evidenceLevel?: unknown; evidenceKind?: unknown; observedAt?: unknown;
           receipt?: { evidenceKind?: unknown; receivedAt?: unknown; observedAt?: unknown } } | undefined;
@@ -136,8 +221,8 @@ export class PipelineStore {
         const levels = [source?.evidenceLevel, source?.evidenceKind, source?.receipt?.evidenceKind]
           .filter(value => value !== undefined).map(value => value === 'fixture' ? 'synthetic' : value === 'provider_mock' ? 'provider_test' : value);
         const level = levels.length ? levels.every(value => value === levels[0]) ? levels[0] : undefined
-          : intake.environment === 'sandbox' && outcome!.evidenceLevel === 'synthetic' ? 'synthetic'
-          : intake.environment === 'local' && outcome!.evidenceLevel === 'local_test' ? 'local_test' : undefined;
+          : intake.environment === 'sandbox' && execution.level === 'synthetic' ? 'synthetic'
+          : intake.environment === 'local' && execution.level === 'local_test' ? 'local_test' : undefined;
         if (typeof level !== 'string' || !['synthetic', 'local_test', 'live_readonly', 'live_operation', 'live_fulfillment'].includes(level)) continue;
         if (intake.environment === 'live' ? !level.startsWith('live_') : intake.environment === 'sandbox' ? level !== 'synthetic' : !['local_test', 'synthetic'].includes(level)) continue;
         const observations = [source?.receipt?.observedAt, source?.receipt?.receivedAt, source?.observedAt].filter((value): value is string => typeof value === 'string');
@@ -148,12 +233,12 @@ export class PipelineStore {
       }
       const actionIds = Object.keys(actionEvidence);
       if (!actionIds.length) fail('Task contains no verified matching action');
-      const level = outcome!.evidenceLevel ?? 'unverified';
+      const level = execution.level ?? 'unverified';
       if (!['synthetic', 'local_test', 'live_readonly', 'live_operation', 'live_fulfillment'].includes(level)) fail('Task evidence has no admissible execution validation level');
       if (intake.environment === 'live' ? !level.startsWith('live_') : !['synthetic', 'local_test'].includes(level)) fail('Synthetic and live verification cannot be substituted');
-      const verification: PipelineVerification = { id: digest({ ontologyId, owner, intake: ref.intakeDigest, task: job.id, outcome, actionIds, expiresAt }), intakeDigest: ref.intakeDigest,
+      const verification: PipelineVerification = { id: digest({ ontologyId, owner, intake: ref.intakeDigest, task: job.id, outcome, actionIds, expiresAt, ...(execution.contextDigest ? { contextDigest: execution.contextDigest } : {}) }), intakeDigest: ref.intakeDigest,
         mappingDigest: pipelineMappingDigest(intake), contractDigest: this.contract(model, intake), kind: 'task_evidence', level, actionIds, actionEvidence,
-        evidenceRefs: [...outcome!.evidenceRefs], taskId: job.id, verifiedAt, expiresAt, availabilityProof: false, authorizationProof: false };
+        evidenceRefs: [...execution.evidenceRefs], taskId: job.id, verifiedAt, expiresAt, availabilityProof: false, authorizationProof: false };
       if (!this.db.prepare('SELECT 1 FROM ontology_pipeline_verifications WHERE id=?').get(verification.id)) this.saveVerification(ontologyId, owner, verification);
       return verification;
     });
