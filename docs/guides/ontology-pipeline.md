@@ -71,6 +71,10 @@ Foundation 的任务接口继续返回裁剪后的 TaskView。证据登记必须
 
 已验收动作的来源等级兼容现有 `evidenceLevel`、滴滴的 `evidenceKind` 和美团的 `receipt.evidenceKind`；冲突等级会被拒绝，缺失的真实等级不能从整项任务补齐。观察时间使用来源回执中的最早已记录时间，不因证据登记而刷新。
 
+正式 native MCP 任务以 `eigos.goal@1` 执行时，登记会从当前独立验收记录中选择唯一、未退役且程序／配置精确匹配的 context。它必须参与原目标的通过条件，具有与封印产物一致的 verified delivery；执行计划仍须匹配原模型决策和确认意图，逐动作 typed receipt 必须对应同一 owner、任务、请求版本、发布、动作、绑定和原观察。不同程序可以共同证明一个目标条件，但 Pipeline 只登记选中 context 的证据，不能拼接其它程序或多个同程序 context 的结果。
+
+普通已完成的 native 任务也可登记，不要求事先由 `prepare_pipeline_validation` 创建。有验证标记时还会核对其原发布、服务、接入和映射引用及时间窗口。只登记实际覆盖的动作子集；未执行动作或缺失回执保持未覆盖。历史报价按原验收时刻检查 receipt，登记仍沿用原 `outcome.assessedAt` 和来源观察时间；报价自然失效不抹去历史执行事实，也不能因此把旧报价当成当前报价或可用性承诺。当前任务结果读取、来源授权、Pipeline 有效期及撤销检查仍然生效。
+
 ## Agent 使用与审计
 
 四类信息分别保留：提供者声明、EIGOS 验证、当前授权／可用性、本次操作及独立验收。验证结果始终包含 `availabilityProof=false` 和 `authorizationProof=false`。
@@ -114,3 +118,5 @@ Foundation 的事实、变化和发现响应继续执行接收方与输出通道
 `tests/ontology-pipeline*.test.ts` 覆盖版本／重启、映射复用、候补及未知状态、证据隔离、有效期、撤销、来源漂移、派发拦截、验证任务权限、事实去重／乱序／冲突、字段依赖及两种管理入口。Foundation 联测使用合成统一 authority、现有权限账本和 Worker，覆盖父级／任务截止时间、跨安装隔离、独立连接回读、证据启用与失效，以及 HTTP/MCP/A2A 的同任务行为。
 
 报名测试使用现有 Worker、任务授权和独立回读，来源及模型均为合成夹具。它验证工程流程，不证明真实报名、日历写入、叫车或付款。相同合成任务的模型调用次数保持不变；真实模型的 token、延迟和完成率需在相同模型、目标与来源条件下另行测量。
+
+`ontology-pipeline-native.test.ts` 使用实际 Worker 工厂、native MCP Reasoner 和 Foundation 公开管理命令，模型响应与 DiDi 传输为合成夹具。测试保留真实的 goal/context、计划、意图及 receipt 结构，覆盖验证任务登记、普通任务复用，以及元数据、原模型决策、receipt、权限和时间边界；其中 live 形状的回执仅用于验证合同，不是正式来源调用的证据。

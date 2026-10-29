@@ -4164,7 +4164,7 @@
     {
       "id": "ontology-pipeline-registry",
       "file": "packages/ontology/pipeline/store.ts",
-      "sourceDigest": "0db6aa3193fa5cc3081572c51c304bd4539d49940a4ff11f31d4aa3663ad729d",
+      "sourceDigest": "aba4b51734a210e1f96fd050c175766ff3e6ae0cd5c5f78c9ba95575103b6fd0",
       "channels": [
         "sqlite",
         "dispatch"
