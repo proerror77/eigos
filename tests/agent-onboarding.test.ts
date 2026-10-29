@@ -171,9 +171,26 @@ test('Agent connector registers itself, serializes concurrent cache expiry, resu
     await mcp.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
     const submitted = await mcp.callTool({ name: 'submit_task', arguments: { goal: 'Prepare my onboarding brief', requestId: randomUUID() } });
     const job = (submitted.structuredContent as { result: { id: string } }).result; let questionRevision: number | undefined;
-    for(let i=0;i<100;i++){const read=await mcp.callTool({name:'get_task',arguments:{taskId:job.id}});if((read.structuredContent as {result:{state:string}}).result.state==='input-required'){questionRevision=(read.structuredContent as {result:{revision:number}}).result.revision;break;}await new Promise(r=>setTimeout(r,10));}
-    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { message: { taskId: job.id, metadata: { expectedRevision: questionRevision }, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
-    assert.equal((await reply.json()).result.task.status.state, 'TASK_STATE_COMPLETED');
+    const questionDeadline = performance.now() + 10000;
+    while (performance.now() < questionDeadline) {
+      const read = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } });
+      const current = (read.structuredContent as { result: { state: string; revision: number } }).result;
+      if (current.state === 'input-required') { questionRevision = current.revision; break; }
+      assert(['submitted', 'working'].includes(current.state), current.state);
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    assert.notEqual(questionRevision, undefined, 'The reply must answer the original task at its actual current revision');
+    const reply = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: 'reply', method: 'SendMessage', params: { configuration: { returnImmediately: true }, message: { taskId: job.id, metadata: { expectedRevision: questionRevision }, messageId: randomUUID(), role: 'ROLE_USER', parts: [{ text: 'A task brief with acceptance criteria' }] } } }) });
+    assert.equal(reply.status, 200);
+    let returned = (await reply.json()).result.task;
+    const completionDeadline = performance.now() + 10000;
+    while (['TASK_STATE_SUBMITTED', 'TASK_STATE_WORKING'].includes(returned.status.state) && performance.now() < completionDeadline) {
+      assert.equal(returned.id, job.id);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const read = await agent.fetch('/a2a', { method: 'POST', headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify({ jsonrpc: '2.0', id: randomUUID(), method: 'GetTask', params: { id: job.id } }) });
+      assert.equal(read.status, 200); returned = (await read.json()).result;
+    }
+    assert.equal(returned.id, job.id); assert.equal(returned.status.state, 'TASK_STATE_COMPLETED');
     const readback = await mcp.callTool({ name: 'get_task', arguments: { taskId: job.id } }); assert.equal((readback.structuredContent as { result: { state: string } }).result.state, 'completed');
     assert.equal((await agent.revoke()).status, 'agent_registration_revoked');
     await assert.rejects(agent.accessToken(), /revoked/); assert.equal(f.counts().refreshes, before + 1);

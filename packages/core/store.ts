@@ -732,7 +732,10 @@ export class JobStore {
     }
   }
   private saveRecoveredWork(owner: string, job: Job, now: number): boolean {
-    try { this.save(owner, job); return true; }
+    try {
+      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+      this.save(owner, job); return true;
+    }
     catch (error) {
       if (!(error instanceof SecurityLineageLimitError)) throw error;
       const previous = { state: job.state, phase: job.delegation!.phase, question: job.question, error: job.error };

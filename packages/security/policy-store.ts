@@ -362,6 +362,20 @@ export class SecurityPolicies {
     const parent = this.security.agentGrant(grant.installationId), fields = parent.resources.find(r => r.type === 'ServiceRequest')?.fields ?? [];
     this.bind(grant, { type: 'ServiceRequest', id: grant.taskId }, fields, 'task_submission');
   }
+  private taskReadHistory(owner: string, taskId: string, requestRevision: number, progress: () => void = () => {}) {
+    return this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?")
+      .all(owner, taskId, requestRevision).map(row => {
+        progress(); const envelope = securityEnvelopeSchema.parse(JSON.parse(String(row.body)));
+        if (envelope.ownerKey !== owner) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        return envelope;
+      });
+  }
+  /** Recovery must respect cumulative evidence capacity even when no unchanged
+   * control record needs rebinding. This grants no current data permission. */
+  assertTaskReadHistoryCapacity(owner: string, taskId: string, requestRevision: number) {
+    const history = this.taskReadHistory(owner, taskId, requestRevision);
+    if (history.length) combineEnvelopes(history);
+  }
   bindTaskProjection(owner: string, taskId: string) {
     // A long historical projection must keep making checked progress. In a
     // Worker scope this also renews its still-valid lease between records.
@@ -383,7 +397,7 @@ export class SecurityPolicies {
           ...(bindingRef?[{type:'ExecutionFeedback',id:digest({request:taskId,revision:g.requestRevision,bindingRef})}]:[])];
         let inherited:SecurityEnvelope|undefined;
         const currentEvidence=()=>inherited??=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
-          ...this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?").all(owner,taskId,g.requestRevision).map(row=>{progress();return securityEnvelopeSchema.parse(JSON.parse(String(row.body)));})]);
+          ...this.taskReadHistory(owner, taskId, g.requestRevision, progress)]);
         for(const ref of this.contextMembers(owner,taskId,g.requestRevision).values()) {
           progress();
           const fields=(parent.resources.find(r=>r.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]!.includes(field));

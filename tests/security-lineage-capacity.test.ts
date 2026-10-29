@@ -9,6 +9,7 @@ import { combineEnvelopes, requireChannel, type SecurityEnvelope } from '../pack
 import { withAuthorization } from '../packages/security/context.js';
 import { assertModelChannel, secureRequest } from '../packages/security/model.js';
 import { securityFixture } from './fixtures/security.js';
+import { historicalAttempt } from './fixtures/security-ledger.js';
 
 function leaf(index: number): SecurityEnvelope {
   return { version: SECURITY_CONTRACT, ownerKey: '["issuer","tenant","alice"]', policyVersion: POLICY_VERSION,
@@ -121,11 +122,18 @@ for (const terminal of [false, true]) test(`lineage overflow parks expired recov
   try {
     const installation = f.installation('Bounded lineage reader'); f.approve(installation.id);
     const initial = f.task(installation.id), claim = f.jobs.claim(['eigos.delegate'], 60000)!;
+    const intentId = randomUUID();
+    f.jobs.createIntent(f.owner, { id: intentId, owner: f.owner, jobId: initial.job.id, stepId: 'synthetic-read', businessOperationKey: randomUUID(),
+      planDigest: 'synthetic-plan', bindingRef: { id: 'synthetic', version: '1' }, inputDigest: 'input', privateDigest: 'private', privateData: {},
+      effect: 'read', state: 'dispatching', nextAt: 0, createdAt: new Date().toISOString() });
+    const attempt = historicalAttempt(f.database, claim, intentId, 'synthetic-plan');
     const scope = f.jobs.security.workerScope(f.owner, initial.job.id, initial.authority.id, claim.token);
     const root = { type: 'ServiceRequest', id: initial.job.id };
     const properties = JSON.parse(String(db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner, root.type, root.id)!.body)).properties;
     withAuthorization(scope, () => {
       // Distinct historical root revisions remain separate evidence records.
+      // Capacity must also be enforced at recovery when this grant has no
+      // task-control fields whose binding would otherwise load read history.
       for (let revision = 1; revision <= 2001; revision++) {
         f.jobs.security.policies.capture(scope, f.jobs.security.policies.envelope(f.owner, root, revision, ['originalGoal'], properties, initial.grant.channels));
       }
@@ -150,6 +158,12 @@ for (const terminal of [false, true]) test(`lineage overflow parks expired recov
     const before = digest(parked);
     for (let poll = 0; poll < 3; poll++) assert.equal(f.jobs.claim(['eigos.delegate'], 60000), undefined);
     assert.equal(digest(f.jobs.get(f.owner, initial.job.id)), before, 'Polling must not repeat projection or append failures');
+    const receipt = { kind: 'confirmed' as const, eventId: 'synthetic-late-capacity', sourceVersion: 1, evidenceRefs: [] };
+    const observation = f.jobs.recordObservation(f.owner, intentId, attempt.id, receipt, true,
+      { claim, apply: () => assert.fail('A parked task cannot apply a late receipt') });
+    assert.equal(observation.applied, false);
+    assert.deepEqual(f.jobs.observations(f.owner, intentId), [receipt], 'Capacity parking must retain an already returned receipt as audit evidence');
+    assert.equal(digest(f.jobs.get(f.owner, initial.job.id)), before, 'Audit-only receipt must not reopen or mutate the parked task');
     assert.equal(digest(reads()), originalReads);
     assert.equal(f.jobs.security.agentGrant(installation.id).revision, 1);
     assert.throws(() => f.jobs.security.workerScope(f.owner, initial.job.id, initial.authority.id, claim.token), /ACCESS_REVOKED/);
