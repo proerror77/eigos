@@ -374,7 +374,12 @@ export class SecurityPolicies {
    * control record needs rebinding. This grants no current data permission. */
   assertTaskReadHistoryCapacity(owner: string, taskId: string, requestRevision: number) {
     const history = this.taskReadHistory(owner, taskId, requestRevision);
-    if (history.length) combineEnvelopes(history);
+    if (!history.length) return;
+    const root = this.db.prepare("SELECT body,revision FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(owner, taskId)!;
+    const properties = JSON.parse(String(root.body)).properties;
+    // Use the current root, matching task projection's root-plus-history
+    // capacity. Channels are not published or used as a permission grant here.
+    combineEnvelopes([this.envelope(owner, { type: 'ServiceRequest', id: taskId }, Number(root.revision), ['originalGoal'], properties, history[0]!.channels), ...history]);
   }
   bindTaskProjection(owner: string, taskId: string) {
     // A long historical projection must keep making checked progress. In a

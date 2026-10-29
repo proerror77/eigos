@@ -732,11 +732,17 @@ export class JobStore {
     }
   }
   private saveRecoveredWork(owner: string, job: Job, now: number): boolean {
+    this.db.exec('SAVEPOINT recovered_work');
     try {
+      // Reject overflowing historical state before reconstructing it, then
+      // check the root version created by this recovery before committing.
       if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
-      this.save(owner, job); return true;
+      this.save(owner, job);
+      if (this.security.enabled) this.security.policies.assertTaskReadHistoryCapacity(owner, job.id, job.delegation!.request.revision);
+      this.db.exec('RELEASE recovered_work'); return true;
     }
     catch (error) {
+      this.db.exec('ROLLBACK TO recovered_work; RELEASE recovered_work');
       if (!(error instanceof SecurityLineageLimitError)) throw error;
       const previous = { state: job.state, phase: job.delegation!.phase, question: job.question, error: job.error };
       scheduleTaskRecovery(job, 'validation_stalled', '当前任务暂时无法完成安全核验。原任务与证据已保留，修复运行环境后可继续。', { now, automatic: false, operation: 'security_lineage_capacity' });
@@ -745,7 +751,7 @@ export class JobStore {
         job.question = previous.question; job.error = previous.error;
         delete job.delegation!.recoveryPending;
       }
-      // The failed projection rolled back its savepoint. Persist only the
+      // Roll back this recovery's complete task/graph save before persisting the
       // technical pause; keep all evidence and deny output until repaired.
       this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
         .run(job.state, job.updatedAt, JSON.stringify(job), owner, job.id);
