@@ -14,8 +14,9 @@ import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
 import {DatabaseSync} from 'node:sqlite';
 import {securedDidiReasoner} from './fixtures/secured-didi.js';
 import {taskContextFields} from '../packages/security/task-context-contract.js';
+import {withAuthorization} from '../packages/security/context.js';
 
-for(const mode of ['direct','native-goal'] as const)test(`foundation Worker ${mode} completes the source-selected read loop using safe facts and sealed delivery`,async()=>{
+for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='direct'?'Worker direct':'native-goal'} completes the source-selected read loop using safe facts and sealed delivery`,async()=>{
   const f=securityFixture(),source=didiFixture({booking:mode==='native-goal'});
   // Only this isolated synthetic connector is made available to the synthetic
   // member. Production personal-account permitted(owner) stays unchanged.
@@ -33,14 +34,25 @@ for(const mode of ['direct','native-goal'] as const)test(`foundation Worker ${mo
   const {reasoner,modelInputs,closed}=securedDidiReasoner(program,mode);
   const failures:string[]=[];
   class CheckedCoordinator extends Coordinator {override async run(claim:import('../packages/core/store.js').WorkClaim,signal:AbortSignal){try{return await super.run(claim,signal);}catch(error){failures.push(error instanceof Error?error.stack??error.message:String(error));throw error;}}}
-  const worker=new Worker(f.jobs,{coordinator:new CheckedCoordinator(f.jobs,reasoner,catalog,{allowSandbox:mode==='native-goal'}),pollMs:10,leaseMs:10000});
+  const coordinator=new CheckedCoordinator(f.jobs,reasoner,catalog,{allowSandbox:mode==='native-goal'});
+  const worker=mode==='direct'?new Worker(f.jobs,{coordinator,pollMs:10,leaseMs:10000}):undefined;
   try {
     const job=tasks.submit(p,{service:'eigos.delegate',requestId:'scoped-didi',goal:'查询北京西站到西二旗地铁站的预估车费，不叫车、不付款',...(mode==='native-goal'?{executionEnvironment:'sandbox'}:{})});
     const rootRevision=f.jobs.security.withAgent(p,job.id,'task.query',()=>f.jobs.ontology.read(f.owner,{type:'ServiceRequest',id:job.id}).revision);
     policy.restrictObject({ownerKey:f.owner,object:{type:'ServiceRequest',id:job.id},expectedObjectRevision:rootRevision,field:'originalGoal',classification:'sensitive',requiredMarkings:['health'],channels:['agent_response','registered_model']},policy.revision());
-    worker.start();
-    const deadline=Date.now()+30000;
-    while(['submitted','working'].includes(f.jobs.get(f.owner,job.id).state) && Date.now()<deadline) await new Promise(r=>setTimeout(r,20));
+    if(worker) {
+      worker.start();
+      const deadline=Date.now()+30000;
+      while(['submitted','working'].includes(f.jobs.get(f.owner,job.id).state) && Date.now()<deadline) await new Promise(r=>setTimeout(r,20));
+    } else {
+      // Native preparation adds several authorized model turns. Drive a fixed
+      // number of durable claims instead of racing a wall-clock poll deadline.
+      for(let turn=0;turn<8 && ['submitted','working'].includes(f.jobs.get(f.owner,job.id).state);turn++) {
+        const claim=f.jobs.claim(['eigos.delegate'],30000);assert(claim);
+        try{await withAuthorization(f.jobs.security.workerScope(f.owner,job.id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
+        finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
+      }
+    }
     const raw=f.jobs.get(f.owner,job.id);
     assert.equal(raw.state,'completed',JSON.stringify({state:raw.state,error:raw.error,failures,recovery:raw.delegation?.recovery,grounding:raw.delegation?.groundingFeedback,feedback:raw.delegation?.agent?.feedback,reads:raw.delegation?.ontologyReads?.filter(r=>r.status==='rejected'),intents:f.jobs.intents(f.owner,job.id).map(i=>({state:i.state,result:i.lastResult?.message}))}));
     const result=tasks.get(p,job.id);
@@ -82,5 +94,5 @@ for(const mode of ['direct','native-goal'] as const)test(`foundation Worker ${mo
     const parent=f.jobs.security.agentGrant(install.id);f.jobs.security.revokeGrant(f.owner,parent.id,parent.revision);
     f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:[program.ref.id],resources,sourceBindingIds:[profile.bindingId],channels:['agent_response','registered_model'],expiresAt:until});
     assert.deepEqual(policy.sources(f.owner,install.id),[],'A new installation ceiling never resurrects an old source approval');
-  }finally{await worker.close();f.close();source.close();}
+  }finally{await worker?.close();f.close();source.close();}
 });
