@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "22",
-    "digest": "b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4"
+    "version": "23",
+    "digest": "eff6798f80bc07f3a9386c90b6356cf26ae28e6217013ef192c2d6a5a83cfe3c"
   },
   "types": {
     "ServiceRequest": {
@@ -2740,13 +2740,33 @@
         "data": "task_sensitive",
         "snapshot": "internal_only"
       }
+    },
+    "RollingGoSearchTask": {
+      "fingerprint": "4d5a312dcab77f823d705daa0037bd82c29451239ac354570be7fcdf8e85c77b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RollingGoSearchObservation": {
+      "fingerprint": "d715308ed381fd78ba331241aae90654f089e23083f468cdf3379595e42cae87",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "5c09efe40cfda582e7b3d7680551b654ec515a2e6131ddf8046a627b0e2a6299",
+      "sourceDigest": "9ee6a5adf6acf77c1bdccf7fc954258913e850949e25a166368ef9473c3a4ae7",
       "channels": [
         "http"
       ],
@@ -3007,7 +3027,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "0faf73635422fdbc6b61b04d95f81ac1885008e4ec6530a7c191f2ae2620bc57",
+      "sourceDigest": "04172274fb837e1fee9a2cc2a17c6e2ce4c1d1007216bbfd507ff040512cb189",
       "channels": [
         "source",
         "dispatch"
@@ -3225,7 +3245,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "fab862a4944149ae25ef7dd22708c895a5ea2f09ff47b3fe0939c93b966a38a0",
+      "sourceDigest": "d24132a50a832c7fb7c67ede514691ebc89a17e8b0591dc221d975be7b8610f7",
       "channels": [
         "authorization_control"
       ],
@@ -3237,7 +3257,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "f6055f35aac8d5969b4e61ea10df1ac98ad5537d9d0bafd96ce8c2ad880f7e34",
+      "sourceDigest": "bec2f72af742ec5001e35a0e6b3cef59ea1985ec1f78b66b444074e8232e0b95",
       "channels": [
         "authorization_control"
       ],
@@ -3441,7 +3461,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "d92b0aaf670b2b6f77bb8cbde8302a60b44bf312ca4229ec4d84f061947b5d1c",
+      "sourceDigest": "a0a7119a98cd338577142052108821229c165d2b7447cc5e3d729c36b9bcb630",
       "channels": [
         "internal"
       ],
@@ -4318,6 +4338,71 @@
       "targetControl": "Preserve ordinary PA task access and unrelated identity applications; no self-service ontology administration",
       "stage": "S5",
       "sourceDigest": "8c791ab2a55d23677a652afb7440c4c60532bc76f162c74f9a961b47f58160b1"
+    },
+    {
+      "id": "rollinggo-connector",
+      "file": "packages/capabilities/rollinggo/connector.ts",
+      "sourceDigest": "221a7310416160fdfb7ba6cfe6348e5552bad5e428496b5ecc0ade34da6c4d78",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-program",
+      "file": "packages/capabilities/rollinggo/program.ts",
+      "sourceDigest": "f21f21b9312674071ced08fd3ef643829ba2108e645faf87acc39d0447b37f5f",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-ontology",
+      "file": "packages/ontology/rollinggo.ts",
+      "sourceDigest": "f03d11aeefb292344ed93640da756d382fced5249485a1daa9793e01fce2beac",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-evaluator",
+      "file": "packages/ontology/rollinggo-functions.ts",
+      "sourceDigest": "3a17c4c3dfd4fab42ae48d8a5cdfaf6b8fad4fd95054aeb432d5a0cd50dc8cbe",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-kernel",
+      "file": "packages/ontology/rollinggo-kernel.ts",
+      "sourceDigest": "5fc55dbaba3a463cb6796643c74f0af999ee1ab8612a7ed3eb76c1f3b04491c8",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
     }
   ]
 }
