@@ -3305,7 +3305,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "3ae96f93aea1f26ddbb2bc49b139b34021bdf5521073525ebe744bfd62c97f92",
+      "sourceDigest": "747b2a116c4ef82825e2407cd1946aba040befce591392968ba4fb24eaf4a3c6",
       "channels": [
         "internal"
       ],
@@ -3353,7 +3353,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "bd20bff5f93ef6d03121687e26f4e5f25e43f05094375d0c30190fb215eaf509",
+      "sourceDigest": "ad914e73f53d20d175dde6668fb7dfd7be81998f7bab290ee8d7b8efd2ba5dd6",
       "channels": [
         "all-reads"
       ],
