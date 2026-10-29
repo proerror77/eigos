@@ -83,7 +83,8 @@ export function assertAcceptedOutputCurrent(catalog: ExecutionCatalog, ctx: Agen
 }
 /** References are filled only from the durable accepted ledger. No JSON paths,
  * model-supplied receipts, implicit conversions or cross-task object aliases. */
-export function composedInputs(catalog: ExecutionCatalog, ctx: AgentProgramContext, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], intent: (id: string) => ActionIntent): Record<string, unknown> {
+export function composedInputs(catalog: ExecutionCatalog, ctx: AgentProgramContext, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], intent: (id: string) => ActionIntent,
+  derive?: (ref: AgentStep['inputRefs'][number], object: ObjectRef) => unknown): Record<string, unknown> {
   const contract = ctx.graph.model.action(step.action).composition ?? fail('Missing action composition contract');
   const input = structuredClone(step.input), targets = new Set<string>();
   const insert = (target: string, source: ActionIntent, port: string) => {
@@ -95,10 +96,27 @@ export function composedInputs(catalog: ExecutionCatalog, ctx: AgentProgramConte
   for (const link of step.inputRefs) {
     const source = plan.steps.find(value => value.id === link.stepId);
     if (!source || !step.dependsOn.includes(link.stepId) || !link.port) fail('Composition dependency requires an exact earlier named output');
-    insert(link.targetKey, intent(source.intentId), link.port);
+    if(link.compute){
+      if(!derive||Object.hasOwn(input,link.targetKey)||targets.has(link.targetKey))fail('Unknown or ambiguous derived composition input');
+      const port=validateDerivedCompositionLink(ctx,source,step,link),accepted=intent(source.intentId);
+      assertAcceptedOutputCurrent(catalog,ctx,accepted,link.port);
+      const object=objectRefSchema.parse(acceptedInput(ctx,accepted,link.port,port));
+      targets.add(link.targetKey);input[link.targetKey]=derive(link,object);
+    }else insert(link.targetKey, intent(source.intentId), link.port);
   }
   validateCompositionInputs(ctx, step.action, input, targets, catalog);
   return input;
+}
+/** A scalar derivation is an explicit pure function declared by the consumer's
+ * read contract, applied to the same accepted port as its observation input. */
+export function validateDerivedCompositionLink(ctx:AgentProgramContext,producer:AgentStep,consumer:AgentStep,ref:AgentStep['inputRefs'][number]):CompositionPort {
+  const source=ref.port&&ctx.graph.model.action(producer.action).composition?.outputs[ref.port];
+  const definition=ctx.graph.model.action(consumer.action),dependency=definition.read?.mcp?.requires.find(value=>value.selectionInput===ref.targetKey);
+  const observation=dependency&&consumer.inputRefs.find(value=>value.targetKey===dependency.observationInput&&!value.compute);
+  if(!producer.contextId||producer.contextId!==consumer.contextId||!source||source.kind!=='object'||source.cardinality!=='one'
+    ||!ref.compute||!dependency?.derive||!same(dependency.derive,ref.compute)||!ctx.graph.model.assignableType(source.type,dependency.objectType)
+    ||observation?.stepId!==ref.stepId||observation.port!==ref.port)fail('Derived composition input differs from its declared source dependency');
+  return source;
 }
 export function validateCompositionLink(ctx: AgentProgramContext, producer: AgentActionPlan['steps'][number], consumer: AgentStep, target: string, port: string | undefined): CompositionPort {
   const source = port && ctx.graph.model.action(producer.action).composition?.outputs[port];

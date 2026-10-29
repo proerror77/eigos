@@ -10,15 +10,11 @@ import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { CandidateFacts, ServiceCapability, ServiceRequest } from '../ontology/execution.js';
 import { checkRequirements } from '../ontology/requirement-checks.js';
 import { assessConditions } from './conditions.js';
+import { goalCompletionSchema } from '../ontology/goal-completion-contract.js';
+export { goalCompletionSchema } from '../ontology/goal-completion-contract.js';
 
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
-const contextId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
-export const goalCompletionSchema = z.strictObject({
-  components: z.array(z.strictObject({ contextId, proposalJson: z.string().min(1).max(16000) })).min(1).max(16),
-  criteria: z.array(z.strictObject({ id: contextId, contextIds: z.array(contextId).min(1).max(16) })).min(1).max(20),
-  conditions: z.array(z.strictObject({ conditionId: z.string().min(1).max(200), contextId })).max(40),
-});
 export function goalState(request: ServiceRequest, goal: GoalContract): AgentExecutionState {
   return { version: '2', programRef: { id: 'eigos.goal', version: '1' }, programDigest: digest({ engine: 'eigos.goal@1', goal: goal.digest, release: goal.ontologyRelease }),
     scope: { type: 'ServiceRequest', id: request.id }, input: {}, requestRevision: request.revision, plans: [], observations: [], feedback: [],

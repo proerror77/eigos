@@ -4,6 +4,7 @@ import type { PlanningSnapshot } from './planning-contract.js';
 import type { Ref } from './execution.js';
 import type { ActionBindingPin } from '../core/action-bindings.js';
 import { inputReferenceSchema, plannedCompletionSchema } from './dataflow-contract.js';
+import { plannedGoalCompletionSchema } from './goal-completion-contract.js';
 
 const stepId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
 export const agentStepSchema = z.strictObject({
@@ -20,6 +21,7 @@ export const agentDecisionSchema = z.strictObject({
   requestRevision: z.number().int().positive(), message: z.string().min(1).max(4000),
   steps: z.array(agentStepSchema).max(4), completionJson: z.string().max(16000),
   plannedCompletion: plannedCompletionSchema.optional(),
+  plannedGoalCompletion: plannedGoalCompletionSchema.optional(),
   informationRequest: z.strictObject({ fact: z.string().min(1).max(80), evidenceRefs: z.array(objectRefSchema).max(8) }).optional(),
   clarificationContextId: stepId.optional(),
   contexts: z.array(z.strictObject({ id: stepId, bindingDigest: z.string().regex(/^[a-f0-9]{64}$/), inputJson: z.string().max(16000) })).max(4).optional(),

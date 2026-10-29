@@ -414,18 +414,21 @@ export class JobStore {
   }
   dispatchIntent(owner: string, id: string, claim?: WorkClaim): void {
     this.executionMutation(() => {
-      if (this.security.enabled && (!claim || claim.owner !== owner || !this.active(claim, Date.now()) || this.intent(owner, id).jobId !== claim.job.id)) throw new DomainError('FORBIDDEN', 'Current task authority and claim are required for dispatch');
-      if (this.security.enabled) {
-        const intent=this.intent(owner,id),{plan,step}=this.security.policies.requireDispatch(owner,intent,'dispatch');
-        if(!['read','local'].includes(step.effect)) {
-          const permit=agentDispatchGrant(this,owner,intent.jobId,plan,step);
-          if(!permit || step.cost && !this.db.prepare("SELECT 1 FROM budget_reservations WHERE owner=? AND intent_id=? AND grant_id=? AND minor=? AND currency=? AND state='held'").get(owner,intent.id,permit.id,step.cost.minor,step.cost.currency)) throw new DomainError('FORBIDDEN','Exact business permit and held budget are required');
-        }
+      this.markDispatched(owner,id,claim);
+      this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
+    });
+  }
+  private markDispatched(owner: string, id: string, claim?: WorkClaim): void {
+    if (this.security.enabled && (!claim || claim.owner !== owner || !this.active(claim, Date.now()) || this.intent(owner, id).jobId !== claim.job.id)) throw new DomainError('FORBIDDEN', 'Current task authority and claim are required for dispatch');
+    if (this.security.enabled) {
+      const intent=this.intent(owner,id),{plan,step}=this.security.policies.requireDispatch(owner,intent,'dispatch');
+      if(!['read','local'].includes(step.effect)) {
+        const permit=agentDispatchGrant(this,owner,intent.jobId,plan,step);
+        if(!permit || step.cost && !this.db.prepare("SELECT 1 FROM budget_reservations WHERE owner=? AND intent_id=? AND grant_id=? AND minor=? AND currency=? AND state='held'").get(owner,intent.id,permit.id,step.cost.minor,step.cost.currency)) throw new DomainError('FORBIDDEN','Exact business permit and held budget are required');
       }
+    }
     const result = this.db.prepare("UPDATE action_intents SET state='dispatching' WHERE owner=? AND id=? AND state='ready'").run(owner, id);
     if (Number(result.changes) !== 1) throw new DomainError('CONFLICT', 'Started action must be reconciled; automatic replay is prohibited');
-    this.projectExecution(owner, this.get(owner, this.intent(owner, id).jobId));
-    });
   }
   startAttempt(claim: WorkClaim, intentId: string, kind: ExecutionAttempt['kind'], inputDigest: string, requestKey?: string, submission?: ExecutionAttempt['submission'], authorizationId?: string): ExecutionAttempt {
     return this.executionMutation(() => {
@@ -433,7 +436,9 @@ export class JobStore {
     if (intent.jobId !== claim.job.id) throw new DomainError('FORBIDDEN', 'Attempt belongs to another task');
     if (this.security.enabled && !this.active(claim, Date.now())) throw new DomainError('FORBIDDEN', 'Task authority or claim is no longer active');
     if (this.security.enabled && kind !== 'dispatch') this.security.policies.requireDispatch(claim.owner,intent,kind);
-    if (kind === 'dispatch') this.dispatchIntent(claim.owner, intentId, claim);
+    // The dispatch marker and its attempt are one transaction. Project their
+    // final combined state once, rather than publishing an intermediate graph.
+    if (kind === 'dispatch') this.markDispatched(claim.owner, intentId, claim);
     else if (intent.state === 'ready' || intent.state === 'canceled_before_dispatch') throw new DomainError('CONFLICT', 'Action has not been dispatched');
     const attempt: ExecutionAttempt = { id: randomUUID(), intentId, kind, requestKey: requestKey ?? (kind === 'dispatch' ? intent.businessOperationKey : randomUUID()), startedAt: new Date().toISOString(), claimToken: claim.token, requestRevision: claim.job.revision ?? 0, inputDigest, planDigest: intent.planDigest, ordinal: this.attempts(claim.owner, intentId).length + 1, ...(submission ? { submission: structuredClone(submission) } : {}), ...(authorizationId ? { authorizationId } : {}) };
     this.db.prepare('INSERT INTO action_attempts VALUES(?,?,?,?)').run(attempt.id, claim.owner, intentId, JSON.stringify(attempt));

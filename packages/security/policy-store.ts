@@ -41,6 +41,15 @@ const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefS
 const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
+/** Exact reviewed additive contract transition, for the offline RollingGo installer.
+ * No general contract override: only the unchanged v22 fields/projections plus
+ * the two RollingGo types and their one safe business view are accepted. */
+export function rollingGoPolicyContracts(model: SecurityStore['model']) {
+  const contract = (ref: typeof model.ref, fields: typeof baseline.types, projection: typeof projectionContract) => digest({model:ref,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
+  const priorFields=Object.fromEntries(Object.entries(baseline.types).filter(([id])=>!['RollingGoSearchTask','RollingGoSearchObservation'].includes(id)));
+  const priorProjection={...projectionContract,fields:Object.fromEntries(Object.entries(projectionContract.fields).filter(([id])=>id!=='RollingGoSearchObservation'))};
+  return {before:contract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:contract(model.ref,baseline.types,projectionContract)};
+}
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
 export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope }
@@ -49,12 +58,20 @@ export interface ObjectBinding { object: ObjectRef; revision: number; fields: st
  * setRole; a member data grant never manufactures a platform resource role. */
 export class SecurityPolicies {
   readonly definitionDigest:string;
+  private definitionReader?: DefinitionStore;
   get model() { return this.security.model; }
   private readonly reviewedModels = new WeakSet<SecurityStore['model']>();
   /** Release labels may change while the reviewed business definitions do not.
    * Cache only immutable model identity; row, field and grant checks stay live. */
   assertModel(model: SecurityStore['model']): void {
     if (model === this.model || this.reviewedModels.has(model)) return;
+    // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
+    // their own model and action bindings; current data/source grants still gate reads.
+    if (this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'
+      && model.ref.id === this.model.ref.id && model.ref.digest === 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'
+      && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
+      this.reviewedModels.add(model); return;
+    }
     if (model.ref.id !== this.model.ref.id || model.ref.digest !== this.model.ref.digest
       || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
     this.reviewedModels.add(model);
@@ -294,7 +311,10 @@ export class SecurityPolicies {
         const jobRow=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(grant.ownerKey,grant.taskId);
         const job=jobRow?JSON.parse(String(jobRow.body)) as Job:undefined,reader=job?.delegation?.ontologyRelease;
         if(reader && job?.delegation?.request.revision===grant.requestRevision) {
-          const release=new DefinitionStore(this.db,Date.now,{readOnly:true}).resolve(reader);
+          // Definitions are immutable, but the exact durable release is still
+          // checked by resolve on every use. Reuse parsing across bindings;
+          // task membership, field access and current grants stay uncached.
+          const release=(this.definitionReader??=new DefinitionStore(this.db,this.security.now,{readOnly:true})).resolve(reader);
           sharedCapability=release.model.ref.digest===this.model.ref.digest && release.compatibleDefinition({kind:'object',id:ref.type,storedDigest:String(row.definition_digest),currentDigest:this.model.fingerprint(ref.type),properties:body.properties});
         }
       }
@@ -314,7 +334,7 @@ export class SecurityPolicies {
     const own=this.envelope(grant.ownerKey, ref, Number(row.revision), safe, JSON.parse(String(row.body)).properties, grant.channels);
     const binding: ObjectBinding = { object: ref, revision: Number(row.revision), fields: safe, sourceBindingId,
       envelope: inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{} ) };
-    this.db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body')
+    this.db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body')
       .run(grant.id, grant.ownerKey, grant.taskId, grant.requestRevision, ref.type, ref.id, Number(row.revision), JSON.stringify(binding));
   }
   bindInputs(grant: TaskDataGrant) {
@@ -368,7 +388,11 @@ export class SecurityPolicies {
    * It never spans source calls, promises, dispatch or another model tool call. */
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
-    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${Number(this.db.prepare('SELECT total_changes() AS n').get()!.n)-(readAuditChanges.get(this.db)??0)}`;
+    // Preparing both metadata reads for every dependency dominated otherwise
+    // cached traversals. One statement still observes both local writes and
+    // other connections before every cached read.
+    const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
+    const stamp=()=>{const row=version.get()!;return `${row.data_version}:${Number(row.changes)-(readAuditChanges.get(this.db)??0)}`;};
     scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);

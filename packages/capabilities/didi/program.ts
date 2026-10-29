@@ -96,6 +96,9 @@ export class DidiAgentProgram implements AgentProgram {
     return definition;
   }
   protected scope(ctx: AgentProgramContext) {
+    return ctx.graph.security ? ctx.graph.security.readSnapshot(()=>this.readScope(ctx)) : this.readScope(ctx);
+  }
+  private readScope(ctx: AgentProgramContext) {
     if (!this.permitted(ctx.owner) || !equal(ctx.state.programRef, this.ref) || ctx.state.programDigest !== this.configurationDigest || ctx.state.requestRevision !== ctx.request.revision) invalid('DiDi account or execution scope changed');
     const scope = ctx.graph.read(ctx.owner, ctx.state.scope), input = rideEstimateInputSchema.parse(ctx.state.input), roots = ctx.graph.related(ctx.owner, ctx.state.scope, 'request', { remaining: 1000 });
     if (scope.ref.type !== 'RideEstimateTask' || scope.properties.configurationDigest !== this.configurationDigest || scope.properties.requestRevision !== ctx.request.revision || !equal(scope.properties.input, input) || !equal(scope.properties.allowedActions, this.actionIds) || roots?.length !== 1 || roots[0]!.ref.id !== ctx.request.id) invalid('DiDi scope belongs to another task');

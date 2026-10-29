@@ -1,3 +1,4 @@
+import { rollingGoObjects, rollingGoActions, rollingGoFunctions } from './rollinggo.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { DomainError } from '../core/domain.js';
@@ -162,6 +163,31 @@ export class DefinitionStore {
       return this.activate('system:install-didi-readonly', release.ref, expectedGeneration, true);
     });
   }
+  /** Explicit additive provider installation. Existing facts, task pins and
+   * non-RollingGo definitions remain unchanged; no source permissions are granted. */
+  installRollingGoReadonly(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the RollingGo installation');
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const types = new Set(rollingGoObjects.map(value => value.id));
+      const availableTypes = new Set([...document.objects, ...document.interfaces, ...rollingGoObjects].map(value => value.id));
+      const actions = new Set(rollingGoActions.map(value => value.id)), functions = new Set(rollingGoFunctions.map(value => value.id));
+      const additions = { objects: kernel.objects.filter(value => types.has(value.id)),
+        links: kernel.links.filter(value => (types.has(value.from.type) || types.has(value.to.type)) && availableTypes.has(value.from.type) && availableTypes.has(value.to.type)),
+        actions: kernel.actions.filter(value => actions.has(value.id)), functions: kernel.functions.filter(value => functions.has(value.id)) };
+      let changed = false;
+      for (const key of ['objects', 'links', 'actions', 'functions'] as const) for (const value of additions[key]) {
+        const current = document[key].find(item => item.id === value.id);
+        if (current && digest(current) !== digest(value)) return conflict('RollingGo installation would replace an existing definition');
+        if (!current) { (document[key] as unknown[]).push(structuredClone(value)); changed = true; }
+      }
+      if (!changed) return namespace;
+      document.version = `rollinggo-readonly-${namespace.generation + 1}`;
+      const release = this.insertRelease(document, 'system:install-rollinggo-readonly', namespace.active);
+      return this.activate('system:install-rollinggo-readonly', release.ref, expectedGeneration, true);
+    });
+  }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {
     ontologyIdSchema.parse(id);
     const row = this.db.prepare('SELECT n.*,r.digest FROM ontology_namespaces n JOIN ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=?').get(id);
@@ -201,6 +227,11 @@ export class DefinitionStore {
     return this.db.prepare('SELECT * FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId, ref.ontologyId, ref.digest)
       ?? this.db.prepare('SELECT r.* FROM ontology_definition_release_aliases a JOIN ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=? AND a.ontology_id=? AND a.digest=?').get(ref.releaseId, ref.ontologyId, ref.digest);
   }
+  private releaseModelDigest(ref: OntologyReleaseRef): unknown {
+    const row=this.db.prepare('SELECT model_digest FROM ontology_definition_releases WHERE id=? AND ontology_id=? AND digest=?').get(ref.releaseId,ref.ontologyId,ref.digest)
+      ?? this.db.prepare('SELECT r.model_digest FROM ontology_definition_release_aliases a JOIN ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=? AND a.ontology_id=? AND a.digest=?').get(ref.releaseId,ref.ontologyId,ref.digest);
+    return row?.model_digest;
+  }
   /** Offline consolidation preserves original task pins, even when independent
    * registries assigned different IDs to byte-identical definitions. There is
    * one canonical content record; aliases never publish or activate a model. */
@@ -227,8 +258,7 @@ export class DefinitionStore {
     const ref = ontologyReleaseRefSchema.parse(input), key = JSON.stringify(ref);
     const cached = this.models.get(key);
     if (cached) {
-      const durable = this.releaseRecord(ref);
-      if (!durable || durable.model_digest !== cached.model.ref.digest) return conflict('The exact ontology release is unavailable');
+      if (this.releaseModelDigest(ref) !== cached.model.ref.digest) return conflict('The exact ontology release is unavailable');
       this.models.delete(key); this.models.set(key, cached);
       return cached;
     }

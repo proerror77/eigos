@@ -204,8 +204,12 @@ export class OntologyObjectStore {
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
-    this.guard()?.requireObject(owner, ref);
-    return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    const guard=this.guard();
+    const read=()=>{
+      guard?.requireObject(owner, ref);
+      return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    };
+    return guard ? guard.readSnapshot(read) : read();
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {

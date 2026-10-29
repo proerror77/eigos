@@ -27,8 +27,9 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 193); assert.equal(report.counts.properties, 1769);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 146);
+  assert.equal(report.counts.objectTypes, 195); assert.equal(report.counts.properties, 1779);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 158);
+  for(const id of ['native-goal-dataflow','native-goal-completion-contract','native-composed-action-bindings','native-agent-decision-contract'])assert(report.surfaces.some(surface=>surface.id===id));
   for (const id of ['ontology-definition-contracts', 'ontology-definition-service', 'ontology-action-discovery-contract', 'ontology-pipeline-contract', 'ontology-pipeline-registry', 'ontology-pipeline-mapping', 'ontology-pipeline-facts', 'ontology-metadata-http', 'ontology-metadata-mcp']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed pipeline surface: ${id}`);
   }
