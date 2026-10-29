@@ -36,6 +36,15 @@ const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefS
 const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
+/** Exact reviewed additive contract transition, for the offline RollingGo installer.
+ * No general contract override: only the unchanged v22 fields/projections plus
+ * the two RollingGo types and their one safe business view are accepted. */
+export function rollingGoPolicyContracts(model: SecurityStore['model']) {
+  const contract = (ref: typeof model.ref, fields: typeof baseline.types, projection: typeof projectionContract) => digest({model:ref,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
+  const priorFields=Object.fromEntries(Object.entries(baseline.types).filter(([id])=>!['RollingGoSearchTask','RollingGoSearchObservation'].includes(id)));
+  const priorProjection={...projectionContract,fields:Object.fromEntries(Object.entries(projectionContract.fields).filter(([id])=>id!=='RollingGoSearchObservation'))};
+  return {before:contract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:contract(model.ref,baseline.types,projectionContract)};
+}
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
 export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope }
@@ -50,6 +59,13 @@ export class SecurityPolicies {
    * Cache only immutable model identity; row, field and grant checks stay live. */
   assertModel(model: SecurityStore['model']): void {
     if (model === this.model || this.reviewedModels.has(model)) return;
+    // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
+    // their own model and action bindings; current data/source grants still gate reads.
+    if (this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'
+      && model.ref.id === this.model.ref.id && model.ref.digest === 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'
+      && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
+      this.reviewedModels.add(model); return;
+    }
     if (model.ref.id !== this.model.ref.id || model.ref.digest !== this.model.ref.digest
       || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
     this.reviewedModels.add(model);
