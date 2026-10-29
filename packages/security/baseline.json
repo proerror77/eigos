@@ -2816,7 +2816,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "d8a8c711c06d5ed801b8a0682c7755d637459291c6b2d8e08ae65b3d259476e7",
+      "sourceDigest": "5b05b426514e7075b940a54c8a1f6ddadc5c64584bb93998400b6a378b3e161a",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2829,7 +2829,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "aed7e0c141720b8764844e0ae99de2e09382201b8c521b18ae0e8487f1d2d583",
+      "sourceDigest": "2a9666aa138a9b03b7d42e6d4475702748fa3e228c558107d588253753878a27",
       "channels": [
         "query",
         "function"
@@ -2939,7 +2939,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "3a807fa57935ec2e1975a4ad1c1b6fb2f653cb444dace5c8a9a6db19b5f35462",
+      "sourceDigest": "f304c55b7219df2e4b28ba95ddfaaeedc085ccee61d8f20e8f7dce716358ea01",
       "channels": [
         "model",
         "dispatch"
@@ -2952,7 +2952,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "f9f463265f197ae7b3c9c4eb21d28c0e900cf788f7ce884aba881e78504fedef",
+      "sourceDigest": "2f43bcd355e6e870b8f0b7417e0242c0413c98e75fc5afe9df0a67d918286bba",
       "channels": [
         "model",
         "dispatch",
@@ -3305,7 +3305,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "1ff6f80a555c42d310d982ea4034965009bbdebb7826c8a47461605dc327bc68",
+      "sourceDigest": "3ae96f93aea1f26ddbb2bc49b139b34021bdf5521073525ebe744bfd62c97f92",
       "channels": [
         "internal"
       ],
@@ -3353,7 +3353,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "60de00eb58efdb406dbd3ad49a049aabf4f936f3ff99bf9181519cd76b9f9f15",
+      "sourceDigest": "baa08aa7211fe02ab7422f9fb28595cddd18d9737680fd34eb0f1a2cc0ae0d3c",
       "channels": [
         "all-reads"
       ],
@@ -3631,7 +3631,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "961c766a974eefd0e8da4d59f432430fd9355ed9f15d3a5c833b25a20bed826f",
+      "sourceDigest": "97dbd88dfb725250894210c61b69f8261db0c9b17b57ed10626ca44de30acbd2",
       "channels": [
         "runtime"
       ],
@@ -3971,7 +3971,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "4ca4fc52d4b4adb7effdbff562ca3b79a7aa8ad265799d6dc772dc62437d3301",
+      "sourceDigest": "46f93a44ae9758c22bd046067932369dde5e5aaded99c514a7773007c0cf3e0f",
       "channels": [
         "model",
         "artifact"
@@ -4439,6 +4439,58 @@
       "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
       "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
       "stage": "S4"
+    },
+    {
+      "id": "native-goal-dataflow",
+      "file": "packages/coordinator/goal-dataflow.ts",
+      "channels": [
+        "model_output",
+        "sqlite"
+      ],
+      "content": "Conditional component evidence selected by the native goal Agent",
+      "currentControl": "Exact task contexts, declared read-only completion modules, original accepted named ports and unchanged component plus whole-goal verification",
+      "targetControl": "No future reference grants execution authority or completion",
+      "stage": "S5",
+      "sourceDigest": "d236f4670858c8fd791b158d1d63777bfd54524fbb8c397d0b70626814a8c0b8"
+    },
+    {
+      "id": "native-goal-completion-contract",
+      "file": "packages/ontology/goal-completion-contract.ts",
+      "channels": [
+        "model_input",
+        "model_output"
+      ],
+      "content": "Bounded component, criterion and future accepted-port references",
+      "currentControl": "Strict schemas, bounded arrays, explicit fixed goal assignments and no executable code or inferred source values",
+      "targetControl": "Host validates every reference against the current task and accepted source ledger",
+      "stage": "S5",
+      "sourceDigest": "4f0b63196197181b1566d8e635446d434ba77e50927084c57ebc2da45676ca85"
+    },
+    {
+      "id": "native-composed-action-bindings",
+      "file": "packages/core/composed-actions.ts",
+      "channels": [
+        "model_output",
+        "source_input"
+      ],
+      "content": "Task-scoped named output bindings and declared scalar derivations",
+      "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
+      "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
+      "stage": "S5",
+      "sourceDigest": "c2b954d78344264cf57611670be1c2e1461c069eccbbe6b25e5488348c24823b"
+    },
+    {
+      "id": "native-agent-decision-contract",
+      "file": "packages/ontology/agent-actions.ts",
+      "channels": [
+        "model_output",
+        "sqlite"
+      ],
+      "content": "Bounded native action graphs and conditional evidence proposals",
+      "currentControl": "Strict model decision schema; host validates authenticated decision digests, exact contexts and current task revision before dispatch",
+      "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
+      "stage": "S5",
+      "sourceDigest": "2c3e9027d59ee2a2c3283fd1cc834b188ab19ece00f83805065b71e6fd04e210"
     }
   ]
 }
