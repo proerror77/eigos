@@ -9,6 +9,7 @@ import { combineEnvelopes, requireChannel, type SecurityEnvelope } from '../pack
 import { withAuthorization } from '../packages/security/context.js';
 import { assertModelChannel, secureRequest } from '../packages/security/model.js';
 import { securityFixture } from './fixtures/security.js';
+import { historicalAttempt } from './fixtures/security-ledger.js';
 
 function leaf(index: number): SecurityEnvelope {
   return { version: SECURITY_CONTRACT, ownerKey: '["issuer","tenant","alice"]', policyVersion: POLICY_VERSION,
@@ -116,17 +117,29 @@ test('expired-claim recovery preserves wide read history and still enforces the 
   } finally { db.close(); f.close(); }
 });
 
-for (const terminal of [false, true]) test(`lineage overflow parks expired recovery without repeated writes${terminal ? ' or reopening a terminal task' : ''}`, () => {
+for (const boundary of [
+  { name: 'historical overflow', historySize: 2001, rootRevision: undefined, blocked: true },
+  { name: 'current root beyond full history', historySize: 2000, rootRevision: 3000, blocked: true },
+  { name: 'new recovery projection beyond full history', historySize: 2000, rootRevision: 2000, blocked: true },
+  { name: 'exact capacity after recovery projection', historySize: 1999, rootRevision: 1999, blocked: false },
+]) for (const terminal of [false, true]) test(`lineage recovery: ${boundary.name}${terminal ? ' on a canceled task' : ''}`, () => {
   const f = securityFixture(), db = new DatabaseSync(f.database);
   try {
     const installation = f.installation('Bounded lineage reader'); f.approve(installation.id);
     const initial = f.task(installation.id), claim = f.jobs.claim(['eigos.delegate'], 60000)!;
+    const intentId = randomUUID();
+    f.jobs.createIntent(f.owner, { id: intentId, owner: f.owner, jobId: initial.job.id, stepId: 'synthetic-read', businessOperationKey: randomUUID(),
+      planDigest: 'synthetic-plan', bindingRef: { id: 'synthetic', version: '1' }, inputDigest: 'input', privateDigest: 'private', privateData: {},
+      effect: 'read', state: 'dispatching', nextAt: 0, createdAt: new Date().toISOString() });
+    const attempt = historicalAttempt(f.database, claim, intentId, 'synthetic-plan');
     const scope = f.jobs.security.workerScope(f.owner, initial.job.id, initial.authority.id, claim.token);
     const root = { type: 'ServiceRequest', id: initial.job.id };
     const properties = JSON.parse(String(db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner, root.type, root.id)!.body)).properties;
     withAuthorization(scope, () => {
       // Distinct historical root revisions remain separate evidence records.
-      for (let revision = 1; revision <= 2001; revision++) {
+      // Capacity must also be enforced at recovery when this grant has no
+      // task-control fields whose binding would otherwise load read history.
+      for (let revision = 1; revision <= boundary.historySize; revision++) {
         f.jobs.security.policies.capture(scope, f.jobs.security.policies.envelope(f.owner, root, revision, ['originalGoal'], properties, initial.grant.channels));
       }
     });
@@ -139,17 +152,43 @@ for (const terminal of [false, true]) test(`lineage overflow parks expired recov
     }
     const reads = () => db.prepare('SELECT digest,body FROM security_reads WHERE grant_id=? ORDER BY digest').all(initial.grant.id);
     const originalReads = digest(reads());
+    if (boundary.rootRevision !== undefined) {
+      db.prepare("UPDATE ontology_objects SET revision=? WHERE owner=? AND type='ServiceRequest' AND id=?")
+        .run(boundary.rootRevision, f.owner, initial.job.id);
+      // Retain a previous progress projection so saving the current canonical
+      // task produces a distinct root version even without a business edit.
+      if (!terminal) db.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.progress','received') WHERE owner=? AND type='ServiceRequest' AND id=?")
+        .run(f.owner, initial.job.id);
+    }
+    const projection = () => db.prepare("SELECT revision,body FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(f.owner, initial.job.id);
+    const originalProjection = projection();
     db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=?').run(Date.now() - 1, initial.job.id);
-    assert.equal(f.jobs.claim(['eigos.delegate'], 60000), undefined);
+    const recovered = f.jobs.claim(['eigos.delegate'], 60000);
+    if (!boundary.blocked) {
+      const current = f.jobs.get(f.owner, initial.job.id);
+      const ready = recovered ?? f.jobs.claim(['eigos.delegate'], 60000, Math.max(Date.now(), current.delegation!.nextAt ?? 0) + 1);
+      assert(ready); assert.equal(ready.job.state, terminal ? 'canceled' : 'working');
+      assert.equal(ready.recovery, terminal ? true : undefined);
+      assert.equal(projection()!.revision, 2000, 'The current root plus retained history must still fit exactly');
+      assert.equal(digest(reads()), originalReads); return;
+    }
+    assert.equal(recovered, undefined);
     const parked = f.jobs.get(f.owner, initial.job.id);
     assert.equal(parked.state, terminal ? 'canceled' : 'paused');
     assert.equal(parked.delegation!.recovery!.state, 'blocked');
     assert.equal(parked.delegation!.recovery!.operation, 'security_lineage_capacity');
     assert.equal(parked.delegation!.recoveryPending, undefined);
+    assert.deepEqual(projection(), originalProjection, 'Capacity failure must roll back the attempted task projection before parking');
     assert.equal(db.prepare('SELECT count(*) AS n FROM work_claims WHERE job_id=?').get(initial.job.id)!.n, 0);
     const before = digest(parked);
     for (let poll = 0; poll < 3; poll++) assert.equal(f.jobs.claim(['eigos.delegate'], 60000), undefined);
     assert.equal(digest(f.jobs.get(f.owner, initial.job.id)), before, 'Polling must not repeat projection or append failures');
+    const receipt = { kind: 'confirmed' as const, eventId: 'synthetic-late-capacity', sourceVersion: 1, evidenceRefs: [] };
+    const observation = f.jobs.recordObservation(f.owner, intentId, attempt.id, receipt, true,
+      { claim, apply: () => assert.fail('A parked task cannot apply a late receipt') });
+    assert.equal(observation.applied, false);
+    assert.deepEqual(f.jobs.observations(f.owner, intentId), [receipt], 'Capacity parking must retain an already returned receipt as audit evidence');
+    assert.equal(digest(f.jobs.get(f.owner, initial.job.id)), before, 'Audit-only receipt must not reopen or mutate the parked task');
     assert.equal(digest(reads()), originalReads);
     assert.equal(f.jobs.security.agentGrant(installation.id).revision, 1);
     assert.throws(() => f.jobs.security.workerScope(f.owner, initial.job.id, initial.authority.id, claim.token), /ACCESS_REVOKED/);

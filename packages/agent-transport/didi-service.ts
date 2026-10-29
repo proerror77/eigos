@@ -112,7 +112,9 @@ export class DidiRelayService {
         // A crash after dispatch cannot silently replay the same provider read.
         transaction(this.db, () => this.db.prepare("INSERT INTO source_relay_reads VALUES(?,?,'processing',NULL)").run(request.callId, base.requestDigest));
         try {
-          const observed = await this.connector.invoke(request.context, request.tool, input, signal, () => this.authorize(request, signal, 'provider_dispatch'));
+          // Request authorization already covers connection preparation. Keep
+          // a fresh authorization immediately before the actual tools/call.
+          const observed = await this.connector.invoke(request.context, request.tool, input, signal, phase => phase==='prepare'?undefined:this.authorize(request, signal, 'provider_dispatch'));
           result = sourceReadResponseSchema.parse({ ...base, result: observed });
         } catch (error) {
           if (signal.aborted) throw error;
@@ -121,9 +123,9 @@ export class DidiRelayService {
         // Keep the private receipt before a fallible authorization round trip. A
         // retry must recheck permission and return this receipt, never reread the provider.
         this.db.prepare("UPDATE source_relay_reads SET state='completed',result=? WHERE id=?").run(JSON.stringify(result), request.callId);
-        if (result.result) await this.authorize(request, signal, 'provider_result');
       }
-      // Permission is rechecked for recovered receipts too.
+      // One current result check follows receipt persistence, including after
+      // recovery. Delivery still rechecks immediately before sending facts.
       await this.authorize(request, signal, 'result');
     } catch (error) {
       if (signal.aborted) throw error;

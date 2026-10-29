@@ -170,6 +170,22 @@ test('a rejected asynchronous read cannot retain the synchronous authorization c
   }finally{f.close();}
 });
 
+for(const subjectKind of ['member','installation'] as const)test(`expired unrelated ${subjectKind} roles do not poison a current object read`,t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture();
+  try{
+    f.role(f.a.id);const place=f.place('current'),task=f.task(f.a,[place]),policy=f.jobs.security.policies;
+    policy.setRole({subjectKind,subjectId:subjectKind==='member'?f.member.id:f.a.id,resource:{kind:'objectType',id:'Provider',version:policy.resourceVersion('objectType','Provider')},role:'Viewer',expiresAt:new Date(Date.now()+1000).toISOString()},policy.revision());
+    t.mock.timers.tick(2000);f.coordinator.refresh();
+    assert.equal(f.va.check({taskId:task.job.id,operation:'task.query',object:place.object}).allowed,true);
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>assert.equal(f.jobs.ontology.read(f.owner,place.object).properties.name,'current'));
+    policy.setRole({subjectKind:'installation',subjectId:f.a.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:new Date(Date.now()+10).toISOString()},policy.revision());
+    assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      assert(policy.binding(authorizationScope()!,place.object));t.mock.timers.tick(11);
+    })),/POLICY_CHANGED/,'Expiry of authority used by this read still rejects its result');
+    assert.equal(f.va.check({taskId:task.job.id,operation:'task.query',object:place.object}).allowed,false);
+  }finally{f.close();}
+});
+
 test('shared lineage is hashed once per synchronous read while every expected digest is checked',t=>{
   const f=fixture();try {
     f.role(f.a.id);const root=f.place('shared'),leaves=Array.from({length:12},(_,i)=>f.place(`derived-${i}`)),top=f.place('top');
@@ -195,6 +211,9 @@ test('shared lineage is hashed once per synchronous read while every expected di
       assert.equal(reads,2,'A later read independently reloads the shared content');
       assert(policy.binding(outer,top.object));
       assert.equal(reads,2+leaves.length+1,'A standalone binding traversal also shares each dependency within its own synchronous boundary');
+      const beforeRead=reads;
+      assert.equal(f.jobs.ontology.read(f.owner,top.object).properties.name,'top');
+      assert(reads-beforeRead<=leaves.length+2,'One object read shares dependency validation through authorization and result projection');
     });
   }finally{f.close();}
 });
@@ -286,6 +305,29 @@ test('stable entity bindings pin revisions and retain different field permission
     f.jobs.save(f.owner,x.job); // Updating task progress cannot approve a new member-asset revision.
     assert.throws(()=>f.va.query({version:2,taskId:x.job.id,query:{object:place.object}}),/not available/);
   } finally {f.close();}
+});
+
+test('identical binding projection avoids a write but changed field authority is persisted',t=>{
+  const f=fixture();try {
+    f.role(f.a.id);const place=f.place('unchanged'),task=f.task(f.a,[place]),policy=f.jobs.security.policies;
+    const prepare=DatabaseSync.prototype.prepare;let writes=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+      const statement=prepare.call(this,sql);
+      if(sql.startsWith('INSERT INTO security_bindings ')){
+        const run=statement.run.bind(statement);
+        statement.run=(...args)=>{const result=Reflect.apply(run,statement,args);writes+=Number(result.changes);return result;};
+      }
+      return statement;
+    });
+    policy.bind(task.grant,place.object,place.fields,'member_asset');
+    assert.equal(writes,0,'An identical projection must not churn the database');
+    const narrowed=place.fields.filter(field=>field!=='name');
+    policy.bind(task.grant,place.object,narrowed,'member_asset');
+    assert.equal(writes,1);
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>{
+      assert.throws(()=>f.jobs.ontology.read(f.owner,place.object),/not available/,'Withdrawing the title field makes the object unavailable');
+    });
+  }finally{f.close();}
 });
 
 test('resource Editor does not grant execution; check access discloses only current task policy', () => {

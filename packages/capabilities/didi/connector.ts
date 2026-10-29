@@ -17,7 +17,7 @@ export interface DidiReadResult { data: DidiData; receipt: DidiReceipt }
 export interface DidiConnector {
   readonly evidenceKind: DidiEvidenceKind;
   readonly transportDigest?: string;
-  invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: () => void | Promise<void>): Promise<DidiReadResult>;
+  invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<DidiReadResult>;
 }
 
 export async function readDidiCredential(binding: DidiBinding): Promise<string> {
@@ -46,7 +46,7 @@ export class DidiMcpConnector implements DidiConnector {
   }
   private key() { return readDidiCredential(this.binding); }
   async verifyCredential(): Promise<void> { await this.key(); }
-  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }, beforeCall?: () => void | Promise<void>): Promise<T> {
+  protected async session<T>(signal: AbortSignal, run: (client: Client, secret: string) => Promise<T>, mock?: { tools: Record<string, z.ZodType>; beforeCall?: () => void }, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<T> {
     if (mock && this.binding.environment !== 'mock') throw new DidiReadError('MOCK_OPERATIONS_ONLY');
     const allowed = mock?.tools ?? didiToolInputs;
     signal.throwIfAborted();
@@ -65,7 +65,7 @@ export class DidiMcpConnector implements DidiConnector {
         if (request.method === 'tools/call') {
           if (!Object.hasOwn(allowed, request.params?.name)) throw new DidiReadError('TOOL_NOT_ALLOWED');
           if (!allowed[request.params.name as keyof typeof allowed]!.safeParse(request.params.arguments).success) throw new DidiReadError('INVALID_TOOL_INPUT');
-          await beforeCall?.();
+          await beforeCall?.('dispatch');
           mock?.beforeCall?.();
         }
       }
@@ -110,11 +110,11 @@ export class DidiMcpConnector implements DidiConnector {
   async discover(signal: AbortSignal) {
     return this.session(signal, async client => ({ endpoint: didiEndpoint(this.binding.environment), environment: this.binding.environment, bindingId: this.binding.bindingId, enabledTools: await this.directory(client, signal), evidenceKind: this.evidenceKind }));
   }
-  async invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: () => void | Promise<void>): Promise<DidiReadResult> {
+  async invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<DidiReadResult> {
     if (!DIDI_TOOLS.includes(tool)) throw new DidiReadError('TOOL_NOT_ALLOWED');
     const parsed = didiToolInputs[tool].safeParse(input);
     if (!parsed.success) throw new DidiReadError('INVALID_TOOL_INPUT');
-    await beforeCall?.();
+    await beforeCall?.('prepare');
     return this.session(signal, async (client, secret) => {
       const directory = await this.directory(client, signal), startedAt = new Date().toISOString();
       signal.throwIfAborted();

@@ -22,7 +22,12 @@ export class DidiRelayConnector implements DidiConnector {
     });
     try {
       while (!signal.aborted && Date.now() < request.expiresAt) {
+        // Account admission and the immutable component scope remain current
+        // while waiting, as do the task/source/Pipeline fences in ready().
         await beforeCall?.();
+        if(!this.store.security.relayReads.ready(request.callId)){
+          await delay(100,undefined,{signal});continue;
+        }
         const response = this.store.security.relayReads.result(request.callId);
         if (response?.error) throw new DidiReadError(response.error);
         if (response?.result) { signal.throwIfAborted(); await beforeCall?.(); return response.result; }

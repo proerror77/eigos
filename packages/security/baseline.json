@@ -2816,7 +2816,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "b68dcc74386a92f5f34a7a2cde31bfaae3ec26da562044d932451424d41a09b9",
+      "sourceDigest": "0151529b27c4ac8b625c2a9061ac5693d0d8bfa527a2fe13ea1de44d88d4f6ab",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2829,7 +2829,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "0eeba1e85afbfc9d70c3314037e45155263035b1a64c6c17238d93eecd59f1b9",
+      "sourceDigest": "df2b6eca72acdc1cf6948d41f7073e46efeabb56719be039050a296e881097fa",
       "channels": [
         "query",
         "function"
@@ -2939,7 +2939,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "838916f68ef0fa5c168e8e7a97cad4955dd58b88b06f95ac9e729f0b986e5427",
+      "sourceDigest": "32e3ac5a8ffe332c29a7452b79116c78a2a29a95930b0e090d393661c279bd87",
       "channels": [
         "model",
         "dispatch"
@@ -2952,7 +2952,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "f9f463265f197ae7b3c9c4eb21d28c0e900cf788f7ce884aba881e78504fedef",
+      "sourceDigest": "2f43bcd355e6e870b8f0b7417e0242c0413c98e75fc5afe9df0a67d918286bba",
       "channels": [
         "model",
         "dispatch",
@@ -2966,13 +2966,26 @@
     {
       "id": "model-session",
       "file": "packages/capabilities/model-session.ts",
-      "sourceDigest": "32646f48cfe32992c2ad7d4f9a10f735ae9f61d8b9e5167065330d539f07cda6",
+      "sourceDigest": "6dd028eaa681bf9f7ce64dcb0c1cc23487c1fa8b558f134541dc2546b6447c90",
       "channels": [
         "registered_model"
       ],
       "content": "Model subprocess messages, data and returned structured output",
       "currentControl": "Process transport and schema validation",
       "targetControl": "Registered channel data eligibility and labeled context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-process-config",
+      "file": "packages/capabilities/model-process.ts",
+      "sourceDigest": "be662ba1c1e5bd278ce322ee13bc81954300bc984d3ff7726ef2f924049a49b3",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Owned model subprocess environment, instructions and existing authentication reference",
+      "currentControl": "Private per-process configuration, bounded host-skill exclusions, validated private auth reference and allowlisted environment",
+      "targetControl": "Keep task inputs and explicit model operations separate from operator configuration",
       "stage": "S3"
     },
     {
@@ -3014,7 +3027,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "63aa7114a678fed188a931bf25a997606960229abe4dcf54af1a0bc1d24d3327",
+      "sourceDigest": "8eb3b6920029596fcf652ee7b0f648f66e605c0024d340b2b648226778455c26",
       "channels": [
         "registered_model",
         "private_file"
@@ -3027,7 +3040,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "73cccc6dc9f46ff142363b19d4d47412b0f8a26079e7a090a4c34af83aaa8413",
+      "sourceDigest": "ddb1d363a3b4fe7ef4683b7b3b7c0cfdf1d4e264fbfaacfe62e8c6729efc3752",
       "channels": [
         "source",
         "dispatch"
@@ -3065,7 +3078,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "327d918cc3b3e60fa7e7b4552943576bb3076891a5c9e41000d815ad69e15b90",
+      "sourceDigest": "b96fa79319c851e075c31fa5f9421a7d1e780bfc796c2f5d558b38acf9520b05",
       "channels": [
         "source",
         "private_file"
@@ -3221,7 +3234,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "ad706e8c64038bd52e1f0a93c6af462767157da0192cf496721a0d91dc040576",
+      "sourceDigest": "ff30b6cae6660bae692f23204522524f225a1cde9e8f2e007054e719c9ce1c15",
       "channels": [
         "authorization_control"
       ],
@@ -3305,7 +3318,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "3ae96f93aea1f26ddbb2bc49b139b34021bdf5521073525ebe744bfd62c97f92",
+      "sourceDigest": "747b2a116c4ef82825e2407cd1946aba040befce591392968ba4fb24eaf4a3c6",
       "channels": [
         "internal"
       ],
@@ -3353,7 +3366,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "20c750ba959f0001b0f14beb1cf94f05f048364450547e7e8db47518228ae0ba",
+      "sourceDigest": "14f461e347f771301ca100814503581e0a4035754c15bf51f332f9ae4f74f5d6",
       "channels": [
         "all-reads"
       ],
@@ -3631,7 +3644,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "40d02d2dc347fe6b4172825447d83190c6541b3d03379390f84152d0d75a2363",
+      "sourceDigest": "25b3a864b3131453c4cc39be0643b971f9f5543a397d07ed6d8db3b4b7cfbf70",
       "channels": [
         "runtime"
       ],
@@ -3971,7 +3984,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "4ca4fc52d4b4adb7effdbff562ca3b79a7aa8ad265799d6dc772dc62437d3301",
+      "sourceDigest": "46f93a44ae9758c22bd046067932369dde5e5aaded99c514a7773007c0cf3e0f",
       "channels": [
         "model",
         "artifact"
@@ -4340,259 +4353,6 @@
       "sourceDigest": "8c791ab2a55d23677a652afb7440c4c60532bc76f162c74f9a961b47f58160b1"
     },
     {
-      "id": "primary-relay-entry",
-      "file": "apps/gateway/relay.ts",
-      "sourceDigest": "8f23947f92c67741fa714090446aeaff45dfb8bde3e546230db81da3efcb773b",
-      "channels": [
-        "http",
-        "authorization_control"
-      ],
-      "content": "Node enrollment, installation binding, current source authorization and dispatch",
-      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-identity-authority",
-      "file": "packages/security/relay.ts",
-      "sourceDigest": "93cd7dabe9436473b46da79e1788e5bd44b42832c08968d15b2a10f423c11e17",
-      "channels": [
-        "authorization_control"
-      ],
-      "content": "Public-key installation routes, short bindings, proof replay and command idempotency",
-      "currentControl": "Current subject, parent grant, task-only scopes and immutable installation ownership",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-read-authority",
-      "file": "packages/security/relay-service.ts",
-      "sourceDigest": "2a4ed371ed79d12895f6ee3140d17abc5cbb4f2d8d92f6de03ff1c04d6d583fd",
-      "channels": [
-        "authorization_control",
-        "source"
-      ],
-      "content": "Durable source requests, task/plan/attempt binding and response acceptance",
-      "currentControl": "Current task/source/action authority, Worker claim, exact input and pinned source peer",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-task-host",
-      "file": "packages/agent-transport/task-host.ts",
-      "sourceDigest": "b22d557b993dc86b0921cbbb4477ab539603eb2c030f9c16367d2620ff55f837",
-      "channels": [
-        "agent_transport"
-      ],
-      "content": "Encrypted task intake and business result projection",
-      "currentControl": "Original TaskService idempotency and current TaskView disclosure at send boundary",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-source-service",
-      "file": "packages/agent-transport/didi-service.ts",
-      "sourceDigest": "a35684437c85afbe3b1cde2da7f1f036015ce59e2d33567b9def4411c099cb09",
-      "channels": [
-        "agent_transport",
-        "source",
-        "private_file"
-      ],
-      "content": "Provider credential custody and durable source read receipts",
-      "currentControl": "Pinned primary and source binding; current DPoP authorization before provider dispatch and every result delivery; private completed receipts survive unavailable authorization without repeating provider reads or extending original deadlines; no order tools",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-enrollment-issuer",
-      "file": "packages/agent-transport/enrollment.ts",
-      "sourceDigest": "b200342ae8f586bc3c5370d4d77951bf906afcf0942cd4d6bc6c8f933fd47237",
-      "channels": [
-        "authorization_control"
-      ],
-      "content": "Short-lived primary assertions for a specific transport public key",
-      "currentControl": "Current Foundation installation and grant, one-minute expiry, runtime-private signing key",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-pa-client",
-      "file": "packages/agent-client/relay.ts",
-      "sourceDigest": "9d88ccc47b59e0ee9c0a40f0051f0b814b08c4e7aaf7815ad53f616dd8ac3a6c",
-      "channels": [
-        "agent_transport"
-      ],
-      "content": "PA request correlation, peer binding and result receive",
-      "currentControl": "Pinned primary authority and contact, encrypted persisted messages, no model credentials",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-node-client",
-      "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "0d243ec04f6de5721525bbf6e0922c1408c5cdd7f0923a0f0654989901abacad",
-      "channels": [
-        "agent_transport",
-        "private_file"
-      ],
-      "content": "Node keys, signed proofs, encrypted inbox and outbox",
-      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-task-contract",
-      "file": "packages/agent-transport/task-contracts.ts",
-      "sourceDigest": "01877bc3b2e5a9d9c4bb037bf3c576b578d26a33d7e1bdcbe47ecbb479cbd321",
-      "channels": [
-        "agent_transport"
-      ],
-      "content": "Task request and response shapes",
-      "currentControl": "Strict protocol, bounded operations, authority and request identity",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-source-contract",
-      "file": "packages/agent-transport/service-contracts.ts",
-      "sourceDigest": "49b93a27e07775cd704d947d9b38dea0f83956f98691b1508887fdc6ea592921",
-      "channels": [
-        "agent_transport",
-        "source"
-      ],
-      "content": "Read-only provider request and response shapes",
-      "currentControl": "Strict protocol, two read tools, source/task/plan/input and response digest",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-didi-adapter",
-      "file": "packages/capabilities/didi/relay-connector.ts",
-      "sourceDigest": "3d8a4fa39c846605f37e651bb519124a59834a0347c10ad2b7861bac6f8ad72e",
-      "channels": [
-        "source"
-      ],
-      "content": "Worker source read delegation through primary transport work",
-      "currentControl": "Explicit transport digest, worker-only authority, current permission before result projection",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-enrollment-verifier",
-      "file": "apps/relay/config.ts",
-      "sourceDigest": "6ba7dbbdb0acba52a59f567b50103fe4ac15b1b2051f40e0f428982b73eb6508",
-      "channels": [
-        "authorization_control"
-      ],
-      "content": "External or primary-issued enrollment assertion validation",
-      "currentControl": "Exact JWT issuer/audience/client/scope/lifetime and optional single-node restriction",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-mailbox-authority",
-      "file": "packages/relay/store.ts",
-      "sourceDigest": "2f61b806c74ce62c2d892be75dd6a352eb3778fdfa99615e240280c244679317",
-      "channels": [
-        "agent_transport",
-        "authorization_control"
-      ],
-      "content": "Node ownership, contacts, durable ciphertext and receipts",
-      "currentControl": "Owner/node-bound enrollment, DPoP replay, contact consent, bounded retention and revocation",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-service-process",
-      "file": "apps/service-agent/main.ts",
-      "sourceDigest": "2c3dafcf73c6fd145d70c8fd0b52d89975b286fb0ec860265fa37e39d14d19c5",
-      "channels": [
-        "runtime",
-        "source",
-        "diagnostics"
-      ],
-      "content": "Independent source Agent process",
-      "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store; diagnostics expose only call ID, check stage, elapsed time, HTTP status and fixed outcome codes, never proofs or source data",
-      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
-      "stage": "S5"
-    },
-    {
-      "id": "native-pa-relay-client",
-      "file": "integrations/grok/eigos-native/client.mjs",
-      "sourceDigest": "d950cb7d635850743c500e74f40ce0601d7eae3189b55ed7bb3beaa3f6b87fe9",
-      "channels": [
-        "agent_transport",
-        "private_file"
-      ],
-      "content": "Installed PA transport requests, saved profiles and result receipts",
-      "currentControl": "Explicit transport choice, pinned authority/public key, private OAuth custody and stable task request identity",
-      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
-      "stage": "S5"
-    },
-    {
-      "id": "primary-pa-profile-setup",
-      "file": "scripts/setup-primary-pa.mjs",
-      "sourceDigest": "de17a7a265bc1c4bb82385513f87912c6ea95d2126310ebb5505ed35b2c9510c",
-      "channels": [
-        "agent_transport",
-        "private_file"
-      ],
-      "content": "Primary PA client links and saved Relay identity configuration",
-      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile",
-      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
-      "stage": "S5"
-    },
-    {
-      "id": "relay-http-boundary",
-      "file": "apps/relay/app.ts",
-      "channels": [
-        "agent_transport",
-        "authorization_control"
-      ],
-      "content": "Authenticated encrypted mailbox and enrollment HTTP boundary",
-      "currentControl": "Explicit loopback proxy trust, per-client ingress limits, exact owner and node proofs, bounded ciphertext",
-      "targetControl": "Keep communication authorization separate from primary task and source grants",
-      "stage": "S5",
-      "sourceDigest": "d88f3ba9db8bb8e233023d22a0c59c92f8a44b82be2b71f8c5f1492b27930b74"
-    },
-    {
-      "id": "relay-private-storage",
-      "file": "packages/relay/files.ts",
-      "channels": [
-        "private_file"
-      ],
-      "content": "Private communication databases and node process-lock storage",
-      "currentControl": "Owned single-link private files, distinct application IDs, bounded SQLite contention and private transactions",
-      "targetControl": "Prevent state aliasing and concurrent node ownership without creating business authority",
-      "stage": "S5",
-      "sourceDigest": "43e04fa0677b6d9cc517e2b71d6526103bd74231e4ba8892928685465ebffca1"
-    },
-    {
-      "id": "native-model-timing",
-      "file": "packages/capabilities/native-model-timing.ts",
-      "channels": [
-        "private_diagnostics"
-      ],
-      "content": "Bounded monotonic CLI and MCP phase metadata without prompts, arguments, results, IDs or credentials",
-      "currentControl": "Fixed phase and tool enums; numeric boundaries and statuses; maximum 96 spans; missing endpoints remain unknown; strict schema rejects extra fields",
-      "targetControl": "Private attempt diagnostics separate from business completion and provider inference claims",
-      "stage": "S3",
-      "sourceDigest": "a88b4dc35ce463bc9f5a604e311edc87039c3620c90f7dfd02b5c37f51128518"
-    },
-    {
-      "id": "model-usage-accounting",
-      "file": "packages/core/member-usage.ts",
-      "channels": [
-        "sqlite",
-        "task_usage"
-      ],
-      "content": "Owned model-attempt accounting and optional private phase timing, including failed attempts",
-      "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated",
-      "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
-      "stage": "S3",
-      "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
-    },
-    {
       "id": "rollinggo-connector",
       "file": "packages/capabilities/rollinggo/connector.ts",
       "sourceDigest": "221a7310416160fdfb7ba6cfe6348e5552bad5e428496b5ecc0ade34da6c4d78",
@@ -4692,6 +4452,324 @@
       "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
       "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
       "stage": "S4"
+    },
+    {
+      "id": "native-goal-dataflow",
+      "file": "packages/coordinator/goal-dataflow.ts",
+      "channels": [
+        "model_output",
+        "sqlite"
+      ],
+      "content": "Conditional component evidence selected by the native goal Agent",
+      "currentControl": "Exact task contexts, declared read-only completion modules, original accepted named ports and unchanged component plus whole-goal verification",
+      "targetControl": "No future reference grants execution authority or completion",
+      "stage": "S5",
+      "sourceDigest": "d236f4670858c8fd791b158d1d63777bfd54524fbb8c397d0b70626814a8c0b8"
+    },
+    {
+      "id": "native-goal-completion-contract",
+      "file": "packages/ontology/goal-completion-contract.ts",
+      "channels": [
+        "model_input",
+        "model_output"
+      ],
+      "content": "Bounded component, criterion and future accepted-port references",
+      "currentControl": "Strict schemas, bounded arrays, explicit fixed goal assignments and no executable code or inferred source values",
+      "targetControl": "Host validates every reference against the current task and accepted source ledger",
+      "stage": "S5",
+      "sourceDigest": "4f0b63196197181b1566d8e635446d434ba77e50927084c57ebc2da45676ca85"
+    },
+    {
+      "id": "native-composed-action-bindings",
+      "file": "packages/core/composed-actions.ts",
+      "channels": [
+        "model_output",
+        "source_input"
+      ],
+      "content": "Task-scoped named output bindings and declared scalar derivations",
+      "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
+      "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
+      "stage": "S5",
+      "sourceDigest": "c2b954d78344264cf57611670be1c2e1461c069eccbbe6b25e5488348c24823b"
+    },
+    {
+      "id": "native-agent-decision-contract",
+      "file": "packages/ontology/agent-actions.ts",
+      "channels": [
+        "model_output",
+        "sqlite"
+      ],
+      "content": "Bounded native action graphs and conditional evidence proposals",
+      "currentControl": "Strict model decision schema; host validates authenticated decision digests, exact contexts and current task revision before dispatch",
+      "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
+      "stage": "S5",
+      "sourceDigest": "1f844a90c0e568455536b5f09f43c4ba8443a5458dcdbe02a78eaa53bf305066"
+    },
+    {
+      "id": "primary-relay-entry",
+      "file": "apps/gateway/relay.ts",
+      "sourceDigest": "8f23947f92c67741fa714090446aeaff45dfb8bde3e546230db81da3efcb773b",
+      "channels": [
+        "http",
+        "authorization_control"
+      ],
+      "content": "Node enrollment, installation binding, current source authorization and dispatch",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-identity-authority",
+      "file": "packages/security/relay.ts",
+      "sourceDigest": "93cd7dabe9436473b46da79e1788e5bd44b42832c08968d15b2a10f423c11e17",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Public-key installation routes, short bindings, proof replay and command idempotency",
+      "currentControl": "Current subject, parent grant, task-only scopes and immutable installation ownership",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-read-authority",
+      "file": "packages/security/relay-service.ts",
+      "sourceDigest": "23c54d79e5b7e27bff128bba6d9e27593584346033c9452f04c3adf68b209e2e",
+      "channels": [
+        "authorization_control",
+        "source"
+      ],
+      "content": "Durable source requests, task/plan/attempt binding and response acceptance",
+      "currentControl": "Current task/source/action authority, Worker claim, exact input and pinned source peer",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-task-host",
+      "file": "packages/agent-transport/task-host.ts",
+      "sourceDigest": "b22d557b993dc86b0921cbbb4477ab539603eb2c030f9c16367d2620ff55f837",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Encrypted task intake and business result projection",
+      "currentControl": "Original TaskService idempotency and current TaskView disclosure at send boundary",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-source-service",
+      "file": "packages/agent-transport/didi-service.ts",
+      "sourceDigest": "cce346271fe5f5a877b222ca55f0977148d2184e340c9d6fa4a090a76d70e0e7",
+      "channels": [
+        "agent_transport",
+        "source",
+        "private_file"
+      ],
+      "content": "Provider credential custody and durable source read receipts",
+      "currentControl": "Pinned primary and source binding; current DPoP authorization before provider dispatch and every result delivery; private completed receipts survive unavailable authorization without repeating provider reads or extending original deadlines; no order tools",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-enrollment-issuer",
+      "file": "packages/agent-transport/enrollment.ts",
+      "sourceDigest": "b200342ae8f586bc3c5370d4d77951bf906afcf0942cd4d6bc6c8f933fd47237",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Short-lived primary assertions for a specific transport public key",
+      "currentControl": "Current Foundation installation and grant, one-minute expiry, runtime-private signing key",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-pa-client",
+      "file": "packages/agent-client/relay.ts",
+      "sourceDigest": "9d88ccc47b59e0ee9c0a40f0051f0b814b08c4e7aaf7815ad53f616dd8ac3a6c",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "PA request correlation, peer binding and result receive",
+      "currentControl": "Pinned primary authority and contact, encrypted persisted messages, no model credentials",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-node-client",
+      "file": "packages/agent-transport/client.ts",
+      "sourceDigest": "c0e954069e1e9a86c8eb07eb89c781a67b5e4f140a15340f1d5342ef1aa26d3a",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Node keys, signed proofs, encrypted inbox and outbox",
+      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-task-contract",
+      "file": "packages/agent-transport/task-contracts.ts",
+      "sourceDigest": "01877bc3b2e5a9d9c4bb037bf3c576b578d26a33d7e1bdcbe47ecbb479cbd321",
+      "channels": [
+        "agent_transport"
+      ],
+      "content": "Task request and response shapes",
+      "currentControl": "Strict protocol, bounded operations, authority and request identity",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-source-contract",
+      "file": "packages/agent-transport/service-contracts.ts",
+      "sourceDigest": "49b93a27e07775cd704d947d9b38dea0f83956f98691b1508887fdc6ea592921",
+      "channels": [
+        "agent_transport",
+        "source"
+      ],
+      "content": "Read-only provider request and response shapes",
+      "currentControl": "Strict protocol, two read tools, source/task/plan/input and response digest",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-didi-adapter",
+      "file": "packages/capabilities/didi/relay-connector.ts",
+      "sourceDigest": "40df8a0ead689e151caafc6529ea559bc459c531950edaff0d0fe98356b34830",
+      "channels": [
+        "source"
+      ],
+      "content": "Worker source read delegation through primary transport work",
+      "currentControl": "Explicit transport digest, worker-only authority, current permission before result projection",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-enrollment-verifier",
+      "file": "apps/relay/config.ts",
+      "sourceDigest": "6ba7dbbdb0acba52a59f567b50103fe4ac15b1b2051f40e0f428982b73eb6508",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "External or primary-issued enrollment assertion validation",
+      "currentControl": "Exact JWT issuer/audience/client/scope/lifetime and optional single-node restriction",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-mailbox-authority",
+      "file": "packages/relay/store.ts",
+      "sourceDigest": "2f61b806c74ce62c2d892be75dd6a352eb3778fdfa99615e240280c244679317",
+      "channels": [
+        "agent_transport",
+        "authorization_control"
+      ],
+      "content": "Node ownership, contacts, durable ciphertext and receipts",
+      "currentControl": "Owner/node-bound enrollment, DPoP replay, contact consent, bounded retention and revocation",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-service-process",
+      "file": "apps/service-agent/main.ts",
+      "sourceDigest": "62d7643e106cbebcf203c17b0e5c5dd06e0cbb7cfbf41ed5f8c8a2ec6db32f9d",
+      "channels": [
+        "runtime",
+        "source",
+        "diagnostics"
+      ],
+      "content": "Independent source Agent process",
+      "currentControl": "Exact configured peer, owned source config, bounded reconnect and no task store; diagnostics expose only call ID, check stage, elapsed time, HTTP status and fixed outcome codes, never proofs or source data",
+      "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
+      "stage": "S5"
+    },
+    {
+      "id": "native-pa-relay-client",
+      "file": "integrations/grok/eigos-native/client.mjs",
+      "sourceDigest": "d950cb7d635850743c500e74f40ce0601d7eae3189b55ed7bb3beaa3f6b87fe9",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Installed PA transport requests, saved profiles and result receipts",
+      "currentControl": "Explicit transport choice, pinned authority/public key, private OAuth custody and stable task request identity",
+      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
+      "stage": "S5"
+    },
+    {
+      "id": "primary-pa-profile-setup",
+      "file": "scripts/setup-primary-pa.mjs",
+      "sourceDigest": "de17a7a265bc1c4bb82385513f87912c6ea95d2126310ebb5505ed35b2c9510c",
+      "channels": [
+        "agent_transport",
+        "private_file"
+      ],
+      "content": "Primary PA client links and saved Relay identity configuration",
+      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile",
+      "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
+      "stage": "S5"
+    },
+    {
+      "id": "relay-http-boundary",
+      "file": "apps/relay/app.ts",
+      "channels": [
+        "agent_transport",
+        "authorization_control"
+      ],
+      "content": "Authenticated encrypted mailbox and enrollment HTTP boundary",
+      "currentControl": "Explicit loopback proxy trust, per-client ingress limits, exact owner and node proofs, bounded ciphertext",
+      "targetControl": "Keep communication authorization separate from primary task and source grants",
+      "stage": "S5",
+      "sourceDigest": "d88f3ba9db8bb8e233023d22a0c59c92f8a44b82be2b71f8c5f1492b27930b74"
+    },
+    {
+      "id": "relay-private-storage",
+      "file": "packages/relay/files.ts",
+      "channels": [
+        "private_file"
+      ],
+      "content": "Private communication databases and node process-lock storage",
+      "currentControl": "Owned single-link private files, distinct application IDs, bounded SQLite contention and private transactions",
+      "targetControl": "Prevent state aliasing and concurrent node ownership without creating business authority",
+      "stage": "S5",
+      "sourceDigest": "43e04fa0677b6d9cc517e2b71d6526103bd74231e4ba8892928685465ebffca1"
+    },
+    {
+      "id": "native-model-timing",
+      "file": "packages/capabilities/native-model-timing.ts",
+      "channels": [
+        "private_diagnostics"
+      ],
+      "content": "Bounded monotonic CLI and MCP phase metadata without prompts, arguments, results, IDs or credentials",
+      "currentControl": "Fixed phase and tool enums; numeric boundaries and statuses; maximum 96 spans; missing endpoints remain unknown; strict schema rejects extra fields",
+      "targetControl": "Private attempt diagnostics separate from business completion and provider inference claims",
+      "stage": "S3",
+      "sourceDigest": "a88b4dc35ce463bc9f5a604e311edc87039c3620c90f7dfd02b5c37f51128518"
+    },
+    {
+      "id": "model-usage-accounting",
+      "file": "packages/core/member-usage.ts",
+      "channels": [
+        "sqlite",
+        "task_usage"
+      ],
+      "content": "Owned model-attempt accounting and optional private phase timing, including failed attempts",
+      "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated",
+      "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
+      "stage": "S3",
+      "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
+    },
+    {
+      "id": "security-projection-origin",
+      "file": "packages/security/projection-origin.ts",
+      "sourceDigest": "07fa8a7f0acd55a79d087e6dbae8bb3695133ba5ba47677090bf6f39f735e74f",
+      "channels": [
+        "all-reads",
+        "worker"
+      ],
+      "content": "Version-bound causal inputs of task-control projections, distinct from accumulated model/audit lineage",
+      "currentControl": "Reuse only the same grant, object content and outgoing relationship snapshot; retain full existing restrictions for legacy or changed records and keep business outputs on fresh lineage",
+      "targetControl": "Current membership, field labels, grants and source authority remain independent; no retroactive audit propagation",
+      "stage": "S2"
     }
   ]
 }

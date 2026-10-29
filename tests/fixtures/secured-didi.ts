@@ -12,20 +12,21 @@ import {input as rideInput} from './didi.js';
 import {Worker} from '../../apps/worker/worker.js';
 import type {Coordinator} from '../../packages/coordinator/coordinator.js';
 import type {JobStore} from '../../packages/core/store.js';
+import {didiDataflow,dataflowCompletion} from './didi-dataflow.js';
 
 /** Real Worker ownership with caller-controlled fixture time. CPU scheduling
  * does not advance authority time; the real-time test signal bounds waiting. */
-export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal,advanceTime:()=>void) {
+export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal,advanceTime:()=>void,until?:(job:ReturnType<JobStore['get']>)=>boolean) {
   const worker=new Worker(store,{coordinator,pollMs:20,leaseMs:10000});
   try {
     worker.start();
-    while(['submitted','working'].includes(store.get(owner,taskId).state)) {
+    while(['submitted','working'].includes(store.get(owner,taskId).state)&&!until?.(store.get(owner,taskId))) {
       signal.throwIfAborted();await new Promise(resolve=>setTimeout(resolve,20));advanceTime();
     }
   }finally{await worker.close();}
 }
 
-export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'native-goal') {
+export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'native-goal',options:{dataflow?:boolean;mutate?:(decision:AgentDecision)=>void}={}) {
   const modelInputs:string[]=[];let closed=0,turns=0;
   const reasoner:Reasoner={ontologyContextMode:mode==='native-goal'?'task':'primitives',securityChannelId:'synthetic-didi',reviewGoal:syntheticGoalReview,closeTask:async()=>{closed++;},ground:async(request,capabilities,_signal,access)=>{
     modelInputs.push(JSON.stringify({request,capabilities}));
@@ -61,6 +62,19 @@ export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'nati
       return {ref,data:result.items[0]!.properties.observedData.data};
     });
     const step=(id:string,action:string,args:object):AgentStep=>({id,action,argumentsJson:JSON.stringify(args),dependsOn:[],inputRefs:[]});
+    if(mode==='native-goal'&&options.dataflow){
+      if(observations.some(value=>value.data.kind==='places'&&value.data.places.filter(place=>place.name===rideInput.origin||place.name===rideInput.destination).length>1)){
+        const decision:AgentDecision={kind:'clarify',requestRevision:ctx.request.revision,message:'Which full address matches your endpoint?',steps:[],completionJson:'',clarificationContextId:'ride'};
+        acknowledgeReads(access);return {decision,evidence:{...evidence(),decisionDigest:digest(decision)}};
+      }
+      if(!observations.length){
+        const decision:AgentDecision={kind:'execute',requestRevision:ctx.request.revision,message:'Select declared read dependencies and conditional whole-goal evidence',completionJson:'',
+          steps:didiDataflow(ctx.state.scope).map(step=>({...step,contextId:'ride',bindingDigest:pin(step.action).digest,contributesTo:['estimate'],inputRefs:step.inputRefs.map(ref=>({...ref,port:'result'}))})),
+          plannedGoalCompletion:{components:[{contextId:'ride',...dataflowCompletion,inputRefs:dataflowCompletion.inputRefs.map(ref=>({...ref,port:'result'}))}],criteria:[{id:'estimate',contextIds:['ride']}],conditions:[]}};
+        options.mutate?.(decision);acknowledgeReads(access);
+        return {decision,evidence:{...evidence(),decisionDigest:digest(decision)}};
+      }
+    }
     let steps:AgentStep[]=[],complete:ObjectRef|undefined;
     if(!observations.length) steps=[step('origin','SearchDidiPlaces',{scope:ctx.state.scope,role:'origin',keywords:rideInput.origin}),step('destination','SearchDidiPlaces',{scope:ctx.state.scope,role:'destination',keywords:rideInput.destination})];
     else {

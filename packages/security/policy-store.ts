@@ -20,6 +20,7 @@ import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
+import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 
 // Only this connection's direct append-only audit inserts are inert for read
 // bindings. Other writes, trigger side effects and other connections still
@@ -52,12 +53,13 @@ export function rollingGoPolicyContracts(model: SecurityStore['model']) {
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
-export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope }
+export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope; projectionOrigin?: ProjectionOrigin }
 
 /** Policy records share the task transaction. Only trusted administration calls
  * setRole; a member data grant never manufactures a platform resource role. */
 export class SecurityPolicies {
   readonly definitionDigest:string;
+  private definitionReader?: DefinitionStore;
   get model() { return this.security.model; }
   private readonly reviewedModels = new WeakSet<SecurityStore['model']>();
   /** Release labels may change while the reviewed business definitions do not.
@@ -296,7 +298,7 @@ export class SecurityPolicies {
     const labels=records.filter(row=>row.field==='*' || policyFields.has(row.field)).map(row=>({...result,...row.body} as SecurityEnvelope));
     return labels.length?combineEnvelopes([result,...labels]):result;
   }
-  bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, inputEnvelope?:SecurityEnvelope) {
+  bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, evidence?:SecurityEnvelope|(()=>SecurityEnvelope)) {
     const row = this.db.prepare('SELECT revision,body,definition_digest FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(grant.ownerKey, ref.type, ref.id);
     if (!row)throw new SecurityError('POLICY_CHANGED');
     const body=JSON.parse(String(row.body));
@@ -310,12 +312,34 @@ export class SecurityPolicies {
         const jobRow=this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(grant.ownerKey,grant.taskId);
         const job=jobRow?JSON.parse(String(jobRow.body)) as Job:undefined,reader=job?.delegation?.ontologyRelease;
         if(reader && job?.delegation?.request.revision===grant.requestRevision) {
-          const release=new DefinitionStore(this.db,Date.now,{readOnly:true}).resolve(reader);
+          // Definitions are immutable, but the exact durable release is still
+          // checked by resolve on every use. Reuse parsing across bindings;
+          // task membership, field access and current grants stay uncached.
+          const release=(this.definitionReader??=new DefinitionStore(this.db,this.security.now,{readOnly:true})).resolve(reader);
           sharedCapability=release.model.ref.digest===this.model.ref.digest && release.compatibleDefinition({kind:'object',id:ref.type,storedDigest:String(row.definition_digest),currentDigest:this.model.fingerprint(ref.type),properties:body.properties});
         }
       }
       if(!sharedCapability && (grant.operations.includes('task.process') || !compatibleProjectedObject(this.db,grant.ownerKey,grant.taskId,ref.type,String(row.definition_digest),body.properties,this.model.ref.digest)))throw new SecurityError('POLICY_CHANGED');
     }
+    let inputEnvelope:SecurityEnvelope|undefined,projectionOrigin:ProjectionOrigin|undefined;
+    if(typeof evidence==='function') {
+      if(sourceBindingId!=='task_context' || !taskContextFields[ref.type] || body.source?.kind!=='task')throw new SecurityError('POLICY_CHANGED');
+      const stored=this.db.prepare('SELECT body FROM security_bindings WHERE grant_id=? AND owner=? AND task_id=? AND request_revision=? AND type=? AND object_id=?')
+        .get(grant.id,grant.ownerKey,grant.taskId,grant.requestRevision,ref.type,ref.id)
+        ?? this.db.prepare("SELECT b.body FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' AND b.type=? AND b.object_id=? ORDER BY issued.rowid DESC LIMIT 1")
+          .get(grant.ownerKey,grant.taskId,grant.requestRevision,grant.installationId,ref.type,ref.id);
+      const previous=stored?JSON.parse(String(stored.body)) as ObjectBinding:undefined;
+      if(previous && (previous.sourceBindingId!==sourceBindingId || refKey(previous.object)!==refKey(ref)))throw new SecurityError('POLICY_CHANGED');
+      // A replacement grant may retain this same installation/request's origin,
+      // never its old permission. Fields below and all read guards stay current.
+      // Incoming consumers do not produce this record. Capability membership
+      // for other tasks also cannot change this task's provenance; current
+      // membership is independently rechecked when reading the binding.
+      const links=this.db.prepare("SELECT type,to_type,to_id,definition_digest FROM ontology_links WHERE owner=? AND from_type=? AND from_id=? AND (type<>'CapabilityRequest' OR (to_type='ServiceRequest' AND to_id=?)) ORDER BY type,to_type,to_id LIMIT 4001")
+        .all(grant.ownerKey,ref.type,ref.id,grant.taskId);
+      if(links.length>4000)throw new SecurityError('INSUFFICIENT_ACCESS');
+      ({inputEnvelope,projectionOrigin}=taskProjectionEvidence({ownerKey:grant.ownerKey,revision:Number(row.revision),definitionDigest:String(row.definition_digest),body,links,previous,current:evidence}));
+    } else inputEnvelope=evidence;
     if (sourceBindingId==='member_asset') {
       const originRow=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(grant.ownerKey,ref.type,ref.id,Number(row.revision));
       const origin=originRow?JSON.parse(String(originRow.body)) as {programId:string;programDigest:string;sourceBindingId:string;inputEnvelope?:SecurityEnvelope}:undefined;
@@ -329,14 +353,33 @@ export class SecurityPolicies {
     const safe = [...new Set(fields)].filter(f => this.fieldPolicy(ref.type, f) !== 'internal_only');
     const own=this.envelope(grant.ownerKey, ref, Number(row.revision), safe, JSON.parse(String(row.body)).properties, grant.channels);
     const binding: ObjectBinding = { object: ref, revision: Number(row.revision), fields: safe, sourceBindingId,
-      envelope: inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{} ) };
-    this.db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body')
+      envelope: inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{} ),...(projectionOrigin?{projectionOrigin}:{}) };
+    this.db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body')
       .run(grant.id, grant.ownerKey, grant.taskId, grant.requestRevision, ref.type, ref.id, Number(row.revision), JSON.stringify(binding));
   }
   bindInputs(grant: TaskDataGrant) {
     for (const input of grant.inputs) this.bind(grant, input.object, input.fields, 'member_asset');
     const parent = this.security.agentGrant(grant.installationId), fields = parent.resources.find(r => r.type === 'ServiceRequest')?.fields ?? [];
     this.bind(grant, { type: 'ServiceRequest', id: grant.taskId }, fields, 'task_submission');
+  }
+  private taskReadHistory(owner: string, taskId: string, requestRevision: number, progress: () => void = () => {}) {
+    return this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?")
+      .all(owner, taskId, requestRevision).map(row => {
+        progress(); const envelope = securityEnvelopeSchema.parse(JSON.parse(String(row.body)));
+        if (envelope.ownerKey !== owner) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+        return envelope;
+      });
+  }
+  /** Recovery must respect cumulative evidence capacity even when no unchanged
+   * control record needs rebinding. This grants no current data permission. */
+  assertTaskReadHistoryCapacity(owner: string, taskId: string, requestRevision: number) {
+    const history = this.taskReadHistory(owner, taskId, requestRevision);
+    if (!history.length) return;
+    const root = this.db.prepare("SELECT body,revision FROM ontology_objects WHERE owner=? AND type='ServiceRequest' AND id=?").get(owner, taskId)!;
+    const properties = JSON.parse(String(root.body)).properties;
+    // Use the current root, matching task projection's root-plus-history
+    // capacity. Channels are not published or used as a permission grant here.
+    combineEnvelopes([this.envelope(owner, { type: 'ServiceRequest', id: taskId }, Number(root.revision), ['originalGoal'], properties, history[0]!.channels), ...history]);
   }
   bindTaskProjection(owner: string, taskId: string) {
     // A long historical projection must keep making checked progress. In a
@@ -357,12 +400,13 @@ export class SecurityPolicies {
         const refs:ObjectRef[]=[...(job.delegation?.goalCoverage?[{type:'GoalCoverage',id:job.delegation.goalCoverage.digest}]:[]),
           ...(properties.currentAssessment?[objectRefSchema.parse(properties.currentAssessment)]:[]),
           ...(bindingRef?[{type:'ExecutionFeedback',id:digest({request:taskId,revision:g.requestRevision,bindingRef})}]:[])];
-        const inherited=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
-          ...this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?").all(owner,taskId,g.requestRevision).map(row=>{progress();return securityEnvelopeSchema.parse(JSON.parse(String(row.body)));})]);
+        let inherited:SecurityEnvelope|undefined;
+        const currentEvidence=()=>inherited??=combineEnvelopes([this.envelope(owner,{type:'ServiceRequest',id:taskId},Number(root.revision),['originalGoal'],properties,g.channels),
+          ...this.taskReadHistory(owner, taskId, g.requestRevision, progress)]);
         for(const ref of this.contextMembers(owner,taskId,g.requestRevision).values()) {
           progress();
           const fields=(parent.resources.find(r=>r.type===ref.type)?.fields??[]).filter(field=>taskContextFields[ref.type]!.includes(field));
-          if(fields.length)this.bind(g,ref,fields,'task_context',inherited);
+          if(fields.length)this.bind(g,ref,fields,'task_context',currentEvidence);
         }
         for(const ref of refs) {
           progress();
@@ -372,7 +416,7 @@ export class SecurityPolicies {
           if(!object)continue;
           const body=JSON.parse(String(object.body));
           if(body.source.kind!=='task' || body.source.id!==taskId || body.properties.requestRevision!==g.requestRevision)throw new SecurityError('POLICY_CHANGED');
-          this.bind(g,ref,resource.fields,'task_projection',inherited);
+          this.bind(g,ref,resource.fields,'task_projection',currentEvidence());
         }
       }
     }
@@ -384,13 +428,21 @@ export class SecurityPolicies {
    * It never spans source calls, promises, dispatch or another model tool call. */
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
-    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${Number(this.db.prepare('SELECT total_changes() AS n').get()!.n)-(readAuditChanges.get(this.db)??0)}`;
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
-    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
+    // Preparing both metadata reads for every dependency dominated otherwise
+    // cached traversals. One statement still observes both local writes and
+    // other connections before every cached read.
+    const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
+    const stamp=()=>{const row=version.get()!;return `${row.data_version}:${Number(row.changes)-(readAuditChanges.get(this.db)??0)}`;};
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
+    // Expired historical roles grant nothing and cannot shorten a read that
+    // another current role permits. Every role valid at entry still constrains
+    // this snapshot, and roleAllows keeps checking the requested resource.
+    const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
+    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();generation++;}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -449,6 +501,7 @@ export class SecurityPolicies {
     }
     // One bounded read shares verified authority and dependency results. Recheck
     // at its end; never carry this memo across a tool call, write or async turn.
+    const generation=scope.readGeneration?.(),verifiedDependencies=new Set<string>();
     const parent=this.security.agentGrant(scope.actor.installationId),clearance=this.recipient(scope.actor.installationId);
     const sources=this.sources(scope.actor.ownerKey,scope.actor.installationId),roles=this.roles(scope.actor.memberId,scope.actor.installationId);
     const checked=scope.readBindings as Map<string,ObjectBinding|undefined> | undefined ?? new Map<string,ObjectBinding|undefined>();
@@ -462,6 +515,7 @@ export class SecurityPolicies {
       const binding=row?JSON.parse(String(row.body)) as ObjectBinding:this.retainedBinding(scope,ref,historicalCapability);
       if(!binding)return;
       if(revision!==undefined && binding.revision!==revision)return;
+      if(binding.projectionOrigin && binding.sourceBindingId!=='task_context')throw new SecurityError('POLICY_CHANGED');
       const allowed=parent.resources.find(r=>r.type===ref.type)?.fields??[];
       binding.fields=binding.fields.filter(field=>{
         if(!allowed.includes(field) || this.fieldPolicy(ref.type,field)==='internal_only')return false;
@@ -477,7 +531,11 @@ export class SecurityPolicies {
       } else if(binding.sourceBindingId==='task_context') {
         if(!this.contextMembers(scope.actor.ownerKey,scope.grant!.taskId,scope.grant!.requestRevision).has(refKey(ref))
           && !(historicalCapability && this.retainedBinding(scope,ref,true)))return;
-        const row=this.db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,ref.type,ref.id),properties=row?JSON.parse(String(row.body)).properties:{};
+        const row=this.db.prepare('SELECT body,definition_digest FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,ref.type,ref.id),body=row?JSON.parse(String(row.body)):undefined,properties=body?.properties??{};
+        if(binding.projectionOrigin) {
+          if(!row)throw new SecurityError('POLICY_CHANGED');
+          assertProjectionOrigin(scope.actor.ownerKey,binding.inputEnvelope,binding.projectionOrigin,{definitionDigest:String(row.definition_digest),body});
+        }
         if(ref.type==='RegisteredActionType' && !this.resourceAllowed(scope,'actionType',String(properties.actionId)))return;
         if(ref.type==='RegisteredCapability' && !parent.capabilityIds.includes(properties.capabilityRef?.id))return;
         binding.fields=binding.fields.filter(field=>taskContextFields[ref.type]?.includes(field));
@@ -492,13 +550,25 @@ export class SecurityPolicies {
       // WHERE miss could reveal a bit about data whose inputs were revoked.
       checked.set(key,binding);
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
+        // Cumulative evidence repeats the same ancestors along many paths.
+        // Verify each complete assertion once in this traversal. A different
+        // revision, field set or expected digest is a different assertion.
+        const dependencyKey=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields,dependency.contentDigest]);
+        if(verifiedDependencies.has(dependencyKey))continue;
         const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
-        if(this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
+        // Recursive reads may have proved this assertion while checking its
+        // own ancestors. Do not repeat that database checkpoint on unwind.
+        if(!verifiedDependencies.has(dependencyKey) && this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
+        verifiedDependencies.add(dependencyKey);
       }
       return binding;
     };
-    const result=read(ref,revision,historicalCapability);scope.assertCurrent();return result;
+    const result=read(ref,revision,historicalCapability);scope.assertCurrent();
+    // Never return a graph assembled across invalidated proofs, including a
+    // write detected after the last content read. The caller can read afresh.
+    if(scope.readGeneration?.()!==generation)throw new SecurityError('POLICY_CHANGED');
+    return result;
   }
   requireObject(owner: string, ref: ObjectRef, revision?: number) {
     const scope = this.scope(owner), value = this.binding(scope, ref, revision);

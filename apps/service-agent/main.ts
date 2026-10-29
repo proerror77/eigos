@@ -16,7 +16,7 @@ try {
     try {
       const contact = await client.ensureContact(config.gatewayAgentId);
       if (contact.state === 'pending' && contact.recipient === client.agentId) await client.respondContact(contact.id, 'accept');
-      await client.listen(message => service.handle(message, stop.signal), stop.signal);
+      await client.listen(message => service.handle(message, stop.signal), stop.signal, {concurrency:2});
     }
     catch {
       if (!stop.signal.aborted) await delay(1000, undefined, { signal: stop.signal }).catch(() => {});

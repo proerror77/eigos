@@ -397,3 +397,37 @@ test('stopping the listener during contact readback preserves the inbox without 
     assert.equal(handled, 0); assert.equal((await b.pending()).length, 1);
   } finally { await f.close(); }
 });
+
+test('bounded concurrent listeners drain started handlers before retry and leave unstarted messages pending',{timeout:15000},async t=>{
+  const f=await fixture(),stop=new AbortController();let releaseSecond!:()=>void,startedBoth!:()=>void,releaseFirstContact!:()=>void;
+  const secondGate=new Promise<void>(resolve=>{releaseSecond=resolve;}),both=new Promise<void>(resolve=>{startedBoth=resolve;}),firstContact=new Promise<void>(resolve=>{releaseFirstContact=resolve;});
+  const started:number[]=[],finished:number[]=[];let active=0,maximum=0,settled=false;
+  const deadline=setTimeout(()=>{stop.abort();releaseSecond();startedBoth();releaseFirstContact();},10000);
+  try{
+    const a=await f.client('Concurrent A'),b=await f.client('Concurrent B'),contact=await f.connect(a,b);
+    for(const index of [1,2,3])await a.send(b.agentId,contact,{index});
+    await b.poll();let contacts=0;const readContacts=b.contacts.bind(b);
+    t.mock.method(b,'contacts',async()=>{
+      const order=++contacts,result=await readContacts();
+      if(order===1)await firstContact;
+      return result;
+    });
+    const listening=b.listen(async message=>{
+      const index=(message.content as {index:number}).index;
+      started.push(index);maximum=Math.max(maximum,++active);
+      if(index===2)releaseFirstContact();
+      if(started.length===2)startedBoth();
+      try{
+        if(index===1){await both;throw new Error('Synthetic handler failure');}
+        await secondGate;finished.push(index);
+      }finally{active--;}
+    },stop.signal,{concurrency:2});
+    const observed=listening.then(()=>{settled=true;},error=>{settled=true;throw error;});
+    const rejected=assert.rejects(observed,/Synthetic handler failure/);
+    await both;await new Promise(resolve=>setImmediate(resolve));
+    assert.deepEqual(started,[2,1],'Independent contact readbacks may finish out of send order');assert.equal(maximum,2);assert.equal(settled,false,'A rejected handler must not release the listener while a sibling still runs');
+    releaseSecond();await rejected;
+    assert.deepEqual(finished,[2]);assert.deepEqual(started,[2,1]);
+    assert.deepEqual((await b.pending()).map(message=>(message.content as {index:number}).index),[1,3]);
+  }finally{clearTimeout(deadline);stop.abort();releaseSecond();startedBoth();releaseFirstContact();await f.close();}
+});

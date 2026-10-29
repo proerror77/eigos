@@ -204,8 +204,12 @@ export class OntologyObjectStore {
     return { ref, revision: Number(row.revision), ...body, ...(deleted ? { tombstone: { revision: Number(deleted.revision), deletedAt: String(deleted.deleted_at) } } : {}) };
   }
   read(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
-    this.guard()?.requireObject(owner, ref);
-    return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    const guard=this.guard();
+    const read=()=>{
+      guard?.requireObject(owner, ref);
+      return this.project(owner, this.raw(owner, ref, budget), ref.type, undefined, budget);
+    };
+    return guard ? guard.readSnapshot(read) : read();
   }
   /** Trusted source validators only. Never expose this through a query or model tool. */
   readPrivate(owner: string, ref: ObjectRef, budget: ReadBudget = { remaining: 1000 }): ObjectView {
@@ -420,6 +424,10 @@ export class OntologyObjectStore {
       for (const ref of touched.values()) {
         if (deleted.has(key(ref)) || this.db.prepare('SELECT 1 FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id)) continue;
         for (const { link, side, direction } of this.model.sides(ref.type)) {
+          // Optional, unbounded relationships have no cardinality condition to
+          // violate. Declaring another such link must not add a database query
+          // to every update of either endpoint.
+          if (side.many && !side.required) continue;
           const prefix = direction === 'forward' ? 'from' : 'to';
           const count = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${prefix}_type=? AND ${prefix}_id=?`).get(...this.ownerParameters(owner), link.id, ref.type, ref.id)!.n);
           if ((!side.many && count > 1) || (side.required && count === 0)) failure('Relationship cardinality violation');

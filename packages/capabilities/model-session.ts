@@ -1,9 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstat, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
-import { homedir, tmpdir } from 'node:os';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { modelEnvironment, modelFeatureArgs } from './model-process.js';
+import { createModelProcessFiles, modelEnvironment, modelFeatureArgs } from './model-process.js';
 import type { RunEvidence } from './executor.js';
 import { modelUsageRecorder } from '../core/model-usage-context.js';
 import type { PromptDataMetrics } from '../coordinator/prompt-data.js';
@@ -215,17 +215,9 @@ export async function openCodexModelSession(binary: string, timeoutMs: number, s
   const directory = await mkdtemp(join(tmpdir(), 'eigos-model-session-'));
   let session: CodexModelSession | undefined;
   try {
-    // app-server lacks exec's --ignore-user-config. Isolate all config/history,
-    // forwarding only a reference to the existing private Codex auth store.
-    const nativeAuth = join(process.env.CODEX_HOME ?? join(homedir(), '.codex'), 'auth.json'), privateConfig = join(directory, 'codex');
-    await mkdir(privateConfig, { mode: 0o700 }); await writeFile(join(privateConfig, 'config.toml'), '', { mode: 0o600 });
-    try {
-      const info = await lstat(nativeAuth);
-      if (!info.isFile() || info.mode & 0o077 || process.getuid && info.uid !== process.getuid()) throw new Error('Native Codex authentication store is not private');
-      await symlink(nativeAuth, join(privateConfig, 'auth.json'));
-    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    const processFiles = await createModelProcessFiles(directory, instructions);
     const child = spawn(binary, ['app-server', '--listen', 'stdio://', '-c', 'project_doc_max_bytes=0', '-c', 'web_search="disabled"', '-c', 'cli_auth_credentials_store="file"', ...modelFeatureArgs], {
-      cwd: directory, env: { ...modelEnvironment(), CODEX_HOME: privateConfig }, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
+      cwd: directory, env: { ...modelEnvironment(), CODEX_HOME: processFiles.codexHome }, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32',
     });
     session = new CodexModelSession(child, directory, schema, signal, timeoutMs, opened);
     await session.initialize(); signal.throwIfAborted(); return session;

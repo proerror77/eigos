@@ -12,13 +12,13 @@ import {currentKernelImplementation} from '../packages/ontology/definition-store
 const businessModel=currentKernelImplementation();
 import {templatePlanning} from '../packages/ontology/planning-contract.js';
 import type {AgentActionPlan,AgentDecision} from '../packages/ontology/agent-actions.js';
-import {authorizationScope} from '../packages/security/context.js';
+import {authorizationScope,withAuthorization} from '../packages/security/context.js';
 import type {AgentProgram} from '../packages/core/agent-program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {Coordinator,type Reasoner} from '../packages/coordinator/coordinator.js';
 import type {OriginalOperation,RecoveryObservation} from '../packages/security/recovery.js';
 
-function setup(participant=false) {
+function setup(participant=false,lineageOverflow=false) {
   let now=Date.now();const f=securityFixture(()=>now),a=f.installation('Original'),b=f.installation('Audit observer'),programRef={id:participant?'booking.participant.free':'synthetic.recovery',version:'1'},programDigest=digest('synthetic-recovery-program');
   const policy=f.jobs.security.policies,until=new Date(now+3600000).toISOString();
   for(const install of [a,b]){
@@ -35,7 +35,21 @@ function setup(participant=false) {
   job.delegation!.agent={version:'1',programRef,programDigest,scope:body.scope,input:{},requestRevision:1,plans:[plan],observations:[],feedback:[]};
   job.state='canceled';f.jobs.save(f.owner,job);
   f.jobs.createIntent(f.owner,{id:intentId,owner:f.owner,jobId:job.id,stepId:step.id,businessOperationKey:operationKey,planDigest:plan.digest,bindingRef:programRef,inputDigest:digest({}),privateDigest:digest({}),privateData:{},effect:'reserve',state:'effect_unknown',remoteRef:'original-synthetic-booking',nextAt:0,createdAt:at});
-  historicalAttempt(f.database,claim,intentId,plan.digest,at);f.jobs.release(claim);f.coordinator.revokeInstallation(f.member.id,a.id);
+  historicalAttempt(f.database,claim,intentId,plan.digest,at);
+  if(lineageOverflow) {
+    const scope=f.jobs.security.workerScope(f.owner,t.job.id,t.authority.id,claim.token),db=new DatabaseSync(f.database);
+    try {
+      const properties=JSON.parse(String(db.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,body.scope.type,t.job.id)!.body)).properties;
+      withAuthorization(scope,()=>{
+        for(let revision=1;revision<=2001;revision++)policy.capture(scope,policy.envelope(f.owner,body.scope,revision,['originalGoal'],properties,t.grant.channels));
+      });
+      db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=?').run(now-1,t.job.id);
+      assert.equal(f.jobs.claim(['eigos.delegate'],10000,now),undefined);
+      const parked=f.jobs.get(f.owner,t.job.id);
+      assert.equal(parked.state,'canceled');assert.equal(parked.delegation!.recovery!.operation,'security_lineage_capacity');
+    }finally{db.close();}
+  }
+  f.jobs.release(claim);f.coordinator.revokeInstallation(f.member.id,a.id);
   const approve=()=>{
     const preview=f.coordinator.recoveryPreview(f.member.id,job.id)[0]!;assert(preview);
     return f.coordinator.approveRecovery(f.member.id,{intentId,installationId:b.id,expectedIntentDigest:preview.expectedIntentDigest,expiresAt:new Date(now+300000).toISOString()});
@@ -43,8 +57,8 @@ function setup(participant=false) {
   return {...f,a,b,t,job,intentId,programRef,programDigest,approve,advance:(ms:number)=>{now+=ms;},now:()=>now};
 }
 
-test('revoked task uses only a separately approved original-operation observer and records audit-only facts',async()=>{
-  const f=setup();let reads=0,dispatches=0;
+for(const lineageOverflow of [false,true])test(`revoked task uses only a separately approved original-operation observer and records audit-only facts${lineageOverflow?' after lineage capacity parking':''}`,async()=>{
+  const f=setup(false,lineageOverflow);let reads=0,dispatches=0;
   const unexpected=()=>{throw new Error('Ordinary execution is unavailable during recovery');};
   const program:AgentProgram={ref:f.programRef,configurationDigest:f.programDigest,actionIds:['CreatePendingBooking'],guidance:'Synthetic recovery',completionSchema:{},permitted:owner=>owner===f.owner,
     capability:()=>({ref:f.programRef,ontologyRef:f.programRef,name:'Synthetic recovery',description:'No real source',tags:[],inputSchema:{},ontology:{},actions:[],predicates:[],verifierRef:f.programRef}),
