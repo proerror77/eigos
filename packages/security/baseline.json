@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "22",
-    "digest": "b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4"
+    "version": "23",
+    "digest": "2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127"
   },
   "types": {
     "ServiceRequest": {
@@ -2740,13 +2740,33 @@
         "data": "task_sensitive",
         "snapshot": "internal_only"
       }
+    },
+    "RollingGoSearchTask": {
+      "fingerprint": "4d5a312dcab77f823d705daa0037bd82c29451239ac354570be7fcdf8e85c77b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RollingGoSearchObservation": {
+      "fingerprint": "d715308ed381fd78ba331241aae90654f089e23083f468cdf3379595e42cae87",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "4d67f56e90f29d7f830eae160288641ab91a685221d43b74a042164986885839",
+      "sourceDigest": "0d0e8fdfffa6258ffb7d632e2ce58f84237ca91526489a9fc5961795c09c5a26",
       "channels": [
         "http"
       ],
@@ -3000,14 +3020,14 @@
         "private_file"
       ],
       "content": "Goal/messages to model process; temporary schema/output files",
-      "currentControl": "Explicit codex model-channel identity; task-bound native MCP must initialize within its existing deadline before planning; qualification remains separately configured",
+      "currentControl": "Explicit codex model-channel identity; qualification remains separately configured",
       "targetControl": "Model channel approval and label propagation; files stay private",
       "stage": "S3"
     },
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "cff5f12730cc1cf8e8e130ea1d7bcfb1d58b99a389a628c3564731eb93b8ad99",
+      "sourceDigest": "73cccc6dc9f46ff142363b19d4d47412b0f8a26079e7a090a4c34af83aaa8413",
       "channels": [
         "source",
         "dispatch"
@@ -3170,7 +3190,7 @@
         "artifact"
       ],
       "content": "Pure source-derived place identity and source/freshness evaluation",
-      "currentControl": "Owned current source proof, city and unique requested match; quote dependencies fresh at request start, quote freshness checked now; unknown stays unresolved",
+      "currentControl": "Owned current source proof, city and unique requested match; unknown stays unresolved",
       "targetControl": "Caller-scoped inputs and derived-output protection",
       "stage": "S3"
     },
@@ -3225,7 +3245,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "3aef9af93d4e00621ac4da23c09438e1f91ce40fb29d561f8b0a30026b336a5c",
+      "sourceDigest": "3c63efcbdcfa1272cc05b0149cdc37829eec6e80238623ca27d7cde5f55a419c",
       "channels": [
         "authorization_control"
       ],
@@ -3237,7 +3257,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "270700789e4e1b5ea9bb418b1ea9a293c8d220f36bee29fa8fc20437a108b9da",
+      "sourceDigest": "dbfb30921d81694912aeb2a3a296597b6669936e13dcd906aac07dfc697645f1",
       "channels": [
         "authorization_control"
       ],
@@ -3333,7 +3353,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "ad838150b56fc04fe0fbf517ee7c86fee28957d6cb219aabbebdf67e02d626b8",
+      "sourceDigest": "20c750ba959f0001b0f14beb1cf94f05f048364450547e7e8db47518228ae0ba",
       "channels": [
         "all-reads"
       ],
@@ -3345,7 +3365,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "9a6dff872e51dfacf01b846e9de43d102be9973b1ce4e04c018a9203c69cdc1b",
+      "sourceDigest": "9b8253a7643b2132433b8ecfa070517f3ad20f51e8f3057267e9a0761970648a",
       "channels": [
         "model-and-agent"
       ],
@@ -3441,7 +3461,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "d92b0aaf670b2b6f77bb8cbde8302a60b44bf312ca4229ec4d84f061947b5d1c",
+      "sourceDigest": "a0a7119a98cd338577142052108821229c165d2b7447cc5e3d729c36b9bcb630",
       "channels": [
         "internal"
       ],
@@ -3951,7 +3971,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "07f6c85cff849087f747b13be845f6a55673bf9b86ffd3ec34c32b3abb79d694",
+      "sourceDigest": "4ca4fc52d4b4adb7effdbff562ca3b79a7aa8ad265799d6dc772dc62437d3301",
       "channels": [
         "model",
         "artifact"
@@ -4571,6 +4591,107 @@
       "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
       "stage": "S3",
       "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
+    },
+    {
+      "id": "rollinggo-connector",
+      "file": "packages/capabilities/rollinggo/connector.ts",
+      "sourceDigest": "221a7310416160fdfb7ba6cfe6348e5552bad5e428496b5ecc0ade34da6c4d78",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-program",
+      "file": "packages/capabilities/rollinggo/program.ts",
+      "sourceDigest": "f21f21b9312674071ced08fd3ef643829ba2108e645faf87acc39d0447b37f5f",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-ontology",
+      "file": "packages/ontology/rollinggo.ts",
+      "sourceDigest": "f03d11aeefb292344ed93640da756d382fced5249485a1daa9793e01fce2beac",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-evaluator",
+      "file": "packages/ontology/rollinggo-functions.ts",
+      "sourceDigest": "3a17c4c3dfd4fab42ae48d8a5cdfaf6b8fad4fd95054aeb432d5a0cd50dc8cbe",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-kernel",
+      "file": "packages/ontology/rollinggo-kernel.ts",
+      "sourceDigest": "5fc55dbaba3a463cb6796643c74f0af999ee1ab8612a7ed3eb76c1f3b04491c8",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private hotel search criteria, reference prices and task-bound source observations",
+      "currentControl": "Exact owner, pinned credential, read-only search allowlist and task evidence validation",
+      "targetControl": "Explicit task data and source permission; no booking or payment authority",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-definition-installer",
+      "file": "scripts/install-rollinggo-readonly.mjs",
+      "sourceDigest": "56c4d47959d4a780b2f14d578c2d3ca741424fc37a39f5a1d7391fb67e4cc1e3",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Additive RollingGo metadata publication and activation; no credentials or business effects",
+      "currentControl": "Owned private database, existing runtime authority, expected release digest and generation",
+      "targetControl": "Explicit operator deployment authority; existing facts, task pins and source permissions preserved",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-policy-upgrade",
+      "file": "packages/security/rollinggo-upgrade.ts",
+      "sourceDigest": "a679e810e0fb8e685528750f10f6f89c26ca7a45e54b2fe82ab3b7937b34f7e6",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit reviewed v22-to-v23 policy contract upgrade and equivalent namespace role copies",
+      "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
+      "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-policy-upgrade-cli",
+      "file": "scripts/upgrade-rollinggo-policy.mjs",
+      "sourceDigest": "6a071cf5b5871f5404e1ee17ed6c3a2e9e1be2532d128ffa09e689b0608afcf9",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit reviewed v22-to-v23 policy contract upgrade and equivalent namespace role copies",
+      "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
+      "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
+      "stage": "S4"
     }
   ]
 }

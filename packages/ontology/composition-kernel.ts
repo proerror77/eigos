@@ -18,7 +18,7 @@ import { domainAtomicActions, domainPreparedReceiptSchema } from './domain-compo
 const sha = z.string().regex(/^[a-f0-9]{64}$/), text = z.string().min(1).max(200);
 const ref = z.strictObject({ id: text, version: text });
 const phases: Record<string, CompositionPort['semantics']['phase']> = {
-  RegistrationTask: 'request', RegistrationOffer: 'quote', RegistrationRecord: 'commitment', MeituanReadTask: 'request',
+  RollingGoSearchTask: 'request', RegistrationTask: 'request', RegistrationOffer: 'quote', RegistrationRecord: 'commitment', MeituanReadTask: 'request',
   RideEstimateTask: 'request', RideEstimateObservation: 'quote', DidiOrderObservation: 'commitment',
   GeoQueryTask: 'request', CatalogTask: 'request', PaotuiTask: 'request', CommerceTask: 'request', BookingTask: 'request', ServiceRequest: 'request', Parcel: 'request', DeliveryRoute: 'request',
   ProductOffer: 'quote', DeliveryQuote: 'quote', ReservationOffer: 'quote', LandedCostQuote: 'quote', CommerceCheckout: 'quote',

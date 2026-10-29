@@ -236,7 +236,9 @@ test('The action model cannot search unrelated owner data or read another task o
   finally { t.store.close(); }
 });
 
-test('An expired window with verified progress rolls over the SAME task without an owner reply', async () => {
+test('An expired window with verified progress rolls over the SAME task without an owner reply', async (context) => {
+  // Exercise expiry explicitly; CI speed must not expire the renewed window.
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const t = setup(); try {
     const job = t.b.submit({ goal: 'Read Coffee' }); await t.b.run();
     const current = t.store.get(owner, job.id); current.createdAt = new Date(Date.now() - 10000).toISOString(); current.delegation!.executionBudget!.window.startedAt = current.createdAt; t.store.save(owner, current);
