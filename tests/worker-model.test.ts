@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CodexExecutor, DEFAULT_WORKER_MODEL } from '../packages/capabilities/executor.js';
@@ -8,10 +8,13 @@ import { readWorkerConfig } from '../packages/core/config.js';
 
 test('Worker pins Luna Fast independently of user defaults and distinguishes requested configuration from observed model', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-model-')), binary = join(dir, 'model-fixture');
-  writeFileSync(binary, `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on('end',()=>{const fs=require('node:fs');fs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],JSON.stringify({args:process.argv.slice(2)}));console.log(JSON.stringify({type:'turn.completed'}));});`, { mode: 0o700 });
+  writeFileSync(binary, `#!${process.execPath}\nprocess.stdin.resume();process.stdin.on('end',()=>{const fs=require('node:fs'),config=fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8');fs.writeFileSync(process.argv[process.argv.indexOf('--output-last-message')+1],JSON.stringify({args:process.argv.slice(2),modelHome:process.env.CODEX_HOME,boundedSkills:config.includes('skills.max_context_tokens = 1'),ownInstructions:config.includes('model_instructions_file ='),hostInstructionsPresent:fs.existsSync(process.env.CODEX_HOME+'/AGENTS.md')}));console.log(JSON.stringify({type:'turn.completed'}));});`, { mode: 0o700 });
   try {
-    const result = await new CodexExecutor(binary).runStructured('fixture', {}, new AbortController().signal), args = (result.output as { args: string[] }).args;
-    assert(args.includes('--ignore-user-config')); assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-luna');
+    const result = await new CodexExecutor(binary).runStructured('fixture', {}, new AbortController().signal);
+    const output = result.output as { args: string[]; modelHome: string; boundedSkills: boolean; ownInstructions: boolean; hostInstructionsPresent: boolean }, args = output.args;
+    assert(output.boundedSkills && output.ownInstructions); assert.equal(output.hostInstructionsPresent, false);
+    assert.notEqual(output.modelHome, process.env.CODEX_HOME); assert.equal(existsSync(output.modelHome), false, 'The isolated model configuration is removed after the attempt');
+    assert.equal(args[args.indexOf('--model') + 1], 'gpt-6-luna');
     assert(args.includes('model_reasoning_effort="medium"')); assert(args.includes('service_tier="priority"'));
     assert(!args.some(arg => arg.startsWith('mcp_servers.')), 'Document-only runs do not acquire Ontology tools');
     assert.deepEqual(result.evidence.modelConfiguration, DEFAULT_WORKER_MODEL); assert.equal(result.evidence.model, undefined); assert(result.evidence.durationMs! >= 0);

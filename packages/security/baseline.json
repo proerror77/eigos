@@ -2966,13 +2966,26 @@
     {
       "id": "model-session",
       "file": "packages/capabilities/model-session.ts",
-      "sourceDigest": "32646f48cfe32992c2ad7d4f9a10f735ae9f61d8b9e5167065330d539f07cda6",
+      "sourceDigest": "6dd028eaa681bf9f7ce64dcb0c1cc23487c1fa8b558f134541dc2546b6447c90",
       "channels": [
         "registered_model"
       ],
       "content": "Model subprocess messages, data and returned structured output",
       "currentControl": "Process transport and schema validation",
       "targetControl": "Registered channel data eligibility and labeled context",
+      "stage": "S3"
+    },
+    {
+      "id": "model-process-config",
+      "file": "packages/capabilities/model-process.ts",
+      "sourceDigest": "be662ba1c1e5bd278ce322ee13bc81954300bc984d3ff7726ef2f924049a49b3",
+      "channels": [
+        "registered_model",
+        "private_file"
+      ],
+      "content": "Owned model subprocess environment, instructions and existing authentication reference",
+      "currentControl": "Private per-process configuration, bounded host-skill exclusions, validated private auth reference and allowlisted environment",
+      "targetControl": "Keep task inputs and explicit model operations separate from operator configuration",
       "stage": "S3"
     },
     {
@@ -3014,7 +3027,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "63aa7114a678fed188a931bf25a997606960229abe4dcf54af1a0bc1d24d3327",
+      "sourceDigest": "8eb3b6920029596fcf652ee7b0f648f66e605c0024d340b2b648226778455c26",
       "channels": [
         "registered_model",
         "private_file"

@@ -18,6 +18,8 @@ Gateway 负责协议、身份和任务入口。Worker 负责持久领取、模�
 
 Worker 的原生本体规划将任务专属 Ontology MCP 标记为必需服务：CLI 等待它初始化后才启动模型回合；初始化失败时停止本次调用。启动上限仍为 15 秒，单次工具调用上限仍为 30 秒。这样可避免可选 MCP 的初始目录等待窗口结束后，模型在缺少本体工具的情况下直接返回。规则见 [Codex MCP 配置](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)。
 
+原生规划和结构化审查均使用进程专属的私有 Codex 配置与业务角色说明，排除宿主的全局 `AGENTS.md` 和无关技能目录。配置仅引用经过文件权限检查的原 Codex 认证文件；清理临时目录不会删除原认证存储。Gateway／供应商凭据不传入模型进程，模型选择、当前数据许可和 Worker 的执行／验收检查仍分别处理。技能排除使用 [Codex 的逐技能配置](https://learn.chatgpt.com/docs/build-skills#enable-or-disable-local-codex-skills)，不修改操作者的技能文件或全局配置。
+
 原生模型调用在 `RunEvidence.nativeTiming` 和私有用量账本的同名字段中保留分段计时；超时、取消、进程失败和无效结果也保留已观察到的阶段。计时使用同一单调时钟，分别记录本地 MCP 准备、CLI 拉起、初始化与工具目录握手、首次工具调用、客户端工具等待、服务端请求／处理、模型输出和退出。缺失边界为 `null` 或省略，未结束的工具区间保留 `pending`，不补造完成时间。
 
 `cliToTurnMs` 包含可能重叠的 MCP 握手，不能与握手耗时相加；`cliBeforeMcpRequestMs` 和 `mcpReadyToTurnMs` 可进一步定位握手前后的 CLI 启动耗时。`turnOutsideToolsMs` 包含模型、传输和调度等待，不代表纯推理时间。记录最多 96 个区间及省略计数，仅含固定阶段／工具名、状态、时间和输入字节数，不保存提示词、参数、结果内容或凭据；用量汇总接口不公开这些私有诊断。先依据这些边界定位问题，再调整具体实现。

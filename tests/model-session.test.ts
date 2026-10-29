@@ -12,6 +12,7 @@ import { withModelUsage, type ModelUsageRecorder } from '../packages/core/model-
 function fakeServer(mode = 'ok') {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-model-protocol-')), binary = join(directory, 'fake-codex'), trace = join(directory, 'trace.jsonl'), nativeConfig = join(directory, 'native');
   mkdirSync(nativeConfig); writeFileSync(join(nativeConfig, 'auth.json'), 'SYNTHETIC_AUTH_ONLY', { mode: 0o600 });
+  writeFileSync(join(nativeConfig, 'AGENTS.md'), 'UNRELATED_HOST_INSTRUCTIONS');
   const previousConfig = process.env.CODEX_HOME, previousSecret = process.env.EIGOS_DEV_TOKEN;
   process.env.CODEX_HOME = nativeConfig; process.env.EIGOS_DEV_TOKEN = 'SYNTHETIC_GATEWAY_SECRET';
   writeFileSync(binary, '#!' + process.execPath + '\n' + `
@@ -19,7 +20,8 @@ const fs = require('node:fs'), readline = require('node:readline');
 const mode = ${JSON.stringify(mode)}, thread = 'synthetic-thread-' + process.pid;
 const log = value => fs.appendFileSync(${JSON.stringify(trace)}, JSON.stringify(value) + '\\n');
 log({ type:'boot', args:process.argv.slice(2), config:process.env.CODEX_HOME, gatewaySecretPresent:!!process.env.EIGOS_DEV_TOKEN,
-  authIsLink:fs.lstatSync(process.env.CODEX_HOME+'/auth.json').isSymbolicLink(), authTarget:fs.readlinkSync(process.env.CODEX_HOME+'/auth.json'), emptyConfig:fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8') === '' });
+  authIsLink:fs.lstatSync(process.env.CODEX_HOME+'/auth.json').isSymbolicLink(), authTarget:fs.readlinkSync(process.env.CODEX_HOME+'/auth.json'),
+  boundedConfig:fs.readFileSync(process.env.CODEX_HOME+'/config.toml','utf8').includes('skills.max_context_tokens = 1'), hostInstructionsPresent:fs.existsSync(process.env.CODEX_HOME+'/AGENTS.md') });
 const send = value => process.stdout.write(JSON.stringify(value) + '\\n');let count=0;
 readline.createInterface({ input:process.stdin }).on('line', line => {
   const r=JSON.parse(line);log({type:'request',method:r.method,params:r.params});
@@ -109,7 +111,7 @@ for (const mode of ['ok', 'early', 'notification', 'foreign-delta']) test(`A bou
     assert(!JSON.stringify([first, second]).includes('SYNTHETIC_HIDDEN_REASONING'));
     assert(!JSON.stringify([first, second]).includes('SYNTHETIC_FOREIGN_TEXT'));
     const events = f.events(), boot = events[0], start = events.find(e => e.method === 'thread/start');
-    assert.equal(boot.gatewaySecretPresent, false); assert(boot.authIsLink && boot.emptyConfig); assert.equal(boot.authTarget, join(f.nativeConfig, 'auth.json'));
+    assert.equal(boot.gatewaySecretPresent, false); assert(boot.authIsLink && boot.boundedConfig); assert.equal(boot.authTarget, join(f.nativeConfig, 'auth.json')); assert.equal(boot.hostInstructionsPresent, false);
     assert(start.params.ephemeral && start.params.approvalPolicy === 'never' && start.params.sandbox === 'read-only');
     assert(start.params.baseInstructions.includes('bounded EIGOS business reasoner'));
     assert(boot.args.includes('shell_tool') && boot.args.includes('plugins') && boot.args.includes('hooks'));
