@@ -231,7 +231,10 @@ export class AgentRuntime {
           const fresh = this.context(claim, current);
           validatePlanningSnapshot(fresh.graph, claim.owner, fresh.request, reads, true);
           const { contexts, request } = prepareComponentContexts(this.catalog, fresh, decision, response.evidence.id, reads);
-          current.delegation!.request = request;
+          // The graph view fills absent optional fields with empty collections.
+          // Persist actual preparation changes, not that equivalent rendering:
+          // otherwise an unchanged request invalidates its independent review.
+          if (!equal(request, fresh.request)) current.delegation!.request = request;
           current.delegation!.agent!.composition!.contexts.push(...contexts);
           current.delegation!.phase = 'planning'; current.delegation!.nextAt = 0; current.updatedAt = new Date().toISOString();
           current.delegation!.events.push({ at: current.updatedAt, event: 'agent_contexts_prepared', evidence: digest(contexts.map(context => context.digest)) });
