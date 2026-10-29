@@ -12,11 +12,10 @@ import {Coordinator} from '../packages/coordinator/coordinator.js';
 import {Worker} from '../apps/worker/worker.js';
 import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
 import {DatabaseSync} from 'node:sqlite';
-import {securedDidiReasoner} from './fixtures/secured-didi.js';
+import {securedDidiReasoner,runNativeDidiTask} from './fixtures/secured-didi.js';
 import {taskContextFields} from '../packages/security/task-context-contract.js';
-import {withAuthorization} from '../packages/security/context.js';
 
-for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='direct'?'Worker direct':'native-goal'} completes the source-selected read loop using safe facts and sealed delivery`,async()=>{
+for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='direct'?'Worker direct':'native-goal'} completes the source-selected read loop using safe facts and sealed delivery`,{timeout:mode==='native-goal'?300000:undefined},async t=>{
   const f=securityFixture(),source=didiFixture({booking:mode==='native-goal'});
   // Only this isolated synthetic connector is made available to the synthetic
   // member. Production personal-account permitted(owner) stays unchanged.
@@ -44,15 +43,7 @@ for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='d
       worker.start();
       const deadline=Date.now()+30000;
       while(['submitted','working'].includes(f.jobs.get(f.owner,job.id).state) && Date.now()<deadline) await new Promise(r=>setTimeout(r,20));
-    } else {
-      // Native preparation adds several authorized model turns. Drive a fixed
-      // number of durable claims instead of racing a wall-clock poll deadline.
-      for(let turn=0;turn<8 && ['submitted','working'].includes(f.jobs.get(f.owner,job.id).state);turn++) {
-        const claim=f.jobs.claim(['eigos.delegate'],30000);assert(claim);
-        try{await withAuthorization(f.jobs.security.workerScope(f.owner,job.id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
-        finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
-      }
-    }
+    } else await runNativeDidiTask(f.jobs,coordinator,f.owner,job.id,t.signal);
     const raw=f.jobs.get(f.owner,job.id);
     assert.equal(raw.state,'completed',JSON.stringify({state:raw.state,error:raw.error,failures,recovery:raw.delegation?.recovery,grounding:raw.delegation?.groundingFeedback,feedback:raw.delegation?.agent?.feedback,reads:raw.delegation?.ontologyReads?.filter(r=>r.status==='rejected'),intents:f.jobs.intents(f.owner,job.id).map(i=>({state:i.state,result:i.lastResult?.message}))}));
     const result=tasks.get(p,job.id);
