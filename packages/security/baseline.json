@@ -4255,7 +4255,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "bbebca263cdc93a4062387603dbb4d932fc296eb71955c606fda16a8eacb6626",
+      "sourceDigest": "a6f0ad74a5f8c465c6b6123de4d9663136e9326c3a835a686d73b9aecb86f608",
       "channels": [
         "operator_cli"
       ],
