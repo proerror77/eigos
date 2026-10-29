@@ -170,6 +170,22 @@ test('a rejected asynchronous read cannot retain the synchronous authorization c
   }finally{f.close();}
 });
 
+for(const subjectKind of ['member','installation'] as const)test(`expired unrelated ${subjectKind} roles do not poison a current object read`,t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});const f=fixture();
+  try{
+    f.role(f.a.id);const place=f.place('current'),task=f.task(f.a,[place]),policy=f.jobs.security.policies;
+    policy.setRole({subjectKind,subjectId:subjectKind==='member'?f.member.id:f.a.id,resource:{kind:'objectType',id:'Provider',version:policy.resourceVersion('objectType','Provider')},role:'Viewer',expiresAt:new Date(Date.now()+1000).toISOString()},policy.revision());
+    t.mock.timers.tick(2000);f.coordinator.refresh();
+    assert.equal(f.va.check({taskId:task.job.id,operation:'task.query',object:place.object}).allowed,true);
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>assert.equal(f.jobs.ontology.read(f.owner,place.object).properties.name,'current'));
+    policy.setRole({subjectKind:'installation',subjectId:f.a.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:new Date(Date.now()+10).toISOString()},policy.revision());
+    assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      assert(policy.binding(authorizationScope()!,place.object));t.mock.timers.tick(11);
+    })),/POLICY_CHANGED/,'Expiry of authority used by this read still rejects its result');
+    assert.equal(f.va.check({taskId:task.job.id,operation:'task.query',object:place.object}).allowed,false);
+  }finally{f.close();}
+});
+
 test('shared lineage is hashed once per synchronous read while every expected digest is checked',t=>{
   const f=fixture();try {
     f.role(f.a.id);const root=f.place('shared'),leaves=Array.from({length:12},(_,i)=>f.place(`derived-${i}`)),top=f.place('top');

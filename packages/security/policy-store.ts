@@ -394,7 +394,11 @@ export class SecurityPolicies {
     const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
     const stamp=()=>{const row=version.get()!;return `${row.data_version}:${Number(row.changes)-(readAuditChanges.get(this.db)??0)}`;};
     scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
-    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
+    // Expired historical roles grant nothing and cannot shorten a read that
+    // another current role permits. Every role valid at entry still constrains
+    // this snapshot, and roleAllows keeps checking the requested resource.
+    const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
+    const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
     const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
