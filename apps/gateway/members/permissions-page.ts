@@ -17,11 +17,13 @@ const expiry=(member:Member,value:unknown)=>new Intl.DateTimeFormat(member.local
 const serviceNames:Record<string,string>={
   'brief.prepare.atomic':'整理任务说明','document.compose':'生成文档','ride.estimate.query':'地点与出行估价',
   'geo.search':'查询公开地点','address.book.read':'读取已保存地址','delivery.quote':'同城配送估价',
-  'services.compose.live':'组合处理多个服务',
+  'services.compose.live':'组合处理多个服务','services.compose.sandbox':'组合处理多个服务',
+  'booking.participant.free':'活动与预约','commerce.catalog.query':'查询与比较公开商品',
+  'commerce.journey.sandbox':'交易与配送演练（测试服务）','ride.order.test':'叫车下单演练（测试服务）',
 };
 const operationNames:Record<string,string>={
   PrepareTaskBrief:'整理任务说明',ComposeDocument:'生成有来源的文档',SearchDidiPlaces:'查询出发地和目的地',EstimateDidiRide:'查询车型与预估价',
-  SearchMeituanLocations:'查询公开地点',ReadMeituanAddresses:'读取已保存地址',ReadMeituanSenderDetails:'读取所选寄件地址',ReadMeituanRecipientDetails:'读取所选收件地址',EstimateMeituanDelivery:'查询配送预估价',
+  SearchMeituanLocations:'查询公开地点',ReadMeituanAddresses:'读取已保存地址',ReadMeituanSenderDetails:'读取所选寄件人的联系信息',ReadMeituanRecipientDetails:'读取所选收件人的联系信息',EstimateMeituanDelivery:'查询配送预估价',
   InspectRegistrationPage:'查看活动与预约条件',ReadParticipantRegistration:'查询原报名或预约状态',
   SearchPublicCatalog:'搜索公开商品',InspectCatalogVariant:'查看商品规格',DiscoverMerchantCatalog:'查找商家商品目录',ReadMerchantVariants:'查询商家商品规格',
   ActivateServiceComponent:'衔接任务中的服务步骤',CompleteServiceComponent:'核验服务步骤的结果',recover_original:'查询已提交操作的状态',
@@ -36,7 +38,7 @@ const dataNames:Record<string,string>={
   CatalogQueryTask:'商品查询条件',CatalogObservation:'商品查询结果',MerchantCatalogEndpoint:'商家的商品目录',ProductOffer:'商品报价',ServiceChannel:'服务渠道',RegistrationTask:'报名与预约条件',RegistrationOffer:'活动或预约信息',RegistrationRecord:'原报名或预约状态',ParticipantBookingTask:'报名或预约要求',ParticipantBookingOffer:'活动与预约条件',ParticipantRegistration:'报名或预约状态',Parcel:'包裹资料',DeliveryRoute:'配送路线',ServiceQuote:'服务估价',
 };
 const fieldNames:Record<string,string>={originalGoal:'你提供的任务说明',conditions:'你设置的条件与限制',authorizedInput:'本任务已确定的查询条件',observedData:'查询结果与相关时间',addressBook:'已保存的地址（不含电话）',createdAt:'记录时间',progress:'任务进度',revision:'记录版本',requestId:'对应任务的标识',displayTitle:'记录名称',projectionState:'任务处理状态'};
-const customerChannels:Record<string,string>={agent_response:'用于完成任务并向你返回结果',registered_model:'允许符合要求的 AI 模型处理这些资料',controlled_download:'允许通过受控入口下载结果',member_ui:'在你的 EIGOS 账号中查看'};
+const customerChannels:Record<string,string>={agent_response:'向你已授权的助手返回结果',registered_model:'允许符合要求的 AI 模型在本项数据限制内处理资料',controlled_download:'允许通过受控入口下载结果',member_ui:'在你的 EIGOS 账号中查看'};
 const taskOperationNames:Record<string,string>={'task.query':'查询任务进度','task.result.read':'读取任务结果','task.process':'继续处理这项任务','member_asset.read':'读取你选定的已有资料','artifact.export':'下载任务文件'};
 const serviceName=(profile:View['profiles'][number])=>serviceNames[profile.programId]??profile.name;
 const operationName=(view:View,id:string)=>operationNames[id]??view.operationDescriptions[id]??'服务中已选定的操作';
