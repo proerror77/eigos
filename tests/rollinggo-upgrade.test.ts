@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { JobStore } from '../packages/core/store.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
+import { currentKernelImplementation } from '../packages/ontology/definition-store.js';
 import { CURRENT_KERNEL_VERSION } from '../packages/ontology/seed-definition.js';
 test('a parent-created v22 database opens and retains active and task-pinned releases with RollingGo disabled', () => {
   const fixture = JSON.parse(
@@ -57,6 +58,7 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       assert.throws(() => store.definitions.installRollingGoReadonly(before.active, before.generation + 1), /changed/);
       const installed = store.definitions.installRollingGoReadonly(before.active, before.generation);
       assert.equal(installed.generation, before.generation + 1);
+      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
       assert.equal(store.definitions.active().model.action('SearchRollingGoHotels').read?.effect, 'read');
       assert.deepEqual(store.definitions.installRollingGoReadonly(installed.active, installed.generation), installed);
       assert.deepEqual(store.get(fixture.owner, fixture.taskId).delegation!.ontologyRelease, fixture.release);

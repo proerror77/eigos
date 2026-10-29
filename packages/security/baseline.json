@@ -3353,7 +3353,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "7050f861d33b94528bbeb6fc85726492494503a5f41b2330d544379ca547e8d0",
+      "sourceDigest": "60de00eb58efdb406dbd3ad49a049aabf4f936f3ff99bf9181519cd76b9f9f15",
       "channels": [
         "all-reads"
       ],
@@ -4414,6 +4414,30 @@
       "content": "Additive RollingGo metadata publication and activation; no credentials or business effects",
       "currentControl": "Owned private database, existing runtime authority, expected release digest and generation",
       "targetControl": "Explicit operator deployment authority; existing facts, task pins and source permissions preserved",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-policy-upgrade",
+      "file": "packages/security/rollinggo-upgrade.ts",
+      "sourceDigest": "a679e810e0fb8e685528750f10f6f89c26ca7a45e54b2fe82ab3b7937b34f7e6",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit reviewed v22-to-v23 policy contract upgrade and equivalent namespace role copies",
+      "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
+      "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
+      "stage": "S4"
+    },
+    {
+      "id": "rollinggo-policy-upgrade-cli",
+      "file": "scripts/upgrade-rollinggo-policy.mjs",
+      "sourceDigest": "6a071cf5b5871f5404e1ee17ed6c3a2e9e1be2532d128ffa09e689b0608afcf9",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit reviewed v22-to-v23 policy contract upgrade and equivalent namespace role copies",
+      "currentControl": "Exact known prior contract, expected policy revision, stopped managers/claims, no pending fences, immutable receipt",
+      "targetControl": "Preserve data/source grants, action/function lists, subject state and expiries; no automatic startup migration",
       "stage": "S4"
     }
   ]
