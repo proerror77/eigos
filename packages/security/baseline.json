@@ -2939,7 +2939,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "232e4d617417c44e75cce9ba69d99804cdaf3430c072129b877f9d8d73fb0650",
+      "sourceDigest": "bb69444a2cafc4e2099203a54840b61cdb20074acb7843c793f4399014422dbf",
       "channels": [
         "model",
         "dispatch"
@@ -4503,7 +4503,7 @@
       "currentControl": "Strict model decision schema; host validates authenticated decision digests, exact contexts and current task revision before dispatch",
       "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
       "stage": "S5",
-      "sourceDigest": "2c3e9027d59ee2a2c3283fd1cc834b188ab19ece00f83805065b71e6fd04e210"
+      "sourceDigest": "320600f41b0eaf3b48d4fe7f5e684a4b29b8ff5aaae8931c8c54478ae43404e5"
     },
     {
       "id": "primary-relay-entry",

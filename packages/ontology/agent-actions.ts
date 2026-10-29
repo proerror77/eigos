@@ -7,14 +7,22 @@ import { inputReferenceSchema, plannedCompletionSchema } from './dataflow-contra
 import { plannedGoalCompletionSchema } from './goal-completion-contract.js';
 
 const stepId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
-export const agentStepSchema = z.strictObject({
+const outputPort = z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).describe('The producer named output port; a computed scalar uses the same port as its paired observation reference.');
+const baseAgentStepSchema = z.strictObject({
   id: stepId, action: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/),
   argumentsJson: z.string().max(16000), dependsOn: z.array(stepId).max(4),
-  inputRefs: z.array(inputReferenceSchema.extend({ port: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/).optional() })).max(8),
+  inputRefs: z.array(inputReferenceSchema.extend({ port: outputPort.optional() })).max(8),
   bindingDigest: z.string().regex(/^[a-f0-9]{64}$/).optional(), contextId: stepId.optional(),
   acceptedInputs: z.array(z.strictObject({ intentId: z.string().min(1).max(200), port: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,79}$/), targetKey: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/) })).max(8).optional(),
   contributesTo: z.array(stepId).max(20).optional(),
 });
+// Keep the historical non-composed shape, while exposing the existing named-
+// port requirement in JSON Schema so native proposals can be corrected before
+// their model session closes. Worker semantic and authority checks still run.
+export const agentStepSchema: z.ZodType<z.infer<typeof baseAgentStepSchema>> = z.union([
+  baseAgentStepSchema.extend({ contextId: stepId, inputRefs: z.array(inputReferenceSchema.extend({ port: outputPort })).max(8) }),
+  baseAgentStepSchema.extend({ contextId: z.never().optional() }),
+]);
 // A frontier is proposed by the model. No connector may supply or rewrite it.
 export const agentDecisionSchema = z.strictObject({
   kind: z.enum(['prepare', 'execute', 'complete', 'clarify', 'no_feasible_plan']),

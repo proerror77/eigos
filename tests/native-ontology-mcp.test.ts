@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { z } from 'zod';
+import { agentDecisionSchema, agentStepSchema } from '../packages/ontology/agent-actions.js';
 import { openOntologyMcp } from '../packages/coordinator/ontology-mcp.js';
 import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
@@ -23,6 +25,29 @@ async function fixture(finalSchema?: object) {
     close: async () => { await client.close(); await transport.close(); await mcp.close(); b.store.close(); } };
 }
 const value = (response: Awaited<ReturnType<Client['callTool']>>) => (response.structuredContent as { result: any }).result;
+
+test('a missing composed derivation port is corrected before the native decision freezes', async () => {
+  const f = await fixture(z.toJSONSchema(agentDecisionSchema));
+  try {
+    const context = value(await f.client.callTool({ name: 'read_task_context', arguments: {} }));
+    const inputRefs: { stepId: string; targetKey: string; port?: string; compute?: { function: string; path: string[] } }[] = [
+      { stepId: 'originSearch', targetKey: 'originObservation', port: 'result' },
+      { stepId: 'originSearch', targetKey: 'originPlaceId', compute: { function: 'selectDidiPlace', path: ['placeId'] } },
+    ];
+    const step = { id: 'estimate', action: 'EstimateDidiRide', contextId: 'ride', argumentsJson: '{}', dependsOn: ['originSearch'], inputRefs };
+    const { contextId: _contextId, ...legacy } = step;
+    assert(agentStepSchema.safeParse(legacy).success, 'Historical non-composed references retain their existing shape');
+    const decision = { kind: 'execute', requestRevision: 1, message: 'Synthetic selected read dependency', completionJson: '', steps: [step] };
+    const receiptIds = [context.receipt.id];
+    const rejected = await f.client.callTool({ name: 'submit_decision', arguments: { decisionJson: JSON.stringify(decision), receiptIds } });
+    assert.equal(rejected.isError, true, 'The proposal interface must catch the missing named port before a new Worker decision is needed');
+    assert.throws(() => f.mcp.result(), /did not submit/);
+    inputRefs[1]!.port = 'result';
+    const accepted = await f.client.callTool({ name: 'submit_decision', arguments: { decisionJson: JSON.stringify(decision), receiptIds } });
+    assert(!accepted.isError); assert.deepEqual(f.mcp.result().output, decision);
+    assert.equal(f.b.store.intents(owner, f.job.id).length, 0, 'Schema acceptance still grants no execution authority');
+  } finally { await f.close(); }
+});
 
 test('native read receipts expose the remaining byte budget without charging instruction pages twice', async () => {
   const f = await fixture();
