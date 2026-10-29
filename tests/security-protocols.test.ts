@@ -19,6 +19,9 @@ import {Coordinator} from '../packages/coordinator/coordinator.js';
 import {didiBusinessViewSchema} from '../packages/security/projections.js';
 
 test('HTTP, MCP and A2A return the same sealed native goal observations for the original task',{timeout:300000},async t=>{
+  // Field/authority semantics use a controlled clock. CI CPU scheduling must
+  // not expire the fixture's Gateway eligibility lease mid-synchronous read.
+  t.mock.timers.enable({apis:['Date'],now:Date.now()});
   let configured:DidiAgentProgram|undefined;
   const source=didiFixture({booking:true}),f=await securityGatewayFixture((store,p)=>{
     const program=new DidiAgentProgram(source.binding,{connector:source.connector});bindPersonalSourceOwner(program,ownerKey(p));
@@ -40,7 +43,7 @@ test('HTTP, MCP and A2A return the same sealed native goal observations for the 
     const created=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'查询北京西站到西二旗地铁站的预估车费，不叫车、不付款',executionEnvironment:'sandbox'},headers),id=created.value.id as string;
     assert.equal(created.status,200);
     const {reasoner}=securedDidiReasoner(program,'native-goal'),coordinator=new Coordinator(store,reasoner,f.gateway.catalog,{allowSandbox:true});
-    await runNativeDidiTask(store,coordinator,owner,id,t.signal);
+    await runNativeDidiTask(store,coordinator,owner,id,t.signal,()=>t.mock.timers.tick(20));
     const done=store.get(owner,id);assert.equal(done.state,'completed',JSON.stringify({state:done.state,error:done.error,recovery:done.delegation?.recovery,feedback:done.delegation?.agent?.feedback,intents:store.intents(owner,id).map(intent=>({state:intent.state,result:intent.lastResult?.message}))}));assert.equal(done.delegation!.agent!.programRef.id,'eigos.goal');
     assert.deepEqual(source.calls.filter(call=>call.name).map(call=>call.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
     const queried=await f.post('/ontology/query',{version:2,taskId:id,query:{type:'RideEstimateObservation'}},headers);assert.equal(queried.status,200);

@@ -13,14 +13,14 @@ import {Worker} from '../../apps/worker/worker.js';
 import type {Coordinator} from '../../packages/coordinator/coordinator.js';
 import type {JobStore} from '../../packages/core/store.js';
 
-/** Real Worker ownership includes synchronous progress renewals and heartbeat.
- * The test signal bounds waiting; production execution/authority limits apply. */
-export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal) {
+/** Real Worker ownership with caller-controlled fixture time. CPU scheduling
+ * does not advance authority time; the real-time test signal bounds waiting. */
+export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal,advanceTime:()=>void) {
   const worker=new Worker(store,{coordinator,pollMs:20,leaseMs:10000});
   try {
     worker.start();
     while(['submitted','working'].includes(store.get(owner,taskId).state)) {
-      signal.throwIfAborted();await new Promise(resolve=>setTimeout(resolve,20));
+      signal.throwIfAborted();await new Promise(resolve=>setTimeout(resolve,20));advanceTime();
     }
   }finally{await worker.close();}
 }
