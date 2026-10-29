@@ -16,6 +16,7 @@ import {securedDidiReasoner,runNativeDidiTask} from './fixtures/secured-didi.js'
 import {taskContextFields} from '../packages/security/task-context-contract.js';
 
 for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='direct'?'Worker direct':'native-goal'} completes the source-selected read loop using safe facts and sealed delivery`,{timeout:mode==='native-goal'?300000:undefined},async t=>{
+  if(mode==='native-goal')t.mock.timers.enable({apis:['Date'],now:Date.now()});
   const f=securityFixture(),source=didiFixture({booking:mode==='native-goal'});
   // Only this isolated synthetic connector is made available to the synthetic
   // member. Production personal-account permitted(owner) stays unchanged.
@@ -43,7 +44,7 @@ for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='d
       worker.start();
       const deadline=Date.now()+30000;
       while(['submitted','working'].includes(f.jobs.get(f.owner,job.id).state) && Date.now()<deadline) await new Promise(r=>setTimeout(r,20));
-    } else await runNativeDidiTask(f.jobs,coordinator,f.owner,job.id,t.signal);
+    } else await runNativeDidiTask(f.jobs,coordinator,f.owner,job.id,t.signal,()=>t.mock.timers.tick(20));
     const raw=f.jobs.get(f.owner,job.id);
     assert.equal(raw.state,'completed',JSON.stringify({state:raw.state,error:raw.error,failures,recovery:raw.delegation?.recovery,grounding:raw.delegation?.groundingFeedback,feedback:raw.delegation?.agent?.feedback,reads:raw.delegation?.ontologyReads?.filter(r=>r.status==='rejected'),intents:f.jobs.intents(f.owner,job.id).map(i=>({state:i.state,result:i.lastResult?.message}))}));
     const result=tasks.get(p,job.id);
