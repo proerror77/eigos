@@ -2796,7 +2796,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "16f9607a082f5680a56302642a2be4434553cd33572abca6e5a3d1e571169c77",
+      "sourceDigest": "d8a8c711c06d5ed801b8a0682c7755d637459291c6b2d8e08ae65b3d259476e7",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3333,7 +3333,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "d08e50659933d38adc35969e44fc5f6470892a99fdd8357518699391adc1029f",
+      "sourceDigest": "7050f861d33b94528bbeb6fc85726492494503a5f41b2330d544379ca547e8d0",
       "channels": [
         "all-reads"
       ],
@@ -4029,7 +4029,7 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "2849b0c1612abdedad1d7db74c6874c40ed0726732f00996fbab0f0e7dd2f03e",
+      "sourceDigest": "6ba7a88f30b5169774f2f212d681b47d89a506d6c05234797c76a1becfc839b2",
       "channels": [
         "model",
         "artifact"
