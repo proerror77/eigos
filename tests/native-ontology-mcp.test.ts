@@ -103,6 +103,7 @@ test('native decision completion requires real receipts and freezes the proposal
     const rejected = await f.client.callTool({ name: 'submit_decision', arguments: { receiptIds: ['invented'], decisionJson: '{}' } });
     assert(rejected.isError); assert.throws(() => f.mcp.result(), /did not submit/);
     const read = value(await f.client.callTool({ name: 'read_task_context', arguments: {} }));
+    assert.equal(read.result.data.instructions.complete, true);
     const args = { receiptIds: [read.receipt.id], decisionJson: JSON.stringify({ requestRevision: 1 }) };
     const accepted = value(await f.client.callTool({ name: 'submit_decision', arguments: args }));
     assert.equal(accepted.execution, 'not_dispatched'); assert.equal(accepted.taskId, f.job.id);
@@ -113,6 +114,7 @@ test('native decision completion requires real receipts and freezes the proposal
     assert.equal(f.b.store.get(owner, f.job.id).artifact, undefined);
     assert.equal(f.b.store.intents(owner, f.job.id).length, 0);
     assert(f.mcp.evidence().decisionSubmitted);
+    assert.deepEqual(f.mcp.evidence().calls.map(call => call.tool), ['read_task_context'], 'Complete exact instructions require no duplicate instruction-page round trip');
     f.expire();
     assert((await f.client.callTool({ name: 'submit_decision', arguments: args })).isError, 'Idempotent decision readback still requires the current claim');
   } finally { await f.close(); }

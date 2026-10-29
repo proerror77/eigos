@@ -285,6 +285,10 @@ export class Coordinator {
       const capabilities = [...new Map([...summaries.map(summary => this.catalog.capability(summary.ref)), ...discovered].map(capability => [digest(capability.ref), capability])).values()];
       if (decision.kind === 'compose') {
         request = groundConditions(groundRequirements(d.request, decision.requirementsJson, [...new Set(capabilities.flatMap(capability => capability.outcomePredicates ?? []))], capabilities.flatMap(capability => capability.requirementRoles ?? []), capabilities.flatMap(capability => capability.predicates.map(predicate => predicate.id))), decision.conditionsJson, groundingAccess.session.retrievedRefs());
+        // Use the graph's empty-collection representation before the first
+        // independent review. Preparation and exact authority quotes then keep
+        // the same request digest when no business facts have changed.
+        request = { ...request, successCriteria: request.successCriteria ?? [], conditions: request.conditions ?? [], confirmedInputs: request.confirmedInputs ?? {} };
         const goal = createGoalContract(request, this.store.ontologyForJob(claim.owner, claim.job).releaseRef!, JSON.parse(decision.criteriaJson), capabilities);
         this.store.finish(claim, job => {
           job.delegation!.request = request; job.delegation!.agent = goalState(request, goal); job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0;
