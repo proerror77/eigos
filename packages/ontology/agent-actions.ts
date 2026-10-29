@@ -19,8 +19,9 @@ const baseAgentStepSchema = z.strictObject({
 // Keep the historical non-composed shape, while exposing the existing named-
 // port requirement in JSON Schema so native proposals can be corrected before
 // their model session closes. Worker semantic and authority checks still run.
+const composedAgentStepSchema = baseAgentStepSchema.extend({ contextId: stepId, inputRefs: z.array(inputReferenceSchema.extend({ port: outputPort })).max(8) });
 export const agentStepSchema: z.ZodType<z.infer<typeof baseAgentStepSchema>> = z.union([
-  baseAgentStepSchema.extend({ contextId: stepId, inputRefs: z.array(inputReferenceSchema.extend({ port: outputPort })).max(8) }),
+  composedAgentStepSchema,
   baseAgentStepSchema.extend({ contextId: z.never().optional() }),
 ]);
 // A frontier is proposed by the model. No connector may supply or rewrite it.
@@ -35,6 +36,7 @@ export const agentDecisionSchema = z.strictObject({
   contexts: z.array(z.strictObject({ id: stepId, bindingDigest: z.string().regex(/^[a-f0-9]{64}$/), inputJson: z.string().max(16000) })).max(4).optional(),
   componentId: z.string().regex(/^[A-Za-z][A-Za-z0-9_-]{0,39}$/).optional(),
 });
+export const composedAgentDecisionSchema = agentDecisionSchema.extend({ steps: z.array(composedAgentStepSchema).max(4) });
 export type AgentDecision = z.infer<typeof agentDecisionSchema>;
 export type AgentStep = z.infer<typeof agentStepSchema>;
 /** Pure, explicitly model-selected component setup. These records never contain

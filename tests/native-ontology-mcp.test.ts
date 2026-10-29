@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { z } from 'zod';
-import { agentDecisionSchema, agentStepSchema } from '../packages/ontology/agent-actions.js';
+import { composedAgentDecisionSchema, agentStepSchema } from '../packages/ontology/agent-actions.js';
 import { openOntologyMcp } from '../packages/coordinator/ontology-mcp.js';
 import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
@@ -27,7 +27,7 @@ async function fixture(finalSchema?: object) {
 const value = (response: Awaited<ReturnType<Client['callTool']>>) => (response.structuredContent as { result: any }).result;
 
 test('a missing composed derivation port is corrected before the native decision freezes', async () => {
-  const f = await fixture(z.toJSONSchema(agentDecisionSchema));
+  const f = await fixture(z.toJSONSchema(composedAgentDecisionSchema));
   try {
     const context = value(await f.client.callTool({ name: 'read_task_context', arguments: {} }));
     const inputRefs: { stepId: string; targetKey: string; port?: string; compute?: { function: string; path: string[] } }[] = [
@@ -41,6 +41,7 @@ test('a missing composed derivation port is corrected before the native decision
     const receiptIds = [context.receipt.id];
     const rejected = await f.client.callTool({ name: 'submit_decision', arguments: { decisionJson: JSON.stringify(decision), receiptIds } });
     assert.equal(rejected.isError, true, 'The proposal interface must catch the missing named port before a new Worker decision is needed');
+    assert(JSON.stringify(rejected.content).includes('port'), 'The model receives the exact missing field while it still owns the current read receipts');
     assert.throws(() => f.mcp.result(), /did not submit/);
     inputRefs[1]!.port = 'result';
     const accepted = await f.client.callTool({ name: 'submit_decision', arguments: { decisionJson: JSON.stringify(decision), receiptIds } });

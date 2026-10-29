@@ -16,7 +16,7 @@ import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
 import { OntologyPlanningSession, modelSessionKey } from './planning-session.js';
 import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
-import { agentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
+import { agentDecisionSchema, composedAgentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
 import { executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, executionBudgetExceeded, MIN_REASONING_TURNS } from '../core/execution-budget.js';
 import { currentRequestView } from '../core/current-inputs.js';
@@ -95,8 +95,8 @@ export class CodexReasoner implements Reasoner {
           preparedContextNavigation: context.preparedContextNavigation ?? (context.state.composition?.contexts ?? []).map(component => ({ id: component.id, programRef: component.programRef, scope: component.scope, retired: context.state.composition!.retiredContexts?.some(value => value.id === component.id) ?? false })),
           limits: context.limits ?? AGENT_LIMITS, executionBudget: access.executionBudget, recovery: access.recovery, actionOutcomes: context.actionOutcomes }),
       ].join('\n\n');
-      const response = await reasonWithOntology(this.model, prompt, z.toJSONSchema(agentDecisionSchema), access.session, signal, access.record, access.maxTurns);
-      return { decision: agentDecisionSchema.parse(response.output), evidence: response.evidence };
+      const response = await reasonWithOntology(this.model, prompt, z.toJSONSchema(composedAgentDecisionSchema), access.session, signal, access.record, access.maxTurns);
+      return { decision: composedAgentDecisionSchema.parse(response.output), evidence: response.evidence };
     }
     const prompt = [
       'You are the EIGOS business Agent. Use the registered Ontology objects, functions and action definitions to fulfill the current user goal. You choose available actions, arguments, selections, dependencies, follow-up queries and when evidence is sufficient. Each connector invokes one vendor operation and provides no recipe. Only the current program actionIds read from Ontology are available. Configured live_free participant reservations require a complete zero price and an exact reserve permit. Other provider business operations must be sandbox-only and receive a separate exact-plan permit; live purchasing or payment is unavailable. Internal managed-data actions instead declare object_write and require their own exact preview-bound authorization; they never grant provider, order or payment authority.',
