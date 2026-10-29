@@ -156,8 +156,27 @@ export class SecurityStore {
     });
   }
   requireSubject(installationId: string, epoch?: number): Subject {
-    this.requireManager(); const value = this.getSubject(installationId);
-    if (!value?.active || value.validUntil <= this.now() || this.fenced(value)) throw new SecurityError('ACCESS_REVOKED');
+    // One statement observes policy, publisher, identity and deny fences at the
+    // same database snapshot. This is a fresh read on every call, not a cached
+    // allowance carried across a model/source operation or an await.
+    let row:Row|undefined;
+    try {
+      row=this.db.prepare(`SELECT p.revision AS policy_revision,d.digest AS policy_digest,m.expires_at AS manager_expires_at,
+        s.installation_id,s.owner,s.member_id,s.client_id,s.epoch,s.state,s.valid_until,
+        EXISTS(SELECT 1 FROM security_fences f WHERE f.owner=s.owner AND f.state<>'cleared'
+          AND ((f.kind='member' AND f.target_id=s.member_id) OR (f.kind='connection' AND f.target_id=s.client_id)
+            OR (f.kind='installation' AND f.target_id=s.installation_id))) AS fenced
+        FROM security_policy p JOIN security_policy_definitions d ON d.slot=p.slot
+        JOIN security_settings c ON c.slot=p.slot AND c.version=2 AND c.mode='foundation'
+        JOIN security_manager m ON m.slot=p.slot
+        LEFT JOIN security_subjects s ON s.installation_id=? WHERE p.slot=1`).get(installationId);
+    }catch{throw new SecurityError('AUTHORITY_UNAVAILABLE');}
+    const now=this.now();
+    if(!this.enabled || !row || !Number.isFinite(now) || !Number.isSafeInteger(row.policy_revision) || Number(row.policy_revision)<1
+      || row.policy_digest!==this.policies.definitionDigest || !Number.isFinite(Number(row.manager_expires_at))
+      || Number(row.manager_expires_at)<=now)throw new SecurityError('AUTHORITY_UNAVAILABLE');
+    const value=row.installation_id===installationId?subject(row):undefined;
+    if (!value?.active || !Number.isFinite(value.validUntil) || value.validUntil <= now || Number(row.fenced)!==0) throw new SecurityError('ACCESS_REVOKED');
     if (epoch !== undefined && value.epoch !== epoch) throw new SecurityError('POLICY_CHANGED');
     return value;
   }

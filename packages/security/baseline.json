@@ -2829,7 +2829,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "2a9666aa138a9b03b7d42e6d4475702748fa3e228c558107d588253753878a27",
+      "sourceDigest": "df2b6eca72acdc1cf6948d41f7073e46efeabb56719be039050a296e881097fa",
       "channels": [
         "query",
         "function"
@@ -3234,7 +3234,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "4c0244f87eec1a5da2cae7200749d4fed440a498ac1f14c8a30cc30e0255d714",
+      "sourceDigest": "ff30b6cae6660bae692f23204522524f225a1cde9e8f2e007054e719c9ce1c15",
       "channels": [
         "authorization_control"
       ],
@@ -3366,7 +3366,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "ad914e73f53d20d175dde6668fb7dfd7be81998f7bab290ee8d7b8efd2ba5dd6",
+      "sourceDigest": "ac954a2bd3f69a5b74428487ab3bb946808cdb9580392a1967c240ab68f48ee5",
       "channels": [
         "all-reads"
       ],
@@ -4757,6 +4757,19 @@
       "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
       "stage": "S3",
       "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
+    },
+    {
+      "id": "security-projection-origin",
+      "file": "packages/security/projection-origin.ts",
+      "sourceDigest": "07fa8a7f0acd55a79d087e6dbae8bb3695133ba5ba47677090bf6f39f735e74f",
+      "channels": [
+        "all-reads",
+        "worker"
+      ],
+      "content": "Version-bound causal inputs of task-control projections, distinct from accumulated model/audit lineage",
+      "currentControl": "Reuse only the same grant, object content and outgoing relationship snapshot; retain full existing restrictions for legacy or changed records and keep business outputs on fresh lineage",
+      "targetControl": "Current membership, field labels, grants and source authority remain independent; no retroactive audit propagation",
+      "stage": "S2"
     }
   ]
 }
