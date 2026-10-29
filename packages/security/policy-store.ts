@@ -393,16 +393,16 @@ export class SecurityPolicies {
     // other connections before every cached read.
     const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
     const stamp=()=>{const row=version.get()!;return `${row.data_version}:${Number(row.changes)-(readAuditChanges.get(this.db)??0)}`;};
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     // Expired historical roles grant nothing and cannot shorten a read that
     // another current role permits. Every role valid at entry still constrains
     // this snapshot, and roleAllows keeps checking the requested resource.
     const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();generation++;}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -461,6 +461,7 @@ export class SecurityPolicies {
     }
     // One bounded read shares verified authority and dependency results. Recheck
     // at its end; never carry this memo across a tool call, write or async turn.
+    const generation=scope.readGeneration?.(),verifiedDependencies=new Set<string>();
     const parent=this.security.agentGrant(scope.actor.installationId),clearance=this.recipient(scope.actor.installationId);
     const sources=this.sources(scope.actor.ownerKey,scope.actor.installationId),roles=this.roles(scope.actor.memberId,scope.actor.installationId);
     const checked=scope.readBindings as Map<string,ObjectBinding|undefined> | undefined ?? new Map<string,ObjectBinding|undefined>();
@@ -504,13 +505,25 @@ export class SecurityPolicies {
       // WHERE miss could reveal a bit about data whose inputs were revoked.
       checked.set(key,binding);
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
+        // Cumulative evidence repeats the same ancestors along many paths.
+        // Verify each complete assertion once in this traversal. A different
+        // revision, field set or expected digest is a different assertion.
+        const dependencyKey=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields,dependency.contentDigest]);
+        if(verifiedDependencies.has(dependencyKey))continue;
         const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
-        if(this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
+        // Recursive reads may have proved this assertion while checking its
+        // own ancestors. Do not repeat that database checkpoint on unwind.
+        if(!verifiedDependencies.has(dependencyKey) && this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
+        verifiedDependencies.add(dependencyKey);
       }
       return binding;
     };
-    const result=read(ref,revision,historicalCapability);scope.assertCurrent();return result;
+    const result=read(ref,revision,historicalCapability);scope.assertCurrent();
+    // Never return a graph assembled across invalidated proofs, including a
+    // write detected after the last content read. The caller can read afresh.
+    if(scope.readGeneration?.()!==generation)throw new SecurityError('POLICY_CHANGED');
+    return result;
   }
   requireObject(owner: string, ref: ObjectRef, revision?: number) {
     const scope = this.scope(owner), value = this.binding(scope, ref, revision);
