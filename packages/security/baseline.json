@@ -3273,7 +3273,7 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "790fd1a88ea704f9ab82456f230250542fc7300cb47baf2c67d92ec1e5c003c7",
+      "sourceDigest": "9d311eebf86208fe8ae595a90d9634f96dd8309d752547be538442b36b561bb4",
       "channels": [
         "member-ui"
       ],

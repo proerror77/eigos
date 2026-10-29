@@ -40,6 +40,13 @@ test('customer permissions keep each connection action, data, purpose and expiry
     const page=permissionsPage(view,f.member,f.session.csrf),customer=page.slice(page.indexOf('aria-label="客户授权总览"'),page.indexOf('id="permission-technical"'));
     assert(customer.includes('你允许 EIGOS'));assert(!customer.includes('Synthetic Agent'));assert(!customer.includes('SearchDidiPlaces'));
     assert(page.includes('高级连接与权限明细'));assert(page.includes('Synthetic Agent'));
+    const technicalDescriptions={...view,fields:view.fields.map(row=>({...row,fields:row.fields.map(field=>({...field,description:'INTERNAL_SCHEMA_DESCRIPTION'}))})),
+      grants:view.grants.map(grant=>grant.kind==='agent_access'?{...grant,resources:grant.resources.map(row=>row.type==='DidiPlaceObservation'?{...row,fields:['id']}:row)}:grant)};
+    const readable=customerPermissionOverview(technicalDescriptions,f.member,f.session.csrf,f.now);
+    assert(readable.includes('记录标识'));assert(!readable.includes('INTERNAL_SCHEMA_DESCRIPTION'));
+    const withExactFields=permissionsPage(technicalDescriptions,f.member,f.session.csrf);
+    const advanced=withExactFields.slice(withExactFields.indexOf('id="permission-technical"'));
+    assert(advanced.includes('原始授权记录与完整字段'));assert(advanced.includes('&quot;resources&quot;'));assert(advanced.includes('&quot;id&quot;'));
     assert.equal(f.source.calls.length,0);
   }finally{await f.close();}
 });
