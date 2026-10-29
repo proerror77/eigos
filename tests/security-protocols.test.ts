@@ -141,7 +141,7 @@ test('member review fixes the exact grant server-side and cannot be replaced, re
   const f=await securityGatewayFixture((_store,p)=>{class ScopedProgram extends DidiAgentProgram{override permitted(owner:string){return owner===ownerKey(p);}}const program=new ScopedProgram(source.binding,{connector:source.connector});return new ExecutionCatalog([program.capability()],[],[],[],[program]);});
   try {
     const a=f.install(),profile=f.gateway.security!.sourceProfiles(f.member.id).profiles[0]!;
-    const page=await fetch(f.base+'/members/permissions',{headers:{cookie:f.cookie}}).then(r=>r.text());assert.ok(page.includes('数据与任务授权'));assert.ok(!page.includes(source.keyFile));
+    const page=await fetch(f.base+'/members/permissions',{headers:{cookie:f.cookie}}).then(r=>r.text());assert.ok(page.includes('客户授权总览'));assert.ok(!page.includes(source.keyFile));
     const form=new URLSearchParams({_csrf:f.session.csrf,kind:'agent',installationId:a.id,programs:profile.programId,hours:'1'});
     form.append('fields','ServiceRequest.requestId');form.append('fields','ServiceRequest.originalGoal');form.append('channels','agent_response');
     const preview=await fetch(f.base+'/members/permissions/review',{method:'POST',headers:{...f.memberHeaders,'content-type':'application/x-www-form-urlencoded'},body:form});
@@ -154,7 +154,7 @@ test('member review fixes the exact grant server-side and cannot be replaced, re
     const withSource=await fetch(f.base+'/members/permissions',{headers:{cookie:f.cookie}}).then(r=>r.text());assert.ok(withSource.includes('Synthetic Agent · 来源许可'));assert.ok(withSource.includes('审阅撤销范围'));
     const revoke=new URLSearchParams({_csrf:f.session.csrf,kind:'revoke_source',installationId:a.id,bindingId:profile.bindingId});
     const revokePage=await fetch(f.base+'/members/permissions/review',{method:'POST',headers:{...f.memberHeaders,'content-type':'application/x-www-form-urlencoded'},body:revoke}).then(r=>r.text());
-    const revokeId=revokePage.match(/name="reviewId" value="([A-Za-z0-9_-]+)"/)?.[1];assert.ok(revokeId);assert.ok(revokePage.includes('撤销这个来源的许可'));assert.ok(revokePage.includes('SearchDidiPlaces'));
+    const revokeId=revokePage.match(/name="reviewId" value="([A-Za-z0-9_-]+)"/)?.[1];assert.ok(revokeId);assert.ok(revokePage.includes('收回这项服务授权'));assert.ok(revokePage.includes('查询出发地和目的地'));
     assert.equal((await f.post('/members/permissions/approve',f.control({reviewId:revokeId,confirm:'approve'}),f.memberHeaders)).status,303);
     assert.deepEqual(f.gateway.security!.managementView(f.member.id).sources,[]);
     const other=f.install(),next=new URLSearchParams(form);next.set('installationId',other.id);
