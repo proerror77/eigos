@@ -21,7 +21,7 @@ import { MEMBERSHIP_SCOPE, type AdmissionPolicy } from '../packages/members/agen
 import { AgentConnector } from '../packages/agent-client/client.js';
 import {businessModel} from '../packages/ontology/business-model.js';
 import { discoverA2A } from '../packages/agent-client/a2a.js';
-import { SendMessageRequest, GetTaskRequest, ListTasksRequest, TaskState, type Task } from '@a2a-js/sdk';
+import { SendMessageRequest, GetTaskRequest, ListTasksRequest, TaskState, Task } from '@a2a-js/sdk';
 import { createExecutionCatalog } from '../packages/capabilities/catalog.js';
 import { participantFixture } from './fixtures/free-booking.js';
 import { taskContextFields } from '../packages/security/task-context-contract.js';
@@ -276,12 +276,21 @@ test('two independently enrolled JWT connectors use foundation v2 and never fall
   }finally{await f.close();}
 });
 
-async function readUntil(client: Awaited<ReturnType<AgentConnector['a2a']>>, task: Task, state: TaskState): Promise<Task> {
+async function readUntil(client: Pick<Awaited<ReturnType<AgentConnector['a2a']>>, 'getTask'>, task: Pick<Task,'id'|'contextId'>, state: TaskState): Promise<Task> {
   // This checks protocol completion, not wall-clock performance. Native
   // authorization/projection work shares CPU with other CI test processes.
   const deadline = Date.now() + 60000;
+  let resetReads=0;
   while (Date.now() < deadline) {
-    const current = await client.getTask(GetTaskRequest.fromJSON({ id: task.id }));
+    let current:Task;
+    try { current = await client.getTask(GetTaskRequest.fromJSON({ id: task.id })); }
+    catch(error) {
+      // A reset observation may reconnect once; never resubmit the task or
+      // swallow authorization, protocol or persistent transport failures.
+      const reset=error instanceof Error&&error.cause instanceof Error&&'code' in error.cause&&error.cause.code==='ECONNRESET';
+      if(!reset||resetReads++>=1)throw error;
+      await new Promise(resolve=>setTimeout(resolve,20));continue;
+    }
     assert.equal(current.contextId, task.contextId);
     if (current.status?.state === state) return current;
     assert([TaskState.TASK_STATE_SUBMITTED, TaskState.TASK_STATE_WORKING].includes(current.status!.state), JSON.stringify(current));
@@ -289,6 +298,20 @@ async function readUntil(client: Awaited<ReturnType<AgentConnector['a2a']>>, tas
   }
   assert.fail('The original A2A task did not reach its expected state');
 }
+
+test('A2A completion observation recovers one reset read of the same task and keeps failures bounded', async () => {
+  const submitted={id:'same-original-task',contextId:'original-context'},completed=Task.fromJSON({...submitted,status:{state:'TASK_STATE_COMPLETED'}});
+  const reset=()=>new TypeError('fetch failed',{cause:Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET'})});
+  const reads:string[]=[];
+  const read=await readUntil({getTask:async request=>{reads.push(request.id);if(reads.length===1)throw reset();return completed;}},submitted,TaskState.TASK_STATE_COMPLETED);
+  assert.equal(read.id,submitted.id);assert.deepEqual(reads,[submitted.id,submitted.id]);
+  let repeated=0;
+  await assert.rejects(readUntil({getTask:async()=>{repeated++;throw reset();}},submitted,TaskState.TASK_STATE_COMPLETED),/fetch failed/);
+  assert.equal(repeated,2,'A persistently broken read must still fail after one recovery');
+  let denied=0;const forbidden=new Error('access revoked');
+  await assert.rejects(readUntil({getTask:async()=>{denied++;throw forbidden;}},submitted,TaskState.TASK_STATE_COMPLETED),error=>error===forbidden);
+  assert.equal(denied,1,'Authorization and other failures must not be retried');
+});
 
 test('official A2A SDK connects from public discovery through OAuth, clarification, refresh and independent readback', async () => {
   const f = await fixture();

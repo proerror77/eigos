@@ -110,11 +110,15 @@ export class AuthorizationCoordinator {
   managementView(memberId:string) {
     const owner=this.owned(memberId),installations=this.members.agents.list(memberId).map(a=>({id:a.id,name:a.displayName,revoked:a.revoked})),profiles=this.sourceProfiles(memberId).profiles;
     const types=[...new Set(['ServiceRequest',...TASK_PROJECTION_TYPES,...profiles.flatMap(p=>p.outputTypes)])];
-    const jobs=this.jobs?.list(owner,{limit:50,offset:0}).jobs??[];
-    return {installations,grants:this.grants(memberId),profiles,policyRevision:this.store.policies.revision(),recoveries:this.recoveries(memberId),recoveryCandidates:jobs.flatMap(job=>this.recoveryPreview(memberId,job.id).map(op=>({...op,taskId:job.id}))),
+    const grants=this.grants(memberId),jobs=this.jobs?.list(owner,{limit:50,offset:0}).jobs??[];
+    const grantedTaskIds=[...new Set(grants.flatMap(grant=>grant.kind==='task_data'&&grant.status==='active'&&Date.parse(grant.expiresAt)>this.store.now()?[grant.taskId]:[]))];
+    const grantedJobs=grantedTaskIds.length?this.jobs?.list(owner,{limit:grantedTaskIds.length,offset:0},grantedTaskIds).jobs??[]:[];
+    const permissionJobs=[...new Map([...jobs,...grantedJobs].map(job=>[job.id,job])).values()];
+    return {installations,grants,profiles,policyRevision:this.store.policies.revision(),recoveries:this.recoveries(memberId),recoveryCandidates:jobs.flatMap(job=>this.recoveryPreview(memberId,job.id).map(op=>({...op,taskId:job.id}))),
       sources:installations.flatMap(a=>this.store.policies.sources(owner,a.id)),objects:this.store.policies.memberCandidates(owner,memberId),
       fields:types.map(type=>({type,name:this.store.model.object(type).name,fields:Object.entries(this.store.policies.fields(type)).filter(([field])=>this.store.policies.fieldPolicy(type,field)!=='internal_only').map(([field,def])=>({field,description:def.description,sensitive:this.store.policies.fieldPolicy(type,field)==='task_sensitive'}))})),
-      tasks:jobs.map(job=>({id:job.id,state:job.state,requestRevision:job.delegation?.request.revision??0}))};
+      operationDescriptions:Object.fromEntries([...new Set(profiles.flatMap(profile=>profile.operations))].map(id=>[id,id==='recover_original'?'查询已经提交操作的状态':this.store.model.action(id).description])),
+      tasks:permissionJobs.map(job=>({id:job.id,title:job.goal,state:job.state,requestRevision:job.delegation?.request.revision??0}))};
   }
   approveSource(memberId:string,input:unknown) {
     const args=z.strictObject({installationId:z.uuid(),bindingId:z.string().min(1),programId:z.string().min(1),operations:z.array(z.string()).min(1),outputTypes:z.array(z.string()).min(1),expiresAt:z.iso.datetime({offset:true}),expectedRevision:z.number().int().positive(),expectedAgentGrant:grantRefSchema}).parse(input);
