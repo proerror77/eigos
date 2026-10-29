@@ -5,7 +5,9 @@ import {SecurityError} from './store.js';
 import {taskContextFields} from './task-context-contract.js';
 export {taskContextFields} from './task-context-contract.js';
 
-const edges=new Set(['RequestSpecificationInstruction','RequestSpecificationConstraint','SpecificationFact','SpecificationCondition','ExecutionContextBinding','ExecutionPlanContext','ExecutionStepPlan','ExecutionInputStep','ExecutionAttemptStep','ExecutionResultAttempt','ExecutionResultStep','ExecutionStepAction','ExecutionStepBinding','ExecutionBindingAction','ExecutionStepDependency']);
+// A corrected interpretation retains its prior input as evidence. Both ends
+// still pass the same task ownership and current-or-earlier revision bounds.
+const edges=new Set(['RequestSpecificationInstruction','RequestSpecificationConstraint','RequestConstraintPredecessor','SpecificationFact','SpecificationCondition','ExecutionContextBinding','ExecutionPlanContext','ExecutionStepPlan','ExecutionInputStep','ExecutionAttemptStep','ExecutionResultAttempt','ExecutionResultStep','ExecutionStepAction','ExecutionStepBinding','ExecutionBindingAction','ExecutionStepDependency']);
 const key=(ref:ObjectRef)=>JSON.stringify([ref.type,ref.id]);
 /** Recompute membership from the current request's exact specification/context.
  * No source-backed business object enters through this task metadata path. */
@@ -18,6 +20,7 @@ export function taskContextMembers(db:DatabaseSync,owner:string,taskId:string,re
  for(const row of rows) {
   const ref={type:String(row.type),id:String(row.id)},body=JSON.parse(String(row.body)),p=body.properties;
   if(body.source?.kind!=='task' || ref.type!=='RegisteredCapability' && body.source.id!==taskId || p.requestRevision!==undefined && p.requestRevision!==revision)continue;
+  if(typeof p.introducedRevision==='number' && p.introducedRevision>revision)continue;
   if(ref.type==='RegisteredCapability' && ref.id!==`capability:${p.definitionDigest}`)continue;
   candidates.set(key(ref),{ref,properties:p});
  }

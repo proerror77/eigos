@@ -1,16 +1,21 @@
 #!/usr/bin/env node
-// PA-side A2A transport. OAuth credentials stay in an owned private file and are
+// PA-side A2A and optional encrypted Relay transports. OAuth credentials stay in an owned private file and are
 // refreshed by the existing installation-bound AgentConnector, never the model.
 import { readFileSync, writeFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
 import { AgentConnector, AgentConnectorError } from '../../../dist/packages/agent-client/client.js';
+import { TaskRelayClient, TaskRelayError } from '../../../dist/packages/agent-client/relay.js';
+import { RelayClient } from '../../../dist/packages/agent-transport/client.js';
+import { taskRelayMetadataSchema, taskRelayProfileSchema } from '../../../dist/packages/agent-transport/task-contracts.js';
+import { z } from 'zod';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   profile: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' },
 } });
 const command = positionals[0];
+let pendingRelayReceipt;
 const emit = value => {
   const text = JSON.stringify(value, null, 2) + '\n';
   if (values.output) {
@@ -21,7 +26,7 @@ const emit = value => {
   process.stdout.write(text);
 };
 try {
-  if (!values.profile || !['discover', 'login', 'status', 'a2a'].includes(command) || positionals.length !== 1) throw new Error('invalid_arguments');
+  if (!values.profile || !['discover', 'login', 'status', 'a2a', 'relay', 'relay-enroll', 'relay-renew', 'relay-bind'].includes(command) || positionals.length !== 1) throw new Error('invalid_arguments');
   const profilePath = resolve(values.profile), stat = statSync(profilePath);
   if ((stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error('private_profile_required');
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
@@ -34,7 +39,13 @@ try {
     };
     const [runtime, agentCard] = await Promise.all([read('/health'), read('/.well-known/agent-card.json')]);
     if (runtime.instance !== profile.baseUrl || !agentCard.supportedInterfaces?.some(i => i.protocolBinding === 'JSONRPC' && i.protocolVersion === '1.0' && i.url === profile.baseUrl + '/a2a')) throw new Error('deployment_mismatch');
-    emit({ baseUrl: profile.baseUrl, runtime, agentCard });
+    let taskRelay;
+    if (profile.relay) {
+      const settings = taskRelayProfileSchema.parse(profile.relay);
+      taskRelay = taskRelayMetadataSchema.parse(await read('/.well-known/eigos-task-relay'));
+      if (taskRelay.gatewayOrigin !== profile.baseUrl || taskRelay.relayUrl !== settings.baseUrl || taskRelay.authorityId !== settings.authorityId || taskRelay.gatewayAgentId !== settings.gatewayAgentId) throw new Error('relay_authority_mismatch');
+    }
+    emit({ baseUrl: profile.baseUrl, runtime, agentCard, ...(taskRelay ? { taskRelay } : {}) });
   } else {
     const agent = await AgentConnector.open(profile);
     if (command === 'login') {
@@ -46,6 +57,32 @@ try {
         emit(await agent.finishAuthorization());
       }
     } else if (command === 'status') emit(await agent.status());
+    else if (command.startsWith('relay')) {
+      const settings = taskRelayProfileSchema.parse(profile.relay);
+      const metadataResponse = await agent.fetch('/.well-known/eigos-task-relay', { signal: AbortSignal.timeout(15000) });
+      if (!metadataResponse.ok) throw new Error('relay_metadata_unavailable');
+      const metadata = taskRelayMetadataSchema.parse(await metadataResponse.json());
+      if (metadata.authorityId !== settings.authorityId || metadata.gatewayAgentId !== settings.gatewayAgentId || metadata.gatewayOrigin !== profile.baseUrl || metadata.relayUrl !== settings.baseUrl) throw new Error('relay_authority_mismatch');
+      const node = await RelayClient.open({ baseUrl: settings.baseUrl, credentialPath: settings.credentialPath, displayName: profile.displayName });
+      try {
+        if (command === 'relay-enroll' || command === 'relay-renew') {
+          const renewal = command === 'relay-renew' ? z.strictObject({ requestId: z.uuid() }).parse(JSON.parse(readFileSync(resolve(values.input ?? ''), 'utf8'))) : undefined;
+          emit(await agent.enrollTaskRelay(node, { renew: !!renewal, requestId: renewal?.requestId }));
+        }
+        else {
+          const pa = new TaskRelayClient(node, agent, settings), binding = await pa.bind();
+          if (command === 'relay-bind') emit(binding);
+          else {
+            if (!values.input) throw new Error('input_required');
+            const bytes = readFileSync(resolve(values.input)); if (bytes.length > 30000) throw new Error('request_too_large');
+            const request = JSON.parse(bytes.toString('utf8')), signal = AbortSignal.timeout(60000);
+            const sent = await pa.send(request, { signal });
+            pendingRelayReceipt = { protocol: metadata.protocol, authorityId: binding.authorityId, requestId: sent.requestId, messageId: sent.messageId, transportReceipt: sent.receipt };
+            emit({ ...pendingRelayReceipt, task: await pa.receive(sent.requestId, signal) });
+          }
+        }
+      } finally { node.close(); }
+    }
     else {
       if (!values.input) throw new Error('input_required');
       const bytes = readFileSync(resolve(values.input));
@@ -65,6 +102,7 @@ try {
     }
   }
 } catch (error) {
-  process.stdout.write(JSON.stringify({ error: error instanceof AgentConnectorError ? error.code : 'eigos_client_operation_failed', ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}) }) + '\n');
+  const result = { error: error instanceof AgentConnectorError || error instanceof TaskRelayError ? error.code : 'eigos_client_operation_failed', ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}), ...(pendingRelayReceipt ? { relay: pendingRelayReceipt } : {}) };
+  if (pendingRelayReceipt) emit(result); else process.stdout.write(JSON.stringify(result) + '\n');
   process.exitCode = 1;
 }

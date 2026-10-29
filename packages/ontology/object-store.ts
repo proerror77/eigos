@@ -540,7 +540,8 @@ export class OntologyObjectStore {
     }
     if (guard && scope) {
       guard.requireResource(scope, this.model.isInterface(target) ? 'interface' : 'objectType', target);
-      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property));
+      const bound = guard.predicate(owner, 'o', this.model.isInterface(target) ? [] : args.where.map(f => f.property),
+        { types: this.model.concreteTypes(target), ...('object' in args ? { objectId: args.object.id } : {}) });
       sql += bound.sql; params.push(...bound.params);
     }
     const properties = this.properties(target);

@@ -11,7 +11,9 @@ import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import type { Principal } from '../packages/core/domain.js';
 import {syntheticOntology} from './fixtures/ontology-objects.js';
-import {authorizationScope} from '../packages/security/context.js';
+import {authorizationScope,withAuthorization} from '../packages/security/context.js';
+import {SecurityStore} from '../packages/security/store.js';
+import {combineEnvelopes} from '../packages/security/envelope.js';
 
 function fixture(extraTypes:string[]=[]) {
   const f = securityFixture(), rawDb = new DatabaseSync(f.database), raw = new OntologyObjectStore(rawDb,businessModel,Date.now,undefined,{skipLegacyMigration:true}), a = f.installation('A'), b = f.installation('B');
@@ -58,6 +60,71 @@ test('resource Viewer is independent of data grants; schema does not grant anoth
   } finally {f.close();}
 });
 
+test('queries validate their schema candidates without visiting unrelated bindings, while retaining dependency checks', t => {
+  const f = fixture();
+  try {
+    f.role(f.a.id);
+    const shared = f.place('shared'), selected = f.place('selected'), other = f.place('other');
+    const provider = { type: 'Provider', id: 'unrelated-provider' };
+    f.raw.ingest(f.owner, { objects: [{ ref: provider, properties: { providerId: provider.id, displayTitle: 'Synthetic provider', name: 'Synthetic provider' } }] }, { kind: 'synthetic', id: 'fixture', observedAt: new Date().toISOString() });
+    const task = f.task(f.a, [shared, selected, other, { object: provider, objectRevision: 1, fields: ['providerId', 'displayTitle', 'name'] }]), policy = f.jobs.security.policies;
+    const envelope = policy.envelope(f.owner, shared.object, 1, shared.fields, f.raw.read(f.owner, shared.object).properties, task.grant.channels);
+    policy.bind(task.grant, selected.object, selected.fields, 'member_asset', envelope);
+    const visited: { type: string; id: string }[] = [], original = policy.binding.bind(policy);
+    t.mock.method(policy, 'binding', (...args: Parameters<typeof policy.binding>) => { visited.push(args[1]); return original(...args); });
+    assert.deepEqual(f.va.query({ version: 2, taskId: task.job.id, query: { object: selected.object } }).items.map(item => item.ref.id), ['selected']);
+    assert(!visited.some(ref => ref.id === other.object.id || ref.type === 'Provider'), 'An exact-object query must not check unrelated candidate bindings');
+    visited.length = 0;
+    assert.deepEqual(f.va.query({ version: 2, taskId: task.job.id, query: { type: 'Place' } }).items.map(item => item.ref.id), ['other', 'selected', 'shared']);
+    assert(!visited.some(ref => ref.type === 'Provider'), 'A type query does not validate another type as a result candidate');
+    policy.restrictObject({ ownerKey: f.owner, object: shared.object, expectedObjectRevision: 1, field: 'name', classification: 'sensitive', requiredMarkings: ['health'], channels: ['agent_response'] }, policy.revision());
+    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { object: selected.object } }), /not available|INSUFFICIENT_ACCESS|OUTPUT_NOT_ALLOWED/, 'The selected object still validates its complete dependency envelope');
+  } finally { f.close(); }
+});
+
+test('narrow queries retain the complete task binding budget', () => {
+  const f = fixture(), db = new DatabaseSync(f.database);
+  try {
+    f.role(f.a.id); const place = f.place('selected'), task = f.task(f.a, [place]);
+    const row = db.prepare("SELECT * FROM security_bindings WHERE grant_id=? AND type='Place'").get(task.grant.id)!;
+    const insert = db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?)');
+    for (let n = 0; n < 2000; n++) { const id = `budget-${n}`, binding = JSON.parse(String(row.body)); binding.object.id = id; insert.run(row.grant_id!, row.owner!, row.task_id!, row.request_revision!, 'Place', id, row.object_revision!, JSON.stringify(binding)); }
+    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { object: place.object } }), /Task object boundary exceeds/);
+  } finally { db.close(); f.close(); }
+});
+
+for (const triggeredWrite of [false, true]) test(`Worker read-audit inserts preserve read memoization${triggeredWrite ? ' while trigger side effects invalidate it' : ''}`, t => {
+  const f = fixture(), db = new DatabaseSync(f.database);
+  try {
+    f.role(f.a.id); const shared = f.place('shared'), leaves = Array.from({ length: 6 }, (_, n) => f.place(`leaf-${n}`));
+    const task = f.task(f.a, [shared, ...leaves]), policy = f.jobs.security.policies;
+    const envelope = policy.envelope(f.owner, shared.object, 1, shared.fields, f.raw.read(f.owner, shared.object).properties, task.grant.channels);
+    for (const leaf of leaves) policy.bind(task.grant, leaf.object, leaf.fields, 'member_asset', envelope);
+    const authority = f.jobs.security.attachTaskAuthority({ ...task.authority, id: randomUUID(), dataGrant: { id: task.grant.id, revision: task.grant.revision }, submittedScopes: ['tasks:read', 'tasks:write', 'member_assets:read'] });
+    const claim = f.jobs.claim(['eigos.delegate'], 60000)!; assert(claim);
+    const scope = f.jobs.security.workerScope(f.owner, task.job.id, authority.id, claim.token);
+    const original = DatabaseSync.prototype.prepare; let contentReads = 0;
+    t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
+      if (sql === 'SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?') contentReads++;
+      return original.call(this, sql);
+    });
+    if (triggeredWrite) db.exec("CREATE TRIGGER fixture_audit_side_effect AFTER INSERT ON security_reads BEGIN UPDATE ontology_objects SET body=json_set(body,'$.properties.name','changed by trigger') WHERE type='Place' AND id='shared'; END;");
+    withAuthorization(scope, () => policy.readSnapshot(() => {
+      if (triggeredWrite) {
+        f.jobs.ontology.read(f.owner, leaves[0]!.object);
+        assert.throws(() => policy.validateLineage(authorizationScope()!, envelope), /OUTPUT_NOT_ALLOWED/);
+      } else {
+        for (const leaf of leaves) f.jobs.ontology.read(f.owner, leaf.object);
+        assert.equal(contentReads, 1, 'Appending read evidence does not change the shared dependency contents');
+        policy.validateLineage(authorizationScope()!, envelope);
+        assert.equal(contentReads, 1);
+      }
+    }));
+    assert(Number(db.prepare('SELECT count(*) n FROM security_reads WHERE grant_id=?').get(task.grant.id)!.n) >= (triggeredWrite ? 1 : leaves.length), 'All audit records remain durable');
+    f.jobs.release(claim);
+  } finally { db.close(); f.close(); }
+});
+
 for(const connection of ['current','separate'] as const)test(`synchronous read checkpoints detect grant revocation from the ${connection} database connection`,()=>{
   const f=fixture();try {
     f.role(f.a.id);const task=f.task(f.a),policy=f.jobs.security.policies;
@@ -101,6 +168,50 @@ test('a rejected asynchronous read cannot retain the synchronous authorization c
     })),/must be synchronous/);
     await assert.rejects(late!,/AUTHORIZATION_REQUIRED/);
   }finally{f.close();}
+});
+
+test('shared lineage is hashed once per synchronous read while every expected digest is checked',t=>{
+  const f=fixture();try {
+    f.role(f.a.id);const root=f.place('shared'),leaves=Array.from({length:12},(_,i)=>f.place(`derived-${i}`)),top=f.place('top');
+    const task=f.task(f.a,[root,...leaves,top]),policy=f.jobs.security.policies;
+    const envelope=policy.envelope(f.owner,root.object,1,root.fields,f.raw.read(f.owner,root.object).properties,task.grant.channels);
+    for(const leaf of leaves)policy.bind(task.grant,leaf.object,leaf.fields,'member_asset',envelope);
+    const combined=combineEnvelopes(leaves.map(leaf=>policy.envelope(f.owner,leaf.object,1,leaf.fields,f.raw.read(f.owner,leaf.object).properties,task.grant.channels)));
+    policy.bind(task.grant,top.object,top.fields,'member_asset',combined);
+    const original=DatabaseSync.prototype.prepare;let reads=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+      if(sql==='SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?')reads++;
+      return original.call(this,sql);
+    });
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',outer=>{
+      policy.readSnapshot(()=>{
+        const scope=authorizationScope()!;
+        for(const leaf of leaves)assert(policy.binding(scope,leaf.object));
+        policy.validateLineage(scope,envelope);
+        assert.equal(reads,1,'Shared content is read once across all derived bindings and validation');
+        assert.throws(()=>policy.validateLineage(scope,{...envelope,lineage:envelope.lineage.map(dependency=>({...dependency,contentDigest:'0'.repeat(64)}))}),/OUTPUT_NOT_ALLOWED/);
+      });
+      policy.readSnapshot(()=>policy.validateLineage(authorizationScope()!,envelope));
+      assert.equal(reads,2,'A later read independently reloads the shared content');
+      assert(policy.binding(outer,top.object));
+      assert.equal(reads,2+leaves.length+1,'A standalone binding traversal also shares each dependency within its own synchronous boundary');
+    });
+  }finally{f.close();}
+});
+
+for(const connection of ['current','separate'] as const)test(`cached lineage content is invalidated by a write on the ${connection} connection`,()=>{
+  const f=fixture(),db=new DatabaseSync(f.database);let writer:DatabaseSync|undefined;
+  try {
+    f.role(f.a.id);const root=f.place('shared'),task=f.task(f.a,[root]);
+    const security=new SecurityStore(db,'foundation',Date.now,true,businessModel),policy=security.policies;
+    const envelope=policy.envelope(f.owner,root.object,1,root.fields,f.raw.read(f.owner,root.object).properties,task.grant.channels);
+    writer=connection==='current'?db:new DatabaseSync(f.database);
+    security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      policy.validateLineage(authorizationScope()!,envelope);
+      writer!.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.name',?) WHERE owner=? AND type=? AND id=?").run('Changed content',f.owner,root.object.type,root.object.id);
+      assert.throws(()=>policy.validateLineage(authorizationScope()!,envelope),/OUTPUT_NOT_ALLOWED/,'An unchanged object revision cannot hide changed content behind the read cache');
+    }));
+  }finally{if(writer && writer!==db)writer.close();db.close();f.close();}
 });
 
 test('definition review separates edit/manage from execution and checks both old and new link endpoints',()=>{

@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { POLICY_VERSION, SECURITY_CONTRACT, securityEnvelopeSchema } from './contracts.js';
-import { SecurityError } from './store.js';
+import { MAX_SECURITY_LINEAGE_ITEMS, POLICY_VERSION, SECURITY_CONTRACT, securityEnvelopeSchema } from './contracts.js';
+import { SecurityError, SecurityLineageLimitError } from './store.js';
 
 export type SecurityEnvelope = z.infer<typeof securityEnvelopeSchema>;
 export type Channel = SecurityEnvelope['channels'][number];
@@ -8,17 +8,33 @@ const rank = { private: 0, sensitive: 1, internal: 2 } as const;
 /** Restrictions combine monotonically. Unknown/incomplete lineage never exports. */
 export function combineEnvelopes(inputs: SecurityEnvelope[]): SecurityEnvelope {
   if (!inputs.length) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-  const values = inputs.map(v => securityEnvelopeSchema.parse(v)), first = values[0]!;
-  if (values.some(v => v.ownerKey !== first.ownerKey)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-  const lineage = [...new Map(values.flatMap(v => v.lineage).map(v => [JSON.stringify(v), v])).values()];
-  const submissions=[...new Map(values.flatMap(v=>v.submission?[v.submission]:[]).map(v=>[JSON.stringify(v),v])).values()];
-  if (submissions.length>1) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-  if (lineage.length > 200) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-  return { version: SECURITY_CONTRACT, ownerKey: first.ownerKey, policyVersion: POLICY_VERSION,
-    requiredMarkings: [...new Set(values.flatMap(v => v.requiredMarkings))],
-    classification: values.reduce((a, b) => rank[a] > rank[b.classification] ? a : b.classification, first.classification),
-    channels: first.channels.filter(c => values.every(v => v.channels.includes(c))), lineage,
-    lineageComplete: values.every(v => v.lineageComplete), ...(submissions[0]?{submission:submissions[0]}:{}) };
+  let ownerKey: string | undefined, submission: SecurityEnvelope['submission'];
+  let classification: SecurityEnvelope['classification'] = 'private', lineageComplete = true;
+  let channels: Channel[] = [];
+  const markings = new Set<SecurityEnvelope['requiredMarkings'][number]>();
+  const lineage = new Map<string, SecurityEnvelope['lineage'][number]>();
+  for (const input of inputs) {
+    if (Array.isArray(input?.lineage) && input.lineage.length > MAX_SECURITY_LINEAGE_ITEMS) throw new SecurityLineageLimitError();
+    const value = securityEnvelopeSchema.parse(input);
+    if (ownerKey === undefined) { ownerKey = value.ownerKey; channels = [...value.channels]; }
+    else if (value.ownerKey !== ownerKey) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    if (value.submission) {
+      if (submission && JSON.stringify(submission) !== JSON.stringify(value.submission)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      submission = value.submission;
+    }
+    for (const dependency of value.lineage) {
+      const key = JSON.stringify(dependency);
+      if (!lineage.has(key) && lineage.size >= MAX_SECURITY_LINEAGE_ITEMS) throw new SecurityLineageLimitError();
+      lineage.set(key, dependency);
+    }
+    for (const marking of value.requiredMarkings) markings.add(marking);
+    if (rank[value.classification] > rank[classification]) classification = value.classification;
+    channels = channels.filter(channel => value.channels.includes(channel));
+    lineageComplete &&= value.lineageComplete;
+  }
+  return { version: SECURITY_CONTRACT, ownerKey: ownerKey!, policyVersion: POLICY_VERSION,
+    requiredMarkings: [...markings], classification, channels, lineage: [...lineage.values()],
+    lineageComplete, ...(submission ? { submission } : {}) };
 }
 export function requireChannel(envelope: SecurityEnvelope, channel: Channel, clearance: { classification: SecurityEnvelope['classification']; markings: SecurityEnvelope['requiredMarkings'] }) {
   const value = securityEnvelopeSchema.parse(envelope);

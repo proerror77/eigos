@@ -5,6 +5,8 @@ import { decodeJwt } from 'jose';
 import * as oidc from 'openid-client';
 import { z } from 'zod';
 import type { Profile } from '../members/store.js';
+import type { RelayClient } from '../agent-transport/client.js';
+import { taskRelayMetadataSchema } from '../agent-transport/task-contracts.js';
 import { ClientFactory, JsonRpcTransportFactory, type Client } from '@a2a-js/sdk/client';
 import { discoverA2A } from './a2a.js';
 
@@ -213,6 +215,37 @@ export class AgentConnector {
   async authorizationContext() {
     const value=z.object({stage:z.enum(['S4','S5']),installationId:z.uuid(),actorKind:z.literal('agent'),grant:z.object({id:z.uuid(),revision:z.number().int().positive()}),authEpoch:z.number().int().positive()}).parse(await this.json('/security/context',{}));
     if(value.installationId!==this.registrationId)throw new AgentConnectorError('installation_context_mismatch');return value;
+  }
+  /** Uses the existing OAuth installation to bind a transport key; refresh credentials stay here. */
+  async bindTaskRelay(relay: RelayClient, expected?: { authorityId: string; gatewayAgentId: string }) {
+    const context = await this.authorizationContext();
+    const metadata = taskRelayMetadataSchema.parse(await this.json('/.well-known/eigos-task-relay'));
+    if (metadata.gatewayOrigin !== this.baseUrl || metadata.relayUrl !== relay.baseUrl) throw new AgentConnectorError('relay_destination_mismatch');
+    if (expected && (metadata.authorityId !== expected.authorityId || metadata.gatewayAgentId !== expected.gatewayAgentId)) throw new AgentConnectorError('relay_authority_mismatch');
+    const token = await this.accessToken(), proof = await relay.taskBindingProof(token, this.baseUrl);
+    const response = await this.fetcher(this.baseUrl + metadata.bindingPath, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+      headers: { Authorization: `Bearer ${token}`, DPoP: proof, 'Content-Type': 'application/json' }, body: JSON.stringify({ signedCard: relay.identity.signedCard }) });
+    if (!response.ok) throw new AgentConnectorError('relay_binding_rejected');
+    const value = taskRelayMetadataSchema.extend({ agentId: z.string(), installationId: z.uuid(), expiresAt: z.number().int(), connectionId: z.uuid() }).parse(await response.json());
+    if (value.agentId !== relay.agentId || value.installationId !== context.installationId || value.authorityId !== metadata.authorityId
+      || value.gatewayAgentId !== metadata.gatewayAgentId || value.gatewayOrigin !== metadata.gatewayOrigin || value.relayUrl !== metadata.relayUrl) throw new AgentConnectorError('relay_binding_mismatch');
+    const contact = (await relay.contacts()).find(c => c.id === value.connectionId);
+    if (!contact || ![contact.requester, contact.recipient].includes(metadata.gatewayAgentId)) throw new AgentConnectorError('relay_contact_mismatch');
+    if (contact.state === 'pending' && contact.recipient === relay.agentId) await relay.respondContact(contact.id, 'accept');
+    else if (contact.state !== 'accepted') throw new AgentConnectorError('relay_contact_not_accepted');
+    return value;
+  }
+  async enrollTaskRelay(relay: RelayClient, options: { renew?: boolean; requestId?: string } = {}) {
+    if (options.renew && !z.uuid().safeParse(options.requestId).success) throw new AgentConnectorError('relay_renewal_request_id_required');
+    const metadata = taskRelayMetadataSchema.parse(await this.json('/.well-known/eigos-task-relay'));
+    if (metadata.gatewayOrigin !== this.baseUrl || metadata.relayUrl !== relay.baseUrl || !metadata.enrollmentPath) throw new AgentConnectorError('relay_enrollment_unavailable');
+    const token = await this.accessToken(), proof = await relay.enrollmentProof(token, this.baseUrl);
+    const response = await this.fetcher(this.baseUrl + metadata.enrollmentPath, { method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30000),
+      headers: { Authorization: `Bearer ${token}`, DPoP: proof, 'Content-Type': 'application/json' }, body: JSON.stringify({ signedCard: relay.identity.signedCard }) });
+    if (!response.ok) throw new AgentConnectorError('relay_enrollment_rejected');
+    const assertion = z.strictObject({ accessToken: z.string().max(8192), expiresAt: z.number().int(), agentId: z.string() }).parse(await response.json());
+    if (assertion.agentId !== relay.agentId || assertion.expiresAt <= Date.now()) throw new AgentConnectorError('relay_enrollment_mismatch');
+    return options.renew ? relay.renew(assertion.accessToken, options.requestId) : relay.register(assertion.accessToken);
   }
   /** Explicit v2 calls have no owner-wide fallback after a denial or old server. */
   async queryOntology(taskId:string,query:unknown,expectedRequestRevision?:number) {

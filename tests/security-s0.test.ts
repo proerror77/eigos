@@ -28,10 +28,13 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 195); assert.equal(report.counts.properties, 1779);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 134);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 154);
   for (const id of ['ontology-definition-contracts', 'ontology-definition-service', 'ontology-action-discovery-contract', 'ontology-pipeline-contract', 'ontology-pipeline-registry', 'ontology-pipeline-mapping', 'ontology-pipeline-facts', 'ontology-metadata-http', 'ontology-metadata-mcp']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed pipeline surface: ${id}`);
   }
+  for (const id of ['relay-http-boundary', 'relay-private-storage']) assert(report.surfaces.some(surface => surface.id === id), `Unreviewed Relay boundary: ${id}`);
+  assert.deepEqual(report.surfaces.find(surface => surface.id === 'native-model-timing')!.channels, ['private_diagnostics']);
+  assert.deepEqual(report.surfaces.find(surface => surface.id === 'model-usage-accounting')!.channels, ['sqlite', 'task_usage']);
   assert(report.surfaces.some(surface => surface.id === 's5-packages-agent-client-a2a' && surface.file === 'packages/agent-client/a2a.ts'), 'Public A2A discovery must remain in the reviewed security inventory');
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));

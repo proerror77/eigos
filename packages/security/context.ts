@@ -22,6 +22,7 @@ export interface AuthorizationScope {
   synchronousRead?: boolean;
   readBindings?: Map<string,unknown>;
   readTaskMembers?: Map<string,Map<string,ObjectRef>>;
+  readLineageDigests?: Map<string,string>;
 }
 const contexts = new AsyncLocalStorage<AuthorizationScope>();
 export const authorizationScope = () => contexts.getStore();

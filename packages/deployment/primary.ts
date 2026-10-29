@@ -34,7 +34,7 @@ export function readPrimaryHealth(port:number,host:string,timeoutMs=15000):Promi
 
 /** A slow startup may recover, but only this authority and release can be ready. */
 export async function waitForPrimaryHealth(
-  port:number,host:string,expected:{authorityId:string;releaseDigest:string},
+  port:number,host:string,expected:{authorityId:string;releaseDigest:string;taskRelay?:'connected'},
   {timeoutMs=120000,requestTimeoutMs=15000,retryDelayMs=500}:{timeoutMs?:number;requestTimeoutMs?:number;retryDelayMs?:number}={},
 ):Promise<Record<string,unknown>> {
   for(const duration of [timeoutMs,requestTimeoutMs,retryDelayMs])
@@ -45,8 +45,10 @@ export async function waitForPrimaryHealth(
     try{
       const health=await readPrimaryHealth(port,host,Math.max(1,Math.min(requestTimeoutMs,deadline-performance.now())));
       if(health.status==='ok' && health.authorityId===expected.authorityId && health.releaseDigest===expected.releaseDigest){
-        if(performance.now()<deadline)return health;
-        lastFailure='Matching response arrived after the readiness deadline';
+        if(expected.taskRelay && (!health.taskRelay || typeof health.taskRelay!=='object' || !('status' in health.taskRelay) || health.taskRelay.status!==expected.taskRelay)){
+          lastFailure='Configured Task Relay is not connected';
+        }else if(performance.now()<deadline)return health;
+        else lastFailure='Matching response arrived after the readiness deadline';
       }else lastFailure='Health status, authority ID or release digest does not match the deployed primary';
     }catch(error){lastFailure=error instanceof Error?error.message:String(error);}
     const remaining=deadline-performance.now();

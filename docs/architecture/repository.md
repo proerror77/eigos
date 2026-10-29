@@ -46,6 +46,8 @@ Gateway 处理协议、认证、任务交互、会员与管理入口；Worker �
 | --- | --- |
 | `apps/gateway/` | MCP、A2A、认证、会员、本体管理及网络入口；[app.ts](../../apps/gateway/app.ts)装配 HTTP 应用 |
 | `apps/worker/` | 持久领取、模型调用、执行、恢复和独立验收；[runtime.ts](../../apps/worker/runtime.ts)装配执行侧，[worker.ts](../../apps/worker/worker.ts)管理领取与租约 |
+| `apps/relay/`、`packages/relay/` | 独立加密通信入口与专属信箱存储，不读取业务库或启动执行器 |
+| `packages/agent-transport/` | 节点身份、标准加密封装、持久收发与宿主接线 |
 | `apps/provider-mcp/` | 美团供应商协议适配；不另建业务本体 |
 | `apps/participant-browser/` | 免费报名的本机浏览器操作队列 |
 | `apps/source-account-observer/` | 本人来源账号状态的观察入口 |

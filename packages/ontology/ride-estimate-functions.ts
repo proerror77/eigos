@@ -30,26 +30,36 @@ export function evaluateRideEstimate(graph: OntologyObjectStore, owner: string, 
     return { ...status, value: { placeId: matches[0]!.id, observation: input.object, selectionRule: addressed.length ? 'explicit_unique_address' : 'unique_exact_name' } };
   }
   if (input.function !== 'rideEstimateStatus') return;
-  if (!['DidiPlaceObservation', 'RideEstimateObservation'].includes(input.object.type)) throw new DomainError('INVALID_INPUT', 'Ride estimate status needs a DiDi observation');
-  const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [input.object], evidenceLevels: [] });
-  const record = graph.read(owner, input.object, budget), proof = sourceProof(graph, owner, input.object, budget);
+  return observationStatus(graph, owner, input.object, budget);
+}
+
+function observationStatus(graph: OntologyObjectStore, owner: string, object: ObjectRef, budget: ReadBudget, freshnessAt?: number): Computation {
+  if (!['DidiPlaceObservation', 'RideEstimateObservation'].includes(object.type)) throw new DomainError('INVALID_INPUT', 'Ride estimate status needs a DiDi observation');
+  const unknown = (reason: string): Computation => ({ status: 'unknown', reason, evidenceRefs: [object], evidenceLevels: [] });
+  const record = graph.read(owner, object, budget), proof = sourceProof(graph, owner, object, budget);
   if (!proof) return unknown('DiDi source evidence no longer matches');
   let s; try { s = checkedRideEstimate(record.properties.snapshot); } catch { return unknown('DiDi snapshot is invalid'); }
-  if (Date.parse(s.observedAt) > graph.now() || Date.parse(s.expiresAt) <= graph.now()) return unknown('DiDi read expired under the local freshness policy');
-  const roots = graph.related(owner, input.object, 'request', budget), scopes = graph.related(owner, input.object, 'scope', budget);
+  const observedAt = Date.parse(s.observedAt), expiresAt = Date.parse(s.expiresAt);
+  const isFresh = () => { const at = freshnessAt ?? graph.now(); return observedAt <= at && at < expiresAt; };
+  if (!isFresh()) return unknown('DiDi read expired under the local freshness policy');
+  const roots = graph.related(owner, object, 'request', budget), scopes = graph.related(owner, object, 'scope', budget);
   if (roots?.length !== 1 || roots[0]!.ref.id !== s.requestId || roots[0]!.properties.revision !== s.requestRevision || scopes?.length !== 1 || digest(scopes[0]!.ref) !== digest(s.scope) || scopes[0]!.properties.configurationDigest !== s.configurationDigest || scopes[0]!.properties.requestRevision !== s.requestRevision) return unknown('DiDi observation belongs to another scope or revision');
   const task = rideEstimateInputSchema.safeParse(scopes[0]!.properties.input);
   if (!task.success) return unknown('DiDi task scope is invalid');
   if (s.route) {
-    const route = graph.related(owner, input.object, 'route', budget), args = rideEstimateActionSchemas.EstimateDidiRide.parse(s.actionInput);
+    const route = graph.related(owner, object, 'route', budget), args = rideEstimateActionSchemas.EstimateDidiRide.parse(s.actionInput);
     if (route?.length !== 1 || route[0]!.properties.origin !== s.route.origin.name || route[0]!.properties.destination !== s.route.destination.name || task.data.mode !== 'estimate') return unknown('DiDi route projection differs from its source');
     for (const role of ['origin', 'destination'] as const) {
-      const refs = graph.related(owner, input.object, `${role}Search`, budget), expected = role === 'origin' ? args.originObservation : args.destinationObservation;
+      const refs = graph.related(owner, object, `${role}Search`, budget), expected = role === 'origin' ? args.originObservation : args.destinationObservation;
       if (refs?.length !== 1 || digest(refs[0]!.ref) !== digest(expected)) return unknown('Place source relationship changed');
-      const status = evaluateRideEstimate(graph, owner, { function: 'rideEstimateStatus', object: expected }, budget);
+      // Places supplied coordinates when this quote was requested. Their later
+      // expiry cannot invalidate a still-current quote. Only this data timestamp
+      // is historical: graph reads, authorization and provenance remain current.
+      const status = observationStatus(graph, owner, expected, budget, Date.parse(s.receipt.startedAt));
       let place; try { place = checkedRideEstimate(refs[0]!.properties.snapshot); } catch { return unknown('Place source is invalid'); }
       if (status?.status !== 'known' || place.data.kind !== 'places' || place.requestId !== s.requestId || place.requestRevision !== s.requestRevision || digest(place.scope) !== digest(s.scope) || place.actionInput.role !== role || !place.data.places.some(p => digest(p) === digest(s.route![role]))) return unknown('Coordinates are not backed by the owned current place observation');
     }
   }
-  return { status: 'known', value: { data: s.data, ...(s.route ? { route: s.route } : {}), observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', feesComplete: 'unknown', availability: 'unknown', pickupCommitment: 'unknown', arrivalCommitment: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true }, evidenceRefs: [input.object, ...proof.refs], evidenceLevels: proof.levels };
+  if (!isFresh()) return unknown('DiDi read expired under the local freshness policy');
+  return { status: 'known', value: { data: s.data, ...(s.route ? { route: s.route } : {}), observedAt: s.observedAt, freshnessPolicyUntil: s.expiresAt, providerQuoteExpiry: 'unknown', feesComplete: 'unknown', availability: 'unknown', pickupCommitment: 'unknown', arrivalCommitment: 'unknown', evidenceKind: s.evidenceKind, noBusinessWrites: true }, evidenceRefs: [object, ...proof.refs], evidenceLevels: proof.levels };
 }

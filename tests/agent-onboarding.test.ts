@@ -428,7 +428,11 @@ test('foundation A2A completes a native read through enrolled JWT identity, expl
     const submitted = await client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: { service: 'eigos.delegate', goal: 'Read the existing synthetic registration; do not submit or pay.', executionEnvironment: 'sandbox' } }] } })); assert('id' in submitted);
     const completed = await readUntil(client, submitted, TaskState.TASK_STATE_COMPLETED).catch(error => {
       const job = f.gateway.store.get(ownerKey(principal), submitted.id);
-      throw new Error(JSON.stringify({ state: job.state, phase: job.delegation?.phase, recovery: job.delegation?.recovery, events: job.delegation?.events.slice(-6), feedback: job.delegation?.agent?.feedback.slice(-4), error: job.error, modelErrors: f.modelErrors }), { cause: error });
+      throw new Error(JSON.stringify({ readbackError: { name: error instanceof Error ? error.name : typeof error,
+        message: error instanceof Error ? error.message : String(error), code: error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined,
+        cause: error instanceof Error && error.cause instanceof Error ? { name: error.cause.name, message: error.cause.message,
+          code: 'code' in error.cause ? String(error.cause.code) : undefined } : undefined },
+        state: job.state, phase: job.delegation?.phase, recovery: job.delegation?.recovery, events: job.delegation?.events.slice(-6), feedback: job.delegation?.agent?.feedback.slice(-4), error: job.error, modelErrors: f.modelErrors }), { cause: error });
     });
     assert.equal(completed.metadata?.view, 'eigos.task.v2'); assert.equal(completed.metadata?.accepted, true); assert.equal(completed.metadata?.outputStatus, 'available');
     assert(completed.artifacts.length > 0); assert(JSON.stringify(completed.artifacts).includes('synthetic-registration'));

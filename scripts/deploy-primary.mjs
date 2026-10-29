@@ -17,6 +17,7 @@ const {values}=parseArgs({options:{config:{type:'string'},apply:{type:'boolean'}
 if(process.platform!=='darwin' || !values.config)throw new Error('Use --config with the owned primary environment on macOS');
 const stat=lstatSync(values.config);if(!stat.isFile() || stat.isSymbolicLink() || stat.uid!==process.getuid() || stat.mode&0o077)throw new Error('Primary settings must be an owned private regular file');
 const source=readFileSync(values.config,'utf8'),settings=parseEnv(source),config=readConfig(settings),authority=config.authority;
+if(settings.EIGOS_TASK_RELAY_FILE && config.EIGOS_TASK_RELAY_FILE!==settings.EIGOS_TASK_RELAY_FILE)throw new Error('Configured Task Relay is unsupported by this checkout');
 if(!authority)throw new Error('Primary deployment requires its preinstalled runtime authority');
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),runtime=primaryRuntime(),label='com.eigos.primary',service=`gui/${process.getuid()}/${label}`;
 const envPath=join(runtime,'server.env'),plistPath=join(homedir(),'Library/LaunchAgents',label+'.plist');
@@ -49,7 +50,7 @@ if(loaded(label))execFileSync('launchctl',['bootout',service],{stdio:'ignore'});
 write(envPath,source.split('\n').filter(line=>!line.startsWith('EIGOS_RELEASE_DIGEST=')).join('\n')+'\nEIGOS_RELEASE_DIGEST='+buildDigest+'\n');
 write(join(runtime,'authority.json'),JSON.stringify(authority,null,2)+'\n');write(plistPath,plist);
 execFileSync('launchctl',['enable',service]);execFileSync('launchctl',['bootstrap',`gui/${process.getuid()}`,plistPath]);
-try{await waitForPrimaryHealth(config.PORT,new URL(config.PUBLIC_URL).host,{authorityId:authority.id,releaseDigest:buildDigest});}
+try{await waitForPrimaryHealth(config.PORT,new URL(config.PUBLIC_URL).host,{authorityId:authority.id,releaseDigest:buildDigest,...(config.EIGOS_TASK_RELAY_FILE?{taskRelay:'connected'}:{})});}
 catch(error){throw new Error(`${error.message}; preserve its database and inspect the owned logs before forward repair`,{cause:error});}
 write(prior,JSON.stringify({sourceCommit,buildDigest,release,files,authorityId:authority.id,authorityDigest:runtimeAuthorityDigest(authority),profile:'primary',endpoint:config.PUBLIC_URL,updatedAt:new Date().toISOString()},null,2)+'\n');
 console.log(JSON.stringify({status:'running',label,sourceCommit,buildDigest,authorityId:authority.id,endpoint:config.PUBLIC_URL,frontendReadback:'required'}));

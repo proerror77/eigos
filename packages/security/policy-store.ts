@@ -21,6 +21,11 @@ import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
 
+// Only this connection's direct append-only audit inserts are inert for read
+// bindings. Other writes, trigger side effects and other connections still
+// invalidate the snapshot; every authority/time check remains in place.
+const readAuditChanges = new WeakMap<DatabaseSync, number>();
+
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
   resource: z.union([resourceRefSchema, z.strictObject({ kind: z.literal('namespace'), id, version: id })]),
@@ -379,13 +384,13 @@ export class SecurityPolicies {
    * It never spans source calls, promises, dispatch or another model tool call. */
   readSnapshot<T>(action:()=>T):T {
     const scope=authorizationScope();if(!scope || scope.synchronousRead)return action();
-    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${this.db.prepare('SELECT total_changes() AS n').get()!.n}`;
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>();
+    const stamp=()=>`${this.db.prepare('PRAGMA data_version').get()!.data_version}:${Number(this.db.prepare('SELECT total_changes() AS n').get()!.n)-(readAuditChanges.get(this.db)??0)}`;
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...this.roles(scope.actor.memberId,scope.actor.installationId).map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -434,6 +439,7 @@ export class SecurityPolicies {
     return this.readBinding(scope,ref,revision);
   }
   private readBinding(scope:AuthorizationScope,ref:ObjectRef,revision?:number,historicalCapability=false):ObjectBinding|undefined {
+    if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.readBinding(authorizationScope()!,ref,revision,historicalCapability)));
     scope.assertCurrent();
     if(!scope.grant)return;
     const key=historicalCapability?JSON.stringify(['historical-capability',ref.type,ref.id]):refKey(ref);
@@ -488,8 +494,7 @@ export class SecurityPolicies {
       if(binding.inputEnvelope)for(const dependency of binding.inputEnvelope.lineage) {
         const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
-        const properties=this.lineageProperties(scope,dependency);
-        if(digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest){checked.set(key,undefined);return;}
+        if(this.lineageDigest(scope,dependency)!==dependency.contentDigest){checked.set(key,undefined);return;}
       }
       return binding;
     };
@@ -500,13 +505,18 @@ export class SecurityPolicies {
     if (!value) throw new DomainError('NOT_FOUND', 'Object is not available in this task');
     return value;
   }
-  predicate(owner: string, alias: string, fields: string[] = []) {
+  predicate(owner: string, alias: string, fields: string[] = [], selection?: { types: readonly string[]; objectId?: string }) {
     const scope = this.scope(owner),g=scope.grant!;
     const rows=this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
       WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' LIMIT 2001`)
       .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId);
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
-    const refs=rows.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
+    // Narrow by the query's public schema/identity before checking candidates.
+    // Data predicates, visibility and transitive dependencies are still checked
+    // before result filtering/counting; the whole-task binding bound is unchanged.
+    const types=selection?new Set(selection.types):undefined;
+    const candidates=rows.filter(row=>(!types || types.has(String(row.type))) && (selection?.objectId===undefined || row.object_id===selection.objectId));
+    const refs=candidates.flatMap(row=>{const b=this.binding(scope,{type:String(row.type),id:String(row.object_id)});return b && fields.every(f=>b.fields.includes(f))?[b.object]:[];});
     return {sql:` AND EXISTS(SELECT 1 FROM json_each(?) visible WHERE json_extract(visible.value,'$.type')=${alias}.type AND json_extract(visible.value,'$.id')=${alias}.id)`,params:[JSON.stringify(refs)]};
   }
   project(owner: string, value: ObjectView, selected?: string[]): ObjectView {
@@ -574,7 +584,10 @@ export class SecurityPolicies {
   capture(scope:AuthorizationScope,envelope:SecurityEnvelope) {
     if (!scope.grant) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const key=digest(envelope);if(scope.lineage.has(key))return;scope.lineage.set(key,envelope);
-    if (scope.actor.actorKind==='worker') this.db.prepare('INSERT OR IGNORE INTO security_reads VALUES(?,?,?)').run(scope.grant.id,key,JSON.stringify(envelope));
+    if (scope.actor.actorKind==='worker') {
+      const written=this.db.prepare('INSERT OR IGNORE INTO security_reads VALUES(?,?,?)').run(scope.grant.id,key,JSON.stringify(envelope));
+      readAuditChanges.set(this.db,(readAuditChanges.get(this.db)??0)+Number(written.changes));
+    }
   }
   loadLineage(scope:AuthorizationScope) {
     if (!scope.grant) return;
@@ -592,6 +605,17 @@ export class SecurityPolicies {
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return JSON.parse(String(old.body)).properties;
   }
+  private lineageDigest(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]) {
+    const cache=scope.readLineageDigests,key=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields]);
+    if(cache)scope.assertCurrent();
+    const cached=cache?.get(key);if(cached!==undefined)return cached;
+    const properties=this.lineageProperties(scope,dependency);
+    const value=digest(Object.fromEntries(dependency.fields!.map(field=>[field,this.value(dependency.object.type,field,properties)])));
+    // Shared ancestors repeat across derived objects. Reuse only their measured
+    // content within this synchronous read; each caller still checks its own
+    // current binding, field visibility and expected digest.
+    if(cache){cache.set(key,value);scope.assertCurrent();}return value;
+  }
   validateLineage(scope:AuthorizationScope,envelope:SecurityEnvelope):void {
     if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.validateLineage(authorizationScope()!,envelope)));
     scope.assertCurrent();
@@ -603,8 +627,7 @@ export class SecurityPolicies {
     for (const dependency of envelope.lineage) {
       const binding=this.readBinding(scope,dependency.object,undefined,dependency.object.type==='RegisteredCapability');
       if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      const properties=this.lineageProperties(scope,dependency);
-      if (digest(Object.fromEntries(dependency.fields.map(f=>[f,this.value(dependency.object.type,f,properties)])))!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      if (this.lineageDigest(scope,dependency)!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
   }
   effectiveEnvelope(scope:AuthorizationScope,envelope:SecurityEnvelope):SecurityEnvelope {

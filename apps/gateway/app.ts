@@ -40,6 +40,7 @@ import { mountDefinitionRoutes } from './ontology/routes.js';
 import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
 import { createIngressRouter } from './ingress.js';
 import { decodeJwt } from 'jose';
+import { TaskRelayGateway, mountTaskRelay, readTaskRelayConfig } from './relay.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
@@ -65,7 +66,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
   try {
-    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
+    catalog = catalogFactory?.(store) ?? createExecutionCatalog({ store, didiRelayAgentId: config.EIGOS_DIDI_RELAY_AGENT_ID, personalSourceOwner: config.EIGOS_PERSONAL_SOURCE_OWNER, didiOrderTestEnabled: config.EIGOS_DIDI_ORDER_TEST_ENABLED === 'true', csvInputDirectory: config.EIGOS_CSV_PILOT === 'true' ? config.EIGOS_CSV_INPUT_DIR : undefined,
       documentEnabled: config.EIGOS_EXECUTOR === 'codex', paotuiSkillDirectory: config.EIGOS_PAOTUI_SKILL_DIR,
       paotuiMemberConnectionFile: config.EIGOS_PAOTUI_MEMBER_CONNECTION_FILE, memberSourceKeyFile: config.EIGOS_MEMBER_SOURCE_KEY_FILE, executionHost: 'gateway',
       rollinggo: config.EIGOS_ROLLINGGO_KEY_FILE ? { keyFile: config.EIGOS_ROLLINGGO_KEY_FILE, keySha256: config.EIGOS_ROLLINGGO_KEY_SHA256! } : undefined,
@@ -98,7 +99,11 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     } else store.admitMemberDidiSource();
   } catch (error) { network?.close(); store.close(); members.close(); throw error; }
   const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members, store, catalog) : undefined;
-  try { security?.start(); } catch(error) { network?.close(); store.close(); members.close(); throw error; }
+  let relay: TaskRelayGateway | undefined;
+  try {
+    relay = config.EIGOS_TASK_RELAY_FILE ? new TaskRelayGateway(store, tasks, config.PUBLIC_URL, readTaskRelayConfig(config.EIGOS_TASK_RELAY_FILE), config.EIGOS_DIDI_RELAY_AGENT_ID) : undefined;
+    security?.start();
+  } catch(error) { network?.close(); store.close(); members.close(); throw error; }
   app.use((req, res, next) => {
     if (!store.authorityCurrent()) { res.status(503).json({ error: 'runtime_authority_unavailable' }); return; }
     if (config.authority) {
@@ -139,7 +144,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
       if (!allowedOrigins.has(origin)) { res.status(403).json({ error: 'origin_not_allowed' }); return; }
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.vary('Origin');
-      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, MCP-Protocol-Version, Mcp-Method, Mcp-Name, A2A-Version, X-EIGOS-Registration-Token');
+      res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Accept, DPoP, MCP-Protocol-Version, Mcp-Method, Mcp-Name, A2A-Version, X-EIGOS-Registration-Token');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Expose-Headers', 'WWW-Authenticate, MCP-Protocol-Version, A2A-Version');
     }
@@ -149,7 +154,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   const runtimeIdentity = { instance: config.PUBLIC_URL, backend: BACKEND_VERSION, releaseDigest: config.EIGOS_RELEASE_DIGEST, ontologyTransport: 'native-mcp' as const,
     ...(config.authority ? { authorityId: config.authority.id, authorityRevision: config.authority.revision } : {}) };
   app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity,
-    ...(config.authority?{ontologyRelease:store.definitions.active().ref}:{}),securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
+    ...(config.authority?{ontologyRelease:store.definitions.active().ref}:{}), ...(relay ? { taskRelay: { status: relay.status } } : {}), securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
   mountInviteBeta(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
@@ -214,6 +219,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   };
 
   if (!security) mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
+  if (relay) mountTaskRelay(app, relay, store, authenticate, req => principals.get(req)!);
   const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
   if (!security) mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
   const definitions = new DefinitionService(store, tasks, catalog);
@@ -320,5 +326,5 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, network, catalog, definitions, security, scopes: SCOPES, close: async () => { security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, network, catalog, definitions, security, relay, scopes: SCOPES, close: async () => { await relay?.close(); security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
 }

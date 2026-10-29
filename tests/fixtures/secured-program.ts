@@ -9,9 +9,11 @@ import type {AgentDecision} from '../../packages/ontology/agent-actions.js';
 import {bindPersonalSourceOwner} from '../../packages/core/source-owner.js';
 import {withAuthorization} from '../../packages/security/context.js';
 import {digest} from '../../packages/core/delegation.js';
+import {setTimeout as delay} from 'node:timers/promises';
+import type {WorkClaim} from '../../packages/core/store.js';
 import {evidence,interpretation,syntheticGoalReview,observeTaskContext,acknowledgeReads} from '../backend-fixture.js';
 
-export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string}={}) {
+export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixture>)=>AgentProgram,input:object,choice:(ctx:AgentPlanningContext,access:PlanningAccess)=>AgentDecision,base?:ReturnType<typeof securityFixture>,options:{nativeTaskContext?:boolean;grantExpiresAt?:string;leaseMs?:number;signal?:AbortSignal;renewLease?:boolean}={}) {
   const f=base??securityFixture(),program=factory(f);bindPersonalSourceOwner(program,f.owner);
   const businessModel=f.jobs.security.model,BUSINESS_MODEL_DEFINITION=businessModel.definitionSnapshot();
   const catalog=new ExecutionCatalog([program.capability()],[],[],[],[program],undefined,f.jobs.security),profile=catalog.securityProfiles(f.owner)[0]!,policy=f.jobs.security.policies,until=options.grantExpiresAt??new Date(Date.now()+3600000).toISOString(),a=f.installation('Scoped native program',15*60*1000);
@@ -40,17 +42,37 @@ export function securedProgramFixture(factory:(f:ReturnType<typeof securityFixtu
     const decision=choice(ctx,access);acknowledgeReads(access);return {decision,evidence:{...evidence(),decisionDigest:digest(decision)}};
   }};
   const coordinator=new Coordinator(f.jobs,reasoner,catalog,{allowSandbox:true});
-  async function tick() {
-    const claim=f.jobs.claim(['eigos.delegate'],30000);assert.ok(claim);
-    try {await withAuthorization(f.jobs.security.workerScope(f.owner,claim.job.id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
+  const leaseMs=options.leaseMs??30000;
+  async function run(claim:WorkClaim) {
+    const scope=f.jobs.security.workerScope(f.owner,claim.job.id,claim.securityAuthorityId!,claim.token);
+    if(options.renewLease) {
+      // Match the real Worker's guarded renewal during bounded synchronous
+      // ontology work; an already expired or revoked claim still fails closed.
+      const check=scope.assertCurrent;let renewAt=Date.now()+Math.floor(leaseMs/3);
+      scope.assertCurrent=()=>{check();if(Date.now()>=renewAt){assert(f.jobs.renew(claim,leaseMs),'The original Worker lease must still be valid');renewAt=Date.now()+Math.floor(leaseMs/3);}};
+    }
+    try {await withAuthorization(scope,()=>coordinator.run(claim,options.signal??new AbortController().signal));}
     finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
+  }
+  async function tick() {
+    options.signal?.throwIfAborted();
+    await delay(0,undefined,{signal:options.signal});
+    const claim=f.jobs.claim(['eigos.delegate'],leaseMs);assert.ok(claim);
+    await run(claim);
   }
   async function advance(id:string,max=12) {
     for(let turn=0;turn<max;turn++) {
+      options.signal?.throwIfAborted();
+      await delay(0,undefined,{signal:options.signal});
       const current=f.jobs.get(f.owner,id);if(!['working','submitted'].includes(current.state))return current;
-      const claim=f.jobs.claim(['eigos.delegate'],30000);assert.ok(claim);
-      try {await withAuthorization(f.jobs.security.workerScope(f.owner,id,claim.securityAuthorityId!,claim.token),()=>coordinator.run(claim,new AbortController().signal));}
-      finally{f.jobs.release(claim);await coordinator.releaseModelContext(claim);}
+      let claim=f.jobs.claim(['eigos.delegate'],leaseMs);
+      const waitUntil=Date.now()+30000;
+      while(!claim && (f.jobs.get(f.owner,id).delegation?.nextAt??0)>Date.now() && Date.now()<waitUntil) {
+        await delay(100,undefined,{signal:options.signal});claim=f.jobs.claim(['eigos.delegate'],leaseMs);
+      }
+      assert.ok(claim,JSON.stringify({state:current.state,nextAt:current.delegation?.nextAt,feedback:current.delegation?.agent?.feedback}));
+      assert.equal(claim.job.id,id,'The fixture must advance the original task');
+      await run(claim);
     }
     assert.fail('Native program exceeded its bounded decision count');
   }

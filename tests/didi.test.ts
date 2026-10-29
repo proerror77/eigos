@@ -10,6 +10,7 @@ import { estimatedMoney, mapDidiResult } from '../packages/capabilities/didi/map
 import { checkedRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
 import { readConfig, readWorkerConfig } from '../packages/core/config.js';
 import { digest } from '../packages/core/delegation.js';
+import { assertGoalEffects, createGoalContract } from '../packages/core/goal-contract.js';
 import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { owner, principal } from './backend-fixture.js';
 import { didiFixture, setupDidi, chooseDidi, observeDidi, input, syntheticKey } from './fixtures/didi.js';
@@ -134,6 +135,28 @@ test('DiDi advertises separate query endpoint roles and preserves exact message 
     assert.equal(grounded.requirements.length, 2);
     assert.throws(() => groundRequirements(request, JSON.stringify(extracted.map(r => ({ ...r, messageId: r.messageId + '-wrong' }))), [], roles), /provenance/);
     assert.equal(t.calls.length, 0);
+  } finally { t.close(); }
+});
+
+test('quoted DiDi read-only constraints freeze enforceable whole-goal effect limits', () => {
+  const t = setupDidi(); try {
+    const goal = '查询路线估价，只读，不下单、不付款。';
+    const request = t.b.submit({ goal }).delegation!.request;
+    const capability = t.catalog.capability(DIDI_PROGRAM_REF);
+    const extracted = [
+      { id: 'read-only', predicate: 'ride.estimate_only', quote: '只读' },
+      { id: 'no-order', predicate: 'execution.no_order', quote: '不下单、不付款' },
+    ].map(({ id, predicate, quote }) => ({ requirement: { id, kind: 'condition', strength: 'hard', expected: { predicate } }, messageId: request.messages[0]!.id, quote }));
+    const grounded = groundRequirements(request, JSON.stringify(extracted), capability.outcomePredicates, capability.requirementRoles, capability.predicates.map(p => p.id));
+    const contract = createGoalContract(grounded, t.store.ontology.releaseRef!, [{ id: 'estimate', description: goal, predicate: 'ride.estimate_observed', phase: 'quote', messageId: request.messages[0]!.id, quote: goal, requirementIds: ['read-only', 'no-order'] }], [capability]);
+    assert.deepEqual(contract.effectConstraints, [
+      { requirementId: 'read-only', allowedEffects: ['read', 'local'] },
+      { requirementId: 'no-order', allowedEffects: ['read', 'local'] },
+    ]);
+    assertGoalEffects(contract, ['read', 'local']);
+    for (const effect of ['reserve', 'order', 'payment', 'change', 'cancel', 'refund', 'object_write', 'external_draft'] as const) assert.throws(() => assertGoalEffects(contract, [effect]), /fixed whole-task constraint/);
+    assert.equal(t.calls.length, 0);
+    assert.equal(t.store.intents(owner, request.id).length, 0);
   } finally { t.close(); }
 });
 
