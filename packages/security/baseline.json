@@ -3065,7 +3065,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "327d918cc3b3e60fa7e7b4552943576bb3076891a5c9e41000d815ad69e15b90",
+      "sourceDigest": "b96fa79319c851e075c31fa5f9421a7d1e780bfc796c2f5d558b38acf9520b05",
       "channels": [
         "source",
         "private_file"
@@ -3221,7 +3221,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "ad706e8c64038bd52e1f0a93c6af462767157da0192cf496721a0d91dc040576",
+      "sourceDigest": "4c0244f87eec1a5da2cae7200749d4fed440a498ac1f14c8a30cc30e0255d714",
       "channels": [
         "authorization_control"
       ],
@@ -4520,7 +4520,7 @@
     {
       "id": "relay-read-authority",
       "file": "packages/security/relay-service.ts",
-      "sourceDigest": "2a4ed371ed79d12895f6ee3140d17abc5cbb4f2d8d92f6de03ff1c04d6d583fd",
+      "sourceDigest": "23c54d79e5b7e27bff128bba6d9e27593584346033c9452f04c3adf68b209e2e",
       "channels": [
         "authorization_control",
         "source"
@@ -4545,7 +4545,7 @@
     {
       "id": "relay-source-service",
       "file": "packages/agent-transport/didi-service.ts",
-      "sourceDigest": "a35684437c85afbe3b1cde2da7f1f036015ce59e2d33567b9def4411c099cb09",
+      "sourceDigest": "cce346271fe5f5a877b222ca55f0977148d2184e340c9d6fa4a090a76d70e0e7",
       "channels": [
         "agent_transport",
         "source",
@@ -4583,7 +4583,7 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "0d243ec04f6de5721525bbf6e0922c1408c5cdd7f0923a0f0654989901abacad",
+      "sourceDigest": "c0e954069e1e9a86c8eb07eb89c781a67b5e4f140a15340f1d5342ef1aa26d3a",
       "channels": [
         "agent_transport",
         "private_file"
@@ -4621,7 +4621,7 @@
     {
       "id": "relay-didi-adapter",
       "file": "packages/capabilities/didi/relay-connector.ts",
-      "sourceDigest": "3d8a4fa39c846605f37e651bb519124a59834a0347c10ad2b7861bac6f8ad72e",
+      "sourceDigest": "40df8a0ead689e151caafc6529ea559bc459c531950edaff0d0fe98356b34830",
       "channels": [
         "source"
       ],
@@ -4658,7 +4658,7 @@
     {
       "id": "relay-service-process",
       "file": "apps/service-agent/main.ts",
-      "sourceDigest": "2c3dafcf73c6fd145d70c8fd0b52d89975b286fb0ec860265fa37e39d14d19c5",
+      "sourceDigest": "62d7643e106cbebcf203c17b0e5c5dd06e0cbb7cfbf41ed5f8c8a2ec6db32f9d",
       "channels": [
         "runtime",
         "source",

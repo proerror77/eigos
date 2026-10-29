@@ -34,7 +34,10 @@ export class RelayReadAuthority {
     if (Number(row.expires_at) <= this.security.now() || row.state === 'revoked') throw new SecurityError('ACCESS_REVOKED');
     const actor = accessContextSchema.parse(JSON.parse(String(row.actor))), request = sourceReadRequestSchema.parse(JSON.parse(String(row.request)));
     if (actor.actorKind !== 'worker' || actor.taskId !== request.context.requestId || actor.requestRevision !== request.context.requestRevision) throw new SecurityError('AUTHORIZATION_REQUIRED');
-    const scope = this.security.scope(actor, actor.taskId, 'task.process');
+    // This scope checks an exact dispatch and exports only its authorization
+    // receipt. It does not inherit or publish the Worker's historical outputs.
+    // Current object/source/plan checks below still read their own dependencies.
+    const scope = this.security.scope(actor, actor.taskId, 'task.process', {inheritLineage:false});
     if (scope.policyRevision !== row.policy_revision) throw new SecurityError('POLICY_CHANGED');
     withAuthorization(scope, () => scope.policies.readSnapshot(() => {
       scope.policies.requireSource(scope, request.context.programId, request.context.programDigest, request.context.action);
@@ -120,6 +123,18 @@ export class RelayReadAuthority {
   result(id: string): SourceReadResponse | undefined {
     const row = this.row(id); this.assert(row);
     return row.result ? sourceReadResponseSchema.parse(JSON.parse(String(row.result))) : undefined;
+  }
+  ready(id:string):boolean {
+    const row=this.row(id),scope=authorizationScope();
+    if(scope?.policies.security!==this.security||scope.actor.actorKind!=='worker'||scope.policyRevision!==row.policy_revision
+      ||digest(scope.actor)!==digest(JSON.parse(String(row.actor))))throw new SecurityError('AUTHORIZATION_REQUIRED');
+    scope.assertCurrent();
+    // Pipeline expiry/revocation must end a pending wait too. The complete
+    // assertion is now bounded without loading historical output lineage.
+    this.assert(row);
+    // Pending polls disclose no source data. result() independently validates
+    // the exact current authorization again before decoding a ready payload.
+    return row.result!==null&&row.result!==undefined;
   }
   revoke(id: string) { this.db.prepare("UPDATE security_relay_reads SET state='revoked' WHERE id=? AND state<>'completed'").run(z.uuid().parse(id)); }
 }

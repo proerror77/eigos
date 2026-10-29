@@ -99,7 +99,7 @@ async function fixture(options: { managed?: boolean; placesOnly?: boolean; signa
   const listening = serviceNode.listen(async message => {
     const request = sourceReadRequestSchema.safeParse(message.content); if (request.success) reads.push(request.data.callId);
     await service.handle(message, stop.signal);
-  }, stop.signal).catch(error => { if (!stop.signal.aborted) failures.push(error); });
+  }, stop.signal, {concurrency:2}).catch(error => { if (!stop.signal.aborted) failures.push(error); });
   await gateway.start();
   async function receive(requestId: string) {
     const until = Date.now() + 10000;
@@ -126,6 +126,8 @@ async function fixture(options: { managed?: boolean; placesOnly?: boolean; signa
 
 test('PA → encrypted primary → source Agent → scoped readback → PA preserves the real task and source receipt identities', { timeout: 60000 }, async t => {
   const f = await fixture({ signal: t.signal });
+  const readResult=f.jobs.security.relayReads.result.bind(f.jobs.security.relayReads);let resultReads=0;
+  t.mock.method(f.jobs.security.relayReads,'result',(id:string)=>{resultReads++;return readResult(id);});
   try {
     const requestId = randomUUID();
     await f.pa.send(f.gatewayId, f.paConnection, { protocol: TASK_RELAY_PROTOCOL, kind: 'task.submit', authorityId: f.authority!.id, requestId,
@@ -140,6 +142,7 @@ test('PA → encrypted primary → source Agent → scoped readback → PA prese
     assert.equal(response.task.accepted, true); assert(JSON.stringify(response.task).includes('73.05'));
     assert.deepEqual(f.source.calls.filter(c => c.name).map(c => c.name), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
     assert.equal(new Set(f.reads).size, 3);
+    assert.equal(resultReads,3,'Completed payloads are decoded once; pending polls retain account, scope, Worker and Pipeline checks');
     const model = f.modelInputs.join('\n');
     for (const privateValue of [syntheticKey, f.source.keyFile, 'claimToken', 'PRIVATE_TRACE_NEVER_TO_MODEL']) assert(!model.includes(privateValue));
     assert.equal(f.failures.length, 0);

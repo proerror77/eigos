@@ -293,7 +293,7 @@ export class SecurityStore {
     if (rows.length !== 1) throw new SecurityError('AUTHORIZATION_REQUIRED');
     return taskDataGrantSchema.parse(grant(rows[0]!));
   }
-  scope(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string | undefined, operation: AuthorizationScope['operation']): AuthorizationScope {
+  scope(actor: Extract<AccessContext, { actorKind: 'agent' | 'worker' }>, taskId: string | undefined, operation: AuthorizationScope['operation'], options: {inheritLineage?:boolean} = {}): AuthorizationScope {
     const data = taskId ? this.taskGrant(actor, taskId) : undefined, policyRevision = this.policies.revision();
     if (data && (data.purpose!=='delegated_task' || !data.operations.includes(operation) || data.inputs.length>0 && !data.operations.includes('member_asset.read'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const parent = this.agentGrant(actor.installationId);
@@ -308,7 +308,7 @@ export class SecurityStore {
           || !claimAuthorityCurrent(this.db,actor.taskId,String(lease.token))) throw new SecurityError('ACCESS_REVOKED');
       }
     } };
-    scope.assertCurrent(); if(actor.actorKind==='worker') this.policies.loadLineage(scope); return scope;
+    scope.assertCurrent(); if(actor.actorKind==='worker'&&options.inheritLineage!==false) this.policies.loadLineage(scope); return scope;
   }
   withAgent<T>(principal: Principal, taskId: string | undefined, operation: AuthorizationScope['operation'], action: (scope: AuthorizationScope) => T): T {
     const scope = this.scope(this.agentContext(principal), taskId, operation);

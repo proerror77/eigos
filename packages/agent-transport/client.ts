@@ -256,11 +256,14 @@ export class RelayClient {
   rejected(): { senderId: string; id: string; reason: string }[] {
     return this.db.prepare("SELECT sender,id,reason FROM node_inbox WHERE state='rejected' ORDER BY rowid DESC LIMIT 100").all().map(row => ({ senderId: String(row.sender), id: String(row.id), reason: String(row.reason) }));
   }
-  async listen(handler: (message: ReceivedMessage) => Promise<void>, signal: AbortSignal) {
+  async listen(handler: (message: ReceivedMessage) => Promise<void>, signal: AbortSignal, options: {concurrency?:number} = {}) {
+    const concurrency=options.concurrency??1;
+    if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4)throw new Error('Invalid Relay handler concurrency');
     while (!signal.aborted) {
       const waiting = await this.pending();
       const messages = waiting.length ? waiting : await this.poll({ waitSeconds: 25, signal });
-      for (const message of messages) {
+      for(let offset=0;offset<messages.length;offset+=concurrency){
+        const settled=await Promise.allSettled(messages.slice(offset,offset+concurrency).map(async message=>{
         signal.throwIfAborted();
         const contact = (await this.contacts()).find(c => c.id === message.connectionId && c.state === 'accepted'
           && (c.requester === message.senderId || c.recipient === message.senderId));
@@ -269,9 +272,14 @@ export class RelayClient {
         if (!contact || expired) {
           this.db.prepare("UPDATE node_inbox SET state='rejected',reason=?,envelope=NULL WHERE sender=? AND id=? AND state='pending'")
             .run(expired ? 'MESSAGE_EXPIRED_OR_INVALID' : 'CONTACT_REVOKED', message.senderId, message.id);
-          continue;
+          return;
         }
         await handler(message); this.markHandled(message.senderId, message.id);
+        }));
+        // Drain every started handler before retrying the durable inbox. A
+        // rejected peer must never overlap a still-running copy of its message.
+        const rejected=settled.find((result):result is PromiseRejectedResult=>result.status==='rejected');
+        if(rejected)throw rejected.reason;
       }
     }
   }
