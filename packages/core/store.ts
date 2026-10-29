@@ -74,6 +74,7 @@ export class JobStore {
 
   private securitySequence = 0;
   private transactionDepth = 0;
+  private readonly claimMutations = new Set<WorkClaim>();
   readonly security: SecurityStore;
   private readonly projectionBase: OntologyObjectStore;
   readonly authority?: RuntimeAuthority;
@@ -808,7 +809,12 @@ export class JobStore {
   renew(claim: WorkClaim, leaseMs: number, now?: number): boolean {
     return this.transaction(() => {
       const at = now ?? Date.now();
-      if (!this.active(claim, at)) return false;
+      // finish/checkpoint hold the write transaction after checking the active
+      // task. Their own staged state may now be terminal; retain the original
+      // token/deadline and current authorization checks while projecting it.
+      if (this.claimMutations.has(claim)
+        ? !this.leaseOwned(claim,at) || !this.processingAuthorityCurrent(claim,at)
+        : !this.active(claim,at)) return false;
       const renewedAt = now ?? Date.now();
       return this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=? AND expires_at>?').run(renewedAt + leaseMs, claim.job.id, claim.token, renewedAt).changes === 1;
     });
@@ -820,40 +826,59 @@ export class JobStore {
     return lease?.token === claim.token && Number(lease.expires_at) > now && Number(lease.revision) === (claim.job.revision ?? 0);
   }
   private active(claim: WorkClaim, now: number): boolean {
-    if (!this.leaseOwned(claim, now)) return false;
+    if (!this.leaseOwned(claim, now) || !this.processingAuthorityCurrent(claim,now)) return false;
     const current = this.taskFence(claim.owner, claim.job.id);
-    if (this.security.enabled) {
-      const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
-      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
-    }
     return (claim.recovery ? current.state === claim.job.state && current.recoveryPending === true : current.state === 'working')
       && (current.requestRevision ?? 0) === (claim.job.delegation?.request?.revision ?? 0)
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
+  private processingAuthorityCurrent(claim:WorkClaim,now:number):boolean {
+    if (this.security.enabled) {
+      const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
+      if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;
+    }
+    return true;
+  }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
+  private withClaimMutation<T>(claim:WorkClaim,action:()=>T):T {
+    this.claimMutations.add(claim);
+    try{return action();}finally{this.claimMutations.delete(claim);}
+  }
+  private mutationCurrent(claim:WorkClaim,now?:number):boolean {
+    // Projection/output work can outlast its last checked record. Recheck the
+    // original Worker deadline and authorization immediately before committing,
+    // while allowing this transaction's own terminal task state.
+    const scope=authorizationScope();
+    if(scope?.actor.actorKind==='worker' && scope.actor.taskId===claim.job.id)scope.assertCurrent();
+    return this.leaseOwned(claim,now??Date.now()) && this.processingAuthorityCurrent(claim,now??Date.now());
+  }
 
   finish(claim: WorkClaim, update: (job: Job) => void, now?: number): boolean {
     try { return this.transaction(() => {
       const at = now ?? Date.now();
       if (!this.active(claim, at)) return false;
-      const job = this.get(claim.owner, claim.job.id);
-      update(job); this.save(claim.owner, job);
-      // The callback may intentionally complete/pause/revise the task. The
-      // initial active check plus SQLite's write transaction fences that state;
-      // the token and wall-clock deadline must still hold at commit.
-      if (!this.leaseOwned(claim, now ?? Date.now())) throw lostClaimFence;
-      this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
-      return true;
+      return this.withClaimMutation(claim,()=>{
+        const job = this.get(claim.owner, claim.job.id);
+        update(job); this.save(claim.owner, job);
+        // The callback may intentionally complete/pause/revise the task. The
+        // initial active check plus SQLite's write transaction fences that state;
+        // the token and wall-clock deadline must still hold at commit.
+        if (!this.mutationCurrent(claim, now)) throw lostClaimFence;
+        this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(job.id, claim.token);
+        return true;
+      });
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
   checkpoint(claim: WorkClaim, update: (job: Job) => void): boolean {
     try { return this.transaction(() => {
       if (!this.active(claim, Date.now())) return false;
-      const job = this.get(claim.owner, claim.job.id);
-      update(job); this.save(claim.owner, job);
-      if (!this.leaseOwned(claim, Date.now())) throw lostClaimFence;
-      return true;
+      return this.withClaimMutation(claim,()=>{
+        const job = this.get(claim.owner, claim.job.id);
+        update(job); this.save(claim.owner, job);
+        if (!this.mutationCurrent(claim)) throw lostClaimFence;
+        return true;
+      });
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 

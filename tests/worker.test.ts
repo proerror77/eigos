@@ -141,7 +141,7 @@ test('synchronous progress keeps a second model-waiting claim alive without rene
   }
 });
 
-test('task projection binding reports progress before a long checkpoint loses its original lease', async t => {
+for(const mutation of ['checkpoint','finish','finish-expired'] as const)test(`task projection binding reports progress before a long ${mutation} loses its original lease`, async t => {
   let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
   const f = securityFixture(() => clock), install = f.installation('Projection progress');
   f.coordinator.approveAgentGrant(f.member.id, { installationId: install.id, capabilityIds: ['brief.prepare'],
@@ -152,14 +152,69 @@ test('task projection binding reports progress before a long checkpoint loses it
   f.jobs.save(f.owner, job);
   const policy = f.jobs.security.policies, bind = policy.bind.bind(policy);
   let bindings = 0, applied = false;
-  t.mock.method(policy, 'bind', (...args: Parameters<typeof policy.bind>) => { bind(...args); bindings++; clock += 6000; });
+  t.mock.method(policy, 'bind', (...args: Parameters<typeof policy.bind>) => { bind(...args); bindings++; clock += mutation==='finish-expired'?16000:6000; });
   const worker = new Worker(f.jobs, { leaseMs: 15000, pollMs: 60000, coordinator: { run: async claim => {
-    applied = f.jobs.checkpoint(claim, () => {});
+    applied = f.jobs[mutation==='checkpoint'?'checkpoint':'finish'](claim, current => { if(mutation!=='checkpoint')current.state='input-required'; });
+    if(mutation==='finish')assert.equal(f.jobs.renew(claim,15000),false,'Completed finalization cannot renew its released claim');
   } } });
   try {
     worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
-    assert(bindings >= 4, 'The checkpoint must bind the submission and all three instruction records');
+    if(mutation==='finish-expired'){
+      assert.equal(applied,false,'Projection progress cannot revive a lease which already expired');
+      assert.equal(f.jobs.get(f.owner,task.job.id).state,'working','Expired finalization must roll back its staged state');
+      return;
+    }
+    assert(bindings >= 4, 'The mutation must bind the submission and all three instruction records');
     assert.equal(applied, true, 'Projection progress must renew the still-current claim before its timer can run');
+    if(mutation==='finish')assert.equal(f.jobs.get(f.owner,task.job.id).state,'input-required');
+  } finally { await worker.close(); f.close(); }
+});
+
+for (const mutation of ['finish', 'checkpoint'] as const)
+for (const boundary of ['expired', 'revoked', 'request_revision'] as const)
+test(`${mutation} rejects authority ${boundary} after the last projection check`, t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+  const f = securityFixture(() => clock), install = f.installation('Commit boundary');
+  f.coordinator.approveAgentGrant(f.member.id, { installationId: install.id, capabilityIds: ['brief.prepare'],
+    resources: [{ type: 'ServiceRequest', fields: ['requestId', 'originalGoal'] }], sourceBindingIds: [],
+    channels: ['agent_response', 'registered_model'], expiresAt: new Date(clock + 1000).toISOString() });
+  const task = f.task(install.id), claim = f.jobs.claim(['eigos.delegate'], 15000)!;
+  const db = (f.jobs as unknown as { db: DatabaseSync }).db, save = f.jobs.save.bind(f.jobs);
+  t.mock.method(f.jobs, 'save', (...args: Parameters<JobStore['save']>) => {
+    save(...args);
+    // The final projection check has returned, but the transaction has not committed.
+    if (boundary === 'expired') clock += 1000;
+    if (boundary === 'revoked') f.jobs.security.revokeGrant(f.owner, task.grant.id, task.grant.revision);
+    if (boundary === 'request_revision') db.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.request.revision',2) WHERE id=?").run(task.job.id);
+  });
+  try {
+    assert.equal(f.jobs[mutation](claim, current => { current.state = 'input-required'; }), false);
+    const current = f.jobs.get(f.owner, task.job.id);
+    assert.equal(current.state, 'working', 'Failed commit must roll back staged task state');
+    assert.equal(current.delegation!.request.revision, 1);
+    assert.equal(db.prepare('SELECT token FROM work_claims WHERE job_id=?').get(task.job.id)!.token, claim.token);
+  } finally { f.close(); }
+});
+
+test('finalization enforces the execution deadline after the last projection check', async t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+  const f = securityFixture(() => clock), install = f.installation('Finalization deadline');
+  f.approve(install.id); const task = f.task(install.id);
+  const save = f.jobs.save.bind(f.jobs); let finalizing = false, applied = false, rejected = false, aborted = false;
+  t.mock.method(f.jobs, 'save', (...args: Parameters<JobStore['save']>) => {
+    save(...args); if (finalizing) clock += 1000;
+  });
+  const worker = new Worker(f.jobs, { leaseMs: 15000, pollMs: 60000, timeoutMs: 1000, coordinator: { run: async (claim, signal) => {
+    finalizing = true;
+    try { applied = f.jobs.finish(claim, current => { current.state = 'input-required'; }); }
+    catch { rejected = true; }
+    finally { finalizing = false; aborted = signal.aborted; }
+  } } });
+  try {
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(applied, false, 'An unexpired lease cannot extend the whole execution deadline');
+    assert(rejected || aborted);
+    assert.equal(f.jobs.get(f.owner, task.job.id).state, 'working');
   } finally { await worker.close(); f.close(); }
 });
 
