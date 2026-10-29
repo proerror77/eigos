@@ -3369,7 +3369,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "2cb338c4f7ec14276344a81ed4fef573e964c28669d04100c5ff227cc6ff3394",
+      "sourceDigest": "eed6d819fab6a5baf52f0a315f2886a4f7445c30c761560c656c0ac4faff971a",
       "channels": [
         "http-mcp-a2a"
       ],
