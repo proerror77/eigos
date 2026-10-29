@@ -12,8 +12,9 @@ import { actionEffects, actionVersion } from '../ontology/composition-contract.j
 import { permittedCapability, permittedProgram, secureProgram, secureAdapter, secureDiscovery } from '../security/execution.js';
 import { businessModel } from '../ontology/business-model.js';
 import {requireRecovery} from '../security/recovery.js';
-import type {SecurityStore} from '../security/store.js';
+import {SecurityError,type SecurityStore} from '../security/store.js';
 import { CompositionProgram } from '../coordinator/composition-program.js';
+import type { AgentActionMetadata } from './agent-action-binding.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 /** A bounded view for reusing one adapter operation. It links to the real sealed
@@ -306,6 +307,22 @@ export class ExecutionCatalog {
     const definition = this.services.get(key(ref));
     if (!definition) throw new DomainError('CONFLICT', 'Capability version is unavailable');
     return structuredClone(definition);
+  }
+  /** Bootstrap reads contracts before selecting a source. Returning an explicit
+   * metadata surface avoids granting an execution handle to an unselected program. */
+  bootstrapProgram(ref: Ref, owner: string): (AgentActionMetadata & Pick<AgentProgram, 'completionSchema'>) | undefined {
+    const scope = authorizationScope();
+    if (this.security?.enabled && (!scope || scope.policies.security !== this.security || scope.actor.ownerKey !== owner)) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const program = this.programs.get(key(ref));
+    if (!program) return;
+    if (!program.permitted(owner) || !permittedProgram(program)) throw new SecurityError('INSUFFICIENT_ACCESS');
+    const capability = structuredClone(program.capability());
+    // A missing metadata view only disables the optional initial-read shortcut.
+    // Later action discovery and the selected execution retain their own checks.
+    if (this.security?.enabled && capability.actions.some(action => !scope!.policies.resourceAllowed(scope!, 'actionType', action.ref.id))) return;
+    return { initialReadFrontier: program.initialReadFrontier, callerManagedActions: program.callerManagedActions,
+      capability: () => structuredClone(capability), definition: program.definition.bind(program), schema: program.schema.bind(program),
+      completionSchema: structuredClone(program.completionSchema) };
   }
   agentProgram(ref: Ref, owner: string): AgentProgram | undefined {
     const program = this.programs.get(key(ref));

@@ -23,6 +23,52 @@ import {goalState,GoalProgram} from '../packages/coordinator/goal-program.js';
 import {templatePlanning} from '../packages/ontology/planning-contract.js';
 import {secureAgentContext} from '../packages/security/model.js';
 import {LocalArtifactProgram} from '../packages/capabilities/local-artifact-agent.js';
+import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
+import {didiFixture} from './fixtures/didi.js';
+import {bindPersonalSourceOwner} from '../packages/core/source-owner.js';
+import {Coordinator,type Reasoner} from '../packages/coordinator/coordinator.js';
+import {Worker} from '../apps/worker/worker.js';
+
+test('Foundation bootstrap reaches the model when an unselected visible composite has an old source grant',async()=>{
+ const f=securityFixture(),source=didiFixture(),db=new DatabaseSync(f.database);
+ const program=new DidiAgentProgram(source.binding,{connector:source.connector}),other=new DidiAgentProgram(source.binding,{connector:source.connector,ref:{id:'fixture.other.ride',version:'1'}});
+ bindPersonalSourceOwner(program,f.owner);bindPersonalSourceOwner(other,f.owner);
+ const catalog=new ExecutionCatalog([program.capability(),other.capability()],[],[],[],[program,other],undefined,f.jobs.security);
+ const profiles=catalog.securityProfiles(f.owner),ride=profiles.find(p=>p.programId===program.ref.id)!,composite=profiles.find(p=>p.programId==='services.compose.live')!,staleRef={id:composite.programId,version:'1'};
+ const policy=f.jobs.security.policies,install=f.installation('metadata bootstrap'),until=new Date(Date.now()+3600000).toISOString();
+ const resources=[...new Set(['ServiceRequest',...ride.outputTypes,...composite.outputTypes,...Object.keys(taskContextFields)])]
+  .map(type=>({type,fields:Object.keys(policy.fields(type)).filter(field=>policy.fieldPolicy(type,field)!=='internal_only')}));
+ f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:[program.ref.id,composite.programId],resources,sourceBindingIds:[ride.bindingId,composite.bindingId],channels:['agent_response','registered_model'],expiresAt:until});
+ policy.setRole({subjectKind:'installation',subjectId:install.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',executeActions:program.actionIds,expiresAt:until},policy.revision());
+ const markings=['member_private','personal_data','precise_location','financial','health','account_private'];
+ policy.setRecipient(install.id,{classification:'sensitive',markings,channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+ policy.setModelChannel('bootstrap-test',{classification:'sensitive',markings,expiresAt:until},policy.revision());
+ for(const profile of [ride,composite])policy.setSource(f.owner,{installationId:install.id,bindingId:profile.bindingId,programId:profile.programId,
+  programDigest:profile===composite?'0'.repeat(64):profile.programDigest,operations:profile.operations,outputTypes:profile.outputTypes,expiresAt:until},policy.revision());
+ const principal={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)},tasks=new TaskService(f.jobs,{catalog});
+ let reached=false;const failures:string[]=[];
+ const reasoner:Reasoner={securityChannelId:'bootstrap-test',ground:async(_request,summaries,_signal,access)=>{
+  assert(summaries.some(s=>s.ref.id===program.ref.id));assert(summaries.some(s=>s.ref.id===staleRef.id));
+  assert(!access.initialPrograms?.some(p=>p.capabilityRef.id===staleRef.id),'The composite has no initial read frontier');
+  const metadata=catalog.bootstrapProgram(staleRef,f.owner)!;assert(metadata);
+  for(const method of ['initialize','invoke','project','complete'])assert.equal((metadata as unknown as Record<string,unknown>)[method],undefined);
+  assert.throws(()=>catalog.bootstrapProgram(staleRef,'another owner'),/AUTHORIZATION_REQUIRED/);
+  assert.throws(()=>catalog.agentProgram(staleRef,f.owner),/SOURCE_NOT_AUTHORIZED/);
+  assert(catalog.agentProgram(program.ref,f.owner));reached=true;throw new Error('Stop the synthetic model before any proposal or source call');
+ },plan:async()=>{throw new Error('No planning expected');}};
+ class CheckedCoordinator extends Coordinator {override async run(claim:import('../packages/core/store.js').WorkClaim,signal:AbortSignal){try{return await super.run(claim,signal);}catch(error){failures.push(error instanceof Error?error.message:String(error));throw error;}}}
+ const coordinator=new CheckedCoordinator(f.jobs,reasoner,catalog),worker=new Worker(f.jobs,{coordinator,pollMs:20,leaseMs:10000});
+ try {
+  assert.throws(()=>catalog.bootstrapProgram(staleRef,f.owner),/AUTHORIZATION_REQUIRED/);
+  const task=tasks.submit(principal,{service:'eigos.delegate',goal:'Synthetic read-only quote, no order or payment',requestId:randomUUID()});
+  const grants=()=>db.prepare('SELECT id,revision,state,body FROM security_grants WHERE installation_id=? ORDER BY id').all(install.id);
+  const sources=()=>db.prepare('SELECT binding_id,state,body FROM security_sources WHERE installation_id=? ORDER BY binding_id').all(install.id);
+  const originalGrants=grants(),originalSources=sources();worker.start();const deadline=Date.now()+10000;
+  while(!reached&&['submitted','working'].includes(f.jobs.get(f.owner,task.id).state)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+  await worker.close();assert(reached,JSON.stringify({state:f.jobs.get(f.owner,task.id).state,failures}));
+  assert.deepEqual(grants(),originalGrants);assert.deepEqual(sources(),originalSources);assert.equal(source.calls.length,0);
+ }finally{await worker.close();db.close();f.close();source.close();}
+});
 
 test('current task authority reads unchanged historical capability metadata without rewriting its writer or granting provider access',()=>{
  const f=securityFixture();let manager:AuthorizationCoordinator|undefined;const rawDb=new DatabaseSync(f.database);

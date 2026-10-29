@@ -246,8 +246,9 @@ export class Coordinator {
     }
     if (this.pauseForModelBudget(claim)) return;
     const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job)).items.filter(summary => !d.request.capabilityRef || digest(summary.ref) === digest(d.request.capabilityRef)).map(summary => {
+      if (this.store.security.enabled || d.ontologyReadScope !== 'owner') return summary;
       const program = this.catalog.programForCapability(summary.ref, claim.owner);
-      return program && !this.store.security.enabled && d.ontologyReadScope === 'owner' ? {...summary, verificationHistory:this.store.providerEvidenceView(claim.owner,program.ref,program.configurationDigest)} : summary;
+      return program ? {...summary, verificationHistory:this.store.providerEvidenceView(claim.owner,program.ref,program.configurationDigest)} : summary;
     });
     if (!summaries.length) { this.pause(claim, d.request, false, 'Requested capability is unavailable in this identity or environment'); return; }
     const fixedCapability = d.request.capabilityRef && summaries.length === 1 && registeredFixedInput(summaries[0]!) ? this.catalog.capability(summaries[0]!.ref) : undefined;
@@ -255,7 +256,7 @@ export class Coordinator {
     if (!this.store.checkpoint(claim, () => this.store.projectCapabilities(claim.owner, d.request.id, summaries))) return;
     const groundingAccess = this.access(claim, d.request, [], signal, 'request_interpreted');
     const initialPrograms = summaries.flatMap(summary => {
-      const program = this.catalog.agentProgram(summary.ref, claim.owner);
+      const program = this.catalog.bootstrapProgram(summary.ref, claim.owner);
       const actionIds = program ? initialActionIds(this.store.ontologyForJob(claim.owner, claim.job), program) : [];
       return actionIds.length ? [{ capabilityRef: summary.ref, actionIds, ...(actionIds.some(id => this.store.ontologyForJob(claim.owner, claim.job).model.action(id).read?.module?.completion.planned) ? { completionSchema: program!.completionSchema } : {}) }] : [];
     });
