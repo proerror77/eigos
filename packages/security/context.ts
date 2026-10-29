@@ -23,6 +23,8 @@ export interface AuthorizationScope {
   readBindings?: Map<string,unknown>;
   readTaskMembers?: Map<string,Map<string,ObjectRef>>;
   readLineageDigests?: Map<string,string>;
+  /** Changes whenever a synchronous read's cached proofs are invalidated. */
+  readGeneration?: () => number;
 }
 const contexts = new AsyncLocalStorage<AuthorizationScope>();
 export const authorizationScope = () => contexts.getStore();

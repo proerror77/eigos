@@ -424,6 +424,10 @@ export class OntologyObjectStore {
       for (const ref of touched.values()) {
         if (deleted.has(key(ref)) || this.db.prepare('SELECT 1 FROM ontology_tombstones WHERE ontology_id=? AND owner=? AND type=? AND id=?').get(this.ontologyId, owner, ref.type, ref.id)) continue;
         for (const { link, side, direction } of this.model.sides(ref.type)) {
+          // Optional, unbounded relationships have no cardinality condition to
+          // violate. Declaring another such link must not add a database query
+          // to every update of either endpoint.
+          if (side.many && !side.required) continue;
           const prefix = direction === 'forward' ? 'from' : 'to';
           const count = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${prefix}_type=? AND ${prefix}_id=?`).get(...this.ownerParameters(owner), link.id, ref.type, ref.id)!.n);
           if ((!side.many && count > 1) || (side.required && count === 0)) failure('Relationship cardinality violation');

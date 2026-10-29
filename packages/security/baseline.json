@@ -2829,7 +2829,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "2a9666aa138a9b03b7d42e6d4475702748fa3e228c558107d588253753878a27",
+      "sourceDigest": "df2b6eca72acdc1cf6948d41f7073e46efeabb56719be039050a296e881097fa",
       "channels": [
         "query",
         "function"
@@ -3221,7 +3221,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "610693ef9af20fd983090a4c018f234801d32653536db261a82c23c2fbdd8e99",
+      "sourceDigest": "36d3827d912b1ef6a83984b0bcef2604b5fbeaee9e2f389363d835a67fc56e0a",
       "channels": [
         "authorization_control"
       ],
@@ -3305,7 +3305,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "3ae96f93aea1f26ddbb2bc49b139b34021bdf5521073525ebe744bfd62c97f92",
+      "sourceDigest": "747b2a116c4ef82825e2407cd1946aba040befce591392968ba4fb24eaf4a3c6",
       "channels": [
         "internal"
       ],
@@ -3353,7 +3353,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "bd20bff5f93ef6d03121687e26f4e5f25e43f05094375d0c30190fb215eaf509",
+      "sourceDigest": "ac954a2bd3f69a5b74428487ab3bb946808cdb9580392a1967c240ab68f48ee5",
       "channels": [
         "all-reads"
       ],
@@ -4491,6 +4491,19 @@
       "targetControl": "Proposals cannot grant permissions or declare unverified business completion",
       "stage": "S5",
       "sourceDigest": "2c3e9027d59ee2a2c3283fd1cc834b188ab19ece00f83805065b71e6fd04e210"
+    },
+    {
+      "id": "security-projection-origin",
+      "file": "packages/security/projection-origin.ts",
+      "sourceDigest": "07fa8a7f0acd55a79d087e6dbae8bb3695133ba5ba47677090bf6f39f735e74f",
+      "channels": [
+        "all-reads",
+        "worker"
+      ],
+      "content": "Version-bound causal inputs of task-control projections, distinct from accumulated model/audit lineage",
+      "currentControl": "Reuse only the same grant, object content and outgoing relationship snapshot; retain full existing restrictions for legacy or changed records and keep business outputs on fresh lineage",
+      "targetControl": "Current membership, field labels, grants and source authority remain independent; no retroactive audit propagation",
+      "stage": "S2"
     }
   ]
 }

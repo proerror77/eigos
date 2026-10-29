@@ -20,6 +20,30 @@ function fixture() {
   return { ...data, db, graph };
 }
 
+test('optional many-valued relationships add no cardinality queries while constrained links remain atomic', t => {
+  const property = { kind: 'string' as const, schema: z.string().min(1), description: 'Synthetic field', source: 'Synthetic fixture', required: true };
+  const model = new OntologyModel({ id: 'fixture.cardinality', version: '1', objects: [{ id: 'Node', version: '1', name: 'Node', aliases: ['Node'], description: 'Synthetic node',
+    primaryKey: 'id', titleKey: 'label', properties: { id: property, label: property } }], interfaces: [], actions: [], functions: [], links: [
+    ...Array.from({ length: 100 }, (_, i) => ({ id: `Peer${i}`, description: 'Unconstrained synthetic relation', from: { type: 'Node', name: `out${i}`, many: true }, to: { type: 'Node', name: `in${i}`, many: true } })),
+    { id: 'OneParent', description: 'At most one parent', from: { type: 'Node', name: 'parent', many: false }, to: { type: 'Node', name: 'children', many: true } },
+  ] });
+  const db = new DatabaseSync(':memory:'), graph = new OntologyObjectStore(db, model, Date.now, undefined, { skipLegacyMigration: true });
+  const object = (id: string) => ({ ref: { type: 'Node', id }, properties: { id, label: id } });
+  const source = { kind: 'synthetic' as const, id: 'fixture', observedAt: new Date().toISOString() };
+  let counts = 0;
+  const prepare = db.prepare.bind(db);
+  t.mock.method(db, 'prepare', (sql: string) => { if (sql.startsWith('SELECT count(*) AS n FROM ontology_')) counts++; return prepare(sql); });
+  try {
+    graph.ingest('alice', { objects: [object('a'), object('b')] }, source);
+    assert.equal(counts, 2, 'Only the actual at-most-one constraint needs a query for each node');
+    assert.throws(() => graph.ingest('alice', { objects: [object('c')], links: [
+      { type: 'OneParent', from: { type: 'Node', id: 'a' }, to: { type: 'Node', id: 'b' } },
+      { type: 'OneParent', from: { type: 'Node', id: 'a' }, to: { type: 'Node', id: 'c' } },
+    ] }, source), /cardinality/);
+    assert.throws(() => graph.read('alice', { type: 'Node', id: 'c' }), /not found/i);
+  } finally { db.close(); }
+});
+
 test('Ontology compiles core, service, checkout and catalog types, inherited interfaces and bounded metadata', () => {
   assert(businessModel.hasType('RegistrationTask'));
   assert(businessModel.implements('RegistrationRecord', 'EvidenceBacked'));
