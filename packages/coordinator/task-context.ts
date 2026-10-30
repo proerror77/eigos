@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { Ref, ServiceRequest } from '../ontology/execution.js';
-import { objectRefSchema, type ActionDefinition, type ObjectRef } from '../ontology/model.js';
+import { objectRefSchema, type ActionDefinition, type ObjectRef, type InterfaceDefinition } from '../ontology/model.js';
 import type { LinkWrite, ObjectView, OntologyObjectStore } from '../ontology/object-store.js';
 import { readCapabilityCatalog, readPreparedCapability, readPreparedResolution, type PreparedCapability, type PreparedResolution } from '../ontology/capability-catalog.js';
 import { actionProperties, readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
@@ -16,6 +16,8 @@ import { compositionSummary } from '../ontology/composition-contract.js';
 import { requestedFactsSchema, type readRequestedFacts } from './requested-facts.js';
 
 export const taskContextSchema = z.strictObject({
+  includeDefinitions: z.boolean().optional().describe('Omit general type definitions when exact action contracts are read separately; business facts and instruction coverage remain unchanged'),
+  includeLinkedFacts: z.boolean().optional().describe('Read bounded forward location relations declared by shared interfaces on explicitly selected personal resources; target fields still require current task access'),
   definitionReceiptId: z.string().min(1).max(200).optional().describe('Reuse a previously returned definition bundle only when its current model and binding still match'),
   facts: requestedFactsSchema.optional().describe('Read selected business facts through shared interfaces; identical reads share one current query. Missing or stale facts identify the remaining information gap, without calling providers.'),
 });
@@ -337,6 +339,31 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       }
     }
     personal = { person, defaults, resources };
+    if (input.includeLinkedFacts) {
+      const followed = new Set<string>();
+      for (const resource of resources) for (const implementation of graph.model.object(resource.object.type).interfaces ?? []) {
+        const view = graph.model.describeType(implementation.id) as { projectionOnly?: boolean; linkConstraints?: InterfaceDefinition['links'] };
+        if (!view.projectionOnly) continue;
+        for (const relation of view.linkConstraints ?? []) {
+          const targets = graph.model.concreteTypes(relation.target);
+          // Read semantic location edges, never evidence/task backlinks or a
+          // Person's unrelated history. The edge comes from the published view.
+          if (!targets.length || !targets.every(type => graph.model.implements(type, 'Addressable'))) continue;
+          const navigation = graph.model.navigation(resource.object.type, relation.name, implementation.id);
+          if (navigation.direction !== 'forward') continue;
+          const identity = digest([resource.object, navigation.link.id]);
+          if (followed.has(identity)) continue;
+          if (followed.size >= 8) { pendingRelationships.push({ from: resource.object, link: navigation.side.name }); continue; }
+          followed.add(identity);
+          const page = graph.query(owner, { from: resource.object, as: implementation.id, link: relation.name, limit: 2 });
+          if (page.page.hasMore) pendingRelationships.push({ from: resource.object, link: navigation.side.name, ...(page.page.cursor ? { cursor: page.page.cursor } : {}) });
+          for (const target of page.items) {
+            const selected = { ...target, properties: Object.fromEntries(Object.entries(target.properties).filter(([field]) => ['name', 'address', 'coordinates'].includes(field))) };
+            if (addObject(selected, false)) addLink({ type: navigation.link.id, from: resource.object, to: target.ref });
+          }
+        }
+      }
+    }
   }
   for (const specification of [...objects.values()].filter(object => object.ref.type === 'RequestSpecification')) {
     const instructionNavigation = graph.model.navigation(specification.ref.type, 'instructions');
@@ -384,7 +411,9 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     ...(binding.managedDiscoveryTypes ? { managedDiscoveryTypes: [...binding.managedDiscoveryTypes].sort() } : {}) });
   const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(sourceChanges.length ? { execution: execution ?? null, sourceChanges } : execution ?? null),
     instructionCount: instructionProjection.rows.length, instructionRefsDigest: instructionCoverageDigest(instructionProjection.rows.map(row => row.ref)), requireCompleteInstructions: binding.purpose === 'grounding' };
-  const bundle = definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition);
+  const bundle = input.includeDefinitions === false
+    ? { model: graph.model.ref, types: [], actions: [], functions: [], definitionRetrieval: 'describe_ontology' }
+    : definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition);
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
   const definitions: PlanningDefinitionReceipt = reused ?? { modelDigest: graph.model.ref.digest, bindingDigest, payloadDigest: digest(bundle), originalReceiptId: receiptId, payload: bundle };
   const modelRequest: TaskRequestView = { ...request, messages: [...initial.selected].sort((a, b) => a - b).map(index => request.messages[index]!), messageView: initial.selected.size === request.messages.length ? 'complete' : 'partial' };

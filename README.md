@@ -30,6 +30,7 @@ flowchart LR
 - [Agent 接入指南](docs/integration.md)
 - [能力实现与验证范围](docs/architecture/capabilities.md)
 - [共享本体与 MCP](packages/ontology/README.md)
+- [单次模型决策的只读执行与测速](docs/guides/single-read-execution.md)
 - [仓库结构与维护](docs/architecture/repository.md)
 
 EIGOS（艾戈斯）为当前候选品牌，详见[品牌说明](docs/brand-brief.md)。

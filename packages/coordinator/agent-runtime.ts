@@ -26,7 +26,7 @@ import { assertGoalEffects } from '../core/goal-contract.js';
 import { actionBudgetImpactSchema } from '../ontology/actions.js';
 import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } from './initial-selection.js';
 import { secureAgentContext, secureRequest } from '../security/model.js';
-import { assertGoalCoverage } from '../ontology/goal-coverage.js';
+import { assertGoalCoverage, assertReadContractResult } from '../ontology/goal-coverage.js';
 import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
 import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
@@ -126,7 +126,7 @@ export class AgentRuntime {
   private accept(claim: WorkClaim, program: AgentProgram, selection: NonNullable<AgentExecutionState['completion']>) {
         this.store.finish(claim, current => {
           const fresh = this.context(claim, current), reads = selection.ontologyPlanning, proposal = selection.proposal;
-          assertGoalCoverage(current, program.capability());
+          const coverage = assertGoalCoverage(current, program.capability());
           validatePlanningSnapshot(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, fresh.request, reads, true);
           this.store.pipelineFacts.assertFresh(claim.owner, fresh.graph.ontologyId, reads.objects.map(value => value.ref));
           const goal = fresh.state.composition ? assessGoal(this.catalog, fresh, proposal, reads) : undefined;
@@ -141,6 +141,7 @@ export class AgentRuntime {
             }
           }
           const delivery = goal?.delivery ?? program.complete(fresh, proposal, reads), capability = program.capability();
+          assertReadContractResult(coverage, delivery);
           const requirements = [...fresh.request.requirements, ...(fresh.request.successCriteria ?? [])];
           const checks = goal?.assessment.requirements ?? delivery.requirementChecks ?? checkRequirements({ ...fresh.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(p => p.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);
           if (requirements.some(r => r.strength === 'hard' && !checks.some(c => c.requirementId === r.id && c.result === 'pass'))) failure('A hard requested outcome remains unsupported by the selected observations');
@@ -204,9 +205,10 @@ export class AgentRuntime {
         // request relationships legitimately change when this scope is created;
         // dispatch uses the fresh scope snapshot and the pinned initial proof.
         const decision = bindInitialSelection(ctx.graph, program, ctx.state.scope, source);
-        access.session.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
-        access.session.acceptReceipts(access.session.receipts().filter(read => read.status === 'ok').map(read => read.id));
-        preparedReads = access.session.finish();
+        const bindingReads = access.session.hostEvidenceSession();
+        bindingReads.prepareContext({ actions: [...new Set(decision.steps.map(step => step.action))], refs: [ctx.state.scope] });
+        bindingReads.acceptReceipts(bindingReads.receipts().filter(read => read.status === 'ok').map(read => read.id));
+        preparedReads = bindingReads.finish();
         response = { decision, evidence: job.runs!.find(run => run.id === initialSelection.modelRunId)! };
       } catch (error) {
         signal.throwIfAborted();

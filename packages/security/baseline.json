@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "25",
-    "digest": "4d71a7f56e4fffa6bc7d733e13b239138a7d97a38f840b7efa7b872ed580a39d"
+    "version": "26",
+    "digest": "78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020"
   },
   "types": {
     "ServiceRequest": {
@@ -1483,7 +1483,7 @@
       }
     },
     "GoalCoverage": {
-      "fingerprint": "830ec63ad927e81ed284d1422a08119fa923b8c9183c1bfe37bc6401356b4c13",
+      "fingerprint": "e1b7367c7f5ce03ade8748a1282201491950077f1ab959733d5fafe787058034",
       "fields": {
         "coverageId": "task_private",
         "displayTitle": "task_private",
@@ -3022,7 +3022,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "c48cd1ab4526c0de576eef1de2d32fcc0363b703a39a98658711cc37ac06885a",
+      "sourceDigest": "cf59de5a1fe8a7c364b857ab255366303242d3add63622798dd8a41ba488ecf4",
       "channels": [
         "model",
         "query"
@@ -3047,7 +3047,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "b772d0a4fcb0d0ae3c95c918a697b8d033198ade0377e993dec3da8b8747f1c6",
+      "sourceDigest": "b265a65b1e0ec4952f09c9c1b658c0f9ed3303dc220814ca69e5425cb7f93343",
       "channels": [
         "model",
         "dispatch"
@@ -3060,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "29cb2fe706e94100a1f3da99d10b78d4538c5c985a78b57277a4483d827330e7",
+      "sourceDigest": "bc85f78b5ba39d60e4d1503de63ddb588c157e4d70b9738cc3ebcdb9a472a115",
       "channels": [
         "model",
         "dispatch",
@@ -3135,7 +3135,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "8eb3b6920029596fcf652ee7b0f648f66e605c0024d340b2b648226778455c26",
+      "sourceDigest": "a0742af33d68b8547f95ea37dc0aadb3fcc0542ffa73f8ebe24310468b202f48",
       "channels": [
         "registered_model",
         "private_file"
@@ -3186,7 +3186,7 @@
     {
       "id": "didi-source",
       "file": "packages/capabilities/didi/connector.ts",
-      "sourceDigest": "b96fa79319c851e075c31fa5f9421a7d1e780bfc796c2f5d558b38acf9520b05",
+      "sourceDigest": "7d4ba55d4026e637601752686c5bee06ee429e487183390043140580978c2372",
       "channels": [
         "source",
         "private_file"
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "77e55c33cfd76d544371ca3256baae063c819094aec07dae19de847dee36bd73",
+      "sourceDigest": "25d5f6d031451a418ff200e92f8d4a981ee047d1de4aa9c7a1fe00ed048b2914",
       "channels": [
         "all-reads"
       ],
@@ -3920,7 +3920,7 @@
     {
       "id": "goal-coverage",
       "file": "packages/ontology/goal-coverage.ts",
-      "sourceDigest": "b1ca85c1726dcdf760ebfc5d419fa62342ee9a08820842f39a8351af76a2be32",
+      "sourceDigest": "701de4cedab0173a07386e9e04aba65fc31ceafe30bc894c6eb7178079c750b8",
       "channels": [
         "model",
         "artifact"
@@ -4041,7 +4041,7 @@
     {
       "id": "goal-review-contract",
       "file": "packages/ontology/goal-review-contract.ts",
-      "sourceDigest": "5b5f1704df393b581cee3c2bf8ec024e561ff9706d97d2f5c6e0f006a73373ff",
+      "sourceDigest": "9931a3594553f2b72da96a6495c69fb08df366f9094f1ed6a610c387a9109682",
       "channels": [
         "model",
         "artifact"
@@ -4066,7 +4066,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "0782196cc3ebcd8348afff62b6bd0a23420d05ea9c24d5182ca7b35c65aba14d",
+      "sourceDigest": "7dd3695f2accb7d9f5084c9e1a712fc68b1eb69b19b35b67998814b34ae36a25",
       "channels": [
         "model",
         "artifact"
@@ -4092,7 +4092,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "275ab82d6ecae1cda5df674000acbea6343ceda9563a78d60dd2751d00d72431",
+      "sourceDigest": "11d380723d521b30f7ffe53b4c57ede1c17c47cf124d8b4347d8373fefd03175",
       "channels": [
         "model",
         "artifact"
@@ -4196,7 +4196,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "88427f4328b8fe118dfaa047b60e01d52815d1af15051eece00c1809a7c268b4",
+      "sourceDigest": "f96a4f000cdc1c285da19b1a1f36276a6a2007f8ec8eb1bfa64d8e4da82087ee",
       "channels": [
         "model"
       ],
@@ -5043,7 +5043,7 @@
     {
       "id": "packages-security-personal-context-upgrade",
       "file": "packages/security/personal-context-upgrade.ts",
-      "sourceDigest": "21e1147e666e5473fd6f13963be86117cb9e0a0591f91aafa64771e52f6c917a",
+      "sourceDigest": "ea98afa65892e6fdc3283f247a8daaeab6efcdc4f42a693e1cf179b1695aff9c",
       "channels": [
         "sqlite",
         "registered_model"
@@ -5076,6 +5076,80 @@
       "currentControl": "Exact reviewed predecessor and stopped authority; no grant expansion",
       "targetControl": "Preserve previous task pins and data grants",
       "stage": "S1"
+    },
+    {
+      "id": "single-read-decision",
+      "file": "packages/coordinator/single-read-decision.ts",
+      "channels": [
+        "model"
+      ],
+      "content": "One tool-free interpretation of a current owned read plan",
+      "currentControl": "Current authorized Ontology receipts before model invocation; exact selected read graph and goal contract; no effect authority",
+      "targetControl": "Preserve current data, source and execution boundaries",
+      "stage": "S3",
+      "sourceDigest": "960c83542130d78fc6f7db02d59c5b3edc56fc723dedcad19a73a77037ef70b4"
+    },
+    {
+      "id": "single-read-kernel",
+      "file": "packages/ontology/single-read-kernel.ts",
+      "channels": [
+        "ontology_registry"
+      ],
+      "content": "Versioned programmatic read-contract validation method",
+      "currentControl": "Exact forward definition, original predecessor and unchanged legacy constructors",
+      "targetControl": "Preserve current data, source and execution boundaries",
+      "stage": "S3",
+      "sourceDigest": "3b4f9a948c29c6d99e468ec1f132bcb137cf312d99279ca645c279ab0b064323"
+    },
+    {
+      "id": "single-read-policy-upgrade",
+      "file": "packages/security/single-read-upgrade.ts",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit v25-to-v26 reviewed policy transition",
+      "currentControl": "Stopped authority, exact digest/revision, unchanged actions/functions/grants and expiry",
+      "targetControl": "Preserve current data, source and execution boundaries",
+      "stage": "S4",
+      "sourceDigest": "108abe22a84f35d8803e8d39b6ccab54e148b67710d78daffc7189c00b69f0b5"
+    },
+    {
+      "id": "single-read-policy-upgrade-cli",
+      "file": "scripts/upgrade-single-read-policy.mjs",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Owned explicit read-contract policy migration",
+      "currentControl": "Exact installed authority and owned database; no automatic startup migration",
+      "targetControl": "Preserve current data, source and execution boundaries",
+      "stage": "S4",
+      "sourceDigest": "2a5bce77ea90062d2e3f40633463b01462c2c54e26d02d0cfe773d00160b5bdf"
+    },
+    {
+      "id": "single-read-kernel-cli",
+      "file": "scripts/install-single-read-contract.mjs",
+      "channels": [
+        "operator-cli"
+      ],
+      "content": "Explicit activation of the read-contract kernel",
+      "currentControl": "Pinned predecessor and generation; retained facts, grants and task releases",
+      "targetControl": "Preserve current data, source and execution boundaries",
+      "stage": "S4",
+      "sourceDigest": "8cc97250da1a4173dc54f334e22c29aa5ca554d2be4228ffce7423399043bab5"
+    },
+    {
+      "id": "measure-readonly-task",
+      "file": "scripts/measure-readonly-task.mjs",
+      "channels": [
+        "operator-cli",
+        "model",
+        "source"
+      ],
+      "content": "Explicit isolated candidate Worker measurement with real model and read-only source",
+      "currentControl": "Private configuration, original pinned binding, isolated Foundation grants, one model invocation and three allowlisted business reads",
+      "targetControl": "No primary mutation, order or payment; private external evidence archive",
+      "stage": "S4",
+      "sourceDigest": "b39e941d20797f88db772c80ab12d03758cd5c7d5dffb9e3fb15014dd14ece09"
     }
   ]
 }

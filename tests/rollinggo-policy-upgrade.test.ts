@@ -1,7 +1,8 @@
-import { createBusinessFactsKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { upgradePersonalContextPolicy } from '../packages/security/personal-context-upgrade.js';
-import { personalContextPolicyContracts } from '../packages/security/policy-store.js';
+import { personalContextPolicyContracts, singleReadPolicyContracts } from '../packages/security/policy-store.js';
+import { upgradeSingleReadPolicy } from '../packages/security/single-read-upgrade.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -136,11 +137,19 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected).applied, false);
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).namespaceRolesPreserved, 1);
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).alreadyApplied, true);
-    const personalContracts = personalContextPolicyContracts(policy.model), personalExpected = { digest: personalContracts.before, revision: revision + 2 };
+    const v25 = createPersonalContextKernelDefinition();
+    const personalContracts = personalContextPolicyContracts(compileOntologyDocument(v25.document, v25.registry)), personalExpected = { digest: personalContracts.before, revision: revision + 2 };
     assert.equal(personalContracts.before, factsContracts.after);
     assert.equal(upgradePersonalContextPolicy(db, personalExpected).applied, false);
     assert.equal(upgradePersonalContextPolicy(db, personalExpected, true).namespaceRolesPreserved, 1);
     assert.equal(upgradePersonalContextPolicy(db, personalExpected, true).alreadyApplied, true);
+    const readContracts = singleReadPolicyContracts(policy.model), readExpected = { digest: readContracts.before, revision: revision + 3 };
+    assert.equal(readContracts.before, personalContracts.after);
+    assert.equal(upgradeSingleReadPolicy(db, readExpected).applied, false);
+    const readUpgrade = upgradeSingleReadPolicy(db, readExpected, true);
+    assert.equal(readUpgrade.namespaceRolesPreserved, 1);
+    assert.equal(readUpgrade.actionsAdded, 0); assert.equal(readUpgrade.functionsAdded, 0); assert.equal(readUpgrade.expiryExtended, false);
+    assert.equal(upgradeSingleReadPolicy(db, readExpected, true).alreadyApplied, true);
     const migrated = JSON.parse(
       String(
         db
@@ -167,7 +176,7 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
     try {
       assert.equal(
         reopened.security.policies.definitionDigest,
-        personalContracts.after,
+        readContracts.after,
       );
     } finally {
       reopened.close();

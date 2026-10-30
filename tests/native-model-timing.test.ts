@@ -87,6 +87,13 @@ test('successful exec receipts include phase timing without copying model or too
   } finally { fixture.close(); }
 });
 
+test('a tool-free decision rejects hidden native tool interactions', async () => {
+  const fixture = executableFixture();
+  try {
+    await assert.rejects(new CodexExecutor(fixture.binary, 5000).runStructured('success', {}, new AbortController().signal, { toolFree: true }), /extra tool interaction/);
+  } finally { fixture.close(); }
+});
+
 test('native preparation includes durable attempt registration before spawning the model', async () => {
   const fixture = executableFixture(); let now = 0;
   const trace = new NativeModelTrace(() => now);

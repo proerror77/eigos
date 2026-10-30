@@ -16,6 +16,7 @@ import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
 import { OntologyPlanningSession, modelSessionKey } from './planning-session.js';
 import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
+import { selectReadPlan, supportsSingleReadDecision } from './single-read-decision.js';
 import { agentDecisionSchema, composedAgentDecisionSchema, type AgentDecision, type AgentExecutionState } from '../ontology/agent-actions.js';
 import { AgentRuntime, AGENT_LIMITS, agentLimits } from './agent-runtime.js';
 import { executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, executionBudgetExceeded, MIN_REASONING_TURNS } from '../core/execution-budget.js';
@@ -32,13 +33,13 @@ import { GoalProgram, goalState } from './goal-program.js';
 import { componentContext } from '../core/composed-actions.js';
 import { secureRequest, secureGoalContext } from '../security/model.js';
 import { withRecovery, type RecoveryWork } from '../security/recovery.js';
-import { assertGoalCoverage, createGoalCoverage, createFixedInputCoverage, registeredFixedInput, goalReviewSchema, type GoalReview, type GoalReviewContext } from '../ontology/goal-coverage.js';
+import { assertGoalCoverage, createGoalCoverage, createFixedInputCoverage, createReadContractCoverage, registeredFixedInput, goalReviewSchema, type GoalReview, type GoalReviewContext } from '../ontology/goal-coverage.js';
 import type { AgentProgram } from '../core/agent-program.js';
 
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
 const capabilitySelectionFeedback = 'Choose an exact capability reference and version listed by read_task_context for this task; the selected capability was not available.';
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
-export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[] }[]; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
+export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; bootstrapComplete?: boolean; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[]; completionSchema?: object }[]; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
 export interface AgentPlanningContext { sourceChanges?: import('../ontology/pipeline/facts.js').PipelineFactChange[]; request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; prepareContext?: boolean; preparedContextNavigation?: {id:string;programRef:{id:string;version:string};scope:{type:string;id:string};retired:boolean}[]; planningObservationTypes?: readonly string[]; components?: ReturnType<NonNullable<AgentProgram['describeComponents']>>; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
 export interface Reasoner {
   readonly ontologyContextMode?: 'primitives' | 'task';
@@ -120,6 +121,7 @@ export class CodexReasoner implements Reasoner {
   }
   async ground(request: ServiceRequest, capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal, access: PlanningAccess) {
     const pinnedFixed = request.capabilityRef && capabilities.length === 1 && registeredFixedInput(capabilities[0]!);
+    if (!pinnedFixed && supportsSingleReadDecision(this.model, access)) return selectReadPlan(this.model, request, capabilities, signal, access);
     if (this.model.ontologyTransport !== 'native-mcp' || pinnedFixed) {
     const fixed = request.capabilityRef && capabilities.length === 1 ? registeredFixedInput(capabilities[0]!) : undefined;
     const messageReferences = !!fixed && request.messages.length === 1;
@@ -245,7 +247,8 @@ export class Coordinator {
       if (!this.store.checkpoint(claim, job => { delete job.delegation!.suspendedAgent; })) return;
     }
     if (this.pauseForModelBudget(claim)) return;
-    const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job), d.request.capabilityRef).items.map(summary => {
+    const summaryPage = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job), d.request.capabilityRef);
+    const summaries = summaryPage.items.map(summary => {
       if (this.store.security.enabled || d.ontologyReadScope !== 'owner') return summary;
       const program = this.catalog.programForCapability(summary.ref, claim.owner);
       return program ? {...summary, verificationHistory:this.store.providerEvidenceView(claim.owner,program.ref,program.configurationDigest)} : summary;
@@ -255,6 +258,7 @@ export class Coordinator {
     if (fixedCapability) { d.request = groundConditions(groundRequirements(d.request, '[]', fixedCapability.outcomePredicates, fixedCapability.requirementRoles), '[]', []); if (!this.store.checkpoint(claim, job => { job.delegation!.request = structuredClone(d.request); })) return; }
     if (!this.store.checkpoint(claim, () => this.store.projectCapabilities(claim.owner, d.request.id, summaries))) return;
     const groundingAccess = this.access(claim, d.request, [], signal, 'request_interpreted');
+    groundingAccess.bootstrapComplete = !summaryPage.hasMore;
     const initialPrograms = summaries.flatMap(summary => {
       const program = this.catalog.bootstrapProgram(summary.ref, claim.owner);
       const actionIds = program ? initialActionIds(this.store.ontologyForJob(claim.owner, claim.job), program) : [];
@@ -326,6 +330,12 @@ export class Coordinator {
           job.delegation!.request = request;
           const initialized = program.initialize(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, request, JSON.parse('inputJson' in decision ? decision.inputJson : '{}'));
           job.delegation!.agent = { version: '1', programRef: program.ref, programDigest: program.configurationDigest, ...initialized, requestRevision: request.revision, plans: [], observations: [], feedback: [], ...(initial ? { initialSelectionPending: initial } : {}) };
+          if (decision.kind === 'resolve' && decision.readPlan) {
+            const proof = createReadContractCoverage({ request, capability, input: initialized.input }, decision, grounded!.evidence, this.store.ontologyReleaseForJob(claim.owner, job));
+            if (job.delegation!.goalCoverage) job.delegation!.goalCoverageHistory = [...(job.delegation!.goalCoverageHistory ?? []), job.delegation!.goalCoverage];
+            job.delegation!.goalCoverage = proof;
+            job.delegation!.events.push({ at: proof.assessedAt, event: 'read_goal_contract_validated', evidence: proof.digest });
+          }
           job.delegation!.phase = 'planning'; job.delegation!.nextAt = 0;
           resolveTaskRecovery(job, 'decision');
           job.updatedAt = new Date().toISOString(); job.delegation!.events.push({ at: job.updatedAt, event: 'agent_scope_initialized', evidence: initialized.scope.id });

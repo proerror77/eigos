@@ -152,7 +152,7 @@ export class OntologyPlanningSession {
   modelSessionKey() { return modelSessionKey(this.owner, this.request, this.graph.model.ref); }
   /** Fresh task-local context only. Definitions determine pure source checks;
    * no adapter, source transport, business action or decision is invoked here. */
-  prepareContext(options: { actions?: string[]; refs?: ObjectRef[] } = {}) {
+  prepareContext(options: { actions?: string[]; refs?: ObjectRef[]; includeDefinitions?: boolean; includeLinkedFacts?: boolean } = {}) {
     this.active();
     const startedAt = new Date().toISOString();
     if (this.reads.length) throw new DomainError('CONFLICT', 'Worker context must precede model queries in this decision');
@@ -166,12 +166,17 @@ export class OntologyPlanningSession {
       entries.push({ call: { tool, argumentsJson: JSON.stringify(input) }, result, receiptId: receipt.id });
       return receipt.status === 'ok';
     };
-    if (this.usesTaskContext()) read('read_task_context', {});
+    const hasContext = this.usesTaskContext() && read('read_task_context', {
+      ...(options.includeDefinitions === false ? { includeDefinitions: false } : {}), ...(options.includeLinkedFacts ? { includeLinkedFacts: true } : {}),
+    });
     read('describe_ontology', definitionInput);
     const refs = [{ type: 'ServiceRequest', id: this.request.id }, ...(options.refs ?? [])]
       .filter((ref, index, all) => all.findIndex(value => key(value) === key(ref)) === index).slice(0, contextLimits.refs);
     const queried: ObjectRef[] = [];
-    for (const ref of refs) if (read('query_ontology', { object: ref })) queried.push(ref);
+    for (const ref of refs) {
+      const delivered = hasContext && this.reads[0]?.deliveredObjects?.some(object => key(object.ref) === key(ref));
+      if (delivered || read('query_ontology', { object: ref })) queried.push(ref);
+    }
     for (const ref of queried) for (const id of functionIds) {
       if (this.graph.model.function(id).inputTypes.some(type => this.graph.model.implements(ref.type, type))) read('evaluate_ontology', { function: id, object: ref });
     }

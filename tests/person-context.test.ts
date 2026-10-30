@@ -115,7 +115,11 @@ test('activities, Tokyo travel and shopping share typed person context; defaults
     ] }, { kind: 'synthetic', id: 'person-three-scenarios', observedAt: new Date().toISOString() });
     await f.write('CreatePersonalPreference', { key: 'rideClass', value: { kind: 'rideClass', value: 'comfort' } });
     await f.write('CreatePersonalPreference', { key: 'deliveryAddress', value: { kind: 'deliveryAddress', address: ref('home') } });
-    const activity = f.tasks.submit(f.a.principal, { requestId: randomUUID(), goal: '参加活动，今天使用 standard 车型', personalContext: { self: true, preferences: ['rideClass'], overrides: { rideClass: 'standard' }, resources: [{ object: ref('event'), revision: 1, fields: ['title','startsAt'], role: 'activity' }] } });
+    const activity = f.tasks.submit(f.a.principal, { requestId: randomUUID(), goal: '参加活动，今天使用 standard 车型',
+      locationContext: { city: '上海市', origin: { name: '当前已确认上车点', source: 'current_location', observedAt: new Date().toISOString() } },
+      personalContext: { self: true, preferences: ['rideClass'], overrides: { rideClass: 'standard' }, resources: [
+        { object: ref('event'), revision: 1, fields: ['title','startsAt'], role: 'activity' }, { object: ref('venue'), revision: 1, fields: ['name'], role: 'destination' },
+      ] } });
     const tokyo = f.tasks.submit(f.b.principal, { requestId: randomUUID(), goal: '去东京旅行，沿已选航班安排机场交通和酒店接送', personalContext: { self: true, preferences: ['rideClass'], resources: [
       { object: ref('flight'), revision: 1, fields: ['startsAt','endsAt'], role: 'travel' }, { object: ref('airport-ride'), revision: 1, fields: ['origin','destination'], role: 'transport' },
       { object: ref('hotel'), revision: 1, fields: ['hotelName'], role: 'lodging' }, { object: ref('airport'), revision: 1, fields: ['name'], role: 'destination' },
@@ -130,6 +134,17 @@ test('activities, Tokyo travel and shopping share typed person context; defaults
     });
     const activityPlan = read(activity.id);
     assert.equal(activityPlan.data.request.confirmedInputs!.personal!.fields.rideClass!.value, 'standard');
+    f.jobs.security.withAgent(f.a.principal, activity.id, 'task.query', () => {
+      const session = new OntologyPlanningSession(f.graph, f.owner, activityPlan.request, [], () => {}, () => {}, 'request', [], { taskContext: { purpose: 'grounding' } });
+      const response = session.call('read_task_context', { includeDefinitions: false, includeLinkedFacts: true }) as { data: TaskContextPayload; receipt: { id: string } };
+      assert(response.data, JSON.stringify(response));
+      assert(response.data.graph.links.some(link => link.type === 'EventVenue' && link.from.id === 'event' && link.to.id === 'venue'), 'The published Located mapping connects the selected next activity to its actual destination');
+      assert.equal(response.data.graph.objects.find(object => object.ref.id === 'venue')!.properties.name, 'Event venue');
+      assert.equal((response.data.request.confirmedInputs!.location!.fields.origin!.value as { source: string }).source, 'current_location');
+      assert.equal(response.data.graph.objects.find(object => object.ref.id === 'event')!.properties.startsAt, '2030-01-01T12:00:00Z');
+      assert.deepEqual(response.data.definitions.bundle.types, []);
+      session.acceptReceipts([response.receipt.id]); session.finish();
+    });
     const travel = read(tokyo.id, f.b);
     assert.equal(travel.data.request.confirmedInputs!.personal!.fields.rideClass!.value, 'comfort');
     assert(travel.data.graph.links.some(link => link.type === 'RequestTravelContext'));

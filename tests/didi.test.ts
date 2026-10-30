@@ -73,6 +73,25 @@ test('A credential revoked during an in-flight read prevents accepting its retur
   } finally { f.close(); }
 });
 
+test('parallel and dependent reads reuse tool schemas but recheck every current dispatch permission', async () => {
+  const f = didiFixture(); let dispatches = 0;
+  try {
+    const check = (phase?: 'prepare' | 'dispatch') => { if (phase === 'dispatch') dispatches++; };
+    await Promise.all([
+      f.connector.invoke(context, 'maps_textsearch', { city: '北京市', keywords: input.origin }, signal(), check),
+      f.connector.invoke(context, 'maps_textsearch', { city: '北京市', keywords: input.destination }, signal(), check),
+    ]);
+    await f.connector.invoke(context, 'taxi_estimate', { from_lng: '116.3', from_lat: '39.9', from_name: input.origin, to_lng: '116.4', to_lat: '40.0', to_name: input.destination }, signal(), check);
+    assert.equal(f.calls.filter(call => call.method === 'tools/list').length, 1);
+    assert.equal(dispatches, 3);
+    const before = f.calls.filter(call => call.method === 'tools/call').length;
+    await assert.rejects(f.connector.invoke(context, 'maps_textsearch', { city: '北京市', keywords: input.origin }, signal(), phase => {
+      if (phase === 'dispatch') throw new DidiReadError('AUTH_REJECTED');
+    }), /AUTH_REJECTED/);
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, before);
+  } finally { f.close(); }
+});
+
 test('Official SDK handles a Streamable HTTP event-stream tool response', async () => {
   const f = didiFixture(); try {
     f.flags.transform = (body, request) => request.method === 'tools/call' ? new Response(`event: message\ndata: ${JSON.stringify(body)}\n\n`, { headers: { 'content-type': 'text/event-stream' } }) : body;

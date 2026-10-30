@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { BACKEND_VERSION, refSchema, type ExecutionPlan, type ServiceRequest, type RequirementCheck, type ResolvedCandidate, type ResolutionScope } from '../ontology/execution.js';
 import { inputReferenceSchema, plannedCompletionSchema } from '../ontology/dataflow-contract.js';
 import { goalReviewSchema } from '../ontology/goal-review-contract.js';
+import { goalCriteriaSchema } from './goal-contract-schema.js';
 
 export const DELEGATE = 'eigos.delegate' as const;
 // Canonical JSON for new plans only. No historical-plan fallback or digest migration.
@@ -31,6 +32,7 @@ export const legacyGroundingSchema = z.object({
     inputRefs: z.array(inputReferenceSchema).max(8).optional(),
   })).max(4).optional(),
   plannedCompletion: plannedCompletionSchema.optional(),
+  readPlan: z.strictObject({ version: z.literal('1'), criteria: z.array(goalCriteriaSchema.element.omit({ quote: true })).min(1).max(20) }).optional(),
 }).strict();
 export type LegacyGrounding = z.infer<typeof legacyGroundingSchema>;
 export const goalGroundingSchema = z.strictObject({

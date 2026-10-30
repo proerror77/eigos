@@ -4,12 +4,17 @@ import type { Job } from '../core/domain.js';
 import type { ServiceCapability, ServiceRequest } from './execution.js';
 import type { RunEvidence } from '../capabilities/executor.js';
 import type { LegacyGrounding } from '../core/delegation.js';
+import { createGoalContract, assertGoalContract, type GoalContract } from '../core/goal-contract.js';
+import type { OntologyReleaseRef } from './definition-contracts.js';
+import type { Delivery } from '../core/catalog.js';
+import { readCoverageOrigin } from './goal-review-contract.js';
 
 import { goalReviewSchema, type GoalReview } from './goal-review-contract.js';
 export { goalReviewSchema, type GoalReview } from './goal-review-contract.js';
 export interface GoalReviewContext { request: ServiceRequest; capability: ServiceCapability; input: Record<string, unknown> }
 export interface GoalCoverage {
-  reviewOrigin: 'independent_turn' | 'registered_fixed_input'; modelDecisionDigest: string;
+  reviewOrigin: 'independent_turn' | 'registered_fixed_input' | typeof readCoverageOrigin; modelDecisionDigest: string;
+  readGoal?: GoalContract;
   version: '1'; requestRevision: number; requestDigest: string; capabilityRef: ServiceCapability['ref'];
   capabilityDigest: string; input: Record<string, unknown>; inputDigest: string;
   review: GoalReview; modelRunId: string; assessedAt: string; digest: string;
@@ -64,6 +69,44 @@ export function createFixedInputCoverage(ctx: GoalReviewContext, decision: Legac
   if (Buffer.byteLength(JSON.stringify(body)) > 40000) fail('Goal coverage exceeds the bounded record size');
   return { ...body, digest: digest(body) };
 }
+
+/** The model interprets once; this verifier checks the declared read contract.
+ * It does not claim a second semantic opinion or business fulfillment. */
+export function createReadContractCoverage(ctx: GoalReviewContext, decision: LegacyGrounding, evidence: RunEvidence, release: OntologyReleaseRef): GoalCoverage {
+  const readPlan = decision.readPlan ?? fail('The read plan has no typed goal');
+  const modelDecisionDigest = evidence.decisionDigest ?? fail('The read plan has no model receipt');
+  if (decision.kind !== 'resolve' || !decision.readPlan || decision.scopeReview || decision.conditionsJson !== '[]' || !decision.initialSteps?.length || !decision.plannedCompletion
+    || !evidence.singleReadDecision || evidence.singleReadDecision.modelRequests !== 1 || evidence.singleReadDecision.toolsAvailable !== false
+    || evidence.decisionDigest !== digest(decision) || !evidence.ontologyContext?.receiptIds.length
+    || digest(decision.capabilityRef) !== digest(ctx.capability.ref) || digest(JSON.parse(decision.inputJson)) !== digest(ctx.input)
+    || !ctx.capability.actions.length || ctx.capability.actions.some(action => action.effect !== 'read' || action.additionalEffects?.some(effect => effect !== 'read'))
+    || decision.initialSteps.some(step => !ctx.capability.actions.some(action => action.ref.id === step.action))
+    || readPlan.criteria.some(criterion => !['fact', 'quote'].includes(criterion.phase))) fail('The selected plan is not a complete registered read contract');
+  if (ctx.request.capabilityRef && digest(ctx.request.capabilityRef) !== digest(ctx.capability.ref)) fail('Read plan differs from the requested capability');
+  const criteria = readPlan.criteria.map(criterion => {
+    const message = ctx.request.messages.find(value => value.id === criterion.messageId) ?? fail('Read criterion refers to an unknown instruction');
+    return { ...criterion, quote: message.text };
+  });
+  if (ctx.request.messages.some(message => !criteria.some(criterion => criterion.messageId === message.id))) fail('The read contract omitted an original instruction');
+  const readGoal = createGoalContract(ctx.request, release, criteria, [ctx.capability]);
+  const review = validateGoalReview(ctx, {
+    requestRevision: ctx.request.revision, verdict: 'covered', message: 'Registered read contract validated; source results remain unverified',
+    clauses: ctx.request.messages.map(message => ({ messageId: message.id, quote: message.text, disposition: 'covered',
+      inputKeys: Object.keys(ctx.input), requirementIds: [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])].map(value => value.id),
+      conditionIds: (ctx.request.conditions ?? []).map(value => value.id), reason: 'Inputs, retained constraints and declared read outcome checked by the host' })),
+  });
+  const body = { version: '1' as const, reviewOrigin: readCoverageOrigin, modelDecisionDigest,
+    requestRevision: ctx.request.revision, requestDigest: digest(ctx.request), capabilityRef: ctx.capability.ref, capabilityDigest: digest(ctx.capability),
+    input: structuredClone(ctx.input), inputDigest: digest(ctx.input), review, readGoal, modelRunId: evidence.id, assessedAt: evidence.completedAt };
+  if (Buffer.byteLength(JSON.stringify(body)) > 40000) fail('Read goal coverage exceeds its bounded record size');
+  return { ...body, digest: digest(body) };
+}
+
+export function assertReadContractResult(proof: GoalCoverage, delivery: Delivery): void {
+  if (proof.reviewOrigin !== readCoverageOrigin) return;
+  if (!proof.readGoal || !delivery.evidenceRefs.length || proof.readGoal.criteria.some(criterion => !delivery.facts.conditions?.includes(criterion.predicate))) fail('Source results do not satisfy every declared read outcome');
+}
+
 export function assertGoalCoverage(job: Job, capability: ServiceCapability): GoalCoverage {
   const d = job.delegation!, proof = d.goalCoverage ?? fail('An independently reviewed goal is required before execution or completion');
   const { digest: expected, ...body } = proof;
@@ -74,6 +117,15 @@ export function assertGoalCoverage(job: Job, capability: ServiceCapability): Goa
     const decision = d.groundingDecisions?.find(item => item.modelRunId === proof.modelRunId)?.decision;
     if (!run || run.purpose !== 'grounding' || !decision || !('capabilityRef' in decision) || digest(decision) !== proof.modelDecisionDigest || run.decisionDigest !== proof.modelDecisionDigest || digest(decision.scopeReview) !== digest(proof.review)) fail('Fixed-input coverage has no actual scope-review response');
     createFixedInputCoverage({ request: d.request, capability, input: proof.input }, decision as LegacyGrounding, run!);
+  } else if (proof.reviewOrigin === readCoverageOrigin) {
+    const decision = d.groundingDecisions?.find(item => item.modelRunId === proof.modelRunId)?.decision ?? fail('Read goal coverage lacks its original model plan');
+    const originalRun = run ?? fail('Read goal coverage lacks its model receipt');
+    const release = d.ontologyRelease ?? fail('Read goal coverage lacks its pinned release');
+    const goal = proof.readGoal ?? fail('Read goal coverage lacks its typed criteria');
+    if (originalRun.purpose !== 'grounding' || decision.kind !== 'resolve') return fail('Read goal coverage lacks its original model plan and release');
+    assertGoalContract(goal, d.request, release);
+    const checked = createReadContractCoverage({ request: d.request, capability, input: proof.input }, decision, originalRun, release);
+    if (checked.digest !== proof.digest) fail('Read goal contract differs from its original checked plan');
   } else if (proof.reviewOrigin !== 'independent_turn' || run?.purpose !== 'goal_coverage' || run.decisionDigest !== digest(proof.review) || proof.modelDecisionDigest !== run.decisionDigest) fail('Goal coverage has no independent model receipt');
   validateGoalReview({ request: d.request, capability, input: proof.input }, proof.review);
   return proof;

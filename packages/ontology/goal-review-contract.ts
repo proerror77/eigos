@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const readCoverageOrigin = 'ontology_read_contract' as const;
+
 export const goalReviewSchema = z.strictObject({
   requestRevision: z.number().int().positive(),
   verdict: z.enum(['covered', 'clarify', 'unsupported']),
