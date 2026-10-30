@@ -68,6 +68,9 @@ test('authorized discovery exposes shared contracts and pages each catalogue wit
     const task = f.task(f.a), request = f.jobs.get(f.owner, task.job.id).delegation!.request;
     f.jobs.security.withAgent(f.pa, task.job.id, 'task.query', () => {
       const session = new OntologyPlanningSession(f.jobs.ontology, f.owner, request, []);
+      const rootFunctions = businessModel.functionsFor(['ServiceRequest']).filter(fn => fn.inputTypes.every(type => type === 'ServiceRequest'));
+      assert(rootFunctions.length > 0);
+      for (const fn of rootFunctions) assert(session.catalog().functions.some(value => value.id === fn.id), 'Internal task function navigation is not truncated by a public type page');
       const page = session.call('describe_ontology', { kind: 'functions', search: 'businessFactStatus', limit: 1 }) as ReturnType<AuthorizedOntologyView['describe']>;
       assert.equal(page.functions.length, 1); assert.equal(page.functions[0]!.id, 'businessFactStatus'); assert.equal(page.types.length, 0);
       const exact = session.call('describe_ontology', { actions: ['SelectOffer'], limit: 1 }) as ReturnType<AuthorizedOntologyView['describe']>;

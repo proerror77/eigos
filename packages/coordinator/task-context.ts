@@ -1,5 +1,5 @@
 import { authorizationScope } from '../security/context.js';
-import { describeAuthorized } from '../security/view.js';
+import { authorizedDefinitions } from '../security/view.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -179,7 +179,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
   if (graph.security) {
-    const visible = describeAuthorized(graph.security.security, authorizationScope()!, {limit: graph.model.typeIds().length}, graph.model);
+    const visible = authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model);
     const actionIds = new Set(actions.map(action => action.id));
     const types: object[] = [], deferredTypes: string[] = []; let bytes = 0;
     for (const type of visible.types.filter(type => names.has(type.id))) {

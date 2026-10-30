@@ -3001,7 +3001,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "3c39effa015704e3097863782d9b42c3b31865d45d2f2adb26406ff199134b50",
+      "sourceDigest": "3a9473b2b5ed2ba8ce5c128b35dcf34a0890cdb551d4a5b64dc5900a56908f8b",
       "channels": [
         "model",
         "query"
@@ -3501,7 +3501,7 @@
     {
       "id": "security-ontology-view",
       "file": "packages/security/view.ts",
-      "sourceDigest": "b8dc183618725256ca6c949794b6b5e8bc1f259eb3f943b9ab687c744b4f3397",
+      "sourceDigest": "5f0b79d1311608f5c84adf2ecef4e93808ef483aa04bc39c65d206f15b7a93a9",
       "channels": [
         "http-mcp-model"
       ],
@@ -4175,7 +4175,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "9fd79c5726bccf271a6a64277ac82bb04b5a665e54cf2c4762660ae3efe64b2a",
+      "sourceDigest": "b696ef1540924704ee7721e149b8a08b3455ecfa76b3e3786bf5d6ae9acc8d19",
       "channels": [
         "model"
       ],

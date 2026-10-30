@@ -17,7 +17,7 @@ export const secureEvaluateSchema = z.strictObject({ version: z.literal(2), task
 export const checkAccessSchema = z.strictObject({ taskId: z.uuid(), operation: z.enum(['task.query', 'task.result.read','resource.view','function.invoke','action.execute','artifact.export']), object: objectRefSchema.optional(), fields: z.array(nameSchema).max(200).optional(),
   resource:z.strictObject({kind:z.enum(['objectType','interface','linkType','actionType','function']),id:nameSchema}).optional(),artifactId:z.uuid().optional() });
 
-export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: { kind?: 'types' | 'actions' | 'functions'; search?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] } = {}, model: OntologyObjectStore['model'] = security.model) {
+export function authorizedDefinitions(security: SecurityStore, scope: AuthorizationScope, model: OntologyObjectStore['model'] = security.model) {
   security.policies.assertModel(model);
   const policy = security.policies, parent = security.agentGrant(scope.actor.installationId);
   const reviewedType = (id: string) => { try {
@@ -51,6 +51,12 @@ export function describeAuthorized(security: SecurityStore, scope: Authorization
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
     return {...f,...(schema?{inputSchema:z.toJSONSchema(schema)}:{})};
   });
+  // Build one authorized definition set for internal context selection and public paging.
+  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: definitions, actions, functions }) }, types: definitions, actions, functions };
+}
+
+export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: { kind?: 'types' | 'actions' | 'functions'; search?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] } = {}, model: OntologyObjectStore['model'] = security.model) {
+  const catalogue = authorizedDefinitions(security, scope, model), { types: definitions, actions, functions } = catalogue;
   const kind = input.kind ?? 'types', search = input.search?.trim().toLowerCase();
   const page = <T extends { id: string }>(values: T[]) => {
     const selected = values.filter(value => (!input.after || value.id > input.after) && (!search || JSON.stringify(value).toLowerCase().includes(search))).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -67,7 +73,7 @@ export function describeAuthorized(security: SecurityStore, scope: Authorization
   const paging = kind === 'types' ? typePage : kind === 'actions' ? actionPage : functionPage;
   // The external digest depends only on the authorized definitions. No private
   // model fingerprint or hidden count/continuation is exposed.
-  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: definitions, actions, functions }) },
+  return { model: catalogue.model,
     kind, types: typePage.items,
     actions: input.actions ? actions.filter(action => input.actions!.includes(action.id)) : kind === 'actions' ? actionPage.items : kind === 'types' ? relatedActions : [],
     functions: input.functions ? functions.filter(fn => input.functions!.includes(fn.id)) : kind === 'functions' ? functionPage.items : kind === 'types' ? relatedFunctions : [],
