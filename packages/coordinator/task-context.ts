@@ -188,7 +188,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     }
     return {model: visible.model, types, ...(deferredTypes.length ? {deferredTypes, definitionRetrieval:'describe_ontology'} : {}),
       actions: visible.actions.filter(action => actionIds.has(action.id)),
-      functions: visible.functions.filter(fn => fn.inputTypes.some(type => names.has(type)))};
+      functions: visible.functions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))))};
   }
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));

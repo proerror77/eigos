@@ -245,7 +245,7 @@ export class Coordinator {
       if (!this.store.checkpoint(claim, job => { delete job.delegation!.suspendedAgent; })) return;
     }
     if (this.pauseForModelBudget(claim)) return;
-    const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job)).items.filter(summary => !d.request.capabilityRef || digest(summary.ref) === digest(d.request.capabilityRef)).map(summary => {
+    const summaries = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job), d.request.capabilityRef).items.map(summary => {
       if (this.store.security.enabled || d.ontologyReadScope !== 'owner') return summary;
       const program = this.catalog.programForCapability(summary.ref, claim.owner);
       return program ? {...summary, verificationHistory:this.store.providerEvidenceView(claim.owner,program.ref,program.configurationDigest)} : summary;

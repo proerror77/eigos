@@ -14,6 +14,7 @@ import {syntheticOntology} from './fixtures/ontology-objects.js';
 import {authorizationScope,withAuthorization} from '../packages/security/context.js';
 import {SecurityStore} from '../packages/security/store.js';
 import {combineEnvelopes} from '../packages/security/envelope.js';
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 
 function fixture(extraTypes:string[]=[]) {
   const f = securityFixture(), rawDb = new DatabaseSync(f.database), raw = new OntologyObjectStore(rawDb,businessModel,Date.now,undefined,{skipLegacyMigration:true}), a = f.installation('A'), b = f.installation('B');
@@ -43,6 +44,37 @@ function fixture(extraTypes:string[]=[]) {
   }
   return { ...f,a,b,pa,pb,role,task,place,raw,va:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pa),vb:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pb),close:()=>{rawDb.close();f.close();} };
 }
+
+test('authorized discovery exposes shared contracts and pages each catalogue without disclosing unavailable implementations', () => {
+  const f = fixture(['HotelProperty', 'RideEstimate', 'Proposal', 'RequestingParty', 'ProductOffer']);
+  try {
+    assert.equal(f.va.describe({ search: 'MonetaryFact' }).types.length, 0);
+    f.role(f.a.id);
+    const monetary = f.va.describe({ search: 'MonetaryFact', limit: 1 });
+    assert.equal(monetary.types[0]!.id, 'MonetaryFact'); assert(Object.hasOwn(monetary.types[0]!.properties, 'amount'));
+    const located = f.va.describe({ search: 'Located', limit: 1 });
+    assert(located.types[0]!.links.some(link => link.name === 'location' && link.target === 'Place'));
+    assert.equal(f.va.describe({ search: 'Scheduled' }).types.length, 0, 'An interface requires a visible concrete implementation');
+    assert.equal(f.va.describe({ kind: 'functions', search: 'businessFactStatus', limit: 1 }).functions[0]!.id, 'businessFactStatus');
+    assert.equal(f.va.describe({ kind: 'actions', search: 'SelectOffer', limit: 1 }).actions[0]!.id, 'SelectOffer');
+    for (const kind of ['actions', 'functions'] as const) {
+      const first = f.va.describe({ kind, limit: 1 });
+      assert.equal(first[kind].length, 1); assert.equal(first.types.length, 0); assert.equal(first[kind === 'actions' ? 'functions' : 'actions'].length, 0);
+      assert(first.hasMore && first.next);
+      const second = f.va.describe({ kind, limit: 1, after: first.next });
+      assert.equal(second[kind].length, 1); assert(second[kind][0]!.id > first[kind][0]!.id);
+      assert.equal(f.va.describe({ kind, search: 'unavailable-secret-catalogue', limit: 1 }).hasMore, false);
+    }
+    const task = f.task(f.a), request = f.jobs.get(f.owner, task.job.id).delegation!.request;
+    f.jobs.security.withAgent(f.pa, task.job.id, 'task.query', () => {
+      const session = new OntologyPlanningSession(f.jobs.ontology, f.owner, request, []);
+      const page = session.call('describe_ontology', { kind: 'functions', search: 'businessFactStatus', limit: 1 }) as ReturnType<AuthorizedOntologyView['describe']>;
+      assert.equal(page.functions.length, 1); assert.equal(page.functions[0]!.id, 'businessFactStatus'); assert.equal(page.types.length, 0);
+      const exact = session.call('describe_ontology', { actions: ['SelectOffer'], limit: 1 }) as ReturnType<AuthorizedOntologyView['describe']>;
+      assert.equal(exact.actions[0]!.id, 'SelectOffer', 'An explicit contract read does not depend on the first type page');
+    });
+  } finally { f.close(); }
+});
 
 test('interface relationship and property aliases retain concrete field and task permissions', () => {
   const f = fixture(['HotelProperty']);

@@ -3001,7 +3001,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "3f6e6bc8666440ca9ad08bac9bf4ec767d59c53dc536a026bf3fb8659a6c7096",
+      "sourceDigest": "3c39effa015704e3097863782d9b42c3b31865d45d2f2adb26406ff199134b50",
       "channels": [
         "model",
         "query"
@@ -3026,7 +3026,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "4ce29dae9439e29b6d6e84115a29e18305e00a2e5f7369a542cb6f411c90f2b6",
+      "sourceDigest": "b772d0a4fcb0d0ae3c95c918a697b8d033198ade0377e993dec3da8b8747f1c6",
       "channels": [
         "model",
         "dispatch"
@@ -3501,7 +3501,7 @@
     {
       "id": "security-ontology-view",
       "file": "packages/security/view.ts",
-      "sourceDigest": "c9dc091afebab38dd15944a0a4eb4afeeb38865633bb62462a7c4e939e21ff31",
+      "sourceDigest": "b8dc183618725256ca6c949794b6b5e8bc1f259eb3f943b9ab687c744b4f3397",
       "channels": [
         "http-mcp-model"
       ],
@@ -3525,7 +3525,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "7909c139ce73b6c306607e921b7286319cb148e1513329d38d09ad934f531232",
+      "sourceDigest": "0c7c65ff971a1827b3bcb887c4a6cd404281690184837dd89ac4ad3c96b8a22e",
       "channels": [
         "worker"
       ],
@@ -4175,7 +4175,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "b29da49b1384216b19ba85db3993fd7af5cf7c3e67b1a0512eb12475366edcc0",
+      "sourceDigest": "9fd79c5726bccf271a6a64277ac82bb04b5a665e54cf2c4762660ae3efe64b2a",
       "channels": [
         "model"
       ],
