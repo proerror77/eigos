@@ -496,7 +496,7 @@ export class AgentRuntime {
         delete job.delegation!.agent!.pendingPlanId;
         return;
       }
-      const reads = templatePlanning(ctx.request, ctx.graph.model.ref), proposal = { intentIds: plan.steps.map(step => step.intentId) };
+      const reads = templatePlanning(ctx.request, ctx.graph.model.ref, plan.ontologyPlanning.accessDigest), proposal = { intentIds: plan.steps.map(step => step.intentId) };
       const delivery = program.complete(ctx, proposal, reads), capability = program.capability();
       const requirements = [...ctx.request.requirements, ...(ctx.request.successCriteria ?? [])];
       const checks = checkRequirements({ ...ctx.request, requirements }, delivery.facts, delivery.evidenceRefs, [...capability.predicates.map(predicate => predicate.id), ...(capability.outcomePredicates ?? [])], capability.locationSemantics);

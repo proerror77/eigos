@@ -65,10 +65,14 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
       assert.equal(store.definitions.legacy().model.ref.version, '15');
       const facts = store.definitions.installBusinessFacts(installed.active, installed.generation);
-      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.equal(store.definitions.active().model.ref.digest, '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644');
       assert.deepEqual(store.definitions.installBusinessFacts(facts.active, facts.generation), facts);
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
-      assert.equal(CURRENT_KERNEL_VERSION, '24');
+      const personal = store.definitions.installPersonalContext(facts.active, facts.generation);
+      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.deepEqual(store.definitions.installPersonalContext(personal.active, personal.generation), personal);
+      assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
+      assert.equal(CURRENT_KERNEL_VERSION, '25');
     } finally {
       store.close();
     }

@@ -24,9 +24,11 @@ export type Requirement = RequirementInput & { provenance: { source: 'pa'; inter
 export interface ConfirmedInput {
   field: string; status: 'confirmed' | 'ambiguous' | 'cleared'; value?: unknown; quote: string; revision: number;
   source: { messageId: string; messageIndex: number; receivedAt: string };
+  personalBasis?: import('./personal-context.js').PersonalBasis;
 }
 export interface ConfirmedInputs { version: '1'; revision: number; messageDigest: string; fields: Record<string, ConfirmedInput>; history: ConfirmedInput[] }
 export interface ServiceRequest {
+  personalContext?: import('./personal-context.js').SelectedPersonalContext;
   capabilityRef?: Ref;
   id: string;
   revision: number;

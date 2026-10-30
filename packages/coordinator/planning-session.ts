@@ -1,5 +1,6 @@
 import { readRequestedFacts, requestedFactsSchema, type RequestedFacts } from './requested-facts.js';
 import { randomUUID } from 'node:crypto';
+import { assertPersonalFactsCurrent } from '../core/personal-context.js';
 import { z } from 'zod';
 import { compositionSummary } from '../ontology/composition-contract.js';
 import { DomainError } from '../core/domain.js';
@@ -69,6 +70,7 @@ export function validatePlanningSnapshot(graph: OntologyObjectStore, owner: stri
   return graph.security ? graph.security.readSnapshot(check) : check();
 }
 function validatePlanningSnapshotRaw(graph: OntologyObjectStore, owner: string, request: ServiceRequest, snapshot: PlanningSnapshot, fresh: boolean): void {
+  if (fresh) assertPersonalFactsCurrent(graph, owner, request);
   if (graph.security && snapshot.accessDigest !== accessDigest()) throw new DomainError('FORBIDDEN', 'Planning authority changed; fresh authorized reads are required');
   graph = graph.forRequestReader(owner, request.id);
   const { digest: expected, ...body } = snapshot;

@@ -267,22 +267,28 @@ export class DefinitionService {
     requireScope(principal, 'ontology:read'); const args = prepareOntologyActionSchema.parse(input);
     this.context(principal, args.ontologyId);
     const owner = ownerKey(principal), prepared = this.tasks.prepareOntologyAction(principal, args), job = this.jobs.get(owner, prepared.id), graph = this.jobs.ontologyForJob(owner, job);
-    const selected = job.delegation!.callerAction!, step = job.delegation!.agent!.plans[0]!.steps[0]!, intent = this.jobs.intent(owner, step.intentId);
-    let preview = (intent.lastVerifiedResult?.output?.source as { preview?: ManagedActionPreview } | undefined)?.preview;
-    let status = intent.state === 'effect_confirmed' ? 'committed' : 'prepared';
-    if (!preview) {
-      try { const current = previewDeclarativeAction(graph, owner, selected.action, selected.input); if (current.digest === step.objectWrite?.previewDigest) preview = current; else status = 'stale'; }
-      catch (error) { if (error instanceof DomainError && ['CONFLICT', 'NOT_FOUND'].includes(error.code)) status = 'stale'; else throw error; }
-    }
-    if (preview && preview.digest !== step.objectWrite?.previewDigest) throw new DomainError('CONFLICT', 'Original mutation preview does not match its Intent');
-    return envelope({ task: taskSummary(job), preview: { status, digest: step.objectWrite!.previewDigest, scope: step.objectWrite, ...(preview ? { objects: preview.objects, links: preview.links, result: preview.result } : {}) } });
+    const inspect = () => {
+      const selected = job.delegation!.callerAction!, step = job.delegation!.agent!.plans[0]!.steps[0]!, intent = this.jobs.intent(owner, step.intentId);
+      let preview = (intent.lastVerifiedResult?.output?.source as { preview?: ManagedActionPreview } | undefined)?.preview;
+      let status = intent.state === 'effect_confirmed' ? 'committed' : 'prepared';
+      if (!preview) {
+        try { const current = previewDeclarativeAction(graph, owner, selected.action, selected.input); if (current.digest === step.objectWrite?.previewDigest) preview = current; else status = 'stale'; }
+        catch (error) { if (error instanceof DomainError && ['CONFLICT', 'NOT_FOUND'].includes(error.code)) status = 'stale'; else throw error; }
+      }
+      if (preview && preview.digest !== step.objectWrite?.previewDigest) throw new DomainError('CONFLICT', 'Original mutation preview does not match its Intent');
+      return envelope({ task: taskSummary(prepared), preview: { status, planDigest: job.delegation!.agent!.plans[0]!.digest, digest: step.objectWrite!.previewDigest, scope: step.objectWrite, ...(preview ? { objects: preview.objects, links: preview.links, result: preview.result } : {}) } });
+    };
+    return this.secured ? this.jobs.security.withAgent(principal, job.id, 'task.query', scope => {
+      graph.read(owner, { type: 'ServiceRequest', id: job.id });
+      const result = inspect(); scope.policies.requireRecipient(scope, scope.policies.outputEnvelope(owner), 'agent_response'); return result;
+    }) : inspect();
   }
   approve(principal: Principal, input: unknown) {
     requireScope(principal, 'ontology:object_write');
     const { taskId, ...permit } = approveOntologyActionSchema.parse(input);
     this.context(principal, permit.objectWrite.ontologyRelease.ontologyId);
     const authorized = this.tasks.authorize(principal, taskId, { ...permit, action: 'approve_object_write', environment: 'managed' });
-    return envelope({ task: taskSummary(this.jobs.get(ownerKey(principal), authorized.id)) });
+    return envelope({ task: taskSummary(authorized) });
   }
   private dependencies(kind: DefinitionKind, definition: DefinitionResource): string[] {
     const value = definition as unknown as Record<string, unknown>;

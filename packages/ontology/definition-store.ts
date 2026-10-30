@@ -8,7 +8,8 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition } from './seed-definition.js';
+import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
 import { businessFactTypes, businessFactLinks } from './business-facts.js';
 import type { OntologyModel } from './model.js';
 import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
@@ -195,7 +196,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the business-facts installation');
-      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      const current = this.resolve(namespace.active), kernel = createBusinessFactsKernelDefinition(trustedTemplates().registry).document;
       if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
       if (current.model.ref.digest !== '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127') return conflict('Business facts require the exact reviewed v23 predecessor');
       const document = structuredClone(current.document), linkIds = new Set(businessFactLinks.map(link => link.id));
@@ -211,6 +212,21 @@ export class DefinitionStore {
       document.version = `business-facts-${namespace.generation + 1}`;
       const release = this.insertRelease(document, 'system:install-business-facts', namespace.active);
       return this.activate('system:install-business-facts', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Explicit additive v24 -> v25 activation; existing tasks keep their pins. */
+  installPersonalContext(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before personal-context installation');
+      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
+      if (current.model.ref.digest !== PERSONAL_CONTEXT_PREDECESSOR) return conflict('Personal context requires the exact reviewed v24 predecessor');
+      const document = structuredClone(current.document); document.version = '25';
+      document.objects.push(...structuredClone(personalObjects)); document.actions.push(...structuredClone(personalActions)); document.links.push(...structuredClone(personalLinks));
+      document.objects.find(type => type.id === 'RequestFact')!.properties.personalBasis = structuredClone(kernel.objects.find(type => type.id === 'RequestFact')!.properties.personalBasis!);
+      const release = this.insertRelease(document, 'system:install-personal-context', namespace.active);
+      return this.activate('system:install-personal-context', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

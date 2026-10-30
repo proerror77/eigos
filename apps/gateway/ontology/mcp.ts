@@ -21,6 +21,14 @@ export function mountDefinitionMcp(server: McpServer, service: DefinitionService
       description: 'Manage service intakes on the reviewed business model: validate, publish, activate, prepare bounded validation tasks, register independently accepted task evidence, and revoke verification. Requires namespace management and operation-specific ontology scopes; preparation retains parent, source and exact effect authorization.',
       inputSchema: foundationDefinitionCommandSchema, annotations: { destructiveHint: false, openWorldHint: false },
     }, input => result(() => service.command(principal, input)));
+    if (principal.scopes.includes('ontology:read') && principal.scopes.includes('tasks:write')) server.registerTool('prepare_ontology_action', {
+      description: 'Preview a reviewed personal-context Action in this task authority. It binds self or manages explicit personal defaults through the existing nonfinancial Intent/Worker ledger. Other caller-managed actions remain unavailable in Foundation mode.',
+      inputSchema: prepareOntologyActionSchema, annotations: { idempotentHint: true, destructiveHint: false, openWorldHint: false },
+    }, input => result(() => service.prepare(principal, input)));
+    if (principal.scopes.includes('ontology:object_write') && principal.scopes.includes('tasks:write')) server.registerTool('approve_ontology_action', {
+      description: 'Approve the exact owned personal-data preview with its unchanged scope and expiry. Current action, field, source and task permissions are still required; completion is independently read back by the Worker.',
+      inputSchema: approveOntologyActionSchema, annotations: { idempotentHint: true, destructiveHint: false, openWorldHint: false },
+    }, input => result(() => service.approve(principal, input)));
     return;
   }
   server.registerTool('query_ontology_definitions', { description: 'Read owned ontology namespaces, bounded Object Type/Link Type/Interface/Action Type resources, draft diffs and validation, published releases and history. Use get_definition for one exact resource. A published definition is distinct from executable handler availability. Validation requires edit or publish permission; metadata reads require ontology:read.', inputSchema: definitionQuerySchema, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false } }, input => result(() => service.query(principal, input)));

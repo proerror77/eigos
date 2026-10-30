@@ -1,3 +1,4 @@
+import { isPersonalAction } from '../ontology/personal-context.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -199,7 +200,7 @@ export class DynamicOntologyProgram implements AgentProgram {
     const resultFacts = mergeManagedResultFacts([...resultBindings.values()].filter(result => finalObjects.get(digest(result.ref))?.operation !== 'tombstone')
       .map(result => readManagedResultFacts(ctx.graph.read(ctx.owner, result.ref).properties, result.bindings)));
     const deliverable = '已完成并回读授权的本体受管数据变更。';
-    return { artifact: { id: randomUUID(), name: 'ontology-action-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { ontologyRelease: this.releaseRef, managedChanges: changes, ...(completion.rationale ? { rationale: completion.rationale } : {}) } } }, facts: { ...resultFacts, conditions: ['ontology.managed_data_readback'] }, evidenceRefs: confirmed.map(intent => intent.id) };
+    return { artifact: { id: randomUUID(), name: 'ontology-action-result.json', data: { goal: ctx.request.originalGoal, deliverable, execution: 'completed', result: { ontologyRelease: this.releaseRef, managedChanges: changes, ...(changes.every(change => isPersonalAction(change.actionId)) ? { securityEvidenceRefs: [...finalObjects.values()].filter(change => change.operation !== 'tombstone').map(change => change.ref) } : {}), ...(completion.rationale ? { rationale: completion.rationale } : {}) } } }, facts: { ...resultFacts, conditions: ['ontology.managed_data_readback'] }, evidenceRefs: confirmed.map(intent => intent.id) };
   }
 }
 

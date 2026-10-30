@@ -60,8 +60,8 @@ export interface PlanningSnapshot {
 export function planningSnapshot(body: Omit<PlanningSnapshot, 'digest'>): PlanningSnapshot { return { ...body, digest: digest(body) }; }
 
 // Explicit existing deterministic after-sales path, never selected by model output.
-export function templatePlanning(request: ServiceRequest, model: OntologyModel['ref']): PlanningSnapshot {
-  return planningSnapshot({ mode: 'trusted_template', model, requestRevision: request.revision, conditionsDigest: digest(request.conditions ?? []), reads: [], objects: [], conditionChecks: [], actionProposals: [] });
+export function templatePlanning(request: ServiceRequest, model: OntologyModel['ref'], accessDigest?: string): PlanningSnapshot {
+  return planningSnapshot({ mode: 'trusted_template', model, requestRevision: request.revision, conditionsDigest: digest(request.conditions ?? []), reads: [], objects: [], conditionChecks: [], actionProposals: [], ...(accessDigest ? { accessDigest } : {}) });
 }
 export const reasoningTurnSchema = z.object({
   kind: z.enum(['read', 'final']),

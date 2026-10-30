@@ -1,4 +1,5 @@
 import { digest } from '../core/delegation.js';
+import { assertPersonalAction, isPersonalAction } from './personal-context.js';
 import { DomainError } from '../core/domain.js';
 import { compileJsonSchema } from './model-compiler.js';
 import { objectRefSchema, type ObjectRef } from './model.js';
@@ -71,6 +72,7 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
     if (!graph.model.implements(ref.type, type)) fail('Object input does not implement its declared type');
     read(ref);
   }
+  if (isPersonalAction(actionId)) for (const ref of assertPersonalAction(graph, owner, actionId, input)) read(ref);
   const value = (expression: ActionValue): unknown => {
     if ('literal' in expression) return structuredClone(expression.literal);
     if ('parameter' in expression) {
@@ -149,6 +151,21 @@ export function previewDeclarativeAction(graph: OntologyObjectStore, owner: stri
   if (result) {
     if (batch.tombstones!.some(item => key(item.ref) === key(result))) fail('Action result cannot reference a tombstoned object');
     if (!batch.creates!.some(ref => key(ref) === key(result))) read(result);
+  }
+  if (isPersonalAction(actionId) && actionId !== 'BindSelfPerson') {
+    const preference = actionId === 'CreatePersonalPreference' ? { type: 'PersonalPreference', id: String(input.preferenceId) } : objectRefSchema.parse(input.preference);
+    const old = actionId === 'CreatePersonalPreference' ? [] : graph.related(owner, preference, 'address', { remaining: 1000 });
+    if (!old) fail('Personal address relationships exceed their bound');
+    const value = input.value as { kind?: string; address?: ObjectRef } | undefined;
+    const next = actionId !== 'ClearPersonalPreference' && value?.kind === 'deliveryAddress' ? value.address : undefined;
+    for (const target of old) if (!next || !equal(target.ref, next)) {
+      read(target.ref); const link = { type: 'PreferenceAddress', from: preference, to: target.ref };
+      batch.removeLinks!.push(link); links.push({ operation: 'remove', link, existed: true });
+    }
+    if (next && !old.some(target => equal(target.ref, next))) {
+      read(next); const link = { type: 'PreferenceAddress', from: preference, to: next };
+      batch.links!.push(link); links.push({ operation: 'add', link, existed: false });
+    }
   }
   graph.previewManaged(owner, batch, previewSource);
   const resultChange = result && objects.find(change => key(change.ref) === key(result) && change.operation !== 'tombstone');

@@ -6,7 +6,7 @@ export const taskContextFields:Record<string,readonly string[]>={
  RequestSpecification:['id','displayTitle','requestRevision','requestDigest','instructionCount','constraintCount','requestedDeliverable','executionEnvironment','outcome','businessScopeId','confirmedInputDigests','capabilityRef','assertionSnapshotVersion','factCount','conditionCount','factFamilies'],
  RequestInstruction:['id','displayTitle','introducedRevision','messageId','sequence','text','receivedAt'],
  RequestConstraint:['id','displayTitle','introducedRevision','requirementId','sequence','group','kind','role','strength','expected','provenance'],
- RequestFact:['factId','displayTitle','namespace','field','status','value','quote','source','factRevision'],
+ RequestFact:['factId','displayTitle','namespace','field','status','value','quote','source','factRevision','personalBasis'],
  RequestCondition:['conditionId','displayTitle','sequence','condition'],
  ExecutionContext:['id','displayTitle','requestRevision','phase','state','programRef','programDigest','scope','activeBinding','pendingPlanId','observationOrder','feedback','goal','components','goalAssessment'],
  ExecutionPlan:['id','displayTitle','planId','planDigest','requestRevision','kind','sequence','state','structureDigest','createdAt','modelRunId'],

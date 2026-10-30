@@ -1,10 +1,11 @@
+import { personalResourceRoles } from '../ontology/personal-context.js';
 import { authorizationScope } from '../security/context.js';
 import { authorizedDefinitions } from '../security/view.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { Ref, ServiceRequest } from '../ontology/execution.js';
-import type { ActionDefinition, ObjectRef } from '../ontology/model.js';
+import { objectRefSchema, type ActionDefinition, type ObjectRef } from '../ontology/model.js';
 import type { LinkWrite, ObjectView, OntologyObjectStore } from '../ontology/object-store.js';
 import { readCapabilityCatalog, readPreparedCapability, readPreparedResolution, type PreparedCapability, type PreparedResolution } from '../ontology/capability-catalog.js';
 import { actionProperties, readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
@@ -52,6 +53,7 @@ export interface TaskContextPayload {
   managedDiscovery?: { types: string[]; relationships: 'forward_managed_only' };
   definitions: { digest: string; originalReceiptId: string; reused: boolean; bundle: Record<string, unknown> };
   requestedFacts?: ReturnType<typeof readRequestedFacts>;
+  personal?: { person: ObjectRef; defaults: { field: string; sources: NonNullable<import('../ontology/execution.js').ConfirmedInput['personalBasis']>['sources'] }[]; resources: { object: ObjectRef; role: string; revision: number }[] };
 }
 export interface TaskContextRead {
   data: TaskContextPayload;
@@ -321,6 +323,21 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
       if (!executionView.tombstonedRefs.some(value => same(value.ref, ref))) executionView.tombstonedRefs.push(deleted);
     } else addObject(graph.read(owner, ref));
   }
+  const personalFields = request.confirmedInputs?.personal?.fields;
+  let personal: TaskContextPayload['personal'];
+  if (personalFields?.subject?.status === 'confirmed') {
+    const person = objectRefSchema.parse(personalFields.subject.value), defaults: NonNullable<TaskContextPayload['personal']>['defaults'] = [], resources: NonNullable<TaskContextPayload['personal']>['resources'] = [];
+    addObject(graph.read(owner, person)); addLink({ type: 'RequestServedPerson', from: requestRef, to: person });
+    for (const fact of Object.values(personalFields)) {
+      if (fact.personalBasis) { for (const source of fact.personalBasis.sources) if (source.authority === 'eigos') addObject(graph.read(owner, source.object)); defaults.push({ field: fact.field, sources: fact.personalBasis.sources }); }
+      if (fact.field.startsWith('resource') && fact.value) {
+        const value = fact.value as { object: ObjectRef; fields: string[]; role: keyof typeof personalResourceRoles; revision: number };
+        const object = graph.query(owner, { object: value.object, select: value.fields }).items[0];
+        if (object) { addObject(object); resources.push({ object: object.ref, role: value.role, revision: object.revision }); addLink({ type: personalResourceRoles[value.role].link, from: requestRef, to: object.ref }); }
+      }
+    }
+    personal = { person, defaults, resources };
+  }
   for (const specification of [...objects.values()].filter(object => object.ref.type === 'RequestSpecification')) {
     const instructionNavigation = graph.model.navigation(specification.ref.type, 'instructions');
     for (const instruction of instructionProjection.rows) {
@@ -371,7 +388,7 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
   const definitions: PlanningDefinitionReceipt = reused ?? { modelDigest: graph.model.ref.digest, bindingDigest, payloadDigest: digest(bundle), originalReceiptId: receiptId, payload: bundle };
   const modelRequest: TaskRequestView = { ...request, messages: [...initial.selected].sort((a, b) => a - b).map(index => request.messages[index]!), messageView: initial.selected.size === request.messages.length ? 'complete' : 'partial' };
-  const data: TaskContextPayload = { version: '1', requestRef, request: modelRequest,
+  const data: TaskContextPayload = { version: '1', requestRef, request: modelRequest, ...(personal ? { personal } : {}),
     instructions: { total: instructionProjection.rows.length, complete: initial.delivered.size === instructionProjection.rows.length,
       included: [...initial.delivered].sort((a, b) => a - b).map(sequence => ({ ref: instructionProjection.rows[sequence]!.ref, messageId: request.messages[sequence]!.id, sequence })),
       ...(initial.missing >= 0 ? { nextCursor: instructionCursor(graph, owner, request, initial.missing - 1) } : {}),

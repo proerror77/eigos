@@ -1,4 +1,5 @@
 import {taskContextFields,TASK_CONTEXT_BINDING_VERSION} from './task-context-contract.js';
+import { selfPersonRef, personalPreferenceRef, personalInputFields, personalContextInputSchema, isPersonalAction } from '../ontology/personal-context.js';
 import {taskContextMembers} from './task-context.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
@@ -46,18 +47,24 @@ const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.
  * No general contract override: only the unchanged v22 fields/projections plus
  * the two RollingGo types and their one safe business view are accepted. */
 export function rollingGoPolicyContracts(model: SecurityStore['model']) {
-  const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => !['RideEstimate', 'HotelPrice', 'Event', 'EventRegistration', 'CheckoutItem'].includes(id)));
+  const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => !['RideEstimate', 'HotelPrice', 'Event', 'EventRegistration', 'CheckoutItem', 'Person', 'PersonalPreference'].includes(id)));
   const priorFields=Object.fromEntries(Object.entries(fields).filter(([id])=>!['RollingGoSearchTask','RollingGoSearchObservation'].includes(id)));
   const priorProjection={...projectionContract,fields:Object.fromEntries(Object.entries(projectionContract.fields).filter(([id])=>id!=='RollingGoSearchObservation'))};
   return {before:policyContract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:policyContract({id:'eigos.business',version:'23',digest:'2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'},fields,projectionContract)};
 }
 function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false) {
-  return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},
+  if (!fields.Person && fields.RequestFact) { fields = structuredClone(fields); fields.RequestFact!.fingerprint = 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'; delete fields.RequestFact!.fields.personalBasis; }
+  const taskFields = fields.Person ? taskContextFields : { ...taskContextFields, RequestFact: taskContextFields.RequestFact!.filter(field => field !== 'personalBasis') };
+  return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskFields,capabilityReader:'immutable-compatible-definition-v1'},
     roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema), ...(reobservation ? { sourceObservationBinding: 'independent-source-read-v1' } : {})});
 }
 export function businessFactsPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '24' || !model.hasType('RideEstimate') || !model.hasType('EventRegistration')) throw new Error('Expected the reviewed business-facts v24 kernel');
-  return { before: rollingGoPolicyContracts(model).after, after: policyContract(model.ref, baseline.types, projectionContract, true) };
+  return { before: rollingGoPolicyContracts(model).after, after: policyContract(model.ref, Object.fromEntries(Object.entries(baseline.types).filter(([id]) => model.hasType(id))), projectionContract, true) };
+}
+export function personalContextPolicyContracts(model: SecurityStore['model']) {
+  if (model.ref.version !== '25' || !model.hasType('Person')) throw new Error('Expected the reviewed personal-context v25 kernel');
+  return { before: '61a64d7f6c60e3ff6a2506710ae27b2b75f179cc485eec412a7873dc5e02e0fa', after: policyContract(model.ref, baseline.types, projectionContract, true) };
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
@@ -77,9 +84,9 @@ export class SecurityPolicies {
     if (model === this.model || this.reviewedModels.has(model)) return;
     // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
     // their own model and action bindings; current data/source grants still gate reads.
-    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || this.model.ref.version === '24')
-      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'].includes(model.ref.digest)
-      && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && model.fingerprint(type.id) === this.model.fingerprint(type.id))
+    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25'].includes(this.model.ref.version))
+      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644'].includes(model.ref.digest)
+      && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && (model.fingerprint(type.id) === this.model.fingerprint(type.id) || this.model.hasType('Person') && type.id === 'RequestFact' && model.fingerprint(type.id) === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'))
       && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
       && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
       && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
@@ -336,6 +343,12 @@ export class SecurityPolicies {
           sharedCapability=release.model.ref.digest===this.model.ref.digest && release.compatibleDefinition({kind:'object',id:ref.type,storedDigest:String(row.definition_digest),currentDigest:this.model.fingerprint(ref.type),properties:body.properties});
         }
       }
+      if (sourceBindingId === 'task_context' && ref.type === 'RequestFact' && this.model.hasType('Person') && row.definition_digest === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'
+        && body.properties.personalBasis === undefined && this.contextMembers(grant.ownerKey, grant.taskId, grant.requestRevision).has(refKey(ref))) {
+        const job = this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(grant.ownerKey, grant.taskId);
+        const reader = job && (JSON.parse(String(job.body)) as Job).delegation?.ontologyRelease;
+        if (reader) { const release = (this.definitionReader ??= new DefinitionStore(this.db, this.security.now, { readOnly: true })).resolve(reader); this.assertModel(release.model); sharedCapability = release.model.fingerprint(ref.type) === row.definition_digest; }
+      }
       if(!sharedCapability && (grant.operations.includes('task.process') || !compatibleProjectedObject(this.db,grant.ownerKey,grant.taskId,ref.type,String(row.definition_digest),body.properties,this.model.ref.digest)))throw new SecurityError('POLICY_CHANGED');
     }
     let inputEnvelope:SecurityEnvelope|undefined,projectionOrigin:ProjectionOrigin|undefined;
@@ -359,9 +372,15 @@ export class SecurityPolicies {
     } else inputEnvelope=evidence;
     if (sourceBindingId==='member_asset') {
       const originRow=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(grant.ownerKey,ref.type,ref.id,Number(row.revision));
-      const origin=originRow?JSON.parse(String(originRow.body)) as {programId:string;programDigest:string;sourceBindingId:string;inputEnvelope?:SecurityEnvelope}:undefined;
+      const origin=originRow?JSON.parse(String(originRow.body)) as {programId:string;programDigest:string;sourceBindingId:string;inputEnvelope?:SecurityEnvelope;personalAsset?:boolean}:undefined;
       if (body.source.kind==='provider' && !origin) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-      if (origin) {
+      if (origin?.personalAsset && body.source.kind === 'user' && (ref.type === 'Person' && ref.id === selfPersonRef(grant.ownerKey).id
+        || ref.type === 'PersonalPreference' && ['rideClass','deliveryAddress'].some(key => ref.id === personalPreferenceRef(grant.ownerKey, key as 'rideClass' | 'deliveryAddress').id))) {
+        // This new task explicitly reauthorizes an owner-confirmed personal
+        // record. Retain its classification/channel restrictions and immutable
+        // creation audit, without borrowing the creator task's access rights.
+        if (origin.inputEnvelope) { const { submission: _submission, ...labels } = origin.inputEnvelope; inputEnvelope = { ...labels, lineage: [] }; }
+      } else if (origin) {
         if (!this.sources(grant.ownerKey,grant.installationId).some(s=>s.bindingId===origin.sourceBindingId && s.programId===origin.programId && s.programDigest===origin.programDigest)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
         sourceBindingId=origin.sourceBindingId;
         inputEnvelope=origin.inputEnvelope;
@@ -378,6 +397,50 @@ export class SecurityPolicies {
     for (const input of grant.inputs) this.bind(grant, input.object, input.fields, 'member_asset');
     const parent = this.security.agentGrant(grant.installationId), fields = parent.resources.find(r => r.type === 'ServiceRequest')?.fields ?? [];
     this.bind(grant, { type: 'ServiceRequest', id: grant.taskId }, fields, 'task_submission');
+  }
+  /** Resolve only explicitly selected personal inputs while issuing a task
+   * grant. This is not a data read endpoint and never returns personal values. */
+  personalBindings(owner: string, job: Job): TaskDataGrant['inputs'] {
+    const selection = job.delegation?.request.personalContext, action = job.delegation?.callerAction;
+    if (!selection && !action) return [];
+    if (action && !isPersonalAction(action.action)) return [];
+    const scope = this.scope(owner, false), parent = this.security.agentGrant(scope.actor.installationId), inputs = new Map<string, TaskDataGrant['inputs'][number]>();
+    const take = (ref: ObjectRef, selectedFields: readonly string[], revision?: number, optional = false): Record<string, unknown> | undefined => {
+      this.requireResource(scope, 'objectType', ref.type);
+      const definition = this.model.object(ref.type), fields = [...new Set([definition.primaryKey, definition.titleKey, ...selectedFields])];
+      if (fields.some(field => !parent.resources.some(resource => resource.type === ref.type && resource.fields.includes(field)) || this.fieldPolicy(ref.type, field) === 'internal_only')) throw new SecurityError('INSUFFICIENT_ACCESS');
+      const row = this.db.prepare('SELECT revision,body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner, ref.type, ref.id);
+      if (!row) { if (optional) return; throw new SecurityError('INSUFFICIENT_ACCESS'); }
+      if (revision !== undefined && row.revision !== revision) throw new SecurityError('POLICY_CHANGED');
+      const previous = inputs.get(refKey(ref));
+      inputs.set(refKey(ref), { object: ref, objectRevision: Number(row.revision), fields: [...new Set([...(previous?.fields ?? []), ...fields])] });
+      return JSON.parse(String(row.body)).properties;
+    };
+    const address = (value: unknown) => {
+      const parsed = objectRefSchema.parse(value);
+      if (parsed.type !== 'SavedAddress') throw new SecurityError('INSUFFICIENT_ACCESS');
+      take(parsed, ['savedAddressId', 'displayTitle', 'address']);
+    };
+    if (selection) {
+      const input = personalContextInputSchema.parse(selection);
+      take(selfPersonRef(owner), personalInputFields.Person);
+      for (const key of input.preferences ?? []) if (!Object.hasOwn(input.overrides ?? {}, key)) {
+        const preference = take(personalPreferenceRef(owner, key), personalInputFields.PersonalPreference, undefined, true);
+        if (preference?.status === 'active' && key === 'deliveryAddress') address((preference.value as { address: unknown }).address);
+      }
+      if (input.overrides?.deliveryAddress) address(input.overrides.deliveryAddress);
+      for (const fact of input.paDefaults ?? []) if (!Object.hasOwn(input.overrides ?? {}, fact.value.kind) && fact.value.kind === 'deliveryAddress') address(fact.value.address);
+      for (const resource of input.resources ?? []) take(resource.object, resource.fields, resource.revision);
+    }
+    if (action && action.action !== 'BindSelfPerson') {
+      take(selfPersonRef(owner), personalInputFields.Person);
+      if (action.action !== 'CreatePersonalPreference') {
+        const preference = take(objectRefSchema.parse(action.input.preference), personalInputFields.PersonalPreference);
+        if ((preference?.value as { kind?: string })?.kind === 'deliveryAddress') address((preference!.value as { address: unknown }).address);
+      }
+      if ((action.input.value as { kind?: string })?.kind === 'deliveryAddress') address((action.input.value as { address: unknown }).address);
+    }
+    return [...inputs.values()];
   }
   private taskReadHistory(owner: string, taskId: string, requestRevision: number, progress: () => void = () => {}) {
     return this.db.prepare("SELECT r.body FROM security_reads r JOIN security_grants issued ON issued.id=r.grant_id WHERE issued.owner=? AND issued.kind='task_data' AND json_extract(issued.body,'$.taskId')=? AND json_extract(issued.body,'$.requestRevision')=?")
@@ -572,7 +635,7 @@ export class SecurityPolicies {
         // revision, field set or expected digest is a different assertion.
         const dependencyKey=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields,dependency.contentDigest]);
         if(verifiedDependencies.has(dependencyKey))continue;
-        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type]?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
+        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type] || this.personalMutationHistory(scope,dependency)?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
         // Recursive reads may have proved this assertion while checking its
         // own ancestors. Do not repeat that database checkpoint on unwind.
@@ -651,13 +714,16 @@ export class SecurityPolicies {
     if (scope.actor.actorKind !== 'worker' || !origin) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const source = this.requireSource(scope, origin.programId, origin.programDigest);
     const inputEnvelope=this.outputEnvelope(owner);
+    const jobRow = _source.kind === 'user' && this.model.hasType('Person') ? this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(owner, scope.grant!.taskId) : undefined;
+    const personalStep = jobRow ? (JSON.parse(String(jobRow.body)) as Job).delegation?.agent?.plans.flatMap(plan => plan.steps).find(step => step.intentId === _source.id && isPersonalAction(step.action) && step.effect === 'object_write') : undefined;
     for (const object of batch.objects) {
       const rule = scope.grant!.outputs.find(o => o.programId === origin.programId && o.programDigest === origin.programDigest && o.sourceBindingId === source.bindingId && o.type === object.ref.type);
       if (!rule || !source.outputTypes.includes(object.ref.type)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       const fields = object.observedFields ? rule.fields.filter(field => object.observedFields!.includes(field)) : rule.fields;
       this.bind(scope.grant!, object.ref, fields, source.bindingId,inputEnvelope, this.model.hasType('ObservedFact') && object.reuseIfUnchanged ? { programId: origin.programId, programDigest: origin.programDigest, sourceBindingId: origin.sourceBindingId } : undefined);
       const revision=this.db.prepare('SELECT revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,object.ref.type,object.ref.id)!.revision;
-      this.db.prepare('INSERT OR IGNORE INTO security_object_origins VALUES(?,?,?,?,?)').run(owner,object.ref.type,object.ref.id,Number(revision),JSON.stringify({...origin,inputEnvelope}));
+      const personalAsset = ['Person','PersonalPreference'].includes(object.ref.type) && !!personalStep?.objectWrite?.targets.some(target => refKey(target.ref) === refKey(object.ref));
+      this.db.prepare('INSERT OR IGNORE INTO security_object_origins VALUES(?,?,?,?,?)').run(owner,object.ref.type,object.ref.id,Number(revision),JSON.stringify({...origin,inputEnvelope,...(personalAsset ? { personalAsset: true } : {})}));
     }
     for (const edge of batch.links ?? []) {
       this.requireResource(scope, 'linkType', edge.type);
@@ -699,6 +765,23 @@ export class SecurityPolicies {
     if (!scope.grant) return;
     for (const row of this.db.prepare('SELECT digest,body FROM security_reads WHERE grant_id=?').all(scope.grant.id)) scope.lineage.set(String(row.digest),securityEnvelopeSchema.parse(JSON.parse(String(row.body))));
   }
+  /** An exact personal update can explain its own pre-state after commit. This
+   * never makes an older default current for another task or later mutation. */
+  private personalMutationHistory(scope: AuthorizationScope, dependency: SecurityEnvelope['lineage'][number]): boolean {
+    if (dependency.object.type !== 'PersonalPreference' || !this.model.hasType('Person') || !scope.grant) return false;
+    const current = this.db.prepare('SELECT revision,body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey, dependency.object.type, dependency.object.id);
+    if (!current || Number(current.revision) !== dependency.revision + 1) return false;
+    const object = JSON.parse(String(current.body));
+    if (object.source.kind !== 'user') return false;
+    const row = this.db.prepare("SELECT o.body FROM action_observations o JOIN action_intents i ON i.owner=o.owner AND i.id=o.intent_id WHERE i.owner=? AND i.job_id=? AND i.id=? AND o.applied=1 ORDER BY o.rowid DESC LIMIT 1").get(scope.actor.ownerKey, scope.grant.taskId, object.source.id);
+    const observed = row && JSON.parse(String(row.body)), source = observed?.output?.source, preview = source?.preview;
+    if (observed?.kind !== 'confirmed' || source?.requestId !== scope.grant.taskId || source?.requestRevision !== scope.grant.requestRevision || !['SetPersonalPreference','ClearPersonalPreference'].includes(preview?.actionId)) return false;
+    const delta = preview.objects?.find((item: { ref: ObjectRef; expectedRevision: number }) => refKey(item.ref) === refKey(dependency.object) && item.expectedRevision === dependency.revision);
+    if (!delta || delta.operation !== 'update' || digest(delta.after) !== digest(object.properties)) return false;
+    const job = this.db.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(scope.actor.ownerKey, scope.grant.taskId);
+    const step = job && (JSON.parse(String(job.body)) as Job).delegation?.agent?.plans.flatMap(plan => plan.steps).find(step => step.intentId === object.source.id);
+    return !!step && step.action === preview.actionId && step.objectWrite?.previewDigest === preview.digest;
+  }
   private lineageProperties(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]) {
     const row=this.db.prepare('SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,dependency.object.type,dependency.object.id);
     if(!row)throw new SecurityError('OUTPUT_NOT_ALLOWED');
@@ -706,7 +789,7 @@ export class SecurityPolicies {
     // Only reviewed task-control records may use their immutable writer history.
     // A changed provider fact never gains this exception; current grants and
     // current field labels still apply before this historical hash is checked.
-    if(!taskContextFields[dependency.object.type])throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    if(!taskContextFields[dependency.object.type] && !this.personalMutationHistory(scope,dependency))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const old=this.db.prepare('SELECT body,definition_digest FROM ontology_object_versions WHERE ontology_id=? AND owner=? AND type=? AND id=? AND revision=? AND deleted=0').get(this.model.ref.id,scope.actor.ownerKey,dependency.object.type,dependency.object.id,dependency.revision);
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return JSON.parse(String(old.body)).properties;
@@ -732,7 +815,7 @@ export class SecurityPolicies {
     }
     for (const dependency of envelope.lineage) {
       const binding=this.readBinding(scope,dependency.object,undefined,dependency.object.type==='RegisteredCapability');
-      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision && !this.personalMutationHistory(scope,dependency)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       if (this.lineageDigest(scope,dependency)!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
   }

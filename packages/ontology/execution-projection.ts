@@ -145,7 +145,8 @@ function projectRequest(graph: OntologyObjectStore, owner: string, request: Serv
   for (const [namespace, family] of Object.entries(request.confirmedInputs ?? {})) for (const fact of Object.values(family.fields)) {
     const ref = node('RequestFact', { requestId: request.id, namespace, fact });
     const links = [edge('FactRequest', ref, root(request.id)), ...(instructions.has(fact.source.messageId) ? [edge('FactInstruction', ref, instructions.get(fact.source.messageId)!)] : [])];
-    write(graph, owner, ref, { namespace, field: fact.field, status: fact.status, ...(fact.value !== undefined ? { value: fact.value } : {}), quote: fact.quote, source: fact.source, factRevision: fact.revision }, links, source);
+    for (const basis of fact.personalBasis?.sources ?? []) if (basis.authority === 'eigos') links.push(edge('RequestFactPreference', ref, basis.object));
+    write(graph, owner, ref, { namespace, field: fact.field, status: fact.status, ...(fact.value !== undefined ? { value: fact.value } : {}), quote: fact.quote, source: fact.source, factRevision: fact.revision, ...(fact.personalBasis ? { personalBasis: fact.personalBasis } : {}) }, links, source);
     specificationLinks.push(edge('SpecificationFact', specification, ref));
   }
   for (const [sequence, condition] of (request.conditions ?? []).entries()) {
@@ -184,7 +185,7 @@ export function readOntologyRequest(graph: OntologyObjectStore, owner: string, r
     const families = specification.factFamilies as Record<string, Pick<ConfirmedInputs, 'version' | 'revision' | 'messageDigest'>>;
     confirmed = Object.fromEntries(Object.entries(families).map(([namespace, metadata]) => [namespace, { ...metadata, fields: Object.fromEntries(facts.filter(fact => fact.properties.namespace === namespace).map(fact => {
       const p = fact.properties;
-      return [String(p.field), { field: p.field, status: p.status, ...(p.value !== undefined ? {value: p.value} : {}), quote: p.quote, revision: p.factRevision, source: p.source } as ConfirmedInputs['fields'][string]];
+      return [String(p.field), { field: p.field, status: p.status, ...(p.value !== undefined ? {value: p.value} : {}), quote: p.quote, revision: p.factRevision, source: p.source, ...(p.personalBasis ? { personalBasis: p.personalBasis } : {}) } as ConfirmedInputs['fields'][string]];
     })) }]));
     conditions = assertions.map(item => item.properties.condition) as ServiceRequest['conditions'];
   }

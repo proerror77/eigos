@@ -6,7 +6,7 @@ import { setupCheckout, checkoutMerchant, checkoutVariant } from './fixtures/sho
 import { owner } from './backend-fixture.js';
 import { sourceProof } from '../packages/ontology/object-evidence.js';
 import { catalogEntityRefs } from '../packages/ontology/catalog-agent-projection.js';
-import { createCurrentKernelDefinition, createRollingGoKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { createBusinessFactsKernelDefinition, createRollingGoKernelDefinition } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { OntologyObjectStore, type ObjectWrite } from '../packages/ontology/object-store.js';
 import { checkedRideEstimate, projectRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
@@ -16,7 +16,7 @@ import { OntologyPlanningSession } from '../packages/coordinator/planning-sessio
 import type { readRequestedFacts } from '../packages/coordinator/requested-facts.js';
 
 test('the new fact release preserves every v23 object, action and historical model fingerprint', () => {
-  const old = createRollingGoKernelDefinition(), current = createCurrentKernelDefinition();
+  const old = createRollingGoKernelDefinition(), current = createBusinessFactsKernelDefinition();
   const before = compileOntologyDocument(old.document, old.registry), after = compileOntologyDocument(current.document, current.registry);
   assert.equal(before.ref.digest, '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127');
   for (const type of old.document.objects) assert.equal(after.fingerprint(type.id), before.fingerprint(type.id));
