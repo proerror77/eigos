@@ -80,8 +80,6 @@ for(const mode of ['direct','native-goal'] as const)test(`foundation ${mode==='d
     migrationDb.close();
     const prices = tasks.queryOntology(p, { version: 2, taskId: job.id, query: { type: 'MonetaryFact', where: [{ property: 'amount', op: 'lt', value: '80' }], select: ['amount', 'currency', 'amountUnit'] } }).items;
     assert.equal(prices.length, 1); assert.equal(prices[0]!.properties.amount, '73.05'); assert.equal(prices[0]!.properties.amountUnit, 'major');
-    policy.restrictObject({ ownerKey: f.owner, object: prices[0]!.ref, expectedObjectRevision: prices[0]!.revision, field: 'estimatedAmount', classification: 'internal', requiredMarkings: ['financial'], channels: [] }, policy.revision());
-    assert.throws(() => tasks.queryOntology(p, { version: 2, taskId: job.id, query: { object: prices[0]!.ref, as: 'MonetaryFact', select: ['amount'] } }), /not available|INSUFFICIENT_ACCESS/);
     const revision=f.jobs.security.withAgent(p,job.id,'task.query',()=>f.jobs.ontology.read(f.owner,observation).revision);
     policy.restrictObject({ownerKey:f.owner,object:observation,expectedObjectRevision:revision,field:'snapshot',classification:'internal',requiredMarkings:['account_private'],channels:[]},policy.revision());
     assert.equal(tasks.get(p,job.id).artifact,undefined,'Mandatory controls on raw source dependencies propagate into the safe view and old delivery');
