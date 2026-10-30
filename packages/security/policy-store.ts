@@ -520,17 +520,17 @@ export class SecurityPolicies {
     // cached traversals. One statement still observes both local writes and
     // other connections before every cached read.
     const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
-    const stamp=()=>{const row=version.get()!;return `${row.data_version}:${Number(row.changes)-(readAuditChanges.get(this.db)??0)}`;};
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
+    const stamp=()=>{const row=version.get()!;return {version:Number(row.data_version),changes:Number(row.changes)-(readAuditChanges.get(this.db)??0)};};
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0,retryable=false;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     // Expired historical roles grant nothing and cannot shorten a read that
     // another current role permits. Every role valid at entry still constrains
     // this snapshot, and roleAllows keeps checking the requested resource.
     const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now();if(next!==checked || now>=validUntil || now<at){bindings.clear();members.clear();lineageDigests.clear();generation++;}if(next!==checked || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,readConflictRetryable:()=>retryable,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -578,7 +578,7 @@ export class SecurityPolicies {
   binding(scope: AuthorizationScope, ref: ObjectRef, revision?: number): ObjectBinding | undefined {
     return this.readBinding(scope,ref,revision);
   }
-  private readBinding(scope:AuthorizationScope,ref:ObjectRef,revision?:number,historicalCapability=false):ObjectBinding|undefined {
+  private readBinding(scope:AuthorizationScope,ref:ObjectRef,revision?:number,historicalCapability=false,retries=2):ObjectBinding|undefined {
     if(!scope.synchronousRead)return withAuthorization(scope,()=>this.readSnapshot(()=>this.readBinding(authorizationScope()!,ref,revision,historicalCapability)));
     scope.assertCurrent();
     if(!scope.grant)return;
@@ -655,7 +655,17 @@ export class SecurityPolicies {
     const result=read(ref,revision,historicalCapability);scope.assertCurrent();
     // Never return a graph assembled across invalidated proofs, including a
     // write detected after the last content read. The caller can read afresh.
-    if(scope.readGeneration?.()!==generation)throw new SecurityError('POLICY_CHANGED');
+    if(scope.readGeneration?.()!==generation) {
+      // Recheck this pure binding traversal only, never its caller, dispatch or
+      // source operation. The complete proof must remain identical after fresh
+      // authority/dependency checks; changed facts still reject the mixed read.
+      if(!result || !retries || !scope.readConflictRetryable?.())throw new SecurityError('POLICY_CHANGED');
+      scope.readBindings?.clear();scope.readTaskMembers?.clear();scope.readLineageDigests?.clear();
+      this.roleCache.delete(scope);this.labelCache.delete(scope);
+      const fresh=this.readBinding(scope,ref,revision,historicalCapability,retries-1);
+      if(!fresh || digest(fresh)!==digest(result))throw new SecurityError('POLICY_CHANGED');
+      return fresh;
+    }
     return result;
   }
   requireObject(owner: string, ref: ObjectRef, revision?: number) {

@@ -25,6 +25,8 @@ export interface AuthorizationScope {
   readLineageDigests?: Map<string,string>;
   /** Changes whenever a synchronous read's cached proofs are invalidated. */
   readGeneration?: () => number;
+  /** An external commit invalidated the memo, without local writes or time invalidation. */
+  readConflictRetryable?: () => boolean;
 }
 const contexts = new AsyncLocalStorage<AuthorizationScope>();
 export const authorizationScope = () => contexts.getStore();
