@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "2b5016f290dd2826112033a9e5861ea3f66e494a959b80176e54e0f83af472c8",
+      "sourceDigest": "4dda37cfb0ed6e32bd87f6ae28487953881e6cfb3ffe44bdcc59f688b7a4983b",
       "channels": [
         "mcp"
       ],

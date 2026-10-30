@@ -23,7 +23,7 @@ Person 是明确声明的自然人服务对象；Member／RequestingParty 是认
 
 每项关联 Person，保留自身 revision、数据版本和来源。它只允许管理明确交给 EIGOS 的默认值；PA 的个人资料继续由 PA 管理。已确认默认可通过 paDefaults 附上类型化 value、sourceReference、sourceVersion、observedAt 和 userConfirmed:true；它被标为“已认证 PA 报告”，并不宣称宿主已独立验证用户确认。该快照仅进入本次任务事实，不写回 EIGOS 长期默认。未确认推测被拒绝。Member 的语言、时区等既有资料仍由 Member 管理，本期不增加另一份可写副本或自动同步所有资料。
 
-提交任务时可以附带：
+本人只绑定一次。PA 为已绑定的本人发起后续任务时，应复用 personalContext.self 和所需字段选择，无须再次调用 BindSelfPerson 或询问用户身份；没有明确服务对象的请求不会被自动归为本人。提交任务时可以附带：
 
 ```json
 {
