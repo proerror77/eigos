@@ -830,7 +830,9 @@ export class JobStore {
         ? !this.leaseOwned(claim,at) || !this.processingAuthorityCurrent(claim,at)
         : !this.active(claim,at)) return false;
       const renewedAt = now ?? Date.now();
-      return this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=? AND expires_at>?').run(renewedAt + leaseMs, claim.job.id, claim.token, renewedAt).changes === 1;
+      const renewed=this.db.prepare('UPDATE work_claims SET expires_at=? WHERE job_id=? AND token=? AND expires_at>?').run(renewedAt + leaseMs, claim.job.id, claim.token, renewedAt).changes === 1;
+      if(renewed && this.security.enabled)this.security.policies.accountForLeaseRenewal();
+      return renewed;
     });
   }
 

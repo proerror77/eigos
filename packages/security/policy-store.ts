@@ -24,10 +24,10 @@ import {DefinitionStore} from '../ontology/definition-store.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 
-// Only this connection's direct append-only audit inserts are inert for read
-// bindings. Other writes, trigger side effects and other connections still
-// invalidate the snapshot; every authority/time check remains in place.
-const readAuditChanges = new WeakMap<DatabaseSync, number>();
+// Count only direct audit inserts and checked claim renewals on this connection.
+// Other writes, trigger side effects and other connections still invalidate the
+// snapshot; every authority/time check remains in place.
+const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
 const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
@@ -520,7 +520,7 @@ export class SecurityPolicies {
     // cached traversals. One statement still observes both local writes and
     // other connections before every cached read.
     const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
-    const stamp=()=>{const row=version.get()!;return {version:Number(row.data_version),changes:Number(row.changes)-(readAuditChanges.get(this.db)??0)};};
+    const stamp=()=>{const row=version.get()!;return {version:Number(row.data_version),changes:Number(row.changes)-(readBookkeepingChanges.get(this.db)??0)};};
     scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0,retryable=false;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
     // Expired historical roles grant nothing and cannot shorten a read that
     // another current role permits. Every role valid at entry still constrains
@@ -771,12 +771,17 @@ export class SecurityPolicies {
     return withInference(()=>integrityFunctions.has(functionId)?withIntegrity(action):action());
   }
   outputEnvelope(owner: string): SecurityEnvelope { const scope = this.scope(owner); return combineEnvelopes([...scope.lineage.values()]); }
+  /** JobStore calls this only after its one checked work_claims update succeeds.
+   * Count that direct row, never trigger writes or an arbitrary progress callback. */
+  accountForLeaseRenewal() {
+    readBookkeepingChanges.set(this.db,(readBookkeepingChanges.get(this.db)??0)+1);
+  }
   capture(scope:AuthorizationScope,envelope:SecurityEnvelope) {
     if (!scope.grant) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const key=digest(envelope);if(scope.lineage.has(key))return;scope.lineage.set(key,envelope);
     if (scope.actor.actorKind==='worker') {
       const written=this.db.prepare('INSERT OR IGNORE INTO security_reads VALUES(?,?,?)').run(scope.grant.id,key,JSON.stringify(envelope));
-      readAuditChanges.set(this.db,(readAuditChanges.get(this.db)??0)+Number(written.changes));
+      readBookkeepingChanges.set(this.db,(readBookkeepingChanges.get(this.db)??0)+Number(written.changes));
     }
   }
   loadLineage(scope:AuthorizationScope) {

@@ -8,12 +8,13 @@ import { currentKernelImplementation } from '../packages/ontology/definition-sto
 import { SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { authorizationScope } from '../packages/security/context.js';
 import { combineEnvelopes, type SecurityEnvelope } from '../packages/security/envelope.js';
+import { Worker } from '../apps/worker/worker.js';
 
 // Execution records retain cumulative evidence. Reading the last record must
 // check every distinct dependency, without repeating work for each path to it.
-function fixture(size: number) {
-  const now = Date.now(), f = securityFixture(() => now), db = new DatabaseSync(f.database);
-  const model = currentKernelImplementation(), raw = new OntologyObjectStore(db, model, () => now, undefined, { skipLegacyMigration: true });
+function fixture(size: number, suppliedClock?: () => number) {
+  const now = Date.now(), clock = suppliedClock ?? (() => now), f = securityFixture(clock), db = new DatabaseSync(f.database);
+  const model = currentKernelImplementation(), raw = new OntologyObjectStore(db, model, clock, undefined, { skipLegacyMigration: true });
   const installation = f.installation('dependency-reader'), policy = f.jobs.security.policies;
   const fields = ['placeId', 'displayTitle', 'name'];
   f.coordinator.approveAgentGrant(f.member.id, {
@@ -51,7 +52,7 @@ function fixture(size: number) {
   }
   const principal = { ...f.principal, access: f.coordinator.authenticate(f.principal, installation.token) };
   return {
-    ...f, db, policy, inputs, grant, envelopes,
+    ...f, db, policy, inputs, grant, envelopes, taskAuthority: task.authority,
     read: () => f.jobs.security.withAgent(principal, task.job.id, 'task.query', () => f.jobs.ontology.read(f.owner, inputs.at(-1)!.object)),
     within: (action: () => void) => f.jobs.security.withAgent(principal, task.job.id, 'task.query', () => policy.readSnapshot(action)),
     close: () => { db.close(); f.close(); },
@@ -189,4 +190,47 @@ test('continuous external commits exhaust the bounded binding recheck', t => {
     assert.throws(() => f.within(() => f.policy.binding(authorizationScope()!, f.inputs.at(-1)!.object)), /POLICY_CHANGED/);
     assert.equal(traversals, 3, 'Initial traversal plus at most two rechecks');
   } finally { f.close(); }
+});
+
+for (const mutation of ['none', 'content', 'trigger'] as const)
+test(`a checked Worker renewal during a dependency read ${mutation === 'none' ? 'preserves the proof' : `does not hide a ${mutation} write`}`, async t => {
+  let clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+  const f = fixture(2, () => clock), original = DatabaseSync.prototype.prepare;
+  f.jobs.security.attachTaskAuthority({ ...f.taskAuthority, id: randomUUID(), dataGrant: { id: f.grant.id, revision: f.grant.revision }, submittedScopes: ['tasks:read', 'tasks:write'] });
+  if (mutation === 'trigger') f.db.exec(`CREATE TRIGGER renewal_business_write AFTER UPDATE ON work_claims BEGIN
+    UPDATE ontology_objects SET body=json_set(body,'$.properties.name','changed by trigger') WHERE type='Place'; END`);
+  let injected = false, renewals = 0, callers = 0, value: unknown, error: unknown;
+  const renew = f.jobs.renew.bind(f.jobs);
+  t.mock.method(f.jobs, 'renew', (...args: Parameters<typeof renew>) => {
+    const result = renew(...args); if (result) renewals++; return result;
+  });
+  t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
+    const statement = original.call(this, sql);
+    if (sql === 'SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?') {
+      const get = statement.get.bind(statement);
+      t.mock.method(statement, 'get', (...args: Parameters<typeof get>) => {
+        const row = Reflect.apply(get, statement, args), scope = authorizationScope();
+        if (!injected && scope?.synchronousRead && scope.actor.actorKind === 'worker') {
+          injected = true; clock += 6000;
+          scope.assertCurrent(); // Real Worker progress renews its original, still-valid claim.
+          if (mutation === 'content') original.call(this, "UPDATE ontology_objects SET body=json_set(body,'$.properties.name','changed during renewal') WHERE owner=? AND type='Place' AND id=?")
+            .run(f.owner, f.inputs[0]!.object.id);
+        }
+        return row;
+      });
+    }
+    return statement;
+  });
+  const worker = new Worker(f.jobs, { leaseMs: 15000, pollMs: 60000, coordinator: { run: async () => {
+    callers++;
+    try { value = f.jobs.ontology.read(f.owner, f.inputs.at(-1)!.object).properties.name; } catch (failure) { error = failure; }
+  } } });
+  try {
+    worker.tick(); await new Promise<void>(resolve => setImmediate(resolve));
+    assert(injected, 'The dependency must be read before the renewal');
+    assert.equal(renewals, 1, 'The actual Worker must renew the current claim once');
+    assert.equal(callers, 1, 'The Worker must execute the selected work once');
+    if (mutation === 'none') { assert.ifError(error); assert.equal(value, 'dependency-1'); }
+    else { assert.equal(value, undefined); assert.match(String(error), /POLICY_CHANGED/); }
+  } finally { await worker.close(); f.close(); }
 });
