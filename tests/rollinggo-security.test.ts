@@ -372,6 +372,20 @@ for (const mode of ['direct', 'native-goal'] as const)
           assert(!text.includes(forbidden));
         assert(text.includes('Synthetic hotel'));
         assert(text.includes('USD'));
+        const beforeHotels = tasks.queryOntology(principal, { version: 2, taskId: job.id, query: { type: 'HotelProperty' } }).items;
+        assert.equal(beforeHotels.length, 1);
+        const oldReceipt = tasks.queryOntology(principal, { version: 2, taskId: job.id, query: { type: 'SourceReceipt' } }).items[0]!.ref;
+        turns = 0;
+        const repeated = tasks.submit(principal, { service: 'eigos.delegate', requestId: 'synthetic-hotel-repeat',
+          goal: 'Search Taipei hotels again, no booking or payment', executionEnvironment: 'sandbox' });
+        await runNativeDidiTask(f.jobs, coordinator, f.owner, repeated.id, t.signal, () => t.mock.timers.tick(20));
+        const repeatedJob = f.jobs.get(f.owner, repeated.id);
+        assert.equal(repeatedJob.state, 'completed', JSON.stringify(repeatedJob.delegation?.agent?.feedback));
+        const afterHotels = tasks.queryOntology(principal, { version: 2, taskId: repeated.id, query: { type: 'HotelProperty' } }).items;
+        assert.deepEqual(afterHotels.map(o => [o.ref, o.revision]), beforeHotels.map(o => [o.ref, o.revision]));
+        assert.equal(calls, 2);
+        assert.throws(() => tasks.queryOntology(principal, { version: 2, taskId: repeated.id, query: { object: oldReceipt } }), /not available|INSUFFICIENT_ACCESS/,
+          'Replacing current evidence must not grant access to the previous task receipt');
         if (mode === 'native-goal') {
           assert.equal(raw.delegation!.agent!.programRef.id, 'eigos.goal');
           assert.equal(

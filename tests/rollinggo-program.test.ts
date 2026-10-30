@@ -41,7 +41,7 @@ test('hotel search completes through the task model with source evidence and no 
               {
                 hotelId: 1,
                 name: 'Synthetic Taipei Hotel',
-                price: { hasPrice: true, currency: 'USD', lowestPrice: 80 },
+                price: { hasPrice: true, currency: 'USD', lowestPrice: calls === 1 ? 80 : 70 },
               },
             ],
             observedAt: new Date().toISOString(),
@@ -135,6 +135,19 @@ test('hotel search completes through the task model with source evidence and no 
           job.artifact?.data.result &&
             'rollingGoAnswer' in job.artifact.data.result,
         );
+        const hotel = store.ontology.query(owner, { type: 'HotelProperty' }).items[0]!;
+        const observation = job.delegation!.agent!.observations[0]!;
+        assert.deepEqual(store.ontology.related(owner, observation, 'hotels', { remaining: 1000 })!.map(value => value.ref), [hotel.ref]);
+        const second = b.submit({ goal: 'Search Taipei hotels again', executionEnvironment: 'sandbox' });
+        for (let n = 0; n < 10 && ['submitted', 'working'].includes(store.get(owner, second.id).state); n++) await b.run();
+        assert.equal(store.get(owner, second.id).state, 'completed');
+        assert.equal(calls, 2);
+        const hotels = store.ontology.query(owner, { type: 'HotelProperty' }).items;
+        assert.equal(hotels.length, 1); assert.equal(hotels[0]!.revision, hotel.revision);
+        const cheaper = store.ontology.query(owner, { type: 'HotelPrice', where: [{ property: 'referenceAmount', op: 'lt', value: '75' }] }).items;
+        assert.equal(cheaper.length, 1); assert.equal(cheaper[0]!.properties.currency, 'USD');
+        assert.equal(cheaper[0]!.properties.priceBasis, 'unknown');
+        assert.equal(store.ontology.evaluate(owner, { function: 'businessFactStatus', object: cheaper[0]!.ref }).status, 'known');
         return;
       }
       await b.run();

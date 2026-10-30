@@ -230,6 +230,7 @@ test('unused custom source types may retire while populated source types still r
 test('new actions may restore exact compiler-generated links after old actions retire without reviving business identities', () => {
   const store = new JobStore(':memory:');
   try {
+    const kernelGenerated = store.definitions.active().document.links.filter(link => link.resourceId.startsWith('generated:')).map(link => link.id).sort();
     const fixture = publishManagedFixture(store, owner, 'generated-reuse.definition');
     let retire = store.definitions.createDraft(owner, fixture.ontologyId, 'Retire all old managed actions');
     for (const action of managedFixtureActions) retire = store.definitions.retireResource(owner, retire.id, retire.revision, action.resourceId);
@@ -237,7 +238,7 @@ test('new actions may restore exact compiler-generated links after old actions r
     const withoutActions = store.definitions.publish(owner, retire.id, retire.revision).release;
     store.definitions.activate(owner, withoutActions, store.definitions.namespace(fixture.ontologyId).generation);
     assert.equal(store.definitions.resolve(withoutActions).model.hasType('OfficeAsset'), true);
-    assert.equal(store.definitions.resolve(withoutActions).document.links.filter(link => link.resourceId.startsWith('generated:')).length, 0);
+    assert.deepEqual(store.definitions.resolve(withoutActions).document.links.filter(link => link.resourceId.startsWith('generated:')).map(link => link.id).sort(), kernelGenerated);
     let next = store.definitions.createDraft(owner, fixture.ontologyId, 'Add a genuinely new action');
     const action = { ...structuredClone(managedFixtureActions[0]!), id: 'CreateNewOfficeAsset', resourceId: 'review:action:CreateNewOfficeAsset' };
     next = store.definitions.putResource(owner, next.id, next.revision, 'action', action);

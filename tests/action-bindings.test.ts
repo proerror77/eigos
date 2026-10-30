@@ -18,7 +18,7 @@ import { DefinitionService } from '../packages/ontology/definition-service.js';
 import { principal } from './backend-fixture.js';
 
 const request: ServiceRequest = { id: 'task-1', revision: 1, originalGoal: 'Compare two sources', requirements: [], messages: [] };
-function fixture(extraPrograms = 0) {
+function fixture(extraPrograms = 0, withListing = false) {
   const db = new DatabaseSync(':memory:'), registry = new TrustedDefinitionRegistry();
   const object = (id: string): SerializableObjectType => ({ resourceId: `test:object:${id}`, id, version: '1', name: id, description: id, aliases: [], primaryKey: 'id', titleKey: 'id', writePolicy: 'source', properties: {
     id: { kind: 'string', description: 'Identity', source: 'Owned fixture', required: true, schema: { type: 'string', minLength: 1, maxLength: 200 } },
@@ -34,10 +34,12 @@ function fixture(extraPrograms = 0) {
   const model = compileOntologyDocument(document, registry), release = { ontologyId: document.id, releaseId: 'release-1', digest: digest(document) };
   const graph = new OntologyObjectStore(db, model, Date.now, undefined, { ontologyId: document.id, releaseRef: release });
   graph.ingest('alice', { objects: [{ ref: { type: 'ServiceRequest', id: request.id }, properties: { id: request.id, revision: 1 } }] }, { kind: 'synthetic', id: 'discovery-fixture', observedAt: new Date().toISOString() });
-  const flags = { permitted: true, connected: true, digest: 'a'.repeat(64), invokes: 0 };
+  const flags = { permitted: true, connected: true, enabled: true, bindingDigest: 'a'.repeat(64), digest: 'a'.repeat(64), invokes: 0 };
   const program = (id: string, environment: 'local' | 'sandbox' = 'local'): AgentProgram => ({
     ref: { id, version: '1' }, get configurationDigest() { return flags.digest; }, actionIds: ['ReadA', 'ReadB', 'ReadC'], guidance: 'Synthetic metadata only', completionSchema: {},
     permitted: owner => flags.permitted && owner === 'alice', sourceAuthorization: () => ({ provider: 'fixture', state: flags.connected ? 'connected' : 'revoked', nextAction: flags.connected ? 'continue' : 'connect' }),
+    ...(withListing ? { listingBinding: () => ({ ref: { id: `binding.${id}`, version: '1' }, capabilityRef: { id, version: '1' }, providerId: id, channelId: id, adapterId: id, protocol: 'local' as const,
+      enabled: flags.enabled, configurationDigest: flags.bindingDigest, verification: { level: 'local_test' as const, evidenceRefs: [] }, recovery: { idempotency: 'none' as const, lookup: false } }) } : {}),
     capability: () => ({ ref: { id, version: '1' }, ontologyRef: { id: 'test.discovery', version: '1' }, name: id, description: 'Synthetic source', tags: [], inputSchema: z.toJSONSchema(z.strictObject({})), ontology: {}, actions: [{ ref: { id: 'ReadA', version: '1' }, effect: 'read' }], predicates: [], verifierRef: { id: 'fixture', version: '1' }, environment }),
     initialize: () => ({ scope: { type: 'ServiceRequest', id: request.id }, input: {} }), schema: () => schema,
     definition: (graph, id) => graph.model.action(id), validate: () => {},
@@ -132,6 +134,10 @@ test('bounded bootstrap and binding pagination can discover a service omitted af
     const page = f.catalog.summaryPage('alice', 16);
     assert.equal(page.items.length, 16); assert.equal(page.hasMore, true);
     assert(!page.items.some(item => item.ref.id === 'extra.source.19'));
+    const exact = f.catalog.summaryPage('alice', 16, 'live', f.graph, { id: 'extra.source.19', version: '1' });
+    assert.deepEqual(exact.items.map(item => item.ref.id), ['extra.source.19']); assert.equal(exact.hasMore, false);
+    assert.equal(f.catalog.summaryPage('alice', 16, 'live', f.graph, { id: 'extra.source.19', version: '2' }).items.length, 0);
+    assert.equal(f.catalog.summaryPage('alice', 16, 'live', f.graph, { id: 'sandbox.source', version: '1' }).items.length, 0);
     const found = f.catalog.discoverActions(f.graph, 'alice', request, { search: 'extra.source.19', actionId: 'ReadA', limit: 1 });
     assert.equal(found.items[0]!.bindings.length, 1);
     assert.equal(found.items[0]!.bindings[0]!.pin.programRef.id, 'extra.source.19');
@@ -145,8 +151,25 @@ test('bounded bootstrap and binding pagination can discover a service omitted af
     const last = rows.find(binding => binding.pin.programRef.id === 'extra.source.19')!;
     assert(last); assert.equal(f.catalog.resolveActionBinding(f.graph, 'alice', request, last.pin).program.ref.id, 'extra.source.19');
     f.flags.permitted = false;
+    assert.equal(f.catalog.summaryPage('alice', 16, 'live', f.graph, { id: 'extra.source.19', version: '1' }).items.length, 0);
     assert.equal(f.catalog.discoverActions(f.graph, 'alice', request, { search: 'extra.source.19' }).items.length, 0);
     assert.equal(f.catalog.summaryPage('alice').hasMore, false);
     assert.equal(f.flags.invokes, 0);
+  } finally { f.db.close(); }
+});
+
+test('action availability and discovery agree on disabled bindings, configuration and source authorization', () => {
+  const f = fixture(0, true);
+  const check = (readiness: string) => {
+    const result = f.catalog.discoverActions(f.graph, 'alice', request, { actionId: 'ReadA' });
+    assert(result.items[0]!.bindings.every(binding => binding.readiness === readiness));
+    assert.equal(f.catalog.actionAvailability(f.graph, 'alice', 'ReadA').status, readiness === 'ready' ? 'executable' : 'handler_unavailable');
+  };
+  try {
+    check('ready'); f.flags.enabled = false; check('disabled');
+    assert.equal(f.catalog.summaryPage('alice', 16, 'live', f.graph, { id: 'source.one', version: '1' }).items.length, 0);
+    f.flags.enabled = true; f.flags.bindingDigest = 'b'.repeat(64); check('disabled');
+    f.flags.bindingDigest = f.flags.digest; f.flags.connected = false; check('source_authorization_required');
+    f.flags.connected = true; check('ready'); assert.equal(f.flags.invokes, 0);
   } finally { f.db.close(); }
 });

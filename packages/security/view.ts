@@ -8,7 +8,7 @@ import type { SecurityStore } from './store.js';
 import { SecurityError } from './store.js';
 import type { AuthorizationScope } from './context.js';
 
-export const secureDescribeSchema = z.strictObject({ taskId: z.uuid().optional(), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: z.string().max(80).optional() });
+export const secureDescribeSchema = z.strictObject({ taskId: z.uuid().optional(), kind: z.enum(['types', 'actions', 'functions']).optional(), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).default(3), after: z.string().max(80).optional() });
 export const secureQuerySchema = z.strictObject({ version: z.literal(2), taskId: z.uuid(), expectedRequestRevision: z.number().int().positive().optional(), query: objectQuerySchema });
 // Discovery does not enumerate hidden function IDs or their argument schemas.
 // The actual registered function schema is validated after resource access.
@@ -17,24 +17,29 @@ export const secureEvaluateSchema = z.strictObject({ version: z.literal(2), task
 export const checkAccessSchema = z.strictObject({ taskId: z.uuid(), operation: z.enum(['task.query', 'task.result.read','resource.view','function.invoke','action.execute','artifact.export']), object: objectRefSchema.optional(), fields: z.array(nameSchema).max(200).optional(),
   resource:z.strictObject({kind:z.enum(['objectType','interface','linkType','actionType','function']),id:nameSchema}).optional(),artifactId:z.uuid().optional() });
 
-export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: { search?: string; limit?: number; after?: string } = {}, model: OntologyObjectStore['model'] = security.model) {
+export function authorizedDefinitions(security: SecurityStore, scope: AuthorizationScope, model: OntologyObjectStore['model'] = security.model) {
   security.policies.assertModel(model);
   const policy = security.policies, parent = security.agentGrant(scope.actor.installationId);
-  const reviewedType = (id: string) => { try { return model.hasType(id) && model.fingerprint(id) === security.model.fingerprint(id); } catch { return false; } };
-  const typeAllowed = (id: string) => reviewedType(id) && policy.resourceAllowed(scope, model.isInterface(id) ? 'interface' : 'objectType', id)
-    && (model.isInterface(id) ? model.concreteTypes(id).some(t => parent.resources.some(r => r.type === t) && policy.resourceAllowed(scope, 'objectType', t)) : parent.resources.some(r => r.type === id));
+  const reviewedType = (id: string) => { try {
+    if (!model.hasType(id) || !security.model.hasType(id) || model.isInterface(id) !== security.model.isInterface(id)) return false;
+    return model.isInterface(id) ? digest(model.describeType(id)) === digest(security.model.describeType(id)) : model.fingerprint(id) === security.model.fingerprint(id);
+  } catch { return false; } };
+  const typeAllowed = (id: string): boolean => reviewedType(id) && policy.resourceAllowed(scope, model.isInterface(id) ? 'interface' : 'objectType', id)
+    && (model.isInterface(id) ? model.concreteTypes(id).some(typeAllowed) : parent.resources.some(r => r.type === id));
   const types = model.typeIds().filter(typeAllowed).sort();
   const fields = (type: string) => Object.fromEntries(Object.entries(policy.fields(type)).filter(([name]) => {
     const concrete = model.concreteTypes(type).filter(t => typeAllowed(t));
     return concrete.some(t => { const field = model.propertyName(t, type, name); return parent.resources.some(r => r.type === t && r.fields.includes(field)) && policy.fieldPolicy(t, field) !== 'internal_only'; });
   }).map(([name, property]) => [name, { description: property.description, kind: property.kind, required: !!property.required,
     ...(property.derived && policy.resourceAllowed(scope, 'function', property.derived) ? { derived: property.derived } : {}), schema: z.toJSONSchema(property.schema) }]));
-  const selected = types.filter(id => (!input.after || id > input.after) && (!input.search || JSON.stringify({id,fields:fields(id)}).toLowerCase().includes(input.search.toLowerCase())));
-  const ids = selected.slice(0, input.limit ?? 3);
-  const definitions = ids.map(id => {
+  const definitions = types.map(id => {
     const concrete = !model.isInterface(id), def = concrete ? model.object(id) : undefined;
-    return { kind: concrete ? 'object' : 'interface', id, ...(def ? { version: def.version, name: def.name, description: def.description,primaryKey:def.primaryKey,titleKey:def.titleKey } : {}), properties: fields(id),
-      links: concrete ? model.sides(id).filter(s => typeAllowed(s.other.type) && policy.resourceAllowed(scope, 'linkType', s.link.id)).map(s => ({ id: s.link.id, name: s.side.name, target: s.other.type, many: s.side.many })) : [] };
+    return { kind: concrete ? 'object' : 'interface', id, ...(def ? { version: def.version, name: def.name, description: def.description,primaryKey:def.primaryKey,titleKey:def.titleKey,
+      interfaces: (def.interfaces ?? []).filter(view => typeAllowed(view.id)).map(view => ({ id: view.id })) } : { description: (model.describeType(id) as { description: string }).description }), properties: fields(id),
+      links: concrete ? model.sides(id).filter(s => typeAllowed(s.other.type) && policy.resourceAllowed(scope, 'linkType', s.link.id)).map(s => ({ id: s.link.id, name: s.side.name, target: s.other.type, many: s.side.many }))
+        : ((model.describeType(id) as { linkConstraints: { name: string; target: string; many: boolean }[] }).linkConstraints).filter(link => typeAllowed(link.target) && model.concreteTypes(id).filter(typeAllowed).some(type => {
+          try { return policy.resourceAllowed(scope, 'linkType', model.navigation(type, link.name, id).link.id); } catch { return false; }
+        })).map(({ name, target, many }) => ({ name, target, many })) };
   });
   const actions = model.actionIds().map(id => model.action(id)).filter(a => policy.resourceAllowed(scope, 'actionType', a.id) && Object.values(a.inputs).every(typeAllowed)
     && a.changes.every(change => typeAllowed(change.split('.')[0]!)) && (a.read?.mcp?.requires??[]).every(r=>typeAllowed(r.objectType) && (!r.action || policy.resourceAllowed(scope,'actionType',r.action)) && policy.resourceAllowed(scope,'function',r.evaluate) && (!r.derive || policy.resourceAllowed(scope,'function',r.derive.function)))
@@ -46,10 +51,33 @@ export function describeAuthorized(security: SecurityStore, scope: Authorization
     const schema=functionCallSchema.options.find(schema=>schema.shape.function.value===f.id);
     return {...f,...(schema?{inputSchema:z.toJSONSchema(schema)}:{})};
   });
+  // Build one authorized definition set for internal context selection and public paging.
+  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: definitions, actions, functions }) }, types: definitions, actions, functions };
+}
+
+export function describeAuthorized(security: SecurityStore, scope: AuthorizationScope, input: { kind?: 'types' | 'actions' | 'functions'; search?: string; limit?: number; after?: string; actions?: string[]; functions?: string[] } = {}, model: OntologyObjectStore['model'] = security.model) {
+  const catalogue = authorizedDefinitions(security, scope, model), { types: definitions, actions, functions } = catalogue;
+  const kind = input.kind ?? 'types', search = input.search?.trim().toLowerCase();
+  const page = <T extends { id: string }>(values: T[]) => {
+    const selected = values.filter(value => (!input.after || value.id > input.after) && (!search || JSON.stringify(value).toLowerCase().includes(search))).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const items = selected.slice(0, input.limit ?? 3), hasMore = selected.length > items.length;
+    return { items, hasMore, next: hasMore ? items.at(-1)?.id : undefined };
+  };
+  const typePage = page(kind === 'types' ? definitions : []), actionPage = page(kind === 'actions' ? actions : []), functionPage = page(kind === 'functions' ? functions : []);
+  const generic = new Set(['ServiceRequest', 'Provider', 'Channel', 'SourceReceipt', 'EvidenceBacked']);
+  const relevant = (type: string) => typePage.items.some(item => !generic.has(item.id) && (item.id === type || model.implements(item.id, type)));
+  const relatedActions = actions.filter(action => Object.values(action.inputs).some(relevant) || action.changes.some(change => relevant(change.split('.')[0]!))
+    || !!action.read && relevant(action.read.resultType) || !!action.operation && relevant(action.operation.resultType));
+  const relatedFunctions = functions.filter(fn => fn.inputTypes.some(relevant));
+  if (input.actions?.some(id => !actions.some(action => action.id === id)) || input.functions?.some(id => !functions.some(fn => fn.id === id))) throw new SecurityError('INSUFFICIENT_ACCESS');
+  const paging = kind === 'types' ? typePage : kind === 'actions' ? actionPage : functionPage;
   // The external digest depends only on the authorized definitions. No private
   // model fingerprint or hidden count/continuation is exposed.
-  return { model: { id: model.ref.id, version: 'authorized.v2', digest: digest({ types: types.map(id => ({ id, fields: fields(id) })), actions, functions }) },
-    types: definitions, actions, functions, hasMore: selected.length > ids.length, next: selected.length > ids.length ? ids.at(-1) : undefined };
+  return { model: catalogue.model,
+    kind, types: typePage.items,
+    actions: input.actions ? actions.filter(action => input.actions!.includes(action.id)) : kind === 'actions' ? actionPage.items : kind === 'types' ? relatedActions : [],
+    functions: input.functions ? functions.filter(fn => input.functions!.includes(fn.id)) : kind === 'functions' ? functionPage.items : kind === 'types' ? relatedFunctions : [],
+    hasMore: paging.hasMore, next: paging.next };
 }
 
 export class AuthorizedOntologyView {

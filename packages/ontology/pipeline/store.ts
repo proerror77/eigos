@@ -55,7 +55,9 @@ export class PipelineStore {
     return intake;
   }
   contract(model: OntologyModel, intake: PipelineIntake): string {
+    const links = [...new Set(intake.mappings.flatMap(mapping => mapping.links?.map(link => link.linkType) ?? []))].sort();
     return digest({ actions: intake.actions.map(action => ({ id: action.actionId, definition: model.action(action.actionId) })),
+      ...(links.length ? { links: links.map(id => model.link(id)) } : {}),
       types: [...new Set([...intake.mappings.map(mapping => mapping.objectType), ...intake.vocabulary.map(term => term.objectType)])].sort().map(type => ({ type, fingerprint: model.fingerprint(type) })) });
   }
   private check(model: OntologyModel, intake: PipelineIntake): string[] {
@@ -74,6 +76,11 @@ export class PipelineStore {
       }
       for (const mapping of intake.mappings) {
         const type = model.object(mapping.objectType);
+        for (const item of mapping.links ?? []) {
+          const target = intake.mappings.find(value => value.id === item.targetMapping), link = model.link(item.linkType);
+          if (!target || model.linkWritePolicy(item.linkType) !== 'source' || !model.implements(mapping.objectType, link.from.type)
+            || !model.implements(target.objectType, link.to.type) || item.many && !link.from.many) issues.push(`Mapping ${mapping.id} has an incompatible relationship ${item.linkType}`);
+        }
         if (mapping.fields.some(field => field.to[0] === type.primaryKey || !type.properties[field.to[0]!])) issues.push(`Mapping ${mapping.id} targets an unknown field or source identity`);
         const cases = intake.fixtures.filter(fixture => fixture.mappingId === mapping.id);
         if (!cases.length) issues.push(`Mapping ${mapping.id} has no synthetic contract examples`);

@@ -11,10 +11,12 @@ import { actionDiscoverySchema, type ActionBindingPin, type ActionDiscoveryEntry
 import { actionEffects, actionVersion } from '../ontology/composition-contract.js';
 import { permittedCapability, permittedProgram, secureProgram, secureAdapter, secureDiscovery } from '../security/execution.js';
 import { businessModel } from '../ontology/business-model.js';
+import { currentKernelImplementation } from '../ontology/definition-store.js';
 import {requireRecovery} from '../security/recovery.js';
 import {SecurityError,type SecurityStore} from '../security/store.js';
 import { CompositionProgram } from '../coordinator/composition-program.js';
 import type { AgentActionMetadata } from './agent-action-binding.js';
+import type { ActionDefinition } from '../ontology/model.js';
 
 export interface AdapterContext { owner: string; request: ServiceRequest }
 /** A bounded view for reusing one adapter operation. It links to the real sealed
@@ -157,6 +159,20 @@ export class ExecutionCatalog {
     if (programs.length > 1) throw new DomainError('CONFLICT', 'Managed action program is ambiguous');
     return programs[0] ? secureProgram(programs[0], this.security) : undefined;
   }
+  private programReadiness(graph: OntologyObjectStore, owner: string, program: AgentProgram, action: ActionDefinition,
+    pipeline = graph.pipelineStatus(owner, program.ref, program.configurationDigest, action.id)): Pick<DiscoveredActionBinding, 'readiness' | 'reason'> {
+    let readiness: DiscoveredActionBinding['readiness'] = 'ready', reason = 'Exact task-scoped action binding; current inputs and effect authorization must still pass';
+    if (!graph.model.actionImplementation(action.id) || !action.composition) { readiness = 'contract_missing'; reason = 'This definition has not yet supplied the complete executable composition contract'; }
+    if (action.composition?.effectScope.recovery.kind === 'original_intent' && !program.recover) { readiness = 'contract_missing'; reason = 'Original-intent recovery has no configured read-only implementation'; }
+    try {
+      if (digest(program.definition(graph, action.id)) !== digest(action)) { readiness = 'contract_mismatch'; reason = 'Runtime action does not match this task ontology release'; }
+    } catch { readiness = 'contract_mismatch'; reason = 'Runtime cannot resolve this exact action definition'; }
+    const provider = program.listingBinding?.(), sourceAuthorization = program.sourceAuthorization?.(owner);
+    if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) { readiness = 'disabled'; reason = 'The registered provider binding is disabled or its configuration changed'; }
+    if (sourceAuthorization && sourceAuthorization.state !== 'connected') { readiness = 'source_authorization_required'; reason = 'The owner must connect or renew this source before invocation'; }
+    if (readiness === 'ready' && !['unmanaged', 'verified', 'validation_only'].includes(pipeline.status)) { readiness = 'pipeline_unverified'; reason = pipeline.reason; }
+    return { readiness, reason };
+  }
   /** Owner, environment and release filtering happens before any binding metadata is returned. */
   discoverActions(graph: OntologyObjectStore, owner: string, request: ServiceRequest, input: ActionDiscoveryQuery): ActionDiscoveryPage {
     const { cursor, ...query } = actionDiscoverySchema.parse(input), catalog = this.forOntology(graph, owner);
@@ -199,16 +215,8 @@ export class ExecutionCatalog {
           ...(action.composition ? { compositionDigest: digest(action.composition) } : {}), configurationDigest: program.configurationDigest,
           ...(provider ? { providerBinding: provider.ref, providerSnapshot: structuredClone(provider), providerDefinitionDigest: bindingDigest(provider) } : {}), ontologyRelease: graph.releaseRef!, ownerDigest: digest(owner), requestId: request.id, requestRevision: request.revision,
         };
-        let readiness: DiscoveredActionBinding['readiness'] = 'ready', reason = 'Exact task-scoped action binding; current inputs and effect authorization must still pass';
-        if (!implementation || !action.composition) { readiness = 'contract_missing'; reason = 'This definition has not yet supplied the complete executable composition contract'; }
-        if (action.composition?.effectScope.recovery.kind === 'original_intent' && !program.recover) { readiness = 'contract_missing'; reason = 'Original-intent recovery has no configured read-only implementation'; }
-        try {
-          if (digest(program.definition(graph, action.id)) !== digest(action)) { readiness = 'contract_mismatch'; reason = 'Runtime action does not match this task ontology release'; }
-        } catch { readiness = 'contract_mismatch'; reason = 'Runtime cannot resolve this exact action definition'; }
-        if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) { readiness = 'disabled'; reason = 'The registered provider binding is disabled or its configuration changed'; }
-        if (sourceAuthorization && sourceAuthorization.state !== 'connected') { readiness = 'source_authorization_required'; reason = 'The owner must connect or renew this source before invocation'; }
         const pipeline = pipelineFor(program, action.id);
-        if (readiness === 'ready' && !['unmanaged', 'verified', 'validation_only'].includes(pipeline.status)) { readiness = 'pipeline_unverified'; reason = pipeline.reason; }
+        let { readiness, reason } = catalog.programReadiness(graph, owner, program, action, pipeline);
         const conditions = query.serviceConditions, declared = pipeline.conditions;
         if (readiness === 'ready' && conditions && (!declared
           || conditions.region && !declared.regions.includes(conditions.region)
@@ -271,9 +279,7 @@ export class ExecutionCatalog {
       if (implementation.kind === 'declarative' && !program.callerManagedActions) continue;
       if (implementation.kind === 'trusted' && program.callerManagedActions) continue;
       try {
-        const definition = program.definition(graph, actionId);
-        if (digest(definition) !== digest(graph.model.action(actionId))) continue;
-        if (!['unmanaged', 'verified', 'validation_only'].includes(graph.pipelineStatus(owner, program.ref, program.configurationDigest, actionId).status)) continue;
+        if (catalog.programReadiness(graph, owner, program, graph.model.action(actionId)).readiness !== 'ready') continue;
         return { status: 'executable', kind: implementation.kind, reason: 'A permitted configured runtime supports this exact definition; invocation still requires task scope and current authorization' };
       } catch { /* A registered definition cannot substitute for a matching runtime. */ }
     }
@@ -352,7 +358,7 @@ export class ExecutionCatalog {
   /** Reviewed server metadata for the member control plane, without credentials,
    * source locators or an implicit grant for programs restricted to another owner. */
   securityProfiles(owner:string) {
-    const model = this.security?.model ?? this.ontologyModel ?? businessModel;
+    const model = this.security?.model ?? this.ontologyModel ?? currentKernelImplementation();
     return [...this.programs.values()].filter(p=>p.permitted(owner)).map(program=>{
       const ontology=program.capability().ontology;
       const objects=ontology && 'objects' in ontology && Array.isArray(ontology.objects) ? ontology.objects.filter((v):v is string=>typeof v==='string') : [];
@@ -387,15 +393,17 @@ export class ExecutionCatalog {
     return page.items;
   }
   /** Bounded bootstrap only. The action directory searches all permitted programs. */
-  summaryPage(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live', graph?: OntologyObjectStore) {
+  summaryPage(owner: string, limit = 16, environment: 'live' | 'sandbox' = 'live', graph?: OntologyObjectStore, capabilityRef?: Ref) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new DomainError('INVALID_INPUT', 'Invalid capability page size');
     const programs = (ref: Ref) => [...this.programs.values()].filter(program => {
       if (!sameRef(program.capability().ref, ref) || !permittedProgram(program) || !program.permitted(owner)) return false;
+      const provider = program.listingBinding?.();
+      if (provider && (!provider.enabled || provider.configurationDigest !== program.configurationDigest)) return false;
       if (!graph) return true;
       const states = program.actionIds.map(action => graph.pipelineStatus(owner, program.ref, program.configurationDigest, action).status);
       return states.every(status => status === 'unmanaged') || states.some(status => status === 'verified' || status === 'validation_only');
     });
-    const permitted = [...this.services.values()].filter(s => (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || programs(s.ref).length));
+    const permitted = [...this.services.values()].filter(s => (!capabilityRef || sameRef(s.ref, capabilityRef)) && (environment === 'sandbox' ? s.environment !== 'live' : s.environment !== 'sandbox') && (this.bindings(s.ref, owner).length || this.discoverySources(s.ref, owner).length || programs(s.ref).length));
     const items = permitted.slice(0, limit).map(s => ({ ref: structuredClone(s.ref), name: s.name, description: s.description, tags: [...s.tags], inputSchema: structuredClone(s.inputSchema), predicates: structuredClone(s.predicates), outcomePredicates: s.outcomePredicates ?? [], ...(s.goalOutcomes ? { goalOutcomes: structuredClone(s.goalOutcomes) } : {}), requirementRoles: structuredClone(s.requirementRoles ?? []), locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, scopeReviewMode: s.scopeReviewMode, ...(this.programs.get(key(s.ref)) instanceof CompositionProgram ? { composition: structuredClone(s.ontology) } : {}),
       sourceAuthorization: programs(s.ref).map(program => program.sourceAuthorization?.(owner)).find(Boolean) ?? this.bindings(s.ref, owner).map(b => this.adapters.get(b.adapterId)?.sourceAuthorization?.(owner)).find(Boolean) }));
     return { items, hasMore: permitted.length > items.length };

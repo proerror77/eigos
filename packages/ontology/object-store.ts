@@ -18,17 +18,18 @@ import { SecurityError } from '../security/store.js';
 import {accessDigest} from '../security/model.js';
 import {responseOnlyProjection,projectFunctionValue} from '../security/projections.js';
 
-const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).strict();
+export const sourceReadContextSchema = z.object({ query: objectRefSchema, collection: nameSchema, observation: objectRefSchema }).strict();
+const sourceSchema = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }), readContext: sourceReadContextSchema.optional() }).strict();
 export type ObjectSource = z.infer<typeof sourceSchema>;
 const filterSchema = z.object({ property: nameSchema, op: z.enum(['eq', 'lt', 'lte', 'gt', 'gte', 'in']), value: z.union([z.string().max(1000), z.number().finite(), z.boolean(), z.array(z.union([z.string().max(1000), z.number().finite(), z.boolean()])).min(1).max(20)]) }).strict();
 const queryFields = { select: z.array(nameSchema).min(1).max(20).optional(), where: z.array(filterSchema).max(8).default([]), limit: z.number().int().min(1).max(50).default(20), cursor: z.string().max(4096).optional() };
 export const objectQuerySchema = z.union([
   z.object({ type: nameSchema, currentDefinitionsOnly: z.boolean().optional(), ...queryFields }).strict(),
-  z.object({ from: objectRefSchema, link: nameSchema, ...queryFields }).strict(),
-  z.object({ object: objectRefSchema, ...queryFields }).strict(),
+  z.object({ from: objectRefSchema, as: nameSchema.optional(), link: nameSchema, ...queryFields }).strict(),
+  z.object({ object: objectRefSchema, as: nameSchema.optional(), ...queryFields }).strict(),
 ]).describe('Each response covers only the requested object, type, or named relationship. Empty results on one relationship do not prove that other relationships or participants are absent. Inspect pagination and state the scope actually read; unqueried information remains unverified.');
 export type ObjectQuery = z.input<typeof objectQuerySchema>;
-export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number }
+export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number; reuseIfUnchanged?: boolean; observedFields?: string[] }
 export interface LinkWrite { type: string; from: ObjectRef; to: ObjectRef }
 export function linkSnapshotDigest(ref: ObjectRef, links: LinkWrite[]): string {
   const values = links.filter(l => l.from.type === ref.type && l.from.id === ref.id && l.to.type !== 'SourceReceipt').map(l => ({ type: l.type, to: l.to }));
@@ -55,7 +56,7 @@ export interface OntologyQueryResult {
   datasetRevision: number;
   definitionScope?: 'current_definitions_only';
 }
-const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
+const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional(), reuseIfUnchanged: z.boolean().optional(), observedFields: z.array(nameSchema).min(1).max(100).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 function failure(message: string): never { throw new DomainError('INVALID_INPUT', message); }
@@ -241,6 +242,26 @@ export class OntologyObjectStore {
       return { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
     }));
   }
+  /** Seal the resulting relationships of a trusted source batch, including
+   * retained edges. This preview grants no read or mutation access to tools. */
+  projectedRelationshipDigest(owner: string, ref: ObjectRef, links: LinkWrite[], removeLinks: LinkWrite[] = []): string {
+    if (this.readOverlay || this.security && !authorizationScope()?.projection) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    this.assertReaderOwner(owner); this.model.object(ref.type);
+    const rows = this.db.prepare(`SELECT type,to_type,to_id,definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND from_type=? AND from_id=? AND to_type<>'SourceReceipt' LIMIT 201`).all(...this.ownerParameters(owner), ref.type, ref.id);
+    if (rows.length > 200) failure('Relationship evidence exceeds its bound');
+    const key = (link: LinkWrite) => JSON.stringify([link.type, link.to]);
+    const result = new Map<string, LinkWrite>();
+    for (const row of rows) {
+      this.assertLinkDefinition(String(row.type), String(row.definition_digest));
+      const link = { type: String(row.type), from: ref, to: { type: String(row.to_type), id: String(row.to_id) } };
+      result.set(key(link), link);
+    }
+    const applies = (link: LinkWrite) => link.from.type === ref.type && link.from.id === ref.id && link.to.type !== 'SourceReceipt';
+    for (const link of removeLinks.filter(applies)) result.delete(key(link));
+    for (const link of links.filter(applies)) result.set(key(link), link);
+    if (result.size > 200) failure('Relationship evidence exceeds its bound');
+    return linkSnapshotDigest(ref, [...result.values()]);
+  }
   /** Internal projection fast path. Checks exact owner/endpoint/definition
    * membership; this grants no write or execution authority to callers. */
   containsLinks(owner: string, links: LinkWrite[]): boolean {
@@ -332,6 +353,8 @@ export class OntologyObjectStore {
         assertTransactionPartyRoleWrite(this, owner, object, source);
         const def = this.model.object(object.ref.type);
         const properties = this.model.parseProperties(object.ref.type, object.properties);
+        if (object.observedFields && (!['provider', 'synthetic'].includes(source.kind) || object.observedFields.some(field => !Object.hasOwn(properties, field))
+          || ![def.primaryKey, def.titleKey].every(field => object.observedFields!.includes(field)))) failure('A source observation must cover the exact identity and title fields');
         if (properties[def.primaryKey] !== object.ref.id) failure('Primary key does not match object identity');
         if (object.ref.type === 'SourceReceipt' && source.kind === 'synthetic' && properties.evidenceLevel !== 'synthetic') failure('Synthetic evidence cannot be promoted');
         if (object.ref.type === 'SourceReceipt' && (source.kind === 'task' || source.kind === 'user' && properties.evidenceLevel !== 'user_asserted')) failure('User statements cannot become provider evidence');
@@ -342,8 +365,17 @@ export class OntologyObjectStore {
         if (Buffer.byteLength(body) > 48_000) failure('Ontology object byte limit exceeded');
         if (old) {
           this.assertObjectDefinition(object.ref.type, String(old.definition_digest), JSON.parse(String(old.body)).properties);
+          if (object.reuseIfUnchanged && Number(old.revision) !== object.expectedRevision) failure('Entity reuse requires an exact source-authoritative revision');
           if (String(old.body) === body) { touched.set(key(object.ref), object.ref); continue; }
           const previous = JSON.parse(String(old.body)).properties as Record<string, unknown>;
+          // A fresh authorized source can independently observe the same entity.
+          // Keep its semantic revision; recordProjection still binds this read's
+          // exact source and lineage to the current task. Managed edits do not use it.
+          if (object.reuseIfUnchanged && digest(previous) === digest(properties)) {
+            if (source.kind !== 'provider' && source.kind !== 'synthetic' || this.model.objectWritePolicy(object.ref.type) !== 'source'
+              || Number(old.revision) !== object.expectedRevision) failure('Entity reuse requires an exact source-authoritative revision');
+            touched.set(key(object.ref), object.ref); continue;
+          }
           if (object.ref.type === 'OrderLine' && (previous.sourceAgreement !== undefined || properties.sourceAgreement !== undefined)) {
             throw new DomainError('CONFLICT', 'An existing order line cannot acquire or replace its sealed source agreement');
           }
@@ -482,7 +514,8 @@ export class OntologyObjectStore {
         if(value!==undefined) properties[name]=value;
       }
     }
-    const value = { ...object, properties, ...(Object.keys(derived).length ? { derived } : {}) };
+    const { readContext: _readContext, ...publicSource } = object.source;
+    const value = { ...object, source: publicSource, properties, ...(Object.keys(derived).length ? { derived } : {}) };
     // Interface names are projected from concrete policy fields, never a second
     // independently visible copy of a hidden concrete field.
     if (guard && target === object.ref.type) return guard.project(owner, value, select);
@@ -498,8 +531,14 @@ export class OntologyObjectStore {
   private queryRaw(owner: string, input: ObjectQuery, budget: ReadBudget, readScope?: string): OntologyQueryResult {
     const args = objectQuerySchema.parse(input);
     this.assertReaderOwner(owner);
+    if ('as' in args && args.as) {
+      const ref = 'object' in args ? args.object : args.from;
+      if (!this.model.isInterface(args.as) || !this.model.implements(ref.type, args.as)) failure('Object does not implement the requested interface');
+      const guard = this.guard(); if (guard) guard.requireResource(guard.scope(owner), 'interface', args.as);
+    }
     const networkQuery = 'object' in args ? isVirtualRef(args.object) : 'type' in args ? isVirtualRef({ type: args.type })
-      : isVirtualRef(args.from) || networkLinkIds.has(this.model.navigation(args.from.type, args.link).link.id);
+      : isVirtualRef(args.from) || networkLinkIds.has(this.model.navigation(args.from.type, args.link, args.as).link.id);
+    if (networkQuery && 'as' in args && args.as) failure('Virtual network views do not support interface projection');
     if (networkQuery) return this.overlay(owner).query(args, budget);
     const guard = this.guard(), scope = guard?.scope(owner);
     const revision = this.revision(owner), queryDigest = digest({ ...args, cursor: undefined, ...(readScope ? { readScope } : {}) });
@@ -515,16 +554,16 @@ export class OntologyObjectStore {
     if ('object' in args) {
       guard?.requireObject(owner, args.object);
       this.raw(owner, args.object, budget);
-      target = args.object.type;
+      target = args.as ?? args.object.type;
       sql = `SELECT o.* FROM ${this.objectTable} o WHERE ${this.owned('o.')} AND o.type=? AND o.id=?`;
       params = [...this.ownerParameters(owner), args.object.type, args.object.id];
     } else if ('from' in args) {
       guard?.requireObject(owner, args.from);
       this.raw(owner, args.from, budget);
-      const nav = this.model.navigation(args.from.type, args.link);
+      const nav = this.model.navigation(args.from.type, args.link, args.as);
       historical = this.model.linkWritePolicy(nav.link.id) === 'source';
       if (guard && scope) guard.requireResource(scope, 'linkType', nav.link.id);
-      target = nav.other.type;
+      target = nav.viewType ?? nav.other.type;
       const side = nav.direction === 'forward' ? 'from' : 'to', other = nav.direction === 'forward' ? 'to' : 'from';
       const storedDefinitions = this.db.prepare(`SELECT DISTINCT definition_digest FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=? LIMIT 201`).all(...this.ownerParameters(owner), nav.link.id, args.from.type, args.from.id);
       if (storedDefinitions.length > 200) throw new DomainError('CONFLICT', 'Relationship definition read bound exceeded');

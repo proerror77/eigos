@@ -1,5 +1,5 @@
 import { authorizationScope } from '../security/context.js';
-import { describeAuthorized } from '../security/view.js';
+import { authorizedDefinitions } from '../security/view.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -12,9 +12,11 @@ import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import type { PlanningContextReceipt, PlanningDefinitionReceipt, PlanningReadReceipt } from '../ontology/planning-contract.js';
 import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
 import { compositionSummary } from '../ontology/composition-contract.js';
+import { requestedFactsSchema, type readRequestedFacts } from './requested-facts.js';
 
 export const taskContextSchema = z.strictObject({
   definitionReceiptId: z.string().min(1).max(200).optional().describe('Reuse a previously returned definition bundle only when its current model and binding still match'),
+  facts: requestedFactsSchema.optional().describe('Read selected business facts through shared interfaces; identical reads share one current query. Missing or stale facts identify the remaining information gap, without calling providers.'),
 });
 export const taskInstructionsSchema = z.strictObject({
   cursor: z.string().min(1).max(4000).optional(),
@@ -49,6 +51,7 @@ export interface TaskContextPayload {
   graph: { objects: ObjectView[]; links: LinkWrite[]; unreadRefs: ObjectRef[]; pendingRelationships: { from: ObjectRef; link: string; cursor?: string }[] };
   managedDiscovery?: { types: string[]; relationships: 'forward_managed_only' };
   definitions: { digest: string; originalReceiptId: string; reused: boolean; bundle: Record<string, unknown> };
+  requestedFacts?: ReturnType<typeof readRequestedFacts>;
 }
 export interface TaskContextRead {
   data: TaskContextPayload;
@@ -176,7 +179,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
   if (graph.security) {
-    const visible = describeAuthorized(graph.security.security, authorizationScope()!, {limit: graph.model.typeIds().length}, graph.model);
+    const visible = authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model);
     const actionIds = new Set(actions.map(action => action.id));
     const types: object[] = [], deferredTypes: string[] = []; let bytes = 0;
     for (const type of visible.types.filter(type => names.has(type.id))) {
@@ -185,7 +188,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     }
     return {model: visible.model, types, ...(deferredTypes.length ? {deferredTypes, definitionRetrieval:'describe_ontology'} : {}),
       actions: visible.actions.filter(action => actionIds.has(action.id)),
-      functions: visible.functions.filter(fn => fn.inputTypes.some(type => names.has(type)))};
+      functions: visible.functions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))))};
   }
   const allFunctions = graph.model.functionDefinitions();
   const functions = allFunctions.filter(fn => [...names].some(type => fn.inputTypes.some(input => graph.model.implements(type, input))));
