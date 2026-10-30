@@ -146,3 +146,47 @@ for (const connection of ['current', 'separate'] as const) test(`a ${connection}
     assert.throws(f.read, /not available|OUTPUT_NOT_ALLOWED/, 'A new read must inspect the changed dependency');
   } finally { f.close(); }
 });
+
+for (const connection of ['current', 'separate'] as const) test(`a ${connection}-connection heartbeat during a dependency read ${connection === 'separate' ? 'rechecks the same proof' : 'still invalidates the traversal'}`, t => {
+  const f = fixture(2), original = DatabaseSync.prototype.prepare;
+  let writes = 0, traversals = 0, callers = 0;
+  try {
+    t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
+      const statement = original.call(this, sql);
+      if (sql === 'SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?') {
+        const get = statement.get.bind(statement), writer = connection === 'current' ? this : f.db;
+        t.mock.method(statement, 'get', (...args: Parameters<typeof get>) => {
+          const row = Reflect.apply(get, statement, args); traversals++;
+          if (!writes++) original.call(writer, 'UPDATE security_manager SET expires_at=expires_at+1 WHERE slot=1').run();
+          return row;
+        });
+      }
+      return statement;
+    });
+    const read = () => f.within(() => { callers++; assert(f.policy.binding(authorizationScope()!, f.inputs.at(-1)!.object)); });
+    if (connection === 'separate') { read(); assert.equal(traversals, 2, 'The whole binding proof is read again after an external commit'); }
+    else { assert.throws(read, /POLICY_CHANGED/); assert.equal(traversals, 1); }
+    assert.equal(callers, 1, 'Retrying a binding never repeats its caller or a business operation');
+  } finally { f.close(); }
+});
+
+test('continuous external commits exhaust the bounded binding recheck', t => {
+  const f = fixture(2), original = DatabaseSync.prototype.prepare;
+  let traversals = 0;
+  try {
+    t.mock.method(DatabaseSync.prototype, 'prepare', function(this: DatabaseSync, sql: string) {
+      const statement = original.call(this, sql);
+      if (sql === 'SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?') {
+        const get = statement.get.bind(statement);
+        t.mock.method(statement, 'get', (...args: Parameters<typeof get>) => {
+          const row = Reflect.apply(get, statement, args); traversals++;
+          original.call(f.db, 'UPDATE security_manager SET expires_at=expires_at+1 WHERE slot=1').run();
+          return row;
+        });
+      }
+      return statement;
+    });
+    assert.throws(() => f.within(() => f.policy.binding(authorizationScope()!, f.inputs.at(-1)!.object)), /POLICY_CHANGED/);
+    assert.equal(traversals, 3, 'Initial traversal plus at most two rechecks');
+  } finally { f.close(); }
+});
