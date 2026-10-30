@@ -3402,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "4eb0fc468aff13fb37cb029a44f4151dbca4714e2803b7a36a7e7372b1153c8a",
+      "sourceDigest": "60718a95bb4b78ab44e2e87b20b362d966c1c4c3ca0c0b78af03067f76b8daa1",
       "channels": [
         "authorization_control"
       ],
@@ -4246,7 +4246,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "0fff1db84622f6709e9818ff3955244c6e65835caf2120c769c743c7d50aa513",
+      "sourceDigest": "aba1d9964fb59e97e917e425016a83320253912c860ebead0a3716fe2ed27e88",
       "channels": [
         "http",
         "mcp"

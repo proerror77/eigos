@@ -81,8 +81,9 @@ test('Foundation HTTP and MCP prepare one bounded task and A2A reads the same au
     const prepared = resultSchema.parse(response.value).result;
     await client.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers } }));
     const tools = (await client.listTools()).tools.map(tool => tool.name);
-    assert(!tools.includes('prepare_ontology_action') && !tools.includes('approve_ontology_action'));
-    assert.equal((await f.post('/ontology/v1/actions/prepare', {}, headers)).status, 404);
+    assert(tools.includes('prepare_ontology_action') && tools.includes('approve_ontology_action'));
+    assert.equal((await client.callTool({ name: 'prepare_ontology_action', arguments: { action: 'CreateOfficeAsset', input: {}, requestId: 'outside-personal-scope' } })).isError, true);
+    assert.equal((await f.post('/ontology/v1/actions/prepare', {}, headers)).status, 400);
     assert.equal((await f.post('/ontology/v1/query', { operation: 'list_definitions', ontologyId: namespace.id }, headers)).status, 403);
     const replay = await client.callTool({ name: 'manage_ontology_definitions', arguments: command });
     assert(!replay.isError, JSON.stringify(replay));

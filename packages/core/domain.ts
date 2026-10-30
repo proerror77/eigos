@@ -54,7 +54,7 @@ export const submitSchema = z.union([z.object({
   service: z.literal('eigos.delegate').default('eigos.delegate'), goal: z.string().trim().min(1).max(10000),
   deliverable: z.string().trim().min(1).max(4000).optional(), requirements: requirementsSchema.optional(), requestId: requestIdSchema,
   locationContext: locationContextSchema.optional(),
-  personalContext: personalContextInputSchema.optional(),
+  personalContext: z.lazy(() => personalContextInputSchema).optional(),
   executionEnvironment: z.enum(['live', 'sandbox']).optional(),
   executionBudget: executionBudgetProfileSchema.optional(),
   ontologyId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).optional(),
@@ -67,7 +67,7 @@ const answerReplySchema = z.object({
   expectedRevision: z.number().int().positive().optional(),
   requirements: requirementsSchema.optional(),
   locationContext: locationContextSchema.optional(),
-  personalContext: personalContextInputSchema.optional(),
+  personalContext: z.lazy(() => personalContextInputSchema).optional(),
   executionBudget: z.literal('extended').optional(),
 }).strict();
 export const replySchema = answerReplySchema;
