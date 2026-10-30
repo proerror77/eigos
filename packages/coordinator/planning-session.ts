@@ -218,6 +218,7 @@ export class OntologyPlanningSession {
         this.retrieved(query.object, true);
         if (taskObjectMembership(this.graph, this.owner, this.request, query.object) === 'foreign') throw new DomainError('FORBIDDEN', 'Object belongs to another request or revision');
       } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') {
+        if (taskObjectMembership(this.graph, this.owner, this.request, query.from) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship origin belongs to another request or revision');
         const nav = this.graph.model.navigation(query.from.type, query.link, query.as);
         const view = query.as && (this.graph.model.describeType(query.as) as { projectionOnly?: boolean }).projectionOnly && nav.direction === 'forward';
         if (!view && !this.managedRelationship(query.from, nav.side.name)) throw new DomainError('FORBIDDEN', 'Relationships require a current task object or an authorized forward managed link');
@@ -227,6 +228,7 @@ export class OntologyPlanningSession {
     if ('from' in query) this.retrieved(query.from, !!query.as);
     const queryScope = discovery ? digest({ requestId: this.request.id, requestRevision: this.request.revision, binding: this.options.taskContext?.program, types: this.managedDiscovery() }) : undefined;
     const result = this.graph.query(this.owner, query, undefined, queryScope);
+    if ('from' in query && query.as) this.remember(query.from);
     for (const object of result.items) {
       if (this.readScope === 'request' && !this.graph.security && taskObjectMembership(this.graph, this.owner, this.request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship points outside the current task revision');
       this.remember(object.ref, object.revision, true);

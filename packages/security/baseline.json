@@ -3001,7 +3001,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "1f37fa718df17e42479f8bb52a779afd482b6ec131293020a35fcfc76adb7814",
+      "sourceDigest": "3f6e6bc8666440ca9ad08bac9bf4ec767d59c53dc536a026bf3fb8659a6c7096",
       "channels": [
         "model",
         "query"

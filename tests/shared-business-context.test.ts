@@ -104,6 +104,9 @@ test('activity, Tokyo travel and shopping share interface reads, business refere
     }
     assert.equal(graph.model.definitionSnapshot().objects.length, originalCount, 'Applications do not create new per-scene ontology types');
     const travel = read(cases[1]!);
+    const focused = new OntologyPlanningSession(graph, owner, travel.request, [], () => {}, () => {}, 'request', [hotel]);
+    focused.call('query_ontology', { facts: [{ key: 'hotelAddress', query: { from: hotel, as: 'Located', link: 'location', select: ['address'] } }] });
+    assert(focused.receipts()[0]!.objects.some(object => object.ref.id === hotel.id), 'A focused relationship read pins its origin even without a preceding full context read');
     const old = graph.read(owner, hotelPlace);
     const updated = { ...old.properties, address: { text: '合成东京酒店地址 B' } }, newReceipt = { type: 'SourceReceipt', id: 'receipt:hotel-address-change' };
     graph.ingest(owner, { objects: [{ ref: hotelPlace, properties: updated, expectedRevision: old.revision }, { ref: newReceipt, properties: { receiptId: newReceipt.id, displayTitle: 'Changed address', safeSummary: 'Synthetic address change', sourceIdentity: 'synthetic-source', sourceEventId: 'hotel-address-change', observedAt: new Date().toISOString(), scope: 'public_locations', evidenceLevel: 'synthetic', contentDigest: digest(updated), subjects: [{ object: hotelPlace, digest: digest(updated), linksDigest: linkSnapshotDigest(hotelPlace, []) }] } }],
