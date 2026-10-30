@@ -17,13 +17,21 @@ import {didiDataflow,dataflowCompletion} from './didi-dataflow.js';
 /** Real Worker ownership with caller-controlled fixture time. CPU scheduling
  * does not advance authority time; the real-time test signal bounds waiting. */
 export async function runNativeDidiTask(store:JobStore,coordinator:Coordinator,owner:string,taskId:string,signal:AbortSignal,advanceTime:()=>void,until?:(job:ReturnType<JobStore['get']>)=>boolean) {
-  const worker=new Worker(store,{coordinator,pollMs:20,leaseMs:10000});
+  const worker=new Worker(store,{coordinator,pollMs:20,leaseMs:10000}), originalRun=coordinator.run;
+  let stopping:Promise<void>|undefined;
+  // Observe a committed decision boundary before another Worker claim can run.
+  // Polling alone can miss a rejection followed by a valid corrective decision.
+  if(until)coordinator.run=async(...args:Parameters<Coordinator['run']>)=>{
+    const result=await originalRun.apply(coordinator,args);
+    if(until(store.get(owner,taskId)))stopping??=worker.close();
+    return result;
+  };
   try {
     worker.start();
     while(['submitted','working'].includes(store.get(owner,taskId).state)&&!until?.(store.get(owner,taskId))) {
       signal.throwIfAborted();await new Promise(resolve=>setTimeout(resolve,20));advanceTime();
     }
-  }finally{await worker.close();}
+  }finally{try{await(stopping??worker.close());}finally{coordinator.run=originalRun;}}
 }
 
 export function securedDidiReasoner(program:DidiAgentProgram,mode:'direct'|'native-goal',options:{dataflow?:boolean;mutate?:(decision:AgentDecision)=>void}={}) {
