@@ -150,6 +150,47 @@ function eventDraft(store: JobStore, eventType = pipelineEventType, intake = eve
   return { namespace, draft, intake };
 }
 
+test('published source relationships resolve owned native identities atomically and invalidate consumers when the venue changes', () => {
+  const store = new JobStore(':memory:');
+  try {
+    const intake = eventIntake(store.ontology.model);
+    intake.mappings[0]!.links = [{ linkType: 'PipelineEventVenue', targetMapping: 'venue', nativeId: ['venueId'] }];
+    intake.fixtures[0]!.input.venueId = 'venue-a';
+    intake.mappings.push({ id: 'venue', objectType: 'PipelineVenue', nativeId: ['native'], maxAgeMs: 60000, fields: [{ from: ['name'], to: ['title'], optional: false }] });
+    intake.fixtures.push({ mappingId: 'venue', input: { native: 'venue-a', name: 'Synthetic venue A' }, expected: { title: 'Synthetic venue A' } });
+    const f = eventDraft(store, pipelineEventType, intake);
+    let draft = store.definitions.putResource(owner, f.draft.id, f.draft.revision, 'object', { ...pipelineEventType, id: 'PipelineVenue', resourceId: 'pipeline:test:venue', name: '场馆', properties: { id: pipelineEventType.properties.id!, title: pipelineEventType.properties.title! } });
+    draft = store.definitions.putResource(owner, draft.id, draft.revision, 'link', { id: 'PipelineEventVenue', resourceId: 'pipeline:test:event-venue', description: 'Event happens at this source venue', writePolicy: 'source',
+      from: { type: 'PipelineEvent', name: 'venueObject', many: false, required: true }, to: { type: 'PipelineVenue', name: 'events', many: true } });
+    assert(store.definitions.validatePipeline(owner, draft.id, draft.revision, intake.serviceId, expiry()).valid);
+    const release = store.definitions.publish(owner, draft.id, draft.revision).release;
+    store.definitions.activate(owner, release, f.namespace.generation);
+    const graph = store.ontologyForRelease(release), now = new Date().toISOString();
+    const sample = { eventId: 'venue-a', sourceAccount: 'account-a', sourceRevision: intake.source.revision, sourceDigest: intake.source.digest,
+      providerVersion: 1, observedAt: now, receivedAt: now, evidenceRefs: ['synthetic:venue'], evidenceLevel: 'synthetic' as const, payload: { native: 'venue-a', name: 'Synthetic venue A' } };
+    const a = store.ingestPipelineObservation(owner, release, intake.serviceId, 'venue', sample, 0);
+    const b = store.ingestPipelineObservation(owner, release, intake.serviceId, 'venue', { ...sample, eventId: 'venue-b', payload: { native: 'venue-b', name: 'Synthetic venue B' } }, 0);
+    const event = { ...sample, eventId: 'event-a', payload: { ...intake.fixtures[0]!.input, venueId: 'missing' } };
+    assert.throws(() => store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', event, 0), /target needs a current observation/);
+    assert.equal(graph.query(owner, { type: 'PipelineEvent' }).items.length, 0);
+    assert.throws(() => store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...event, sourceAccount: 'account-b', payload: { ...event.payload, venueId: 'venue-a' } }, 0), /target needs a current observation/);
+    const first = store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...event, payload: { ...event.payload, venueId: 'venue-a' } }, 0);
+    assert.deepEqual(graph.related(owner, first.object, 'venueObject', { remaining: 1000 })!.map(o => o.ref), [a.object]);
+    const object = graph.read(owner, first.object), snapshot = { ref: object.ref, revision: object.revision, propertiesDigest: digest(object.properties), linksDigest: graph.relationshipDigest(owner, object.ref, { remaining: 1000 }) };
+    store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]);
+    const tasks = new TaskService(store, { catalog: createExecutionCatalog({ store }) });
+    const task = tasks.submit(principal, { ontologyId: f.namespace.id, goal: 'Plan travel to this event venue', requestId: randomUUID() });
+    store.transaction(() => store.pipelineFacts.track(owner, f.namespace.id, task.id, 1, 'transport', first.object, ['title']));
+    const moved = store.ingestPipelineObservation(owner, release, intake.serviceId, 'event', { ...event, eventId: 'event-b', providerVersion: 2, payload: { ...event.payload, venueId: 'venue-b' } }, 1);
+    assert.equal(moved.semanticRevision, 2);
+    assert.deepEqual(graph.related(owner, first.object, 'venueObject', { remaining: 1000 })!.map(o => o.ref), [b.object]);
+    assert.equal(graph.related(owner, a.object, 'events', { remaining: 1000 })!.length, 0);
+    assert.throws(() => store.pipelineFacts.assertSnapshots(owner, graph, [snapshot]), /changed after planning/);
+    assert.equal(store.pipelineFacts.changes(owner, task.id, 1).length, 1);
+    assert.throws(() => graph.read('other-owner', first.object));
+  } finally { store.close(); }
+});
+
 test('pipeline regression: a fresh snapshot uses the same visible properties as planning', () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-pipeline-projection-')), path = join(directory, 'jobs.sqlite'), store = new JobStore(path);
   try {

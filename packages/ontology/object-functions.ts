@@ -1,4 +1,5 @@
 import { evaluateRollingGo } from './rollinggo-functions.js';
+import { evaluateBusinessFact } from './business-fact-functions.js';
 import { validateCallerOutcomeProof } from './caller-outcome-proof.js';
 import { evaluateOrderTest } from './didi-order-test-functions.js';
 import { evaluateRegistrationFunction } from './free-booking-functions.js';
@@ -36,7 +37,7 @@ const simple = (name: string) => z.object({ function: z.literal(name), object: o
 export const functionCallSchema = z.union([
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
-  simple('registrationStatus'), simple('rollingGoSearchStatus'),
+  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'),
   simple('shopifyCheckoutObservationStatus'),
   simple('shopifyPAPaymentStatus'),
   simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'), simple('taskOutcomeStatus'),
@@ -85,6 +86,8 @@ export function evaluateFunction(store: OntologyObjectStore, owner: string, inpu
   const orderTestResult = evaluateOrderTest(store, owner, input, budget);
   if (orderTestResult) return orderTestResult;
   const hotelResult = evaluateRollingGo(store, owner, input, budget);
+  const businessFactResult = evaluateBusinessFact(store, owner, input, budget);
+  if (businessFactResult) return businessFactResult;
   if (hotelResult) return hotelResult;
   const rideResult = evaluateRideEstimate(store, owner, input, budget);
   if (rideResult) return rideResult;

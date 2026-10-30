@@ -5,6 +5,8 @@ import { catalogActionSchemas, catalogObservationSchema, type CatalogObservation
 import { SHOPIFY_CATALOG_ORIGIN, ShopifyReadOnlyClient, shopifyMerchantOrigin } from '../capabilities/shopify/read-only.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectWrite, type LinkWrite } from './object-store.js';
 import type { ObjectRef } from './model.js';
+import { businessFactsEnabled } from './business-fact-projection.js';
+import { sourceProof } from './object-evidence.js';
 
 export function checkedAgentCatalogObservation(value: unknown): CatalogObservation {
   const s = catalogObservationSchema.parse(value), { contentDigest, ...body } = s;
@@ -57,7 +59,7 @@ export function projectAgentCatalogObservation(graph: OntologyObjectStore, owner
     let old;
     try { old = graph.read(owner, ref); } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
     const changed = !old || digest(old.properties) !== digest(properties);
-    if (changed) objects.push({ ref, properties, ...(old ? { expectedRevision: old.revision } : {}) });
+    if (changed || businessFactsEnabled(graph)) objects.push({ ref, properties, ...(old ? { expectedRevision: old.revision, ...(businessFactsEnabled(graph) && !changed ? { reuseIfUnchanged: true } : {}) } : {}) });
     return { ref, revision: (old?.revision ?? 0) + (changed ? 1 : 0), changed, old };
   };
   add(subject, `${s.merchant.name}: ${s.action}`, { requestRevision: s.requestRevision, snapshot: s }, true);
@@ -76,13 +78,16 @@ export function projectAgentCatalogObservation(graph: OntologyObjectStore, owner
       let previous;
       if (variant.old) {
         const observations = graph.related(owner, ref, 'currentCatalogObservation', { remaining: 1000 });
-        if (observations?.length !== 1) throw new DomainError('CONFLICT', 'Current catalog variant provenance is missing or ambiguous');
-        previous = checkedAgentCatalogObservation(observations[0]!.properties.snapshot);
-        if (previous.merchant.shopId !== s.merchant.shopId || !previous.items.some(i => i.variantId === item.variantId)) throw new DomainError('CONFLICT', 'Current catalog variant belongs to another source identity');
+        const checkoutItems = businessFactsEnabled(graph) && observations?.length === 0 ? graph.related(owner, ref, 'checkoutItems', { remaining: 1000 }) : undefined;
+        const checkoutOrigin = checkoutItems?.some(item => sourceProof(graph, owner, item.ref, { remaining: 1000 }));
+        if (observations?.length !== 1 && !checkoutOrigin) throw new DomainError('CONFLICT', 'Current catalog variant provenance is missing or ambiguous');
+        if (checkoutOrigin && variant.changed && Date.parse(s.receipt.startedAt) < Date.parse(variant.old.source.observedAt)) throw new DomainError('CONFLICT', 'An older catalog read cannot replace a checkout-observed variant');
+        previous = observations?.length === 1 ? checkedAgentCatalogObservation(observations[0]!.properties.snapshot) : undefined;
+        if (previous && (previous.merchant.shopId !== s.merchant.shopId || !previous.items.some(i => i.variantId === item.variantId))) throw new DomainError('CONFLICT', 'Current catalog variant belongs to another source identity');
         // Changed specifications from an older or overlapping read cannot
         // displace a newer observed specification. An explicit fresh read is
         // required to settle disagreement.
-        if (variant.changed && Date.parse(s.receipt.startedAt) < Date.parse(previous.observedAt)) throw new DomainError('CONFLICT', 'An older or overlapping catalog read cannot replace the current product specification');
+        if (previous && variant.changed && Date.parse(s.receipt.startedAt) < Date.parse(previous.observedAt)) throw new DomainError('CONFLICT', 'An older or overlapping catalog read cannot replace the current product specification');
       }
       if (!previous || Date.parse(s.receipt.startedAt) >= Date.parse(previous.receipt.startedAt) && Date.parse(s.observedAt) >= Date.parse(previous.observedAt)) {
         if (previous) removeLinks.push({ type: 'ProductVariantCurrentCatalogObservation', from: ref, to: { type: 'CatalogObservation', id: previous.id } });

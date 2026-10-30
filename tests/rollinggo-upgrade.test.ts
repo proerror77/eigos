@@ -58,13 +58,17 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       assert.throws(() => store.definitions.installRollingGoReadonly(before.active, before.generation + 1), /changed/);
       const installed = store.definitions.installRollingGoReadonly(before.active, before.generation);
       assert.equal(installed.generation, before.generation + 1);
-      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.equal(store.definitions.active().model.ref.digest, '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127');
       assert.equal(store.definitions.active().model.action('SearchRollingGoHotels').read?.effect, 'read');
       assert.deepEqual(store.definitions.installRollingGoReadonly(installed.active, installed.generation), installed);
       assert.deepEqual(store.get(fixture.owner, fixture.taskId).delegation!.ontologyRelease, fixture.release);
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
       assert.equal(store.definitions.legacy().model.ref.version, '15');
-      assert.equal(CURRENT_KERNEL_VERSION, '23');
+      const facts = store.definitions.installBusinessFacts(installed.active, installed.generation);
+      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.deepEqual(store.definitions.installBusinessFacts(facts.active, facts.generation), facts);
+      assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
+      assert.equal(CURRENT_KERNEL_VERSION, '24');
     } finally {
       store.close();
     }

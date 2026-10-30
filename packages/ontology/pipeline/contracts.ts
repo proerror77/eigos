@@ -19,9 +19,14 @@ export const pipelineFieldSchema = z.strictObject({
 export const pipelineMappingSchema = z.strictObject({
   id: resourceIdSchema, objectType: nameSchema, nativeId: path,
   fields: z.array(pipelineFieldSchema).min(1).max(50),
+  // Targets resolve within this intake's source/account/owner namespace.
+  // Raw payloads cannot select an arbitrary object ID or another source.
+  links: z.array(z.strictObject({ linkType: nameSchema, targetMapping: resourceIdSchema, nativeId: path,
+    many: z.boolean().optional(), optional: z.boolean().optional() })).max(20).optional(),
   maxAgeMs: z.number().int().min(1000).max(30 * 86400000),
 }).superRefine((mapping, context) => {
   const targets = mapping.fields.map(value => value.to.join('.'));
+  if (new Set(mapping.links?.map(link => link.linkType)).size !== (mapping.links?.length ?? 0)) context.addIssue({ code: 'custom', message: 'Each relationship mapping must have one authoritative source field' });
   if (targets.some((target, index) => targets.some((other, j) => j !== index && (target === other || target.startsWith(other + '.'))))) {
     context.addIssue({ code: 'custom', message: 'Mapping targets must be unique and cannot overlap' });
   }
@@ -55,6 +60,7 @@ export const pipelineIntakeSchema = z.strictObject({
   }
   if (value.actions.some(action => action.readbackActionId && !value.actions.some(other => other.actionId === action.readbackActionId))) context.addIssue({ code: 'custom', message: 'Readback must reference an action in the same intake' });
   if (value.fixtures.some(fixture => !value.mappings.some(mapping => mapping.id === fixture.mappingId))) context.addIssue({ code: 'custom', message: 'Fixture refers to an unknown mapping' });
+  if (value.mappings.some(mapping => mapping.links?.some(link => !value.mappings.some(target => target.id === link.targetMapping)))) context.addIssue({ code: 'custom', message: 'Relationship target must name a mapping in the same intake' });
   if (value.environment !== 'live' && value.actions.some(action => action.requiredEvidence.startsWith('live_'))) context.addIssue({ code: 'custom', message: 'Non-live intakes cannot require live evidence' });
   if (value.environment === 'live' && value.actions.some(action => action.requiredEvidence === 'synthetic')) context.addIssue({ code: 'custom', message: 'Synthetic evidence cannot admit live execution' });
   if (value.environment !== 'local' && value.actions.some(action => action.requiredEvidence === 'local_test')) context.addIssue({ code: 'custom', message: 'Local evidence only applies to a local program' });

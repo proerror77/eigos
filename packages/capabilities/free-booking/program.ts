@@ -22,7 +22,7 @@ const completion = z.strictObject({ registration: objectRefSchema.extend({ type:
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
 const same = (a: unknown, b: unknown) => digest(a) === digest(b);
 export class ParticipantBookingProgram implements AgentProgram {
-  readonly projectionTypes=['RegistrationTask','RegistrationOffer','RegistrationRecord','SourceReceipt'];
+  readonly projectionTypes=['RegistrationTask','RegistrationOffer','RegistrationRecord','SourceReceipt','Event','EventRegistration'];
   readonly ref = { id: 'booking.participant.free', version: '1' };
   readonly liveFreeReservation: true | undefined;
   readonly configurationDigest: string;

@@ -42,6 +42,7 @@ export function routeLocationFacts(request: ServiceRequest, route: { origin: Did
 }
 
 export class DidiAgentProgram implements AgentProgram {
+  readonly projectionTypes = ['RideEstimateTask', 'DidiPlaceObservation', 'RideEstimateObservation', 'RideRoute', 'Provider', 'SourceReceipt', 'Place', 'RideEstimate'];
   readonly ref: { id: string; version: string };
   readonly actionIds: readonly string[] = rideEstimateActionIds;
   readonly completionSchema: object = z.toJSONSchema(rideEstimateCompletionSchema);

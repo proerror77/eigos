@@ -8,7 +8,8 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition } from './seed-definition.js';
+import { businessFactTypes, businessFactLinks } from './business-facts.js';
 import type { OntologyModel } from './model.js';
 import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
 import { PipelineStore } from './pipeline/store.js';
@@ -144,7 +145,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the DiDi installation');
-      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = createTaskClosureKernelDefinition(trustedTemplates().registry).document;
       const types = new Set(rideEstimateObjects.map(value => value.id));
       const availableTypes = new Set([...document.objects, ...document.interfaces, ...rideEstimateObjects].map(value => value.id));
       const actions = new Set(rideEstimateActions.map(value => value.id)), functions = new Set(rideEstimateFunctions.map(value => value.id));
@@ -169,7 +170,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the RollingGo installation');
-      const document = structuredClone(this.resolve(namespace.active).document), kernel = trustedTemplates().kernel;
+      const document = structuredClone(this.resolve(namespace.active).document), kernel = createRollingGoKernelDefinition(trustedTemplates().registry).document;
       const types = new Set(rollingGoObjects.map(value => value.id));
       const availableTypes = new Set([...document.objects, ...document.interfaces, ...rollingGoObjects].map(value => value.id));
       const actions = new Set(rollingGoActions.map(value => value.id)), functions = new Set(rollingGoFunctions.map(value => value.id));
@@ -186,6 +187,24 @@ export class DefinitionStore {
       document.version = `rollinggo-readonly-${namespace.generation + 1}`;
       const release = this.insertRelease(document, 'system:install-rollinggo-readonly', namespace.active);
       return this.activate('system:install-rollinggo-readonly', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Explicit v23 -> v24 source-fact projection release. No startup activation,
+   * data rewrite, task pin change, source grant or provider operation occurs. */
+  installBusinessFacts(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before the business-facts installation');
+      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
+      if (current.model.ref.digest !== '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127') return conflict('Business facts require the exact reviewed v23 predecessor');
+      const document = structuredClone(current.document), linkIds = new Set(businessFactLinks.map(link => link.id));
+      document.objects.push(...kernel.objects.filter(type => businessFactTypes.includes(type.id)));
+      document.links.push(...kernel.links.filter(link => linkIds.has(link.id)));
+      document.functions.push(...kernel.functions.filter(fn => fn.id === 'businessFactStatus'));
+      document.version = `business-facts-${namespace.generation + 1}`;
+      const release = this.insertRelease(document, 'system:install-business-facts', namespace.active);
+      return this.activate('system:install-business-facts', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

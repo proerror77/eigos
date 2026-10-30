@@ -28,7 +28,7 @@ export const objectQuerySchema = z.union([
   z.object({ object: objectRefSchema, ...queryFields }).strict(),
 ]).describe('Each response covers only the requested object, type, or named relationship. Empty results on one relationship do not prove that other relationships or participants are absent. Inspect pagination and state the scope actually read; unqueried information remains unverified.');
 export type ObjectQuery = z.input<typeof objectQuerySchema>;
-export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number }
+export interface ObjectWrite { ref: ObjectRef; properties: Record<string, unknown>; expectedRevision?: number; reuseIfUnchanged?: boolean; observedFields?: string[] }
 export interface LinkWrite { type: string; from: ObjectRef; to: ObjectRef }
 export function linkSnapshotDigest(ref: ObjectRef, links: LinkWrite[]): string {
   const values = links.filter(l => l.from.type === ref.type && l.from.id === ref.id && l.to.type !== 'SourceReceipt').map(l => ({ type: l.type, to: l.to }));
@@ -55,7 +55,7 @@ export interface OntologyQueryResult {
   datasetRevision: number;
   definitionScope?: 'current_definitions_only';
 }
-const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
+const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema, properties: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(1).optional(), reuseIfUnchanged: z.boolean().optional(), observedFields: z.array(nameSchema).min(1).max(100).optional() }).strict()).max(200), links: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(500).default([]), removeLinks: z.array(z.object({ type: nameSchema, from: objectRefSchema, to: objectRefSchema }).strict()).max(100).default([]) }).strict();
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 function failure(message: string): never { throw new DomainError('INVALID_INPUT', message); }
@@ -332,6 +332,8 @@ export class OntologyObjectStore {
         assertTransactionPartyRoleWrite(this, owner, object, source);
         const def = this.model.object(object.ref.type);
         const properties = this.model.parseProperties(object.ref.type, object.properties);
+        if (object.observedFields && (!['provider', 'synthetic'].includes(source.kind) || object.observedFields.some(field => !Object.hasOwn(properties, field))
+          || ![def.primaryKey, def.titleKey].every(field => object.observedFields!.includes(field)))) failure('A source observation must cover the exact identity and title fields');
         if (properties[def.primaryKey] !== object.ref.id) failure('Primary key does not match object identity');
         if (object.ref.type === 'SourceReceipt' && source.kind === 'synthetic' && properties.evidenceLevel !== 'synthetic') failure('Synthetic evidence cannot be promoted');
         if (object.ref.type === 'SourceReceipt' && (source.kind === 'task' || source.kind === 'user' && properties.evidenceLevel !== 'user_asserted')) failure('User statements cannot become provider evidence');
@@ -342,8 +344,17 @@ export class OntologyObjectStore {
         if (Buffer.byteLength(body) > 48_000) failure('Ontology object byte limit exceeded');
         if (old) {
           this.assertObjectDefinition(object.ref.type, String(old.definition_digest), JSON.parse(String(old.body)).properties);
+          if (object.reuseIfUnchanged && Number(old.revision) !== object.expectedRevision) failure('Entity reuse requires an exact source-authoritative revision');
           if (String(old.body) === body) { touched.set(key(object.ref), object.ref); continue; }
           const previous = JSON.parse(String(old.body)).properties as Record<string, unknown>;
+          // A fresh authorized source can independently observe the same entity.
+          // Keep its semantic revision; recordProjection still binds this read's
+          // exact source and lineage to the current task. Managed edits do not use it.
+          if (object.reuseIfUnchanged && digest(previous) === digest(properties)) {
+            if (source.kind !== 'provider' && source.kind !== 'synthetic' || this.model.objectWritePolicy(object.ref.type) !== 'source'
+              || Number(old.revision) !== object.expectedRevision) failure('Entity reuse requires an exact source-authoritative revision');
+            touched.set(key(object.ref), object.ref); continue;
+          }
           if (object.ref.type === 'OrderLine' && (previous.sourceAgreement !== undefined || properties.sourceAgreement !== undefined)) {
             throw new DomainError('CONFLICT', 'An existing order line cannot acquire or replace its sealed source agreement');
           }

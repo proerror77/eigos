@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "23",
-    "digest": "2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127"
+    "version": "24",
+    "digest": "e37296df0706b620d78d6fe3b82a2b96d16d32914da743b8445d3ffaa89b4956"
   },
   "types": {
     "ServiceRequest": {
@@ -2760,6 +2760,85 @@
         "requestRevision": "task_private",
         "snapshot": "internal_only"
       }
+    },
+    "RideEstimate": {
+      "fingerprint": "1eae617fc1ec59602045dd06b8484ff327dbd79cfe2a39c6be7371869d4eea8b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "productCategory": "task_sensitive",
+        "productName": "task_sensitive",
+        "priceText": "task_sensitive",
+        "estimatedAmount": "task_sensitive",
+        "currency": "task_sensitive",
+        "priceKind": "task_sensitive",
+        "feesComplete": "task_sensitive"
+      }
+    },
+    "HotelPrice": {
+      "fingerprint": "afc480aa2fbf75efa970eba5aaa917d5ff47b213eebc2bf0c3440b9e1c1a36bb",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "hotelRevision": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "checkInDate": "task_sensitive",
+        "stayNights": "task_sensitive",
+        "adultCount": "task_sensitive",
+        "referenceAmount": "task_sensitive",
+        "currency": "task_sensitive",
+        "hasPrice": "task_sensitive",
+        "priceKind": "task_sensitive",
+        "priceBasis": "task_sensitive"
+      }
+    },
+    "Event": {
+      "fingerprint": "4ceba34d42f6660fc94a17674e0f1904d4821e72cc5742d200c5947471fe241e",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "serviceUrl": "task_sensitive",
+        "title": "task_sensitive",
+        "kind": "task_sensitive",
+        "startsAt": "task_sensitive",
+        "endsAt": "task_sensitive",
+        "timeZone": "task_sensitive"
+      }
+    },
+    "EventRegistration": {
+      "fingerprint": "e3e3a747b0f2ab5be6a83159e48b2338ba83ff43d44ac1791a786424e14a48ff",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "eventRevision": "task_sensitive",
+        "sourceVersion": "task_sensitive",
+        "state": "task_sensitive",
+        "independentRead": "task_sensitive",
+        "submittedAt": "task_sensitive",
+        "confirmedAt": "task_sensitive"
+      }
+    },
+    "CheckoutItem": {
+      "fingerprint": "87706da2f5b577bdf1f0e8032d307ac7b5716f063cae55ecec8dc409482b3d52",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "variantRevision": "task_sensitive",
+        "requestRevision": "task_sensitive",
+        "quantity": "task_sensitive",
+        "unitPriceMinor": "task_sensitive",
+        "currency": "task_sensitive",
+        "available": "task_sensitive"
+      }
     }
   },
   "surfaces": [
@@ -2829,7 +2908,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "df2b6eca72acdc1cf6948d41f7073e46efeabb56719be039050a296e881097fa",
+      "sourceDigest": "2b06f81b2f1b064c4035f82baf9f4aeef9300fd2463b9bd68ab488e60a5da2de",
       "channels": [
         "query",
         "function"
@@ -3366,7 +3445,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "14f461e347f771301ca100814503581e0a4035754c15bf51f332f9ae4f74f5d6",
+      "sourceDigest": "65294c5dc573ed4143d7e223a4edbffe9880cb257ecd785de407b4fc57edcf71",
       "channels": [
         "all-reads"
       ],
@@ -3474,7 +3553,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "a0a7119a98cd338577142052108821229c165d2b7447cc5e3d729c36b9bcb630",
+      "sourceDigest": "7d4f185ad0cb514a53433951c03147ac11a9ea07e330401baeb794fab8a8890a",
       "channels": [
         "internal"
       ],
@@ -3644,7 +3723,7 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "25b3a864b3131453c4cc39be0643b971f9f5543a397d07ed6d8db3b4b7cfbf70",
+      "sourceDigest": "4ca4fc5ba8a6488c0277e4cf864404b500faf517cb55d4efd889d1110bec405f",
       "channels": [
         "runtime"
       ],
@@ -3668,7 +3747,7 @@
     {
       "id": "s5-packages-capabilities-free-booking-program",
       "file": "packages/capabilities/free-booking/program.ts",
-      "sourceDigest": "b4d6639112d911824248eba64a85275ca3c1fcc45bb2b789cac428681ac5eba6",
+      "sourceDigest": "8731c3b80c6f904929a8ab4c6634e7738efff4a5cec52838fd8f9337b463e6ab",
       "channels": [
         "runtime"
       ],
@@ -3984,7 +4063,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "46f93a44ae9758c22bd046067932369dde5e5aaded99c514a7773007c0cf3e0f",
+      "sourceDigest": "dc9f1f1791204445c35ebea2555e8633f9e95074b4b041479fa370aea0f03b9b",
       "channels": [
         "model",
         "artifact"
@@ -4164,7 +4243,7 @@
     {
       "id": "ontology-pipeline-contract",
       "file": "packages/ontology/pipeline/contracts.ts",
-      "sourceDigest": "b7237a8d1a2114ccf606296d4de110c0f8cd202bb7c6bc193f88b624dda27056",
+      "sourceDigest": "06230704d30bd575cac8a9ba3d3e0f75207a1de900f786f1260c61c9ffe76ae7",
       "channels": [
         "management",
         "sqlite"
@@ -4177,7 +4256,7 @@
     {
       "id": "ontology-pipeline-registry",
       "file": "packages/ontology/pipeline/store.ts",
-      "sourceDigest": "0db6aa3193fa5cc3081572c51c304bd4539d49940a4ff11f31d4aa3663ad729d",
+      "sourceDigest": "e560ccd44c31ed4568f2ff80ee89b096c4eb9a4a5a4d707223db9028295f21f9",
       "channels": [
         "sqlite",
         "dispatch"
@@ -4190,7 +4269,7 @@
     {
       "id": "ontology-pipeline-mapping",
       "file": "packages/ontology/pipeline/mapping.ts",
-      "sourceDigest": "5ce4c1ceb1b4879d9ad4de88912de04704314c8c0d54cfb72ce7293c957ecc43",
+      "sourceDigest": "28f9a2730f6cdd1f62de46a1761c0c93ce511eda02cd9543d1a03cdfef86f08f",
       "channels": [
         "source",
         "sqlite"
@@ -4203,7 +4282,7 @@
     {
       "id": "ontology-pipeline-facts",
       "file": "packages/ontology/pipeline/facts.ts",
-      "sourceDigest": "a4a325961ee465e91f9b60fe4e09b3b205974b7273f71029c7657c8bc7a4acf7",
+      "sourceDigest": "5709592c17627b206b3f2b047b8ebb99bc4a1e9ec61dd877ac92c5fa41eac6f2",
       "channels": [
         "source",
         "sqlite",
@@ -4368,7 +4447,7 @@
     {
       "id": "rollinggo-program",
       "file": "packages/capabilities/rollinggo/program.ts",
-      "sourceDigest": "f21f21b9312674071ced08fd3ef643829ba2108e645faf87acc39d0447b37f5f",
+      "sourceDigest": "51c3145c3a3368b928eb2abfea7e1dff9ecee372caf791157be8f92f3709b799",
       "channels": [
         "worker",
         "ontology"
@@ -4432,7 +4511,7 @@
     {
       "id": "rollinggo-policy-upgrade",
       "file": "packages/security/rollinggo-upgrade.ts",
-      "sourceDigest": "a679e810e0fb8e685528750f10f6f89c26ca7a45e54b2fe82ab3b7937b34f7e6",
+      "sourceDigest": "7572da24530bc5edd518dd720456b03e20ead7255277f00de513caa63845fd47",
       "channels": [
         "operator-cli"
       ],
@@ -4770,6 +4849,102 @@
       "currentControl": "Reuse only the same grant, object content and outgoing relationship snapshot; retain full existing restrictions for legacy or changed records and keep business outputs on fresh lineage",
       "targetControl": "Current membership, field labels, grants and source authority remain independent; no retroactive audit propagation",
       "stage": "S2"
+    },
+    {
+      "id": "packages-ontology-business-facts",
+      "file": "packages/ontology/business-facts.ts",
+      "sourceDigest": "561ccf771abf75899da0cd40351759144950db1d2328cc0c22ac02872136378e",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-business-facts-kernel",
+      "file": "packages/ontology/business-facts-kernel.ts",
+      "sourceDigest": "d9f348a703f7e8358eb525dfe5c306f88309f9164cc40b63f623e93d54e20eda",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-business-fact-projection",
+      "file": "packages/ontology/business-fact-projection.ts",
+      "sourceDigest": "a7a7775138e32ba4154b415adfcac49f98dc92b4856966669a98dbfeb6ee0449",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-business-fact-functions",
+      "file": "packages/ontology/business-fact-functions.ts",
+      "sourceDigest": "788873d82af0125e52d69ee351fd04acb1ac74d64f90519020e48fa72ed82c0e",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-security-reviewed-policy-upgrade",
+      "file": "packages/security/reviewed-policy-upgrade.ts",
+      "sourceDigest": "43e01f38436b048b449d9408738db1f7605684c388022771f192a62ed614b493",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-security-business-facts-upgrade",
+      "file": "packages/security/business-facts-upgrade.ts",
+      "sourceDigest": "6b550c1a0fbf148090f588ffd778808be548ce9ada05906963d855e09e62061e",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "scripts-install-business-facts",
+      "file": "scripts/install-business-facts.mjs",
+      "sourceDigest": "fbd935bcd4c5a1bd27d7aa82c4498d730e21aee591edb05211792e29d66e1d4e",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "scripts-upgrade-business-facts-policy",
+      "file": "scripts/upgrade-business-facts-policy.mjs",
+      "sourceDigest": "ce4c85fb6e67037c3c93bbf601b694d02ec94aa1cefe4649412e0a2e8d1bce70",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Source-derived reusable business facts or explicit offline policy migration",
+      "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
+      "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
     }
   ]
 }

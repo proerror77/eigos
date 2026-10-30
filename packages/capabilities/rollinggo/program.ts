@@ -1,6 +1,7 @@
 import { objectResultProjection } from '../../core/composed-actions.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { BusinessFactProjection, businessFactsEnabled, sourceEntityRef } from '../../ontology/business-fact-projection.js';
 import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
 import { permitsPersonalSource } from '../../core/source-owner.js';
@@ -51,6 +52,7 @@ export class RollingGoProgram implements AgentProgram {
     'RollingGoSearchTask',
     'RollingGoSearchObservation',
     'SourceReceipt',
+    'HotelProperty', 'HotelPrice', 'Provider',
   ];
   readonly guidance = ONTOLOGY_READ_GUIDANCE;
   readonly completionSchema = z.toJSONSchema(completion);
@@ -298,11 +300,33 @@ export class RollingGoProgram implements AgentProgram {
       { type: 'RollingGoObservationscope', from: ref, to: s.scope },
       { type: 'ReceiptRequest', from: receipt, to: root },
     ];
+    const facts = businessFactsEnabled(ctx.graph) ? new BusinessFactProjection(ctx.graph, ctx.owner, s.observedAt, receipt) : undefined;
+    if (facts) {
+      const provider = facts.entity(sourceEntityRef('Provider', 'rollinggo:international', 'rollinggo'), 'RollingGo', { name: 'RollingGo', verifiedIdentityRefs: ['https://mcp.rollinggo.ai/mcp'] });
+      for (const hotel of s.hotels) {
+        const title = hotel.name || hotel.nameEn || `RollingGo hotel ${hotel.hotelId}`;
+        const entity = facts.entity(sourceEntityRef('HotelProperty', 'rollinggo:international', String(hotel.hotelId)), title,
+          { sourceId: String(hotel.hotelId), ...(hotel.name || hotel.nameEn ? { hotelName: title } : {}), ...(hotel.address ? { address: hotel.address } : {}) }, 'HotelPropertyEvidence');
+        facts.edge('RollingGoObservationHotels', ref, entity);
+        if (hotel.price) {
+          const amount = hotel.price.hasPrice && hotel.price.lowestPrice !== undefined ? String(hotel.price.lowestPrice) : undefined;
+          const price = facts.fact(sourceEntityRef('HotelPrice', 'rollinggo:international', { observation: s.id, hotel: hotel.hotelId }), title,
+            { observedAt: s.observedAt, expiresAt: s.expiresAt, requestRevision: s.requestRevision, hotelRevision: facts.revision(entity), checkInDate: s.input.checkInParam.checkInDate, stayNights: s.input.checkInParam.stayNights,
+              adultCount: s.input.checkInParam.adultCount, hasPrice: hotel.price.hasPrice, priceKind: 'reference', priceBasis: 'provider_unspecified',
+              ...(amount !== undefined && /^(0|[1-9]\d{0,17})(\.\d{1,6})?$/.test(amount) ? { referenceAmount: amount } : {}),
+              ...(hotel.price.currency && /^[A-Z]{3}$/.test(hotel.price.currency) ? { currency: hotel.price.currency } : {}) });
+          facts.edge('RollingGoObservationPrices', ref, price); facts.edge('HotelPriceHotel', price, entity);
+          facts.edge('HotelPriceProvider', price, provider); facts.edge('HotelPriceRequest', price, root);
+        }
+      }
+      links.push(...facts.links);
+    }
     ctx.graph.ingest(
       ctx.owner,
       {
         objects: [
           { ref, properties },
+          ...(facts?.objects ?? []),
           {
             ref: receipt,
             properties: {
@@ -316,6 +340,7 @@ export class RollingGoProgram implements AgentProgram {
                 s.evidenceKind === 'fixture' ? 'synthetic' : 'live_readonly',
               contentDigest: s.contentDigest,
               subjects: [
+                ...(facts?.subjects() ?? []),
                 {
                   object: ref,
                   digest: digest(properties),
@@ -326,6 +351,7 @@ export class RollingGoProgram implements AgentProgram {
             },
           },
         ],
+        removeLinks: facts?.removeLinks,
         links: [
           ...links,
           {

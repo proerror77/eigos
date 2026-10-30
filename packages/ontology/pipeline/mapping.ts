@@ -1,4 +1,5 @@
 import { DomainError } from '../../core/domain.js';
+import type { LinkWrite } from '../object-store.js';
 import { digest } from '../../core/delegation.js';
 import { assertDefinitionJson } from '../definition-contracts.js';
 import type { OntologyModel } from '../model.js';
@@ -59,6 +60,24 @@ export function mapPipelineObservation(model: OntologyModel, owner: string, inta
   if (Object.hasOwn(properties, primaryKey)) invalid('Mapping cannot override the source-scoped primary key');
   properties[primaryKey] = id;
   const parsed = model.parseProperties(mapping.objectType, properties);
-  return { ref: { type: mapping.objectType, id }, properties: parsed, sample, expiresAt: new Date(expires).toISOString(),
-    semanticDigest: digest(parsed), sourceKey: digest({ owner, source: intake.source.id, account: sample.sourceAccount, type: mapping.objectType, nativeId }) };
+  const ref = { type: mapping.objectType, id }, links: LinkWrite[] = [];
+  for (const item of mapping.links ?? []) {
+    const target = intake.mappings.find(value => value.id === item.targetMapping) ?? invalid('Unknown source relationship target mapping');
+    const definition = model.link(item.linkType);
+    if (model.linkWritePolicy(item.linkType) !== 'source' || !model.implements(mapping.objectType, definition.from.type) || !model.implements(target.objectType, definition.to.type)
+      || item.many && !definition.from.many) invalid('Source relationship mapping conflicts with its published type or cardinality');
+    const value = read(sample.payload, item.nativeId);
+    if (value === undefined && item.optional) continue;
+    const values = item.many ? value : [value];
+    const ids = Array.isArray(values) ? values : invalid('Relationship target list must be an array');
+    if (ids.length > 50 || ids.some(value => typeof value !== 'string' || !value.trim() || value.length > 500)
+      || new Set(ids).size !== ids.length) invalid('Relationship target requires bounded unique native source identities');
+    for (const nativeId of ids) links.push({ type: item.linkType, from: ref, to: { type: target.objectType,
+      id: `pipeline:${digest({ owner, source: intake.source.id, account: sample.sourceAccount, type: target.objectType, nativeId })}` } });
+  }
+  links.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (links.length > 200) invalid('Relationship mapping exceeds the per-object bound');
+  return { ref, properties: parsed, sample, expiresAt: new Date(expires).toISOString(),
+    ...(mapping.links ? { links, relationshipDigest: digest(links) } : {}),
+    semanticDigest: digest(mapping.links ? { properties: parsed, links } : parsed), sourceKey: digest({ owner, source: intake.source.id, account: sample.sourceAccount, type: mapping.objectType, nativeId }) };
 }

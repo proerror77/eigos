@@ -27,8 +27,8 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 195); assert.equal(report.counts.properties, 1779);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 160);
+  assert.equal(report.counts.objectTypes, 200); assert.equal(report.counts.properties, 1833);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 168);
   assert(report.surfaces.some(surface => surface.id === 'model-process-config' && surface.file === 'packages/capabilities/model-process.ts'));
   assert(report.surfaces.some(surface=>surface.id==='security-projection-origin' && surface.file==='packages/security/projection-origin.ts'));
   for(const id of ['native-goal-dataflow','native-goal-completion-contract','native-composed-action-bindings','native-agent-decision-contract'])assert(report.surfaces.some(surface=>surface.id===id));

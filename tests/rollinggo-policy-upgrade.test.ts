@@ -9,6 +9,8 @@ import { securityFixture } from './fixtures/security.js';
 import { digest } from '../packages/core/delegation.js';
 import { rollingGoPolicyContracts } from '../packages/security/policy-store.js';
 import { upgradeRollingGoPolicy } from '../packages/security/rollinggo-upgrade.js';
+import { upgradeBusinessFactsPolicy } from '../packages/security/business-facts-upgrade.js';
+import { businessFactsPolicyContracts } from '../packages/security/policy-store.js';
 import { JobStore } from '../packages/core/store.js';
 
 test('offline RollingGo policy upgrade preserves existing grants and exact namespace permissions', () => {
@@ -124,6 +126,12 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
       ),
       revision + 1,
     );
+    const factsContracts = businessFactsPolicyContracts(policy.model);
+    assert.equal(factsContracts.before, contracts.after);
+    const factsExpected = { digest: factsContracts.before, revision: revision + 1 };
+    assert.equal(upgradeBusinessFactsPolicy(db, factsExpected).applied, false);
+    assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).namespaceRolesPreserved, 1);
+    assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).alreadyApplied, true);
     const migrated = JSON.parse(
       String(
         db
@@ -150,7 +158,7 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
     try {
       assert.equal(
         reopened.security.policies.definitionDigest,
-        contracts.after,
+        factsContracts.after,
       );
     } finally {
       reopened.close();

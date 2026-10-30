@@ -3,7 +3,7 @@ import { digest } from '../../core/delegation.js';
 import { DomainError } from '../../core/domain.js';
 import { assertBusinessTransaction } from '../../core/transaction.js';
 import type { ObjectRef } from '../model.js';
-import type { OntologyObjectStore } from '../object-store.js';
+import type { OntologyObjectStore, LinkWrite } from '../object-store.js';
 import type { OntologyReleaseRef } from '../definition-contracts.js';
 import type { ObjectSnapshot } from '../planning-contract.js';
 import type { PipelineIntake, PipelineObservation } from './contracts.js';
@@ -15,12 +15,14 @@ interface FactState {
   properties: Record<string, unknown>; providerVersion?: number; conflicted: boolean;
   intakeDigest: string; mappingId: string; release: OntologyReleaseRef; observedAt: string; expiresAt: string; evidenceRefs: string[];
   sourceId: string; sourceRevision: string; sourceDigest: string; evidenceLevel: string;
+  relationshipDigest?: string;
+  relationshipTypes?: string[];
 }
 export interface PipelineFactChange {
   id: string; componentId: string; object: ObjectRef; reason: 'changed' | 'conflicted' | 'stale' | 'restored';
   fields: string[]; semanticRevision: number; at: string;
 }
-interface Dependency { jobId: string; requestRevision: number; componentId: string; sourceKey: string; fields: string[]; values: Record<string, unknown>; valuesDigest: string }
+interface Dependency { jobId: string; requestRevision: number; componentId: string; sourceKey: string; fields: string[]; values: Record<string, unknown>; valuesDigest: string; relationshipDigest?: string }
 const fail = (message: string): never => { throw new DomainError('CONFLICT', message); };
 const values = (properties: Record<string, unknown>, fields: string[]) => Object.fromEntries(fields.map(field => [field, properties[field] ?? null]));
 
@@ -62,8 +64,9 @@ export class PipelineFactStore {
     for (const row of rows) {
       const dependency: Dependency = JSON.parse(String(row.body));
       if (!this.hooks.active(owner, dependency.jobId, dependency.requestRevision)) continue;
-      const affected = dependency.fields.filter(field => digest(dependency.values[field] ?? null) !== digest(state.properties[field] ?? null));
-      if (reason === 'changed' && (!affected.length || dependency.valuesDigest === digest(values(state.properties, dependency.fields)))) continue;
+      const relationshipsChanged = dependency.relationshipDigest !== state.relationshipDigest;
+      const affected = relationshipsChanged ? dependency.fields : dependency.fields.filter(field => digest(dependency.values[field] ?? null) !== digest(state.properties[field] ?? null));
+      if (reason === 'changed' && !relationshipsChanged && (!affected.length || dependency.valuesDigest === digest(values(state.properties, dependency.fields)))) continue;
       const body = { componentId: dependency.componentId, object: state.object, reason, fields: reason === 'changed' ? affected : dependency.fields,
         semanticRevision: state.semanticRevision, at: new Date(this.now()).toISOString() };
       const id = digest({ owner, jobId: dependency.jobId, requestRevision: dependency.requestRevision, ...body, at: undefined, factRevision: state.revision });
@@ -101,13 +104,26 @@ export class PipelineFactStore {
       state = { sourceKey: mapped.sourceKey, object: mapped.ref, revision: (old?.revision ?? 0) + 1, semanticRevision: (old?.semanticRevision ?? 0) + (changed ? 1 : 0),
         semanticDigest: mapped.semanticDigest, properties: mapped.properties, providerVersion: sample.providerVersion, conflicted: false,
         intakeDigest, mappingId, release: graph.releaseRef!, observedAt: sample.observedAt, expiresAt: mapped.expiresAt, evidenceRefs: sample.evidenceRefs,
-        sourceId: intake.source.id, sourceRevision: sample.sourceRevision, sourceDigest: sample.sourceDigest, evidenceLevel: sample.evidenceLevel };
+        sourceId: intake.source.id, sourceRevision: sample.sourceRevision, sourceDigest: sample.sourceDigest, evidenceLevel: sample.evidenceLevel,
+        ...(mapped.relationshipDigest ? { relationshipDigest: mapped.relationshipDigest, relationshipTypes: mapping.links!.map(link => link.linkType) } : {}) };
       let prior;
       try { prior = withIntegrity(() => graph.readPrivate(owner, mapped.ref)); }
       catch (error) { if (!(error instanceof DomainError && error.code === 'NOT_FOUND')) throw error; }
       // Refreshing provenance without a semantic change must not invalidate an
       // already grounded plan by incrementing its canonical object revision.
-      if (!prior || digest(prior.properties) !== mapped.semanticDigest) graph.ingest(owner, { objects: [{ ref: mapped.ref, properties: mapped.properties, ...(prior ? { expectedRevision: prior.revision } : {}) }], links: [] },
+      const removeLinks: LinkWrite[] = [];
+      for (const link of mapped.links ?? []) {
+        const target = this.current(owner, graph.ontologyId, link.to);
+        if (!target || target.health !== 'fresh' || target.intakeDigest !== intakeDigest) fail('Relationship target needs a current observation from the same published source mapping');
+        withIntegrity(() => graph.readPrivate(owner, link.to));
+      }
+      if (prior) for (const relationship of mapping.links ?? []) {
+        const definition = graph.model.link(relationship.linkType);
+        const previous = withIntegrity(() => graph.related(owner, mapped.ref, definition.from.name, { remaining: 1000 })) ?? fail('Relationship replacement exceeds its bound');
+        for (const target of previous) if (!mapped.links?.some(link => link.type === relationship.linkType && digest(link.to) === digest(target.ref))) removeLinks.push({ type: relationship.linkType, from: mapped.ref, to: target.ref });
+      }
+      if (!prior || digest(prior.properties) !== digest(mapped.properties) || mapped.links?.length || removeLinks.length) graph.ingest(owner, {
+        objects: [{ ref: mapped.ref, properties: mapped.properties, ...(prior ? { expectedRevision: prior.revision, reuseIfUnchanged: digest(prior.properties) === digest(mapped.properties) } : {}) }], links: mapped.links ?? [], removeLinks },
         { kind: sample.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: `pipeline:${digest({ intakeDigest, event: sample.eventId })}`, observedAt: sample.observedAt });
       this.save(owner, graph.ontologyId, state);
       result = { object: mapped.ref, status: changed ? 'applied' : 'unchanged', semanticRevision: state.semanticRevision };
@@ -129,7 +145,7 @@ export class PipelineFactStore {
     if (!selected.length || selected.length > 50 || selected.some(field => !Object.hasOwn(state.properties, field)) || componentId.length > 240) fail('Fact dependency fields must name bounded current properties');
     const existing = this.db.prepare('SELECT 1 FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=? AND source_key=? AND component_id=?').get(owner, jobId, requestRevision, state.sourceKey, componentId);
     if (!existing && Number(this.db.prepare('SELECT count(*) AS n FROM ontology_pipeline_dependencies WHERE owner=? AND job_id=? AND request_revision=?').get(owner, jobId, requestRevision)!.n) >= 100) fail('Task fact dependencies exceed the bounded context limit');
-    const body: Dependency = { jobId, requestRevision, componentId, sourceKey: state.sourceKey, fields: [...new Set(selected)].sort(), values: values(state.properties, selected), valuesDigest: digest(values(state.properties, selected)) };
+    const body: Dependency = { jobId, requestRevision, componentId, sourceKey: state.sourceKey, fields: [...new Set(selected)].sort(), values: values(state.properties, selected), valuesDigest: digest(values(state.properties, selected)), ...(state.relationshipDigest ? { relationshipDigest: state.relationshipDigest } : {}) };
     this.db.prepare('INSERT INTO ontology_pipeline_dependencies VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,ontology_id,source_key,job_id,request_revision,component_id) DO UPDATE SET body=excluded.body')
       .run(owner, ontologyId, state.sourceKey, jobId, requestRevision, componentId, JSON.stringify(body));
   }
@@ -149,8 +165,16 @@ export class PipelineFactStore {
       // private properties and their digest never become model tool output.
       const current = graph.read(owner, snapshot.ref);
       const integrity = withIntegrity(() => graph.evidencePropertiesDigest(owner, snapshot.ref, { remaining: 1 }));
-      if (state.semanticDigest !== integrity) fail('Source fact integrity differs from its recorded observation; operator review is required');
+      if (digest(state.properties) !== integrity) fail('Source fact integrity differs from its recorded observation; operator review is required');
+      if (state.relationshipDigest) {
+        const links = withIntegrity(() => (state.relationshipTypes ?? []).flatMap(type => {
+          const values = graph.related(owner, snapshot.ref, graph.model.link(type).from.name, { remaining: 1000 }) ?? fail('Source relationship integrity exceeds its bound');
+          return values.map(value => ({ type, from: snapshot.ref, to: value.ref }));
+        })).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+        if (digest(links) !== state.relationshipDigest) fail('Source relationship integrity differs from its recorded observation; operator review is required');
+      }
       if (current.revision !== snapshot.revision) fail('Source fact changed after planning; refresh the affected inputs before dispatch');
+      if (state.relationshipDigest && graph.relationshipDigest(owner, snapshot.ref, { remaining: 1000 }) !== snapshot.linksDigest) fail('Source relationships changed after planning; refresh the affected inputs before dispatch');
     }
   }
   hasDependencies(owner: string, jobId: string, requestRevision: number): boolean {

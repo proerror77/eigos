@@ -46,14 +46,23 @@ const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.
  * No general contract override: only the unchanged v22 fields/projections plus
  * the two RollingGo types and their one safe business view are accepted. */
 export function rollingGoPolicyContracts(model: SecurityStore['model']) {
-  const contract = (ref: typeof model.ref, fields: typeof baseline.types, projection: typeof projectionContract) => digest({model:ref,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
-  const priorFields=Object.fromEntries(Object.entries(baseline.types).filter(([id])=>!['RollingGoSearchTask','RollingGoSearchObservation'].includes(id)));
+  const fields = Object.fromEntries(Object.entries(baseline.types).filter(([id]) => !['RideEstimate', 'HotelPrice', 'Event', 'EventRegistration', 'CheckoutItem'].includes(id)));
+  const priorFields=Object.fromEntries(Object.entries(fields).filter(([id])=>!['RollingGoSearchTask','RollingGoSearchObservation'].includes(id)));
   const priorProjection={...projectionContract,fields:Object.fromEntries(Object.entries(projectionContract.fields).filter(([id])=>id!=='RollingGoSearchObservation'))};
-  return {before:contract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:contract(model.ref,baseline.types,projectionContract)};
+  return {before:policyContract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:policyContract({id:'eigos.business',version:'23',digest:'2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'},fields,projectionContract)};
+}
+function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false) {
+  return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},
+    roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema), ...(reobservation ? { sourceObservationBinding: 'independent-source-read-v1' } : {})});
+}
+export function businessFactsPolicyContracts(model: SecurityStore['model']) {
+  if (model.ref.version !== '24' || !model.hasType('RideEstimate') || !model.hasType('EventRegistration')) throw new Error('Expected the reviewed business-facts v24 kernel');
+  return { before: rollingGoPolicyContracts(model).after, after: policyContract(model.ref, baseline.types, projectionContract, true) };
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
-export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope; projectionOrigin?: ProjectionOrigin }
+type SourceObservationOrigin = { programId: string; programDigest: string; sourceBindingId: string };
+export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope; projectionOrigin?: ProjectionOrigin; sourceObservation?: SourceObservationOrigin }
 
 /** Policy records share the task transaction. Only trusted administration calls
  * setRole; a member data grant never manufactures a platform resource role. */
@@ -68,8 +77,11 @@ export class SecurityPolicies {
     if (model === this.model || this.reviewedModels.has(model)) return;
     // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
     // their own model and action bindings; current data/source grants still gate reads.
-    if (this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'
-      && model.ref.id === this.model.ref.id && model.ref.digest === 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'
+    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || this.model.ref.version === '24')
+      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'].includes(model.ref.digest)
+      && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && model.fingerprint(type.id) === this.model.fingerprint(type.id))
+      && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
+      && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
       && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
       this.reviewedModels.add(model); return;
     }
@@ -82,7 +94,7 @@ export class SecurityPolicies {
   constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {
     const existing=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy'").get();
     const definitions=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy_definitions'").get();
-    const expected=digest({model:this.model.ref,fields:baseline.types,projection:projectionContract,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskContextFields,capabilityReader:'immutable-compatible-definition-v1'},roles:z.toJSONSchema(roleSchema),source:z.toJSONSchema(storedSourceSchema)});
+    const expected=policyContract(this.model.ref, Object.fromEntries(Object.entries(baseline.types).filter(([id]) => this.model.hasType(id))), projectionContract, this.model.hasType('RideEstimate'));
     this.definitionDigest=expected;
     if(security.enabled && existing && (!definitions || db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()?.digest!==expected)) throw new Error('Security policy contract changed or is missing; explicit migration is required');
     if(security.enabled && existing) {
@@ -298,7 +310,12 @@ export class SecurityPolicies {
     const labels=records.filter(row=>row.field==='*' || policyFields.has(row.field)).map(row=>({...result,...row.body} as SecurityEnvelope));
     return labels.length?combineEnvelopes([result,...labels]):result;
   }
-  bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, evidence?:SecurityEnvelope|(()=>SecurityEnvelope)) {
+  bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, evidence?:SecurityEnvelope|(()=>SecurityEnvelope), sourceObservation?: SourceObservationOrigin) {
+    if (sourceObservation) {
+      const scope = authorizationScope();
+      if (!this.model.hasType('RideEstimate') || !scope?.projection || scope.actor.actorKind !== 'worker' || scope.grant?.id !== grant.id
+        || sourceBindingId !== scope.projection.sourceBindingId || digest(sourceObservation) !== digest(scope.projection)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+    }
     const row = this.db.prepare('SELECT revision,body,definition_digest FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(grant.ownerKey, ref.type, ref.id);
     if (!row)throw new SecurityError('POLICY_CHANGED');
     const body=JSON.parse(String(row.body));
@@ -353,7 +370,7 @@ export class SecurityPolicies {
     const safe = [...new Set(fields)].filter(f => this.fieldPolicy(ref.type, f) !== 'internal_only');
     const own=this.envelope(grant.ownerKey, ref, Number(row.revision), safe, JSON.parse(String(row.body)).properties, grant.channels);
     const binding: ObjectBinding = { object: ref, revision: Number(row.revision), fields: safe, sourceBindingId,
-      envelope: inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{} ),...(projectionOrigin?{projectionOrigin}:{}) };
+      envelope: inputEnvelope?combineEnvelopes([own,inputEnvelope]):own,...(inputEnvelope?{inputEnvelope}:{} ),...(projectionOrigin?{projectionOrigin}:{}), ...(sourceObservation ? { sourceObservation } : {}) };
     this.db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(grant_id,type,object_id) DO UPDATE SET object_revision=excluded.object_revision,body=excluded.body WHERE security_bindings.object_revision<>excluded.object_revision OR security_bindings.body<>excluded.body')
       .run(grant.id, grant.ownerKey, grant.taskId, grant.requestRevision, ref.type, ref.id, Number(row.revision), JSON.stringify(binding));
   }
@@ -541,7 +558,7 @@ export class SecurityPolicies {
         binding.fields=binding.fields.filter(field=>taskContextFields[ref.type]?.includes(field));
       } else if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
         const row=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(scope.actor.ownerKey,ref.type,ref.id,binding.revision);
-        const origin=row?JSON.parse(String(row.body)) as {programId:string;programDigest:string;sourceBindingId:string}:undefined;
+        const origin=binding.sourceObservation ?? (row?JSON.parse(String(row.body)) as SourceObservationOrigin:undefined);
         if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.programId===origin.programId && s.outputTypes.includes(ref.type)
           && (s.bindingId===origin.sourceBindingId && s.programDigest===origin.programDigest
             || s.readbackVersions?.some(version=>version.sourceBindingId===origin.sourceBindingId && version.programDigest===origin.programDigest))))return;
@@ -637,13 +654,33 @@ export class SecurityPolicies {
     for (const object of batch.objects) {
       const rule = scope.grant!.outputs.find(o => o.programId === origin.programId && o.programDigest === origin.programDigest && o.sourceBindingId === source.bindingId && o.type === object.ref.type);
       if (!rule || !source.outputTypes.includes(object.ref.type)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
-      this.bind(scope.grant!, object.ref, rule.fields, source.bindingId,inputEnvelope);
+      const fields = object.observedFields ? rule.fields.filter(field => object.observedFields!.includes(field)) : rule.fields;
+      this.bind(scope.grant!, object.ref, fields, source.bindingId,inputEnvelope, this.model.hasType('RideEstimate') ? { programId: origin.programId, programDigest: origin.programDigest, sourceBindingId: origin.sourceBindingId } : undefined);
       const revision=this.db.prepare('SELECT revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,object.ref.type,object.ref.id)!.revision;
       this.db.prepare('INSERT OR IGNORE INTO security_object_origins VALUES(?,?,?,?,?)').run(owner,object.ref.type,object.ref.id,Number(revision),JSON.stringify({...origin,inputEnvelope}));
     }
-    for (const edge of [...(batch.links ?? []), ...(batch.removeLinks ?? [])]) {
+    for (const edge of batch.links ?? []) {
       this.requireResource(scope, 'linkType', edge.type);
       this.requireObject(owner, edge.from); this.requireObject(owner, edge.to);
+    }
+    for (const edge of batch.removeLinks ?? []) {
+      this.requireResource(scope, 'linkType', edge.type); this.requireObject(owner, edge.from);
+      // Re-observing a shared entity may retire its old current evidence edge.
+      // This is a same-source projection write, not permission to read the prior
+      // task's receipt. Its immutable observation/receipt remains in the ledger.
+      const replacement = this.model.hasType('RideEstimate') && edge.to.type === 'SourceReceipt'
+        && this.model.link(edge.type).from.name === 'sourceReceipts'
+        && batch.objects.some(object => refKey(object.ref) === refKey(edge.from))
+        && (batch.links ?? []).some(link => link.type === edge.type && refKey(link.from) === refKey(edge.from)
+          && batch.objects.some(object => object.ref.type === 'SourceReceipt' && refKey(object.ref) === refKey(link.to)));
+      if (replacement) {
+        const row = this.db.prepare('SELECT origins.body FROM security_object_origins origins JOIN ontology_objects objects ON objects.owner=origins.owner AND objects.type=origins.type AND objects.id=origins.object_id AND objects.revision=origins.object_revision WHERE origins.owner=? AND origins.type=? AND origins.object_id=?')
+          .get(owner, edge.to.type, edge.to.id);
+        const previous = row ? JSON.parse(String(row.body)) as SourceObservationOrigin : undefined;
+        if (previous?.programId === origin.programId && (previous.sourceBindingId === source.bindingId && previous.programDigest === source.programDigest
+          || source.readbackVersions?.some(version => version.sourceBindingId === previous.sourceBindingId && version.programDigest === previous.programDigest))) continue;
+      }
+      this.requireObject(owner, edge.to);
     }
   }
   infer<T>(owner: string, functionId: string, action: () => T): T {
