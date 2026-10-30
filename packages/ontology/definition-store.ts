@@ -8,7 +8,8 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
+import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
 import { businessFactTypes, businessFactLinks } from './business-facts.js';
 import type { OntologyModel } from './model.js';
@@ -219,7 +220,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before personal-context installation');
-      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      const current = this.resolve(namespace.active), kernel = createPersonalContextKernelDefinition(trustedTemplates().registry).document;
       if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
       if (current.model.ref.digest !== PERSONAL_CONTEXT_PREDECESSOR) return conflict('Personal context requires the exact reviewed v24 predecessor');
       const document = structuredClone(current.document); document.version = '25';
@@ -227,6 +228,22 @@ export class DefinitionStore {
       document.objects.find(type => type.id === 'RequestFact')!.properties.personalBasis = structuredClone(kernel.objects.find(type => type.id === 'RequestFact')!.properties.personalBasis!);
       const release = this.insertRelease(document, 'system:install-personal-context', namespace.active);
       return this.activate('system:install-personal-context', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Explicit v25 -> v26 validation-method upgrade. No task pin, stored fact,
+   * source grant or provider action changes during this offline activation. */
+  installSingleReadContract(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before read-contract installation');
+      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
+      if (current.model.ref.digest !== SINGLE_READ_PREDECESSOR) return conflict('Read contracts require the exact reviewed v25 predecessor');
+      const document = structuredClone(current.document); document.version = '26';
+      const index = document.objects.findIndex(type => type.id === 'GoalCoverage');
+      document.objects[index] = structuredClone(kernel.objects.find(type => type.id === 'GoalCoverage')!);
+      const release = this.insertRelease(document, 'system:install-single-read-contract', namespace.active);
+      return this.activate('system:install-single-read-contract', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

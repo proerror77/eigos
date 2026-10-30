@@ -14,6 +14,7 @@ export class DidiReadError extends AgentReadError {
 }
 export interface DidiCallContext { requestId: string; requestRevision: number; actionInputDigest: string; planId: string; intentId: string; attemptId: string; modelRunId: string; programId?: string; programDigest?: string; action?: string }
 export interface DidiReadResult { data: DidiData; receipt: DidiReceipt }
+type DidiDirectory = { name: string; inputSchema: object }[];
 export interface DidiConnector {
   readonly evidenceKind: DidiEvidenceKind;
   readonly transportDigest?: string;
@@ -39,6 +40,8 @@ export async function readDidiCredential(binding: DidiBinding): Promise<string> 
 export class DidiMcpConnector implements DidiConnector {
   readonly evidenceKind: DidiEvidenceKind;
   readonly binding: DidiBinding;
+  private directoryCache?: { expiresAt: number; tools: DidiDirectory };
+  private directoryReads = new Map<string, Promise<DidiDirectory>>();
   constructor(binding: DidiBinding, private fetcher: typeof fetch = fetch, fixture = false) {
     this.binding = didiBindingSchema.parse(binding);
     if (!isAbsolute(binding.keyFile) || binding.auditDirectory && !isAbsolute(binding.auditDirectory)) throw new DidiReadError('PRIVATE_ABSOLUTE_PATH_REQUIRED');
@@ -110,13 +113,28 @@ export class DidiMcpConnector implements DidiConnector {
   async discover(signal: AbortSignal) {
     return this.session(signal, async client => ({ endpoint: didiEndpoint(this.binding.environment), environment: this.binding.environment, bindingId: this.binding.bindingId, enabledTools: await this.directory(client, signal), evidenceKind: this.evidenceKind }));
   }
+  /** Only immutable tool schemas are reused, within this pinned account binding.
+   * Credentials and the current dispatch callback are still checked for every
+   * business call. No source result or permission enters this cache. */
+  private async readDirectory(client: Client, signal: AbortSignal, context: DidiCallContext): Promise<DidiDirectory> {
+    if (this.directoryCache && this.directoryCache.expiresAt > Date.now()) return structuredClone(this.directoryCache.tools);
+    const key = `${context.requestId}:${context.requestRevision}`;
+    let pending = this.directoryReads.get(key);
+    if (!pending) {
+      pending = this.directory(client, signal).then(tools => {
+        this.directoryCache = { tools, expiresAt: Date.now() + 30000 }; return tools;
+      }).finally(() => { if (this.directoryReads.get(key) === pending) this.directoryReads.delete(key); });
+      this.directoryReads.set(key, pending);
+    }
+    const tools = await pending; signal.throwIfAborted(); return structuredClone(tools);
+  }
   async invoke(context: DidiCallContext, tool: DidiTool, input: Record<string, unknown>, signal: AbortSignal, beforeCall?: (phase?: 'prepare'|'dispatch') => void | Promise<void>): Promise<DidiReadResult> {
     if (!DIDI_TOOLS.includes(tool)) throw new DidiReadError('TOOL_NOT_ALLOWED');
     const parsed = didiToolInputs[tool].safeParse(input);
     if (!parsed.success) throw new DidiReadError('INVALID_TOOL_INPUT');
     await beforeCall?.('prepare');
     return this.session(signal, async (client, secret) => {
-      const directory = await this.directory(client, signal), startedAt = new Date().toISOString();
+      const directory = await this.readDirectory(client, signal, context), startedAt = new Date().toISOString();
       signal.throwIfAborted();
       const raw = await client.callTool({ name: tool, arguments: parsed.data }, { signal, timeout: 20000 });
       await this.verifyCredential();
@@ -132,6 +150,6 @@ export class DidiMcpConnector implements DidiConnector {
         await appendFile(join(this.binding.auditDirectory, 'reads.jsonl'), JSON.stringify({ ...context, receipt, input: parsed.data, evidenceKind: this.evidenceKind }) + '\n', { mode: 0o600 });
       }
       return { data, receipt };
-    }, undefined, beforeCall);
+    }, undefined, beforeCall).catch(error => { this.directoryCache = undefined; throw error; });
   }
 }

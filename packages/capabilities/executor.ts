@@ -51,6 +51,9 @@ export interface RunEvidence {
   promptBytes?: number;
   promptData?: PromptDataMetrics;
   ontologyContext?: { digest: string; receiptIds: string[]; startedAt: string; preparedAt: string; model: { id: string; version: string; digest: string }; requestRevision: number };
+  /** Host-measured invocation boundary, not a claim about opaque provider retries. */
+  singleReadDecision?: { version: '1'; modelRequests: 1; toolsAvailable: false };
+  toolFreeInvocation?: { completedTurns: 1; toolCalls: 0 };
   usage?: Record<string, number>;
   purpose?: 'grounding' | 'planning' | 'document' | 'goal_coverage';
   nativeMcpCalls?: { server: string; tool: string; status: string; failure?: { message: string; argumentKeys: string[]; function?: string; objectType?: string } }[];
@@ -58,7 +61,7 @@ export interface RunEvidence {
     calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
 }
 export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[]; trace?: NativeModelTrace }
-export interface ModelRunOptions { mcp?: NativeMcpConnection }
+export interface ModelRunOptions { mcp?: NativeMcpConnection; toolFree?: true }
 export interface CodexModelConfiguration {
   model: string;
   reasoningEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -110,6 +113,7 @@ export class CodexExecutor implements Executor {
 
   // Shared bounded model transport. Callers validate their own structured decisions.
   async runStructured(prompt: string, schema: object, signal: AbortSignal, options: ModelRunOptions = {}): Promise<{ output: unknown; evidence: RunEvidence }> {
+    if (options.toolFree && options.mcp) throw new Error('A tool-free model invocation cannot attach MCP tools');
     const id = randomUUID();
     const startedAt = new Date().toISOString();
     const started = performance.now(), trace = options.mcp?.trace ?? new NativeModelTrace();
@@ -178,6 +182,9 @@ export class CodexExecutor implements Executor {
               if (event.type === 'turn.completed') trace.mark('turnCompleted');
               if (event.item && typeof event.item === 'object') {
                 const item = event.item as Record<string, unknown>;
+                if (options.toolFree && typeof item.type === 'string' && !['reasoning', 'agent_message'].includes(item.type)) {
+                  outcome = 'process_failed'; failure = new Error('Tool-free model invocation attempted an extra tool interaction'); kill(); return;
+                }
                 if (item.type === 'mcp_tool_call' && item.server === 'eigos_ontology' && typeof item.id === 'string' && typeof item.tool === 'string') {
                   if (event.type === 'item.started') trace.clientToolStarted(item.id, item.tool);
                   if (event.type === 'item.completed') trace.clientToolCompleted(item.id, item.tool, item.status === 'failed' || !!(item.result && typeof item.result === 'object' && (item.result as Record<string, unknown>).isError === true));
@@ -219,6 +226,7 @@ export class CodexExecutor implements Executor {
       const threadId = events.find(e => e.type === 'thread.started')?.thread_id;
       const model = /^model:\s*(\S+)/m.exec(stderr)?.[1];
       const output: unknown = JSON.parse(text); trace.mark('outputParsed');
+      if (options.toolFree && (events.filter(event => event.type === 'turn.completed').length !== 1 || nativeMcpCalls.length)) throw new Error('Tool-free model invocation did not complete exactly one turn');
       recorded = {
         id, runtime: 'codex-exec', startedAt, completedAt: new Date().toISOString(),
         outputSha256: createHash('sha256').update(text).digest('hex'), model,
@@ -226,6 +234,7 @@ export class CodexExecutor implements Executor {
         threadId: typeof threadId === 'string' ? threadId : undefined,
         usage: usage(),
         ...(options.mcp ? { nativeMcpCalls } : {}),
+        ...(options.toolFree ? { toolFreeInvocation: { completedTurns: 1 as const, toolCalls: 0 as const } } : {}),
       };
       succeeded = true;
       return { output, evidence: recorded };
