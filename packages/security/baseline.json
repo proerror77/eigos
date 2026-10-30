@@ -4066,7 +4066,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "c9475cdd1b1b90cb0da535e4e5f56fc2c1b6abd38f0140fbf3d93410a482b2df",
+      "sourceDigest": "7dd3695f2accb7d9f5084c9e1a712fc68b1eb69b19b35b67998814b34ae36a25",
       "channels": [
         "model",
         "artifact"

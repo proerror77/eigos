@@ -1,6 +1,7 @@
-import { z } from 'zod';
 import { digest } from './delegation.js';
 import { DomainError } from './domain.js';
+import { goalCriteriaSchema, type GoalCriterion } from './goal-contract-schema.js';
+export { goalCriteriaSchema, type GoalCriterion } from './goal-contract-schema.js';
 import type { ServiceCapability, ServiceRequest, RequirementCheck } from '../ontology/execution.js';
 import type { ConditionCheck } from '../ontology/planning-contract.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
@@ -8,14 +9,6 @@ import type { ObjectRef } from '../ontology/model.js';
 import type { Delivery } from './catalog.js';
 import type { EffectClass } from '../ontology/actions.js';
 
-export const goalCriteriaSchema = z.array(z.strictObject({
-  id: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/),
-  description: z.string().min(1).max(1000), predicate: z.string().min(1).max(160),
-  phase: z.enum(['fact', 'quote', 'commitment', 'payment', 'delivery', 'artifact']),
-  messageId: z.string().min(1).max(200), quote: z.string().min(1).max(2000),
-  requirementIds: z.array(z.string().min(1).max(100)).max(40),
-})).min(1).max(20);
-export type GoalCriterion = z.infer<typeof goalCriteriaSchema>[number];
 export interface GoalContract {
   version: '1'; requestId: string; requestRevision: number; ontologyRelease: OntologyReleaseRef;
   originalGoalDigest: string; constraintsDigest: string; criteria: GoalCriterion[]; digest: string;
