@@ -18,11 +18,13 @@ const resources = (document: OntologyDocument) => [
   ...document.actions.map(value => ({ kind: 'action' as const, value })),
 ];
 const coreType = (id: string) => /^(?:Execution|Registered|Network)/.test(id) || ['Authorization', 'SourceReceipt', 'ServiceRequest', 'RequestInstruction', 'RequestConstraint', 'OutcomeAssessment', 'EntityIdentityAssertion', 'TransactionPartyRole'].includes(id);
-function compatibleBusinessObject(original: SerializableObjectType, candidate: SerializableObjectType): boolean {
+function compatibleBusinessObject(original: SerializableObjectType, candidate: SerializableObjectType, document: OntologyDocument): boolean {
   if (coreType(original.id)) return false;
-  const { name: _name, description: _description, aliases: _aliases, properties, ...identity } = original;
-  const { name: _newName, description: _newDescription, aliases: _newAliases, properties: next, ...nextIdentity } = candidate;
+  const { name: _name, description: _description, aliases: _aliases, properties, interfaces: previousViews = [], ...identity } = original;
+  const { name: _newName, description: _newDescription, aliases: _newAliases, properties: next, interfaces: nextViews = [], ...nextIdentity } = candidate;
   if (digest(identity) !== digest(nextIdentity)) return false;
+  if (previousViews.some(view => !nextViews.some(next => digest(view) === digest(next)))) return false;
+  if (nextViews.filter(view => !previousViews.some(old => old.id === view.id)).some(view => !document.interfaces.find(iface => iface.id === view.id)?.projectionOnly)) return false;
   if (Object.entries(properties).some(([name, value]) => !next[name] || digest(value) !== digest(next[name]))) return false;
   return Object.entries(next).filter(([name]) => !Object.hasOwn(properties, name)).every(([, property]) => !property.required && !property.derived && !property.validatorRef && property.authority !== 'managed');
 }
@@ -36,7 +38,7 @@ export function validateBusinessDefinitionExtensions(original: OntologyDocument,
     // dependencies or in-flight users. Kernel identities remain protected here
     // and independently by the trusted registry's complete-kernel check.
     if (!next && !type.resourceId.startsWith('builtin:')) continue;
-    if (!next || digest(type) !== digest(next) && !compatibleBusinessObject(type, next)) fail(`Incompatible source definition extension: ${type.id}`);
+    if (!next || digest(type) !== digest(next) && !compatibleBusinessObject(type, next, candidate)) fail(`Incompatible source definition extension: ${type.id}`);
     for (const [name, property] of Object.entries(next.properties)) if (!Object.hasOwn(type.properties, name)) { compileJsonSchema(property.schema); unboundSourceFields.push({ type: type.id, property: name }); }
   }
   return { unboundSourceFields };
@@ -105,7 +107,7 @@ export class TrustedDefinitionRegistry {
     const byFunction = new Map(document.functions.map(fn => [fn.id, fn]));
     const match = this.protectedKernels.some(kernel => [...kernel.resources].every(([resourceId, expected]) => {
       const value = byResource.get(resourceId);
-      return value && value.kind === expected.kind && value.value.id === expected.id && (digest(value.value) === expected.digest || value.kind === 'object' && compatibleBusinessObject(expected.value as SerializableObjectType, value.value as SerializableObjectType));
+      return value && value.kind === expected.kind && value.value.id === expected.id && (digest(value.value) === expected.digest || value.kind === 'object' && compatibleBusinessObject(expected.value as SerializableObjectType, value.value as SerializableObjectType, document));
     }) && [...kernel.functions].every(([id, expected]) => { const fn = byFunction.get(id); return !!fn && digest(fn) === expected; }));
     if (!match) fail('Trusted ontology kernel resources cannot be changed, mixed or removed');
   }

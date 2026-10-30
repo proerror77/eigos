@@ -43,7 +43,7 @@ const propertySchema = z.strictObject({
 const properties = z.record(nameSchema, propertySchema).refine(value => Object.keys(value).length <= 300, 'Too many properties');
 const inputTypes = z.record(nameSchema, nameSchema).refine(value => Object.keys(value).length <= 100, 'Too many inputs');
 const actionMap = z.record(nameSchema, z.strictObject({ actionId: nameSchema, inputMap: z.record(nameSchema, nameSchema), outputMap: z.record(nameSchema, nameSchema).optional() }));
-const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.record(nameSchema, nameSchema).optional(), actionMap: actionMap.optional() });
+const interfaceImplementation = z.strictObject({ id: nameSchema, propertyMap: z.record(nameSchema, nameSchema).optional(), linkMap: z.record(nameSchema, nameSchema).optional(), actionMap: actionMap.optional() });
 export const serializableObjectTypeSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, version: versionSchema, name: text, aliases: z.array(z.string().min(1).max(500)).max(100), description: text,
   primaryKey: nameSchema, titleKey: nameSchema, properties, interfaces: z.array(interfaceImplementation).max(100).optional(),
@@ -51,6 +51,8 @@ export const serializableObjectTypeSchema = z.strictObject({
 });
 export const serializableInterfaceSchema = z.strictObject({
   resourceId: resourceIdSchema, id: nameSchema, description: text, parents: names.optional(), properties,
+  propertyCompatibility: z.literal('structural_v1').optional(),
+  projectionOnly: z.boolean().optional(),
   optionalProperties: names.optional(),
   links: z.array(z.strictObject({ name: nameSchema, target: nameSchema, many: z.boolean(), optional: z.boolean().optional() })).max(200).optional(),
   actions: z.array(z.strictObject({ id: nameSchema, inputs: inputTypes, effects, resultTypes: names.optional(), optional: z.boolean().optional(), ports: z.strictObject({ inputs: z.record(nameSchema, compositionPortSchema), outputs: z.record(nameSchema, compositionPortSchema) }).optional() })).max(100).optional(),

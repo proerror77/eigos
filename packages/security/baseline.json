@@ -4,7 +4,7 @@
   "model": {
     "id": "eigos.business",
     "version": "24",
-    "digest": "e37296df0706b620d78d6fe3b82a2b96d16d32914da743b8445d3ffaa89b4956"
+    "digest": "496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644"
   },
   "types": {
     "ServiceRequest": {
@@ -2762,7 +2762,7 @@
       }
     },
     "RideEstimate": {
-      "fingerprint": "1eae617fc1ec59602045dd06b8484ff327dbd79cfe2a39c6be7371869d4eea8b",
+      "fingerprint": "cce78e59c83c453c8a31b0549f86bd208b67fa237a43ce0c72907645f700b1ea",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -2774,12 +2774,14 @@
         "priceText": "task_sensitive",
         "estimatedAmount": "task_sensitive",
         "currency": "task_sensitive",
+        "amountUnit": "task_sensitive",
+        "priceBasis": "task_sensitive",
         "priceKind": "task_sensitive",
         "feesComplete": "task_sensitive"
       }
     },
     "HotelPrice": {
-      "fingerprint": "afc480aa2fbf75efa970eba5aaa917d5ff47b213eebc2bf0c3440b9e1c1a36bb",
+      "fingerprint": "7319de045c977641d61abd177a24bfbef4481295a23a3389ff184ef703a2449c",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -2794,11 +2796,13 @@
         "currency": "task_sensitive",
         "hasPrice": "task_sensitive",
         "priceKind": "task_sensitive",
-        "priceBasis": "task_sensitive"
+        "amountUnit": "task_sensitive",
+        "priceBasis": "task_sensitive",
+        "pricingCompleteness": "task_sensitive"
       }
     },
     "Event": {
-      "fingerprint": "4ceba34d42f6660fc94a17674e0f1904d4821e72cc5742d200c5947471fe241e",
+      "fingerprint": "2885520facf96041d8eecfc863d116d8f62507ec96ea0ae0277a654707f99d38",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -2826,7 +2830,7 @@
       }
     },
     "CheckoutItem": {
-      "fingerprint": "87706da2f5b577bdf1f0e8032d307ac7b5716f063cae55ecec8dc409482b3d52",
+      "fingerprint": "135c557d4adca0f4a32f29045e8cd151b34827ad7da3b3552d6cc3d1294d5439",
       "fields": {
         "id": "task_private",
         "displayTitle": "task_private",
@@ -2837,7 +2841,11 @@
         "quantity": "task_sensitive",
         "unitPriceMinor": "task_sensitive",
         "currency": "task_sensitive",
-        "available": "task_sensitive"
+        "available": "task_sensitive",
+        "amountUnit": "task_sensitive",
+        "priceKind": "task_sensitive",
+        "priceBasis": "task_sensitive",
+        "pricingCompleteness": "task_sensitive"
       }
     }
   },
@@ -2908,7 +2916,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "2b06f81b2f1b064c4035f82baf9f4aeef9300fd2463b9bd68ab488e60a5da2de",
+      "sourceDigest": "44c4c6d48ee821673f5771dad7fcf6bc6e370d525302701c636d0c5d2f9d9601",
       "channels": [
         "query",
         "function"
@@ -2993,7 +3001,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "0b9c4dbd57dd55f66bcff3c58702f195688839869a5f60673b63ee93463ad15b",
+      "sourceDigest": "1f37fa718df17e42479f8bb52a779afd482b6ec131293020a35fcfc76adb7814",
       "channels": [
         "model",
         "query"
@@ -3221,7 +3229,7 @@
     {
       "id": "ontology-definitions",
       "file": "packages/ontology/model.ts",
-      "sourceDigest": "3b1106497d28016d927b4c5ceb322a0cd69226be4b0438dd2e667389f43ff35b",
+      "sourceDigest": "b3dd1e1b784b87d1be54347155b53ff7cac89a75c8576d27ffbaf5d0fd1344ee",
       "channels": [
         "definition"
       ],
@@ -3445,7 +3453,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "65294c5dc573ed4143d7e223a4edbffe9880cb257ecd785de407b4fc57edcf71",
+      "sourceDigest": "b5c81cfb5ffc9b9de7f18468228e865bb9e5356c59cced4a60ab4d9db3da01a8",
       "channels": [
         "all-reads"
       ],
@@ -3517,7 +3525,7 @@
     {
       "id": "execution-catalog",
       "file": "packages/core/catalog.ts",
-      "sourceDigest": "2fdf947c4674c2b1413ab7e9fabc86562266d4076d7f0ee05b6fe9bc4a6b41ae",
+      "sourceDigest": "7909c139ce73b6c306607e921b7286319cb148e1513329d38d09ad934f531232",
       "channels": [
         "worker"
       ],
@@ -3553,7 +3561,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "7d4f185ad0cb514a53433951c03147ac11a9ea07e330401baeb794fab8a8890a",
+      "sourceDigest": "eb96a85a81a0f0de67ca02f411032d5a863af11af0046f5bc461f1ec473e1b00",
       "channels": [
         "internal"
       ],
@@ -3577,7 +3585,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "bcf1015644b56e5ea7b0db109c487a6fa8aab627723e7cd5d386031bbb4f8b4f",
+      "sourceDigest": "3f25c7c300f2c3434b2088f4c2b328b23de684b48f230abd22c7970158549a7c",
       "channels": [
         "model"
       ],
@@ -4063,7 +4071,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "dc9f1f1791204445c35ebea2555e8633f9e95074b4b041479fa370aea0f03b9b",
+      "sourceDigest": "a0a09892099650a40ffcbcf84425133d07d50033f9ddd012a1734c662fd6d592",
       "channels": [
         "model",
         "artifact"
@@ -4167,7 +4175,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "12fd9c3b27923effa0a36b410fc524ecc0b90a65aaf68b8913fc4ffc3b118341",
+      "sourceDigest": "b29da49b1384216b19ba85db3993fd7af5cf7c3e67b1a0512eb12475366edcc0",
       "channels": [
         "model"
       ],
@@ -4179,7 +4187,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "54b8f1864caa08a460af0d97ccb076abde9c3b883d7b4eef3efacc43fb84ddff",
+      "sourceDigest": "ad1978bff65d9a7d9a3530bda330f20f1079a0165b933e3bc6d8c906d2b087bd",
       "channels": [
         "model"
       ],
@@ -4204,7 +4212,7 @@
     {
       "id": "ontology-definition-contracts",
       "file": "packages/ontology/definition-contracts.ts",
-      "sourceDigest": "c012465aa443ad18176e7c2a790fa04106b05ed37bee6af65835e210c58c5191",
+      "sourceDigest": "d626b7771f5abc5debe25de267a6326aedfbbee3941702ebc106456c4a6023ca",
       "channels": [
         "management",
         "sqlite"
@@ -4447,7 +4455,7 @@
     {
       "id": "rollinggo-program",
       "file": "packages/capabilities/rollinggo/program.ts",
-      "sourceDigest": "51c3145c3a3368b928eb2abfea7e1dff9ecee372caf791157be8f92f3709b799",
+      "sourceDigest": "a52964cc083172a793b1375c46708bd073ae1c74e292177a9a9984e84924ecd4",
       "channels": [
         "worker",
         "ontology"
@@ -4853,7 +4861,7 @@
     {
       "id": "packages-ontology-business-facts",
       "file": "packages/ontology/business-facts.ts",
-      "sourceDigest": "561ccf771abf75899da0cd40351759144950db1d2328cc0c22ac02872136378e",
+      "sourceDigest": "064bc29dacc99f77f34c2edbc166e469b9103eef1c2177fd35513744d19472b5",
       "channels": [
         "sqlite"
       ],
@@ -4865,7 +4873,7 @@
     {
       "id": "packages-ontology-business-facts-kernel",
       "file": "packages/ontology/business-facts-kernel.ts",
-      "sourceDigest": "d9f348a703f7e8358eb525dfe5c306f88309f9164cc40b63f623e93d54e20eda",
+      "sourceDigest": "e19c8493ad983b389b8632cad9f4b91eb2fe4b69b134c6b5f510eeea36f43828",
       "channels": [
         "sqlite"
       ],
@@ -4877,7 +4885,7 @@
     {
       "id": "packages-ontology-business-fact-projection",
       "file": "packages/ontology/business-fact-projection.ts",
-      "sourceDigest": "a7a7775138e32ba4154b415adfcac49f98dc92b4856966669a98dbfeb6ee0449",
+      "sourceDigest": "2b90b201b276d5ef18c00a0ecb1714ca50abdfa3668d66bdca2e22f08acfa620",
       "channels": [
         "sqlite"
       ],
@@ -4889,7 +4897,7 @@
     {
       "id": "packages-ontology-business-fact-functions",
       "file": "packages/ontology/business-fact-functions.ts",
-      "sourceDigest": "788873d82af0125e52d69ee351fd04acb1ac74d64f90519020e48fa72ed82c0e",
+      "sourceDigest": "0ee72b1b4c8c2c952e63c4e0ba535fd8976e828422af44f9371a719e12293e95",
       "channels": [
         "sqlite"
       ],
@@ -4944,6 +4952,32 @@
       "content": "Source-derived reusable business facts or explicit offline policy migration",
       "currentControl": "Exact source scope, field policy, owner and task authorization; no automatic grants",
       "targetControl": "Retain original evidence and validate both endpoints on every relationship read",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-shared-business-interfaces",
+      "file": "packages/ontology/shared-business-interfaces.ts",
+      "sourceDigest": "06cae57d947cdee0c06337fa82299e2b978f99d6daf589515cd1878f7efd0eb6",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Shared semantic projections and bounded task fact reads",
+      "currentControl": "Concrete field and endpoint permissions; request membership and current versions",
+      "targetControl": "No new authority or provider invocation from interface projection",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-coordinator-requested-facts",
+      "file": "packages/coordinator/requested-facts.ts",
+      "sourceDigest": "bdb9c06fea636a32c88a7fdd800328885c800e92f9faf40792ed2c50985fcc56",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Shared semantic projections and bounded task fact reads",
+      "currentControl": "Concrete field and endpoint permissions; request membership and current versions",
+      "targetControl": "No new authority or provider invocation from interface projection",
       "stage": "S1"
     }
   ]

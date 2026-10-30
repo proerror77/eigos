@@ -146,7 +146,7 @@ test('hotel search completes through the task model with source evidence and no 
         assert.equal(hotels.length, 1); assert.equal(hotels[0]!.revision, hotel.revision);
         const cheaper = store.ontology.query(owner, { type: 'HotelPrice', where: [{ property: 'referenceAmount', op: 'lt', value: '75' }] }).items;
         assert.equal(cheaper.length, 1); assert.equal(cheaper[0]!.properties.currency, 'USD');
-        assert.equal(cheaper[0]!.properties.priceBasis, 'provider_unspecified');
+        assert.equal(cheaper[0]!.properties.priceBasis, 'unknown');
         assert.equal(store.ontology.evaluate(owner, { function: 'businessFactStatus', object: cheaper[0]!.ref }).status, 'known');
         return;
       }

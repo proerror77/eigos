@@ -9,6 +9,11 @@ import { catalogEntityRefs } from '../packages/ontology/catalog-agent-projection
 import { createCurrentKernelDefinition, createRollingGoKernelDefinition } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { OntologyObjectStore, type ObjectWrite } from '../packages/ontology/object-store.js';
+import { checkedRideEstimate, projectRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
+import { digest } from '../packages/core/delegation.js';
+import { randomUUID } from 'node:crypto';
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
+import type { readRequestedFacts } from '../packages/coordinator/requested-facts.js';
 
 test('the new fact release preserves every v23 object, action and historical model fingerprint', () => {
   const old = createRollingGoKernelDefinition(), current = createCurrentKernelDefinition();
@@ -35,6 +40,17 @@ test('repeated DiDi tasks reuse source places, provider and route while keeping 
     const estimate = graph.query(owner, { type: 'RideEstimate', where: [{ property: 'estimatedAmount', op: 'lt', value: '80' }] }).items;
     assert.equal(estimate.length, 1); assert.equal(estimate[0]!.properties.currency, 'CNY');
     assert.equal(graph.evaluate(owner, { function: 'businessFactStatus', object: estimate[0]!.ref }).status, 'known');
+    const session = new OntologyPlanningSession(graph, owner, first.delegation!.request, [], () => {}, () => {}, 'request', [estimate[0]!.ref], { taskContext: { purpose: 'agent', refs: [estimate[0]!.ref] } });
+    const initial = session.call('read_task_context', {});
+    assert(!JSON.stringify(initial).includes('"readContext":'), 'Technical source-query metadata is not a business property or model input');
+    const callsBefore = t.calls.length;
+    const batch = session.call('query_ontology', { facts: [
+      { key: 'price', query: { object: estimate[0]!.ref, as: 'MonetaryFact', select: ['amount', 'currency', 'amountUnit'] }, evaluate: true },
+      { key: 'validity', query: { object: estimate[0]!.ref, as: 'MonetaryFact', select: ['observedAt', 'expiresAt'] }, evaluate: true },
+    ] }) as ReturnType<typeof readRequestedFacts>;
+    assert.deepEqual(batch.reads, { requested: 2, performed: 1, reused: 1 }); assert.deepEqual(batch.needsRefresh, []);
+    assert.equal(batch.facts[0]!.items[0]!.properties.amount, '73.05'); assert.equal(t.calls.length, callsBefore);
+    assert.deepEqual(session.receipts().map(read => read.tool), ['read_task_context', 'query_ontology']);
     const route = graph.related(owner, estimate[0]!.ref, 'route', { remaining: 1000 })![0]!;
     assert.equal(graph.related(owner, route.ref, 'originPlace', { remaining: 1000 })![0]!.properties.name, '北京西站');
     await run();
@@ -42,6 +58,14 @@ test('repeated DiDi tasks reuse source places, provider and route while keeping 
     assert.equal(graph.query(owner, { type: 'RideRoute' }).items.length, 1);
     assert.equal(graph.query(owner, { type: 'RideEstimate' }).items.length, 4);
     for (const ref of first.delegation!.agent!.observations) assert(sourceProof(graph, owner, ref, { remaining: 1000 }), 'Re-observation must preserve original source evidence');
+    const originalRef = first.delegation!.agent!.observations.find(ref => ref.type === 'RideEstimateObservation')!;
+    const original = checkedRideEstimate(graph.read(owner, originalRef).properties.snapshot);
+    const { contentDigest: _oldDigest, ...next } = structuredClone(original), id = randomUUID(), observedAt = new Date().toISOString();
+    if (next.data.kind !== 'estimate') throw new Error('Expected an estimate fixture');
+    next.data.items[0]!.priceText = '83.05'; next.data.items[0]!.estimatedMoney = { minor: '8305', currency: 'CNY' };
+    Object.assign(next, { id, observedAt, expiresAt: new Date(Date.parse(observedAt) + 300000).toISOString(), receipt: { ...next.receipt, id, startedAt: observedAt, receivedAt: observedAt, resultDigest: digest(next.data) } });
+    projectRideEstimate(graph, owner, { ...next, contentDigest: digest(next) });
+    assert.equal(graph.evaluate(owner, { function: 'businessFactStatus', object: estimate[0]!.ref }).status, 'unknown', 'A later price supersedes the earlier still-unexpired estimate');
     assert.throws(() => graph.read('other-owner', places[0]!.ref));
     const reused = graph.read(owner, places[0]!.ref);
     assert.throws(() => graph.ingest(owner, { objects: [{ ref: reused.ref, properties: reused.properties, expectedRevision: reused.revision + 1, reuseIfUnchanged: true }] }, reused.source), /exact source-authoritative revision/);
@@ -75,11 +99,16 @@ test('checkout observations reuse the catalog variant identity and retain per-ob
     const variant = catalogEntityRefs({ merchant: checkoutMerchant, action: 'ReadMerchantVariants' }, checkoutVariant).variant!;
     const items = graph.query(owner, { type: 'CheckoutItem' }).items;
     assert(items.length >= 3); assert.equal(graph.query(owner, { type: 'ProductVariant' }).items.length, 1);
+    const statuses: string[] = [];
     for (const item of items) {
       assert.deepEqual(graph.related(owner, item.ref, 'productVariant', { remaining: 1000 })!.map(o => o.ref), [variant]);
       assert.equal(item.properties.quantity, 1);
-      assert.equal(graph.evaluate(owner, { function: 'businessFactStatus', object: item.ref }).status, 'known');
+      statuses.push(graph.evaluate(owner, { function: 'businessFactStatus', object: item.ref }).status);
     }
+    assert(statuses.includes('known')); assert(statuses.includes('unknown'), 'An independent readback supersedes the earlier checkout response');
+    const before = graph.read(owner, variant);
+    graph.ingest(owner, { objects: [{ ref: variant, properties: { ...before.properties, specificationRevision: 'changed-specification' }, expectedRevision: before.revision }] }, { kind: 'synthetic', id: 'changed-variant', observedAt: new Date().toISOString() });
+    assert(items.every(item => graph.evaluate(owner, { function: 'businessFactStatus', object: item.ref }).status === 'unknown'));
     assert.equal(graph.query(owner, { type: 'Order' }).items.length, 0); assert.equal(graph.query(owner, { type: 'Payment' }).items.length, 0);
   } finally { t.store.close(); }
 });

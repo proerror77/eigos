@@ -11,6 +11,7 @@ import { actionDiscoverySchema, type ActionBindingPin, type ActionDiscoveryEntry
 import { actionEffects, actionVersion } from '../ontology/composition-contract.js';
 import { permittedCapability, permittedProgram, secureProgram, secureAdapter, secureDiscovery } from '../security/execution.js';
 import { businessModel } from '../ontology/business-model.js';
+import { currentKernelImplementation } from '../ontology/definition-store.js';
 import {requireRecovery} from '../security/recovery.js';
 import {SecurityError,type SecurityStore} from '../security/store.js';
 import { CompositionProgram } from '../coordinator/composition-program.js';
@@ -352,7 +353,7 @@ export class ExecutionCatalog {
   /** Reviewed server metadata for the member control plane, without credentials,
    * source locators or an implicit grant for programs restricted to another owner. */
   securityProfiles(owner:string) {
-    const model = this.security?.model ?? this.ontologyModel ?? businessModel;
+    const model = this.security?.model ?? this.ontologyModel ?? currentKernelImplementation();
     return [...this.programs.values()].filter(p=>p.permitted(owner)).map(program=>{
       const ontology=program.capability().ontology;
       const objects=ontology && 'objects' in ontology && Array.isArray(ontology.objects) ? ontology.objects.filter((v):v is string=>typeof v==='string') : [];

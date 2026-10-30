@@ -245,7 +245,7 @@ export class ShopifyCheckoutProgram implements AgentProgram {
     const publicProperties = { id: ref.id, displayTitle: `${snapshot.merchant.name}: ${action}`.slice(0, 500), requestRevision: snapshot.requestRevision, ...(snapshot.products ? { items: snapshot.products } : { data: snapshot.checkout }) };
     const links: LinkWrite[] = [{ type: `${ref.type}Request`, from: ref, to: { type: 'ServiceRequest', id: ctx.request.id } }, { type: `${ref.type}Scope`, from: ref, to: ctx.state.scope }, ...(snapshot.originalObservation ? [{ type: 'ShopifyCheckoutOriginalCreation', from: ref, to: snapshot.originalObservation }] : [])];
     const receipt = { type: 'SourceReceipt', id: `shopify-checkout:${snapshot.receipt.id}` };
-    const facts = businessFactsEnabled(ctx.graph) ? new BusinessFactProjection(ctx.graph, ctx.owner, snapshot.observedAt, receipt) : undefined;
+    const facts = businessFactsEnabled(ctx.graph) ? new BusinessFactProjection(ctx.graph, ctx.owner, snapshot.observedAt, receipt, { query: ctx.state.scope, collection: snapshot.products ? 'products' : 'checkouts', observation: ref }) : undefined;
     if (facts) for (const item of snapshot.products ?? snapshot.checkout?.items ?? []) {
       const refs = catalogEntityRefs({ merchant: snapshot.merchant, action: 'ReadMerchantVariants' }, item.variantId);
       // A checkout read confirms identity and price, not the full catalog specification.
@@ -262,7 +262,7 @@ export class ShopifyCheckoutProgram implements AgentProgram {
       const variant = facts.entity(refs.variant!, observed.displayTitle, old ? Object.fromEntries(Object.entries(old.properties).filter(([key]) => !['variantId', 'displayTitle'].includes(key))) : observed, undefined, observedFields);
       const provider = facts.entity(refs.provider, snapshot.merchant.name, { name: snapshot.merchant.name, verifiedIdentityRefs: [snapshot.merchant.shopId, `https://${snapshot.merchant.domain}`] });
       const line = facts.fact(sourceEntityRef('CheckoutItem', `shopify:${snapshot.merchant.shopId}`, { observation: snapshot.id, variant: item.variantId }), item.title,
-        { observedAt: snapshot.observedAt, expiresAt: snapshot.expiresAt, requestRevision: snapshot.requestRevision, variantRevision: facts.revision(variant), quantity: item.quantity, unitPriceMinor: item.unitPrice.minor, currency: item.unitPrice.currency,
+        { observedAt: snapshot.observedAt, expiresAt: snapshot.expiresAt, requestRevision: snapshot.requestRevision, variantRevision: facts.revision(variant), quantity: item.quantity, unitPriceMinor: item.unitPrice.minor, currency: item.unitPrice.currency, amountUnit: 'minor', priceKind: 'display_price', priceBasis: 'unit', pricingCompleteness: 'partial',
           ...('available' in item ? { available: item.available } : {}) });
       facts.edge(`${ref.type}Items`, ref, line); facts.edge('CheckoutItemVariant', line, variant); facts.edge('CheckoutItemProvider', line, provider);
       facts.edge('CheckoutItemRequest', line, { type: 'ServiceRequest', id: ctx.request.id });
@@ -271,7 +271,7 @@ export class ShopifyCheckoutProgram implements AgentProgram {
     const evidenceLevel = snapshot.evidenceKind === 'fixture' ? 'synthetic' : snapshot.receipt.tool === 'create_checkout' ? 'live_operation' : 'live_readonly';
     ctx.graph.ingest(ctx.owner, { objects: [{ ref, properties: { ...publicProperties, snapshot } }, ...(facts?.objects ?? []), { ref: receipt, properties: { receiptId: receipt.id, displayTitle: 'Shopify 原始来源回执', sourceIdentity: `shopify-shop:${snapshot.merchant.shopId}:${snapshot.merchant.domain}`, sourceEventId: snapshot.receipt.id, scope: snapshot.products ? 'goods_offer' : 'checkout_session',
       observedAt: snapshot.observedAt, evidenceLevel, contentDigest: snapshot.contentDigest, subjects: [{ object: ref, digest: digest(publicProperties), linksDigest: linkSnapshotDigest(ref, links) }, ...(facts?.subjects() ?? [])], safeSummary: snapshot.products ? '选定商品的公开来源观察；不是库存预留或购买许可' : '原未付款结账及其状态；没有调用订单完成或支付工具' } }],
-      removeLinks: facts?.removeLinks, links: [...links, { type: `${ref.type}Evidence`, from: ref, to: receipt }, { type: 'ReceiptRequest', from: receipt, to: { type: 'ServiceRequest', id: ctx.request.id } }] }, { kind: snapshot.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: snapshot.receipt.id, observedAt: snapshot.observedAt });
+      removeLinks: facts?.removeLinks, links: [...links, { type: `${ref.type}Evidence`, from: ref, to: receipt }, { type: 'ReceiptRequest', from: receipt, to: { type: 'ServiceRequest', id: ctx.request.id } }] }, { kind: snapshot.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: snapshot.receipt.id, observedAt: snapshot.observedAt, ...(facts?.readContext ? { readContext: facts.readContext } : {}) });
     return ref;
   }
   projectOutputs(_ctx: AgentActionContext, _action: string, _input: Record<string, unknown>, result: AgentActionResult, object: ObjectRef) {

@@ -655,7 +655,7 @@ export class SecurityPolicies {
       const rule = scope.grant!.outputs.find(o => o.programId === origin.programId && o.programDigest === origin.programDigest && o.sourceBindingId === source.bindingId && o.type === object.ref.type);
       if (!rule || !source.outputTypes.includes(object.ref.type)) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
       const fields = object.observedFields ? rule.fields.filter(field => object.observedFields!.includes(field)) : rule.fields;
-      this.bind(scope.grant!, object.ref, fields, source.bindingId,inputEnvelope, this.model.hasType('RideEstimate') ? { programId: origin.programId, programDigest: origin.programDigest, sourceBindingId: origin.sourceBindingId } : undefined);
+      this.bind(scope.grant!, object.ref, fields, source.bindingId,inputEnvelope, this.model.hasType('ObservedFact') && object.reuseIfUnchanged ? { programId: origin.programId, programDigest: origin.programDigest, sourceBindingId: origin.sourceBindingId } : undefined);
       const revision=this.db.prepare('SELECT revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(owner,object.ref.type,object.ref.id)!.revision;
       this.db.prepare('INSERT OR IGNORE INTO security_object_origins VALUES(?,?,?,?,?)').run(owner,object.ref.type,object.ref.id,Number(revision),JSON.stringify({...origin,inputEnvelope}));
     }
@@ -665,14 +665,13 @@ export class SecurityPolicies {
     }
     for (const edge of batch.removeLinks ?? []) {
       this.requireResource(scope, 'linkType', edge.type); this.requireObject(owner, edge.from);
-      // Re-observing a shared entity may retire its old current evidence edge.
+      // Re-observing a shared entity may replace a same-source relationship.
       // This is a same-source projection write, not permission to read the prior
-      // task's receipt. Its immutable observation/receipt remains in the ledger.
-      const replacement = this.model.hasType('RideEstimate') && edge.to.type === 'SourceReceipt'
-        && this.model.link(edge.type).from.name === 'sourceReceipts'
+      // task's target. Its immutable observation/receipt remains in the ledger.
+      const replacement = this.model.hasType('ObservedFact') && this.model.linkWritePolicy(edge.type) === 'source' && source.outputTypes.includes(edge.to.type)
         && batch.objects.some(object => refKey(object.ref) === refKey(edge.from))
         && (batch.links ?? []).some(link => link.type === edge.type && refKey(link.from) === refKey(edge.from)
-          && batch.objects.some(object => object.ref.type === 'SourceReceipt' && refKey(object.ref) === refKey(link.to)));
+          && batch.objects.some(object => object.ref.type === edge.to.type && refKey(object.ref) === refKey(link.to)));
       if (replacement) {
         const row = this.db.prepare('SELECT origins.body FROM security_object_origins origins JOIN ontology_objects objects ON objects.owner=origins.owner AND objects.type=origins.type AND objects.id=origins.object_id AND objects.revision=origins.object_revision WHERE origins.owner=? AND origins.type=? AND origins.object_id=?')
           .get(owner, edge.to.type, edge.to.id);

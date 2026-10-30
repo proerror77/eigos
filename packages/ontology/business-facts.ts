@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { LinkDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
+import { sharedBusinessProperties as shared } from './shared-business-interfaces.js';
 
 const text = z.string().min(1).max(2000), time = z.iso.datetime({ offset: true });
 const decimal = z.string().regex(/^(0|[1-9]\d{0,17})(\.\d{1,6})?$/);
@@ -21,6 +22,7 @@ export const businessFactObjects: ObjectTypeDefinition[] = [
     productCategory: str('Provider service category'), productName: str('Provider service name'), priceText: str('Original bounded price display', false),
     estimatedAmount: p('decimal', decimal, 'Estimated CNY major units, only when the source supplies an exact amount', false),
     currency: p('string', z.literal('CNY'), 'Explicit estimate currency', false),
+    amountUnit: shared.amountUnit, priceBasis: shared.priceBasis,
     priceKind: p('string', z.literal('estimate'), 'Estimate, never a final fare'), feesComplete: p('string', z.literal('unknown'), 'Full mandatory fees are not proven'),
   }),
   type('HotelPrice', '酒店参考价格', 'A hotel search price for the exact check-in date, nights and adults. Room, availability, tax and price basis remain unknown unless independently sourced.', {
@@ -30,7 +32,7 @@ export const businessFactObjects: ObjectTypeDefinition[] = [
     referenceAmount: p('decimal', decimal, 'Provider numeric reference price in major units; not assumed to be nightly or stay total', false),
     currency: p('string', z.string().regex(/^[A-Z]{3}$/), 'Currency explicitly attached to the returned price', false),
     hasPrice: p('boolean', z.boolean(), 'Provider price availability flag'), priceKind: p('string', z.literal('reference'), 'Reference price, not a bookable offer'),
-    priceBasis: p('string', z.literal('provider_unspecified'), 'The source does not specify nightly versus whole-stay basis'),
+    amountUnit: shared.amountUnit, priceBasis: shared.priceBasis, pricingCompleteness: shared.pricingCompleteness,
   }),
   type('Event', '活动或预约场次', 'Source-identified event or appointment session. Its URL identifies the source event; no venue or attendance is inferred.', {
     serviceUrl: str('Canonical source service URL'), title: str('Source event title'), kind: p('string', z.enum(['event_registration', 'appointment']), 'Source service kind'),
@@ -48,8 +50,21 @@ export const businessFactObjects: ObjectTypeDefinition[] = [
     requestRevision: integer('Exact request revision for the selected quantity'),
     quantity: integer('Selected number of source sale units'), unitPriceMinor: p('decimal', z.string().regex(/^(0|[1-9]\d{0,17})$/), 'Unit display price in currency minor units'),
     currency: p('string', z.string().regex(/^[A-Z]{3}$/), 'Source price currency'), available: p('boolean', z.boolean(), 'Source sale availability, not stock reservation', false),
+    amountUnit: shared.amountUnit, priceKind: shared.priceKind, priceBasis: shared.priceBasis, pricingCompleteness: shared.pricingCompleteness,
   }),
 ];
+for (const object of businessFactObjects) {
+  if (object.id === 'Event') {
+    object.interfaces!.push({ id: 'Scheduled' }, { id: 'Located', linkMap: { location: 'venue' } }, { id: 'IdentitySubject' });
+    continue;
+  }
+  const propertyMap: Record<string, string> = {}, linkMap: Record<string, string> = {};
+  if (object.id === 'RideEstimate') Object.assign(propertyMap, { amount: 'estimatedAmount', pricingCompleteness: 'feesComplete' });
+  if (object.id === 'HotelPrice') { Object.assign(propertyMap, { amount: 'referenceAmount', subjectRevision: 'hotelRevision' }); linkMap.subject = 'hotel'; }
+  if (object.id === 'CheckoutItem') { Object.assign(propertyMap, { amount: 'unitPriceMinor', subjectRevision: 'variantRevision' }); linkMap.subject = 'productVariant'; }
+  if (object.id === 'EventRegistration') { propertyMap.subjectRevision = 'eventRevision'; linkMap.subject = 'event'; }
+  object.interfaces!.push({ id: object.id === 'EventRegistration' ? 'ObservedFact' : 'MonetaryFact', propertyMap, linkMap });
+}
 export const businessFactTypes = businessFactObjects.map(o => o.id);
 const link = (id: string, from: string, name: string, to: string, reverse: string, many = false, required = false): LinkDefinition => ({
   id, description: `${from}.${name} ↔ ${to}.${reverse}`, from: { type: from, name, many, required }, to: { type: to, name: reverse, many: true },
@@ -76,4 +91,8 @@ export const businessFactLinks: LinkDefinition[] = [
   link('CheckoutItemProvider', 'CheckoutItem', 'provider', 'Provider', 'checkoutItems', false, true),
   link('MeituanObservationPlaces', 'MeituanReadObservation', 'places', 'Place', 'meituanObservations', true),
   link('MeituanObservationQuote', 'MeituanReadObservation', 'quote', 'DeliveryQuote', 'meituanObservations'),
+  link('EventVenue', 'Event', 'venue', 'Place', 'events'),
+  link('HotelPropertyLocation', 'HotelProperty', 'location', 'Place', 'hotels'),
+  link('TravelLegOriginPlace', 'TravelLeg', 'departurePlace', 'Place', 'departingTravelLegs'),
+  link('TravelLegDestinationPlace', 'TravelLeg', 'arrivalPlace', 'Place', 'arrivingTravelLegs'),
 ];

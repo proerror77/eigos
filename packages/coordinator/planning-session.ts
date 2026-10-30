@@ -1,10 +1,11 @@
+import { readRequestedFacts, requestedFactsSchema, type RequestedFacts } from './requested-facts.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { compositionSummary } from '../ontology/composition-contract.js';
 import { DomainError } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
-import { objectQuerySchema, type OntologyObjectStore } from '../ontology/object-store.js';
+import { objectQuerySchema, type OntologyObjectStore, type ObjectQuery, type OntologyQueryResult } from '../ontology/object-store.js';
 import { functionCallSchema } from '../ontology/object-functions.js';
 import { planningSnapshot, type PlanningReadReceipt, type ObjectSnapshot, type DecisionActionProposal, type PlanningSnapshot } from '../ontology/planning-contract.js';
 import type { ResolvedCandidate, ServiceRequest } from '../ontology/execution.js';
@@ -25,7 +26,8 @@ import { describeAuthorized, secureFunctionCallSchema } from '../security/view.j
 const describeSchema = z.object({ functions: z.array(z.string().min(1).max(80)).max(20).optional(), includeLinks: z.boolean().optional(), kind: z.enum(['types', 'actions', 'functions']).optional().describe('Types return related contracts only; actions/functions pages enumerate their complete catalogues'), search: z.string().max(100).optional(), limit: z.number().int().min(1).max(5).optional(), after: z.string().max(80).optional(), actions: z.array(z.string().min(1).max(80)).max(8).optional().describe('Exact action IDs whose complete input schemas are needed; otherwise concise action summaries'), includeConditionSchema: z.boolean().optional().describe('Request the full typed business-condition contract when grounding domain conditions'), includeSchemas: z.boolean().optional().describe('Request full property and action schemas; default returns concise names, semantics and links') }).strict();
 const assessmentSchema = z.object({ candidateId: z.string().max(200).optional(), subject: objectRefSchema.optional(), phase: z.enum(['precondition', 'result']).optional() }).strict();
 const actionSchema = z.object({ action: z.string().min(1).max(80), inputs: z.array(z.object({ name: z.string().min(1).max(80), object: objectRefSchema, revision: z.number().int().positive() }).strict()).min(1).max(8) }).strict();
-export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: objectQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
+export const planningQuerySchema = z.union([...objectQuerySchema.options, z.object({ facts: requestedFactsSchema }).strict()]);
+export const planningToolSchemas = { read_task_context: taskContextSchema, read_task_instructions: taskInstructionsSchema, describe_ontology: describeSchema, discover_actions: actionDiscoverySchema, query_ontology: planningQuerySchema, evaluate_ontology: functionCallSchema, assess_conditions: assessmentSchema, propose_action: actionSchema };
 export const planningToolCatalog = (taskContext = false, actionCatalog = false, secured = false) => Object.entries(planningToolSchemas).filter(([name]) => (taskContext || !['read_task_context', 'read_task_instructions'].includes(name)) && (actionCatalog || name !== 'discover_actions')).map(([name, schema]) => ({ name, inputSchema: compactSchema(z.toJSONSchema(secured && name === 'evaluate_ontology' ? secureFunctionCallSchema : schema)), readOnly: true, executionAllowed: false }));
 const key = (ref: ObjectRef) => JSON.stringify(ref);
 const contextLimits = { reads: 10, bytes: 80000, resultBytes: 30000, refs: 8 } as const;
@@ -199,6 +201,48 @@ export class OntologyPlanningSession {
     return navigation.direction === 'forward' && this.graph.model.linkWritePolicy(navigation.link.id) === 'managed'
       && this.graph.model.concreteTypes(navigation.other.type).every(type => isSharedManagedType(this.graph.model, type));
   }
+  private queryData(input: ObjectQuery): OntologyQueryResult {
+    let query = objectQuerySchema.parse(input);
+    let discovery = false;
+    if (this.readScope === 'request' && !this.graph.security) {
+      if ('type' in query) {
+        if (query.type === 'ServiceRequest') {
+          const { type: _type, ...fields } = query;
+          query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
+        } else {
+          const allowed = this.managedDiscovery(), types = this.graph.model.concreteTypes(query.type);
+          if (!allowed || !types.length || types.some(type => !allowed.includes(type) || !isSharedManagedType(this.graph.model, type))) throw new DomainError('FORBIDDEN', 'This task permits only bound objects and its host-authorized managed discovery types');
+          discovery = true;
+        }
+      } else if ('object' in query) {
+        this.retrieved(query.object, true);
+        if (taskObjectMembership(this.graph, this.owner, this.request, query.object) === 'foreign') throw new DomainError('FORBIDDEN', 'Object belongs to another request or revision');
+      } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') {
+        const nav = this.graph.model.navigation(query.from.type, query.link, query.as);
+        const view = query.as && (this.graph.model.describeType(query.as) as { projectionOnly?: boolean }).projectionOnly && nav.direction === 'forward';
+        if (!view && !this.managedRelationship(query.from, nav.side.name)) throw new DomainError('FORBIDDEN', 'Relationships require a current task object or an authorized forward managed link');
+        discovery = true;
+      }
+    }
+    if ('from' in query) this.retrieved(query.from, !!query.as);
+    const queryScope = discovery ? digest({ requestId: this.request.id, requestRevision: this.request.revision, binding: this.options.taskContext?.program, types: this.managedDiscovery() }) : undefined;
+    const result = this.graph.query(this.owner, query, undefined, queryScope);
+    for (const object of result.items) {
+      if (this.readScope === 'request' && !this.graph.security && taskObjectMembership(this.graph, this.owner, this.request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship points outside the current task revision');
+      this.remember(object.ref, object.revision, true);
+    }
+    return result;
+  }
+  private requestedFacts(input: RequestedFacts) {
+    const before = this.graph.revision(this.owner);
+    const facts = readRequestedFacts(input, query => this.queryData(query), object => {
+      const result = this.graph.evaluate(this.owner, { function: 'businessFactStatus', object: object.ref });
+      for (const ref of [object.ref, ...result.evidenceRefs]) this.remember(ref);
+      return result;
+    });
+    if (this.graph.revision(this.owner) !== before) throw new DomainError('CONFLICT', 'Facts changed during the context read; retry against the current versions');
+    return facts;
+  }
   call(tool: string, input: unknown, options?: { origin: 'worker_context'; maxOutputBytes: number }): unknown {
     this.active();
     if (this.graph.security && !authorizationScope()?.synchronousRead) return this.graph.security.readSnapshot(() => this.call(tool, input, options));
@@ -219,6 +263,7 @@ export class OntologyPlanningSession {
         for (const ref of contextRead.deliveredRefs) this.remember(ref, undefined, true);
         for (const ref of contextRead.data.graph.unreadRefs) this.knownRefs.set(key(ref), ref);
         instructionRefs = contextRead.instructionRefs;
+        if (args.facts) contextRead.data.requestedFacts = this.requestedFacts(args.facts);
         output = contextRead.data;
       } else if (tool === 'read_task_instructions') {
         if (!this.options.taskContext || !this.reads.some(receipt => receipt.tool === 'read_task_context' && receipt.status === 'ok')) throw new DomainError('FORBIDDEN', 'Read the current task context before its original instruction pages');
@@ -270,36 +315,14 @@ export class OntologyPlanningSession {
         }
       }
       else if (tool === 'query_ontology') {
-        let query = objectQuerySchema.parse(input);
-        let discovery = false;
-        if (this.readScope === 'request' && !this.graph.security) {
-          if ('type' in query) {
-            if (query.type === 'ServiceRequest') {
-              const { type: _type, ...fields } = query;
-              query = { ...fields, object: { type: 'ServiceRequest', id: this.request.id } };
-            } else {
-              const allowed = this.managedDiscovery(), types = this.graph.model.concreteTypes(query.type);
-              if (!allowed || !types.length || types.some(type => !allowed.includes(type) || !isSharedManagedType(this.graph.model, type))) throw new DomainError('FORBIDDEN', 'This task permits only bound objects and its host-authorized managed discovery types');
-              discovery = true;
-            }
-          } else if ('object' in query) {
-            this.retrieved(query.object, true);
-            if (taskObjectMembership(this.graph, this.owner, this.request, query.object) === 'foreign') throw new DomainError('FORBIDDEN', 'Object belongs to another request or revision');
-          } else if (taskObjectMembership(this.graph, this.owner, this.request, query.from) !== 'current') {
-            if (!this.managedRelationship(query.from, query.link)) throw new DomainError('FORBIDDEN', 'Relationships require a current task object or an authorized forward managed link');
-            discovery = true;
-          }
+        const parsed = planningQuerySchema.parse(input);
+        if ('facts' in parsed) output = this.requestedFacts(parsed.facts);
+        else {
+          const result = this.queryData(parsed);
+          for (const object of result.items) if (object.ref.type === 'RequestInstruction' && typeof object.properties.text === 'string') instructionRefs.push(object.ref);
+          instructionPage = !!result.items.length && result.items.every(object => object.ref.type === 'RequestInstruction');
+          output = this.graph.security ? { items: result.items.map(({ref, revision, properties, derived}) => ({ref, revision, properties, ...(derived ? {derived} : {})})), page: {limit: result.page.limit, hasMore: result.page.hasMore, cursor: result.page.cursor} } : result;
         }
-        if ('from' in query) this.retrieved(query.from);
-        const queryScope = discovery ? digest({ requestId: this.request.id, requestRevision: this.request.revision, binding: this.options.taskContext?.program, types: this.managedDiscovery() }) : undefined;
-        const result = this.graph.query(this.owner, query, undefined, queryScope);
-        for (const object of result.items) {
-          if (this.readScope === 'request' && !this.graph.security && taskObjectMembership(this.graph, this.owner, this.request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Relationship points outside the current task revision');
-          this.remember(object.ref, object.revision, true);
-          if (object.ref.type === 'RequestInstruction' && typeof object.properties.text === 'string') instructionRefs.push(object.ref);
-        }
-        instructionPage = !!result.items.length && result.items.every(object => object.ref.type === 'RequestInstruction');
-        output = this.graph.security ? { items: result.items.map(({ref, revision, properties, derived}) => ({ref, revision, properties, ...(derived ? {derived} : {})})), page: {limit: result.page.limit, hasMore: result.page.hasMore, cursor: result.page.cursor} } : result;
       } else if (tool === 'evaluate_ontology') {
         if (this.graph.security) { const candidate = secureFunctionCallSchema.parse(input); this.graph.security.requireResource(authorizationScope()!, 'function', candidate.function); }
         const args = functionCallSchema.parse(input);

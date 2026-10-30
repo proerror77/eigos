@@ -56,7 +56,7 @@ export function projectRegistration(ctx: AgentActionContext, action: string, res
   const object: ObjectWrite = { ref, properties: { id: ref.id, displayTitle: data.title, requestRevision: ctx.request.revision, data: result.payload.data, snapshot } };
   const links: LinkWrite[] = [{ type: `${ref.type}Request`, from: ref, to: root }, { type: `${ref.type}Task`, from: ref, to: ctx.state.scope }];
   const source = { type: 'SourceReceipt', id: digest({ ref, receipt: receipt.id }) };
-  const facts = businessFactsEnabled(ctx.graph) ? new BusinessFactProjection(ctx.graph, ctx.owner, data.observedAt, source) : undefined;
+  const facts = businessFactsEnabled(ctx.graph) ? new BusinessFactProjection(ctx.graph, ctx.owner, data.observedAt, source, { query: ctx.state.scope, collection: `${ref.type}Observations`, observation: ref }) : undefined;
   if (facts) {
     const event = facts.entity(sourceEntityRef('Event', receipt.sourceIdentity, data.serviceUrl), data.title,
       { serviceUrl: data.serviceUrl, title: data.title, kind: data.kind, startsAt: data.startsAt, endsAt: data.endsAt, timeZone: data.timeZone }, 'EventEvidence');
@@ -72,7 +72,7 @@ export function projectRegistration(ctx: AgentActionContext, action: string, res
   }
   const proof: ObjectWrite = { ref: source, properties: { receiptId: source.id, displayTitle: '参与者报名来源回读', sourceIdentity: receipt.sourceIdentity, sourceEventId: receipt.id, scope: 'reservation', observedAt: receipt.receivedAt, evidenceLevel: result.evidenceLevel, contentDigest: receipt.responseSha256, subjects: [{ object: ref, digest: digest(object.properties), linksDigest: linkSnapshotDigest(ref, links) }, ...(facts?.subjects() ?? [])], safeSummary: result.evidenceLevel === 'synthetic' ? '合成报名来源；不是实际参加资格' : '本机授权浏览器观察；来源网页状态与任务提交回执分别记录' } };
   links.push({ type: `${ref.type}Evidence`, from: ref, to: source }, { type: 'ReceiptRequest', from: source, to: root });
-  ctx.graph.ingest(ctx.owner, { objects: [object, proof, ...(facts?.objects ?? [])], links, removeLinks: facts?.removeLinks }, { kind: result.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: receipt.sourceIdentity, observedAt: receipt.receivedAt });
+  ctx.graph.ingest(ctx.owner, { objects: [object, proof, ...(facts?.objects ?? [])], links, removeLinks: facts?.removeLinks }, { kind: result.evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: receipt.sourceIdentity, observedAt: receipt.receivedAt, ...(facts?.readContext ? { readContext: facts.readContext } : {}) });
   readRegistration(ctx.graph, ctx.owner, ref);
   return ref;
 }

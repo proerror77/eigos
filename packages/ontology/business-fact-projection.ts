@@ -1,9 +1,9 @@
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { ObjectRef } from './model.js';
-import { linkSnapshotDigest, type LinkWrite, type ObjectWrite, type OntologyObjectStore } from './object-store.js';
+import { type LinkWrite, type ObjectWrite, type OntologyObjectStore, type ObjectSource, type ObjectView } from './object-store.js';
 
-export const businessFactsEnabled = (graph: OntologyObjectStore) => graph.model.hasType('RideEstimate') && graph.model.hasType('HotelPrice');
+export const businessFactsEnabled = (graph: OntologyObjectStore) => graph.model.hasType('ObservedFact') && graph.model.hasType('MonetaryFact');
 export const sourceEntityRef = (type: string, source: string, nativeIdentity: unknown): ObjectRef => ({ type, id: digest({ namespace: 'business-entity-v1', type, source, nativeIdentity }) });
 
 /** Builds one atomic source projection. It never reads a different owner or
@@ -13,8 +13,16 @@ export class BusinessFactProjection {
   readonly links: LinkWrite[] = [];
   readonly removeLinks: LinkWrite[] = [];
   private evidenced = new Map<string, ObjectWrite>();
-  constructor(private graph: OntologyObjectStore, private owner: string, private observedAt: string, private receipt: ObjectRef) {}
+  constructor(private graph: OntologyObjectStore, private owner: string, private observedAt: string, private receipt: ObjectRef, readonly readContext?: ObjectSource['readContext']) {}
   edge(type: string, from: ObjectRef, to: ObjectRef) { this.links.push({ type, from, to }); }
+  replaceLink(type: string, from: ObjectRef, to: ObjectRef) {
+    let previous: ObjectView[] | undefined;
+    try { previous = this.graph.related(this.owner, from, this.graph.model.link(type).from.name, { remaining: 1000 }); }
+    catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; previous = []; }
+    if (!previous) throw new DomainError('CONFLICT', 'Relationship replacement exceeds its bound');
+    for (const old of previous) if (old.ref.type !== to.type || old.ref.id !== to.id) this.removeLinks.push({ type, from, to: old.ref });
+    this.edge(type, from, to);
+  }
   revision(ref: ObjectRef): number {
     const pending = this.objects.find(value => value.ref.type === ref.type && value.ref.id === ref.id);
     if (!pending) throw new DomainError('INVALID_INPUT', 'The entity must be observed before its revision is pinned');
@@ -54,6 +62,6 @@ export class BusinessFactProjection {
     this.edge(`${ref.type}Evidence`, ref, this.receipt); return ref;
   }
   subjects() {
-    return [...this.evidenced.values()].map(o => ({ object: o.ref, digest: digest(o.properties), linksDigest: linkSnapshotDigest(o.ref, this.links) }));
+    return [...this.evidenced.values()].map(o => ({ object: o.ref, digest: digest(o.properties), linksDigest: this.graph.projectedRelationshipDigest(this.owner, o.ref, this.links, this.removeLinks) }));
   }
 }

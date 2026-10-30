@@ -199,6 +199,12 @@ export class DefinitionStore {
       if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
       if (current.model.ref.digest !== '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127') return conflict('Business facts require the exact reviewed v23 predecessor');
       const document = structuredClone(current.document), linkIds = new Set(businessFactLinks.map(link => link.id));
+      for (const type of document.objects) {
+        const next = kernel.objects.find(value => value.id === type.id);
+        if (next?.visibility === 'technical') type.visibility = 'technical';
+      }
+      document.interfaces.push(...kernel.interfaces.filter(type => !document.interfaces.some(previous => previous.id === type.id)));
+      for (const id of ['HotelProperty', 'RideRoute', 'TravelLeg', 'Place', 'SavedAddress']) document.objects.find(type => type.id === id)!.interfaces = structuredClone(kernel.objects.find(type => type.id === id)!.interfaces);
       document.objects.push(...kernel.objects.filter(type => businessFactTypes.includes(type.id)));
       document.links.push(...kernel.links.filter(link => linkIds.has(link.id)));
       document.functions.push(...kernel.functions.filter(fn => fn.id === 'businessFactStatus'));

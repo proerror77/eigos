@@ -31,7 +31,7 @@ function sourceProofInternal(store:OntologyObjectStore,owner:string,ref:ObjectRe
   // Place is a source-qualified public observation; CheckoutItem may be read
   // before creation or from the original checkout. Neither promotes evidence.
   if (ref.type === 'Place' && store.model.hasType('RideEstimate') || ref.type === 'CheckoutItem') {
-    const allowed = ref.type === 'Place' ? ['public_locations', 'domain_ride'] : ['goods_offer', 'checkout_session'];
+    const allowed = ref.type === 'Place' ? ['public_locations', 'domain_ride', 'domain_hotel'] : ['goods_offer', 'checkout_session'];
     const scope = receipts?.[0]?.properties.scope;
     if (typeof scope === 'string' && allowed.includes(scope)) scopes[ref.type] = scope;
   }

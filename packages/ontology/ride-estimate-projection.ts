@@ -26,7 +26,7 @@ export function projectRideEstimate(graph: OntologyObjectStore, owner: string, v
   const subject = { type: s.data.kind === 'places' ? 'DidiPlaceObservation' : 'RideEstimateObservation', id: s.id };
   const objects: ObjectWrite[] = [], links: LinkWrite[] = [];
   const receipt = { type: 'SourceReceipt', id: `didi:${s.id}` };
-  const facts = businessFactsEnabled(graph) ? new BusinessFactProjection(graph, owner, s.observedAt, receipt) : undefined;
+  const facts = businessFactsEnabled(graph) ? new BusinessFactProjection(graph, owner, s.observedAt, receipt, { query: s.scope, collection: `${subject.type}Observations`, observation: subject }) : undefined;
   const namespace = `didi:${s.receipt.environment}:${s.receipt.bindingId}`;
   // DiDi supplies a content identity, not a persistent native place identifier.
   // Equal source snapshots can be reused; changed coordinates/name are never merged.
@@ -56,7 +56,7 @@ export function projectRideEstimate(graph: OntologyObjectStore, owner: string, v
         const estimatedAmount = minor === undefined ? undefined : `${BigInt(minor) / 100n}.${String(BigInt(minor) % 100n).padStart(2, '0')}`;
         const estimate = facts.fact(sourceEntityRef('RideEstimate', namespace, { observation: s.id, category: item.productCategory }), item.productName,
           { observedAt: s.observedAt, expiresAt: s.expiresAt, requestRevision: s.requestRevision, productCategory: item.productCategory, productName: item.productName,
-            ...(item.priceText ? { priceText: item.priceText } : {}), ...(estimatedAmount ? { estimatedAmount, currency: 'CNY' } : {}), priceKind: 'estimate', feesComplete: 'unknown' });
+            ...(item.priceText ? { priceText: item.priceText } : {}), ...(estimatedAmount ? { estimatedAmount, currency: 'CNY' } : {}), amountUnit: 'major', priceBasis: 'total', priceKind: 'estimate', feesComplete: 'unknown' });
         facts.edge('RideObservationEstimates', subject, estimate); facts.edge('RideEstimateRequest', estimate, root);
         facts.edge('RideEstimateBusinessRoute', estimate, route); facts.edge('RideEstimateBusinessProvider', estimate, provider);
       }
@@ -69,6 +69,6 @@ export function projectRideEstimate(graph: OntologyObjectStore, owner: string, v
     evidenceLevel: s.evidenceKind === 'fixture' ? 'synthetic' : s.evidenceKind === 'provider_mock' ? 'provider_test' : 'live_readonly', contentDigest: s.contentDigest,
     subjects: [{ object: subject, digest: digest(record.properties), linksDigest: linkSnapshotDigest(subject, links) }, ...(facts?.subjects() ?? [])], safeSummary: '一次地点或车型估价读取；价格是预估，完整费用、叫车可用性与接送承诺未知' });
   links.push({ type: 'ReceiptRequest', from: receipt, to: root }, { type: `${subject.type}Evidence`, from: subject, to: receipt });
-  graph.ingest(owner, { objects, links, removeLinks: facts?.removeLinks }, { kind: s.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: s.receipt.id, observedAt: s.observedAt });
+  graph.ingest(owner, { objects, links, removeLinks: facts?.removeLinks }, { kind: s.evidenceKind === 'fixture' ? 'synthetic' : 'provider', id: s.receipt.id, observedAt: s.observedAt, ...(facts?.readContext ? { readContext: facts.readContext } : {}) });
   return subject;
 }

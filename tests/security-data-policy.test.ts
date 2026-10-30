@@ -44,6 +44,21 @@ function fixture(extraTypes:string[]=[]) {
   return { ...f,a,b,pa,pb,role,task,place,raw,va:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pa),vb:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pb),close:()=>{rawDb.close();f.close();} };
 }
 
+test('interface relationship and property aliases retain concrete field and task permissions', () => {
+  const f = fixture(['HotelProperty']);
+  try {
+    f.role(f.a.id); f.role(f.b.id);
+    const place = f.place('shared-hotel-place'), hotel = { type: 'HotelProperty', id: 'shared-hotel' };
+    f.raw.ingest(f.owner, { objects: [{ ref: hotel, properties: { objectId: hotel.id, displayTitle: 'Hotel', hotelName: 'Synthetic hotel' } }],
+      links: [{ type: 'HotelPropertyLocation', from: hotel, to: place.object }] }, { kind: 'synthetic', id: 'hotel-source', observedAt: new Date().toISOString() });
+    const task = f.task(f.a, [place, { object: hotel, objectRevision: 1, fields: ['objectId', 'displayTitle', 'hotelName'] }]);
+    const result = f.va.query({ version: 2, taskId: task.job.id, query: { from: hotel, as: 'Located', link: 'location' } });
+    assert.equal(result.items[0]!.ref.id, place.object.id); assert(!Object.hasOwn(result.items[0]!.properties, 'address'));
+    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { object: place.object, as: 'Addressable', select: ['address'] } }), /not available|INSUFFICIENT_ACCESS/);
+    assert.throws(() => f.vb.query({ version: 2, taskId: task.job.id, query: { from: hotel, as: 'Located', link: 'location' } }), /AUTHORIZATION_REQUIRED/);
+  } finally { f.close(); }
+});
+
 test('resource Viewer is independent of data grants; schema does not grant another installation its task', () => {
   const f=fixture(); try {
     const x=f.task(f.a,[f.place('A')]);
