@@ -29,6 +29,11 @@ import { addLocationContext, prepareLocationContext } from './location-context.j
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 import { AuthorizedOntologyView } from '../security/view.js';
 import { TaskSecurity } from '../security/task-service.js';
+import { selectPersonalContext } from './personal-context.js';
+import { isPersonalAction, selfPersonRef, personalPreferenceRef, personalPreferenceKey, mergePersonalContext } from '../ontology/personal-context.js';
+import { compileJsonSchema } from '../ontology/model-compiler.js';
+import { authorizationScope } from '../security/context.js';
+import { accessDigest } from '../security/model.js';
 import { pipelineValidationRequestSchema, pipelineMappingDigest } from '../ontology/pipeline/contracts.js';
 
 export interface TaskOptions { catalog: ExecutionCatalog; allowSandboxActions?: boolean; allowExternalDrafts?: boolean; waitTimeoutMs?: number }
@@ -154,7 +159,10 @@ export class TaskService {
     return graph.evaluate(ownerKey(p), scoped.query);
   }
 
-  submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false)) : this.submitInternal(p, input, contextId, false); }
+  submit(p: Principal, input: unknown, contextId?: string): Job { return this.security ? this.security.submit(p, () => this.submitInternal(p, input, contextId, false), job => {
+    const current = this.store.get(ownerKey(p), job.id), request = current.delegation!.request;
+    if (request.personalContext && !request.confirmedInputs?.personal) { selectPersonalContext(this.store.ontologyForJob(ownerKey(p), current), ownerKey(p), request, request.personalContext); this.store.save(ownerKey(p), current); }
+  }) : this.submitInternal(p, input, contextId, false); }
   preparePipelineValidation(p: Principal, input: unknown): Job {
     return this.security
       ? this.security.submit(p, () => this.preparePipelineValidationInternal(p, input), job => this.assertPipelineValidationProgram(p, job))
@@ -196,7 +204,12 @@ export class TaskService {
    * decision. It still uses the same pending plan, exact grant, Worker intent,
    * atomic observation and independent readback as model-selected actions. */
   prepareOntologyAction(p: Principal, input: unknown): Job {
-    if (this.security) throw new DomainError('FORBIDDEN', 'Foundation caller-managed preparation requires reviewed task authority');
+    if (!this.security) return this.prepareOntologyActionRaw(p, input);
+    const action = z.object({ action: z.string() }).passthrough().parse(input).action;
+    if (!isPersonalAction(action)) throw new DomainError('FORBIDDEN', 'Foundation caller-managed preparation is limited to reviewed personal actions');
+    return this.security.submit(p, () => this.prepareOntologyActionRaw(p, input), job => this.finishCallerAction(p, this.store.get(ownerKey(p), job.id)));
+  }
+  private prepareOntologyActionRaw(p: Principal, input: unknown): Job {
     requireScope(p, 'tasks:write'); requireScope(p, 'ontology:read');
     if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
     const args = z.strictObject({ ontologyId: ontologyIdSchema.default('eigos.business'), action: z.string().min(1).max(80).optional(),
@@ -208,45 +221,65 @@ export class TaskService {
       this.store.definitions.assertAccess(owner, args.ontologyId, p.scopes.includes('ontology:admin'));
       const release = this.store.definitions.active(args.ontologyId).ref, graph = this.store.ontologyForRelease(release);
       const selected = args.interface ? resolveManagedInterfaceAction(graph, owner, { ...args.interface, input: args.input }) : { actionId: args.action!, input: args.input };
-      const program = this.options.catalog.forOntology(graph, owner).managedProgram(owner);
-      if (!program?.callerManagedActions || graph.model.actionImplementation(selected.actionId)?.kind !== 'declarative') throw new DomainError('FORBIDDEN', 'Caller preparation is available only for bound declarative managed actions');
-      const definition = program.definition(graph, selected.actionId), parsed = program.schema(selected.actionId).parse(selected.input);
+      if (isPersonalAction(selected.actionId)) {
+        const key = selected.actionId === 'BindSelfPerson' ? undefined : personalPreferenceKey.parse(selected.input.key);
+        const derived = selected.actionId === 'BindSelfPerson' ? { personId: selfPersonRef(owner).id } : { person: selfPersonRef(owner), ...(selected.actionId === 'CreatePersonalPreference' ? { preferenceId: personalPreferenceRef(owner, key!).id } : { preference: personalPreferenceRef(owner, key!) }) };
+        for (const [name, value] of Object.entries(derived)) { if (Object.hasOwn(selected.input, name) && digest(selected.input[name]) !== digest(value)) throw new DomainError('FORBIDDEN', 'Personal action cannot select another service subject'); selected.input[name] = value; }
+      }
+      const programRef = { id: `ontology.managed.${release.ontologyId}`, version: release.digest };
+      const program = this.options.catalog.forOntology(graph, owner).configuredProgram(programRef, owner);
+      if (!program || graph.model.actionImplementation(selected.actionId)?.kind !== 'declarative') throw new DomainError('FORBIDDEN', 'Caller preparation is available only for bound declarative managed actions');
+      const definition = graph.model.action(selected.actionId), parsed = compileJsonSchema(definition.inputSchema!).parse(selected.input);
       if (digest(parsed) !== digest(selected.input)) throw new DomainError('INVALID_INPUT', 'Action inputs cannot be silently normalized');
-      const objects = Object.keys(definition.inputs).map(name => objectRefSchema.parse(selected.input[name]));
       const now = new Date().toISOString(), goal = `执行已发布的数据动作 ${selected.actionId}`;
       const job: Job = { id: randomUUID(), contextId: randomUUID(), service: DELEGATE, goal, state: 'auth-required', revision: 1, executionMode: 'worker', runs: [],
         messages: [{ id: args.requestId, role: 'user', text: goal, at: now }], createdAt: now, updatedAt: now };
-      const callerAction = { version: '1' as const, requestId: args.requestId, ownerDigest: digest(owner), ontologyRelease: release, programRef: program.ref, action: selected.actionId, input: structuredClone(selected.input), inputDigest: digest(selected.input),
+      const callerAction = { version: '1' as const, requestId: args.requestId, ownerDigest: digest(owner), ontologyRelease: release, programRef, action: selected.actionId, input: structuredClone(selected.input), inputDigest: digest(selected.input),
         ...(args.interface ? { interfaceInvocation: { ...args.interface, input: structuredClone(args.input) } } : {}) };
       job.delegation = { backendVersion: BACKEND_VERSION, ontologyRelease: release, callerAction, ontologyReadScope: 'request',
         request: { id: job.id, revision: 1, originalGoal: goal, executionEnvironment: 'live', requirements: [], messages: [{ id: args.requestId, text: goal, receivedAt: now }] },
         executionBudget: initialExecutionBudget(now), phase: 'awaiting_authorization', events: [{ at: now, event: 'caller_managed_action_requested', evidence: digest(callerAction) }] };
       this.store.save(owner, job);
-      const initialized = program.initialize(graph, owner, job.delegation.request, { actionIds: [selected.actionId], objects });
-      const state: AgentExecutionState = { version: '1', programRef: program.ref, programDigest: program.configurationDigest, ...initialized, requestRevision: 1, plans: [], observations: [], feedback: [] };
-      job.delegation.agent = state;
-      const ctx = { graph, owner, request: job.delegation.request, state, intents: [] };
-      program.validate(ctx, selected.actionId, selected.input);
-      const authority = program.authority?.(ctx, selected.actionId, selected.input);
-      if (!authority?.objectWrite || authority.cost) throw new DomainError('FORBIDDEN', 'Declarative action did not produce an exact nonfinancial scope');
-      const planId = randomUUID(), intentId = randomUUID(), stepId = 'managedAction';
-      const decision: AgentDecision = { kind: 'execute', requestRevision: 1, message: 'Authenticated caller selected this exact published managed action and arguments', steps: [{ id: stepId, action: selected.actionId, argumentsJson: JSON.stringify(selected.input), dependsOn: [], inputRefs: [] }], completionJson: '' };
-      const planning = templatePlanning(job.delegation.request, graph.model.ref);
-      const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', sequence: 1, requestId: job.id, requestRevision: 1, programRef: program.ref, programDigest: program.configurationDigest,
-        scope: state.scope, scopeDigest: digest(graph.read(owner, state.scope).properties), callerDecision: { requestId: args.requestId, envelopeDigest: digest(callerAction), decision }, reasoning: decision.message, createdAt: now,
-        steps: [{ ...decision.steps[0]!, definitionDigest: digest(definition), input: structuredClone(selected.input), intentId, operationKey: actionOperationKey(owner, job.id, `caller:${args.requestId}`), effect: 'object_write', objectWrite: authority.objectWrite }], ontologyPlanning: planning };
-      const plan: AgentActionPlan = { ...body, digest: digest(body) };
-      validateAgentAuthority(program, ctx, plan, plan.steps[0]!);
-      state.plans = [plan]; state.pendingPlanId = plan.id;
-      job.delegation.authorizationRequest = agentPlanAuthorization(plan);
-      job.question = '数据变更已预览；请审查准确目标、字段及版本后授权提交。';
-      this.store.save(owner, job);
-      const step = plan.steps[0]!;
-      this.store.createIntent(owner, { id: intentId, owner, jobId: job.id, stepId, businessOperationKey: step.operationKey, planDigest: plan.digest, bindingRef: program.ref,
-        inputDigest: digest({ input: step.input, inputRefs: [] }), privateDigest: digest({}), privateData: {}, effect: 'object_write', state: 'ready', nextAt: 0, createdAt: now });
-      this.store.save(owner, job);
-      return job;
+      return this.security ? job : this.finishCallerAction(p, job);
     });
+  }
+  private finishCallerAction(p: Principal, job: Job): Job {
+    if (job.delegation?.agent) return job;
+    const owner = ownerKey(p), envelope = job.delegation!.callerAction!, selected = { actionId: envelope.action, input: envelope.input };
+    if (this.security) this.store.security.policies.bindTaskProjection(owner, job.id);
+    const graph = this.store.ontologyForJob(owner, job), program = this.catalogForJob(owner, job).agentProgram(envelope.programRef, owner);
+    if (!program?.callerManagedActions) throw new DomainError('FORBIDDEN', 'Managed runtime is unavailable');
+    const definition = program.definition(graph, selected.actionId), objects = Object.keys(definition.inputs).map(name => objectRefSchema.parse(selected.input[name]));
+    if (this.security) {
+      const scope = authorizationScope()!;
+      scope.policies.requireResource(scope, 'actionType', selected.actionId);
+      scope.policies.requireSource(scope, program.ref.id, program.configurationDigest, selected.actionId);
+    }
+    const now = job.createdAt;
+    const initialized = program.initialize(graph, owner, job.delegation!.request, { actionIds: [selected.actionId], objects });
+    const state: AgentExecutionState = { version: '1', programRef: program.ref, programDigest: program.configurationDigest, ...initialized, requestRevision: 1, plans: [], observations: [], feedback: [] };
+    job.delegation!.agent = state;
+    const ctx = { graph, owner, request: job.delegation!.request, state, intents: [] };
+    program.validate(ctx, selected.actionId, selected.input);
+    const authority = program.authority?.(ctx, selected.actionId, selected.input);
+    if (!authority?.objectWrite || authority.cost) throw new DomainError('FORBIDDEN', 'Declarative action did not produce an exact nonfinancial scope');
+    const planId = randomUUID(), intentId = randomUUID(), stepId = 'managedAction';
+    const decision: AgentDecision = { kind: 'execute', requestRevision: 1, message: 'Authenticated caller selected this exact published managed action and arguments', steps: [{ id: stepId, action: selected.actionId, argumentsJson: JSON.stringify(selected.input), dependsOn: [], inputRefs: [] }], completionJson: '' };
+    const planning = templatePlanning(job.delegation!.request, graph.model.ref, accessDigest());
+    const body: Omit<AgentActionPlan, 'digest'> = { id: planId, version: '2', sequence: 1, requestId: job.id, requestRevision: 1, programRef: program.ref, programDigest: program.configurationDigest,
+      scope: state.scope, scopeDigest: digest(graph.read(owner, state.scope).properties), callerDecision: { requestId: envelope.requestId, envelopeDigest: digest(envelope), decision }, reasoning: decision.message, createdAt: now,
+      steps: [{ ...decision.steps[0]!, definitionDigest: digest(definition), input: structuredClone(selected.input), intentId, operationKey: actionOperationKey(owner, job.id, `caller:${envelope.requestId}`), effect: 'object_write', objectWrite: authority.objectWrite }], ontologyPlanning: planning };
+    const plan: AgentActionPlan = { ...body, digest: digest(body) };
+    validateAgentAuthority(program, ctx, plan, plan.steps[0]!);
+    state.plans = [plan]; state.pendingPlanId = plan.id;
+    job.delegation!.authorizationRequest = agentPlanAuthorization(plan);
+    job.question = '数据变更已预览；请审查准确目标、字段及版本后授权提交。';
+    this.store.save(owner, job);
+    const step = plan.steps[0]!;
+    this.store.createIntent(owner, { id: intentId, owner, jobId: job.id, stepId, businessOperationKey: step.operationKey, planDigest: plan.digest, bindingRef: program.ref,
+      inputDigest: digest({ input: step.input, inputRefs: [] }), privateDigest: digest({}), privateData: {}, effect: 'object_write', state: 'ready', nextAt: 0, createdAt: now });
+    this.store.save(owner, job);
+    return job;
   }
   submitInTransaction(p: Principal, input: unknown): Job {
     if (this.security) throw new DomainError('FORBIDDEN', 'Foundation network submission is unavailable');
@@ -279,6 +312,10 @@ export class TaskService {
           requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
           requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
           executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
+      if (args.personalContext) {
+        job.delegation.request.personalContext = mergePersonalContext(args.personalContext);
+        if (!this.security) selectPersonalContext(this.store.ontologyForRelease(ontologyRelease), owner, job.delegation.request, args.personalContext);
+      }
       if (args.locationContext) {
         addLocationContext(job.delegation.request, args.locationContext, args.requestId, now);
         job.delegation.events.push({ at: now, event: 'location_context_recorded' });
@@ -289,7 +326,11 @@ export class TaskService {
     return submitted;
   }
 
-  amend(p: Principal, input: unknown, contextId?: string): Job { if (this.security) throw new DomainError('FORBIDDEN', 'Foundation amendments require a reviewed task grant transition'); return this.reply(p, versionedReplySchema.parse(input), contextId, undefined, true); }
+  amend(p: Principal, input: unknown, contextId?: string): Job {
+    const args = versionedReplySchema.parse(input);
+    if (this.security && (!args.personalContext || args.requirements || args.locationContext || args.executionBudget)) throw new DomainError('FORBIDDEN', 'Foundation amendments are limited to an explicit personal-context refresh');
+    return this.reply(p, args, contextId, undefined, true);
+  }
 
   resume(p: Principal, input: unknown, contextId?: string): Job {
     if (this.security) {
@@ -322,7 +363,11 @@ export class TaskService {
 
   reply(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }, amendment = false): Job {
     const { taskId } = z.object({taskId:taskIdSchema}).passthrough().parse(input);
-    return this.security ? this.security.mutate(p, taskId, () => this.replyRaw(p,input,contextId,expected,amendment)) : this.replyRaw(p,input,contextId,expected,amendment);
+    const personalRefresh = replySchema.parse(input).personalContext;
+    return this.security ? this.security.mutate(p, taskId, () => this.replyRaw(p,input,contextId,expected,amendment), personalRefresh ? job => {
+      const request = job.delegation!.request;
+      selectPersonalContext(this.store.ontologyForJob(ownerKey(p), job), ownerKey(p), request, personalRefresh); this.store.save(ownerKey(p), job);
+    } : undefined) : this.replyRaw(p,input,contextId,expected,amendment);
   }
   private replyRaw(p: Principal, input: unknown, contextId?: string, expected?: { revision: number; updatedAt: string }, amendment = false): Job {
     requireScope(p, 'tasks:write');
@@ -339,7 +384,7 @@ export class TaskService {
       if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
       if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
       if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
-      if (args.locationContext && (job.delegation?.plan || this.store.intents(owner, job.id).some(intent => !['read', 'local'].includes(intent.effect)))) throw new DomainError('CONFLICT', 'An address correction cannot change a fixed business operation; reconcile its original operation first');
+      if ((args.locationContext || args.personalContext) && (job.delegation?.plan || this.store.intents(owner, job.id).some(intent => !['read', 'local'].includes(intent.effect)))) throw new DomainError('CONFLICT', 'An address correction cannot change a fixed business operation; reconcile its original operation first');
       if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
       const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
       if (amendment) {
@@ -383,6 +428,10 @@ export class TaskService {
           delete job.delegation!.agent;
         }
         request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
+        if (args.personalContext) {
+          request.personalContext = mergePersonalContext(args.personalContext, request.personalContext);
+          if (!this.security) selectPersonalContext(this.store.ontologyForJob(owner, job), owner, request, args.personalContext);
+        }
         if (args.locationContext) addLocationContext(request, args.locationContext, args.requestId, job.updatedAt);
         else prepareLocationContext(request);
         for (const r of args.requirements ?? []) {
@@ -512,7 +561,7 @@ export class TaskService {
     requireScope(p, 'tasks:write'); taskIdSchema.parse(id);
     const args = z.object({ requestId: z.string().trim().min(1).max(128) }).passthrough().parse(input);
     const owner = ownerKey(p);
-    if (this.security && ['approve_external_draft','approve_object_write'].includes(String(args.action))) throw new DomainError('FORBIDDEN','This operation needs a reviewed foundation authorization contract');
+    if (this.security && args.action === 'approve_external_draft') throw new DomainError('FORBIDDEN','This operation needs a reviewed foundation authorization contract');
     const fingerprint = args.action === 'approve_external_draft' ? digest(externalDraftPermitSchema.parse(input)) : JSON.stringify(args);
     if (expectedContextId && this.store.get(owner, id).contextId !== expectedContextId) throw new DomainError('NOT_FOUND', 'Task not found in this context');
     return this.store.once(owner, `authorize:${id}`, args.requestId, fingerprint, () => {
@@ -552,6 +601,12 @@ export class TaskService {
           const permit = z.object({ action: z.literal('approve_object_write'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), objectWrite: objectWriteScopeSchema, expiresAt: z.iso.datetime({ offset: true }), environment: z.literal('managed') }).strict().parse(input);
           this.store.definitions.assertAccess(owner, this.store.ontologyReleaseForJob(owner, job).ontologyId, p.scopes.includes('ontology:admin'));
           if (!writes.length || writes.some(write => !write.program.callerManagedActions)) throw new DomainError('FORBIDDEN', 'Managed write authority is restricted to the registered declarative engine');
+          if (this.security) {
+            const scope = authorizationScope()!;
+            if (writes.some(write => !isPersonalAction(write.step.action))) throw new DomainError('FORBIDDEN', 'Foundation write approval is limited to reviewed personal actions');
+            for (const write of writes) { scope.policies.requireResource(scope, 'actionType', write.step.action, 'action.execute'); scope.policies.requireSource(scope, write.program.ref.id, write.program.configurationDigest, write.step.action); }
+            for (const write of writes) for (const target of write.step.objectWrite!.targets) if (target.fields.length && !scope.grant!.outputs.some(output => output.programId === write.program.ref.id && output.programDigest === write.program.configurationDigest && output.type === target.ref.type && target.fields.every(field => output.fields.includes(field)))) throw new DomainError('FORBIDDEN', 'Personal write fields exceed the current task output grant');
+          }
           this.store.grant(owner, createAgentObjectWriteGrant(owner, id, plan, permit));
         } else {
           const permit = z.object({ action: z.literal('approve_plan'), requestId: z.string().min(1).max(128), planDigest: z.string().regex(/^[a-f0-9]{64}$/), allowedEffects: z.array(z.enum(['local', 'read', 'reserve', 'order', 'payment', 'change', 'cancel', 'refund'])).min(1).max(8), maxAmount: moneySchema, payeeIds: z.array(z.string().min(1).max(200)).max(8), expiresAt: z.iso.datetime({ offset: true }), environment: z.enum(['sandbox', 'live_free']) }).strict().parse(input);

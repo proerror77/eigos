@@ -27,9 +27,9 @@ const issuedAt = '2026-10-24T00:00:00Z', expiresAt = '2026-10-24T01:00:00Z';
 test('S0 inventories every definition and nested subtree without changing runtime or granting access', () => {
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
-  assert.equal(report.counts.objectTypes, 200); assert.equal(report.counts.properties, 1841); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 170);
-  for (const id of ['packages-ontology-shared-business-interfaces', 'packages-coordinator-requested-facts']) assert(report.surfaces.some(surface => surface.id === id));
+  assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 176);
+  for (const id of ['packages-ontology-shared-business-interfaces', 'packages-coordinator-requested-facts', 'packages-ontology-personal-context', 'packages-ontology-personal-context-kernel', 'packages-core-personal-context', 'packages-security-personal-context-upgrade']) assert(report.surfaces.some(surface => surface.id === id));
   assert(report.surfaces.some(surface => surface.id === 'model-process-config' && surface.file === 'packages/capabilities/model-process.ts'));
   assert(report.surfaces.some(surface=>surface.id==='security-projection-origin' && surface.file==='packages/security/projection-origin.ts'));
   for(const id of ['native-goal-dataflow','native-goal-completion-contract','native-composed-action-bindings','native-agent-decision-contract'])assert(report.surfaces.some(surface=>surface.id===id));

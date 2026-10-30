@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "24",
-    "digest": "496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644"
+    "version": "25",
+    "digest": "4d71a7f56e4fffa6bc7d733e13b239138a7d97a38f840b7efa7b872ed580a39d"
   },
   "types": {
     "ServiceRequest": {
@@ -2288,7 +2288,7 @@
       }
     },
     "RequestFact": {
-      "fingerprint": "aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace",
+      "fingerprint": "76d1fab3035ac0b9e910d98e9d19c5fe95107194ed6663aa55685b6a89f484b8",
       "fields": {
         "factId": "task_sensitive",
         "displayTitle": "task_sensitive",
@@ -2298,7 +2298,8 @@
         "value": "internal_only",
         "quote": "task_sensitive",
         "source": "task_sensitive",
-        "factRevision": "task_private"
+        "factRevision": "task_private",
+        "personalBasis": "task_sensitive"
       }
     },
     "RequestCondition": {
@@ -2847,6 +2848,26 @@
         "priceBasis": "task_sensitive",
         "pricingCompleteness": "task_sensitive"
       }
+    },
+    "Person": {
+      "fingerprint": "0e018fde6d23fc2253ebc728ab731b252526fdef06c1b6dab49579547270cb12",
+      "fields": {
+        "personId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "identityBasis": "task_sensitive"
+      }
+    },
+    "PersonalPreference": {
+      "fingerprint": "be2411e9b1a82f59e09a8e636a4485bd7a4c7563a1370d1fb32c3379c8d8f237",
+      "fields": {
+        "preferenceId": "task_sensitive",
+        "displayTitle": "task_sensitive",
+        "personId": "task_sensitive",
+        "key": "task_sensitive",
+        "value": "task_sensitive",
+        "status": "task_sensitive",
+        "authority": "task_sensitive"
+      }
     }
   },
   "surfaces": [
@@ -2865,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "9d764080c27558e51b5b09db4e688fa6b0eaa4b567130ccbc67ea8bca50d69cd",
+      "sourceDigest": "4dda37cfb0ed6e32bd87f6ae28487953881e6cfb3ffe44bdcc59f688b7a4983b",
       "channels": [
         "mcp"
       ],
@@ -2889,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "17a8167b790df87901ffd5443416256aba503026c3d1b7c622aabef3bdebadc9",
+      "sourceDigest": "42e8bfe4593014c2bab88709bb05d4663b90252facf10f4a3304f89dbd19923e",
       "channels": [
         "http",
         "mcp",
@@ -2916,7 +2937,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "44c4c6d48ee821673f5771dad7fcf6bc6e370d525302701c636d0c5d2f9d9601",
+      "sourceDigest": "db485461371e6c8566d7dab0ee57dfec45b4617b66c30c79a1ac3a8102d22c44",
       "channels": [
         "query",
         "function"
@@ -3001,7 +3022,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "3a9473b2b5ed2ba8ce5c128b35dcf34a0890cdb551d4a5b64dc5900a56908f8b",
+      "sourceDigest": "c48cd1ab4526c0de576eef1de2d32fcc0363b703a39a98658711cc37ac06885a",
       "channels": [
         "model",
         "query"
@@ -3039,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "2f43bcd355e6e870b8f0b7417e0242c0413c98e75fc5afe9df0a67d918286bba",
+      "sourceDigest": "29cb2fe706e94100a1f3da99d10b78d4538c5c985a78b57277a4483d827330e7",
       "channels": [
         "model",
         "dispatch",
@@ -3309,7 +3330,7 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "23f165f01582d170d6dc5280826f4d8d551f24b01adb7abb4e20d0d92b381364",
+      "sourceDigest": "6eb2c89c15794a0638506cc442fe6ebf21c2ada9350d062124f2d2a352f9481b",
       "channels": [
         "authorization_control"
       ],
@@ -3381,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "c6c9c6ca398a670b58fe1b54f8ec7e417005cc671a31ecbf6748fab135da10a7",
+      "sourceDigest": "60718a95bb4b78ab44e2e87b20b362d966c1c4c3ca0c0b78af03067f76b8daa1",
       "channels": [
         "authorization_control"
       ],
@@ -3453,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "b5c81cfb5ffc9b9de7f18468228e865bb9e5356c59cced4a60ab4d9db3da01a8",
+      "sourceDigest": "77e55c33cfd76d544371ca3256baae063c819094aec07dae19de847dee36bd73",
       "channels": [
         "all-reads"
       ],
@@ -3489,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "eed6d819fab6a5baf52f0a315f2886a4f7445c30c761560c656c0ac4faff971a",
+      "sourceDigest": "052e7e1be0bc7c6a70f1e6ea2b04447215c0a24ec1faeadd14e25816b7ed583a",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -3573,7 +3594,7 @@
     {
       "id": "planning-authority-contract",
       "file": "packages/ontology/planning-contract.ts",
-      "sourceDigest": "7435f7169d62b0659a1113c1ca1687000f0034e67a8222ad1848d05f2a08d060",
+      "sourceDigest": "bef56b18705e79ac53d7fb4dba2f534762d607f8c1c8ba825547f964698d5af0",
       "channels": [
         "internal"
       ],
@@ -3585,7 +3606,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "3f25c7c300f2c3434b2088f4c2b328b23de684b48f230abd22c7970158549a7c",
+      "sourceDigest": "be0698b854289df561cbff637ec0013a203468f735e8b6faa014529a0cc02ed2",
       "channels": [
         "model"
       ],
@@ -4071,7 +4092,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "a0a09892099650a40ffcbcf84425133d07d50033f9ddd012a1734c662fd6d592",
+      "sourceDigest": "275ab82d6ecae1cda5df674000acbea6343ceda9563a78d60dd2751d00d72431",
       "channels": [
         "model",
         "artifact"
@@ -4123,7 +4144,7 @@
     {
       "id": "caller-outcome-proof",
       "file": "packages/ontology/caller-outcome-proof.ts",
-      "sourceDigest": "39d983810d858f44979c6d877ebb32592ad3efa5ba96c2bcefc02138578bc2c6",
+      "sourceDigest": "c09fd00c156214526d8bb76df3e9f8d46e2fca437c99808f2b5b8e681e52da7d",
       "channels": [
         "model",
         "artifact"
@@ -4162,7 +4183,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "75e7447a15fbd216c68df5bce9c7cc43511b46c416581b6b077f9af7cd7ff82f",
+      "sourceDigest": "8930067c84a8adb4b920680e4976f8281ac409870e6af4fef27bd170b262182c",
       "channels": [
         "model",
         "artifact"
@@ -4175,7 +4196,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "b696ef1540924704ee7721e149b8a08b3455ecfa76b3e3786bf5d6ae9acc8d19",
+      "sourceDigest": "88427f4328b8fe118dfaa047b60e01d52815d1af15051eece00c1809a7c268b4",
       "channels": [
         "model"
       ],
@@ -4199,7 +4220,7 @@
     {
       "id": "task-context-binding-contract",
       "file": "packages/security/task-context-contract.ts",
-      "sourceDigest": "4507c1d787b01dd6af35913e7cbe6a77a74a4a5ebc129ecb75ed25e16f4a8ea2",
+      "sourceDigest": "9265b09c1bc879bfb7a9f2606ad2016bd30d368c18260b4ea89bbd27ec6f9ef6",
       "channels": [
         "model",
         "artifact"
@@ -4225,7 +4246,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "67299519084f537523f80dca003fff064e3e7057d3510f5ea7059f82bdcc0678",
+      "sourceDigest": "6dd789f910f152e9744fb096701fa03d947fc93d1093b566c2b7d9dc08167ca4",
       "channels": [
         "http",
         "mcp"
@@ -4379,7 +4400,7 @@
     {
       "id": "ontology-metadata-http",
       "file": "apps/gateway/ontology/routes.ts",
-      "sourceDigest": "828d135d1e06495978dc24eb46a95f6014272d2f42dd2bbef7e3276995cfdf0b",
+      "sourceDigest": "e374de4d48fc73d36e44c8e7dc3c956b77836a28dc987a91772b8a7b019d1457",
       "channels": [
         "http"
       ],
@@ -4391,7 +4412,7 @@
     {
       "id": "ontology-metadata-mcp",
       "file": "apps/gateway/ontology/mcp.ts",
-      "sourceDigest": "6f05d1c1226af8368435f934c5e1a77f7ece66c8aeff0bc2f299f61f3b45898a",
+      "sourceDigest": "c9d80c7b59e05cbc6fa84547fb4e6be3e1f46921ccabeea5dd59833af5d5bb86",
       "channels": [
         "mcp"
       ],
@@ -4921,7 +4942,7 @@
     {
       "id": "packages-security-business-facts-upgrade",
       "file": "packages/security/business-facts-upgrade.ts",
-      "sourceDigest": "6b550c1a0fbf148090f588ffd778808be548ce9ada05906963d855e09e62061e",
+      "sourceDigest": "a96821e62b72bdebd43e41d8286be9ee518bcdf5c0718aeaa847481e1d6545ff",
       "channels": [
         "sqlite"
       ],
@@ -4978,6 +4999,82 @@
       "content": "Shared semantic projections and bounded task fact reads",
       "currentControl": "Concrete field and endpoint permissions; request membership and current versions",
       "targetControl": "No new authority or provider invocation from interface projection",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-personal-context",
+      "file": "packages/ontology/personal-context.ts",
+      "sourceDigest": "4f020d123324599ccce906e95e2e972b7a7954b711c95a41dbd49cf69f3def11",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Person and explicit task-selected personal facts",
+      "currentControl": "Owner-scoped self identity, exact input grants and controlled nonfinancial actions",
+      "targetControl": "Independent task permission, historical choices and no provider side effects",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-ontology-personal-context-kernel",
+      "file": "packages/ontology/personal-context-kernel.ts",
+      "sourceDigest": "db180dd9ab8b4f868e92989d58fc3e7dd971c52d4101f774db4704e31dbc6d1f",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Person and explicit task-selected personal facts",
+      "currentControl": "Owner-scoped self identity, exact input grants and controlled nonfinancial actions",
+      "targetControl": "Independent task permission, historical choices and no provider side effects",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-core-personal-context",
+      "file": "packages/core/personal-context.ts",
+      "sourceDigest": "df9ec3747b09ae63e2a987523d43a3467380308c6bbbcf471a76a96b3527ab64",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Person and explicit task-selected personal facts",
+      "currentControl": "Owner-scoped self identity, exact input grants and controlled nonfinancial actions",
+      "targetControl": "Independent task permission, historical choices and no provider side effects",
+      "stage": "S1"
+    },
+    {
+      "id": "packages-security-personal-context-upgrade",
+      "file": "packages/security/personal-context-upgrade.ts",
+      "sourceDigest": "21e1147e666e5473fd6f13963be86117cb9e0a0591f91aafa64771e52f6c917a",
+      "channels": [
+        "sqlite",
+        "registered_model"
+      ],
+      "content": "Person and explicit task-selected personal facts",
+      "currentControl": "Owner-scoped self identity, exact input grants and controlled nonfinancial actions",
+      "targetControl": "Independent task permission, historical choices and no provider side effects",
+      "stage": "S1"
+    },
+    {
+      "id": "scripts-install-personal-context",
+      "file": "scripts/install-personal-context.mjs",
+      "sourceDigest": "19f0d14be386663ff2c339a172607bdd6bdb3a2cb8dbd4db6384e8545892478a",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Explicit offline personal-context migration",
+      "currentControl": "Exact reviewed predecessor and stopped authority; no grant expansion",
+      "targetControl": "Preserve previous task pins and data grants",
+      "stage": "S1"
+    },
+    {
+      "id": "scripts-upgrade-personal-context-policy",
+      "file": "scripts/upgrade-personal-context-policy.mjs",
+      "sourceDigest": "92a81971b48519822f6d614a6c336ef5664d0422db09fd4d0bde0665d42f08e8",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Explicit offline personal-context migration",
+      "currentControl": "Exact reviewed predecessor and stopped authority; no grant expansion",
+      "targetControl": "Preserve previous task pins and data grants",
       "stage": "S1"
     }
   ]

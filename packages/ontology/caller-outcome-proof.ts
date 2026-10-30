@@ -87,7 +87,7 @@ export function createCallerOutcomeProof(graph:OntologyObjectStore,owner:string,
     || d.request.id!==job.id || d.outcome.requestId!==job.id || d.outcome.requestRevision!==d.request.revision || state.requestRevision!==d.request.revision
     || !same(caller.ontologyRelease,graph.releaseRef) || !same(caller.ontologyRelease,d.ontologyRelease) || !same(caller.programRef,state.programRef)
     || caller.inputDigest!==digest(caller.input) || !d.request.messages.some(message=>message.id===caller.requestId)
-    || completion.requestId!==caller.requestId || !same(completion.ontologyPlanning,templatePlanning(d.request,graph.model.ref)))return fail('Caller outcome has no exact authenticated contract and independent readback');
+    || completion.requestId!==caller.requestId || !same(completion.ontologyPlanning,templatePlanning(d.request,graph.model.ref,completion.ontologyPlanning.accessDigest)))return fail('Caller outcome has no exact authenticated contract and independent readback');
   const plans=state.plans.filter(plan=>plan.digest===completion.planDigest);
   if(plans.length!==1)return fail('Caller completion has no unique sealed plan');
   const plan=plans[0]!,{digest:planDigest,...planBody}=plan,selected=plan.callerDecision,step=plan.steps[0];

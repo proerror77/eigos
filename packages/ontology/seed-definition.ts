@@ -1,5 +1,6 @@
 import { extendRollingGoKernel } from './rollinggo-kernel.js';
 import { extendBusinessFactsKernel } from './business-facts-kernel.js';
+import { extendPersonalContextKernel } from './personal-context-kernel.js';
 import { extendTaskClosureKernel } from './task-closure-kernel.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -19,7 +20,7 @@ import { parseOntologyDocument, type DefinitionKind, type JsonSchema, type Ontol
 import type { ActionDefinition, InterfaceDefinition, ModelDefinition, ObjectTypeDefinition, PropertyDefinition } from './model.js';
 
 export const LEGACY_SEED_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '15', digest: 'efd2ef430b621b1c4f83b8d4e79a794126d24257bfa5022a5c1de8bdd6e48776' });
-export const CURRENT_KERNEL_VERSION = '24';
+export const CURRENT_KERNEL_VERSION = '25';
 export const PA_PAYMENT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '19', digest: '60287d4b34e950c24e6479812e3a8fd0be6ba19402917a2f3ff9db63798065df' });
 export const PROVIDER_READ_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '20', digest: 'ef3a604ace56a5617bfe67b93686ec5a19ac94ba2c06ebc37676e4b1c3efa5a4' });
 export const CHECKOUT_KERNEL_MODEL_REF = Object.freeze({ id: 'eigos.business', version: '18', digest: 'da1bfa28f9c3a2635913e93a3c3889702c82c2a82ed3d9c9d9dbf9dc38817ee6' });
@@ -127,6 +128,9 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
   return predecessor;
 }
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
+  return complete(extendPersonalContextKernel(createBusinessFactsKernelDefinition(registry).document, registry), registry, false);
+}
+export function createBusinessFactsKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return complete(extendBusinessFactsKernel(createRollingGoKernelDefinition(registry).document, registry), registry, false);
 }
 export function createRollingGoKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {

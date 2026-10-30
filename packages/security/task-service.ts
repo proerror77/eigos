@@ -1,3 +1,4 @@
+import { personalInputFields } from '../ontology/personal-context.js';
 import { randomUUID } from 'node:crypto';
 import { DomainError, ownerKey, requireScope, type Job, type Principal } from '../core/domain.js';
 import type { JobStore, ListFilter } from '../core/store.js';
@@ -49,11 +50,13 @@ export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'st
 
 export class TaskSecurity {
   constructor(private store: JobStore) {}
-  private provision(p: Principal, job: Job, previous?: TaskDataGrant) {
+  private provision(p: Principal, job: Job, previous?: TaskDataGrant, replacePersonalInputs = false) {
     const security = this.store.security, actor = security.agentContext(p), parent = security.agentGrant(actor.installationId), at = new Date(security.now()).toISOString();
     if (!job.delegation) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const oldGrants = security.listGrants(actor.ownerKey).filter(g => g.kind === 'task_data' && g.taskId === job.id);
     if (!previous && oldGrants.length) { security.taskGrant(actor, job.id); return; }
+    const personalInputs = security.withAgent(p, undefined, 'task.process', () => security.policies.personalBindings(actor.ownerKey, job));
+    if (personalInputs.length) requireScope(p, 'tasks:read');
     if (previous) security.revokeGrant(actor.ownerKey, previous.id, previous.revision);
     const sourceRules = security.policies.sources(actor.ownerKey, actor.installationId).flatMap(s => s.outputTypes.flatMap(type => {
       const resource = parent.resources.find(r => r.type === type);
@@ -65,8 +68,8 @@ export class TaskSecurity {
         previous ? Date.parse(previous.expiresAt) : Date.parse(at) + securityDefaults.taskGrantMaxSeconds * 1000,
         job.delegation.pipelineValidation ? Date.parse(job.delegation.pipelineValidation.expiresAt) : Infinity)).toISOString(),
       taskId: job.id, requestRevision: job.delegation.request.revision, purpose: previous?.purpose ?? 'delegated_task',
-      operations: previous?.operations ?? ['task.process', ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
-      inputs: previous?.inputs ?? [], outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });
+      operations: previous ? [...new Set([...previous.operations, ...(replacePersonalInputs && personalInputs.length ? ['member_asset.read' as const] : [])])] : ['task.process', ...(personalInputs.length ? ['member_asset.read'] : []), ...(p.scopes.includes('tasks:read') ? ['task.query','task.result.read',...(parent.channels.includes('controlled_download')?['artifact.export']:[])] : [])],
+      inputs: replacePersonalInputs ? personalInputs : previous?.inputs ?? personalInputs, outputs: previous?.outputs ?? sourceRules, channels: previous?.channels ?? parent.channels });
     security.attachTaskAuthority({ version: SECURITY_CONTRACT, id: randomUUID(), revision: 1, ownerKey: actor.ownerKey, memberId: actor.memberId, installationId: actor.installationId,
       taskId: job.id, requestRevision: grant.requestRevision, agentGrant: grant.parentGrant, dataGrant: { id: grant.id, revision: grant.revision },
       submittedScopes: [...new Set(p.scopes)], authEpoch: actor.authEpoch, policyVersion: POLICY_VERSION, issuedAt: at, expiresAt: grant.expiresAt });
@@ -81,16 +84,19 @@ export class TaskSecurity {
       return this.project(p, this.store.get(ownerKey(p),job.id));
     }));
   }
-  mutate(p: Principal, taskId: string, action: () => Job): TaskView {
+  mutate(p: Principal, taskId: string, action: () => Job, personalRefresh?: (job: Job) => void): TaskView {
     requireScope(p,'tasks:write');
     const security = this.store.security, actor = security.agentContext(p), scope = security.scope(actor, taskId, 'task.process');
     return withAuthorization(scope, () => this.store.transaction(() => {
       scope.assertCurrent();
       const result = action(), job = this.store.get(actor.ownerKey,result.id);
       if (job.id !== taskId) this.provision(p,job);
-      else if (job.delegation?.request.revision !== scope.grant!.requestRevision) this.provision(p,job,scope.grant);
+      else if (job.delegation?.request.revision !== scope.grant!.requestRevision) {
+        this.provision(p, job, scope.grant, !!personalRefresh);
+        if (personalRefresh) security.withAgent(p, job.id, 'task.process', () => personalRefresh(job));
+      }
       else scope.assertCurrent();
-      return this.project(p,job);
+      return this.project(p,this.store.get(actor.ownerKey, job.id));
     }));
   }
   resume(p:Principal,taskId:string,action:()=>Job):TaskView {
@@ -157,7 +163,7 @@ export class TaskSecurity {
         const markdown=job.artifact.data.markdown;
         const refs=allowed('artifact',job.artifact)?deliveryEvidence(job.artifact):undefined;
         if (refs) {
-          const observations=refs.map(ref=>{const object=graph.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field)))};});
+          const observations=refs.map(ref=>{const object=graph.read(actor.ownerKey,ref);return {ref,revision:object.revision,properties:Object.fromEntries(Object.entries(object.properties).filter(([field])=>Object.hasOwn(projectionFields(ref.type),field) || Object.hasOwn(personalInputFields, ref.type) && (personalInputFields[ref.type as keyof typeof personalInputFields] as readonly string[]).includes(field)))};});
           if(observations.length)security.policies.requireRecipient(scope,security.policies.outputEnvelope(actor.ownerKey),'agent_response');
           base.artifact={id:job.artifact.id,name:job.artifact.name,data:{...(typeof markdown==='string'?{markdown}:{}),goal:job.artifact.data.goal,deliverable:job.artifact.data.deliverable,execution:job.artifact.data.execution,...(observations.length?{result:{observations}}:{})}};
           if(job.state==='completed' && job.delegation?.acceptance?.accepted)base.accepted=true;

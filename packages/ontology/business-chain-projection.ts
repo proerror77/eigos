@@ -1,3 +1,4 @@
+import { personalResourceRoles, isPersonalAction, selfPersonRef } from './personal-context.js';
 import { createCallerOutcomeProof } from './caller-outcome-proof.js';
 import { outcomeAssessmentValues, outcomeAssessmentRef, hasTaskClosureProjection } from './outcome-assessment-values.js';
 import { digest } from '../core/delegation.js';
@@ -28,6 +29,19 @@ export function projectBusinessChain(graph: OntologyObjectStore, owner: string, 
   const plans = [...(d.planHistory ?? []), ...(d.plan ? [d.plan] : [])];
   const states = [...(d.agentHistory ?? []), ...(d.agent ? [d.agent] : [])];
   write(graph, owner, party, { ownerDigest: digest(owner), identityBasis: 'ledger_owner' }, [edge('RequestRequester', request, party)], source, true);
+  const personal = d.request.confirmedInputs?.personal?.fields;
+  const subject = personal?.subject?.status === 'confirmed' ? objectRefSchema.parse(personal.subject.value) : d.callerAction && isPersonalAction(d.callerAction.action) ? selfPersonRef(owner) : undefined;
+  if (subject && graph.model.hasType('Person') && optionalObject(graph, owner, subject)) {
+    const person = subject;
+    const links = [edge('RequestServedPerson', request, person), edge('RequesterSelfPerson', party, person)];
+    for (const [key, fact] of Object.entries(personal ?? {})) if (key.startsWith('resource') && fact.status === 'confirmed') { const resource = fact.value as { object: unknown; role: keyof typeof personalResourceRoles }; const ref = objectRefSchema.parse(resource.object); links.push(edge(personalResourceRoles[resource.role].link, request, ref)); }
+    const obsolete = new Map<string, LinkWrite>();
+    for (const fact of d.request.confirmedInputs?.personal?.history ?? []) if (fact.field.startsWith('resource') && fact.value) {
+      const resource = fact.value as { object: unknown; role: keyof typeof personalResourceRoles }, prior = edge(personalResourceRoles[resource.role].link, request, objectRefSchema.parse(resource.object));
+      if (!links.some(link => digest(link) === digest(prior)) && graph.containsLinks(owner, [prior])) obsolete.set(digest(prior), prior);
+    }
+    graph.ingest(owner, { objects: [], links, removeLinks: [...obsolete.values()] }, source);
+  }
   write(graph, owner, executor, { name: 'EIGOS execution service' }, [], source, true);
   const decide = (actionId: string, sourceKind: string, sourceId: string, occurredAt: string, revision: number, basis: unknown, target?: ObjectRef, actorKind = 'executor') => {
     const definition = graph.model.action(actionId), contract = actionRef(job.id, definition);

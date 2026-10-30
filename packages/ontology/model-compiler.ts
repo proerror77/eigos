@@ -302,7 +302,8 @@ export function compileOntologyDocument(input: OntologyDocument | unknown, regis
   }
   for (const link of document.links.filter(link => link.writePolicy === 'managed')) {
     const endpoints = [...model.concreteTypes(link.from.type), ...model.concreteTypes(link.to.type)];
-    if (!endpoints.length || endpoints.some(type => model.objectWritePolicy(type) !== 'managed')) fail('Managed links require managed concrete endpoints');
+    const personalAddress = link.resourceId === 'builtin:eigos.business:link:PreferenceAddress' && link.id === 'PreferenceAddress' && link.from.type === 'PersonalPreference' && link.to.type === 'SavedAddress' && model.hasType('Person');
+    if (!endpoints.length || !personalAddress && endpoints.some(type => model.objectWritePolicy(type) !== 'managed')) fail('Managed links require managed concrete endpoints');
   }
   return model;
 }

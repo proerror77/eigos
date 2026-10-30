@@ -1,3 +1,7 @@
+import { createBusinessFactsKernelDefinition } from '../packages/ontology/seed-definition.js';
+import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
+import { upgradePersonalContextPolicy } from '../packages/security/personal-context-upgrade.js';
+import { personalContextPolicyContracts } from '../packages/security/policy-store.js';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
@@ -126,12 +130,17 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
       ),
       revision + 1,
     );
-    const factsContracts = businessFactsPolicyContracts(policy.model);
+    const v24 = createBusinessFactsKernelDefinition(), factsContracts = businessFactsPolicyContracts(compileOntologyDocument(v24.document, v24.registry));
     assert.equal(factsContracts.before, contracts.after);
     const factsExpected = { digest: factsContracts.before, revision: revision + 1 };
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected).applied, false);
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).namespaceRolesPreserved, 1);
     assert.equal(upgradeBusinessFactsPolicy(db, factsExpected, true).alreadyApplied, true);
+    const personalContracts = personalContextPolicyContracts(policy.model), personalExpected = { digest: personalContracts.before, revision: revision + 2 };
+    assert.equal(personalContracts.before, factsContracts.after);
+    assert.equal(upgradePersonalContextPolicy(db, personalExpected).applied, false);
+    assert.equal(upgradePersonalContextPolicy(db, personalExpected, true).namespaceRolesPreserved, 1);
+    assert.equal(upgradePersonalContextPolicy(db, personalExpected, true).alreadyApplied, true);
     const migrated = JSON.parse(
       String(
         db
@@ -158,7 +167,7 @@ test('offline RollingGo policy upgrade preserves existing grants and exact names
     try {
       assert.equal(
         reopened.security.policies.definitionDigest,
-        factsContracts.after,
+        personalContracts.after,
       );
     } finally {
       reopened.close();

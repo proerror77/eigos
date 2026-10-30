@@ -65,7 +65,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit the original goal to a discovered service. Before a location-dependent delegation, the PA obtains the actual task addresses and city from the user saved address or current location as appropriate, then supplies locationContext. EIGOS records it as Ontology RequestFact inputs before planning; the user should not repeat known addresses or city. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate still uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task.',
+    description: 'Submit the original goal to a discovered service. For an already explicitly bound self, include personalContext.self and select only the needed default keys and known business references; do not bind the person again or ask the user to repeat existing facts. Explicit task overrides and clears take precedence over profile defaults. Before a location-dependent delegation, the PA obtains the actual task addresses and city from the user saved address or current location as appropriate, then supplies locationContext. EIGOS records it as Ontology RequestFact inputs before planning; the user should not repeat known addresses or city. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate still uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => taskSummary(tasks.submit(principal, args))));
@@ -92,8 +92,8 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: versionedReplySchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.reply(principal, args))));
-  if (!tasks.secured) server.registerTool('amend_task', {
-    description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
+  server.registerTool('amend_task', {
+    description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. In Foundation mode this is limited to an explicit personalContext refresh within existing installation permissions. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.amend(principal, args))));
   if (!tasks.secured) server.registerTool('resume_task', {

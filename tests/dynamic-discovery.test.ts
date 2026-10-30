@@ -1,3 +1,4 @@
+import { personalActionIds } from '../packages/ontology/personal-context.js';
 // Synthetic reasoning exercises the actual scoped reads and mutation lifecycle.
 // The real PA acceptance run remains a separate, recorded validation.
 import assert from 'node:assert/strict';
@@ -34,7 +35,7 @@ test('the backend discovers existing inputs without PA refs, binds reads across 
         observeTaskContext(access);
         const capability = capabilities.find(cap => cap.ref.id === `ontology.managed.${f.ontologyId}`)!;
         const schema = capability.inputSchema as { properties: { actionIds: { items: { enum: string[] } } } };
-        assert.deepEqual(schema.properties.actionIds.items.enum, ['CreateOfficeAsset', 'DeleteOfficeAsset', 'SetOfficeAssetStatus'], 'The interpreter receives exact current Action IDs without asking PA to supply internal definitions');
+        assert.deepEqual(schema.properties.actionIds.items.enum, [...personalActionIds, 'CreateOfficeAsset', 'DeleteOfficeAsset', 'SetOfficeAssetStatus'].sort(), 'The interpreter receives exact current Action IDs without asking PA to supply internal definitions');
         return { decision: { kind: 'resolve', requestRevision: request.revision, capabilityRef: capability.ref, message: 'Use the current managed program', inputJson: JSON.stringify({ actionIds: ['SetOfficeAssetStatus'], objects: [] }), requirementsJson: '[]', conditionsJson: '[]' }, evidence: evidence() };
       },
       plan: async () => { throw new Error('Dynamic data uses the Agent runtime'); },

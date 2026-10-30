@@ -42,7 +42,10 @@ test('E2E: one managed launcher starts and stops Gateway, Worker, participant qu
     }
     assert(ready, diagnostics);
     const headers = { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' };
-    const model = await fetch(gateway + '/ontology/describe', { method: 'POST', headers, body: JSON.stringify({ search: 'Registration', limit: 5 }) }).then(r => r.json());
+    const described = await fetch(gateway + '/ontology/describe', { method: 'POST', headers, body: JSON.stringify({ search: 'Registration', limit: 5 }) });
+    const model = await described.json();
+    assert.equal(described.status, 200, JSON.stringify(model));
+    assert(model.model, JSON.stringify(model));
     assert.equal(model.model.version, CURRENT_KERNEL_VERSION); assert(['RegistrationTask', 'RegistrationOffer', 'RegistrationRecord'].every(id => model.types.some((type: { id: string }) => type.id === id)));
     const card = await fetch(gateway + '/.well-known/agent-card.json').then(r => r.json());
     assert.match(card.skills[0].description, /booking\.participant\.free/);

@@ -6,7 +6,6 @@ import { ontologyManagerPage, ontologyManagerScript } from './page.js';
 
 export function mountDefinitionRoutes(app: Express, service: DefinitionService, authenticate: RequestHandler, principal: (request: Request) => Principal): void {
   for (const [path, method] of [['query', 'query'], ['commands', 'command'], ['actions/prepare', 'prepare'], ['actions/approve', 'approve']] as const) {
-    if (service.secured && path.startsWith('actions/')) continue;
     app.post(`/ontology/v1/${path}`, authenticate, (req, res, next) => {
       try { res.json(service[method](principal(req), req.body)); }
       catch (error) {

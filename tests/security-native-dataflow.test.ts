@@ -57,6 +57,10 @@ test('native planned completion cannot select a place result as an estimate',{ti
     assert(job.delegation!.agent!.feedback.some(value=>value.kind==='completion'));
     assert(!job.delegation!.acceptance?.accepted);assert.notEqual(job.state,'completed');
     assert.equal(job.delegation!.agent!.pendingPlanId,undefined,'Failed conditional verification returns control for a new model decision');
+    const calls=f.source.calls.filter(call=>call.method==='tools/call').length;
+    await runNativeDidiTask(f.jobs,f.coordinator,f.owner,f.task.id,t.signal,()=>t.mock.timers.tick(20));
+    assert.equal(f.jobs.get(f.owner,f.task.id).delegation!.acceptance?.accepted,true,'A subsequent correct decision can finish the same task');
+    assert.equal(f.source.calls.filter(call=>call.method==='tools/call').length,calls,'Corrective completion reuses the accepted source facts');
   }finally{f.close();}
 });
 

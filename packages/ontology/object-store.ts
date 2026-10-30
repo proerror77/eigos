@@ -131,7 +131,7 @@ export class OntologyObjectStore {
   }
   private assertObjectDefinition(type: string, storedDigest: string, properties: Record<string, unknown>): void {
     const currentDigest = this.model.fingerprint(type);
-    if (this.security && (!this.security.model.hasType(type) || currentDigest !== this.security.model.fingerprint(type))) throw new SecurityError('POLICY_CHANGED');
+    if (this.security && (!this.security.model.hasType(type) || currentDigest !== this.security.model.fingerprint(type) && !(type === 'RequestFact' && this.security.model.hasType('Person') && currentDigest === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'))) throw new SecurityError('POLICY_CHANGED');
     if (storedDigest === currentDigest) return;
     if (!this.context.compatibleDefinition?.({ kind: 'object', id: type, storedDigest, currentDigest, properties })
       || digest(this.model.parseProperties(type, properties)) !== digest(properties)) throw new DomainError('CONFLICT', 'Object definition changed; historical data cannot be reinterpreted');
@@ -292,6 +292,20 @@ export class OntologyObjectStore {
   /** Exercises the same schema, revision and cardinality checks then rolls back all changes. */
   previewManaged(owner: string, input: ManagedObjectBatch, source: ObjectSource): void {
     if (this.readOverlay) throw new DomainError('FORBIDDEN', 'Read views cannot preview data mutations');
+    // Preview checks the tentative schema on this same connection, then rolls
+    // back. It must never mint source origins or task bindings. All existing
+    // endpoints and changed types remain subject to the current read scope.
+    if (this.security) {
+      const scope = this.security.scope(owner), created = new Set((input.creates ?? []).map(key));
+      for (const object of input.objects ?? []) { this.security.requireResource(scope, 'objectType', object.ref.type); if (!created.has(key(object.ref))) this.security.requireObject(owner, object.ref); }
+      for (const link of [...(input.links ?? []), ...(input.removeLinks ?? [])]) {
+        this.security.requireResource(scope, 'linkType', link.type);
+        for (const ref of [link.from, link.to]) if (!created.has(key(ref))) this.security.requireObject(owner, ref);
+      }
+      for (const deletion of input.tombstones ?? []) { this.security.requireResource(scope, 'objectType', deletion.ref.type); this.security.requireObject(owner, deletion.ref, deletion.expectedRevision); }
+      const validation = new OntologyObjectStore(this.db, this.model, this.now, undefined, { ...this.context, security: undefined, skipLegacyMigration: true }, false);
+      validation.previewManaged(owner, input, source); return;
+    }
     this.db.exec('SAVEPOINT ontology_preview');
     try { this.writeManaged(owner, input, source); }
     finally { this.db.exec('ROLLBACK TO ontology_preview; RELEASE ontology_preview'); }
@@ -326,7 +340,8 @@ export class OntologyObjectStore {
       if (Object.keys(this.model.properties(deletion.ref.type)).some(field => this.model.propertyAuthority(deletion.ref.type, field) === 'source')) throw new DomainError('FORBIDDEN', 'Objects containing source-authority fields cannot be generically deleted');
     }
     for (const link of [...batch.links, ...batch.removeLinks]) {
-      if (this.model.linkWritePolicy(link.type) !== 'managed' || this.model.objectWritePolicy(link.from.type) !== 'managed' || this.model.objectWritePolicy(link.to.type) !== 'managed') throw new DomainError('FORBIDDEN', 'Managed actions cannot change protected relationships');
+      const personalAddress = link.type === 'PreferenceAddress' && link.from.type === 'PersonalPreference' && link.to.type === 'SavedAddress' && this.model.hasType('Person');
+      if (this.model.linkWritePolicy(link.type) !== 'managed' || this.model.objectWritePolicy(link.from.type) !== 'managed' || !personalAddress && this.model.objectWritePolicy(link.to.type) !== 'managed') throw new DomainError('FORBIDDEN', 'Managed actions cannot change protected relationships');
     }
     this.ingestBatch(owner, batch, source, tombstones);
   }

@@ -106,7 +106,7 @@ export class AuthorizationCoordinator {
     return this.store.listGrants(this.owned(memberId)).map(({ ownerKey: _owner, memberId: _member, approvedByMemberId: _approver, ...safe }) => safe);
   }
   revokeGrant(memberId: string, grantId: string, expectedRevision: number) { this.store.revokeGrant(this.owned(memberId), grantId, expectedRevision); }
-  sourceProfiles(memberId:string) {return {revision:this.store.policies.revision(),profiles:this.catalog?.securityProfiles(this.owned(memberId)) ?? []};}
+  sourceProfiles(memberId:string) { const owner = this.owned(memberId), catalog = this.jobs ? this.catalog?.forOntology(this.jobs.ontology, owner) : this.catalog; return {revision:this.store.policies.revision(),profiles:catalog?.securityProfiles(owner) ?? []};}
   managementView(memberId:string) {
     const owner=this.owned(memberId),installations=this.members.agents.list(memberId).map(a=>({id:a.id,name:a.displayName,revoked:a.revoked})),profiles=this.sourceProfiles(memberId).profiles;
     const types=[...new Set(['ServiceRequest',...TASK_PROJECTION_TYPES,...profiles.flatMap(p=>p.outputTypes)])];
@@ -124,7 +124,7 @@ export class AuthorizationCoordinator {
     const args=z.strictObject({installationId:z.uuid(),bindingId:z.string().min(1),programId:z.string().min(1),operations:z.array(z.string()).min(1),outputTypes:z.array(z.string()).min(1),expiresAt:z.iso.datetime({offset:true}),expectedRevision:z.number().int().positive(),expectedAgentGrant:grantRefSchema}).parse(input);
     const facts=this.members.authorizationFacts(memberId,args.installationId);
     if (!facts.active) throw new SecurityError('ACCESS_REVOKED');
-    const profile=this.catalog?.securityProfiles(facts.ownerKey).find(s=>s.programId===args.programId && s.bindingId===args.bindingId);
+    const profile=this.sourceProfiles(memberId).profiles.find(s=>s.programId===args.programId && s.bindingId===args.bindingId);
     if (!profile || !args.operations.every(o=>profile.operations.includes(o)) || !args.outputTypes.every(t=>profile.outputTypes.includes(t))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
     const parent=this.store.agentGrant(args.installationId);
     if(parent.id!==args.expectedAgentGrant.id || parent.revision!==args.expectedAgentGrant.revision)throw new SecurityError('POLICY_CHANGED');

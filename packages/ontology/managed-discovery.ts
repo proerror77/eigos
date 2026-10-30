@@ -1,10 +1,11 @@
 import type { OntologyModel } from './model.js';
 import { isExecutionBookkeepingType } from './execution-model.js';
 
-/** Shared managed records can supply a task. Request-bound records and source
+/** Personal records enter through explicit personal context or exact action inputs.
+ * Shared managed records can supply a task. Request-bound records and source
  * projections keep their existing exact-reference/source authorization paths. */
 export function isSharedManagedType(model: OntologyModel, type: string): boolean {
-  if (!model.hasType(type) || model.isInterface(type) || model.objectWritePolicy(type) !== 'managed' || isExecutionBookkeepingType(type) || type === 'ServiceRequest') return false;
+  if (!model.hasType(type) || model.isInterface(type) || model.objectWritePolicy(type) !== 'managed' || isExecutionBookkeepingType(type) || ['ServiceRequest', 'Person', 'PersonalPreference'].includes(type)) return false;
   const properties = model.properties(type);
   return !Object.hasOwn(properties, 'requestId') && !Object.hasOwn(properties, 'requestRevision')
     && !Object.entries(properties).some(([name, property]) => property.derived || model.propertyAuthority(type, name) === 'source')
