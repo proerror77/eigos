@@ -1,3 +1,4 @@
+import { DefinitionService } from '../packages/ontology/definition-service.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -28,11 +29,12 @@ function fixture() {
     policy.setSource(f.owner, { installationId: installation.id, bindingId: sourceBindingId, programId: program.ref.id, programDigest: program.configurationDigest, operations: [...personalActionIds], outputTypes: ['Person','PersonalPreference'], expiresAt }, policy.revision());
     return { ...installation, principal: { ...f.principal, access: f.coordinator.authenticate(f.principal, installation.token) } };
   };
-  const failures: string[] = [];
+  const failures: string[] = [], commands = new Map<string, { action: string; input: Record<string, unknown>; requestId: string }>();
   class CheckedCoordinator extends Coordinator { override async run(...args: Parameters<Coordinator['run']>) { try { return await super.run(...args); } catch (error) { failures.push(error instanceof Error ? error.stack ?? error.message : String(error)); throw error; } } }
   const a = install('Personal PA A'), b = install('Personal PA B'), tasks = new TaskService(f.jobs, { catalog }), coordinator = new CheckedCoordinator(f.jobs, noModel, catalog);
   const write = async (action: string, input: Record<string, unknown>, selected = a) => {
     const command = { action, input, requestId: randomUUID() }, waiting = tasks.prepareOntologyAction(selected.principal, command);
+    commands.set(waiting.id, structuredClone(command));
     assert.equal(waiting.state, 'auth-required');
     const raw = f.jobs.get(f.owner, waiting.id), approval = raw.delegation!.authorizationRequest!;
     assert('objectWrite' in approval); assert.equal(f.jobs.intents(f.owner, waiting.id)[0]!.state, 'ready');
@@ -49,7 +51,7 @@ function fixture() {
     } finally { await worker.close(); }
   };
   const rawDb = new DatabaseSync(f.database), rawGraph = new OntologyObjectStore(rawDb, graph.model, Date.now, undefined, { skipLegacyMigration: true });
-  return { ...f, a, b, tasks, graph, rawGraph, write, catalog, expiresAt, install, close: () => { rawDb.close(); f.close(); } };
+  return { ...f, a, b, tasks, graph, rawGraph, write, catalog, expiresAt, install, commands, close: () => { rawDb.close(); f.close(); } };
 }
 
 test('Foundation personal actions use exact previews, real Worker commits and independent task grants', { timeout: 120000 }, async () => {
@@ -185,7 +187,9 @@ test('personal previews reject foreign identity, stale versions and unavailable 
     assert.equal(f.jobs.list(f.owner, { limit: 50, offset: 0 }).total, count);
     assert.throws(() => f.tasks.prepareOntologyAction(f.a.principal, { action: 'SubmitServiceRequest', requestId: randomUUID(), input: {} }), /limited to reviewed personal actions/);
     await f.write('BindSelfPerson', { self: true, displayTitle: 'Synthetic self' });
-    await f.write('CreatePersonalPreference', { key: 'rideClass', value: { kind: 'rideClass', value: 'comfort' } });
+    const createdPreference = await f.write('CreatePersonalPreference', { key: 'rideClass', value: { kind: 'rideClass', value: 'comfort' } });
+    const definitions = new DefinitionService(f.jobs, f.tasks, f.catalog);
+    assert.equal((definitions.prepare(f.a.principal, f.commands.get(createdPreference.id)!).result as { preview: { status: string } }).preview.status, 'committed');
     assert.throws(() => f.tasks.prepareOntologyAction(f.a.principal, { action: 'SetPersonalPreference', requestId: randomUUID(), input: { key: 'rideClass', value: { kind: 'rideClass', value: 'premium' }, expectedRevision: 2 } }), /revision|changed/i);
     const waiting = f.tasks.prepareOntologyAction(f.a.principal, { action: 'ClearPersonalPreference', requestId: randomUUID(), input: { key: 'rideClass', expectedRevision: 1 } });
     const approval = f.jobs.get(f.owner, waiting.id).delegation!.authorizationRequest!; assert('objectWrite' in approval);
@@ -194,5 +198,6 @@ test('personal previews reject foreign identity, stale versions and unavailable 
     assert.equal(f.rawGraph.read(f.owner, personalPreferenceRef(f.owner, 'rideClass')).properties.status, 'active');
     f.jobs.security.policies.restrictObject({ ownerKey: f.owner, object: personalPreferenceRef(f.owner, 'rideClass'), expectedObjectRevision: 1, field: 'value', classification: 'internal', requiredMarkings: ['personal_data'], channels: [] }, f.jobs.security.policies.revision());
     assert.throws(() => f.tasks.submit(f.b.principal, { requestId: randomUUID(), goal: '不能恢复被隐藏的默认值', personalContext: { self: true, preferences: ['rideClass'] } }));
+    assert.throws(() => definitions.prepare(f.a.principal, f.commands.get(createdPreference.id)!), /not available|INSUFFICIENT_ACCESS|OUTPUT_NOT_ALLOWED/, 'Idempotent preparation cannot reveal a now-restricted historical value');
   } finally { f.close(); }
 });

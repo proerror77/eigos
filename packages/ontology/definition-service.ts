@@ -1,3 +1,4 @@
+import { accessDigest } from '../security/model.js';
 import { z } from 'zod';
 import { DomainError, ownerKey, requireScope, taskIdSchema, type Job, type Principal } from '../core/domain.js';
 import type { JobStore } from '../core/store.js';
@@ -274,6 +275,19 @@ export class DefinitionService {
       if (!preview) {
         try { const current = previewDeclarativeAction(graph, owner, selected.action, selected.input); if (current.digest === step.objectWrite?.previewDigest) preview = current; else status = 'stale'; }
         catch (error) { if (error instanceof DomainError && ['CONFLICT', 'NOT_FOUND'].includes(error.code)) status = 'stale'; else throw error; }
+      }
+      if (this.secured && preview && status === 'committed') {
+        // Retained mutation records are audit evidence, not a bypass around
+        // current field/row permission on an idempotent preparation readback.
+        for (const change of preview.objects) {
+          const fields = [...new Set([...Object.keys(change.before ?? {}), ...Object.keys(change.after ?? {})])];
+          graph.query(owner, { object: change.ref, select: fields });
+        }
+        for (const read of preview.reads) graph.read(owner, read.ref);
+      }
+      if (this.secured && status === 'prepared') {
+        const currentAccess = this.jobs.security.withAgent(principal, job.id, 'task.process', () => accessDigest());
+        if (job.delegation!.agent!.plans[0]!.ontologyPlanning.accessDigest !== currentAccess) status = 'stale';
       }
       if (preview && preview.digest !== step.objectWrite?.previewDigest) throw new DomainError('CONFLICT', 'Original mutation preview does not match its Intent');
       return envelope({ task: taskSummary(this.secured ? prepared : job), preview: { status, planDigest: job.delegation!.agent!.plans[0]!.digest, digest: step.objectWrite!.previewDigest, scope: step.objectWrite, ...(preview ? { objects: preview.objects, links: preview.links, result: preview.result } : {}) } });

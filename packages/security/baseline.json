@@ -4246,7 +4246,7 @@
     {
       "id": "ontology-definition-service",
       "file": "packages/ontology/definition-service.ts",
-      "sourceDigest": "aba1d9964fb59e97e917e425016a83320253912c860ebead0a3716fe2ed27e88",
+      "sourceDigest": "6dd789f910f152e9744fb096701fa03d947fc93d1093b566c2b7d9dc08167ca4",
       "channels": [
         "http",
         "mcp"
