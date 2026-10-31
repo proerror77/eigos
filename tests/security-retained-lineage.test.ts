@@ -14,10 +14,11 @@ import {secureRequest} from '../packages/security/model.js';
 import {digest} from '../packages/core/delegation.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
 import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
+import {taskObjectMembership} from '../packages/coordinator/task-context.js';
+import {SecurityStore} from '../packages/security/store.js';
 
-for (const change of ['none', 'revoked', 'content', 'malformed'] as const)
-test(`request reconstruction shares one bounded metadata scan while preserving ${change} checks`, t => {
- const f=securityFixture(),db=new DatabaseSync(f.database);
+function requestFixture() {
+ const f=securityFixture();
  try {
   const policy=f.jobs.security.policies,install=f.installation('request read window'),until=new Date(Date.now()+3600000).toISOString();
   f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:['brief.prepare'],resources:[
@@ -28,8 +29,17 @@ test(`request reconstruction shares one bounded metadata scan while preserving $
   policy.setRecipient(install.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
   const principal={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)};
   const catalog=new ExecutionCatalog([BRIEF_CAPABILITY],[BRIEF_BINDING],[new BriefAdapter()]),tasks=new TaskService(f.jobs,{catalog});
-  const job=tasks.submit(principal,{service:'eigos.delegate',goal:'Exact original synthetic instruction',requestId:randomUUID()});
+  const submitted=tasks.submit(principal,{service:'eigos.delegate',goal:'Exact original synthetic instruction',requestId:randomUUID()}),job=f.jobs.get(f.owner,submitted.id);
   policy.bindTaskProjection(f.owner,job.id);
+  return {...f,policy,install,principal,job};
+ }catch(error){f.close();throw error;}
+}
+
+for (const change of ['none', 'revoked', 'content', 'malformed'] as const)
+test(`request reconstruction shares one bounded metadata scan while preserving ${change} checks`, t => {
+ const f=requestFixture(),db=new DatabaseSync(f.database);
+ try {
+  const {policy,install,principal,job}=f;
   const prepare=DatabaseSync.prototype.prepare;let scans=0,changed=false;
   t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
    const statement=prepare.call(this,sql);
@@ -55,6 +65,47 @@ test(`request reconstruction shares one bounded metadata scan while preserving $
   assert.equal(read().originalGoal,job.goal);
   assert.equal(scans,2,'A later request rechecks membership instead of reusing a prior call');
  }finally{db.close();f.close();}
+});
+
+test('task membership shares ancestor traversal within one read and keeps task/revision boundaries distinct',t=>{
+ const f=requestFixture(),db=new DatabaseSync(f.database);
+ try {
+  const graph=f.jobs.ontologyForJob(f.owner,f.job),request=f.job.delegation!.request;
+  const row=db.prepare("SELECT id FROM ontology_objects WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").get(f.owner,f.job.id)!;
+  const specification=db.prepare("SELECT id FROM ontology_objects WHERE owner=? AND type='RequestSpecification' AND json_extract(body,'$.source.id')=?").get(f.owner,f.job.id)!;
+  const ref={type:'RequestInstruction',id:String(row.id)},spec={type:'RequestSpecification',id:String(specification.id)},query=graph.query.bind(graph);let roots=0;
+  t.mock.method(graph,'query',(...args:Parameters<typeof query>)=>{
+   const input=args[1];if('from' in input && input.from.type===ref.type && input.from.id===ref.id && input.link==='request')roots++;
+   return query(...args);
+  });
+  f.jobs.security.withAgent(f.principal,f.job.id,'task.query',()=>{
+   f.policy.readSnapshot(()=>{
+    assert.equal(taskObjectMembership(graph,f.owner,request,ref),'current');
+    assert.equal(taskObjectMembership(graph,f.owner,request,ref),'current');assert.equal(roots,1);
+    assert.equal(taskObjectMembership(graph,f.owner,{...request,id:randomUUID()},ref),'foreign');
+    assert.equal(taskObjectMembership(graph,f.owner,request,spec),'current');
+    assert.equal(taskObjectMembership(graph,f.owner,{...request,revision:request.revision+1},spec),'foreign');
+    assert.equal(roots,2,'The same visible object must be classified separately for another task');
+   });
+   assert.equal(taskObjectMembership(graph,f.owner,request,ref),'current');assert.equal(roots,3,'A later read proves membership again');
+  });
+ }finally{db.close();f.close();}
+});
+
+for(const connection of ['current','separate'] as const)
+test(`task membership reuse detects removed ownership links on the ${connection} connection`,()=>{
+ const f=requestFixture(),db=new DatabaseSync(f.database),writer=connection==='current'?db:new DatabaseSync(f.database);
+ try {
+  const security=new SecurityStore(db,'foundation',Date.now,true,f.policy.model),policy=security.policies;
+  const graph=new OntologyObjectStore(db,f.policy.model,Date.now,undefined,{security:policy},false),request=f.job.delegation!.request;
+  const row=db.prepare("SELECT id FROM ontology_objects WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").get(f.owner,f.job.id)!;
+  const ref={type:'RequestInstruction',id:String(row.id)},link=graph.model.navigation(ref.type,'request').link.id;
+  security.withAgent(f.principal,f.job.id,'task.query',()=>policy.readSnapshot(()=>{
+   assert.equal(taskObjectMembership(graph,f.owner,request,ref),'current');
+   writer.prepare('DELETE FROM ontology_links WHERE owner=? AND type=? AND from_type=? AND from_id=?').run(f.owner,link,ref.type,ref.id);
+   assert.equal(taskObjectMembership(graph,f.owner,request,ref),'foreign','The prior positive result must not survive a write');
+  }));
+ }finally{if(writer!==db)writer.close();db.close();f.close();}
 });
 
 for(const firstWriter of ['same_task','other_task'] as const)

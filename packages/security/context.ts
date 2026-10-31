@@ -23,6 +23,8 @@ export interface AuthorizationScope {
   readBindings?: Map<string,unknown>;
   readTaskMembers?: Map<string,Map<string,ObjectRef>>;
   readLineageDigests?: Map<string,string>;
+  /** Pure read results, namespaced by the exact reader and cleared with proofs. */
+  readValues?: Map<object,Map<string,unknown>>;
   /** Changes whenever a synchronous read's cached proofs are invalidated. */
   readGeneration?: () => number;
   /** An external commit invalidated the memo, without local writes or time invalidation. */

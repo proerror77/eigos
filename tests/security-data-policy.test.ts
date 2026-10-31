@@ -132,14 +132,88 @@ test('queries validate their schema candidates without visiting unrelated bindin
   } finally { f.close(); }
 });
 
+test('queries share binding and revision lists within one synchronous read, and refresh them for the next read', t => {
+  const f=fixture();
+  try {
+    f.role(f.a.id);const place=f.place('shared'),task=f.task(f.a,[place]),policy=f.jobs.security.policies;
+    const prepare=DatabaseSync.prototype.prepare;let bindings=0,revisions=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+      if(sql.startsWith('SELECT DISTINCT b.type,b.object_id FROM security_bindings'))bindings++;
+      if(sql==='SELECT type,object_id,object_revision FROM security_bindings WHERE grant_id=? ORDER BY type,object_id')revisions++;
+      return prepare.call(this,sql);
+    });
+    const read=()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      const byType=f.jobs.ontology.query(f.owner,{type:'Place'});
+      const byId=f.jobs.ontology.query(f.owner,{object:place.object,select:['name']});
+      assert.deepEqual(byType.items.map(item=>item.ref),[place.object]);
+      assert.equal(byId.items[0]!.properties.name,'shared');
+      assert.equal(byType.datasetRevision,byId.datasetRevision);
+    }));
+    read();assert.equal(bindings,1);assert.equal(revisions,1);
+    read();assert.equal(bindings,2);assert.equal(revisions,2,'A later tool read independently loads its visible revision');
+  } finally {f.close();}
+});
+
+for(const connection of ['current','separate'] as const)
+test(`query-list reuse observes removed bindings and changed content on the ${connection} connection`,()=>{
+  const f=fixture(),db=new DatabaseSync(f.database),writer=connection==='current'?db:new DatabaseSync(f.database);
+  try {
+    f.role(f.a.id);const a=f.place('A'),b=f.place('B'),task=f.task(f.a,[a,b]);
+    const security=new SecurityStore(db,'foundation',Date.now,true,businessModel),policy=security.policies;
+    const graph=new OntologyObjectStore(db,businessModel,Date.now,undefined,{security:policy},false);
+    security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      const before=graph.query(f.owner,{type:'Place'});assert.deepEqual(before.items.map(item=>item.ref.id),['A','B']);
+      writer.prepare("DELETE FROM security_bindings WHERE grant_id=? AND type='Place' AND object_id=?").run(task.grant.id,a.object.id);
+      writer.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.name','Changed B') WHERE owner=? AND type='Place' AND id=?").run(f.owner,b.object.id);
+      const after=graph.query(f.owner,{type:'Place'});
+      assert.deepEqual(after.items.map(item=>item.ref.id),['B']);assert.equal(after.items[0]!.properties.name,'Changed B');
+      assert.notEqual(after.datasetRevision,before.datasetRevision);
+    }));
+  } finally {if(writer!==db)writer.close();db.close();f.close();}
+});
+
+for(const change of ['unrelated','binding'] as const)
+test(`an external commit during visibility lookup repeats only an unchanged pure lookup: ${change}`,t=>{
+  const f=fixture(),writer=new DatabaseSync(f.database);
+  try {
+    f.role(f.a.id);const place=f.place('selected'),task=f.task(f.a,[place]),policy=f.jobs.security.policies;
+    writer.exec('CREATE TABLE fixture_unrelated(value INTEGER)');
+    const prepare=DatabaseSync.prototype.prepare;let lists=0,queries=0;
+    t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+      const statement=prepare.call(this,sql);
+      if(sql.startsWith('SELECT DISTINCT b.type,b.object_id FROM security_bindings')){
+        const all=statement.all.bind(statement);
+        t.mock.method(statement,'all',(...args:Parameters<typeof all>)=>{
+          const rows=all(...args);
+          if(++lists===1){
+            if(change==='unrelated')prepare.call(writer,'INSERT INTO fixture_unrelated VALUES(1)').run();
+            else prepare.call(writer,'DELETE FROM security_bindings WHERE grant_id=? AND type=? AND object_id=?').run(task.grant.id,place.object.type,place.object.id);
+          }
+          return rows;
+        });
+      }
+      return statement;
+    });
+    const read=()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
+      queries++;return f.jobs.ontology.query(f.owner,{type:'Place'});
+    }));
+    if(change==='binding')assert.throws(read,/POLICY_CHANGED/);
+    else assert.deepEqual(read().items.map(item=>item.ref),[place.object]);
+    assert.equal(lists,2);assert.equal(queries,1,'A pure lookup conflict never replays the caller or a source operation');
+  } finally {writer.close();f.close();}
+});
+
 test('narrow queries retain the complete task binding budget', () => {
   const f = fixture(), db = new DatabaseSync(f.database);
   try {
     f.role(f.a.id); const place = f.place('selected'), task = f.task(f.a, [place]);
     const row = db.prepare("SELECT * FROM security_bindings WHERE grant_id=? AND type='Place'").get(task.grant.id)!;
     const insert = db.prepare('INSERT INTO security_bindings VALUES(?,?,?,?,?,?,?,?)');
-    for (let n = 0; n < 2000; n++) { const id = `budget-${n}`, binding = JSON.parse(String(row.body)); binding.object.id = id; insert.run(row.grant_id!, row.owner!, row.task_id!, row.request_revision!, 'Place', id, row.object_revision!, JSON.stringify(binding)); }
-    assert.throws(() => f.va.query({ version: 2, taskId: task.job.id, query: { object: place.object } }), /Task object boundary exceeds/);
+    f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>f.jobs.security.policies.readSnapshot(()=>{
+      assert.equal(f.jobs.ontology.query(f.owner,{object:place.object}).items.length,1);
+      for (let n = 0; n < 2000; n++) { const id = `budget-${n}`, binding = JSON.parse(String(row.body)); binding.object.id = id; insert.run(row.grant_id!, row.owner!, row.task_id!, row.request_revision!, 'Place', id, row.object_revision!, JSON.stringify(binding)); }
+      assert.throws(() => f.jobs.ontology.query(f.owner,{object:place.object}), /Task object boundary exceeds/);
+    }));
   } finally { db.close(); f.close(); }
 });
 
@@ -179,10 +253,10 @@ for(const connection of ['current','separate'] as const)test(`synchronous read c
   const f=fixture();try {
     f.role(f.a.id);const task=f.task(f.a),policy=f.jobs.security.policies;
     assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
-      authorizationScope()!.assertCurrent();
+      assert.equal(f.jobs.ontology.query(f.owner,{type:'ServiceRequest'}).items.length,1);
       if(connection==='current')f.jobs.security.revokeGrant(f.owner,task.grant.id,task.grant.revision);
       else {const db=new DatabaseSync(f.database);try{db.prepare("UPDATE security_grants SET state='revoked' WHERE id=?").run(task.grant.id);}finally{db.close();}}
-      authorizationScope()!.assertCurrent();assert.fail('A revoked read must not return');
+      f.jobs.ontology.query(f.owner,{type:'ServiceRequest'});assert.fail('A revoked cached query must not return');
     })),/AUTHORIZATION_REQUIRED|POLICY_CHANGED|ACCESS_REVOKED/);
   }finally{f.close();}
 });
@@ -230,7 +304,8 @@ for(const subjectKind of ['member','installation'] as const)test(`expired unrela
     f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>assert.equal(f.jobs.ontology.read(f.owner,place.object).properties.name,'current'));
     policy.setRole({subjectKind:'installation',subjectId:f.a.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:new Date(Date.now()+10).toISOString()},policy.revision());
     assert.throws(()=>f.jobs.security.withAgent(f.pa,task.job.id,'task.query',()=>policy.readSnapshot(()=>{
-      assert(policy.binding(authorizationScope()!,place.object));t.mock.timers.tick(11);
+      assert.equal(f.jobs.ontology.query(f.owner,{object:place.object}).items.length,1);t.mock.timers.tick(11);
+      f.jobs.ontology.query(f.owner,{object:place.object});
     })),/POLICY_CHANGED/,'Expiry of authority used by this read still rejects its result');
     assert.equal(f.va.check({taskId:task.job.id,operation:'task.query',object:place.object}).allowed,false);
   }finally{f.close();}

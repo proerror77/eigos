@@ -521,19 +521,41 @@ export class SecurityPolicies {
     // other connections before every cached read.
     const version=this.db.prepare('SELECT data_version, total_changes() AS changes FROM pragma_data_version');
     const stamp=()=>{const row=version.get()!;return {version:Number(row.data_version),changes:Number(row.changes)-(readBookkeepingChanges.get(this.db)??0)};};
-    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0,retryable=false;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>();
+    scope.assertCurrent();let checked=stamp(),at=this.security.now(),active=true,generation=0,retryable=false;const bindings=new Map<string,unknown>(),members=new Map<string,Map<string,ObjectRef>>(),lineageDigests=new Map<string,string>(),values=new Map<object,Map<string,unknown>>();
     // Expired historical roles grant nothing and cannot shorten a read that
     // another current role permits. Every role valid at entry still constrains
     // this snapshot, and roleAllows keeps checking the requested resource.
     const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();values.clear();generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,readConflictRetryable:()=>retryable,assertCurrent:current},()=>{
+      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readValues:values,readGeneration:()=>generation,readConflictRetryable:()=>retryable,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
+  }
+  /** Only pure server-owned reads may share a value. The reader identity keeps
+   * model views separate; authority and projection modes remain part of the key.
+   * An external commit may repeat this read alone if its complete result agrees. */
+  memoRead<T>(reader:object,key:string,read:()=>T,retries=2):T {
+    const scope=authorizationScope();
+    if(!scope?.synchronousRead || !scope.readValues)return read();
+    scope.assertCurrent();
+    const context=JSON.stringify([scope.actor.actorKind,scope.actor.installationId,scope.grant?.id,scope.grant?.revision,scope.policyRevision,scope.operation,!!scope.inference,!!scope.integrity,key]);
+    const cached=scope.readValues.get(reader);
+    if(cached?.has(context))return cached.get(context) as T;
+    const generation=scope.readGeneration?.(),value=read();
+    if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');
+    scope.assertCurrent();
+    if(scope.readGeneration?.()!==generation) {
+      if(!retries || !scope.readConflictRetryable?.())throw new SecurityError('POLICY_CHANGED');
+      const fresh=this.memoRead(reader,key,read,retries-1);
+      if(digest(fresh)!==digest(value))throw new SecurityError('POLICY_CHANGED');
+      return fresh;
+    }
+    const values=scope.readValues.get(reader)??new Map<string,unknown>();
+    values.set(context,value);scope.readValues.set(reader,values);return value;
   }
   private contextMembers(owner:string,taskId:string,revision:number) {
     const scope=authorizationScope();scope?.assertCurrent();
@@ -660,7 +682,7 @@ export class SecurityPolicies {
       // source operation. The complete proof must remain identical after fresh
       // authority/dependency checks; changed facts still reject the mixed read.
       if(!result || !retries || !scope.readConflictRetryable?.())throw new SecurityError('POLICY_CHANGED');
-      scope.readBindings?.clear();scope.readTaskMembers?.clear();scope.readLineageDigests?.clear();
+      scope.readBindings?.clear();scope.readTaskMembers?.clear();scope.readLineageDigests?.clear();scope.readValues?.clear();
       this.roleCache.delete(scope);this.labelCache.delete(scope);
       const fresh=this.readBinding(scope,ref,revision,historicalCapability,retries-1);
       if(!fresh || digest(fresh)!==digest(result))throw new SecurityError('POLICY_CHANGED');
@@ -675,9 +697,9 @@ export class SecurityPolicies {
   }
   predicate(owner: string, alias: string, fields: string[] = [], selection?: { types: readonly string[]; objectId?: string }) {
     const scope = this.scope(owner),g=scope.grant!;
-    const rows=this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
+    const rows=this.memoRead(this,JSON.stringify(['query-bindings',g.ownerKey,g.taskId,g.requestRevision,g.installationId]),()=>this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
       WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' LIMIT 2001`)
-      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId);
+      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId));
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
     // Narrow by the query's public schema/identity before checking candidates.
     // Data predicates, visibility and transitive dependencies are still checked
@@ -714,8 +736,11 @@ export class SecurityPolicies {
     return { ...value, properties:{...properties,...technical} };
   }
   visibleRevision(owner: string): number {
-    const scope = this.scope(owner), rows = this.db.prepare('SELECT type,object_id,object_revision FROM security_bindings WHERE grant_id=? ORDER BY type,object_id').all(scope.grant!.id);
-    return parseInt(digest([scope.policyRevision, scope.grant!.id, rows]).slice(0, 12), 16);
+    const scope = this.scope(owner);
+    return this.memoRead(this,JSON.stringify(['visible-revision',owner,scope.grant!.id]),()=>{
+      const rows=this.db.prepare('SELECT type,object_id,object_revision FROM security_bindings WHERE grant_id=? ORDER BY type,object_id').all(scope.grant!.id);
+      return parseInt(digest([scope.policyRevision,scope.grant!.id,rows]).slice(0,12),16);
+    });
   }
   cursor(owner: string, query: string, token?: string, value?: ObjectRef): ObjectRef | string | undefined {
     const scope = this.scope(owner), context = digest([scope.actor.installationId, scope.actor.authEpoch, scope.grant!.id, scope.grant!.revision, scope.policyRevision, query, this.visibleRevision(owner)]);

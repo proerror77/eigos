@@ -3426,12 +3426,12 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "4efc6606189071d7168b08328c7a36fa23bb72b3547d351f0fb8f2b203db222e",
+      "sourceDigest": "920f8d4a07803eea8a3fa602bb5b7e2a22ba7dc6655c6a1a65fefe8a2e267bec",
       "channels": [
         "internal"
       ],
       "content": "Server-only actor, projection and integrity scopes",
-      "currentControl": "Foundation v2: Server-only actor, projection and integrity scopes",
+      "currentControl": "Foundation v2: Server-only actor, projection and integrity scopes; pure read values are confined to the current synchronous proof window",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
@@ -3474,12 +3474,12 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "f31d517b843b1d15f5f5fc28360d775ba6a807adfa393c089a9e97c127c742f6",
+      "sourceDigest": "2d790e6cd49d0ee617bfbd2265c478f545e66aa1ea8e25437615f62fad5a82e5",
       "channels": [
         "all-reads"
       ],
       "content": "Resource roles, fields, bindings, source grants, derived lineage, artifacts and opaque cursors",
-      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; long task projections report checked Worker progress without changing the original lease, authority or evidence",
+      "currentControl": "Current resource roles, fields, source grants and output lineage; release labels may differ only with identical reviewed model content and action implementations; checked Worker progress preserves original lease, authority and evidence; binding and revision lists are reused only within one synchronous read, invalidated by database changes or expiry, with unchanged authority checks and bounded pure-lookup conflict verification",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S2"
     },
@@ -4183,25 +4183,25 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
+      "sourceDigest": "ffc51a807cbbfc496571842c30e4d2ea2ef924827994599761605d836736515f",
       "channels": [
         "model",
         "artifact"
       ],
       "content": "Typed source computation, immutable execution graph and named provenance",
-      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks; sealed request records and a single bounded plan-history read are reused during context assembly",
       "targetControl": "No fresh execution authority or cross-task data grant from metadata",
       "stage": "S5"
     },
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "f96a4f000cdc1c285da19b1a1f36276a6a2007f8ec8eb1bfa64d8e4da82087ee",
+      "sourceDigest": "aaca74733519801fe612f19c59c4438e5ff90a97d3d430bacb065b1b2e23f1f9",
       "channels": [
         "model"
       ],
       "content": "Bounded native task context and current instruction / capability / execution navigation",
-      "currentControl": "Pinned owner/task/revision/release and bounded acknowledged reads; authorized source-change notices invalidate old decision receipts without promoting facts or permissions",
+      "currentControl": "Pinned owner/task/revision/release and bounded acknowledged reads; authorized source-change notices invalidate old decision receipts without promoting facts or permissions; task membership reuse is keyed by exact reader, owner, task and revision within the current synchronous proof window",
       "targetControl": "Current field/source/channel authorization on every model export",
       "stage": "S5"
     },
