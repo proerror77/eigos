@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { randomBytes, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { releaseFiles } from '../dist/packages/deployment/files.js';
+import { PA_SKILL_DIRECTORY } from '../dist/packages/members/pa-onboarding.js';
 import { parseEnv } from 'node:util';
 import { readWorkerConfig } from '../dist/packages/core/config.js';
 import { DidiMcpConnector } from '../dist/packages/capabilities/didi/connector.js';
@@ -160,7 +161,8 @@ try {
   }
   const peerDirectory = join(runtime, 'peer'); mkdirSync(peerDirectory, { recursive: true, mode: 0o700 });
   const installedSkill = readFileSync(join(sourceRoot,'integrations/grok/eigos-delegate/SKILL.md'),'utf8') + `\n## Saved connection for this user\n\n- Run on the user's connected Mac, not the cloud computer.\n- Client: ${peerClient}\n- Profile: ${join(runtime,'profile.json')}\n- Command: python3 ${peerClient} --config ${join(runtime,'profile.json')} <command>\n- Save task inputs and receipts in ${peerDirectory}.\n- Default and allowed service: eigos.delegate. Credential values are private; never read or print client-token or server.env.\n- Parcel quotation is read-only: let EIGOS read saved addresses, present choices and continue the same task. Do not find or inject address IDs yourself.\n- launchd ${label} keeps Gateway/Worker available while the Mac is available.\n`;
-  privateWrite(join(runtime,'skill-install.md'), installedSkill); privateWrite(join(directory,'skill-install.md'), installedSkill);
+  const skillWithReferences = installedSkill.replaceAll('](references/', `](${join(release, 'dist', PA_SKILL_DIRECTORY, 'references')}/`);
+  privateWrite(join(runtime,'skill-install.md'), skillWithReferences); privateWrite(join(directory,'skill-install.md'), skillWithReferences);
   privateWrite(ownership, JSON.stringify({sourceRoot:root})+'\n');
   const sourceCommit = execFileSync('git',['rev-parse','HEAD'],{cwd:sourceRoot,encoding:'utf8'}).trim();
   const dirty = !!execFileSync('git',['status','--porcelain'],{cwd:sourceRoot,encoding:'utf8'}).trim();
