@@ -74,11 +74,11 @@ export class DidiAgentProgram implements AgentProgram {
         if (request.confirmedInputs?.location?.fields[role]?.status === 'cleared') invalid('This task address was explicitly cleared; the PA must obtain its replacement instead of reusing history');
         const place = supplied[role]; if (!place) continue;
         if (raw[role] !== undefined && (typeof raw[role] !== 'string' || !locationAliases(place, supplied.city).includes(normalizedLocation(raw[role] as string)))) invalid('Route differs from the current PA-provided address context');
-        // Keep an explicitly selected, confirmed street address as the query.
-        // Replacing it with the POI name makes the address search fail the scope guard.
+        // Keep concrete confirmed names, addresses and their exact combinations
+        // as queries; label-only aliases still resolve to the confirmed POI name.
         const query = raw[role];
-        const explicit = typeof query === 'string' && [place.address, place.name].some(value => value
-          && locationAliases({ name: value, source: place.source }, supplied.city!).includes(normalizedLocation(query)));
+        const explicit = typeof query === 'string'
+          && locationAliases({ ...place, label: undefined }, supplied.city).includes(normalizedLocation(query));
         raw[role] = explicit ? query : place.name;
       }
     }

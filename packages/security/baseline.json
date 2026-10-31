@@ -3752,12 +3752,12 @@
     {
       "id": "s5-packages-capabilities-didi-program",
       "file": "packages/capabilities/didi/program.ts",
-      "sourceDigest": "4ca4fc5ba8a6488c0277e4cf864404b500faf517cb55d4efd889d1110bec405f",
+      "sourceDigest": "b04e6988a8b75290aa4950344efc087c40f4e38a583b2eb856b1238b07a1476f",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation. Exact combinations of the already confirmed place name and address remain concrete read queries; source matching still checks both fields and no new place or permission is inferred.",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
