@@ -120,7 +120,14 @@ export function customerPermissionOverview(view:View,member:Member,csrf:string,n
 export function preparePermissionReview(view:View,form:Record<string,unknown>,now=Date.now()):PermissionReview {
   const kind=z.enum(['agent','source','task','revoke','revoke_source','recovery']).parse(form.kind),installationId=z.uuid().parse(form.installationId);
   if(!view.installations.some(a=>a.id===installationId && !a.revoked)) throw new Error('Unknown installation');
-  const hours=z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours??1),expiresAt=new Date(now+hours*3600000).toISOString();
+  const hours=z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours??1);
+  let expiresAt=new Date(now+hours*3600000).toISOString();
+  if(form.expiryGrantId) {
+    if(kind!=='agent' && kind!=='source')throw new Error('Only installation and source reviews can reuse a ceiling deadline');
+    const id=z.uuid().parse(form.expiryGrantId),prior=view.grants.find(g=>g.id===id && g.kind==='agent_access' && g.installationId===installationId);
+    if(!prior || Date.parse(prior.expiresAt)<=now)throw new Error('Choose an unexpired permission boundary for this installation');
+    expiresAt=prior.expiresAt;
+  }
   const selectedChannels=values(form.channels);if(!selectedChannels.every(c=>Object.hasOwn(channels,c)))throw new Error('Unknown channel');
   let input:Record<string,unknown>;
   if(kind==='agent') {
@@ -179,6 +186,7 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const install=`<label>个人助手<select name="installationId" required>${options(view)}</select></label>`;
   const channelChoices=Object.entries(channels).filter(([key])=>key!=='member_ui').map(([key,label])=>check('channels',key,escape(label))).join('');
   const active=view.grants.filter(g=>g.status==='active' && Date.parse(g.expiresAt)>Date.now());
+  const expiryChoice=`<label>沿用已有权限边界的截止时间（可选）<select name="expiryGrantId"><option value="">按下方有效期创建</option>${view.grants.filter(g=>g.kind==='agent_access' && Date.parse(g.expiresAt)>Date.now()).map(g=>`<option value="${escape(g.id)}">${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${escape(g.installationId.slice(0,8))} · 至 ${escape(expiry(member,g.expiresAt))}</option>`).join('')}</select></label><p class="fine">只沿用所选连接的原截止时间，不复制原授权的能力或字段。替换后仍可选原记录，过期记录不可用。</p>`;
   const current=active.length?active.map(g=>`<article><h3>${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${g.kind==='agent_access'?'安装授权上限':'任务授权'}</h3>
     <p>${g.kind==='task_data'?`任务 <code>${escape(g.taskId)}</code> · 请求版本 ${g.requestRevision}`:`${g.capabilityIds.length} 项能力 · ${g.resources.length} 类数据`}</p>
     <p>${g.channels.map(c=>escape(channels[c])).join(' · ')}<br>到期：${escape(expiry(member,g.expiresAt))}</p>
@@ -186,8 +194,8 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const sourceGrants=view.sources.map(s=>`<article><h3>${escape(view.installations.find(a=>a.id===s.installationId)?.name??'助手')} · 来源许可</h3><p>${escape(view.profiles.find(p=>p.programId===s.programId)?.name??s.programId)}</p><p>操作：${s.operations.map(escape).join('、')}<br>输出：${s.outputTypes.map(t=>escape(view.fields.find(f=>f.type===t)?.name??t)).join('、')}<br>到期：${escape(expiry(member,s.expiresAt))}</p>${form('revoke_source',hidden('installationId',s.installationId)+hidden('bindingId',s.bindingId))}</article>`).join('');
   const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
     <fieldset><legend>可使用的数据字段</legend><p class="fine">结构化字段涵盖其完整子项；未勾选的字段不在授权内。</p>${view.fields.map(r=>`<details><summary>${escape(r.name)}</summary>${r.fields.map(f=>check('fields',`${r.type}.${f.field}`,`${escape(f.description)}${f.sensitive?' · 敏感数据':''}<small><code>${escape(r.type)}.${escape(f.field)}</code></small>`)).join('')}</details>`).join('')}</fieldset>
-    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset><label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
-  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset><label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');
+    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
+  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');
   const taskForm=view.tasks.length && active.length?form('task',install+`<label>任务<select name="taskId">${view.tasks.filter(t=>t.requestRevision>0).map(t=>`<option value="${escape(t.id)}">${escape(t.id.slice(0,8))} · ${escape(t.state)} · 版本 ${t.requestRevision}</option>`).join('')}</select></label>
     <fieldset><legend>选定的现有输入</legend><p class="fine">只显示本人拥有、已开放定义且可委托的当前对象。每个选择固定对象版本与字段。</p>${view.objects.map(o=>`<details><summary>${escape(o.title)} · ${escape(o.object.type)}</summary><small><code>${escape(o.object.id)}</code> · 版本 ${o.objectRevision}</small>${o.fields.map(field=>check('inputs',JSON.stringify([o.object,o.objectRevision,field]),escape(field))).join('')}</details>`).join('')||'<p>暂无可选择的现有对象。</p>'}</fieldset>
     <fieldset><legend>本任务可接收的来源输出</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>

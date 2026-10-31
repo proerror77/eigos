@@ -3414,12 +3414,12 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "d40ac170777e25f578228864ba55a3f8c4a58e014ae0bc5ba13c17ab362d1809",
+      "sourceDigest": "c434ad395f2196b587fad1153a9fc322a9f768b486a918872dd6f3cd4b76cdb8",
       "channels": [
         "member-ui"
       ],
       "content": "Exact immutable controller review, source readback and revocation",
-      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover.",
+      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover. Installation and source reviews can retain a same-installation unexpired ceiling deadline, including its explicit replacement record, without copying rights; source deadlines remain capped by the active parent.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
