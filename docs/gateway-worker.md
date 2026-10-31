@@ -50,11 +50,13 @@ Gateway 和 Worker 必须使用同一个持久 SQLite 文件，建议设置相�
 
 ```sh
 npm run check
-npm test
 npm run build
-npm run test:e2e:run
+npm run test:changed
+npm run test:e2e:changed
 git diff --check
 ```
+
+默认按相对 `origin/main` 的全部分支改动选择测试，包含本地暂存、未暂存和新增文件。用 `npm run test:scope` 预览范围；其他基线传 `-- --base=<ref>`。全量回归、CI 触发与范围回退规则见[测试与 CI](guides/testing.md)。
 
 自动测试使用隔离数据库和合成模型／来源。进程级测试验证真实进程与协议接线，仍不能证明真实商家操作或履约。实际业务验收需要独立来源回读。
 
