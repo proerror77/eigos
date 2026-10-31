@@ -37,7 +37,8 @@ import { AgentAccessError } from '../../packages/members/agents.js';
 import { BACKEND_VERSION } from '../../packages/ontology/execution.js';
 import { DefinitionService } from '../../packages/ontology/definition-service.js';
 import { mountDefinitionRoutes } from './ontology/routes.js';
-import { inviteBetaPrincipal, mountInviteBeta } from './invite-beta.js';
+import { inviteBetaPrincipal } from './invite-beta.js';
+import { mountPaOnboarding } from './pa-onboarding.js';
 import { createIngressRouter } from './ingress.js';
 import { decodeJwt } from 'jose';
 import { TaskRelayGateway, mountTaskRelay, readTaskRelayConfig } from './relay.js';
@@ -110,7 +111,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
       let route;
       try { route = ingress.selected(req)!; } catch { res.status(403).json({ error: 'unregistered_ingress' }); return; }
       res.setHeader('X-EIGOS-Authority-Id', config.authority.id);
-      if (route.browserRedirect && (req.path === '/' || req.path === '/members' || req.path.startsWith('/members/'))) {
+      if (route.browserRedirect && (req.path === '/' || req.path === '/connect' || req.path.startsWith('/connect/') || req.path === '/members' || req.path.startsWith('/members/'))) {
         res.redirect(307, config.PUBLIC_URL + req.originalUrl); return;
       }
     }
@@ -155,7 +156,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     ...(config.authority ? { authorityId: config.authority.id, authorityRevision: config.authority.revision } : {}) };
   app.get('/health', (_req, res) => { const available = !security || security.available; res.status(available ? 200 : 503).json({ status: available ? 'ok' : 'unavailable', version: '0.1.0', ...runtimeIdentity,
     ...(config.authority?{ontologyRelease:store.definitions.active().ref}:{}), ...(relay ? { taskRelay: { status: relay.status } } : {}), securityStage: security ? 'S5_foundation_v2' : 'legacy' }); });
-  mountInviteBeta(app, config);
+  mountPaOnboarding(app, config);
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
   mountMemberRoutes(app, config, members, loginProvider, security);

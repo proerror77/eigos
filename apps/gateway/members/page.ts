@@ -13,7 +13,7 @@ function fields(profile: Profile): string {
     <label>时区<input name="timezone" required maxlength="100" value="${escape(profile.timezone)}" aria-describedby="timezone-help"><small id="timezone-help">例如 Asia/Shanghai 或 UTC</small></label></div>`;
 }
 
-export function memberPage(input: { member?: Member; csrf?: string; connections?: Connection[]; agentRegistrations?: AgentRegistration[]; invitationOnly?: boolean; loginAvailable: boolean; manualApproval: boolean; notice?: string; networkAccess?: boolean; permissionsAvailable?: boolean }): string {
+export function memberPage(input: { member?: Member; csrf?: string; connections?: Connection[]; agentRegistrations?: AgentRegistration[]; invitationOnly?: boolean; loginAvailable: boolean; manualApproval: boolean; notice?: string; networkAccess?: boolean; permissionsAvailable?: boolean; connectionGuideAvailable?: boolean }): string {
   const { member, csrf, connections = [], agentRegistrations = [], invitationOnly = false, loginAvailable, manualApproval, notice } = input;
   const hidden = `<input type="hidden" name="_csrf" value="${escape(csrf ?? '')}">`;
   const form = (action: string, body: string) => `<form method="post" action="/members/${action}">${hidden}${body}</form>`;
@@ -34,6 +34,7 @@ export function memberPage(input: { member?: Member; csrf?: string; connections?
         ${form(`connections/${connection.id}/${connection.blocked ? 'restore' : 'revoke'}`, `<button type="submit">${connection.blocked ? '恢复连接' : '停用连接'}</button>`)}</article>`).join('')}</div>` : '<div class="empty">还没有助手访问过你的账号。<p>在个人助手中添加 EIGOS，完成服务授权后，连接会显示在这里。</p></div>'}
       <p class="fine">停用会立即阻止该助手的新调用。已接受的业务任务需要按任务和供应商的规则另行取消。</p>
       ${input.permissionsAvailable?'<p><a href="/members/permissions">管理数据、来源和任务授权</a></p>':''}
+      ${input.connectionGuideAvailable?'<p><a href="/connect">连接新的个人助手 · 下载 EIGOS Skill</a></p>':''}
       ${form('logout', '<button type="submit">退出当前登录</button>')}</aside>`;
   return memberLayout(content,notice);
 }

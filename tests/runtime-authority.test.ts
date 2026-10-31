@@ -90,7 +90,10 @@ test('public and private ingress share task authority while audience, installati
     const publicHealth=await request('primary.example','/health'),privateHealth=await request('private.example:8443','/health');
     assert.equal((await jwtVerifier(f.authority.issuer,'https://private.example:8443',keySet,'private_tenant')(privateToken)).clientId,'private-agent');
     assert.equal(publicHealth.body.authorityId,f.authority.id);assert.deepEqual(privateHealth.body,publicHealth.body);
-    const home=await request('primary.example','/');assert.equal(home.status,200);assert.match(home.body,/登录与邀请只确认会员身份/);
+    const home=await request('primary.example','/');assert.equal(home.status,200);assert.match(home.body,/href="\/members\/permissions"/);
+    const guide=await request('primary.example','/connect/agent.json');assert.equal(guide.status,200);assert.equal(guide.body.securityMode,'foundation');
+    assert.equal(guide.body.links.permissions,'https://primary.example/members/permissions');assert.equal(guide.body.transports.mcp.url,'https://primary.example/mcp');
+    const privateGuide=await request('private.example:8443','/connect/agent.json');assert.equal(privateGuide.status,307);assert.equal(privateGuide.headers.location,'https://primary.example/connect/agent.json');
     assert.equal((await request('primary.example','/security/context',privateToken,{},'private.example:8443')).status,401,'Forwarded host cannot make a private audience valid on the public ingress');
     assert.equal((await request('private.example:8443','/security/context',await token('private-agent','https://private.example:8443','public_tenant'),{})).status,401,'A signed claim from another ingress cannot replace the exact tenant claim');
     const created=await request('private.example:8443','/tasks',privateToken,{service:'eigos.delegate',goal:'Synthetic unified task',requestId:randomUUID()});

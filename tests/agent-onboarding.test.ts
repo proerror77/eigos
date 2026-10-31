@@ -405,7 +405,7 @@ test('A2A discovery pins the origin and issuer; a lost POST response is not repl
   } finally { await f.close(); }
 });
 
-test('foundation A2A completes a native read through enrolled JWT identity, explicit member grants, durable Worker and protected readback', async () => {
+test('the public PA guide leads through Foundation authorization, permitted discovery, a native read and protected MCP/A2A readback', async () => {
   const source = participantFixture({ choice: (ctx, access) => {
     access.session.call('query_ontology', { object: ctx.state.scope });
     const record = ctx.state.observations.find(value => value.type === 'RegistrationRecord');
@@ -418,10 +418,15 @@ test('foundation A2A completes a native read through enrolled JWT identity, expl
   } });
   const f = await fixture('self-service', true, { ...source.model, ontologyContextMode: 'task', securityChannelId: 'a2a-synthetic' }, source.source);
   try {
-    const agent = await AgentConnector.open({ baseUrl: f.base, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Protected A2A Agent', fetch: f.fetcher });
+    const guide = await f.call('/connect/agent.json').then(r => r.json());
+    assert.equal(guide.origin, f.base); assert.equal(guide.transports.mcp, undefined);
+    assert.equal(guide.transports.a2a.registration, f.base + '/.well-known/eigos-agent-registration');
+    const skill = await f.call(new URL(guide.links.skill).pathname).then(r => r.text()); assert(skill.includes(f.base + '/connect/agent.json'));
+    const agent = await AgentConnector.open({ baseUrl: guide.origin, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Protected A2A Agent', fetch: f.fetcher });
     await agent.beginAuthorization(); await agent.finishAuthorization(); await agent.registerMembership(profile, true);
     const admission = await agent.status(); assert.equal(admission.status, 'data_authorization_required');
     assert.equal(admission.links.permissions, f.base + '/members/permissions');
+    assert.equal(guide.links.permissions, admission.links.permissions);
     await assert.rejects(agent.accessToken(), /data_authorization_required/);
     const metadata = await f.call('/.well-known/eigos-agent-registration').then(r => r.json()); assert.equal(metadata.permissions_url, admission.links.permissions);
     const member = f.gateway.members.list()[0]!, session = f.gateway.members.createSession(member.id);
@@ -441,8 +446,17 @@ test('foundation A2A completes a native read through enrolled JWT identity, expl
       expiresAt: until, expectedRevision: policy.revision(), expectedAgentGrant: { id: grant.id, revision: grant.revision } });
     assert.equal(sourceResponse.status, 200, await sourceResponse.clone().text());
     assert.equal((await agent.status()).status, 'foundation_ready');
+    const discovery = new Client({ name: 'new-pa-discovery', version: '1' });
+    try {
+      await discovery.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
+      const services = await discovery.callTool({ name: 'list_services', arguments: {} }); assert(!services.isError);
+      assert.equal((services.structuredContent as { result: { id: string }[] }).result[0]!.id, 'eigos.delegate');
+      const contracts = await discovery.callTool({ name: 'describe_ontology', arguments: { kind: 'actions', search: 'ReadParticipantRegistration', limit: 5 } }); assert(!contracts.isError);
+      assert((contracts.structuredContent as { result: { actions: { id: string }[] } }).result.actions.some(value => value.id === 'ReadParticipantRegistration'));
+      assert.equal(source.counters().submits, 0);
+    } finally { await discovery.close(); }
     const client = await agent.a2a(); f.worker.start();
-    const submitted = await client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: { service: 'eigos.delegate', goal: 'Read the existing synthetic registration; do not submit or pay.', executionEnvironment: 'sandbox' } }] } })); assert('id' in submitted);
+    const submitted = await client.sendMessage(SendMessageRequest.fromJSON({ message: { messageId: randomUUID(), role: 'ROLE_USER', parts: [{ data: { service: 'eigos.delegate', goal: '查一下我已有的预约结果，不要重新提交或付款。', executionEnvironment: 'sandbox' } }] } })); assert('id' in submitted);
     const completed = await readUntil(client, submitted, TaskState.TASK_STATE_COMPLETED).catch(error => {
       const job = f.gateway.store.get(ownerKey(principal), submitted.id);
       throw new Error(JSON.stringify({ readbackError: { name: error instanceof Error ? error.name : typeof error,

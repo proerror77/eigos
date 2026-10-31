@@ -9,6 +9,8 @@ import { taskSummary } from '../../packages/core/task-summary.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { TaskView } from '../../packages/security/task-service.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
+import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
+import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
@@ -54,11 +56,11 @@ function toTask(job: Job, historyLength?: number): Task {
 export function agentCard(c: Config, services: ReturnType<TaskService['services']>): AgentCard {
   return AgentCard.fromJSON({
     name: 'EIGOS', version: '0.1.0',
-    description: c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resources, task data, sources and output channels are checked separately. Replies require expectedRevision from current Task metadata. Connecting never authorizes a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.',
+    description: PA_DISCOVERY_GUIDANCE + ' ' + (c.EIGOS_SECURITY_MODE === 'foundation' ? 'Task-scoped delegated execution. Installation grants, resources, task data, sources and output channels are checked separately. Replies require expectedRevision from current Task metadata. Connecting never authorizes a source, purchase, message or payment.' : 'Delegate only tasks matching the enabled skills below. EIGOS preserves task identity, asks for missing inputs and returns service-specific deliverables. Replies and corrections require expectedRevision from the current Task metadata. SendMessage metadata.taskOperation=amend corrects an open read-only task; resume continues a technical pause using data.expectedRevision without an answer. metadata.internalState=paused is a technical pause, not missing owner input. Connecting this agent does not authorize purchases, sending or payments. No general shopping or coffee ordering capability is currently available.'),
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
-    documentationUrl: 'https://github.com/proerror77/eigos',
+    documentationUrl: paOnboardingAvailable(c) ? `${c.PUBLIC_URL}/connect` : 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      extensions: [...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
+      extensions: [...(paOnboardingAvailable(c) ? [{ uri: `${c.PUBLIC_URL}/connect/agent.json`, description: PA_DISCOVERY_GUIDANCE, required: false }] : []), ...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
     },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {

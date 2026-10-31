@@ -1,5 +1,23 @@
 # Agent 自助登记、邀请与自动续期
 
+## 客户 PA 接入与自然触发
+
+已配置 JWT 和可用公开客户端的实例在 `/` 与 `/connect` 提供客户接入页。客户先完成本人账号开通，再选择 PA 支持的 MCP 或 A2A 连接方式，并导入 `eigos-delegate` Skill。原生 MCP 连接并不自动安装 Skill；下载文件也不代表宿主已加载。应让 PA 确认 Skill 可见、认证状态及当前可发现能力。
+
+- `/connect/agent.json`：公开连接信息，包含当前 origin、已配置的传输、会员／授权页、检查步骤及结果合同。没有客户身份、任务、来源凭据或访问令牌。
+- `/connect/eigos-delegate.tar.gz`：完整 Skill 文件夹，含主指引、按需参考、既有可选脚本及绑定当前 origin 的公开 `connection.json`。解压后按宿主规则导入或放入其 Skill 目录，再刷新宿主。
+- `/connect/SKILL.md`：可直接阅读的主指引；相对参考链接也可通过同一 `/connect/` 路径读取。
+
+普通连接检查只读取运行身份、准入与服务定义，不创建业务任务、不要求供应商凭据。遇到缺少登录、会员、邀请或安装许可时，PA 使用返回的下一步和本人页面继续原登记。Foundation 的原生 MCP 只有在统一 authority 已登记该客户端时才作为公开接入方式列出；其他已配置的 Agent 使用既有 A2A／AgentConnector 登记。
+
+Skill 的选择依据是实际服务意图：用户说“明天从家去机场，先帮我查车价”或“查一下出差住宿和交通”时，即使没有提到 EIGOS，也先检查当前可用服务；“网约车怎么计价”、旅行散文及明确排除委托的请求由 PA 正常处理。MCP 的服务端指引／工具描述与 A2A 发现说明提供相同的判断原则。自动选择仍依赖目标宿主的 Skill 加载与模型选择，需要在实际支持的 PA 上验收。
+
+`list_services` 中的 `eigos.delegate` 是入口。PA 可进一步读取本人获准的 `describe_ontology` 合同；定义存在不代表来源已在线或已经授权。EIGOS 对任务、来源与执行分别检查。缺少真实服务时明确报告，不能把原业务目标改成已完成的任务说明。
+
+任务发出后保存原 taskId、contextId、请求标识及 revision。授权与补问完成后先回读原任务，再按当前响应提供的动作续接；不创建替代任务。Foundation 结果要求 completed、`accepted=true`、`outputStatus=available` 和实际交付物。接口收到请求、登录成功、只读报价、预约提交与真实履约分别报告。此接入改动不启用真实下单或付款，也不自动接入日历或新的供应商。
+
+## 登记与会员准入
+
 原生 Codex MCP 邀请接入见[部署入口](deployment.md)。它使用预登记的公开 OAuth 客户端 ID，沿用会员和客户端连接检查；下文的 Node AgentConnector 则额外管理独立安装实例，两者的停用粒度分别说明。
 
 客户的 Agent 从公开发现入口开始登记，Auth0 验证真实用户并签发令牌，EIGOS 校验会员资格、邀请和安装实例的停用状态。Gateway 不持有 Agent 的刷新令牌，也不另建 OAuth 授权服务器。

@@ -13,6 +13,7 @@ import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
 import type { DefinitionService } from '../../packages/ontology/definition-service.js';
+import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
@@ -31,7 +32,7 @@ async function result(action: () => unknown): Promise<CallToolResult> {
 }
 
 export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
-  const server = new McpServer({ name: 'eigos', version: '0.1.0' });
+  const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: PA_DISCOVERY_GUIDANCE });
   if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (!tasks.secured && network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
@@ -61,7 +62,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
   }, (args: unknown) => result(() => tasks.evaluateOntology(principal, args, network?.service.ontologyReader(principal, network.token))));
   if (tasks.secured) server.registerTool('check_access',{description:'Check current access to your granted task and selected fields; this grants no authority.',inputSchema:checkAccessSchema,annotations:read},args=>result(()=>tasks.checkAccess(principal,args)));
   server.registerTool('list_services', {
-    description: 'Discover configured EIGOS services and their actual scope. The ontology backend exposes eigos.delegate and optional sandbox after-sales.',
+    description: 'Discover current EIGOS service entry points before delegating a practical service request, such as ride estimates, accommodation, travel or appointments. eigos.delegate is an entry point; inspect permitted describe_ontology contracts for business scope. Definitions do not prove a live source or execution permission.',
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {

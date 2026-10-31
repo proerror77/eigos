@@ -18,6 +18,7 @@ export function agentOnboardingMetadata(c: Config) {
     issuer: c.OAUTH_ISSUER, client_id: c.OIDC_AGENT_CLIENT_ID, audience: c.OAUTH_AUDIENCE,
     scopes: ['openid', 'offline_access', MEMBERSHIP_SCOPE, ...TASK_SCOPES, ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     membership_url: `${c.PUBLIC_URL}/members`, admission_policy: c.EIGOS_MEMBERSHIP_APPROVAL,
+    connection_guide: `${c.PUBLIC_URL}/connect/agent.json`, skill_url: `${c.PUBLIC_URL}/connect/SKILL.md`,
     authorization_grant: 'urn:ietf:params:oauth:grant-type:device_code', credential_header: REGISTRATION_HEADER,
     registration_credential: { generation: '32 cryptographically random bytes, unpadded base64url', length: 43, purpose: 'Registration status and binding only; not a business access token' },
     registration_request: { method: 'POST', content_type: 'application/json', schema: {

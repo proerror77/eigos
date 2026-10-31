@@ -2874,36 +2874,36 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "0d0e8fdfffa6258ffb7d632e2ce58f84237ca91526489a9fc5961795c09c5a26",
+      "sourceDigest": "860512374dadc440bc251773399858fc5dd4064742b8fbad35009f7d6d3f234f",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants",
+      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged.",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "7fffbb397cc6e3d55103e7be7d3893ea60ee412f912b28c232b65efd11813102",
+      "sourceDigest": "7a8501ecdeaf37d6c9f5615e2d74775c0211730e6a61031e9063b936d180777e",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority.",
+      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority. Service instructions describe intent-based discovery and preserve capability, source and task authorization checks.",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "d119ffcd8906550168a6d88c7934708b648395502cd6e1f4eac1c06f5009616d",
+      "sourceDigest": "d613e446fc1999e79ac6484054428bfd9f3defadaafff57ca9251622459d449b",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata.",
+      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata. The public card points to the current connection guide and distinguishes discovery triggers from actual business availability.",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
@@ -2950,24 +2950,24 @@
     {
       "id": "member-ui",
       "file": "apps/gateway/members/routes.ts",
-      "sourceDigest": "d53d29e35d4efb3ea65a046b978a0e5bab953428965af71e9d5e94ba0cfa1d82",
+      "sourceDigest": "010995536ac463f4f726061246f837166745b9d88003a85eb804616b7790f857",
       "channels": [
         "member_ui"
       ],
       "content": "Member profile, connections, installation revoke and invitation flows",
-      "currentControl": "Controller session plus Origin/CSRF; immutable five-minute review and atomic policy-version check",
+      "currentControl": "Controller session plus Origin/CSRF; immutable five-minute review and atomic policy-version check. The existing member session page links to the public guide without approving any connection or grant.",
       "targetControl": "Reuse identity and coordinate all revocation with business fence",
       "stage": "S1"
     },
     {
       "id": "member-page",
       "file": "apps/gateway/members/page.ts",
-      "sourceDigest": "23382e81dca9ed0b4b9b89848697a563c70b19304d40ab5bd6d5284f3cfcbfbf",
+      "sourceDigest": "11279af295efd83c938753485b75bb8ec9c1c01e00dae6ded5c49ac09890190f",
       "channels": [
         "member_ui"
       ],
       "content": "Rendered member and connection/installation information",
-      "currentControl": "Foundation links to explicit installation, source and task permission review",
+      "currentControl": "Foundation links to explicit installation, source and task permission review. Public guide navigation is rendered separately from existing member data and permission controls.",
       "targetControl": "Installation and task authorization review UI",
       "stage": "S1"
     },
@@ -2998,12 +2998,12 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "fddc6e06c86f44d7d1f4d3ce33aff74ccfcc772cb572fd82ba3cb9916277b340",
+      "sourceDigest": "11bdddef490fd32e44aaa385c74c6ac89a35ee67ca6a71f123c92d6ba6e35b9e",
       "channels": [
         "http"
       ],
       "content": "Registration status, binding and revoke",
-      "currentControl": "Existing installation binding and revocation; S5 readiness and canonical permission-page discovery never self-issue data or source grants",
+      "currentControl": "Existing installation binding and revocation; S5 readiness and canonical permission-page discovery never self-issue data or source grants. Public registration metadata also links to the current-origin Skill and connection guide.",
       "targetControl": "No self-issued data grant; coordinate revoke",
       "stage": "S1"
     },
@@ -3618,12 +3618,12 @@
     {
       "id": "security-build",
       "file": "scripts/build.mjs",
-      "sourceDigest": "b1188c412af6c74ccbc9983a00f76bb5abd12b886ceee4e97e81fdcc1fca30a4",
+      "sourceDigest": "5df5f5f67e4dfe44a32525f86fb16ce73d3ae96f17dbf40b859b3c8d5661f779",
       "channels": [
         "build"
       ],
       "content": "Compile all runtime surfaces and copy the reviewed field baseline",
-      "currentControl": "Foundation v2: Compile all runtime surfaces and copy the reviewed field baseline",
+      "currentControl": "Foundation v2: Compile all runtime surfaces and copy the reviewed field baseline. The build copies only the reviewed Skill asset allowlist alongside the existing reviewed policy baseline.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3836,12 +3836,12 @@
     {
       "id": "s5-scripts-setup-pa",
       "file": "scripts/setup-pa.mjs",
-      "sourceDigest": "e6a7bbe54d792113f8f21d2c11c3eac193b5d751e0dec4991d5b3400d1f6897a",
+      "sourceDigest": "9221003056435a6deb63ace1b4bce868c0e043b2728cdf25eaeaad49be2875ec",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation. Legacy single-file Skill handoff resolves conditional references in its immutable release; credentials and owner checks are unchanged.",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
@@ -4806,13 +4806,13 @@
     {
       "id": "primary-pa-profile-setup",
       "file": "scripts/setup-primary-pa.mjs",
-      "sourceDigest": "de17a7a265bc1c4bb82385513f87912c6ea95d2126310ebb5505ed35b2c9510c",
+      "sourceDigest": "40f4f13081d5cae28eb0de22b2fb56763b8d35141e619a6eb71c2285c2ed797d",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Primary PA client links and saved Relay identity configuration",
-      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile",
+      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile. The verified release exports the complete public Skill folder while retaining existing endpoint and Relay identity checks.",
       "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     },
@@ -5161,6 +5161,81 @@
       "content": "Local A2A task input validation and explicit location provenance canonicalization",
       "currentControl": "Shared task schema before credentials or transport; explicit user assertion only; unchanged goal and message identity; conflicts reject with field paths",
       "targetControl": "Do not infer locations, provenance, observation time, action plans or permission",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-onboarding-http",
+      "file": "apps/gateway/pa-onboarding.ts",
+      "channels": [
+        "http"
+      ],
+      "content": "Public PA connection page, metadata and complete Skill download",
+      "currentControl": "Configured JWT transports only; fixed GET routes and reviewed assets; no member enrollment, credential ingestion or business grants",
+      "sourceDigest": "a58b159fa70d2b81f24fe51a1f0454bc9ab7d62ea14adebf6c9792ec8555e534",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-onboarding-page",
+      "file": "apps/gateway/pa-onboarding-page.ts",
+      "channels": [
+        "http",
+        "member_ui"
+      ],
+      "content": "Customer connection instructions and clipboard interaction",
+      "currentControl": "Escaped public configuration, same-origin script under CSP and explicit distinction between download, login, permission and usable result",
+      "sourceDigest": "8c9ff13e37173fe6902b7032eb23c2980569191bf4ddd8c57a34a5bb76ae67f7",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-onboarding-assets",
+      "file": "packages/members/pa-onboarding.ts",
+      "channels": [
+        "http",
+        "agent_transport"
+      ],
+      "content": "Public connection metadata and Skill archive construction",
+      "currentControl": "Explicit public field projection, configured transport selection and fixed asset allowlist; archive paths reject traversal and do not execute installers",
+      "sourceDigest": "0b1e8af10d394236f38eb92f96071230914965acd567614b6a4772cc75fae9e0",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-delegation-guidance",
+      "file": "packages/core/services.ts",
+      "channels": [
+        "mcp",
+        "a2a"
+      ],
+      "content": "Shared intent-based PA capability discovery guidance",
+      "currentControl": "Current service discovery, user delegation preference, independent permission and original-task accepted delivery remain separate requirements",
+      "sourceDigest": "ce904e10c9d5f6bb993c1e823f48557a212d42fdab91de439816b988176caa2a",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-skill-release",
+      "file": "packages/deployment/files.ts",
+      "channels": [
+        "build"
+      ],
+      "content": "Immutable runtime manifest including complete public Skill assets",
+      "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included",
+      "sourceDigest": "7da80e3413b6f265ca57213a70fa5410eafeb7b66f4f8f8bb5cc036bab266eec",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-oauth-discovery",
+      "file": "apps/gateway/auth.ts",
+      "channels": [
+        "http"
+      ],
+      "content": "JWT verifier and public OAuth resource/PA discovery metadata",
+      "currentControl": "Existing signed issuer, audience, token purpose, lifetime and scope validation; guide URL is public pinned-origin metadata and grants no authority",
+      "sourceDigest": "efe93a2730edc6d292b6733f3307bbbca50e634675ba3931e796c8c94001dc48",
+      "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     }
   ]
