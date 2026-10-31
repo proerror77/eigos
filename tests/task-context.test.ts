@@ -58,12 +58,18 @@ function read(session: OntologyPlanningSession): ContextResponse {
 }
 function accept(session: OntologyPlanningSession) { session.acceptReceipts(session.receipts().filter(receipt => receipt.status === 'ok').map(receipt => receipt.id)); }
 
-test('task-context read reconstructs owner instructions and constraints from Ontology without Job payloads', () => {
+test('task-context read reconstructs owner instructions and constraints from Ontology without Job payloads', t => {
   const f = fixture();
   try {
     const current = f.store.get(owner, f.job.id);
     current.runs = [{ ...evidence(), outputSha256: 'PRIVATE_JOB_RUNTIME_MARKER' }];
     f.store.save(owner, current);
+    const query=f.store.ontology.query.bind(f.store.ontology),reads=new Map<string,number>();
+    t.mock.method(f.store.ontology,'query',(...args:Parameters<typeof query>)=>{
+      const input=args[1];
+      if('from' in input && ['specifications','instructions','constraints'].includes(input.link))reads.set(input.link,(reads.get(input.link)??0)+1);
+      return query(...args);
+    });
     const session = f.session(), response = read(session);
     assert.equal(response.data.request.id, current.id);
     assert.equal(response.data.request.messages[0]!.text, current.goal);
@@ -72,6 +78,7 @@ test('task-context read reconstructs owner instructions and constraints from Ont
     assert(response.data.graph.objects.some(object => object.ref.type === 'RequestInstruction'));
     assert(response.data.graph.objects.some(object => object.ref.type === 'RequestConstraint'));
     assert(!JSON.stringify(response).includes('PRIVATE_JOB_RUNTIME_MARKER'));
+    assert.deepEqual(Object.fromEntries(reads),{specifications:1,instructions:1,constraints:1},'Context assembly reuses the exact records from its sealed request read');
     assert.equal(response.receipt.outputDigest, digest(response.data));
     assert.throws(() => session.finish(), /acknowledge/);
     accept(session);
@@ -333,7 +340,7 @@ test('prepared resolution rejects cross-task references and detects changed publ
   } finally { f.store.close(); }
 });
 
-test('a long task reads a compact business context and can explicitly inspect older plan nodes', () => {
+test('a long task reads a compact business context and can explicitly inspect older plan nodes', t => {
   const f = fixture();
   try {
     const binding = f.agent(), job = f.store.get(owner, f.job.id), state = job.delegation!.agent!, request = job.delegation!.request;
@@ -348,7 +355,13 @@ test('a long task reads a compact business context and can explicitly inspect ol
       state.plans.push({ ...body, digest: digest(body) });
     }
     state.pendingPlanId = 'plan-24'; f.store.save(owner, job);
+    const query=f.store.ontology.query.bind(f.store.ontology);let planReads=0;
+    t.mock.method(f.store.ontology,'query',(...args:Parameters<typeof query>)=>{
+      const input=args[1];if('from' in input && input.from.type==='ExecutionContext' && input.link==='plans')planReads++;
+      return query(...args);
+    });
     const session = f.session(binding), context = read(session);
+    assert.equal(planReads,1,'Selecting recent plans does not read the complete history twice');
     assert.equal(context.data.execution!.history.planCount, 24);
     assert.equal(context.data.execution!.history.omittedPlanCount, 22);
     assert.equal(context.data.execution!.plans.length, 2);

@@ -164,13 +164,18 @@ function projectRequest(graph: OntologyObjectStore, owner: string, request: Serv
 }
 /** Reconstruct the current safe request from typed graph records, never a Job JSON blob. */
 export function readOntologyRequest(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
-  const read = () => readOntologyRequestRaw(graph, owner, requestId);
+  return readOntologyRequestGraph(graph, owner, requestId).request;
+}
+/** The sealed request and the exact records used to reconstruct it. Context
+ * assembly can reuse these records instead of querying its instructions again. */
+export function readOntologyRequestGraph(graph: OntologyObjectStore, owner: string, requestId: string) {
+  const read = () => readOntologyRequestGraphRaw(graph, owner, requestId);
   // The specification and its instructions/facts are one synchronous read.
   // Reuse their checked dependencies only within this call; every database or
   // authority invalidation still clears the existing snapshot caches.
   return graph.security ? graph.security.readSnapshot(read) : read();
 }
-function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
+function readOntologyRequestGraphRaw(graph: OntologyObjectStore, owner: string, requestId: string) {
   const request = graph.read(owner, root(requestId)), revision = Number(request.properties.revision);
   const filter = [{ property: 'requestRevision', op: 'eq' as const, value: revision }];
   const specs = related(graph, owner, request.ref, 'specifications', filter);
@@ -203,7 +208,7 @@ function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, reque
     confirmedInputs: Object.fromEntries(Object.entries(confirmed ?? {}).map(([name, value]) => [name, { ...structuredClone(value), messageDigest: inputDigests[name] ?? fail('Confirmed input provenance is missing'), history: [] }])),
     messages: instructions.map(({ properties: p }) => ({ id: String(p.messageId), text: String(p.text), receivedAt: String(p.receivedAt) })) };
   if (digest(safeRequest(view)) !== specification.requestDigest) fail('Current request graph differs from its sealed specification');
-  return view;
+  return { request: view, object: request, specification: specs[0]!, instructions, constraints };
 }
 
 interface StepShape {
@@ -626,11 +631,14 @@ export function readExecutionContext(graph: OntologyObjectStore, owner: string, 
   for (const ref of observations.slice(0, -12)) unread.set(key(ref), ref);
   const binding = p.activeBinding ? add(graph.read(owner, p.activeBinding as ObjectRef)) : undefined;
   if (binding) { addLink(edge('ExecutionContextBinding', binding.ref, context.ref)); traverse(binding.ref, 'actionTypes'); }
-  const allPlans = related(graph, owner, context.ref, 'plans').sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence));
-  const pending = allPlans.find(plan => plan.properties.planId === p.pendingPlanId);
-  const selectedPlans = pending ? [...allPlans.filter(plan => plan !== pending).slice(-1), pending] : allPlans.slice(-2);
+  let allPlans: ObjectView[] = [];
+  const selectedPlans = traverse(context.ref, 'plans', values => {
+    allPlans = [...values].sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence));
+    const pending = allPlans.find(plan => plan.properties.planId === p.pendingPlanId);
+    return pending ? [...allPlans.filter(plan => plan !== pending).slice(-1), pending] : allPlans.slice(-2);
+  });
   const olderPlans = allPlans.filter(plan => !selectedPlans.includes(plan));
-  const plans = traverse(context.ref, 'plans', () => selectedPlans).sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map(plan => {
+  const plans = selectedPlans.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map(plan => {
     const steps = traverse(plan.ref, 'steps').sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map(step => {
       const dependencies = traverse(step.ref, 'dependencies'), inputs = traverse(step.ref, 'inputs');
       for (const input of inputs) {
