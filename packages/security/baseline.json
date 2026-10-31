@@ -2886,12 +2886,12 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "4dda37cfb0ed6e32bd87f6ae28487953881e6cfb3ffe44bdcc59f688b7a4983b",
+      "sourceDigest": "7fffbb397cc6e3d55103e7be7d3893ea60ee412f912b28c232b65efd11813102",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions",
+      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority.",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },

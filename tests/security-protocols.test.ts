@@ -39,6 +39,33 @@ test('HTTP, MCP and A2A expose the same bounded source-authorization recovery',a
   }finally{await client.close();await f.close();}
 });
 
+test('Foundation MCP exposes original-PA technical resume and preserves its permission fences',async()=>{
+  const f=await securityGatewayFixture(),a=f.install(),b=f.install(),client=new Client({name:'original-resume',version:'1'}),foreign=new Client({name:'foreign-resume',version:'1'});
+  try {
+    for(const actor of [a,b]){f.gateway.security!.approveAgentGrant(f.member.id,f.grantInput(actor.id));f.qualify(actor.id);}
+    const headers={authorization:`Bearer ${a.token}`};
+    await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers}}));
+    await foreign.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers:{authorization:`Bearer ${b.token}`}}}));
+    assert((await client.listTools()).tools.some(tool=>tool.name==='resume_task'));
+    const created=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic original read-only task'},headers);
+    assert.equal(created.status,200);const id=String(created.value.id),owner=ownerKey(f.p),store=f.gateway.store,job=store.get(owner,id);
+    scheduleTaskRecovery(job,'worker_interrupted','Synthetic technical pause',{automatic:false});store.save(owner,job);
+    const before=store.get(owner,id),authority=store.security.workAuthority(owner,id)!;
+    const grants=JSON.stringify(store.security.listGrants(owner)),input={taskId:id,requestId:randomUUID(),expectedRevision:before.revision!};
+    for(const [actor,args] of [[foreign,input],[client,{...input,expectedRevision:input.expectedRevision+1}],[client,{...input,executionBudget:'extended'}]] as const) {
+      assert((await actor.callTool({name:'resume_task',arguments:args})).isError);
+      assert.equal(store.get(owner,id).state,'paused');assert.equal(JSON.stringify(store.security.listGrants(owner)),grants);
+    }
+    const result=await client.callTool({name:'resume_task',arguments:input});assert(!result.isError,JSON.stringify(result));
+    assert.equal((result.structuredContent as {result:{state:string}}).result.state,'working');
+    assert.deepEqual(await client.callTool({name:'resume_task',arguments:input}),result);
+    const after=store.get(owner,id);
+    assert.equal(after.id,before.id);assert.equal(after.contextId,before.contextId);assert.equal(after.revision,before.revision!+1);
+    assert.deepEqual(after.delegation!.request,before.delegation!.request);assert.deepEqual(after.messages,before.messages);assert.deepEqual(after.runs,before.runs);
+    assert.equal(JSON.stringify(store.security.listGrants(owner)),grants);assert.deepEqual(store.security.workAuthority(owner,id),authority);
+  }finally{await client.close();await foreign.close();await f.close();}
+});
+
 test('HTTP, MCP and A2A return the same sealed native goal observations for the original task',{timeout:300000},async t=>{
   // Field/authority semantics use a controlled clock. CI CPU scheduling must
   // not expire the fixture's Gateway eligibility lease mid-synchronous read.

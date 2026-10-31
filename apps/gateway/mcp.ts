@@ -96,8 +96,8 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. In Foundation mode this is limited to an explicit personalContext refresh within existing installation permissions. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.amend(principal, args))));
-  if (!tasks.secured) server.registerTool('resume_task', {
-    description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
+  server.registerTool('resume_task', {
+    description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. In Foundation mode only the original PA with current task-processing permission and execution authority can resume, using the current expectedRevision without increasing its budget or expiry. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));
   if (options.payment !== false) server.registerTool('select_payment_route', {
