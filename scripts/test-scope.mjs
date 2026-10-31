@@ -30,6 +30,13 @@ function documentation(file) {
 }
 
 export function shardFiles(files, count = 8) {
+  // This sequential journey can consume most of a hosted runner's job budget.
+  // Keep it separate from ordinary suites without changing coverage or checks.
+  const longSuite = 'tests/stripe-payment.test.ts';
+  if (count > 1 && files.includes(longSuite)) {
+    const rest = files.filter(file => file !== longSuite);
+    return { ...shardFiles(rest, count - 1), [count]: files.filter(file => file === longSuite) };
+  }
   return Object.fromEntries(Array.from({ length: count }, (_, index) =>
     [index + 1, files.filter((_, position) => position % count === index)]));
 }
