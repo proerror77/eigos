@@ -44,6 +44,8 @@ node <saved-client> --profile <saved-profile> status
 node <saved-client> --profile <saved-profile> a2a --input <request.json> --output <receipt.json>
 ```
 
+The standard client validates new-task data with the same input schema as EIGOS before opening credentials or making a network request. It can canonicalize an explicit shared `locationContext.source="user_provided"` onto each named endpoint. It preserves the original goal and message ID; it never infers current location, observation times, missing provenance or permission. Conflicting provenance is rejected locally with field paths. Use the normal endpoint-level schema above; no manual JSON correction or per-business execution script is needed for this known shared-source form.
+
 `discover` returns the current runtime and Agent Card. Compare instance and releaseDigest with native MCP `get_runtime_info`. Complete device login as the same EIGOS member used for native MCP. An active installation and a successful protocol response are separate checks.
 
 For readback, write an A2A 1.0 JSON-RPC request with method `GetTask` and `params.id` equal to the existing taskId. For a continuation, use `SendMessage` with `configuration.returnImmediately=true`, `message.role="ROLE_USER"`, a new stable `message.messageId`, the original `message.taskId` and `message.contextId`, text parts, and `message.metadata.expectedRevision` from the current task. Save the exact request before sending. The client preserves the request, injects authorization internally, and never automatically replays writes.

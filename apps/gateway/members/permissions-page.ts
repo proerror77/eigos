@@ -120,15 +120,22 @@ export function customerPermissionOverview(view:View,member:Member,csrf:string,n
 export function preparePermissionReview(view:View,form:Record<string,unknown>,now=Date.now()):PermissionReview {
   const kind=z.enum(['agent','source','task','revoke','revoke_source','recovery']).parse(form.kind),installationId=z.uuid().parse(form.installationId);
   if(!view.installations.some(a=>a.id===installationId && !a.revoked)) throw new Error('Unknown installation');
-  const hours=z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours??1),expiresAt=new Date(now+hours*3600000).toISOString();
+  const hours=z.coerce.number().int().min(1).max(kind==='agent'?720:24).parse(form.hours??1);
+  let expiresAt=new Date(now+hours*3600000).toISOString();
+  if(form.expiryGrantId) {
+    if(kind!=='agent' && kind!=='source')throw new Error('Only installation and source reviews can reuse a ceiling deadline');
+    const id=z.uuid().parse(form.expiryGrantId),prior=view.grants.find(g=>g.id===id && g.kind==='agent_access' && g.installationId===installationId);
+    if(!prior || Date.parse(prior.expiresAt)<=now)throw new Error('Choose an unexpired permission boundary for this installation');
+    expiresAt=prior.expiresAt;
+  }
   const selectedChannels=values(form.channels);if(!selectedChannels.every(c=>Object.hasOwn(channels,c)))throw new Error('Unknown channel');
   let input:Record<string,unknown>;
   if(kind==='agent') {
     const capabilityIds=values(form.programs),selected=values(form.fields);
-    if(!capabilityIds.length || !capabilityIds.every(id=>view.profiles.some(p=>p.programId===id)))throw new Error('Choose an available capability');
+    if(!capabilityIds.length || !capabilityIds.every(id=>view.profiles.some(p=>p.programId===id || p.capabilityId===id)))throw new Error('Choose an available capability');
     const resources=view.fields.map(r=>({type:r.type,fields:r.fields.filter(f=>selected.includes(`${r.type}.${f.field}`)).map(f=>f.field)})).filter(r=>r.fields.length);
     if(resources.flatMap(r=>r.fields).length!==selected.length || !selectedChannels.length)throw new Error('Choose registered fields and channels');
-    input={installationId,capabilityIds,resources,sourceBindingIds:view.profiles.filter(p=>capabilityIds.includes(p.programId)).map(p=>p.bindingId),channels:selectedChannels,expiresAt};
+    input={installationId,capabilityIds,resources,sourceBindingIds:view.profiles.filter(p=>capabilityIds.includes(p.programId) || capabilityIds.includes(p.capabilityId)).map(p=>p.bindingId),channels:selectedChannels,expiresAt};
   } else if(kind==='source') {
     const profile=view.profiles.find(p=>p.programId===form.programId),parent=view.grants.find(g=>g.kind==='agent_access' && g.installationId===installationId && g.status==='active');
     if(!profile || !parent)throw new Error('Approve the installation ceiling first');
@@ -142,12 +149,21 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
       .map(({object,objectRevision,fields})=>({object,objectRevision,fields}));
     if(inputs.flatMap(i=>i.fields).length!==selected.length)throw new Error('Selected object revision or field is no longer available');
     const programIds=values(form.programs);if(!programIds.every(id=>view.sources.some(s=>s.installationId===installationId && s.programId===id)))throw new Error('Approve the selected source first');
-    const current=view.grants.find(g=>g.kind==='task_data' && g.installationId===installationId && g.taskId===task.id && g.status==='active');
-    const takeover=form.takeover==='yes';
+    const takeover=form.takeover==='yes',renewOriginal=form.renewOriginal==='yes';
+    if(takeover && renewOriginal)throw new Error('Choose original-PA renewal or takeover, not both');
+    const current=view.grants.find(g=>g.kind==='task_data' && g.installationId===installationId && g.taskId===task.id
+      && (renewOriginal?g.id===task.continuation?.grant.id:g.status==='active'));
+    if(renewOriginal && (task.continuation?.installationId!==installationId || current?.kind!=='task_data'))throw new Error('Choose the original PA and its paused task');
     input={installationId,taskId:task.id,expectedRequestRevision:task.requestRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision},...(current?{replaces:{id:current.id,revision:current.revision}}:{}),takeover,
       inputs,programIds,purpose:'delegated_task',operations:['task.query','task.result.read',...(takeover?['task.process']:[]),...(inputs.length?['member_asset.read']:[]),...(selectedChannels.includes('controlled_download')?['artifact.export']:[])],
       channels:selectedChannels,expiresAt:new Date(Math.min(Date.parse(expiresAt),Date.parse(parent.expiresAt))).toISOString()};
-    if(!selectedChannels.length)throw new Error('Choose a delivery channel');
+    if(renewOriginal && current?.kind==='task_data') {
+      const sources=programIds.map(id=>view.sources.find(s=>s.installationId===installationId && s.programId===id)!);
+      Object.assign(input,{renewOriginal:true,inputs:selected.length?inputs:current.inputs,operations:current.operations,channels:selectedChannels.length?selectedChannels:current.channels,
+        expiresAt:new Date(Math.min(Date.parse(String(input.expiresAt)),Date.parse(current.expiresAt),...sources.map(s=>Date.parse(s.expiresAt)))).toISOString(),
+        expectedSources:sources.map(s=>({programId:s.programId,programDigest:s.programDigest,bindingId:s.bindingId}))});
+    }
+    if(!selectedChannels.length && !renewOriginal)throw new Error('Choose a delivery channel');
   } else if(kind==='recovery') {
     const operation=view.recoveryCandidates.find(o=>o.intentId===form.intentId);
     const source=operation?view.sources.find(s=>s.installationId===installationId && s.programId===operation.programId && s.operations.includes('recover_original')):undefined;
@@ -170,19 +186,21 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const install=`<label>个人助手<select name="installationId" required>${options(view)}</select></label>`;
   const channelChoices=Object.entries(channels).filter(([key])=>key!=='member_ui').map(([key,label])=>check('channels',key,escape(label))).join('');
   const active=view.grants.filter(g=>g.status==='active' && Date.parse(g.expiresAt)>Date.now());
+  const expiryChoice=`<label>沿用已有权限边界的截止时间（可选）<select name="expiryGrantId"><option value="">按下方有效期创建</option>${view.grants.filter(g=>g.kind==='agent_access' && Date.parse(g.expiresAt)>Date.now()).map(g=>`<option value="${escape(g.id)}">${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${escape(g.installationId.slice(0,8))} · 至 ${escape(expiry(member,g.expiresAt))}</option>`).join('')}</select></label><p class="fine">只沿用所选连接的原截止时间，不复制原授权的能力或字段。替换后仍可选原记录，过期记录不可用。</p>`;
   const current=active.length?active.map(g=>`<article><h3>${escape(view.installations.find(a=>a.id===g.installationId)?.name??'助手')} · ${g.kind==='agent_access'?'安装授权上限':'任务授权'}</h3>
     <p>${g.kind==='task_data'?`任务 <code>${escape(g.taskId)}</code> · 请求版本 ${g.requestRevision}`:`${g.capabilityIds.length} 项能力 · ${g.resources.length} 类数据`}</p>
     <p>${g.channels.map(c=>escape(channels[c])).join(' · ')}<br>到期：${escape(expiry(member,g.expiresAt))}</p>
     ${form('revoke',hidden('installationId',g.installationId)+hidden('grantId',g.id))}</article>`).join(''):'<p class="muted">还没有有效的数据授权。</p>';
   const sourceGrants=view.sources.map(s=>`<article><h3>${escape(view.installations.find(a=>a.id===s.installationId)?.name??'助手')} · 来源许可</h3><p>${escape(view.profiles.find(p=>p.programId===s.programId)?.name??s.programId)}</p><p>操作：${s.operations.map(escape).join('、')}<br>输出：${s.outputTypes.map(t=>escape(view.fields.find(f=>f.type===t)?.name??t)).join('、')}<br>到期：${escape(expiry(member,s.expiresAt))}</p>${form('revoke_source',hidden('installationId',s.installationId)+hidden('bindingId',s.bindingId))}</article>`).join('');
-  const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
+  const ceilingCapabilities=new Map(view.profiles.flatMap(p=>[p.programId,p.capabilityId].map(id=>[id,`${p.name} · ${id}`] as const)));
+  const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${[...ceilingCapabilities].map(([id,name])=>check('programs',id,escape(name))).join('')}</fieldset>
     <fieldset><legend>可使用的数据字段</legend><p class="fine">结构化字段涵盖其完整子项；未勾选的字段不在授权内。</p>${view.fields.map(r=>`<details><summary>${escape(r.name)}</summary>${r.fields.map(f=>check('fields',`${r.type}.${f.field}`,`${escape(f.description)}${f.sensitive?' · 敏感数据':''}<small><code>${escape(r.type)}.${escape(f.field)}</code></small>`)).join('')}</details>`).join('')}</fieldset>
-    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset><label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
-  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset><label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');
+    <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
+  const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');
   const taskForm=view.tasks.length && active.length?form('task',install+`<label>任务<select name="taskId">${view.tasks.filter(t=>t.requestRevision>0).map(t=>`<option value="${escape(t.id)}">${escape(t.id.slice(0,8))} · ${escape(t.state)} · 版本 ${t.requestRevision}</option>`).join('')}</select></label>
     <fieldset><legend>选定的现有输入</legend><p class="fine">只显示本人拥有、已开放定义且可委托的当前对象。每个选择固定对象版本与字段。</p>${view.objects.map(o=>`<details><summary>${escape(o.title)} · ${escape(o.object.type)}</summary><small><code>${escape(o.object.id)}</code> · 版本 ${o.objectRevision}</small>${o.fields.map(field=>check('inputs',JSON.stringify([o.object,o.objectRevision,field]),escape(field))).join('')}</details>`).join('')||'<p>暂无可选择的现有对象。</p>'}</fieldset>
     <fieldset><legend>本任务可接收的来源输出</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
-    <fieldset><legend>处理和交付</legend>${channelChoices}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
+    <fieldset><legend>处理和交付</legend>${channelChoices}${check('renewOriginal','yes','更新原助手的来源授权，保留原任务、输入、处理权限、交付渠道和期限；授权后仍由原助手恢复。仅适用于尚未派发操作的暂停任务。')}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
     <label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`):'<p class="muted">有了安装授权和任务后，可以在这里批准输入、来源和接管范围。</p>';
   const recovery=view.recoveryCandidates.length && view.sources.some(s=>s.operations.includes('recover_original'))?form('recovery',install+`<label>原操作<select name="intentId">${view.recoveryCandidates.map(o=>`<option value="${escape(o.intentId)}">${escape(o.action)} · ${escape(o.taskId.slice(0,8))}</option>`).join('')}</select></label><p>仅回读原操作；最多三次、一小时内有效。结果进入审计记录。</p>`):'<p class="muted">当前没有具备专用只读观察器的待查证操作。</p>';
   return memberLayout(`<style>
@@ -212,7 +230,7 @@ export function permissionReviewPage(review:PermissionReview,view:View,member:Me
     resources=parent?.kind==='agent_access'?parent.resources.filter(row=>outputTypes.includes(row.type)):[];
     selectedChannels=parent?.channels;
   }
-  if(review.kind==='task')rows.push({label:'任务',value:view.tasks.find(task=>task.id===input.taskId)?.title??'你选择的任务'},{label:'允许做什么',value:(input.operations as string[]).map(operation=>taskOperationNames[operation]).join('、')},{label:'任务处理方式',value:input.takeover?'允许继续处理，并收回本任务其他连接的旧授权':'仅允许访问列出的任务资料'});
+  if(review.kind==='task')rows.push({label:'任务',value:view.tasks.find(task=>task.id===input.taskId)?.title??'你选择的任务'},{label:'允许做什么',value:(input.operations as string[]).map(operation=>taskOperationNames[operation]).join('、')},{label:'任务处理方式',value:input.renewOriginal?'更新原助手的来源授权；保留原任务和限制，由原助手恢复':input.takeover?'允许继续处理，并收回本任务其他连接的旧授权':'仅允许访问列出的任务资料'});
   if(review.kind==='recovery') {
     const operation=view.recoveryCandidates.find(o=>o.intentId===input.intentId);
     rows.push({label:'原任务',value:view.tasks.find(task=>task.id===operation?.taskId)?.title??'原来提交的任务'},{label:'原操作',value:operation?operationName(view,operation.action):'原来提交的操作'},{label:'范围',value:'只查询原操作状态，最多三次、一小时内有效；不会发起新操作。'});

@@ -349,6 +349,12 @@ export class TaskService {
       if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
       const intents = this.store.intents(owner, job.id);
       if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
+      if(this.security) {
+        const previous=d.groundingDecisions?.at(-1)?.decision;
+        const selected=d.agent?.programRef ?? d.suspendedAgent?.programRef ?? d.request.capabilityRef
+          ?? (previous?.kind==='resolve' && previous.requestRevision===d.request.revision?previous.capabilityRef:undefined);
+        if(selected && selected.id!=='eigos.goal')this.catalogForJob(owner,job).agentProgram(selected,owner);
+      }
       job.updatedAt = new Date().toISOString(); job.revision = (job.revision ?? 0) + 1;
       continueExecutionBudget(job, 'recovery', args.executionBudget);
       if (remainingModelTurns(job) < MIN_REASONING_TURNS) throw new DomainError('CONFLICT', 'Task safety budget requires a policy change; confirmed facts must not be resubmitted');

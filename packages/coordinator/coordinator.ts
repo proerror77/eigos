@@ -247,6 +247,13 @@ export class Coordinator {
       if (!this.store.checkpoint(claim, job => { delete job.delegation!.suspendedAgent; })) return;
     }
     if (this.pauseForModelBudget(claim)) return;
+    // Recheck a previously selected source before spending another model turn.
+    // Other visible, unselected metadata remains available for discovery.
+    if(this.store.security.enabled) {
+      const previous=d.groundingDecisions?.at(-1)?.decision;
+      const selected=d.request.capabilityRef ?? (previous?.kind==='resolve' && previous.requestRevision===d.request.revision?previous.capabilityRef:undefined);
+      if(selected)this.catalog.agentProgram(selected,claim.owner);
+    }
     const summaryPage = this.catalog.summaryPage(claim.owner, 16, d.request.executionEnvironment ?? 'live', this.store.ontologyForJob(claim.owner, claim.job), d.request.capabilityRef);
     const summaries = summaryPage.items.map(summary => {
       if (this.store.security.enabled || d.ontologyReadScope !== 'owner') return summary;

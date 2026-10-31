@@ -85,7 +85,7 @@ export class AgentRuntime {
     const compatibility = graph.security && (this.reasoner.ontologyContextMode !== 'task' || !!d.agent?.components || !!d.request.capabilityRef && this.catalog.capability(d.request.capabilityRef).scopeReviewMode === 'registered_fixed_input');
     const request = compatibility ? secureRequest(graph, claim.owner, d.request) : readOntologyRequest(graph, claim.owner, d.request.id);
     if (request.revision !== d.request.revision) failure('Current business request differs from its Ontology revision');
-    return { graph: this.store.ontologyForJob(claim.owner, claim.job), owner: claim.owner, request, state, intents: this.store.intents(claim.owner, claim.job.id), modelRuns: job.runs };
+    return { graph, owner: claim.owner, request, state, intents: this.store.intents(claim.owner, claim.job.id), modelRuns: job.runs };
   }
   private program(claim: WorkClaim): AgentProgram {
     const ctx = this.context(claim), program = ctx.state.composition ? new GoalProgram(ctx.state.composition.goal) : this.catalog.agentProgram(ctx.state.programRef, claim.owner);

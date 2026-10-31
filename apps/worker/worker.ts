@@ -3,7 +3,8 @@ import type { Coordinator } from '../../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 import { JobStore, type WorkClaim } from '../../packages/core/store.js';
 import { ReasoningBudgetExhausted } from '../../packages/core/execution-budget.js';
-import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource } from '../../packages/core/task-recovery.js';
+import { scheduleTaskRecovery, resumeScheduledRecovery, canRecoverReadOnly, canResumeSource, SOURCE_AUTHORIZATION_MESSAGE } from '../../packages/core/task-recovery.js';
+import {SecurityError} from '../../packages/security/store.js';
 import { withModelUsage } from '../../packages/core/model-usage-context.js';
 import { ConnectionAuthorizationRequired, DomainError } from '../../packages/core/domain.js';
 import { withAuthorization, type AuthorizationScope } from '../../packages/security/context.js';
@@ -142,6 +143,10 @@ export class Worker {
         const intentId = current.delegation?.intentId;
         const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
         if (current.delegation && readOnly) {
+          if(error instanceof SecurityError && error.reason==='SOURCE_NOT_AUTHORIZED' && !controller.signal.aborted) {
+            scheduleTaskRecovery(current,'source_authorization_required',SOURCE_AUTHORIZATION_MESSAGE,{automatic:false,operation:'SOURCE_NOT_AUTHORIZED'});
+            return;
+          }
           if (error instanceof DomainError && !controller.signal.aborted) {
             scheduleTaskRecovery(current, 'validation_stalled', '当前执行未通过权限或状态校验。原任务与确认信息保留，需修复运行条件后继续。', { automatic: false });
             return;

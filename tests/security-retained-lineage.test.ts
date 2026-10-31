@@ -15,6 +15,48 @@ import {digest} from '../packages/core/delegation.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
 import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
 
+for (const change of ['none', 'revoked', 'content', 'malformed'] as const)
+test(`request reconstruction shares one bounded metadata scan while preserving ${change} checks`, t => {
+ const f=securityFixture(),db=new DatabaseSync(f.database);
+ try {
+  const policy=f.jobs.security.policies,install=f.installation('request read window'),until=new Date(Date.now()+3600000).toISOString();
+  f.coordinator.approveAgentGrant(f.member.id,{installationId:install.id,capabilityIds:['brief.prepare'],resources:[
+   {type:'ServiceRequest',fields:['requestId','displayTitle','originalGoal','revision','conditions','progress','projectionState','createdAt']},
+   ...Object.entries(taskContextFields).map(([type,fields])=>({type,fields:fields.filter(field=>Object.hasOwn(policy.fields(type),field)&&policy.fieldPolicy(type,field)!=='internal_only')})),
+  ],sourceBindingIds:[],channels:['agent_response','registered_model'],expiresAt:until});
+  policy.setRole({subjectKind:'installation',subjectId:install.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',expiresAt:until},policy.revision());
+  policy.setRecipient(install.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+  const principal={...f.principal,access:f.coordinator.authenticate(f.principal,install.token)};
+  const catalog=new ExecutionCatalog([BRIEF_CAPABILITY],[BRIEF_BINDING],[new BriefAdapter()]),tasks=new TaskService(f.jobs,{catalog});
+  const job=tasks.submit(principal,{service:'eigos.delegate',goal:'Exact original synthetic instruction',requestId:randomUUID()});
+  policy.bindTaskProjection(f.owner,job.id);
+  const prepare=DatabaseSync.prototype.prepare;let scans=0,changed=false;
+  t.mock.method(DatabaseSync.prototype,'prepare',function(this:DatabaseSync,sql:string){
+   const statement=prepare.call(this,sql);
+   if(sql.startsWith('SELECT type,id,body FROM ontology_objects WHERE owner=? AND type IN')){
+    const all=statement.all.bind(statement);
+    t.mock.method(statement,'all',(...args:Parameters<typeof all>)=>{
+     const rows=Reflect.apply(all,statement,args);scans++;
+     if(!changed && change!=='none'){
+      changed=true;
+      if(change==='revoked')f.coordinator.revokeInstallation(f.member.id,install.id);
+      else if(change==='content')prepare.call(db,"UPDATE ontology_objects SET body=json_set(body,'$.properties.text','untrusted replacement') WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").run(f.owner,job.id);
+      else prepare.call(db,"UPDATE ontology_objects SET body='invalid JSON' WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").run(f.owner,job.id);
+     }
+     return rows;
+    });
+   }
+   return statement;
+  });
+  const read=()=>f.jobs.security.withAgent(principal,job.id,'task.query',()=>readOntologyRequest(f.jobs.ontologyForJob(f.owner,job.id),f.owner,job.id));
+  if(change!=='none'){assert.throws(read,/REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED|differs|not available|JSON/);assert(changed);return;}
+  assert.equal(read().messages[0]!.text,job.goal);
+  assert.equal(scans,1,'One synchronous request must not repeat the same metadata membership scan for each relationship');
+  assert.equal(read().originalGoal,job.goal);
+  assert.equal(scans,2,'A later request rechecks membership instead of reusing a prior call');
+ }finally{db.close();f.close();}
+});
+
 for(const firstWriter of ['same_task','other_task'] as const)
 test(`replaced discovery remains usable only as existing lineage, without restoring a removed capability to discovery: ${firstWriter}`,()=>{
  const f=securityFixture(),db=new DatabaseSync(f.database);let manager:AuthorizationCoordinator|undefined;

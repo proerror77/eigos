@@ -100,6 +100,8 @@ export class OntologyObjectStore {
     if (readOverlay || !initialize) return;
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS ontology_objects (owner TEXT NOT NULL,type TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,definition_digest TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(owner,type,id));
+      CREATE INDEX IF NOT EXISTS ontology_objects_task_source ON ontology_objects(owner,CASE WHEN json_valid(body) THEN json_extract(body,'$.source.id') END,type,id);
+      CREATE INDEX IF NOT EXISTS ontology_objects_body_validity ON ontology_objects(owner,json_valid(body));
       CREATE TABLE IF NOT EXISTS ontology_links (owner TEXT NOT NULL,type TEXT NOT NULL,from_type TEXT NOT NULL,from_id TEXT NOT NULL,to_type TEXT NOT NULL,to_id TEXT NOT NULL,definition_digest TEXT NOT NULL,PRIMARY KEY(owner,type,from_type,from_id,to_type,to_id));
       CREATE INDEX IF NOT EXISTS ontology_links_reverse ON ontology_links(owner,type,to_type,to_id,from_type,from_id);
       CREATE INDEX IF NOT EXISTS ontology_links_outgoing ON ontology_links(owner,from_type,from_id,type,to_type,to_id);

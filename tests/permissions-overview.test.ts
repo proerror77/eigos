@@ -6,7 +6,7 @@ import {DidiAgentProgram} from '../packages/capabilities/didi/program.js';
 import {ExecutionCatalog} from '../packages/core/catalog.js';
 import {ownerKey} from '../packages/core/domain.js';
 import {randomUUID} from 'node:crypto';
-import {customerPermissionOverview,permissionsPage} from '../apps/gateway/members/permissions-page.js';
+import {customerPermissionOverview,permissionsPage,preparePermissionReview} from '../apps/gateway/members/permissions-page.js';
 
 async function fixture() {
   const source=didiFixture(),f=await securityGatewayFixture((_store,p)=>{
@@ -85,6 +85,43 @@ test('task scopes include older granted tasks, escape titles and stop describing
     const updated={...view,profiles:view.profiles.map(profile=>({...profile,programDigest:'0'.repeat(64)}))};
     const stale=customerPermissionOverview(updated,f.member,f.session.csrf,f.now);
     assert(stale.includes('服务已更新'));assert(stale.includes('使用新版前需要重新确认范围'));
+    assert.equal(f.source.calls.length,0);
+  }finally{await f.close();}
+});
+
+test('permission replacement preserves an exact existing deadline without copying rights or borrowing another connection deadline',async()=>{
+  const f=await fixture();try {
+    const manager=f.gateway.security!,view=manager.managementView(f.member.id);
+    const prior=view.grants.find(g=>g.kind==='agent_access' && g.installationId===f.a.id)!;
+    const foreign=view.grants.find(g=>g.kind==='agent_access' && g.installationId===f.b.id)!;
+    const form={kind:'agent',installationId:f.a.id,programs:f.profile.programId,fields:'ServiceRequest.requestId',channels:'agent_response',hours:'24',expiryGrantId:prior.id};
+    const review=preparePermissionReview(view,form,f.now);
+    assert.equal(review.input.expiresAt,prior.expiresAt);
+    assert.deepEqual(review.input.resources,[{type:'ServiceRequest',fields:['requestId']}]);
+    assert.deepEqual(review.input.channels,['agent_response']);
+    const alias='synthetic.legacy-capability',withAlias={...view,profiles:view.profiles.map(p=>({...p,capabilityId:alias}))};
+    const aliasReview=preparePermissionReview(withAlias,{...form,programs:[f.profile.programId,alias]},f.now);
+    assert.deepEqual(aliasReview.input.capabilityIds,[f.profile.programId,alias]);
+    assert.deepEqual(aliasReview.input.sourceBindingIds,[f.profile.bindingId]);
+    assert(permissionsPage(withAlias,f.member,f.session.csrf).includes(`value="${alias}"`));
+    assert.throws(()=>preparePermissionReview(view,{...form,programs:'unavailable.capability'},f.now),/available capability/);
+    assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:foreign.id},f.now),/this installation/);
+    assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:randomUUID()},f.now),/this installation/);
+    assert.throws(()=>preparePermissionReview(view,form,Date.parse(prior.expiresAt)),/unexpired/);
+    assert.throws(()=>preparePermissionReview(view,{...form,kind:'task'},f.now),/Only installation and source/);
+    manager.revokeGrant(f.member.id,prior.id,prior.revision);
+    const replaced=manager.managementView(f.member.id);
+    assert.equal(replaced.grants.find(g=>g.id===prior.id)!.status,'revoked');
+    const input=preparePermissionReview(replaced,form,f.now).input;
+    const parent=manager.approveAgentGrant(f.member.id,input);
+    assert.equal(parent.expiresAt,prior.expiresAt);
+    const sourceForm={kind:'source',installationId:f.a.id,programId:f.profile.programId,operations:'SearchDidiPlaces',outputTypes:'DidiPlaceObservation',expiryGrantId:prior.id,hours:'1'};
+    const current=manager.managementView(f.member.id);
+    assert.equal(preparePermissionReview(current,sourceForm,f.now).input.expiresAt,prior.expiresAt);
+    const shorter=new Date(Date.parse(parent.expiresAt)-1000).toISOString();
+    const clipped={...current,grants:current.grants.map(g=>g.id===parent.id?{...g,expiresAt:shorter}:g)};
+    assert.equal(preparePermissionReview(clipped,sourceForm,f.now).input.expiresAt,shorter);
+    assert(permissionsPage(current,f.member,f.session.csrf).includes('name="expiryGrantId"'));
     assert.equal(f.source.calls.length,0);
   }finally{await f.close();}
 });

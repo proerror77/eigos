@@ -2886,38 +2886,38 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "4dda37cfb0ed6e32bd87f6ae28487953881e6cfb3ffe44bdcc59f688b7a4983b",
+      "sourceDigest": "7fffbb397cc6e3d55103e7be7d3893ea60ee412f912b28c232b65efd11813102",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions",
+      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority.",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "42e3266c6a1da1aa5781d7bb7e05251af2ac7b85eeeadb36d0a34b8ea9764373",
+      "sourceDigest": "d119ffcd8906550168a6d88c7934708b648395502cd6e1f4eac1c06f5009616d",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed",
+      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata.",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "42e8bfe4593014c2bab88709bb05d4663b90252facf10f4a3304f89dbd19923e",
+      "sourceDigest": "afa14643f2ba80f726d338f13f98f87e8b57f27dba1adc97139d62df22d5bee8",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes",
+      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes; Technical resume rechecks an already selected source before retaining the original task grant and execution authority.",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
@@ -2937,13 +2937,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "db485461371e6c8566d7dab0ee57dfec45b4617b66c30c79a1ac3a8102d22c44",
+      "sourceDigest": "a0c0ac77cf83b55413871ca3dd43889f92d9448152f86a22762e513f6740e517",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -3047,27 +3047,27 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "b265a65b1e0ec4952f09c9c1b658c0f9ed3303dc220814ca69e5425cb7f93343",
+      "sourceDigest": "d767584216049b303d3cfa5b2f01e20ce30db1c3b8f23e167286d27ac40fd5b6",
       "channels": [
         "model",
         "dispatch"
       ],
       "content": "Task interpretation, initial context, selection and execution orchestration",
-      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority",
+      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery.",
       "targetControl": "Persisted task authority with source/input/output checks",
       "stage": "S3"
     },
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "bc85f78b5ba39d60e4d1503de63ddb588c157e4d70b9738cc3ebcdb9a472a115",
+      "sourceDigest": "90f521c6778d16ca8aee0bb0b4e31075f1d6de0d1f7437eabd864e705e7321e4",
       "channels": [
         "model",
         "dispatch",
         "artifact"
       ],
       "content": "Action plans, dispatch, observations, result acceptance and recovery",
-      "currentControl": "Current task/source/effect grants plus intake evidence, canonical revision and independent source-integrity checks at dispatch and before writes; original recovery stays separate",
+      "currentControl": "Current task/source/effect grants plus intake evidence, canonical revision and independent source-integrity checks at dispatch and before writes; original recovery stays separate; one pinned graph view per synchronous context reconstruction",
       "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
       "stage": "S3"
     },
@@ -3330,24 +3330,24 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "6eb2c89c15794a0638506cc442fe6ebf21c2ada9350d062124f2d2a352f9481b",
+      "sourceDigest": "36989081372c54dd0d9a9d9430587d1e212ced95ca14ce26c9b22d5e896008c0",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover",
+      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover; Member-reviewed original-PA source renewal pins current source versions and exact prior grants, preserves identity, inputs, processing rights, channels and expiration ceiling, rejects existing operations, and leaves the task paused.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "ff30b6cae6660bae692f23204522524f225a1cde9e8f2e007054e719c9ce1c15",
+      "sourceDigest": "0e49128c05f7e15eef8773ed9cfbea6d8e62d6be57bc939df28cef97f6bc35b1",
       "channels": [
         "authorization_control"
       ],
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration",
+      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3390,12 +3390,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "947fced35086a8b037faa210ee31cfa7eebb8e34f19727c59283cbe3d3e26957",
+      "sourceDigest": "94ec47323dfae480286a03a2e9a301835905dcb6ff127378f84d59602ad0ada6",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3414,12 +3414,12 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "9d311eebf86208fe8ae595a90d9634f96dd8309d752547be538442b36b561bb4",
+      "sourceDigest": "7990fe05676ef06dd535ebeb364419f781ec0eaa1bba4ab2314d80b5bf6e8805",
       "channels": [
         "member-ui"
       ],
       "content": "Exact immutable controller review, source readback and revocation",
-      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation",
+      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover. Installation and source reviews can retain a same-installation unexpired ceiling deadline, including its explicit replacement record, without copying rights; source deadlines remain capped by the active parent.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3510,12 +3510,12 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "052e7e1be0bc7c6a70f1e6ea2b04447215c0a24ec1faeadd14e25816b7ed583a",
+      "sourceDigest": "72fb21396bb2c1011ac2f3fcba0faad9d81604f523a39a0f4c1164dd6136ffc9",
       "channels": [
         "http-mcp-a2a"
       ],
       "content": "Common safe views for mutations, reads, waits, replay and downloads",
-      "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together",
+      "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together; Bounded recovery guidance uses the exact active successor grant and ordered pause events, including legacy generic pauses; no raw diagnostic or source configuration is exported.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -4170,20 +4170,20 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "c0248c79658514bd0a009c218a640a7e4115c33f16580c72df28d49bdc6b721c",
+      "sourceDigest": "6d35c461d64af4de5c81b61931dee0263eb6d5bf1df8640cab738e205168a5ca",
       "channels": [
         "model",
         "artifact"
       ],
       "content": "Reviewed task-context row/field binding with inherited source read envelopes",
-      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks; indexed either-end closure retains exact capability links, bounds and malformed JSON rejection",
       "targetControl": "No fresh execution authority or cross-task data grant from metadata",
       "stage": "S5"
     },
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "8930067c84a8adb4b920680e4976f8281ac409870e6af4fef27bd170b262182c",
+      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
       "channels": [
         "model",
         "artifact"
@@ -4616,13 +4616,13 @@
     {
       "id": "primary-relay-entry",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "8f23947f92c67741fa714090446aeaff45dfb8bde3e546230db81da3efcb773b",
+      "sourceDigest": "660b3233fe5c9a23626c1572df67712b89bed2dbb29dc857eb68b4f5280c5e0a",
       "channels": [
         "http",
         "authorization_control"
       ],
       "content": "Node enrollment, installation binding, current source authorization and dispatch",
-      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4704,13 +4704,13 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "c0e954069e1e9a86c8eb07eb89c781a67b5e4f140a15340f1d5342ef1aa26d3a",
+      "sourceDigest": "899feb56a1081119bf02b18d96b486bc8b4b0c3915c1fa8581704ed2717c88fb",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Node keys, signed proofs, encrypted inbox and outbox",
-      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback",
+      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4793,7 +4793,7 @@
     {
       "id": "native-pa-relay-client",
       "file": "integrations/grok/eigos-native/client.mjs",
-      "sourceDigest": "d950cb7d635850743c500e74f40ce0601d7eae3189b55ed7bb3beaa3f6b87fe9",
+      "sourceDigest": "683cdc8e2f206aed19228803c5074e833c6e918eaa5d9db446ee738dbb1c35fa",
       "channels": [
         "agent_transport",
         "private_file"
@@ -5150,6 +5150,18 @@
       "targetControl": "No primary mutation, order or payment; private external evidence archive",
       "stage": "S4",
       "sourceDigest": "b39e941d20797f88db772c80ab12d03758cd5c7d5dffb9e3fb15014dd14ece09"
+    },
+    {
+      "id": "pa-task-input",
+      "file": "packages/agent-client/task-input.ts",
+      "sourceDigest": "47e045e79d5f460f64c67fd41d54b201d7da753ad8af0fbe561bdb558a5da4cc",
+      "channels": [
+        "PA client"
+      ],
+      "content": "Local A2A task input validation and explicit location provenance canonicalization",
+      "currentControl": "Shared task schema before credentials or transport; explicit user assertion only; unchanged goal and message identity; conflicts reject with field paths",
+      "targetControl": "Do not infer locations, provenance, observation time, action plans or permission",
+      "stage": "S5"
     }
   ]
 }

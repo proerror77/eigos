@@ -317,8 +317,9 @@ test('foundation discovery exposes reviewed Pipeline and personal actions while 
     assert.equal(grant.status, 200);
     await client.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${actor.token}` } } }));
     const names = (await client.listTools()).tools.map(tool => tool.name);
-    for (const name of ['network_query', 'network_command', 'list_source_connections', 'begin_source_connection', 'get_member_usage', 'resume_task', 'authorize_checkout_draft']) assert(!names.includes(name), name);
-    for (const name of ['prepare_ontology_action','approve_ontology_action','amend_task']) assert(names.includes(name));
+    for (const name of ['network_query', 'network_command', 'list_source_connections', 'begin_source_connection', 'get_member_usage', 'authorize_checkout_draft']) assert(!names.includes(name), name);
+    for (const name of ['prepare_ontology_action','approve_ontology_action','amend_task','resume_task']) assert(names.includes(name));
+    assert.equal((await client.callTool({name:'resume_task',arguments:{taskId:randomUUID(),requestId:randomUUID(),expectedRevision:1}})).isError,true,'Discovery cannot grant access to a task');
     assert.equal((await client.callTool({ name: 'prepare_ontology_action', arguments: { action: 'SubmitServiceRequest', input: {}, requestId: 'not-a-personal-action' } })).isError, true);
     assert(names.includes('check_access')); assert(names.includes('submit_task')); assert(names.includes('reply_to_task'));
     assert(names.includes('query_ontology_definitions')); assert(names.includes('manage_ontology_definitions'));
