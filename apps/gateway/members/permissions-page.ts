@@ -132,10 +132,10 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
   let input:Record<string,unknown>;
   if(kind==='agent') {
     const capabilityIds=values(form.programs),selected=values(form.fields);
-    if(!capabilityIds.length || !capabilityIds.every(id=>view.profiles.some(p=>p.programId===id)))throw new Error('Choose an available capability');
+    if(!capabilityIds.length || !capabilityIds.every(id=>view.profiles.some(p=>p.programId===id || p.capabilityId===id)))throw new Error('Choose an available capability');
     const resources=view.fields.map(r=>({type:r.type,fields:r.fields.filter(f=>selected.includes(`${r.type}.${f.field}`)).map(f=>f.field)})).filter(r=>r.fields.length);
     if(resources.flatMap(r=>r.fields).length!==selected.length || !selectedChannels.length)throw new Error('Choose registered fields and channels');
-    input={installationId,capabilityIds,resources,sourceBindingIds:view.profiles.filter(p=>capabilityIds.includes(p.programId)).map(p=>p.bindingId),channels:selectedChannels,expiresAt};
+    input={installationId,capabilityIds,resources,sourceBindingIds:view.profiles.filter(p=>capabilityIds.includes(p.programId) || capabilityIds.includes(p.capabilityId)).map(p=>p.bindingId),channels:selectedChannels,expiresAt};
   } else if(kind==='source') {
     const profile=view.profiles.find(p=>p.programId===form.programId),parent=view.grants.find(g=>g.kind==='agent_access' && g.installationId===installationId && g.status==='active');
     if(!profile || !parent)throw new Error('Approve the installation ceiling first');
@@ -192,7 +192,8 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
     <p>${g.channels.map(c=>escape(channels[c])).join(' · ')}<br>到期：${escape(expiry(member,g.expiresAt))}</p>
     ${form('revoke',hidden('installationId',g.installationId)+hidden('grantId',g.id))}</article>`).join(''):'<p class="muted">还没有有效的数据授权。</p>';
   const sourceGrants=view.sources.map(s=>`<article><h3>${escape(view.installations.find(a=>a.id===s.installationId)?.name??'助手')} · 来源许可</h3><p>${escape(view.profiles.find(p=>p.programId===s.programId)?.name??s.programId)}</p><p>操作：${s.operations.map(escape).join('、')}<br>输出：${s.outputTypes.map(t=>escape(view.fields.find(f=>f.type===t)?.name??t)).join('、')}<br>到期：${escape(expiry(member,s.expiresAt))}</p>${form('revoke_source',hidden('installationId',s.installationId)+hidden('bindingId',s.bindingId))}</article>`).join('');
-  const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
+  const ceilingCapabilities=new Map(view.profiles.flatMap(p=>[p.programId,p.capabilityId].map(id=>[id,`${p.name} · ${id}`] as const)));
+  const ceilings=view.profiles.length && options(view)?form('agent',install+`<fieldset><legend>允许创建的任务能力</legend>${[...ceilingCapabilities].map(([id,name])=>check('programs',id,escape(name))).join('')}</fieldset>
     <fieldset><legend>可使用的数据字段</legend><p class="fine">结构化字段涵盖其完整子项；未勾选的字段不在授权内。</p>${view.fields.map(r=>`<details><summary>${escape(r.name)}</summary>${r.fields.map(f=>check('fields',`${r.type}.${f.field}`,`${escape(f.description)}${f.sensitive?' · 敏感数据':''}<small><code>${escape(r.type)}.${escape(f.field)}</code></small>`)).join('')}</details>`).join('')}</fieldset>
     <fieldset><legend>允许的处理和交付渠道</legend>${channelChoices}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="24">1 天</option><option value="168">7 天</option><option value="720">30 天</option></select></label>`):'<div class="empty">当前没有可授予的已绑定来源能力。来源必须先通过已有账号与连接资格检查。</div>';
   const sourceForms=view.profiles.map(profile=>`<details><summary>${escape(profile.name)}</summary>${form('source',install+hidden('programId',profile.programId)+`<fieldset><legend>来源操作</legend>${profile.operations.map(o=>check('operations',o,escape(o==='recover_original'?'仅查询原操作的状态':o))).join('')}</fieldset><fieldset><legend>允许接收的数据类型</legend>${profile.outputTypes.map(t=>check('outputTypes',t,escape(view.fields.find(f=>f.type===t)?.name??t))).join('')}</fieldset>${expiryChoice}<label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`)}</details>`).join('');

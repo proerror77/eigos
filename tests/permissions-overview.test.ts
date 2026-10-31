@@ -99,6 +99,12 @@ test('permission replacement preserves an exact existing deadline without copyin
     assert.equal(review.input.expiresAt,prior.expiresAt);
     assert.deepEqual(review.input.resources,[{type:'ServiceRequest',fields:['requestId']}]);
     assert.deepEqual(review.input.channels,['agent_response']);
+    const alias='synthetic.legacy-capability',withAlias={...view,profiles:view.profiles.map(p=>({...p,capabilityId:alias}))};
+    const aliasReview=preparePermissionReview(withAlias,{...form,programs:[f.profile.programId,alias]},f.now);
+    assert.deepEqual(aliasReview.input.capabilityIds,[f.profile.programId,alias]);
+    assert.deepEqual(aliasReview.input.sourceBindingIds,[f.profile.bindingId]);
+    assert(permissionsPage(withAlias,f.member,f.session.csrf).includes(`value="${alias}"`));
+    assert.throws(()=>preparePermissionReview(view,{...form,programs:'unavailable.capability'},f.now),/available capability/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:foreign.id},f.now),/this installation/);
     assert.throws(()=>preparePermissionReview(view,{...form,expiryGrantId:randomUUID()},f.now),/this installation/);
     assert.throws(()=>preparePermissionReview(view,form,Date.parse(prior.expiresAt)),/unexpired/);

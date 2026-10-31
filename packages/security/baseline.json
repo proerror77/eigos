@@ -3414,7 +3414,7 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "c434ad395f2196b587fad1153a9fc322a9f768b486a918872dd6f3cd4b76cdb8",
+      "sourceDigest": "7990fe05676ef06dd535ebeb364419f781ec0eaa1bba4ab2314d80b5bf6e8805",
       "channels": [
         "member-ui"
       ],
