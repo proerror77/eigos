@@ -1,36 +1,96 @@
 name: CI
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
-  verify:
-    if: github.event_name != 'push' || github.event.deleted != true
+  scope:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
+    outputs:
+      verify: ${{ steps.scope.outputs.verify }}
+      shards: ${{ steps.scope.outputs.shards }}
+      e2e: ${{ steps.scope.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm run build
-      - run: npm run test:e2e:run
-  tests:
-    if: github.event_name != 'push' || github.event.deleted != true
+      - name: Validate test selection
+        run: node --test tests/ci-scope.test.mjs
+      - id: scope
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: node scripts/test-scope.mjs --ci
+  verify:
+    needs: scope
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require a valid scope
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+        run: test "$SCOPE_RESULT" = success
+      - uses: actions/checkout@v4
+        if: needs.scope.outputs.verify == 'true'
+      - uses: actions/setup-node@v4
+        if: needs.scope.outputs.verify == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: needs.scope.outputs.verify == 'true'
+      - run: npm run check
+        if: needs.scope.outputs.verify == 'true'
+      - run: npm run build
+        if: needs.scope.outputs.verify == 'true'
+      - run: npm run test:e2e:run
+        if: needs.scope.outputs.verify == 'true'
+        env:
+          EIGOS_TEST_FILES: ${{ needs.scope.outputs.e2e }}
+      - name: Documentation scope
+        if: needs.scope.outputs.verify == 'false'
+        run: echo 'Documentation-only change; no runtime checks required.'
+  # Preserve required check names. Empty shards validate the scope without
+  # installing dependencies or invoking Node's automatic test discovery.
+  tests:
+    needs: scope
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    env:
+      EIGOS_TEST_FILES: ${{ needs.scope.result == 'success' && toJSON(fromJSON(needs.scope.outputs.shards)[matrix.shard]) || '[]' }}
     steps:
+      - name: Require a valid scope
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+        run: test "$SCOPE_RESULT" = success
       - uses: actions/checkout@v4
+        if: env.EIGOS_TEST_FILES != '[]'
       - uses: actions/setup-node@v4
+        if: env.EIGOS_TEST_FILES != '[]'
         with:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm test -- --test-shard=${{ matrix.shard }}/8
+        if: env.EIGOS_TEST_FILES != '[]'
+      - run: npm test
+        if: env.EIGOS_TEST_FILES != '[]'
+      - name: Empty shard
+        if: env.EIGOS_TEST_FILES == '[]'
+        run: echo 'No affected tests assigned to this shard.'
