@@ -165,6 +165,21 @@ test('shards cover each selected file exactly once, including small and empty sc
   }
 });
 
+test('the long sequential Stripe suite has its own shard without losing selected files', () => {
+  const longSuite='tests/stripe-payment.test.ts';
+  for(const files of [[longSuite],['tests/a.test.ts',longSuite,'tests/b.test.ts','tests/c.test.ts'],testFiles(root)]) {
+    for(const count of [1,2,8]) {
+      const shards=shardFiles(files,count);
+      assert.equal(Object.keys(shards).length,count);
+      assert.deepEqual(Object.values(shards).flat().sort(),[...files].sort());
+      if(count>1) {
+        assert.deepEqual(shards[count],[longSuite],'Do not stack ordinary suites onto the long sequential journey');
+        assert(!Object.values(shards).slice(0,-1).flat().includes(longSuite));
+      }
+    }
+  }
+});
+
 test('an empty selection never falls through to automatic Node test discovery', t => {
   const f = fixture(t);
   f.put('tests/should-not-run.test.mjs', 'process.exit(99);');
