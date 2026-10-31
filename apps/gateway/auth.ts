@@ -6,6 +6,7 @@ import { z } from 'zod';
 import type { Config } from '../../packages/core/config.js';
 import { SCOPES, TASK_SCOPES, type Principal } from '../../packages/core/domain.js';
 import { readTenantClaim } from '../../packages/core/identity-claims.js';
+import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
 
 export type VerifyToken = (token: string) => Promise<Principal>;
 
@@ -48,6 +49,7 @@ export function protectedResourceMetadata(c: Config): object {
       : [...SCOPES.filter(scope => scope !== 'ontology:admin'), ...(c.EIGOS_NETWORK_ENABLED === 'true' ? NETWORK_SCOPES : []), ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     bearer_methods_supported: ['header'],
     resource_name: 'EIGOS task gateway',
+    ...(paOnboardingAvailable(c) ? { eigos_connection_guide: `${c.PUBLIC_URL}/connect/agent.json` } : {}),
     ...(c.OIDC_AGENT_CLIENT_ID ? { eigos_agent_registration: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration` } : {}),
   };
 }

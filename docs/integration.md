@@ -2,6 +2,8 @@
 
 MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实例的接口与能力，再提交明确目标；服务配置和业务授权分别检查。
 
+客户从当前实例的 `/connect` 开始，取得公开连接配置、完整 `eigos-delegate` Skill 和只读检查指令。PA 可读取 `/connect/agent.json`；OAuth 发现、登记发现和 Agent Card 均指向同一接入说明。MCP 或 A2A 接通一种即可，Skill 另按宿主规则安装并启用。详见[客户 PA 接入](guides/agent-onboarding.md#客户-pa-接入与自然触发)。
+
 ## 发现与认证
 
 - `GET /health` 返回实例、运行契约和构建摘要。

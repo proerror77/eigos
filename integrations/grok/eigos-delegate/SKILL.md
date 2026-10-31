@@ -1,19 +1,51 @@
 ---
 name: eigos-delegate
-description: Discover configured EIGOS services, delegate a supported goal, and continue the same task through native MCP, authenticated A2A, or explicitly selected encrypted Relay. Verify the current deployment and actual delivery.
+description: Discover and delegate supported service queries and arrangements through EIGOS, including ride estimates, accommodation, travel and appointments (出行查价、住宿查询、旅行安排、预约), then continue the original task through authorization and verified result readback. Use for practical service requests even when EIGOS is not named, explicit EIGOS document delegation, and connecting or checking EIGOS. Pure knowledge questions and creative writing do not need service delegation. Available services depend on the current deployment and user permissions.
 ---
 
 # EIGOS delegation
 
-Use the saved primary HTTPS connection. Native MCP and A2A must reach the same instance and the same member identity. Do not use historical loopback profiles or old task successes as evidence for the current service.
+## When to consider EIGOS
 
-## Discover and delegate
+When the user wants actual service information, planning or an external arrangement, inspect the connected EIGOS service before deciding whether it can help. Examples: “明天从家去机场，帮我查车价”, “下周出差，查一下住宿和交通”, or a concrete appointment request. The user does not need to name EIGOS. These are discovery triggers, not promises that ride ordering, travel booking or restaurant reservations are available.
 
-For a requested service outcome, inspect EIGOS when it may provide a relevant capability. Respect an explicit instruction not to delegate. Use native MCP `get_runtime_info` and `list_services`; report the actual capability scope. Do not turn an unsupported real-world request into a completed task brief or document.
+A general explanation (“网约车怎么计价”), creative writing (“写一篇旅行散文”), or a request expressly excluding EIGOS does not require delegation. For mixed requests, delegate only the supported service portion while retaining all user constraints. An unsupported business outcome must stay unsupported or partial; do not silently turn it into a completed task brief.
 
-Use the host's native EIGOS MCP connection by default. Native discovery or calls must not be replaced with Shell, curl, Python or the A2A transport. If authentication fails, complete the host's OAuth flow or report the actual failure. Never read, print, copy or place an access token, refresh token or client secret in a prompt or tool argument.
+For document work, use this skill when the user explicitly requests EIGOS or selects its discovered document service; ordinary local drafting can stay with the PA.
 
-Submit the user's original goal through native `submit_task`, using a stable requestId. Retain the taskId, contextId and request ID. Network retries preserve the original content and ID; never create a replacement task to escape an uncertain result or execution budget.
+## Connect and check before the first delegation
+
+Use the saved primary HTTPS connection, or the public connection.json supplied with this skill. Its `/connect/agent.json` describes the configured MCP/A2A paths and member pages. A downloaded skill is not an authenticated connection. Install and enable it using the PA host's supported skill mechanism; refresh the host's skill list if necessary. If the host cannot use the configured transport, report that prerequisite instead of claiming connection success.
+
+Use the host's native EIGOS MCP connection by default. An already selected A2A path is also supported; read [A2A connection and continuation](references/a2a.md) only when using its saved client. Native MCP discovery or calls must not be replaced with Shell, curl, Python or another identity to bypass a failed native connection. Native MCP and A2A must reach the same instance and member identity when both are used.
+
+For a connection check, read runtime identity, admission and available service definitions only. Do not create a task, request supplier credentials or order anything merely to test the connection. Report which checks actually passed, which need user action, and whether the skill is visible to this PA. Do not use historical loopback profiles or old successful tasks as evidence for the current deployment.
+
+## Discover current capabilities
+
+Use native MCP `get_runtime_info` and `list_services`. With A2A, inspect the current Agent Card through the authenticated host client. `eigos.delegate` is a delegation entry point, not a list of enabled business services. When the current discovery exposes only that entry point, inspect permitted `describe_ontology` contracts for the relevant goal; page bounded results when needed. Definitions alone do not prove a configured live source or execution permission. EIGOS makes the final source and task checks.
+
+Preserve the original goal and determine whether the deliverable is information, a plan, a submitted request or a confirmed business outcome. Reuse necessary facts already supplied or available through the PA's authorized tools. For calendar-dependent planning, obtain only the needed availability in the PA when permitted; never imply EIGOS has read or changed an unconnected calendar. Pass only task-relevant, permitted context. Ask for genuinely missing facts or choices.
+
+## Guide the user through the missing authorization
+
+Keep identity login, membership, PA installation permission, source/data access and business-operation permission separate. Present the link and exact next action supplied by the current connection or task:
+
+| Observed state | Next action |
+| --- | --- |
+| Missing or expired EIGOS login / HTTP 401 | Use the PA host's OAuth flow or existing connector refresh; the user completes the provider page. |
+| Membership or registration required | Follow the returned membership/registration entry, preserve the same enrollment, and obtain the user's profile consent. |
+| Waiting for invitation or approval | Retain the enrollment and follow the returned polling interval; explain what is pending. |
+| `data_authorization_required` or missing installation/data permission | Open the returned permissions page for the user to review this installation's exact scope. |
+| Missing or expired supplier connection | Use only the currently advertised private host/source flow for the user's own account; report unavailable source onboarding as a prerequisite. |
+| Task `auth-required` / `TASK_STATE_AUTH_REQUIRED` | Read its current authorization request. Obtain any required member/source approval or exact plan permit through the indicated channel, then reread this same task. |
+| Revoked or suspended installation/member | Report the actual denial and member action required; do not enroll a substitute identity to evade it. |
+
+Never ask the user to paste an access token, refresh token, password or supplier credential into chat. The host handles credentials through its private channel. The PA cannot approve its own access. Reuse valid authority already granted; do not invent new approvals or infer order/payment authority from login or a free-text answer.
+
+## Delegate and continue the original task
+
+Submit the user's original goal through native `submit_task`, with a stable requestId and the discovered service. On A2A, use the current SendMessage contract. Save the exact request plus returned taskId, contextId and revision before continuing. Continue an existing task only when its saved connection identifies this EIGOS instance; a task ID alone does not establish which service owns it. Identical retries keep the original content and request/message ID; never replace a pending task to escape uncertain submission, technical limits or a permission denial.
 
 ### Obtain task addresses before delegating
 
@@ -27,96 +59,22 @@ Use natural-language constraints in `goal` for ordinary delegation. Do not turn 
 
 On `input-required`, first inspect `delegation.knownLocations`, the question and the returned source choices. Resolve a unique match against the already obtained address within the same task; ask the user only for a genuinely new choice. Keep unchanged city/address facts. To correct a location, send the corresponding `locationContext` in the normal versioned `reply_to_task`/`amend_task`; a null endpoint explicitly clears it. Do not clear other known locations. A reply or address fact grants no order, cancellation or payment authority.
 
-Read the same task with `get_task`, normally using `waitMs: 30000` while submitted or working. A wait deadline is not a failure. For input-required, use only information supplied by the user; ask for actual missing facts. Reply on the same task using the current expectedRevision and a new stable request ID. Do not repeat questions already answered.
+Read the same task with `get_task`, normally using `waitMs: 30000` while submitted or working; use A2A GetTask on that transport. A wait deadline is not a failure. Only input-required calls for missing business input: use `reply_to_task` or its A2A continuation with current expectedRevision and a stable new reply ID. A stale revision requires rereading the original task.
 
-Technical recovering or paused states are not missing business input. Preserve the task and confirmed facts, identify the runtime prerequisite, then use `resume_task` only after it changes. Do not repeatedly retry the same unchanged failure. Cancellation requires the user's intent and does not prove that an external order was canceled.
+After authorization, reread the same task. If it still requires resumption, use the returned recovery action or available `resume_task` / `resume_source_task` contract with current expectedRevision. Resume only after the prerequisite changes and within the original authority; do not automatically renew grants or replay an unknown external effect. Technical pauses are not requests for the user to repeat known facts. Unknown business operations require original-operation reconciliation. Cancellation follows the user's intent and does not prove an external order was reversed.
 
-## A2A on the same primary instance
+## Read back and report the actual delivery
 
-A2A is an independently authenticated protocol path. Use the saved client on the user's connected Mac, where its private profile lives. The client uses device OAuth and rotating refresh credentials through AgentConnector; it does not expose token values to the model.
+For Foundation, require `view=eigos.task.v2` (A2A metadata.view), completed state, accepted=true, outputStatus=available and an actual requested artifact. Read controlled attachments through their authorized download path. Restricted or receipt-only output is not a usable result. For legacy, use its actual service acceptance and artifact contract; do not fabricate Foundation fields.
 
-Commands follow this form:
+Tell the user what was obtained, its source and observation/expiry time when present, any unknown constraints and any unfinished portions. A document proves document delivery; a quote proves a price observation; a submitted booking is not a confirmed reservation. Completion of one component does not complete the whole goal. If readback is denied after revocation or expiry, report that limitation without treating historical results as currently available.
 
-```text
-node <saved-client> --profile <saved-profile> discover
-node <saved-client> --profile <saved-profile> login
-node <saved-client> --profile <saved-profile> status
-node <saved-client> --profile <saved-profile> a2a --input <request.json> --output <receipt.json>
-```
+Keep queries and reply versions on the original task. When explicitly checking both protocols, compare the same task's result through MCP and A2A. Do not report receipt, discovery, model proposal, login or an authorization notification as fulfillment.
 
-The standard client validates new-task data with the same input schema as EIGOS before opening credentials or making a network request. It can canonicalize an explicit shared `locationContext.source="user_provided"` onto each named endpoint. It preserves the original goal and message ID; it never infers current location, observation times, missing provenance or permission. Conflicting provenance is rejected locally with field paths. Use the normal endpoint-level schema above; no manual JSON correction or per-business execution script is needed for this known shared-source form.
+## Conditional host procedures
 
-`discover` returns the current runtime and Agent Card. Compare instance and releaseDigest with native MCP `get_runtime_info`. Complete device login as the same EIGOS member used for native MCP. An active installation and a successful protocol response are separate checks.
+- For a saved A2A/CLI client and persistent authentication, read [A2A connection and continuation](references/a2a.md). The bundled Python helper is an optional existing-host adapter; an A2A-native PA may use its own compatible SDK instead.
+- Use encrypted Relay only when explicitly selected and already configured; then read [Relay](references/relay.md).
+- Only for an explicitly isolated test payment handoff, read [test payments](references/test-payments.md). These helpers do not enable real ordering or payment.
 
-For readback, write an A2A 1.0 JSON-RPC request with method `GetTask` and `params.id` equal to the existing taskId. For a continuation, use `SendMessage` with `configuration.returnImmediately=true`, `message.role="ROLE_USER"`, a new stable `message.messageId`, the original `message.taskId` and `message.contextId`, text parts, and `message.metadata.expectedRevision` from the current task. Save the exact request before sending. The client preserves the request, injects authorization internally, and never automatically replays writes.
-
-An A2A continuation must not create a second task. Inspect the actual JSON-RPC response; a transport success containing an `error` is not success.
-
-## Encrypted Relay when selected
-
-Use Relay when the user explicitly requests it and the saved PA profile contains a reviewed `relay` connection. Keep the native MCP default for other requests. The profile pins the Relay origin, private node-file reference, primary `authorityId` and full Gateway public-key ID. The existing saved client verifies these pins before binding or sending; do not create or change them while fulfilling a business task.
-
-```text
-node <saved-client> --profile <saved-profile> relay-enroll
-node <saved-client> --profile <saved-profile> relay-bind
-node <saved-client> --profile <saved-profile> relay --input <request.json> --output <receipt.json>
-```
-
-Enrollment requires the user's authorization to connect this node and uses the already authenticated member installation. It grants communication only. The host handles the short enrollment assertion internally; do not retrieve credentials, private keys or bearer values. A `relay-renew` command requires an input file containing a fixed UUID `requestId`; reuse that file on an uncertain renewal.
-
-Save a Relay request with a UUID `requestId` and `kind`: `task.submit` carries the original `submit_task` input in `input`; `task.get` and `task.cancel` carry `taskId`; `task.reply` carries the current versioned reply in `input`. Follow the same address, authority and completion rules above. Use a fresh request ID for each read or continuation. On an uncertain submit, preserve the exact saved request and business request ID; retrying it can use a new transport message while the primary retains the same task. Never replace its goal or infer completion from `transportReceipt.status=received`.
-
-The client returns the primary authority ID, business request ID, transport message ID and the protected `task` view. Re-read that task until `state=completed`, `accepted=true` and the actual artifact is available. Compare the same task ID through native MCP or A2A for independent protocol readback. Relay does not expose order or payment approval commands; permission denial is not a reason to switch identities or use an owner-wide API.
-
-## Shopify checkout payment handoff v3 — isolated tests only
-
-When `paPayment.request.version == "3"`, the original checkout belongs to the local Shopify contract simulator. Payment authority stays with the user and PA. Use the PA's already configured isolated test Vault or account; never route synthetic terms to a real wallet. EIGOS receives no card, account token or Vault credential.
-
-Read the exact request, full amount/currency, payee, source checkout and expiry. Inspect your own current test capability. With the supplied `eigos_test_payment.py` helper, use `--config <private PA payment profile> capabilities --task-id <original id>`. Select one supported returned capability by saving `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","capability":<returned capability>}` and calling the existing `payment-route` command with a stable UUID. Do not include `wallet` for v3 or invent an available capability.
-
-Keep the selected route and `selection.operationId`. The PA payment helper re-reads the same task, checks its private exact test authorization and environment, persists dispatch before payment, and keeps credentials outside tool output. Call its `pay --task-id <original id>` only for the authorized original checkout. Once a dispatch exists, repeated `pay` calls query it; `query` explicitly reads that same operation. Unknown, declined, expired or missing results never authorize another payment or route switch. The helper supports only pinned loopback simulation and documented test instruments, not a real Grok Vault or payment provider.
-
-After an attempt, use the existing `payment-result` command with only the original handoff ID/digest and `submitted`, `unknown`, `declined` or `canceled`. Continue reading the same EIGOS task until its independent merchant payment AND original order checks finish. Read the final artifact back to the user and label it as synthetic test checkout/payment with `realPayment=false`; it is not official Shopify development-store integration or fulfillment.
-
-## Booking payment handoff v2 — isolated tests only
-
-Apply this section only when `paPayment.request.version == "2"`. Inspect the original booking, full price, payee and expiry. The PA observes its own current Link Agent Wallet test availability; unknown availability does not authorize a fallback or a new payment.
-
-Save `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","wallet":{"status":"unavailable","reason":"region_unsupported","observedAt":"<current ISO time>"}}` to a file and run `payment-route --task-id <id> --input-file <file> --request-id <stable-UUID>`. EIGOS checks the original unpaid booking and selects the preferred usable route. Preserve the payment handoff's `selection`; retries reuse the exact UUID and input. If a selection already exists, use it rather than selecting again. This observation and selection grant no new payment authority.
-
-If provider facts have expired before a route is selected, use `reconcile --task-id <id> --request-id <stable-UUID>` (the existing EIGOS readback endpoint) or MCP `reconcile_task`, then poll the original task. This refreshes source facts without pretending that a payment was attempted. Do not replace the booking or submit a false payment notification merely to refresh it.
-
-For `selection.route == "link_agent_wallet"`, use the PA's own compatible wallet directly with the provider. For `link_checkout`, show the user the exact source-provided `request.terms.checkout.url` and ask them to confirm in the merchant page; do not request their card details or claim that opening the URL completed payment. A real ordinary Link checkout is a user-confirmed flow. Do not guess payment URLs, open another booking, or execute credentials against a different recipient.
-
-Before any authorized payment, re-read the task: it must still be waiting, its status must be `awaiting_pa` or `awaiting_user`, the route must match the saved selection, and the terms must not have expired. Verify the endpoint, payee and exact amount. Persist the handoff ID, `selection.operationId` and the wallet's original operation identity before dispatch. An issued route may already be in use. A timeout, payment decline, duplicate handoff or `awaiting_provider` state means query the original payment, never automatically switch routes or pay again.
-
-After the wallet attempt or the user's checkout response, save only `{"handoffId":"<request.id>","handoffDigest":"<request.digest>","outcome":"submitted"}` and run `payment-result --task-id <id> --input-file <file> --request-id <stable-UUID>`. Outcomes are `submitted`, `declined`, `unknown`, or `canceled`; none proves success. Do not send wallet keys, tokens, card data or a free-text “paid” reply. The client sends a structured A2A continuation with `action: "report_payment_result"`; MCP callers can use `report_payment_result` with the same fields plus `taskId` and `requestId`. Browser redirects, page success messages and URL parameters are not payment evidence.
-
-Reuse the identical notification UUID and payload on a network retry. If an independent readback is already running, query the task and retry the same notification later. EIGOS must separately read the provider's payment and booking before completion. A lost notification can be followed by an `unknown` notification or `reconcile_task`; neither initiates another payment. Cancellation withdraws the EIGOS handoff but does not reverse an already dispatched PA payment. Report a late outcome for audit; a canceled task must stay canceled.
-
-## Verify delivery
-
-Report completion only when the same task is completed, its independent acceptance is true, and the requested artifact is present. A document delivery proves that document was produced; a task brief does not prove its underlying business goal occurred. Discovery, a model proposal, an authorization notice or a payment notice is not fulfillment.
-
-When checking both protocols, retrieve the same taskId through native MCP and A2A, compare the actual artifact content, status and acceptance, and retain both receipts. Distinguish this live PA check from fixed probes or synthetic internal tests.
-
-For a newly authorized request, `run --text-file <goal> --request-id <stable-id> --save-dir <private-directory>` combines discovery, one submission, polling and saving raw receipts in one client invocation. It outputs compact delivery text for the PA to relay; complete structured artifacts remain saved. It polls for up to 55 seconds (default interval 0.25 seconds); the separate poll command retains its 45-second limit. `run --spec-file <private-JSON>` can supply saved profile, textFile, requestId, saveDir and optional seconds/interval without credential values or a business plan. When `resumeRequired=true`, repeat the identical command and directory: it reads the saved task, never submits a replacement. An uncertain send stops for inspection of the original request identity. Input-required, authorization-required and failed states stop without responding, approving, paying or retrying. Use the explicit continuation flow for any user input or authority. The run also saves phase timing and the actual received UTC before final readback and artifact processing.
-
-`get --task-id <id>` retrieves a snapshot. `cancel --task-id <id>` requires the user's intent to cancel; cancellation is not proof that any external order was reversed. Completed/failed/rejected/canceled tasks do not restart; a later request needs a new task.
-
-## Persistent connection
-
-Foundation setup uses `configure --card-url <https-url> --security-mode foundation --agent-credential-file <private-installation-file> --node-bin <absolute-node-path> --agent-request-helper <absolute-reviewed-agent-request.mjs>`. Each installation has its own Node AgentConnector credential file; `scripts/agent-enroll.mjs begin/finish` performs provider device enrollment, with the human completing the provider page. The member then approves the installation's task/data ceiling and sources. The Python process delegates authenticated requests to AgentConnector, which handles rotating refresh credentials without returning bearer values to Python. On hosts that require an existing environment proxy, add `--node-use-env-proxy` with a Node version supporting that flag. Configure verifies the installation context before replacing the profile.
-
-Legacy setup remains `configure --card-url <url> --token-file <private-file>` (or `--token-env <secret-variable-name>`). Explicit `--allow-loopback-http` is for authorized local development only. The profile stores a credential reference, not a token. A legacy token-file profile does not perform OAuth refresh. Never print, upload or place the token in a prompt. Do not alter the server, source code, credentials or delegation allowlist while fulfilling a task.
-
-The client's `submit` with structured `service` fields and the authorization endpoint are EIGOS application conventions, not universal A2A methods. The current EIGOS server always returns Tasks; this client is not a general client for every A2A agent. Its same-origin and no-redirect rules are local connection policies.
-
-
-## Foundation protected task contract
-
-When the saved profile or runtime declares foundation, require `metadata.view=eigos.task.v2` for A2A or `view=eigos.task.v2` for MCP task results. Use current `revision` as expectedRevision for replies. Read the plan permission from `metadata.authorization`, booking payment v2 from `metadata.payment`, and protected files from attachments. Completion requires completed state, accepted=true and an available actual artifact. Never request raw delegation/model history or fall back to an owner-wide API after denial.
-
-Foundation query/evaluate use version 2, the explicitly granted taskId and the published secured schema; check_access only diagnoses permission. The compatible Python client provides query/evaluate/check-access with task-id and a private input file when that transport/profile is explicitly selected. Keep the native MCP default otherwise. Cursors stay with the original installation, task and query. Unreviewed registry/network/source-management, usage, amend/resume, external drafts and Shopify payment v3 remain unavailable in foundation; legacy retains its existing contracts.
-
-A sandbox plan permit binds the exact planDigest, effects, maxAmount, payees, expiry and environment. A changed plan needs its own permit. Zero real cost for Mock does not authorize a real order or payment. Model judgment and an accepted task never create authority.
+Foundation object query/evaluate uses version 2, an explicitly granted taskId and the published secured schema. `check_access` only diagnoses permission. Unreviewed management/source/payment surfaces remain unavailable; use the actual discovered contracts, never a legacy or owner-wide fallback after denial. A permit binds its exact plan, effects, amount, recipients, expiry and environment; model judgment cannot create authority.

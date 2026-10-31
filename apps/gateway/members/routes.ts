@@ -8,6 +8,7 @@ import { createLoginProvider, type LoginAttempt } from './oidc.js';
 import { memberPage } from './page.js';
 import type { AuthorizationCoordinator } from '../../../packages/security/coordinator.js';
 import { SecurityError } from '../../../packages/security/store.js';
+import { paOnboardingAvailable } from '../../../packages/members/pa-onboarding.js';
 import {permissionsPage,permissionReviewPage,preparePermissionReview,type PermissionReview} from './permissions-page.js';
 
 function cookies(req: Request): Record<string, string> {
@@ -44,6 +45,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
     res.set('Referrer-Policy', 'same-origin').type('html').send(memberPage({
       ...(current ? { member: current.member, csrf: current.csrf, connections: store.connections(current.member.id) } : {}),
       agentRegistrations: current ? store.agents.list(current.member.id) : [], invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only',
+      connectionGuideAvailable: paOnboardingAvailable(c),
       permissionsAvailable: !!security, networkAccess: !security && c.EIGOS_NETWORK_ENABLED === 'true' && !!current && c.EIGOS_NETWORK_MEMBER_IDS.includes(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
     }));
   });

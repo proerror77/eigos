@@ -9,6 +9,7 @@ import { releaseFiles } from '../packages/deployment/files.js';
 import { assertLegacyDeploymentAllowed,primaryRuntime,readPrimaryHealth } from '../packages/deployment/primary.js';
 import http from 'node:http';
 import {once} from 'node:events';
+import { PA_SKILL_DIRECTORY, PA_SKILL_FILES } from '../packages/members/pa-onboarding.js';
 
 test('primary readiness preserves the configured ingress Host on its loopback probe',async()=>{
   const server=http.createServer((request,response)=>{response.writeHead(request.headers.host==='primary.example'?200:403,{'Content-Type':'application/json'});response.end(JSON.stringify({authorityId:'fixture-primary'}));});
@@ -43,10 +44,12 @@ test('immutable release retains JSON assets required by relocated runtime import
     put(join(source, 'dist/packages/members/ontology-operator.js'), "export const label = 'Operator transport fixture';");
     put(join(source, 'integrations/grok/eigos-delegate/scripts/eigos_a2a.py'), '');
     put(join(source, 'integrations/grok/eigos-native/client.mjs'), 'console.log("A2A transport fixture");');
+    for (const name of PA_SKILL_FILES) put(join(source, 'dist', PA_SKILL_DIRECTORY, name), `public asset ${name}`);
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
     const files = releaseFiles(source);
     assert(files.includes('dist/packages/ontology/definitions/didi-readonly.json'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
+    for (const name of PA_SKILL_FILES) assert(files.includes(`dist/${PA_SKILL_DIRECTORY}/${name}`));
     for (const path of files) { mkdirSync(dirname(join(release, path)), { recursive: true }); cpSync(join(source, path), join(release, path)); }
     rmSync(source, { recursive: true });
     assert.equal(execFileSync(process.execPath, ['dist/apps/gateway/main.js'], { cwd: release, encoding: 'utf8' }).trim(), '15');

@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, rmSync, copyFileSync } from 'node:fs';
-import { resolve, join, relative } from 'node:path';
+import { existsSync, readdirSync, rmSync, copyFileSync, mkdirSync } from 'node:fs';
+import { resolve, join, relative, dirname } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { syncOntology } from './ontology.mjs';
 const root = process.cwd();
@@ -13,5 +13,11 @@ function prune(path) {
 }
 if (existsSync('dist')) prune(resolve('dist'));
 execFileSync(resolve('node_modules/.bin/tsc'), [], { stdio: 'inherit' });
+const { PA_SKILL_DIRECTORY, PA_SKILL_FILES } = await import('../dist/packages/members/pa-onboarding.js');
+for (const name of PA_SKILL_FILES) {
+  const destination = resolve('dist', PA_SKILL_DIRECTORY, name);
+  mkdirSync(dirname(destination), { recursive: true });
+  copyFileSync(resolve(PA_SKILL_DIRECTORY, name), destination);
+}
 copyFileSync(resolve('packages/security/baseline.json'), resolve('dist/packages/security/baseline.json'));
 await syncOntology(root);
