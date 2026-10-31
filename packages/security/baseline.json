@@ -2898,26 +2898,26 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "42e3266c6a1da1aa5781d7bb7e05251af2ac7b85eeeadb36d0a34b8ea9764373",
+      "sourceDigest": "d119ffcd8906550168a6d88c7934708b648395502cd6e1f4eac1c06f5009616d",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed",
+      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata.",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "42e8bfe4593014c2bab88709bb05d4663b90252facf10f4a3304f89dbd19923e",
+      "sourceDigest": "afa14643f2ba80f726d338f13f98f87e8b57f27dba1adc97139d62df22d5bee8",
       "channels": [
         "http",
         "mcp",
         "a2a"
       ],
       "content": "Queries, mutations, blocking wait and internal Job response",
-      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes",
+      "currentControl": "Current parent/source grants and namespace publish/read/task scopes; prepare the selected intake atomically with an exact release/runtime and a task window capped at ten minutes; Technical resume rechecks an already selected source before retaining the original task grant and execution authority.",
       "targetControl": "TaskDataGrant, current projection and operation-specific scope",
       "stage": "S2"
     },
@@ -3047,13 +3047,13 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "b265a65b1e0ec4952f09c9c1b658c0f9ed3303dc220814ca69e5425cb7f93343",
+      "sourceDigest": "d767584216049b303d3cfa5b2f01e20ce30db1c3b8f23e167286d27ac40fd5b6",
       "channels": [
         "model",
         "dispatch"
       ],
       "content": "Task interpretation, initial context, selection and execution orchestration",
-      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority",
+      "currentControl": "Foundation source/role/channel gates and bounded task Ontology context; pipeline eligibility narrows grounded candidates without granting source or effect authority; Rechecks a previously selected source before another model turn without granting execution through unselected metadata discovery.",
       "targetControl": "Persisted task authority with source/input/output checks",
       "stage": "S3"
     },
@@ -3330,24 +3330,24 @@
     {
       "id": "security-coordinator",
       "file": "packages/security/coordinator.ts",
-      "sourceDigest": "6eb2c89c15794a0638506cc442fe6ebf21c2ada9350d062124f2d2a352f9481b",
+      "sourceDigest": "36989081372c54dd0d9a9d9430587d1e212ced95ca14ce26c9b22d5e896008c0",
       "channels": [
         "authorization_control"
       ],
       "content": "Signed installation resolution and cross-database eligibility coordination",
-      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover",
+      "currentControl": "Existing identity and revocation coordinator plus reviewed source/task approval and explicit controller takeover; Member-reviewed original-PA source renewal pins current source versions and exact prior grants, preserves identity, inputs, processing rights, channels and expiration ceiling, rejects existing operations, and leaves the task paused.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "ff30b6cae6660bae692f23204522524f225a1cde9e8f2e007054e719c9ce1c15",
+      "sourceDigest": "0e49128c05f7e15eef8773ed9cfbea6d8e62d6be57bc939df28cef97f6bc35b1",
       "channels": [
         "authorization_control"
       ],
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration",
+      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3390,12 +3390,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "947fced35086a8b037faa210ee31cfa7eebb8e34f19727c59283cbe3d3e26957",
+      "sourceDigest": "94ec47323dfae480286a03a2e9a301835905dcb6ff127378f84d59602ad0ada6",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3414,12 +3414,12 @@
     {
       "id": "permission-review-page",
       "file": "apps/gateway/members/permissions-page.ts",
-      "sourceDigest": "9d311eebf86208fe8ae595a90d9634f96dd8309d752547be538442b36b561bb4",
+      "sourceDigest": "d40ac170777e25f578228864ba55a3f8c4a58e014ae0bc5ba13c17ab362d1809",
       "channels": [
         "member-ui"
       ],
       "content": "Exact immutable controller review, source readback and revocation",
-      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation",
+      "currentControl": "Foundation v2: Exact immutable controller review, source readback and revocation; Original-PA renewal has a distinct explicit review, pins source versions, displays current output fields and preserves original task restrictions without controller takeover.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
@@ -3510,12 +3510,12 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "052e7e1be0bc7c6a70f1e6ea2b04447215c0a24ec1faeadd14e25816b7ed583a",
+      "sourceDigest": "72fb21396bb2c1011ac2f3fcba0faad9d81604f523a39a0f4c1164dd6136ffc9",
       "channels": [
         "http-mcp-a2a"
       ],
       "content": "Common safe views for mutations, reads, waits, replay and downloads",
-      "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together",
+      "currentControl": "Safe TaskView and current controller grants; validation expiry intersects parent and task bounds, post-provision checks roll back task/grant/idempotency together; Bounded recovery guidance uses the exact active successor grant and ordered pause events, including legacy generic pauses; no raw diagnostic or source configuration is exported.",
       "targetControl": "Preserve current grant, policy and source boundaries; no automatic legacy migration",
       "stage": "S4"
     },
