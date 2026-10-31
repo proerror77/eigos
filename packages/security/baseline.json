@@ -4183,7 +4183,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "8930067c84a8adb4b920680e4976f8281ac409870e6af4fef27bd170b262182c",
+      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
       "channels": [
         "model",
         "artifact"
@@ -4793,7 +4793,7 @@
     {
       "id": "native-pa-relay-client",
       "file": "integrations/grok/eigos-native/client.mjs",
-      "sourceDigest": "d950cb7d635850743c500e74f40ce0601d7eae3189b55ed7bb3beaa3f6b87fe9",
+      "sourceDigest": "683cdc8e2f206aed19228803c5074e833c6e918eaa5d9db446ee738dbb1c35fa",
       "channels": [
         "agent_transport",
         "private_file"
@@ -5150,6 +5150,18 @@
       "targetControl": "No primary mutation, order or payment; private external evidence archive",
       "stage": "S4",
       "sourceDigest": "b39e941d20797f88db772c80ab12d03758cd5c7d5dffb9e3fb15014dd14ece09"
+    },
+    {
+      "id": "pa-task-input",
+      "file": "packages/agent-client/task-input.ts",
+      "sourceDigest": "47e045e79d5f460f64c67fd41d54b201d7da753ad8af0fbe561bdb558a5da4cc",
+      "channels": [
+        "PA client"
+      ],
+      "content": "Local A2A task input validation and explicit location provenance canonicalization",
+      "currentControl": "Shared task schema before credentials or transport; explicit user assertion only; unchanged goal and message identity; conflicts reject with field paths",
+      "targetControl": "Do not infer locations, provenance, observation time, action plans or permission",
+      "stage": "S5"
     }
   ]
 }
