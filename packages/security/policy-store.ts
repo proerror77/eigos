@@ -699,7 +699,12 @@ export class SecurityPolicies {
     const scope = this.scope(owner),g=scope.grant!;
     const rows=this.memoRead(this,JSON.stringify(['query-bindings',g.ownerKey,g.taskId,g.requestRevision,g.installationId]),()=>this.db.prepare(`SELECT DISTINCT b.type,b.object_id FROM security_bindings b JOIN security_grants issued ON issued.id=b.grant_id
       WHERE b.owner=? AND b.task_id=? AND b.request_revision=? AND issued.installation_id=? AND issued.kind='task_data' LIMIT 2001`)
-      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId));
+      .all(g.ownerKey,g.taskId,g.requestRevision,g.installationId).sort((a,b)=>{
+        // Candidate enumeration order is not part of visibility. Compare the
+        // same set identically after an unrelated concurrent database commit.
+        const left=JSON.stringify([a.type,a.object_id]),right=JSON.stringify([b.type,b.object_id]);
+        return left<right?-1:left>right?1:0;
+      }));
     if(rows.length>2000) throw new DomainError('CONFLICT','Task object boundary exceeds the supported query budget');
     // Narrow by the query's public schema/identity before checking candidates.
     // Data predicates, visibility and transitive dependencies are still checked

@@ -189,7 +189,9 @@ test(`an external commit during visibility lookup repeats only an unchanged pure
             if(change==='unrelated')prepare.call(writer,'INSERT INTO fixture_unrelated VALUES(1)').run();
             else prepare.call(writer,'DELETE FROM security_bindings WHERE grant_id=? AND type=? AND object_id=?').run(task.grant.id,place.object.type,place.object.id);
           }
-          return rows;
+          // DISTINCT has no ordering contract. An unrelated commit may leave
+          // the same candidates in a different enumeration order.
+          return change==='unrelated' && lists===1 ? rows.reverse() : rows;
         });
       }
       return statement;
