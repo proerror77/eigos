@@ -431,3 +431,42 @@ test('bounded concurrent listeners drain started handlers before retry and leave
     assert.deepEqual((await b.pending()).map(message=>(message.content as {index:number}).index),[1,3]);
   }finally{clearTimeout(deadline);stop.abort();releaseSecond();startedBoth();releaseFirstContact();await f.close();}
 });
+
+test('a free listener slot receives later arrivals without waiting for an earlier handler or repeating it',{timeout:15000},async()=>{
+  const f=await fixture(),stop=new AbortController();
+  let releaseFirst!:()=>void,enteredFirst!:()=>void,enteredSecond!:()=>void,enteredThird!:()=>void;
+  const firstGate=new Promise<void>(r=>{releaseFirst=r;}),first=new Promise<void>(r=>{enteredFirst=r;}),second=new Promise<void>(r=>{enteredSecond=r;}),third=new Promise<void>(r=>{enteredThird=r;});
+  const within=async(promise:Promise<void>)=>{let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('A later message was blocked by an active handler')),3000);})]);}finally{clearTimeout(timer);}};
+  const seen:number[]=[],errors:unknown[]=[];let active=0,maximum=0,listening:Promise<void>|undefined;
+  try{
+    const a=await f.client('Rolling A'),b=await f.client('Rolling B'),contact=await f.connect(a,b);
+    listening=b.listen(async message=>{
+      const index=(message.content as {index:number}).index;seen.push(index);maximum=Math.max(maximum,++active);
+      try{if(index===1){enteredFirst();await firstGate;}else if(index===2)enteredSecond();else enteredThird();}finally{active--;}
+    },stop.signal,{concurrency:2}).catch(error=>{if(!stop.signal.aborted)errors.push(error);});
+    await a.send(b.agentId,contact,{index:1});await within(first);
+    await a.send(b.agentId,contact,{index:2});await within(second);
+    await a.send(b.agentId,contact,{index:3});await within(third);
+    assert.deepEqual(seen,[1,2,3]);assert.equal(maximum,2);assert.equal(active,1);assert.deepEqual(errors,[]);
+  }finally{stop.abort();releaseFirst();await listening;await f.close();}
+});
+
+test('handler failure wakes an active receive and retains the exact message for a non-overlapping retry',{timeout:15000},async()=>{
+  const f=await fixture(),stop=new AbortController();let rejectHandler!:(error:Error)=>void,enteredHandler!:()=>void,enteredPoll!:()=>void,polls=0,calls=0;
+  const handlerGate=new Promise<void>((_,reject)=>{rejectHandler=reject;}),entered=new Promise<void>(r=>{enteredHandler=r;}),polling=new Promise<void>(r=>{enteredPoll=r;});
+  const failure=new Error('Synthetic rolling handler failure');let observed:unknown,listening:Promise<void>|undefined;
+  const within=async(promise:Promise<void>)=>{let timer:ReturnType<typeof setTimeout>|undefined;try{await Promise.race([promise,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new Error('Listener did not react to its handler')),3000);})]);}finally{clearTimeout(timer);}};
+  try{
+    const a=await f.client('Failure A'),b=await f.client('Failure B',async(input,init)=>{
+      if(String(input).endsWith('/v1/inbox?wait=25')&&++polls===2)enteredPoll();
+      return fetch(input,init);
+    }),contact=await f.connect(a,b);
+    listening=b.listen(async()=>{calls++;enteredHandler();await handlerGate;},stop.signal,{concurrency:2}).catch(error=>{observed=error;});
+    const sent=await a.send(b.agentId,contact,{index:1});await within(entered);await within(polling);
+    rejectHandler(failure);await within(listening);
+    assert.equal(observed,failure);assert.equal(calls,1);assert.deepEqual((await b.pending()).map(message=>message.id),[sent.id]);
+    const retry=new AbortController();
+    await b.listen(async message=>{assert.equal(message.id,sent.id);calls++;retry.abort();},retry.signal,{concurrency:2}).catch(error=>{if(!retry.signal.aborted)throw error;});
+    assert.equal(calls,2);assert.deepEqual(await b.pending(),[]);
+  }finally{stop.abort();rejectHandler(failure);await listening;await f.close();}
+});

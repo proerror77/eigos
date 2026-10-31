@@ -259,11 +259,10 @@ export class RelayClient {
   async listen(handler: (message: ReceivedMessage) => Promise<void>, signal: AbortSignal, options: {concurrency?:number} = {}) {
     const concurrency=options.concurrency??1;
     if(!Number.isInteger(concurrency)||concurrency<1||concurrency>4)throw new Error('Invalid Relay handler concurrency');
-    while (!signal.aborted) {
-      const waiting = await this.pending();
-      const messages = waiting.length ? waiting : await this.poll({ waitSeconds: 25, signal });
-      for(let offset=0;offset<messages.length;offset+=concurrency){
-        const settled=await Promise.allSettled(messages.slice(offset,offset+concurrency).map(async message=>{
+    const active=new Map<string,Promise<void>>(),outcome:{failure?:{reason:unknown}}={};
+    const pending=this.db.prepare('SELECT state FROM node_inbox WHERE sender=? AND id=?');
+    let wake:AbortController|undefined;
+    const run=async(message:ReceivedMessage)=>{
         signal.throwIfAborted();
         const contact = (await this.contacts()).find(c => c.id === message.connectionId && c.state === 'accepted'
           && (c.requester === message.senderId || c.recipient === message.senderId));
@@ -275,12 +274,35 @@ export class RelayClient {
           return;
         }
         await handler(message); this.markHandled(message.senderId, message.id);
-        }));
-        // Drain every started handler before retrying the durable inbox. A
-        // rejected peer must never overlap a still-running copy of its message.
-        const rejected=settled.find((result):result is PromiseRejectedResult=>result.status==='rejected');
-        if(rejected)throw rejected.reason;
+    };
+    try {
+      while (!signal.aborted&&!outcome.failure) {
+        if(active.size===concurrency){await Promise.race(active.values());continue;}
+        const waiting=await this.pending();
+        if(signal.aborted||outcome.failure)break;
+        for(const message of waiting){
+          if(active.size===concurrency)break;
+          const key=JSON.stringify([message.senderId,message.id]);
+          // pending() decrypts asynchronously. A handler may have completed
+          // since its row was read; neither it nor an active copy may restart.
+          if(active.has(key)||pending.get(message.senderId,message.id)?.state!=='pending')continue;
+          const work=run(message).catch(reason=>{outcome.failure??={reason};}).finally(()=>{
+            active.delete(key);wake?.abort();
+          });
+          active.set(key,work);
+        }
+        if(active.size===concurrency){await Promise.race(active.values());continue;}
+        // Keep receiving into free slots while earlier handlers run. Their
+        // completion/error wakes the poll so capacity and failures are current.
+        const poll=new AbortController();wake=poll;
+        try{await this.poll({waitSeconds:25,signal:AbortSignal.any([signal,poll.signal])});}
+        catch(error){if(!poll.signal.aborted||signal.aborted)throw error;}
+        finally{wake=undefined;}
       }
+    }finally{
+      // A retry may begin only after every already-started callback has ended.
+      await Promise.allSettled(active.values());
     }
+    if(outcome.failure)throw outcome.failure.reason;
   }
 }

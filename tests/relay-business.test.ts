@@ -13,6 +13,7 @@ import { DefinitionService } from '../packages/ontology/definition-service.js';
 import { parsePipelineIntake } from '../packages/ontology/pipeline/contracts.js';
 import { TaskRelayGateway, mountTaskRelay } from '../apps/gateway/relay.js';
 import { DidiRelayService } from '../packages/agent-transport/didi-service.js';
+import { RelayClient } from '../packages/agent-transport/client.js';
 import { DidiMcpConnector } from '../packages/capabilities/didi/connector.js';
 import { DidiAgentProgram } from '../packages/capabilities/didi/program.js';
 import { DidiRelayConnector } from '../packages/capabilities/didi/relay-connector.js';
@@ -147,6 +148,33 @@ test('PA → encrypted primary → source Agent → scoped readback → PA prese
     for (const privateValue of [syntheticKey, f.source.keyFile, 'claimToken', 'PRIVATE_TRACE_NEVER_TO_MODEL']) assert(!model.includes(privateValue));
     assert.equal(f.failures.length, 0);
   } finally { await f.close(); }
+});
+
+test('independent queued source reads are both dispatched before either delivery completes',{timeout:60000},async t=>{
+  const f=await fixture({signal:t.signal});let releasePair!:()=>void,paired=false;
+  const pair=new Promise<void>(resolve=>{releasePair=resolve;}),firstPair=new Set<string>(),started=new Set<string>();
+  try{
+  const pending=f.jobs.security.relayReads.pending.bind(f.jobs.security.relayReads),deliver=RelayClient.prototype.deliver;
+  t.mock.method(f.jobs.security.relayReads,'pending',()=>{
+    const rows=pending();
+    if(!paired){if(rows.length<2)return [];paired=true;for(const row of rows.slice(0,2))firstPair.add(row.request.callId);}
+    return rows;
+  });
+  t.mock.method(RelayClient.prototype,'deliver',async function(this:RelayClient,id:string,options?:Parameters<typeof deliver>[1]){
+    if(this.agentId===f.gatewayId&&firstPair.has(id)){
+      started.add(id);if(started.size===2)releasePair();await pair;
+    }
+    return deliver.call(this,id,options);
+  });
+    const requestId=randomUUID();
+    await f.pa.send(f.gatewayId,f.paConnection,{protocol:TASK_RELAY_PROTOCOL,kind:'task.submit',authorityId:f.authority!.id,requestId,
+      input:{service:'eigos.delegate',requestId,goal:'查询北京西站到西二旗地铁站的预估车费，不叫车、不付款'}});
+    const submitted=await f.receive(requestId);assert(submitted.task,submitted.error);
+    const completed=await f.advance(submitted.task.id);
+    assert.equal(started.size,2);assert.equal(completed.state,'completed');assert.equal(completed.delegation!.acceptance!.accepted,true);
+    assert.deepEqual(f.source.calls.filter(call=>call.name).map(call=>call.name),['maps_textsearch','maps_textsearch','taxi_estimate']);
+    assert.equal(f.failures.length,0);
+  }finally{releasePair();await f.close();}
 });
 
 function manageDidi(f: Awaited<ReturnType<typeof fixture>>) {

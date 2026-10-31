@@ -164,6 +164,13 @@ function projectRequest(graph: OntologyObjectStore, owner: string, request: Serv
 }
 /** Reconstruct the current safe request from typed graph records, never a Job JSON blob. */
 export function readOntologyRequest(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
+  const read = () => readOntologyRequestRaw(graph, owner, requestId);
+  // The specification and its instructions/facts are one synchronous read.
+  // Reuse their checked dependencies only within this call; every database or
+  // authority invalidation still clears the existing snapshot caches.
+  return graph.security ? graph.security.readSnapshot(read) : read();
+}
+function readOntologyRequestRaw(graph: OntologyObjectStore, owner: string, requestId: string): ServiceRequest {
   const request = graph.read(owner, root(requestId)), revision = Number(request.properties.revision);
   const filter = [{ property: 'requestRevision', op: 'eq' as const, value: revision }];
   const specs = related(graph, owner, request.ref, 'specifications', filter);

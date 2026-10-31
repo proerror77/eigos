@@ -10,6 +10,7 @@ import { TaskRelayClient, TaskRelayError } from '../../../dist/packages/agent-cl
 import { RelayClient } from '../../../dist/packages/agent-transport/client.js';
 import { taskRelayMetadataSchema, taskRelayProfileSchema } from '../../../dist/packages/agent-transport/task-contracts.js';
 import { z } from 'zod';
+import { prepareA2ATaskRequest, AgentTaskInputError } from '../../../dist/packages/agent-client/task-input.js';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   profile: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' },
@@ -32,6 +33,15 @@ try {
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   if (typeof profile.baseUrl !== 'string' || new URL(profile.baseUrl).protocol !== 'https:' || new URL(profile.baseUrl).origin !== profile.baseUrl
     || typeof profile.credentialPath !== 'string' || !profile.credentialPath.startsWith('/') || typeof profile.displayName !== 'string') throw new Error('invalid_profile');
+  let a2aRequest;
+  if (command === 'a2a') {
+    if (!values.input) throw new AgentTaskInputError(['input']);
+    const bytes = readFileSync(resolve(values.input));
+    if (bytes.length > 60000) throw new AgentTaskInputError(['input']);
+    let input;
+    try { input = JSON.parse(bytes.toString('utf8')); } catch { throw new AgentTaskInputError(['input']); }
+    a2aRequest = prepareA2ATaskRequest(input);
+  }
   if (command === 'discover') {
     const read = async path => {
       const r = await fetch(profile.baseUrl + path, { redirect: 'error', signal: AbortSignal.timeout(15000) });
@@ -84,13 +94,7 @@ try {
       } finally { node.close(); }
     }
     else {
-      if (!values.input) throw new Error('input_required');
-      const bytes = readFileSync(resolve(values.input));
-      if (bytes.length > 60000) throw new Error('request_too_large');
-      const request = JSON.parse(bytes.toString('utf8'));
-      if (request.jsonrpc !== '2.0' || !['SendMessage', 'GetTask', 'ListTasks', 'CancelTask'].includes(request.method)
-        || !['string', 'number'].includes(typeof request.id) || !request.params || typeof request.params !== 'object'
-        || (request.method === 'SendMessage' && !request.params.message?.messageId)) throw new Error('invalid_a2a_request');
+      const request = a2aRequest;
       const response = await agent.fetch('/a2a', { method: 'POST', signal: AbortSignal.timeout(60000),
         headers: { 'Content-Type': 'application/json', 'A2A-Version': '1.0' }, body: JSON.stringify(request) });
       if (!response.ok) { emit({ error: 'a2a_http_rejected', httpStatus: response.status }); process.exitCode = 1; }
@@ -102,7 +106,7 @@ try {
     }
   }
 } catch (error) {
-  const result = { error: error instanceof AgentConnectorError || error instanceof TaskRelayError ? error.code : 'eigos_client_operation_failed', ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}), ...(pendingRelayReceipt ? { relay: pendingRelayReceipt } : {}) };
-  if (pendingRelayReceipt) emit(result); else process.stdout.write(JSON.stringify(result) + '\n');
+  const result = { error: error instanceof AgentConnectorError || error instanceof TaskRelayError || error instanceof AgentTaskInputError ? error.code : 'eigos_client_operation_failed', ...(error instanceof AgentTaskInputError ? { fields: error.fields } : {}), ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}), ...(pendingRelayReceipt ? { relay: pendingRelayReceipt } : {}) };
+  if (pendingRelayReceipt || error instanceof AgentTaskInputError) emit(result); else process.stdout.write(JSON.stringify(result) + '\n');
   process.exitCode = 1;
 }
