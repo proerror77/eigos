@@ -204,6 +204,9 @@ export class AuthorizationCoordinator {
       if(args.renewOriginal) {
         this.store.attachTaskAuthority({...original!,id:randomUUID(),revision:1,agentGrant:grant.parentGrant,dataGrant:{id:grant.id,revision:grant.revision},issuedAt:at,expiresAt:grant.expiresAt});
         job.updatedAt=at;job.revision=(job.revision??0)+1;
+        if(job.delegation!.recovery?.code==='source_authorization_required') {
+          const recovery=job.delegation!.recovery;recovery.state='resolved';recovery.resolvedAt=at;recovery.nextAction='none';delete recovery.retryAt;
+        }
         job.delegation!.events.push({at,event:'original_pa_source_authorization_renewed',evidence:grant.id});
         this.jobs!.save(facts.ownerKey,job);
       } else if (args.takeover) {

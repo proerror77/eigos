@@ -75,6 +75,8 @@ for(const replaceCeiling of [false,true])test(`member-reviewed source renewal ke
     assert.throws(()=>f.tasks.resume(f.principal(),resume()),/SOURCE_NOT_AUTHORIZED|AUTHORIZATION_REQUIRED/,'Source approval cannot silently replace the old task grant');
     const input=f.renewal(),before=f.jobs.get(f.owner,f.task.id),grant=f.manager.approveTaskGrant(f.member.id,input),renewed=f.jobs.get(f.owner,f.task.id);
     assert.equal(renewed.state,'paused','Only the original PA resumes execution');assert.equal(renewed.contextId,before.contextId);
+    const ready=new TaskSecurity(f.jobs).get(f.principal(),f.task.id).recovery;
+    assert.equal(ready?.code,'SOURCE_AUTHORIZATION_RENEWED');assert.equal(ready.nextAction,'resume_original_task');
     assert.deepEqual(renewed.delegation!.request,before.delegation!.request);assert.deepEqual(renewed.messages,before.messages);assert.deepEqual(renewed.runs,before.runs);
     const authority=f.jobs.security.workAuthority(f.owner,f.task.id)!;
     for(const key of ['installationId','memberId','ownerKey','requestRevision','authorityOrigin','submittedScopes','authEpoch','expiresAt'] as const)
