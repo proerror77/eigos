@@ -15,7 +15,7 @@ import {digest} from '../packages/core/delegation.js';
 import {OntologyObjectStore} from '../packages/ontology/object-store.js';
 import {projectCapabilityCatalog} from '../packages/ontology/capability-catalog.js';
 
-for (const change of ['none', 'revoked', 'content'] as const)
+for (const change of ['none', 'revoked', 'content', 'malformed'] as const)
 test(`request reconstruction shares one bounded metadata scan while preserving ${change} checks`, t => {
  const f=securityFixture(),db=new DatabaseSync(f.database);
  try {
@@ -40,7 +40,8 @@ test(`request reconstruction shares one bounded metadata scan while preserving $
      if(!changed && change!=='none'){
       changed=true;
       if(change==='revoked')f.coordinator.revokeInstallation(f.member.id,install.id);
-      else prepare.call(db,"UPDATE ontology_objects SET body=json_set(body,'$.properties.text','untrusted replacement') WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").run(f.owner,job.id);
+      else if(change==='content')prepare.call(db,"UPDATE ontology_objects SET body=json_set(body,'$.properties.text','untrusted replacement') WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").run(f.owner,job.id);
+      else prepare.call(db,"UPDATE ontology_objects SET body='invalid JSON' WHERE owner=? AND type='RequestInstruction' AND json_extract(body,'$.source.id')=?").run(f.owner,job.id);
      }
      return rows;
     });
@@ -48,7 +49,7 @@ test(`request reconstruction shares one bounded metadata scan while preserving $
    return statement;
   });
   const read=()=>f.jobs.security.withAgent(principal,job.id,'task.query',()=>readOntologyRequest(f.jobs.ontologyForJob(f.owner,job.id),f.owner,job.id));
-  if(change!=='none'){assert.throws(read,/REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED|differs|not available/);assert(changed);return;}
+  if(change!=='none'){assert.throws(read,/REVOKED|AUTHORIZATION_REQUIRED|POLICY_CHANGED|differs|not available|JSON/);assert(changed);return;}
   assert.equal(read().messages[0]!.text,job.goal);
   assert.equal(scans,1,'One synchronous request must not repeat the same metadata membership scan for each relationship');
   assert.equal(read().originalGoal,job.goal);

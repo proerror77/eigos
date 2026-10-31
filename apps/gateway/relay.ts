@@ -81,11 +81,13 @@ export class TaskRelayGateway {
   }
   private async dispatch() {
     while (!this.abort.signal.aborted) {
-      for (const { peerId, request } of this.store.security.relayReads.pending()) {
-        if (this.abort.signal.aborted) break;
+      const pending=this.store.security.relayReads.pending();
+      for(let offset=0;offset<pending.length;offset+=2){
+        await Promise.all(pending.slice(offset,offset+2).map(async({peerId,request})=>{
+        if (this.abort.signal.aborted) return;
         try {
           const contact = (await this.client!.contacts()).find(c => c.state === 'accepted' && [c.requester, c.recipient].includes(peerId));
-          if (!contact) continue;
+          if (!contact) return;
           this.store.security.relayReads.route(request.callId, contact.id);
           const id = await this.client!.queue(peerId, contact.id, request, { id: request.callId, expiresAt: request.expiresAt });
           await this.client!.deliver(id, { signal: this.abort.signal, beforeSend: () => { this.store.security.relayReads.authorize(request.callId, peerId); } });
@@ -93,6 +95,7 @@ export class TaskRelayGateway {
         } catch (error) {
           if (error instanceof SecurityError) this.store.security.relayReads.revoke(request.callId);
         }
+        }));
       }
       await delay(100, undefined, { signal: this.abort.signal }).catch(() => {});
     }

@@ -2937,13 +2937,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "db485461371e6c8566d7dab0ee57dfec45b4617b66c30c79a1ac3a8102d22c44",
+      "sourceDigest": "a0c0ac77cf83b55413871ca3dd43889f92d9448152f86a22762e513f6740e517",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },
@@ -3060,14 +3060,14 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "bc85f78b5ba39d60e4d1503de63ddb588c157e4d70b9738cc3ebcdb9a472a115",
+      "sourceDigest": "90f521c6778d16ca8aee0bb0b4e31075f1d6de0d1f7437eabd864e705e7321e4",
       "channels": [
         "model",
         "dispatch",
         "artifact"
       ],
       "content": "Action plans, dispatch, observations, result acceptance and recovery",
-      "currentControl": "Current task/source/effect grants plus intake evidence, canonical revision and independent source-integrity checks at dispatch and before writes; original recovery stays separate",
+      "currentControl": "Current task/source/effect grants plus intake evidence, canonical revision and independent source-integrity checks at dispatch and before writes; original recovery stays separate; one pinned graph view per synchronous context reconstruction",
       "targetControl": "Intersect task/installation/source authority; label results; recovery-only context",
       "stage": "S3"
     },
@@ -4170,13 +4170,13 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "c0248c79658514bd0a009c218a640a7e4115c33f16580c72df28d49bdc6b721c",
+      "sourceDigest": "6d35c461d64af4de5c81b61931dee0263eb6d5bf1df8640cab738e205168a5ca",
       "channels": [
         "model",
         "artifact"
       ],
       "content": "Reviewed task-context row/field binding with inherited source read envelopes",
-      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks",
+      "currentControl": "Exact owner/task/revision/release/proof and reviewed field/channel checks; indexed either-end closure retains exact capability links, bounds and malformed JSON rejection",
       "targetControl": "No fresh execution authority or cross-task data grant from metadata",
       "stage": "S5"
     },
@@ -4616,13 +4616,13 @@
     {
       "id": "primary-relay-entry",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "8f23947f92c67741fa714090446aeaff45dfb8bde3e546230db81da3efcb773b",
+      "sourceDigest": "660b3233fe5c9a23626c1572df67712b89bed2dbb29dc857eb68b4f5280c5e0a",
       "channels": [
         "http",
         "authorization_control"
       ],
       "content": "Node enrollment, installation binding, current source authorization and dispatch",
-      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4704,13 +4704,13 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "c0e954069e1e9a86c8eb07eb89c781a67b5e4f140a15340f1d5342ef1aa26d3a",
+      "sourceDigest": "899feb56a1081119bf02b18d96b486bc8b4b0c3915c1fa8581704ed2717c88fb",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Node keys, signed proofs, encrypted inbox and outbox",
-      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback",
+      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
