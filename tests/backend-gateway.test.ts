@@ -38,7 +38,7 @@ async function fixture(model: Reasoner = reasoner(r => r.messages.some(m => m.te
   const wait = async (id: string, state: Job['state']) => { for (let i = 0; i < 400; i++) { const j = gateway.tasks.get(principal, id); if (j.state === state) return j; await pause(10); } assert.fail(JSON.stringify(gateway.tasks.get(principal, id))); };
   const approval = (j: Job) => ({ action: 'confirm_simulated_payment', requestId: 'approve-' + j.id, quoteId: j.delegation!.plan!.quote!.id, quoteDigest: j.delegation!.plan!.quote!.digest });
   const approve = (j: Job, extra = {}) => fetch(base + `/tasks/${j.id}/authorize`, { method: 'POST', headers, body: JSON.stringify({ ...approval(j), ...extra }) });
-  return { dir, base, token, gateway, worker, rpc, send, wait, approve, approval, close: async () => { await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, base, token, gateway, worker, server, rpc, send, wait, approve, approval, close: async () => { await worker.close(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); await gateway.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
 test('new backend uses existing A2A/MCP intake, clarification, exact approval and independently accepted delivery', async () => {
@@ -101,6 +101,8 @@ test('blocking A2A stops at clarification/authorization and active waits reject 
 
 test('existing Personal Agent Python client still discovers, resumes, approves and reads the new backend', async () => {
   const f = await fixture(); const script = resolve('integrations/grok/eigos-delegate/scripts/eigos_a2a.py');
+  const requests: { method: string | undefined; userAgent: string; authenticated: boolean }[] = [];
+  f.server.on('request', request => requests.push({ method: request.method, userAgent: request.headers['user-agent'] ?? '', authenticated: !!request.headers.authorization }));
   const profile = join(f.dir, 'profile.json'); const tokenFile = join(f.dir, 'token'); writeFileSync(tokenFile, f.token, { mode: 0o600 }); chmodSync(tokenFile, 0o600);
   const run = async (...args: string[]) => { const r = await exec('python3', [script, '--config', profile, ...args], { env: { PATH: process.env.PATH, HOME: process.env.HOME }, maxBuffer: 1024 * 1024 }); assert(!r.stdout.includes(f.token)); assert(!r.stderr.includes(f.token)); return JSON.parse(r.stdout); };
   try {
@@ -111,6 +113,9 @@ test('existing Personal Agent Python client still discovers, resumes, approves a
     await run('authorize', '--task-id', ready.id, '--input-file', approval); await f.wait(ready.id, 'completed');
     assert.equal((await run('get', '--task-id', ready.id)).status.state, 'TASK_STATE_COMPLETED');
     writeFileSync(input, 'changed goal'); await assert.rejects(run('send', '--text-file', input, '--request-id', 'one'));
+    assert(requests.some(request => request.method === 'GET' && !request.authenticated), 'Discovery uses the application identity');
+    assert(requests.some(request => request.method === 'POST' && request.authenticated), 'Protected requests use the application identity');
+    assert(requests.every(request => request.userAgent.startsWith('EIGOS-A2A-Client/')), 'Do not send the stock Python User-Agent to the public gateway');
   } finally { await f.close(); }
 });
 
