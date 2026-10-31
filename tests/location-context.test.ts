@@ -173,6 +173,58 @@ test('a confirmed full address remains the prepared search query and reaches the
   } finally { store.close(); f.close(); }
 });
 
+test('confirmed place names combined with their exact addresses remain concrete queries without widening the route', () => {
+  const f = didiFixture(), store = new JobStore(':memory:'), b = backend(createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector } }), didiModel(), store);
+  try {
+    const job = b.submit({ goal, locationContext: context }), request = readOntologyRequest(store.ontology, owner, job.id), program = new DidiAgentProgram(f.binding);
+    for (const separator of ['，', ',', ' ']) {
+      const origin = context.origin.name + separator + context.origin.address, destination = context.destination.name + separator + context.destination.address;
+      const prepared = program.initialize(store.ontology, owner, request, { mode: 'estimate', origin, destination }).input;
+      assert(prepared.mode === 'estimate'); assert.equal(prepared.origin, origin); assert.equal(prepared.destination, destination);
+    }
+    for (const destination of [context.destination.name + '，另一个地址99号', '另一个地点，' + context.destination.address,
+      context.destination.name + '，' + context.destination.address + '另一入口', '拳馆，' + context.destination.address]) {
+      assert.throws(() => program.initialize(store.ontology, owner, request, { mode: 'estimate', origin: '家', destination }), /PA-provided address context/);
+    }
+    assert.equal(f.calls.length, 0);
+  } finally { store.close(); f.close(); }
+});
+
+test('confirmed place names combined with addresses reach source matching and complete the same read-only task', async () => {
+  const f = didiFixture(), store = new JobStore(':memory:'), queries = {
+    origin: context.origin.name + '，' + context.origin.address, destination: context.destination.name + ',' + context.destination.address,
+  };
+  f.flags.ambiguous = true;
+  f.flags.transform = (body, request) => {
+    if (request.params?.name === 'maps_textsearch') {
+      const role = request.params.arguments.keywords === queries.origin ? 'origin' : request.params.arguments.keywords === queries.destination ? 'destination' : undefined;
+      if (role) body.result.content[0].text = JSON.stringify([sourcePlace('非目标地点', 1), sourcePlace(context[role].name, 2), sourcePlace(context[role].name, 3)]);
+    }
+    return body;
+  };
+  const model = didiModel((ctx, access) => {
+    const decision = chooseDidi(ctx, access);
+    return { ...decision, steps: decision.steps.map(step => {
+      if (step.action !== 'SearchDidiPlaces') return step;
+      const args = JSON.parse(step.argumentsJson), prepared = ctx.state.input as typeof queries;
+      return { ...step, argumentsJson: JSON.stringify({ ...args, keywords: prepared[args.role as keyof typeof queries] }) };
+    }) };
+  }, { mode: 'estimate', ...queries });
+  const b = backend(createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector } }), model, store);
+  try {
+    const exactRequirements = requirements.map(r => r.kind === 'location' ? { ...r, expected: { ref: queries[r.role as keyof typeof queries] } } : r);
+    let done = b.submit({ goal, locationContext: context, requirements: exactRequirements }); const id = done.id;
+    for (let i = 0; i < 10 && ['submitted', 'working'].includes(done.state); i++) done = await b.run();
+    assert.equal(done.state, 'completed', JSON.stringify({ error: done.error, feedback: done.delegation?.agent?.feedback }));
+    assert.equal(done.id, id); assert.equal(done.delegation!.acceptance!.accepted, true); assert.equal(done.delegation!.request.revision, 1);
+    assert.equal(done.messages.filter(m => m.role === 'user').length, 1);
+    assert.equal(done.delegation!.agent!.input.origin, queries.origin); assert.equal(done.delegation!.agent!.input.destination, queries.destination);
+    assert.deepEqual(f.calls.filter(c => c.method === 'tools/call').map(c => c.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+    assert(f.calls.some(c => c.name === 'maps_textsearch' && c.args?.keywords === queries.origin));
+    assert(f.calls.some(c => c.name === 'maps_textsearch' && c.args?.keywords === queries.destination));
+  } finally { store.close(); f.close(); }
+});
+
 test('MCP and A2A carry the same address context through the existing delegate interface', async t => {
   const f = didiFixture(), server = createServer(); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); assert(address && typeof address !== 'string');

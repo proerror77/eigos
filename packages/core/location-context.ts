@@ -84,7 +84,10 @@ export function locationMatchesSource(location: TaskLocation, city: string, plac
 export function locationAliases(location: TaskLocation, city: string): string[] {
   const groups = [['家', '家里', '我家', '我的家', '家中', 'home', 'my home'], ['这里', '我这里', '当前位置', '我现在的位置', '我当前的位置', 'current location']];
   const labels = location.label ? groups.find(group => group.some(value => normalize(value) === normalize(location.label!))) ?? [location.label] : [];
-  return [location.name, location.address, ...labels].filter((value): value is string => !!value)
+  // A query may spell out both confirmed fields. Only their exact combination
+  // is an alias; labels and additional address suffixes do not enter this set.
+  const combined = location.address ? [',', '，', ' '].map(separator => location.name + separator + location.address) : [];
+  return [location.name, location.address, ...labels, ...combined].filter((value): value is string => !!value)
     .flatMap(value => [normalize(value), normalize(city) + normalize(value), normalize(city).replace(/市$/, '') + normalize(value)]);
 }
 export function normalizedLocation(value: string): string { return normalize(value); }
