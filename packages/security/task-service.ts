@@ -149,8 +149,12 @@ export class TaskSecurity {
       if (!root) throw new SecurityError('AUTHORIZATION_REQUIRED');
       security.policies.requireRecipient(scope,root.envelope,'agent_response');
       base.outputStatus='available';
-      if(job.state==='paused' && job.delegation?.recovery?.code==='source_authorization_required') {
-        const renewed=job.delegation.recovery.state==='resolved';
+      const recovery=job.delegation?.recovery;
+      // Earlier Workers recorded only validation_stalled. Bind the reviewed
+      // handoff to this exact active successor grant, including those old tasks.
+      const events=job.delegation?.events??[],renewal=events.findLastIndex(event=>event.event==='original_pa_source_authorization_renewed' && event.evidence===grant.id);
+      const renewed=renewal>events.findLastIndex(event=>event.event==='technical_recovery_paused');
+      if(job.state==='paused' && (renewed || recovery?.code==='source_authorization_required')) {
         base.recovery={code:renewed?'SOURCE_AUTHORIZATION_RENEWED':'SOURCE_NOT_AUTHORIZED',message:renewed?SOURCE_AUTHORIZATION_RENEWED_MESSAGE:SOURCE_AUTHORIZATION_MESSAGE,
           nextAction:renewed?'resume_original_task':'review_source_authorization',reviewPath:'/members/permissions'};
       }

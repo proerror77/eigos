@@ -71,6 +71,9 @@ for(const replaceCeiling of [false,true])test(`member-reviewed source renewal ke
     assert.equal(f.source.calls.length,0);
     const resume=()=>({taskId:f.task.id,requestId:randomUUID(),expectedRevision:f.jobs.get(f.owner,f.task.id).revision!});
     assert.throws(()=>f.tasks.resume(f.principal(),resume()),/SOURCE_NOT_AUTHORIZED/);
+    if(replaceCeiling) {
+      const historical=f.jobs.get(f.owner,f.task.id);historical.delegation!.recovery!.code='validation_stalled';f.jobs.save(f.owner,historical);
+    }
     f.approveCurrentSource(replaceCeiling);
     assert.throws(()=>f.tasks.resume(f.principal(),resume()),/SOURCE_NOT_AUTHORIZED|AUTHORIZATION_REQUIRED/,'Source approval cannot silently replace the old task grant');
     const input=f.renewal(),before=f.jobs.get(f.owner,f.task.id),grant=f.manager.approveTaskGrant(f.member.id,input),renewed=f.jobs.get(f.owner,f.task.id);
@@ -141,5 +144,7 @@ test('permission review pins the current source and preserves the original task 
     assert(html.includes('由原助手恢复'));assert(html.includes('允许接收的服务结果'));assert(html.includes('地点资料'));
     const grant=f.manager.approveTaskGrant(f.member.id,review.input);assert(grant.outputs.some(o=>o.type==='Place'));
     assert.equal(f.jobs.get(f.owner,f.task.id).state,'paused');assert.equal(f.source.calls.length,0);
+    const failed=f.jobs.get(f.owner,f.task.id);scheduleTaskRecovery(failed,'source_authorization_required','Synthetic new denial',{automatic:false});f.jobs.save(f.owner,failed);
+    assert.equal(new TaskSecurity(f.jobs).get(f.principal(),f.task.id).recovery?.code,'SOURCE_NOT_AUTHORIZED','A later denial invalidates the old ready handoff');
   }finally{f.close();}
 });
