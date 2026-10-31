@@ -3668,7 +3668,7 @@
     {
       "id": "s5-integrations-grok-eigos-delegate-scripts-eigos-a2a",
       "file": "integrations/grok/eigos-delegate/scripts/eigos_a2a.py",
-      "sourceDigest": "b85f9c74301e4ca40c6368a3eb644c2b8eb2010b04ec8c85d84a3d8b93e0a09c",
+      "sourceDigest": "e69cfd5ef9def0c542511b024ef13e748cee28827fc844a3ee5eae0f4d07ad60",
       "channels": [
         "PA client"
       ],

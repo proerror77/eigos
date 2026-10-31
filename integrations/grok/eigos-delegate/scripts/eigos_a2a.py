@@ -91,7 +91,7 @@ class Client:
     def request(self, url, body=None, authenticated=False):
         if address(url, self.config.get('allowLoopbackHttp', False)) != self.origin:
             raise ClientError('Cross-origin endpoint refused; reconfigure explicitly before sharing credentials or task content')
-        headers = {'Accept': 'application/json'}
+        headers = {'Accept': 'application/json', 'User-Agent': 'EIGOS-A2A-Client/1.0'}
         if (body is not None or authenticated) and self.config.get('agentCredentialFile'):
             origin = urllib.parse.urlunsplit((*urllib.parse.urlsplit(url)[:2], '', '', ''))
             try:
