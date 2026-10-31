@@ -14,7 +14,8 @@ export function canResumeSource(job: Job, intents: Pick<ActionIntent, 'effect' |
     && intents.every(intent => ['read', 'local'].includes(intent.effect) || ['effect_confirmed', 'rejected', 'canceled_before_dispatch'].includes(intent.state));
 }
 
-export type RecoveryCode = 'worker_interrupted' | 'worker_timeout' | 'model_unavailable' | 'provider_read_unavailable' | 'reasoning_incomplete' | 'validation_stalled';
+export type RecoveryCode = 'worker_interrupted' | 'worker_timeout' | 'model_unavailable' | 'provider_read_unavailable' | 'reasoning_incomplete' | 'validation_stalled' | 'source_authorization_required';
+export const SOURCE_AUTHORIZATION_MESSAGE='来源授权与当前服务绑定不匹配。请在会员授权页更新来源并审阅原任务续接，再由原助手恢复此任务；无需重新提交目标。';
 export interface TaskRecovery {
   version: '1'; code: RecoveryCode; state: 'scheduled' | 'running' | 'blocked' | 'resolved';
   attempts: number; maxAttempts: number; fingerprint: string; lastFailureAt: string;

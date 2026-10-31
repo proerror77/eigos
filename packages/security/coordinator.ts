@@ -3,11 +3,12 @@ import { z } from 'zod';
 import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { MemberStore } from '../members/store.js';
 import { accessContextSchema, agentAccessGrantSchema, POLICY_VERSION, SECURITY_CONTRACT, securityDefaults, type AccessContext } from './contracts.js';
-import { SecurityError, SecurityStore, type Fence } from './store.js';
+import { SecurityError, SecurityStore, type Fence, type TaskDataGrant } from './store.js';
 import type { JobStore } from '../core/store.js';
 import type { ExecutionCatalog } from '../core/catalog.js';
 import { taskDataGrantSchema,grantRefSchema } from './contracts.js';
 import {TASK_PROJECTION_TYPES} from './policy-store.js';
+import {digest} from '../core/delegation.js';
 
 const grantFields = agentAccessGrantSchema.shape;
 const writeContention=(error:unknown)=>error instanceof Error && 'code' in error && error.code==='ERR_SQLITE_ERROR'
@@ -118,7 +119,12 @@ export class AuthorizationCoordinator {
       sources:installations.flatMap(a=>this.store.policies.sources(owner,a.id)),objects:this.store.policies.memberCandidates(owner,memberId),
       fields:types.map(type=>({type,name:this.store.model.object(type).name,fields:Object.entries(this.store.policies.fields(type)).filter(([field])=>this.store.policies.fieldPolicy(type,field)!=='internal_only').map(([field,def])=>({field,description:def.description,sensitive:this.store.policies.fieldPolicy(type,field)==='task_sensitive'}))})),
       operationDescriptions:Object.fromEntries([...new Set(profiles.flatMap(profile=>profile.operations))].map(id=>[id,id==='recover_original'?'查询已经提交操作的状态':this.store.model.action(id).description])),
-      tasks:permissionJobs.map(job=>({id:job.id,title:job.goal,state:job.state,requestRevision:job.delegation?.request.revision??0}))};
+      tasks:permissionJobs.map(job=>{
+        const authority=this.store.latestTaskAuthority(owner,job.id);
+        return {id:job.id,title:job.goal,state:job.state,requestRevision:job.delegation?.request.revision??0,
+          continuation:job.state==='paused' && authority?.authorityOrigin==='agent_submission'
+            ? {installationId:authority.installationId,grant:authority.dataGrant} : undefined};
+      })};
   }
   approveSource(memberId:string,input:unknown) {
     const args=z.strictObject({installationId:z.uuid(),bindingId:z.string().min(1),programId:z.string().min(1),operations:z.array(z.string()).min(1),outputTypes:z.array(z.string()).min(1),expiresAt:z.iso.datetime({offset:true}),expectedRevision:z.number().int().positive(),expectedAgentGrant:grantRefSchema}).parse(input);
@@ -143,7 +149,8 @@ export class AuthorizationCoordinator {
     if (!this.jobs || !this.token) throw new SecurityError('AUTHORITY_UNAVAILABLE');
     const fields=taskDataGrantSchema.shape;
     const args=z.strictObject({taskId:z.uuid(),installationId:z.uuid(),expectedRequestRevision:z.number().int().positive(),
-      replaces: z.strictObject({id:z.uuid(),revision:z.number().int().positive()}).optional(),expectedAgentGrant:grantRefSchema,takeover:z.boolean().default(false),
+      replaces: z.strictObject({id:z.uuid(),revision:z.number().int().positive()}).optional(),expectedAgentGrant:grantRefSchema,takeover:z.boolean().default(false),renewOriginal:z.boolean().default(false),
+      expectedSources:z.array(z.strictObject({programId:z.string().min(1),programDigest:z.string().regex(/^[a-f0-9]{64}$/),bindingId:z.string().min(1)})).max(100).optional(),
       inputs:fields.inputs,programIds:z.array(z.string().min(1)).max(100),purpose:fields.purpose,operations:fields.operations,channels:fields.channels,expiresAt:fields.expiresAt}).parse(input);
     const facts=this.members.authorizationFacts(memberId,args.installationId);
     if (!facts.active) throw new SecurityError('ACCESS_REVOKED');
@@ -151,16 +158,42 @@ export class AuthorizationCoordinator {
     return this.jobs.transaction(()=>{
       const job=this.jobs!.get(facts.ownerKey,args.taskId),request=job.delegation?.request;
       if (!request || request.revision!==args.expectedRequestRevision || this.jobs!.hasActiveClaim(job.id)) throw new DomainError('CONFLICT','Task is running or its request changed; review its current state');
-      const grants=this.store.listGrants(facts.ownerKey).filter(g=>g.kind==='task_data' && g.taskId===job.id && g.status==='active');
-      const current=grants.find(g=>g.installationId===args.installationId);
+      const allGrants=this.store.listGrants(facts.ownerKey).filter((g):g is TaskDataGrant=>g.kind==='task_data' && g.taskId===job.id);
+      const grants=allGrants.filter(g=>g.status==='active'),original=args.renewOriginal?this.store.latestTaskAuthority(facts.ownerKey,job.id):undefined;
+      const current=args.renewOriginal?allGrants.find(g=>g.id===original?.dataGrant.id):grants.find(g=>g.installationId===args.installationId);
       if (current && (current.id!==args.replaces?.id || current.revision!==args.replaces.revision) || !current && args.replaces) throw new DomainError('CONFLICT','Task grant changed; review the current grant');
       if (args.operations.includes('task.process')) {
-        if (!args.takeover) throw new DomainError('INVALID_INPUT','Continuing execution requires explicit takeover approval');
+        if (!args.takeover && !args.renewOriginal) throw new DomainError('INVALID_INPUT','Continuing execution requires explicit takeover or original-PA renewal approval');
         if (this.jobs!.intents(facts.ownerKey,job.id).some(i=>!['read','local'].includes(i.effect) && this.jobs!.attempts(facts.ownerKey,i.id).length)) throw new DomainError('CONFLICT','An existing business operation requires its original recovery path');
       }
       const parent=this.store.agentGrant(args.installationId),at=new Date(this.store.now()).toISOString(),sources=this.store.policies.sources(facts.ownerKey,args.installationId);
       if(parent.id!==args.expectedAgentGrant.id || parent.revision!==args.expectedAgentGrant.revision)throw new SecurityError('POLICY_CHANGED');
       if (!args.programIds.every(id=>sources.some(s=>s.programId===id))) throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+      if(args.renewOriginal) {
+        const equalSet=(a:string[],b:string[])=>digest([...a].sort())===digest([...b].sort());
+        const replacedWithParent=current?.status==='revoked' && current.parentGrant.id!==parent.id && current.parentGrant.id===original?.agentGrant.id
+          && current.revision===(original?.dataGrant.revision??0)+1
+          && this.store.listGrants(facts.ownerKey).some(g=>g.id===current.parentGrant.id && g.status==='revoked');
+        if(args.takeover || !original || original.authorityOrigin!=='agent_submission' || original.installationId!==args.installationId
+          || original.authEpoch!==this.store.requireSubject(args.installationId).epoch || original.requestRevision!==request.revision
+          || !current || current.kind!=='task_data' || current.installationId!==args.installationId
+          || current.status==='active' && (current.revision!==original.dataGrant.revision || current.parentGrant.id!==original.agentGrant.id)
+          || (current.status!=='active' && !replacedWithParent) || job.state!=='paused' || this.jobs!.intents(facts.ownerKey,job.id).length
+          || !args.operations.includes('task.process') || !equalSet(args.operations,current.operations) || !equalSet(args.channels,current.channels)
+          || digest(args.inputs)!==digest(current.inputs) || args.purpose!==current.purpose
+          || Date.parse(args.expiresAt)>Math.min(Date.parse(current.expiresAt),Date.parse(original.expiresAt))
+          || Date.parse(current.expiresAt)<=this.store.now() || Date.parse(original.expiresAt)<=this.store.now()
+          || !args.programIds.length || new Set(args.programIds).size!==args.programIds.length
+          || args.programIds.some(id=>!current.outputs.some(output=>output.programId===id)))
+          throw new DomainError('CONFLICT','Review an unexpired, undispatched paused task for its original PA; renewal cannot change its inputs, processing rights, channels or deadline');
+        const profiles=this.sourceProfiles(memberId).profiles;
+        if(args.expectedSources?.length!==args.programIds.length || args.programIds.some(id=>{
+          const expected=args.expectedSources!.filter(s=>s.programId===id),source=sources.find(s=>s.programId===id);
+          return expected.length!==1 || !source || expected[0]!.programDigest!==source.programDigest || expected[0]!.bindingId!==source.bindingId
+            || !profiles.some(p=>p.programId===id && p.bindingId===source.bindingId && p.programDigest===source.programDigest)
+            || Date.parse(args.expiresAt)>Date.parse(source.expiresAt);
+        }))throw new SecurityError('SOURCE_NOT_AUTHORIZED');
+      }
       const outputs=sources.filter(s=>args.programIds.includes(s.programId)).flatMap(s=>s.outputTypes.flatMap(type=>{
         const r=parent.resources.find(r=>r.type===type);return r?[{programId:s.programId,programDigest:s.programDigest,sourceBindingId:s.bindingId,type,fields:r.fields}]:[];
       }));
@@ -168,7 +201,12 @@ export class AuthorizationCoordinator {
       const grant=this.store.issueTaskGrant({version:SECURITY_CONTRACT,id:randomUUID(),revision:1,kind:'task_data',status:'active',
         ownerKey:facts.ownerKey,memberId,approvedByMemberId:memberId,installationId:args.installationId,parentGrant:{id:parent.id,revision:parent.revision},
         issuedAt:at,expiresAt:args.expiresAt,taskId:job.id,requestRevision:request.revision,inputs:args.inputs,outputs,purpose:args.purpose,operations:args.operations,channels:args.channels});
-      if (args.takeover) {
+      if(args.renewOriginal) {
+        this.store.attachTaskAuthority({...original!,id:randomUUID(),revision:1,agentGrant:grant.parentGrant,dataGrant:{id:grant.id,revision:grant.revision},issuedAt:at,expiresAt:grant.expiresAt});
+        job.updatedAt=at;job.revision=(job.revision??0)+1;
+        job.delegation!.events.push({at,event:'original_pa_source_authorization_renewed',evidence:grant.id});
+        this.jobs!.save(facts.ownerKey,job);
+      } else if (args.takeover) {
         this.jobs!.cancelActions(facts.ownerKey,job.id);
         if (job.delegation!.agent) job.delegation!.agentHistory=[...(job.delegation!.agentHistory??[]),job.delegation!.agent];
         delete job.delegation!.agent;delete job.delegation!.plan;delete job.question;delete job.artifact;

@@ -8,6 +8,7 @@ import { withAuthorization,authorizationScope } from './context.js';
 import {z} from 'zod';
 import {objectRefSchema,type ObjectRef} from '../ontology/model.js';
 import {projectionFields} from './projections.js';
+import {SOURCE_AUTHORIZATION_MESSAGE} from '../core/task-recovery.js';
 
 const evidenceMetadata=z.object({securityEvidenceRefs:z.array(objectRefSchema).max(20).optional()});
 const goalResult=z.object({version:z.literal('1'),goalDigest:z.string().regex(/^[a-f0-9]{64}$/),components:z.array(z.object({
@@ -45,6 +46,7 @@ export interface TaskView extends Pick<Job, 'id' | 'contextId' | 'service' | 'st
   outputStatus: 'available' | 'restricted' | 'receipt_only';
   attachments?: {id:string;name:string;mediaType:string;size:number}[];
   authorization?: NonNullable<Job['delegation']>['authorizationRequest'];
+  recovery?: {code:'SOURCE_NOT_AUTHORIZED';message:string;nextAction:'review_source_authorization';reviewPath:'/members/permissions'};
   payment?: {request:Pick<import('../core/pa-payment.js').PAPaymentRequest,'id'|'version'|'taskId'|'requestRevision'|'createdAt'|'terms'|'digest'>;status:import('../core/pa-payment.js').PAPaymentState['status'];selection?:import('../core/pa-payment.js').PAPaymentSelection};
 }
 
@@ -147,6 +149,8 @@ export class TaskSecurity {
       if (!root) throw new SecurityError('AUTHORIZATION_REQUIRED');
       security.policies.requireRecipient(scope,root.envelope,'agent_response');
       base.outputStatus='available';
+      if(job.state==='paused' && job.delegation?.recovery?.code==='source_authorization_required')
+        base.recovery={code:'SOURCE_NOT_AUTHORIZED',message:SOURCE_AUTHORIZATION_MESSAGE,nextAction:'review_source_authorization',reviewPath:'/members/permissions'};
       if (root.fields.includes('originalGoal')) base.goal=String(graph.read(actor.ownerKey,{type:'ServiceRequest',id:job.id}).properties.originalGoal ?? '');
       const allowed=(id:string,content:unknown)=>{
         const envelope=security.policies.output(actor.ownerKey,job.id,id,content);

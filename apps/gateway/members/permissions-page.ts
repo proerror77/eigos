@@ -142,12 +142,21 @@ export function preparePermissionReview(view:View,form:Record<string,unknown>,no
       .map(({object,objectRevision,fields})=>({object,objectRevision,fields}));
     if(inputs.flatMap(i=>i.fields).length!==selected.length)throw new Error('Selected object revision or field is no longer available');
     const programIds=values(form.programs);if(!programIds.every(id=>view.sources.some(s=>s.installationId===installationId && s.programId===id)))throw new Error('Approve the selected source first');
-    const current=view.grants.find(g=>g.kind==='task_data' && g.installationId===installationId && g.taskId===task.id && g.status==='active');
-    const takeover=form.takeover==='yes';
+    const takeover=form.takeover==='yes',renewOriginal=form.renewOriginal==='yes';
+    if(takeover && renewOriginal)throw new Error('Choose original-PA renewal or takeover, not both');
+    const current=view.grants.find(g=>g.kind==='task_data' && g.installationId===installationId && g.taskId===task.id
+      && (renewOriginal?g.id===task.continuation?.grant.id:g.status==='active'));
+    if(renewOriginal && (task.continuation?.installationId!==installationId || current?.kind!=='task_data'))throw new Error('Choose the original PA and its paused task');
     input={installationId,taskId:task.id,expectedRequestRevision:task.requestRevision,expectedAgentGrant:{id:parent.id,revision:parent.revision},...(current?{replaces:{id:current.id,revision:current.revision}}:{}),takeover,
       inputs,programIds,purpose:'delegated_task',operations:['task.query','task.result.read',...(takeover?['task.process']:[]),...(inputs.length?['member_asset.read']:[]),...(selectedChannels.includes('controlled_download')?['artifact.export']:[])],
       channels:selectedChannels,expiresAt:new Date(Math.min(Date.parse(expiresAt),Date.parse(parent.expiresAt))).toISOString()};
-    if(!selectedChannels.length)throw new Error('Choose a delivery channel');
+    if(renewOriginal && current?.kind==='task_data') {
+      const sources=programIds.map(id=>view.sources.find(s=>s.installationId===installationId && s.programId===id)!);
+      Object.assign(input,{renewOriginal:true,inputs:selected.length?inputs:current.inputs,operations:current.operations,channels:selectedChannels.length?selectedChannels:current.channels,
+        expiresAt:new Date(Math.min(Date.parse(String(input.expiresAt)),Date.parse(current.expiresAt),...sources.map(s=>Date.parse(s.expiresAt)))).toISOString(),
+        expectedSources:sources.map(s=>({programId:s.programId,programDigest:s.programDigest,bindingId:s.bindingId}))});
+    }
+    if(!selectedChannels.length && !renewOriginal)throw new Error('Choose a delivery channel');
   } else if(kind==='recovery') {
     const operation=view.recoveryCandidates.find(o=>o.intentId===form.intentId);
     const source=operation?view.sources.find(s=>s.installationId===installationId && s.programId===operation.programId && s.operations.includes('recover_original')):undefined;
@@ -182,7 +191,7 @@ export function permissionsPage(view:View,member:Member,csrf:string,notice?:stri
   const taskForm=view.tasks.length && active.length?form('task',install+`<label>任务<select name="taskId">${view.tasks.filter(t=>t.requestRevision>0).map(t=>`<option value="${escape(t.id)}">${escape(t.id.slice(0,8))} · ${escape(t.state)} · 版本 ${t.requestRevision}</option>`).join('')}</select></label>
     <fieldset><legend>选定的现有输入</legend><p class="fine">只显示本人拥有、已开放定义且可委托的当前对象。每个选择固定对象版本与字段。</p>${view.objects.map(o=>`<details><summary>${escape(o.title)} · ${escape(o.object.type)}</summary><small><code>${escape(o.object.id)}</code> · 版本 ${o.objectRevision}</small>${o.fields.map(field=>check('inputs',JSON.stringify([o.object,o.objectRevision,field]),escape(field))).join('')}</details>`).join('')||'<p>暂无可选择的现有对象。</p>'}</fieldset>
     <fieldset><legend>本任务可接收的来源输出</legend>${view.profiles.map(p=>check('programs',p.programId,escape(p.name))).join('')}</fieldset>
-    <fieldset><legend>处理和交付</legend>${channelChoices}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
+    <fieldset><legend>处理和交付</legend>${channelChoices}${check('renewOriginal','yes','更新原助手的来源授权，保留原任务、输入、处理权限、交付渠道和期限；授权后仍由原助手恢复。仅适用于尚未派发操作的暂停任务。')}${check('takeover','yes','允许这个助手继续处理任务；会撤销其他助手对此任务的授权。已发出的业务操作须先完成原操作查证。')}</fieldset>
     <label>有效期<select name="hours"><option value="1">1 小时</option><option value="8">8 小时</option><option value="24">24 小时</option></select></label>`):'<p class="muted">有了安装授权和任务后，可以在这里批准输入、来源和接管范围。</p>';
   const recovery=view.recoveryCandidates.length && view.sources.some(s=>s.operations.includes('recover_original'))?form('recovery',install+`<label>原操作<select name="intentId">${view.recoveryCandidates.map(o=>`<option value="${escape(o.intentId)}">${escape(o.action)} · ${escape(o.taskId.slice(0,8))}</option>`).join('')}</select></label><p>仅回读原操作；最多三次、一小时内有效。结果进入审计记录。</p>`):'<p class="muted">当前没有具备专用只读观察器的待查证操作。</p>';
   return memberLayout(`<style>
@@ -212,7 +221,7 @@ export function permissionReviewPage(review:PermissionReview,view:View,member:Me
     resources=parent?.kind==='agent_access'?parent.resources.filter(row=>outputTypes.includes(row.type)):[];
     selectedChannels=parent?.channels;
   }
-  if(review.kind==='task')rows.push({label:'任务',value:view.tasks.find(task=>task.id===input.taskId)?.title??'你选择的任务'},{label:'允许做什么',value:(input.operations as string[]).map(operation=>taskOperationNames[operation]).join('、')},{label:'任务处理方式',value:input.takeover?'允许继续处理，并收回本任务其他连接的旧授权':'仅允许访问列出的任务资料'});
+  if(review.kind==='task')rows.push({label:'任务',value:view.tasks.find(task=>task.id===input.taskId)?.title??'你选择的任务'},{label:'允许做什么',value:(input.operations as string[]).map(operation=>taskOperationNames[operation]).join('、')},{label:'任务处理方式',value:input.renewOriginal?'更新原助手的来源授权；保留原任务和限制，由原助手恢复':input.takeover?'允许继续处理，并收回本任务其他连接的旧授权':'仅允许访问列出的任务资料'});
   if(review.kind==='recovery') {
     const operation=view.recoveryCandidates.find(o=>o.intentId===input.intentId);
     rows.push({label:'原任务',value:view.tasks.find(task=>task.id===operation?.taskId)?.title??'原来提交的任务'},{label:'原操作',value:operation?operationName(view,operation.action):'原来提交的操作'},{label:'范围',value:'只查询原操作状态，最多三次、一小时内有效；不会发起新操作。'});

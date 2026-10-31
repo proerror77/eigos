@@ -17,6 +17,27 @@ import {taskContextFields} from '../packages/security/task-context-contract.js';
 import {securedDidiReasoner,runNativeDidiTask} from './fixtures/secured-didi.js';
 import {Coordinator} from '../packages/coordinator/coordinator.js';
 import {didiBusinessViewSchema} from '../packages/security/projections.js';
+import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
+
+test('HTTP, MCP and A2A expose the same bounded source-authorization recovery',async()=>{
+  const f=await securityGatewayFixture(),a=f.install(),client=new Client({name:'source-recovery',version:'1'});
+  try {
+    assert.equal((await f.post('/members/security/grants',f.control(f.grantInput(a.id)),f.memberHeaders)).status,200);f.qualify(a.id);
+    const headers={authorization:`Bearer ${a.token}`};
+    await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers}}));
+    const created=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic original read-only task'},headers);
+    assert.equal(created.status,200);const id=String(created.value.id),owner=ownerKey(f.p),raw=f.gateway.store.get(owner,id);
+    scheduleTaskRecovery(raw,'source_authorization_required','PRIVATE_ERROR_MUST_NOT_LEAK',{automatic:false,operation:'SOURCE_NOT_AUTHORIZED'});f.gateway.store.save(owner,raw);
+    const http=await fetch(f.base+'/tasks/'+id,{headers}).then(r=>r.json());
+    const mcp=await client.callTool({name:'get_task',arguments:{taskId:id}});assert(!mcp.isError);
+    const rpc=await f.post('/a2a',{jsonrpc:'2.0',id:randomUUID(),method:'GetTask',params:{id}},headers);
+    assert.equal(rpc.status,200);
+    assert.deepEqual((mcp.structuredContent as {result:{recovery:unknown}}).result.recovery,http.recovery);
+    assert.deepEqual(rpc.value.result.metadata.recovery,http.recovery);
+    assert.equal(http.recovery.code,'SOURCE_NOT_AUTHORIZED');assert.equal(http.recovery.reviewPath,'/members/permissions');
+    for(const result of [http,mcp,rpc.value])assert(!JSON.stringify(result).includes('PRIVATE_ERROR_MUST_NOT_LEAK'));
+  }finally{await client.close();await f.close();}
+});
 
 test('HTTP, MCP and A2A return the same sealed native goal observations for the original task',{timeout:300000},async t=>{
   // Field/authority semantics use a controlled clock. CI CPU scheduling must

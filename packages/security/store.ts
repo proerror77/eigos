@@ -229,6 +229,11 @@ export class SecurityStore {
     return agentAccessGrantSchema.parse(grant(row));
   }
   listGrants(owner: string): (AgentAccessGrant | TaskDataGrant)[] { return this.db.prepare('SELECT * FROM security_grants WHERE owner=? ORDER BY rowid').all(owner).map(r => r.kind === 'agent_access' ? agentAccessGrantSchema.parse(grant(r)) : taskDataGrantSchema.parse(grant(r))); }
+  /** History for an explicit member review, never evidence of current authority. */
+  latestTaskAuthority(owner: string, taskId: string): TaskAuthority | undefined {
+    const row=this.db.prepare('SELECT body FROM security_task_authorities WHERE owner=? AND task_id=? ORDER BY rowid DESC LIMIT 1').get(owner,taskId);
+    return row ? taskExecutionAuthoritySchema.parse(JSON.parse(String(row.body))) : undefined;
+  }
   issueAgentGrant(input: unknown): AgentAccessGrant {
     const g = agentAccessGrantSchema.parse(input);
     return this.atomic(() => {
