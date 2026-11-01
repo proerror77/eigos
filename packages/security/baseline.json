@@ -5087,7 +5087,7 @@
       "currentControl": "Current authorized Ontology receipts before model invocation; exact selected read graph and goal contract; no effect authority",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S3",
-      "sourceDigest": "aefc6380c9c1d813aaf177eca59a28d4a7cfcbe4e654f7ffb47323796f578953"
+      "sourceDigest": "0db9c09d59458cd0c7f3ca24a367881d6e1b6aa11aed2b80086f4912612c1572"
     },
     {
       "id": "single-read-kernel",
