@@ -131,3 +131,20 @@ export async function postgresTaskReadOntology(client: Client, principal: Princi
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,() =>
     postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder));
 }
+
+/** Construct an edge reader only after its trusted kernel has finished loading.
+ * An evicted object must rebuild its kernel before creating a new reader;
+ * passing an absent builder must never silently select the synchronous path. */
+export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
+  stagedKernelComponents(builder);
+  return Object.freeze({
+    ontology: (client: Client, principal: Principal, taskId: string, policyDigest: string) =>
+      postgresTaskReadOntology(client,principal,taskId,policyDigest,builder),
+    resourceViewAllowed: (client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string) =>
+      postgresTaskResourceViewAllowed(client,principal,taskId,policyDigest,kind,id,builder),
+    fieldClassification: (client: Client, principal: Principal, taskId: string, policyDigest: string, type: string, field: string) =>
+      postgresTaskFieldClassification(client,principal,taskId,policyDigest,type,field,builder),
+    clearance: (client: Client, principal: Principal, taskId: string, policyDigest: string) =>
+      postgresTaskReadClearance(client,principal,taskId,policyDigest),
+  });
+}

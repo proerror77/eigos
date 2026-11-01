@@ -7,7 +7,7 @@ import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
+import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 
@@ -36,8 +36,11 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
     }
     const staged=new StagedKernelBuilder();
+    assert.throws(()=>createStagedPostgresTaskReader(undefined as unknown as StagedKernelBuilder),/Invalid staged kernel builder/);
+    assert.throws(()=>createStagedPostgresTaskReader(staged),/not ready/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged)),/not ready/);
     for(let stage=0;stage<StagedKernelBuilder.stages;stage++)staged.step(stage);
+    const stagedReader=createStagedPostgresTaskReader(staged);
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
@@ -57,11 +60,11 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const original=f.jobs.security.scope(f.jobs.security.agentContext(principal),task.job.id,'task.result.read').grant!;
     const read=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadGrant(c,principal,task.job.id,policy));
     assert.equal((await read()).grant.id,original.id);
-    const model=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged));
+    const model=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.ontology(c,principal,task.job.id,policy));
     assert.deepEqual(model.ref,task.job.delegation!.ontologyRelease);
     for(const [type,field] of [['ServiceRequest','originalGoal'],['ServiceRequest','requestId'],['ServiceRequest','progress'],['ServiceRequest','unreviewed'],['NonexistentType','field']] as const) {
       const expected=f.jobs.security.policies.fieldPolicy(type,field);
-      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskFieldClassification(c,principal,task.job.id,policy,type,field,staged));
+      const actual=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.fieldClassification(c,principal,task.job.id,policy,type,field));
       assert.equal(actual,expected);
     }
     const envelope={version:SECURITY_CONTRACT,ownerKey:f.owner,policyVersion:POLICY_VERSION,requiredMarkings:['member_private'] as const,classification:'private' as const,channels:['agent_response'] as const,lineage:[],lineageComplete:true};
@@ -69,6 +72,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     f.jobs.security.policies.requireRecipient(sqliteScope,{...envelope,requiredMarkings:[...envelope.requiredMarkings],channels:[...envelope.channels]},'agent_response');
     const clearance=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadClearance(c,principal,task.job.id,policy));
     assert.deepEqual(await clearance(),recipient);
+    assert.deepEqual(await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.clearance(c,principal,task.job.id,policy)),recipient);
     const recipientBody=String(sqlite.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installation.id)!.body);
     const expiredRecipient={...recipient,expiresAt:'2000-01-01T00:00:00.000Z'};
     sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(JSON.stringify(expiredRecipient),installation.id);
@@ -87,7 +91,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientBody,installation.id]);
     for(const type of ['ServiceRequest','Place','NonexistentType']) {
       const expected=f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType',type);
-      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType',type,staged));
+      const actual=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.resourceViewAllowed(c,principal,task.job.id,policy,'objectType',type));
       assert.equal(actual,expected);
     }
     assert.equal(f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType','ServiceRequest'),true);
@@ -131,6 +135,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     sqlite.prepare('UPDATE security_subjects SET epoch=epoch-1 WHERE installation_id=?').run(installation.id);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch+1 WHERE installation_id=$1`,[installation.id]);
     await assert.rejects(read(),/POLICY_CHANGED/);
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.ontology(c,principal,task.job.id,policy)),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);

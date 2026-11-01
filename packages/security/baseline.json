@@ -5676,10 +5676,10 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "d188b8036ae2b899dd666ebfa7da8c6225fa7e6e6fae8c1dd6e25c886baad648",
+      "sourceDigest": "f394d45596e210fb14e9d07d3b572c406932d8e5815974a79e2ceb98660fe8d0",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
-      "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
+      "currentControl": "Fenced transaction and explicit authority checks; staged reader requires a completed trusted kernel; no field-output authorization",
+      "targetControl": "Fenced transaction and explicit authority checks; staged reader requires a completed trusted kernel; no field-output authorization"
     },
     {
       "id": "resource-role-policy",
