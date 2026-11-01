@@ -13,6 +13,23 @@ import {secureRequest} from '../packages/security/model.js';
 const receipt=():PlanningReadReceipt=>({id:randomUUID(),at:new Date().toISOString(),tool:'read_task_context',
   inputDigest:'a'.repeat(64),outputDigest:'b'.repeat(64),datasetRevision:1,status:'ok',objects:[]});
 
+for(const boundary of ['service','ontologyReads'] as const)
+test(`a receipt retains JSON.parse last-value semantics for duplicate ${boundary} keys`,()=>{
+ const f=securityFixture(),install=f.installation('Legacy receipt keys');f.approve(install.id);
+ const task=f.task(install.id),claim=f.jobs.claim(['eigos.delegate'],30000)!,db=Reflect.get(f.jobs,'db') as DatabaseSync;
+ const raw=String(db.prepare('SELECT body FROM jobs WHERE id=?').get(task.job.id)!.body);
+ const changed=boundary==='service'?raw.replace('"service":"eigos.delegate"','"service":"wrong","service":"eigos.delegate"')
+  :raw.replace('"delegation":{','"delegation":{"ontologyReads":[],"ontologyReads":'+JSON.stringify([receipt()])+',');
+ assert.notEqual(changed,raw);db.prepare('UPDATE jobs SET body=? WHERE id=?').run(changed,task.job.id);
+ const scope=f.jobs.security.workerScope(f.owner,task.job.id,claim.securityAuthorityId!,claim.token);
+ try{
+  const before=f.jobs.get(f.owner,task.job.id),item=receipt();
+  assert(withAuthorization(scope,()=>f.jobs.recordPlanningRead(claim,item)));
+  const after=f.jobs.get(f.owner,task.job.id);assert.deepEqual(after.delegation!.ontologyReads,[...(before.delegation!.ontologyReads??[]),item]);
+  before.delegation!.ontologyReads=after.delegation!.ontologyReads;assert.deepEqual(after,before);
+ }finally{f.close();}
+});
+
 test('a receipt synchronizes an external heartbeat before acquiring its write fence',t=>{
  const f=securityFixture(),install=f.installation('External receipt heartbeat');f.approve(install.id);
  const task=f.task(install.id),claim=f.jobs.claim(['eigos.delegate'],30000)!,policy=f.jobs.security.policies;
@@ -48,11 +65,11 @@ test(`a receipt cannot synchronize past a changed ${boundary} proof`,t=>{
   return transaction(action);
  }));
  try{
-  withAuthorization(scope,()=>policy.readSnapshot(()=>{
+  withAuthorization(scope,()=>policy.readSnapshot(()=>withAuthorization({...authorizationScope()!},()=>{
    const request=secureRequest(f.jobs.ontologyForJob(f.owner,task.job),f.owner,task.job.delegation!.request);
    assert.equal(request.originalGoal,task.job.goal);assert(scope.lineage.size>0);
    assert.throws(()=>f.jobs.recordPlanningRead(claim,receipt()),/OUTPUT_NOT_ALLOWED|POLICY_CHANGED/);
-  }));
+  })));
   assert(changed);assert.equal(f.jobs.get(f.owner,task.job.id).delegation!.ontologyReads?.length??0,0);
  }finally{external.close();f.close();}
 });
@@ -127,7 +144,7 @@ test('a planning receipt rolls back when its lease expires during the write',t=>
  const db=Reflect.get(f.jobs,'db') as DatabaseSync,prepare=db.prepare.bind(db);let expired=false;
  t.mock.method(db,'prepare',(sql:string)=>{
   const statement=prepare(sql);
-  if(sql.startsWith('UPDATE jobs SET state=?,updated_at=?,body=?')){
+  if(sql.startsWith('UPDATE jobs SET state=?,updated_at=?,body=')){
    const run=statement.run.bind(statement);
    t.mock.method(statement,'run',(...args:Parameters<typeof run>)=>{const result=run(...args);clock+=30001;expired=true;return result;});
   }

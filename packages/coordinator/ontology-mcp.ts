@@ -90,7 +90,13 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     const span = trace.start('server_tool', name); let failed = false;
     let stage:'authority'|'tool'|'model_output'='authority';
     try {
-      active(); const result = authorized(() => { authority?.assertCurrent(); stage='tool'; const value = action(); stage='model_output'; session.authorizeModel(modelChannelId); return value; });
+      active(); const result = authorized(() => {
+        const read = () => { authority?.assertCurrent(); stage='tool'; const value = action(); stage='model_output'; session.authorizeModel(modelChannelId); return value; };
+        // The read, its receipt and its final egress check are synchronous.
+        // Share proofs only inside this RPC; writes/time changes still invalidate
+        // them, and the next request always starts a fresh snapshot.
+        return session.graph.security ? session.graph.security.readSnapshot(read) : read();
+      });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
     } catch (error) {
       failed = true;

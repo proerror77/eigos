@@ -936,14 +936,30 @@ export class JobStore {
       }
       const generation = scope?.readGeneration?.();
       return this.withClaimMutation(claim, () => {
-        const job = this.get(claim.owner, claim.job.id);
-        if (job.id !== claim.job.id || job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION
-          || this.authority && job.authorityId !== undefined && job.authorityId !== this.authority.id) {
+        const row = this.ownedTaskRow(claim.owner,claim.job.id,`body_type,valid,
+          json_extract(parsed,'$.id','$.service','$.authorityId','$.delegation.backendVersion','$.state','$.updatedAt') AS metadata,
+          json_type(parsed,'$.authorityId') AS authority_type,json_type(parsed,'$.delegation.ontologyReads') AS reads_type,
+          (SELECT count(*)>count(DISTINCT key) FROM json_each(parsed) WHERE key IN ('id','service','authorityId','state','updatedAt','delegation'))
+          OR CASE WHEN json_type(parsed,'$.delegation')='object' THEN (SELECT count(*)>count(DISTINCT key) FROM json_each(jsonb_extract(parsed,'$.delegation')) WHERE key IN ('backendVersion','ontologyReads')) ELSE 0 END AS ambiguous`,true);
+        if(row.body_type!=='text'||row.valid!==1)throw new SyntaxError('Stored task JSON is invalid');
+        const legacy = !!row.ambiguous || row.reads_type!==null && !['array','null'].includes(String(row.reads_type));
+        const job = legacy ? this.get(claim.owner,claim.job.id) : undefined;
+        const [id,service,authorityId,backend,state,updatedAt]=JSON.parse(String(row.metadata)) as unknown[];
+        if ((job?job.id:id) !== claim.job.id || (job?job.service:service) !== 'eigos.delegate' || (job?job.delegation?.backendVersion:backend) !== BACKEND_VERSION
+          || this.authority && (job?job.authorityId!==undefined:row.authority_type!==null) && (job?job.authorityId:authorityId)!==this.authority.id) {
           throw new DomainError('CONFLICT', 'Planning receipt does not belong to this delegated task');
         }
-        job.delegation.ontologyReads = [...(job.delegation.ontologyReads ?? []), structuredClone(receipt)];
-        const written = this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
-          .run(job.state, job.updatedAt, JSON.stringify(job), claim.owner, claim.job.id);
+        const item=structuredClone(receipt);
+        // Append in SQLite instead of parsing/stringifying a complete model
+        // history in JS. Noncanonical legacy keys keep JSON.parse's last value.
+        let written;
+        if(job){
+          job.delegation!.ontologyReads=[...(job.delegation!.ontologyReads??[]),item];
+          written=this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?').run(job.state,job.updatedAt,JSON.stringify(job),claim.owner,claim.job.id);
+        }else{
+          const append=row.reads_type==='array'?"json_insert(body,'$.delegation.ontologyReads[#]',json(?))":"json_set(body,'$.delegation.ontologyReads',json_array(json(?)))";
+          written=this.db.prepare(`UPDATE jobs SET state=?,updated_at=?,body=${append} WHERE owner=? AND id=?`).run(state as string,updatedAt as string,JSON.stringify(item),claim.owner,claim.job.id);
+        }
         if (written.changes !== 1) throw lostClaimFence;
         if (this.security.enabled) this.security.policies.accountForPlanningRead();
         if (!this.mutationCurrent(claim)) throw lostClaimFence;

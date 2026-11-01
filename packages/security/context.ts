@@ -23,6 +23,8 @@ export interface AuthorizationScope {
   readBindings?: Map<string,unknown>;
   readTaskMembers?: Map<string,Map<string,ObjectRef>>;
   readLineageDigests?: Map<string,string>;
+  /** Pure union of the server's digest-keyed lineage, only within this read. */
+  readCombinedEnvelope?: { generation: number | undefined; keys: string[]; envelope: SecurityEnvelope };
   /** Changes whenever a synchronous read's cached proofs are invalidated. */
   readGeneration?: () => number;
   /** An external commit invalidated the memo, without local writes or time invalidation. */

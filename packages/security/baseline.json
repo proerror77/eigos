@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "8b92416e92015ceb1e1d8b1cd2741c06f83c40cb8b2bc53eb439e2b4a750beb2",
+      "sourceDigest": "a82bbbe6c978d3dd7b07a8c0702f6bf239e12935ae42761c658e29fea4fbf60b",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3426,7 +3426,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "4efc6606189071d7168b08328c7a36fa23bb72b3547d351f0fb8f2b203db222e",
+      "sourceDigest": "ff6a9beb8064ffbbff49f22b0a2574e42e3c7df288093cd735120f41ccb3be3b",
       "channels": [
         "internal"
       ],
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "487139d356326421c7aa7dbcaa85bce94109e666f3e2a8aec9995382bc945c20",
+      "sourceDigest": "4b0ba5268128652d8d4c7fa53c01dc9bf9b0c1582ec890caca5ac4cadedf9551",
       "channels": [
         "all-reads"
       ],
@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "61045df17f66301315a3b309ebd5868413c362b817dd46276cc1e7080111c2ed",
+      "sourceDigest": "900ba08c6debca32f59e7f8a41a1179fbe8d3df7291e076dfff240093852c964",
       "channels": [
         "model"
       ],
