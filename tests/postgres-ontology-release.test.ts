@@ -28,8 +28,26 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
       for (const row of sqlite.prepare(`SELECT * FROM "${table}"`).all()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${columns.map((_,i) => `$${i+1}`).join(',')})`,columns.map(c => row[c.name]));
     }
     await client.query(`CREATE TABLE "${schema}".jobs(id TEXT PRIMARY KEY,owner TEXT,body TEXT)`);
+    await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
     const body = { id:task,authorityId:authority.id,delegation:{backendVersion:BACKEND_VERSION,ontologyRelease:legacy.ref} };
     await client.query(`INSERT INTO "${schema}".jobs VALUES($1,$2,$3)`,[task,owner,JSON.stringify(body)]);
+    let taskQueryBytes = 0;
+    const observed = new Proxy(client, { get(target, property) {
+      if (property === 'query') return async (sql: string, values?: unknown[]) => {
+        const result = await target.query(sql, values);
+        if (sql.includes('.jobs j JOIN')) taskQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
+        return result;
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify({...body,padding:'x'.repeat(16 * 1024 * 1024)})]);
+    assert.deepEqual((await postgresBusinessTransaction(observed,schema,authority,c => postgresTaskOntologyRelease(c,owner,task))).ref,legacy.ref);
+    assert(taskQueryBytes < 4096, `task lookup returned ${taskQueryBytes} bytes`);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify({...body,delegation:{...body.delegation,ontologyRelease:{...legacy.ref,extra:'x'.repeat(16 * 1024 * 1024)}}})]);
+    await assert.rejects(postgresBusinessTransaction(observed,schema,authority,c => postgresTaskOntologyRelease(c,owner,task)),/Stored ontology reference is invalid/);
+    assert(taskQueryBytes < 4096, `invalid task lookup returned ${taskQueryBytes} bytes`);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(body)]);
     const taskRelease = () => postgresBusinessTransaction(client,schema,authority,c => postgresTaskOntologyRelease(c,owner,task));
     const first = await taskRelease();
     assert.deepEqual(first.ref,legacy.ref); assert.deepEqual(first.model.ref,legacy.model.ref);

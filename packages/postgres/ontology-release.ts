@@ -52,19 +52,29 @@ export async function postgresOntologyRelease(client: Client, input: OntologyRel
 export async function postgresTaskOntologyRelease(client: Client, owner: string, taskId: string) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   if (!owner || !taskId) return conflict('Invalid task identity');
-  const result = await client.query(`SELECT j.body,a.id AS authority_id FROM ${q}.jobs j JOIN ${q}.runtime_authority a ON a.slot=1 WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
+  const result = await client.query(`SELECT a.id AS authority_id,
+    CASE WHEN jsonb_typeof(body.value->'authorityId')='string' AND octet_length(body.value->>'authorityId') <= 256 THEN body.value->>'authorityId' END AS task_authority,
+    CASE WHEN jsonb_typeof(body.value#>'{delegation,backendVersion}')='string' AND octet_length(body.value#>>'{delegation,backendVersion}') <= 256 THEN body.value#>>'{delegation,backendVersion}' END AS backend_version,
+    CASE WHEN body.value#>'{delegation,ontologyRelease}' IS NULL OR body.value#>'{delegation,ontologyRelease}' = 'null'::jsonb THEN 'absent'
+         WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN 'present' ELSE 'invalid' END AS ref_state,
+    CASE WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text) <= 1024 THEN (body.value#>'{delegation,ontologyRelease}')::text END AS ref
+    FROM ${q}.jobs j JOIN ${q}.runtime_authority a ON a.slot=1
+    CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body
+    WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
   if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');
-  let job: { authorityId?: unknown; delegation?: { backendVersion?: unknown; ontologyRelease?: unknown } };
-  try { job = JSON.parse(String(result.rows[0].body)); }
-  catch { return conflict('Stored task is invalid'); }
-  if (!job || job.delegation?.backendVersion !== BACKEND_VERSION) return conflict('Historical backend tasks have no current executable ontology context');
-  if (job.authorityId !== result.rows[0].authority_id) return conflict('Historical runtime authority tasks are read-only');
-  let ref = job.delegation.ontologyRelease;
-  if (ref === undefined || ref === null) {
-    const bootstrap = await client.query(`SELECT legacy_ref FROM ${q}.ontology_definition_bootstrap WHERE id=1`);
+  const row = result.rows[0];
+  if (row.backend_version !== BACKEND_VERSION) return conflict('Historical backend tasks have no current executable ontology context');
+  if (row.task_authority !== row.authority_id) return conflict('Historical runtime authority tasks are read-only');
+  let ref: unknown;
+  if (row.ref_state === 'absent') {
+    const bootstrap = await client.query(`SELECT CASE WHEN octet_length(legacy_ref) <= 1024 THEN legacy_ref END AS legacy_ref FROM ${q}.ontology_definition_bootstrap WHERE id=1`);
     if (bootstrap.rowCount !== 1) return conflict('Ontology definitions have not been initialized');
     try { ref = JSON.parse(String(bootstrap.rows[0].legacy_ref)); }
     catch { return conflict('Stored legacy ontology reference is invalid'); }
+  } else {
+    if (row.ref_state !== 'present') return conflict('Stored ontology reference is invalid');
+    try { ref = JSON.parse(String(row.ref)); }
+    catch { return conflict('Stored ontology reference is invalid'); }
   }
   return postgresOntologyRelease(client, ontologyReleaseRefSchema.parse(ref));
 }
