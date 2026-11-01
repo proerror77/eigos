@@ -10,6 +10,8 @@ import type { VerifyToken } from '../auth.js';
 import type { AuthorizationCoordinator } from '../../../packages/security/coordinator.js';
 import { SecurityError } from '../../../packages/security/store.js';
 import type { RuntimeIngress } from '../../../packages/core/runtime-authority.js';
+import { MESSAGING_SCOPES } from '../../../packages/agent-messaging/contracts.js';
+import type { AgentMessagingService } from '../../../packages/agent-messaging/service.js';
 
 export const REGISTRATION_HEADER = 'X-EIGOS-Registration-Token';
 export const enrollmentClaim = (resource: string) => `${resource.replace(/\/$/, '')}/claims/agent_enrollment`;
@@ -19,6 +21,7 @@ export function agentOnboardingMetadata(c: Config) {
     scopes: ['openid', 'offline_access', MEMBERSHIP_SCOPE, ...TASK_SCOPES, ...(c.EIGOS_MEMBER_SOURCE_KEY_FILE ? SOURCE_SCOPES : [])],
     membership_url: `${c.PUBLIC_URL}/members`, admission_policy: c.EIGOS_MEMBERSHIP_APPROVAL,
     connection_guide: `${c.PUBLIC_URL}/connect/agent.json`, skill_url: `${c.PUBLIC_URL}/connect/SKILL.md`,
+    ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? { messaging: { scopes: MESSAGING_SCOPES, permissions_url: `${c.PUBLIC_URL}/members/communications`, schema: 'eigos.agent-communication/1' } } : {}),
     authorization_grant: 'urn:ietf:params:oauth:grant-type:device_code', credential_header: REGISTRATION_HEADER,
     registration_credential: { generation: '32 cryptographically random bytes, unpadded base64url', length: 43, purpose: 'Registration status and binding only; not a business access token' },
     registration_request: { method: 'POST', content_type: 'application/json', schema: {
@@ -33,7 +36,7 @@ export function agentOnboardingMetadata(c: Config) {
 }
 
 export function mountAgentRoutes(app: Express, base: Config, members: MemberStore, defaultVerify: VerifyToken, security?: AuthorizationCoordinator,
-  ingress?: (request: Request) => { config: Config; verify: VerifyToken; route: RuntimeIngress }): void {
+  ingress?: (request: Request) => { config: Config; verify: VerifyToken; route: RuntimeIngress }, messaging?: AgentMessagingService): void {
   app.get('/.well-known/eigos-agent-registration', (req, res) => {
     const c = ingress?.(req).config ?? base;
     if (!c.OIDC_AGENT_CLIENT_ID || c.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'agent_onboarding_not_configured' }); return; }
@@ -47,8 +50,9 @@ export function mountAgentRoutes(app: Express, base: Config, members: MemberStor
     }
     const registration = `${c.PUBLIC_URL}/agents/registrations/${value.id}`;
     return { registrationId: value.id, displayName: value.displayName, status,
+      ...(messaging ? { messaging: messaging.readiness(value.id) } : {}),
       nextAction: ({ authorization_required: 'authorize_user', registration_required: 'submit_membership', waiting_invitation: 'wait_for_invitation', pending_approval: 'wait_for_approval', active: 'call_services', foundation_ready: 'inspect_authorization', data_authorization_required: 'request_member_grant', registration_expired: 'start_new_registration' } as Record<string, string>)[status] ?? 'contact_member',
-      pollAfterSeconds: 5, links: { status: registration, bind: `${registration}/token`, application: `${registration}/application`, invitation: `${registration}/invitation`, revoke: `${registration}/revoke`, membership: `${c.PUBLIC_URL}/members`, ...(security ? { permissions: `${base.PUBLIC_URL}/members/permissions` } : {}), mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
+      pollAfterSeconds: 5, links: { status: registration, bind: `${registration}/token`, application: `${registration}/application`, invitation: `${registration}/invitation`, revoke: `${registration}/revoke`, membership: `${c.PUBLIC_URL}/members`, ...(security ? { permissions: `${base.PUBLIC_URL}/members/permissions` } : {}), ...(messaging ? { communications: `${base.PUBLIC_URL}/members/communications` } : {}), mcp: `${c.PUBLIC_URL}/mcp`, a2a: `${c.PUBLIC_URL}/a2a` } };
   };
   app.all(['/agents/registrations', '/agents/registrations/:id', '/agents/registrations/:id/:action'], async (req, res, next) => {
     const entry = ingress?.(req), c = entry?.config ?? base, verify = entry?.verify ?? defaultVerify;

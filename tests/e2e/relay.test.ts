@@ -58,7 +58,10 @@ test('independent Relay process persists offline ciphertext; synthetic PA coordi
     relay = await start(); b = await RelayClient.open(optionsB);
     const received = await b.poll(); assert.equal(received.length, 1); assert.equal(received[0]!.id, sent.id);
     b.close(); b = await RelayClient.open(optionsB); assert.equal((await b.pending())[0]!.id, sent.id);
-    b.markHandled(senderId, sent.id); assert.deepEqual(await b.poll(), []); b.close(); b = undefined;
+    b.retainInboxMessage(senderId, sent.id); assert.deepEqual(await b.poll(), []);
+    b.close(); b = await RelayClient.open(optionsB);
+    assert.equal((await b.readRetainedMessage(senderId, sent.id)).id, sent.id);
+    b.close(); b = undefined;
     runExample();
     const data = Buffer.concat(readdirSync(directory).filter(name => name.startsWith('relay.sqlite')).map(name => readFileSync(join(directory, name))));
     for (const secret of [token, 'offline-fixture-never-in-relay-plaintext']) { assert(!data.includes(Buffer.from(secret))); assert(!(before + relay.output()).includes(secret)); }

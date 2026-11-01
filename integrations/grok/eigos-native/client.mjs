@@ -11,9 +11,12 @@ import { RelayClient } from '../../../dist/packages/agent-transport/client.js';
 import { taskRelayMetadataSchema, taskRelayProfileSchema } from '../../../dist/packages/agent-transport/task-contracts.js';
 import { z } from 'zod';
 import { prepareA2ATaskRequest, AgentTaskInputError } from '../../../dist/packages/agent-client/task-input.js';
+import { prepareA2ACommunicationRequest, AgentCommunicationInputError } from '../../../dist/packages/agent-client/communication-input.js';
+import { COMMUNICATION_SCHEMA } from '../../../dist/packages/agent-messaging/contracts.js';
 
 const { values, positionals } = parseArgs({ allowPositionals: true, options: {
   profile: { type: 'string' }, input: { type: 'string' }, output: { type: 'string' },
+  purpose: { type: 'string' },
 } });
 const command = positionals[0];
 let pendingRelayReceipt;
@@ -27,13 +30,14 @@ const emit = value => {
   process.stdout.write(text);
 };
 try {
-  if (!values.profile || !['discover', 'login', 'status', 'a2a', 'relay', 'relay-enroll', 'relay-renew', 'relay-bind'].includes(command) || positionals.length !== 1) throw new Error('invalid_arguments');
+  if (!values.profile || !['discover', 'login', 'status', 'a2a', 'communication', 'relay', 'relay-enroll', 'relay-renew', 'relay-bind'].includes(command) || positionals.length !== 1
+    || values.purpose && (command !== 'login' || !['services', 'messaging', 'both'].includes(values.purpose))) throw new Error('invalid_arguments');
   const profilePath = resolve(values.profile), stat = statSync(profilePath);
   if ((stat.mode & 0o077) || stat.uid !== process.getuid()) throw new Error('private_profile_required');
   const profile = JSON.parse(readFileSync(profilePath, 'utf8'));
   if (typeof profile.baseUrl !== 'string' || new URL(profile.baseUrl).protocol !== 'https:' || new URL(profile.baseUrl).origin !== profile.baseUrl
     || typeof profile.credentialPath !== 'string' || !profile.credentialPath.startsWith('/') || typeof profile.displayName !== 'string') throw new Error('invalid_profile');
-  let a2aRequest;
+  let a2aRequest, communicationRequest;
   if (command === 'a2a') {
     if (!values.input) throw new AgentTaskInputError(['input']);
     const bytes = readFileSync(resolve(values.input));
@@ -41,6 +45,14 @@ try {
     let input;
     try { input = JSON.parse(bytes.toString('utf8')); } catch { throw new AgentTaskInputError(['input']); }
     a2aRequest = prepareA2ATaskRequest(input);
+  }
+  if (command === 'communication') {
+    if (!values.input) throw new AgentCommunicationInputError();
+    const bytes = readFileSync(resolve(values.input));
+    if (bytes.length > 30000) throw new AgentCommunicationInputError();
+    let input;
+    try { input = JSON.parse(bytes.toString('utf8')); } catch { throw new AgentCommunicationInputError(); }
+    communicationRequest = prepareA2ACommunicationRequest(input);
   }
   if (command === 'discover') {
     const read = async path => {
@@ -60,13 +72,25 @@ try {
     const agent = await AgentConnector.open(profile);
     if (command === 'login') {
       const status = await agent.status();
-      if (['active','foundation_ready'].includes(status.status)) { await agent.accessToken(); emit({ status: status.status, registrationId: agent.registrationId }); }
+      const purpose = values.purpose ?? 'services';
+      if (purpose === 'services' && ['active','foundation_ready'].includes(status.status)) { await agent.accessToken(); emit({ status: status.status, registrationId: agent.registrationId }); }
       else {
-        const authorization = await agent.beginAuthorization();
+        const authorization = await agent.beginAuthorization({ purpose });
         process.stdout.write(JSON.stringify({ status: 'authorization_required', ...authorization }) + '\n');
         emit(await agent.finishAuthorization());
       }
     } else if (command === 'status') emit(await agent.status());
+    else if (command === 'communication') {
+      const client = await agent.a2a({ purpose: 'messaging' });
+      const response = await client.sendMessage(communicationRequest);
+      if (!('messageId' in response)) throw new Error('communication_returned_task');
+      const part = response.parts[0];
+      if (part?.content?.$case !== 'data') throw new Error('communication_response_invalid');
+      const value = z.object({ schema: z.literal(COMMUNICATION_SCHEMA), result: z.unknown().optional(), error: z.string().optional(), permissions_url: z.url().optional() }).parse(part.content.value);
+      if (!!value.error === (value.result !== undefined)) throw new Error('communication_response_invalid');
+      emit(value);
+      if (value.error) process.exitCode = 1;
+    }
     else if (command.startsWith('relay')) {
       const settings = taskRelayProfileSchema.parse(profile.relay);
       const metadataResponse = await agent.fetch('/.well-known/eigos-task-relay', { signal: AbortSignal.timeout(15000) });
@@ -106,7 +130,7 @@ try {
     }
   }
 } catch (error) {
-  const result = { error: error instanceof AgentConnectorError || error instanceof TaskRelayError || error instanceof AgentTaskInputError ? error.code : 'eigos_client_operation_failed', ...(error instanceof AgentTaskInputError ? { fields: error.fields } : {}), ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}), ...(pendingRelayReceipt ? { relay: pendingRelayReceipt } : {}) };
-  if (pendingRelayReceipt || error instanceof AgentTaskInputError) emit(result); else process.stdout.write(JSON.stringify(result) + '\n');
+  const result = { error: error instanceof AgentConnectorError || error instanceof TaskRelayError || error instanceof AgentTaskInputError || error instanceof AgentCommunicationInputError ? error.code : command === 'communication' ? 'communication_request_failed' : 'eigos_client_operation_failed', ...(error instanceof AgentTaskInputError ? { fields: error.fields } : {}), ...(error instanceof AgentConnectorError && error.admission ? { admission: error.admission } : {}), ...(pendingRelayReceipt ? { relay: pendingRelayReceipt } : {}) };
+  if (pendingRelayReceipt || error instanceof AgentTaskInputError || error instanceof AgentCommunicationInputError) emit(result); else process.stdout.write(JSON.stringify(result) + '\n');
   process.exitCode = 1;
 }

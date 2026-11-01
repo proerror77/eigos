@@ -1,4 +1,5 @@
-import { AgentCard, Task, TaskState, Role, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest, type ListTasksRequest, type ListTasksResponse, type StreamResponse } from '@a2a-js/sdk';
+import { AgentCard, Message, Task, TaskState, Role, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest, type ListTasksRequest, type ListTasksResponse, type StreamResponse } from '@a2a-js/sdk';
+import { randomUUID } from 'node:crypto';
 import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/server';
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
@@ -11,10 +12,12 @@ import type { TaskView } from '../../packages/security/task-service.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
+import { communicationRequestSchema, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
+import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
 
 export class AgentUser implements User {
   readonly isAuthenticated = true;
-  constructor(readonly principal: Principal) {}
+  constructor(readonly principal: Principal, readonly messagingIdentity?: MessagingIdentity) {}
   get userName(): string { return ownerKey(this.principal); }
 }
 
@@ -60,7 +63,7 @@ export function agentCard(c: Config, services: ReturnType<TaskService['services'
     supportedInterfaces: [{ url: `${c.PUBLIC_URL}/a2a`, protocolBinding: 'JSONRPC', protocolVersion: '1.0' }],
     documentationUrl: paOnboardingAvailable(c) ? `${c.PUBLIC_URL}/connect` : 'https://github.com/proerror77/eigos',
     capabilities: { streaming: false, pushNotifications: false, extendedAgentCard: false,
-      extensions: [...(paOnboardingAvailable(c) ? [{ uri: `${c.PUBLIC_URL}/connect/agent.json`, description: PA_DISCOVERY_GUIDANCE, required: false }] : []), ...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
+      extensions: [...(paOnboardingAvailable(c) ? [{ uri: `${c.PUBLIC_URL}/connect/agent.json`, description: PA_DISCOVERY_GUIDANCE, required: false }] : []), ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-communications`, description: 'Explicit structured Personal Agent communication operations return Message receipts and do not create business tasks. Separate messaging scopes and controller communication consent are required.', required: false }] : []), ...(c.EIGOS_INVITE_BETA === 'true' ? [] : [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-pa-payment`, description: 'Prefer the PA Link Agent Wallet; fall back to provider Link checkout before payment. Route selection and notifications never prove payment; independent provider readback is required.', required: false }]), ...(c.OIDC_AGENT_CLIENT_ID ? [{ uri: `${c.PUBLIC_URL}/.well-known/eigos-agent-registration`, description: 'Agent installation registration, admission status and device authorization metadata.', required: false }] : [])],
     },
     defaultInputModes: ['text/plain', 'application/json'], defaultOutputModes: ['text/plain', 'application/json', 'text/markdown'],
     securitySchemes: {
@@ -68,17 +71,20 @@ export function agentCard(c: Config, services: ReturnType<TaskService['services'
         ? { openIdConnectSecurityScheme: { openIdConnectUrl: `${c.OAUTH_ISSUER!.replace(/\/$/, '')}/.well-known/openid-configuration` } }
         : { httpAuthSecurityScheme: { scheme: 'Bearer', bearerFormat: 'opaque', description: 'Loopback-only development credential' } },
     },
-    securityRequirements: [{ schemes: { eigos: { list: c.EIGOS_AUTH_MODE === 'jwt' ? ['tasks:read', 'tasks:write'] : [] } } }],
-    skills: services.map(service => ({
+    securityRequirements: [{ schemes: { eigos: { list: c.EIGOS_AUTH_MODE === 'jwt' ? ['tasks:read', 'tasks:write'] : [] } } },
+      ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ schemes: { eigos: { list: ['messaging:read', 'messaging:write'] } } }] : [])],
+    skills: [...services.map(service => ({
       id: service.id, name: service.name, description: service.description,
       tags: service.tags, examples: service.examples,
       inputModes: service.inputModes, outputModes: service.outputModes,
-    })),
+    })), ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? [{ id: 'eigos.agent-communication', name: 'Personal Agent communication',
+      description: 'Find permitted PA endpoints and exchange messages through the Relay using one data part with schema=eigos.agent-communication/1 and a validated operation. Returns Message receipts, not business Tasks. Requires independent messaging scopes, controller communication consent and accepted contacts.',
+      tags: ['communication', 'relay'], examples: ['Find a permitted PA', 'Send or reply to a PA message', 'Read your PA inbox'], inputModes: ['application/json'], outputModes: ['application/json'] }] : [])],
   });
 }
 
 export class A2AGateway implements A2ARequestHandler {
-  constructor(private tasks: TaskService, private card: AgentCard) {}
+  constructor(private tasks: TaskService, private card: AgentCard, private messaging?: AgentMessagingService) {}
   async getAgentCard(): Promise<AgentCard> { return this.card; }
 
   private principal(ctx: ServerCallContext, tenant?: string): Principal {
@@ -101,7 +107,30 @@ export class A2AGateway implements A2ARequestHandler {
     }
   }
 
-  async sendMessage(params: SendMessageRequest, ctx: ServerCallContext): Promise<Task> {
+  async sendMessage(params: SendMessageRequest, ctx: ServerCallContext): Promise<Task | Message> {
+    const communication = params.message?.parts.some(part => part.content?.$case === 'data' && part.content.value && typeof part.content.value === 'object'
+      && 'schema' in part.content.value && String(part.content.value.schema).startsWith('eigos.agent-communication/'));
+    if (communication) {
+      this.principal(ctx, params.tenant);
+      const message = params.message!, identity = ctx.user instanceof AgentUser ? ctx.user.messagingIdentity : undefined;
+      if (!this.messaging || !identity || message.role !== Role.ROLE_USER || !message.messageId || message.taskId || message.contextId
+        || message.referenceTaskIds.length || message.extensions.length || message.parts.length !== 1 || message.parts[0]?.content?.$case !== 'data'
+        || params.configuration?.taskPushNotificationConfig || message.metadata?.taskOperation !== undefined) throw new RequestMalformedError('Invalid communication envelope');
+      const parsed = communicationRequestSchema.safeParse(message.parts[0].content.value);
+      if (!parsed.success) throw new RequestMalformedError('Invalid communication contract');
+      const modes = params.configuration?.acceptedOutputModes;
+      if (modes?.length && !modes.includes('application/json')) throw new ContentTypeNotSupportedError('Communication receipts use application/json');
+      if (params.configuration?.historyLength !== undefined) z.number().int().min(0).max(1000).parse(params.configuration.historyLength);
+      if ('requestId' in parsed.data.operation && parsed.data.operation.requestId !== message.messageId) throw new RequestMalformedError('Communication requestId must match messageId');
+      try {
+        const result = await this.messaging.execute(identity, parsed.data.operation);
+        return Message.fromJSON({ messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ data: { schema: 'eigos.agent-communication/1', result } }] });
+      } catch (error) {
+        if (!(error instanceof MessagingError)) throw error;
+        return Message.fromJSON({ messageId: randomUUID(), role: 'ROLE_AGENT', parts: [{ data: { schema: 'eigos.agent-communication/1', error: error.code,
+          ...(error.code === 'MESSAGING_AUTHORIZATION_REQUIRED' && this.messaging.permissionsUrl ? { permissions_url: this.messaging.permissionsUrl } : {}) } }] });
+      }
+    }
     const job = this.adapt(() => {
       const p = this.principal(ctx, params.tenant);
       const message = params.message;
