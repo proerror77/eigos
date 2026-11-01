@@ -25,6 +25,8 @@ export class AgentMessagingService {
   #nodes = new Map<string, Promise<RelayClient>>();
   #refreshing = new Map<string, Promise<void>>();
   #closing = new Set<Promise<void>>();
+  #active = new Set<Promise<unknown>>();
+  #closePromise?: Promise<void>;
   #cursorKey = randomBytes(32);
   private closed = false;
   get permissionsUrl() { return this.options.permissionsUrl; }
@@ -148,11 +150,19 @@ export class AgentMessagingService {
     const after = this.after(cursor, context), next = after + limit;
     return { items: items.slice(after, next), ...(next < items.length ? { cursor: this.cursor({ context, after: next, expiresAt: this.store.now() + 900000 }) } : {}) };
   }
+  private track<T>(action: () => Promise<T>): Promise<T> {
+    if (this.closed) return Promise.reject(new MessagingError('MESSAGING_UNAVAILABLE',503));
+    const work = Promise.resolve().then(action); this.#active.add(work);
+    void work.finally(() => this.#active.delete(work)).catch(() => {});
+    return work;
+  }
   async execute(identity: MessagingIdentity, input: unknown): Promise<unknown> {
-    const operation = messagingOperationSchema.parse(input), scope = operationScope(operation.action), own = this.authorized(identity, scope);
-    const result = await this.dispatch(own, operation);
-    this.authorized(identity, scope);
-    return result;
+    return this.track(async () => {
+      const operation = messagingOperationSchema.parse(input), scope = operationScope(operation.action), own = this.authorized(identity, scope);
+      const result = await this.dispatch(own, operation);
+      this.authorized(identity, scope);
+      return result;
+    });
   }
   private async dispatch(own: CommunicationGrant, op: MessagingOperation): Promise<unknown> {
     if (op.action === 'find') {
@@ -310,12 +320,20 @@ export class AgentMessagingService {
       }
     }
   }
-  async prepareEndpoint(id: string) { await this.node(id); return this.endpoint(this.store.grant(id)); }
-  async close() {
+  async prepareEndpoint(id: string) { return this.track(async () => { await this.node(id); return this.endpoint(this.store.grant(id)); }); }
+  close(): Promise<void> {
+    if (this.#closePromise) return this.#closePromise;
     this.closed = true;
+    return this.#closePromise = this.drain();
+  }
+  private async drain(): Promise<void> {
+    // Stop admitting operations first; let started work settle before closing
+    // node databases so an in-flight response can persist its receipt.
+    await Promise.allSettled([...this.#active]);
     await Promise.allSettled(this.#refreshing.values());
-    await Promise.allSettled(this.#closing);
-    for (const node of await Promise.allSettled(this.#nodes.values())) if (node.status === 'fulfilled') node.value.close();
-    this.#nodes.clear();
+    const nodes = [...this.#nodes.values()]; this.#nodes.clear();
+    const closing = [...this.#closing];
+    await Promise.allSettled(closing);
+    for (const node of await Promise.allSettled(nodes)) if (node.status === 'fulfilled') node.value.close();
   }
 }

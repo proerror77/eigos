@@ -5267,7 +5267,7 @@
     {
       "id": "pa-messaging-service",
       "file": "packages/agent-messaging/service.ts",
-      "sourceDigest": "585edb3e45385c5754b4dad6c8e0dc2d505767297f59fd8f2180dae5036efb50",
+      "sourceDigest": "c987ffbb8ea8f74e47851d4e186ba92c3317eea1d9045436c4080b5002f6614a",
       "channels": [
         "mcp",
         "a2a",
@@ -5275,8 +5275,8 @@
         "http"
       ],
       "content": "Private PA directory, accepted contacts and encrypted inbox/outbox routing.",
-      "currentControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution.",
-      "targetControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution.",
+      "currentControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution. Shutdown rejects new operations and drains in-flight delivery and enrollment before releasing node state.",
+      "targetControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution. Shutdown rejects new operations and drains in-flight delivery and enrollment before releasing node state.",
       "stage": "S5"
     },
     {
