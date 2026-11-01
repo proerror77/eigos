@@ -3946,7 +3946,7 @@
     {
       "id": "task-outcome",
       "file": "packages/core/task-outcome.ts",
-      "sourceDigest": "1a23c9ae904a363099d6729c751c5b221f1a6ffe749a02ea3281d61384579c17",
+      "sourceDigest": "f38eed836c0c0f5fb4289ca9c9766b96207167f44c4ec27dca42ef564ee6ead6",
       "channels": [
         "model",
         "artifact"
