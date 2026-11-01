@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { securityEnvelopeSchema } from './contracts.js';
 import { combineEnvelopes, type SecurityEnvelope } from './envelope.js';
-import { SecurityError } from './store.js';
+import { SecurityError } from './errors.js';
 
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const projectionOriginSchema = z.strictObject({ version: z.literal(1), contentDigest: sha, linksDigest: sha, inputDigest: sha });

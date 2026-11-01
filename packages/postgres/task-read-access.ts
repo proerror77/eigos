@@ -97,16 +97,22 @@ export async function withPostgresTaskReadGrant<T>(client: Client, principal: Pr
 /** Check resource.view against the reviewed security model, as SQLite does.
  * The task's pinned model is independently validated but never substitutes
  * for current policy. Object, field, source, lineage and output checks remain. */
-export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<boolean> {
+export async function postgresTaskResourceViewValidUntil(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<number> {
   const captured = structuredClone(principal);
-  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
+  const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
     await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
     const result = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
     if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
-    return roleAllows(builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model,roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
+    return {roles,actor:admission.actor,model:builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model};
   });
+  const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,'resource.view',()=>now));
+  return matching.reduce((latest,role)=>Math.max(latest,Date.parse(role.expiresAt)),0);
+}
+
+export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<boolean> {
+  return (await postgresTaskResourceViewValidUntil(client,principal,taskId,policyDigest,kind,id,builder))>Date.now();
 }
 
 /** Return reviewed classification only; role, object binding, current labels,
@@ -259,11 +265,12 @@ export async function postgresTaskDirectFieldCandidates(client: Client, principa
     });
     const definition=model.object(ref.type);
     if(!fields.includes(definition.primaryKey) || !fields.includes(definition.titleKey))return undefined;
-    if(!await postgresTaskResourceViewAllowed(client,captured,taskId,policyDigest,'objectType',ref.type,builder))return undefined;
-    return {revision:binding.revision,fields,clearanceExpiresAt:clearance.expiresAt};
+    const roleValidUntil=await postgresTaskResourceViewValidUntil(client,captured,taskId,policyDigest,'objectType',ref.type,builder);
+    if(!roleValidUntil)return undefined;
+    return {revision:binding.revision,fields,validUntil:Math.min(roleValidUntil,Date.parse(clearance.expiresAt))};
   });
-  if(!checked || Date.parse(checked.clearanceExpiresAt)<=Date.now())return undefined;
-  return {revision:checked.revision,fields:checked.fields};
+  if(!checked || checked.validUntil<=Date.now())return undefined;
+  return checked;
 }
 
 /** Construct an edge reader only after its trusted kernel has finished loading.

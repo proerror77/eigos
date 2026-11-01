@@ -4869,7 +4869,7 @@
     {
       "id": "security-projection-origin",
       "file": "packages/security/projection-origin.ts",
-      "sourceDigest": "07fa8a7f0acd55a79d087e6dbae8bb3695133ba5ba47677090bf6f39f735e74f",
+      "sourceDigest": "cd98126f71b16872455524b25f065078c7ed980682746f3f727fbdd6c622658c",
       "channels": [
         "all-reads",
         "worker"
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "fd8a77dc9ee459035d8631ab61e1857e0727e201fb2a40c283d8bdd1dc0766f9",
+      "sourceDigest": "7198acddcbbba16ea3b38df1d8f8bbaac25ab1aea5dab26da4e5b02323aebbc1",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required",
       "targetControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required"
@@ -5775,6 +5775,18 @@
       "content": "PostgreSQL task metadata membership",
       "currentControl": "Fenced task grant, exact owner and revision, malformed and ambiguous JSON rejection, bounded closure; no access authorization",
       "targetControl": "Fenced task grant, exact owner and revision, malformed and ambiguous JSON rejection, bounded closure; no access authorization",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-context-binding",
+      "file": "packages/postgres/task-context-binding.ts",
+      "sourceDigest": "22d3e5615a98f3e22825e9419400b7ff77a062aa482c9b1603fd2e389d9108f3",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "PostgreSQL task context binding candidate",
+      "currentControl": "Current task membership, binding, fields, provenance and capability checks; lineage and output authorization remain required",
+      "targetControl": "Current task membership, binding, fields, provenance and capability checks; lineage and output authorization remain required",
       "stage": "S5"
     }
   ]

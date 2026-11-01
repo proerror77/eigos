@@ -13,17 +13,21 @@ import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 import { sourceMatchesObservation } from '../packages/security/source-policy.js';
 import { taskContextMembers } from '../packages/security/task-context.js';
 import { postgresTaskContextMembers } from '../packages/postgres/task-context-membership.js';
+import { postgresTaskContextBindingCandidate } from '../packages/postgres/task-context-binding.js';
+import { digest } from '../packages/core/delegation.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
   // keep the fixture's copied projection valid throughout those checks.
-  const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE || process.env.EIGOS_TEST_LARGE_ROW==='1'?1200000:0;
+  const clockOffset=1200000;
   const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000),sourceExpiry=new Date(Date.now()+3600000).toISOString();
-  f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
+  f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']},{type:'RequestSpecification',fields:['id','displayTitle','requestRevision']},{type:'RegisteredCapability',fields:['id','name','capabilityRef','contextRequestId']},{type:'RegisteredActionType',fields:['id','displayTitle','actionId']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
   f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId:'synthetic-source',programId:'brief.prepare',programDigest:'b'.repeat(64),operations:['synthetic.read'],outputTypes:['ServiceRequest'],expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   assert(principal.access.actorKind==='agent');const parentGrantId=principal.access.agentGrant.id;
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
+  for(const type of ['RequestSpecification','RegisteredCapability','RegisteredActionType'])f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:type,version:f.jobs.security.policies.resourceVersion('objectType',type)},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
+  f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'actionType',id:'ReadCommerceContext',version:f.jobs.security.policies.resourceVersion('actionType','ReadCommerceContext')},role:'Viewer',expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const recipient={classification:'sensitive' as const,markings:['member_private','personal_data'] as const,channels:['agent_response'] as const,expiresAt:new Date(Date.now()+3600000).toISOString()};
   f.jobs.security.policies.setRecipient(installation.id,recipient,f.jobs.security.policies.revision());
   for(const field of ['*','originalGoal','requestId']) f.jobs.security.policies.restrictObject({ownerKey:f.owner,object:{type:'ServiceRequest',id:task.job.id},expectedObjectRevision:1,field,classification:'sensitive',requiredMarkings:['personal_data'],channels:['agent_response']},f.jobs.security.policies.revision());
@@ -54,14 +58,15 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
       {type:'RequestInstruction',id:'synthetic-future',properties:{introducedRevision:2}},
       {type:'ExecutionContext',id:'synthetic-context',properties:{requestRevision:1}},
       {type:'RequestInstruction',id:'synthetic-unlinked',properties:{introducedRevision:1}},
-      {type:'RegisteredCapability',id:`capability:${'a'.repeat(64)}`,properties:{definitionDigest:'a'.repeat(64)}},
+      {type:'RegisteredCapability',id:`capability:${'a'.repeat(64)}`,properties:{definitionDigest:'a'.repeat(64),capabilityRef:{id:'brief.prepare'}}},
+      {type:'RegisteredActionType',id:'synthetic-action',properties:{actionId:'ReadCommerceContext'}},
     ];
     for(const object of contextObjects){
       const body=JSON.stringify({source:{kind:'task',id:object.type==='RegisteredCapability'?'another-task':task.job.id},properties:object.properties});
       sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,object.type,object.id,1,'a'.repeat(64),body);
       await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,object.type,object.id,'a'.repeat(64),body]);
     }
-    const contextLinks=[['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-instruction'],['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-future'],['CapabilityRequest','RegisteredCapability',`capability:${'a'.repeat(64)}`,'ServiceRequest',task.job.id]];
+    const contextLinks=[['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-instruction'],['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-future'],['ExecutionStepAction','RequestSpecification','synthetic-spec','RegisteredActionType','synthetic-action'],['CapabilityRequest','RegisteredCapability',`capability:${'a'.repeat(64)}`,'ServiceRequest',task.job.id]];
     for(const [type,fromType,fromId,toType,toId] of contextLinks){
       sqlite.prepare('INSERT INTO ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES(?,?,?,?,?,?,?)').run(f.owner,type!,fromType!,fromId!,toType!,toId!,'a'.repeat(64));
       await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES($1,$2,$3,$4,$5,$6,$7)`,[f.owner,type,fromType,fromId,toType,toId,'a'.repeat(64)]);
@@ -94,6 +99,55 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) SELECT $1,'RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','overflow-'||n,$2 FROM generate_series(1,4001) n`,[f.owner,'a'.repeat(64)]);
     await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
     await client.query(`DELETE FROM "${schema}".ontology_links WHERE owner=$1 AND type='RequestSpecificationInstruction' AND to_id LIKE 'overflow-%'`,[f.owner]);
+    const rootBinding=JSON.parse(String(sqlite.prepare("SELECT body FROM security_bindings WHERE grant_id=? AND type='ServiceRequest' AND object_id=?").get(task.grant.id,task.job.id)!.body));
+    const metadataEnvelope={...rootBinding.envelope,channels:['agent_response','registered_model'],lineage:[],lineageComplete:true};
+    const specRef={type:'RequestSpecification',id:'synthetic-spec'},capRef={type:'RegisteredCapability',id:`capability:${'a'.repeat(64)}`},actionRef={type:'RegisteredActionType',id:'synthetic-action'};
+    const specBody=String(sqlite.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,specRef.type,specRef.id)!.body);
+    const specBinding={object:specRef,revision:1,fields:['id','displayTitle','requestRevision'],sourceBindingId:'task_context',envelope:rootBinding.envelope,inputEnvelope:metadataEnvelope,
+      projectionOrigin:{version:1,contentDigest:digest(['a'.repeat(64),JSON.parse(specBody)]),linksDigest:'b'.repeat(64),inputDigest:digest(metadataEnvelope)}};
+    const capBinding={object:capRef,revision:1,fields:['id','name','capabilityRef','contextRequestId'],sourceBindingId:'task_context',envelope:rootBinding.envelope};
+    const actionBinding={object:actionRef,revision:1,fields:['id','displayTitle','actionId'],sourceBindingId:'task_context',envelope:rootBinding.envelope};
+    for(const value of [specBinding,capBinding,actionBinding]){
+      sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(task.grant.id,f.owner,task.job.id,1,value.object.type,value.object.id,1,JSON.stringify(value));
+      await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[task.grant.id,f.owner,task.job.id,value.object.type,value.object.id,JSON.stringify(value)]);
+    }
+    const contextCandidate=(item:{type:string;id:string})=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskContextBindingCandidate(c,principal,task.job.id,policy,item,staged));
+    const sqliteContext=(item:{type:string;id:string})=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>f.jobs.security.policies.binding(scope,item));
+    for(const item of [specRef,capRef,actionRef]){
+      const expected=sqliteContext(item);assert(expected?.fields.length,item.type);
+      const actual=await contextCandidate(item);assert(actual);assert.deepEqual(actual.fields,expected.fields);assert.deepEqual(actual.object,item);
+      if(item.type==='RegisteredCapability')assert(!actual.fields.includes('contextRequestId'));
+    }
+    const alteredSpec={...specBinding,projectionOrigin:{...specBinding.projectionOrigin,contentDigest:'c'.repeat(64)}};
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(alteredSpec),task.grant.id,specRef.type,specRef.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(alteredSpec),task.grant.id,specRef.type,specRef.id]);
+    assert.throws(()=>sqliteContext(specRef),/POLICY_CHANGED/);await assert.rejects(contextCandidate(specRef),/POLICY_CHANGED/);
+    const alteredInput={...specBinding,projectionOrigin:{...specBinding.projectionOrigin,inputDigest:'d'.repeat(64)}};
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(alteredInput),task.grant.id,specRef.type,specRef.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(alteredInput),task.grant.id,specRef.type,specRef.id]);
+    assert.throws(()=>sqliteContext(specRef),/POLICY_CHANGED/);await assert.rejects(contextCandidate(specRef),/POLICY_CHANGED/);
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(specBinding),task.grant.id,specRef.type,specRef.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(specBinding),task.grant.id,specRef.type,specRef.id]);
+    const foreignSpec=JSON.stringify({...JSON.parse(specBody),source:{kind:'task',id:'other-task'}});
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(foreignSpec,f.owner,specRef.type,specRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[foreignSpec,f.owner,specRef.type,specRef.id]);
+    assert.equal(sqliteContext(specRef),undefined);assert.equal(await contextCandidate(specRef),undefined);
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(specBody,f.owner,specRef.type,specRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[specBody,f.owner,specRef.type,specRef.id]);
+    const capBody=String(sqlite.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,capRef.type,capRef.id)!.body);
+    const foreignCap=JSON.parse(capBody);foreignCap.properties.capabilityRef={id:'unapproved-capability'};
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(JSON.stringify(foreignCap),f.owner,capRef.type,capRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[JSON.stringify(foreignCap),f.owner,capRef.type,capRef.id]);
+    assert.equal(sqliteContext(capRef),undefined);assert.equal(await contextCandidate(capRef),undefined);
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(capBody,f.owner,capRef.type,capRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[capBody,f.owner,capRef.type,capRef.id]);
+    const actionBody=String(sqlite.prepare('SELECT body FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(f.owner,actionRef.type,actionRef.id)!.body);
+    const foreignAction=JSON.parse(actionBody);foreignAction.properties.actionId='UnapprovedAction';
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(JSON.stringify(foreignAction),f.owner,actionRef.type,actionRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[JSON.stringify(foreignAction),f.owner,actionRef.type,actionRef.id]);
+    assert.equal(sqliteContext(actionRef),undefined);assert.equal(await contextCandidate(actionRef),undefined);
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(actionBody,f.owner,actionRef.type,actionRef.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[actionBody,f.owner,actionRef.type,actionRef.id]);
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
@@ -283,6 +337,27 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest',staged)),false);
     assert.equal(await candidateFields(),undefined);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[role.body,role.id]);
+    // A role may expire while the final grant recheck is waiting on PostgreSQL.
+    // Advance only this test process's clock after the role query completes.
+    const realNow=Date.now,shortRole={...JSON.parse(String(role.body)),expiresAt:new Date(realNow()+30000).toISOString()};
+    await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[JSON.stringify(shortRole),role.id]);
+    let clockShift=0,sawRole=false;
+    const delayedRole=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:string,values?:unknown[])=>{
+        const result=await target.query(sql,values);
+        if(!sawRole && sql.includes('.security_roles')){assert(realNow()<Date.parse(shortRole.expiresAt));sawRole=true;clockShift=40000;}
+        return result;
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    try {
+      Date.now=()=>realNow()+clockShift;
+      assert.equal(await postgresBusinessTransaction(delayedRole,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest',staged)),false);
+      assert(sawRole);
+    } finally {
+      Date.now=realNow;
+      await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[role.body,role.id]);
+    }
     // Historical task models must not revive a namespace role for an old
     // security policy version. SQLite evaluates roles against the reviewed
     // current security model, not the task's historical read model.
@@ -321,6 +396,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(sourceAllowed(),/POLICY_CHANGED/);
     await assert.rejects(candidateFields(),/POLICY_CHANGED/);
     await assert.rejects(members(),/POLICY_CHANGED/);
+    await assert.rejects(contextCandidate(specRef),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);
