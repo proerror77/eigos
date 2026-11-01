@@ -503,7 +503,7 @@ export class Coordinator {
       signal.throwIfAborted(); if (!this.store.claimActive(claim)) throw new DomainError('CONFLICT', 'Planning claim is no longer active');
       if (programContext) program?.assertContext?.(programContext);
     }, receipt => {
-      if (!this.store.checkpoint(claim, job => { job.delegation!.ontologyReads = [...(job.delegation!.ontologyReads ?? []), receipt]; })) throw new DomainError('CONFLICT', 'Planning read arrived after cancellation or lease loss');
+      if (!this.store.recordPlanningRead(claim, receipt)) throw new DomainError('CONFLICT', 'Planning read arrived after cancellation or lease loss');
     }, bounds?.readScope ?? (job.delegation?.ontologyReadScope === 'owner' ? 'owner' : 'request'), refs, {
       actionCatalog: this.catalog,
       priorReads: job.delegation?.ontologyReads,
