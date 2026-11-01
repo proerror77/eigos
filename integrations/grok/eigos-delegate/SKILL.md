@@ -43,6 +43,8 @@ Keep identity login, membership, PA installation permission, source/data access 
 
 Never ask the user to paste an access token, refresh token, password or supplier credential into chat. The host handles credentials through its private channel. The PA cannot approve its own access. Reuse valid authority already granted; do not invent new approvals or infer order/payment authority from login or a free-text answer.
 
+An access error alone does not identify a missing grant. For `INSUFFICIENT_ACCESS`, first compare the submitted context with the user's actual goal; unrelated personal data must not become a reason to request broader access. Report the exact error and distinguish an error-supplied action from a permissions link found in current connection metadata. Do not claim that task-creation permission is missing, or present historical notes as returned guidance, when the server has not established that diagnosis.
+
 ## Delegate and continue the original task
 
 Submit the user's original goal through native `submit_task`, with a stable requestId and the discovered service. On A2A, use the current SendMessage contract. Save the exact request plus returned taskId, contextId and revision before continuing. Continue an existing task only when its saved connection identifies this EIGOS instance; a task ID alone does not establish which service owns it. Identical retries keep the original content and request/message ID; never replace a pending task to escape uncertain submission, technical limits or a permission denial.
@@ -50,6 +52,8 @@ Submit the user's original goal through native `submit_task`, with a stable requ
 ### Obtain task addresses before delegating
 
 For a location-dependent task, first obtain the addresses needed for this user's actual goal. For “from home”, read the user's saved home address; for “from here”, obtain the current device location and its address/city. An explicitly named origin takes precedence over the device location. Reuse facts already supplied or saved; do not ask the user to repeat them. If a device connection is unavailable, identify that prerequisite instead of substituting home or guessing a city from an IP address.
+
+For explicitly named public endpoints, pass their supplied names and city in `locationContext`, with `source: user_provided`; omit unverified street addresses. Omit `personalContext` entirely unless the goal needs authorized stored personal facts or preferences. Its `self` selector requests personal data, not caller identity; do not add it or an empty personal-context object as a routine default. An address guessed by the PA is not user-provided. Authorized address preparation remains available when the goal actually needs it.
 
 Keep the original user goal unchanged and provide the acquired facts in `submit_task.locationContext`: `city`, and the applicable `origin`/`destination`. Each endpoint has a canonical `name`, optional full `address`, optional user-facing `label` such as “家”, and `source` (`saved_address`, `current_location`, or `user_provided`). A `current_location` requires its actual `observedAt` timestamp. Do not invent a timestamp or treat an old position as current.
 
