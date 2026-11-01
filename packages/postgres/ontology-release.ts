@@ -1,0 +1,68 @@
+import type { Client } from 'pg';
+import { digest } from '../core/delegation.js';
+import { DomainError } from '../core/domain.js';
+import { ontologyReleaseRefSchema, parseOntologyDocument, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
+import { BACKEND_VERSION } from '../ontology/execution.js';
+import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
+import { createCurrentKernelDefinition, createSeedDefinition } from '../ontology/seed-definition.js';
+import { postgresBusinessSchema } from './runtime-transaction.js';
+
+let registry: TrustedDefinitionRegistry | undefined;
+function trustedRegistry(): TrustedDefinitionRegistry {
+  if (!registry) {
+    const seed = createSeedDefinition();
+    createCurrentKernelDefinition(seed.registry);
+    registry = seed.registry;
+  }
+  return registry;
+}
+function conflict(message: string): never { throw new DomainError('CONFLICT', message); }
+function freeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+/** Resolve an exact persisted release using the same trusted compiler as the
+ * SQLite authority. This is an internal building block: the caller must check
+ * task/installation permissions and claim freshness in the same transaction. */
+export async function postgresOntologyRelease(client: Client, input: OntologyReleaseRef) {
+  const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
+  let result = await client.query(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
+  if (!result.rowCount) result = await client.query(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
+  if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');
+  const row = result.rows[0];
+  let document;
+  try { document = parseOntologyDocument(JSON.parse(String(row.body))); }
+  catch { return conflict('Stored ontology release is invalid'); }
+  if (document.id !== ref.ontologyId || digest(document) !== ref.digest) return conflict('Stored ontology release digest is invalid');
+  const model = compileOntologyDocument(document, trustedRegistry());
+  if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
+  const sequence = Number(row.sequence);
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || typeof row.created_at !== 'string') return conflict('Stored ontology release metadata is invalid');
+  return Object.freeze({ ref: freeze(ref), document: freeze(document), model, sequence, createdAt: row.created_at });
+}
+
+/** Resolve the release pinned to an owned task, including the explicit legacy
+ * bootstrap reference. It does not grant access or validate a Worker claim. */
+export async function postgresTaskOntologyRelease(client: Client, owner: string, taskId: string) {
+  const schema = postgresBusinessSchema(client), q = `"${schema}"`;
+  if (!owner || !taskId) return conflict('Invalid task identity');
+  const result = await client.query(`SELECT j.body,a.id AS authority_id FROM ${q}.jobs j JOIN ${q}.runtime_authority a ON a.slot=1 WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
+  if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');
+  let job: { authorityId?: unknown; delegation?: { backendVersion?: unknown; ontologyRelease?: unknown } };
+  try { job = JSON.parse(String(result.rows[0].body)); }
+  catch { return conflict('Stored task is invalid'); }
+  if (!job || job.delegation?.backendVersion !== BACKEND_VERSION) return conflict('Historical backend tasks have no current executable ontology context');
+  if (job.authorityId !== result.rows[0].authority_id) return conflict('Historical runtime authority tasks are read-only');
+  let ref = job.delegation.ontologyRelease;
+  if (ref === undefined || ref === null) {
+    const bootstrap = await client.query(`SELECT legacy_ref FROM ${q}.ontology_definition_bootstrap WHERE id=1`);
+    if (bootstrap.rowCount !== 1) return conflict('Ontology definitions have not been initialized');
+    try { ref = JSON.parse(String(bootstrap.rows[0].legacy_ref)); }
+    catch { return conflict('Stored legacy ontology reference is invalid'); }
+  }
+  return postgresOntologyRelease(client, ontologyReleaseRefSchema.parse(ref));
+}
