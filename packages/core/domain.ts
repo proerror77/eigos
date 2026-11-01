@@ -6,13 +6,14 @@ import type { AccessContext } from '../security/contracts.js';
 import { locationContextSchema } from './location-context.js';
 import { personalContextInputSchema } from '../ontology/personal-context.js';
 import { executionBudgetProfileSchema } from './execution-budget.js';
+import type { MESSAGING_SCOPES } from '../agent-messaging/contracts.js';
 
 /** Existing PA onboarding requests task access only. Modeling and administration
  * are separately requested grants, never implicit upgrades to an installation. */
 export const TASK_SCOPES = ['services:read', 'tasks:read', 'tasks:write'] as const;
 export const ONTOLOGY_OPERATOR_SCOPES = ['ontology:read', 'ontology:write', 'ontology:publish', 'ontology:admin'] as const;
 export const SCOPES = [...TASK_SCOPES, ...ONTOLOGY_OPERATOR_SCOPES, 'ontology:object_write'] as const;
-export type Scope = (typeof SCOPES)[number] | 'sources:read' | 'sources:write';
+export type Scope = (typeof SCOPES)[number] | (typeof MESSAGING_SCOPES)[number] | 'sources:read' | 'sources:write';
 export interface Principal {
   issuer: string;
   subject: string;

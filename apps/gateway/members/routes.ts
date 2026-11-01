@@ -47,6 +47,7 @@ export function mountMemberRoutes(app: Express, c: Config, store: MemberStore, p
       agentRegistrations: current ? store.agents.list(current.member.id) : [], invitationOnly: c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only',
       connectionGuideAvailable: paOnboardingAvailable(c),
       permissionsAvailable: !!security, networkAccess: !security && c.EIGOS_NETWORK_ENABLED === 'true' && !!current && c.EIGOS_NETWORK_MEMBER_IDS.includes(current.member.id), loginAvailable: !!provider, manualApproval: c.EIGOS_MEMBERSHIP_APPROVAL !== 'self-service', ...(notice ? { notice } : {}),
+      communicationsAvailable: c.EIGOS_MESSAGING_ENABLED === 'true',
     }));
   });
   app.get('/members/permissions',(req,res)=>{

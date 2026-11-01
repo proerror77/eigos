@@ -222,6 +222,12 @@ export class SecurityStore {
   hasFence(input: Pick<Fence, 'ownerKey' | 'kind' | 'targetId'>): boolean {
     return !!this.db.prepare("SELECT 1 FROM security_fences WHERE id=? AND state<>'cleared'").get(fenceKey(input));
   }
+  /** Includes cleared fences: restoring eligibility cannot silently restore an old communication grant. */
+  identityGeneration(facts: Pick<SubjectFacts, 'ownerKey' | 'memberId' | 'installationId' | 'clientId'>): string {
+    const rows = this.db.prepare("SELECT kind,target_id,revision,state FROM security_fences WHERE owner=? AND ((kind='member' AND target_id=?) OR (kind='connection' AND target_id=?) OR (kind='installation' AND target_id=?)) ORDER BY kind,target_id")
+      .all(facts.ownerKey, facts.memberId, facts.clientId, facts.installationId);
+    return digest([facts.ownerKey, facts.memberId, facts.installationId, facts.clientId, rows]);
+  }
   agentGrant(installationId: string): AgentAccessGrant {
     this.requireSubject(installationId);
     const row = this.db.prepare("SELECT * FROM security_grants WHERE installation_id=? AND kind='agent_access' AND state='active' AND expires_at>?").get(installationId, this.now());

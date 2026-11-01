@@ -28,7 +28,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 189);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 195);
   for (const id of ['pa-onboarding-http', 'pa-onboarding-page', 'pa-onboarding-assets', 'pa-delegation-guidance', 'pa-skill-release', 'pa-oauth-discovery']) {
     assert(report.surfaces.some(surface => surface.id === id), `Unreviewed PA onboarding surface: ${id}`);
   }
@@ -47,6 +47,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   assert.deepEqual(report.surfaces.find(surface => surface.id === 'native-model-timing')!.channels, ['private_diagnostics']);
   assert.deepEqual(report.surfaces.find(surface => surface.id === 'model-usage-accounting')!.channels, ['sqlite', 'task_usage']);
   assert(report.surfaces.some(surface => surface.id === 's5-packages-agent-client-a2a' && surface.file === 'packages/agent-client/a2a.ts'), 'Public A2A discovery must remain in the reviewed security inventory');
+  for (const id of ['pa-messaging-contracts', 'pa-messaging-metadata', 'pa-messaging-service', 'pa-messaging-dispatch', 'pa-messaging-mcp', 'pa-messaging-controller']) assert(report.surfaces.some(surface => surface.id === id), 'Unreviewed PA messaging boundary: ' + id);
   assert.equal(report.enforcement, 'not_installed'); assert.equal(report.defaults.automaticLegacyGrant, false);
   assert.equal(report.baselineDigest, digest(baseline()));
   assert.deepEqual(businessModel.ref, before);

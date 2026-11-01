@@ -17,6 +17,9 @@ import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontology/definition-contracts.js';
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
+import { mountMessagingMcp } from './messaging/mcp.js';
+import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
+import type { MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
 
 async function result(action: () => unknown): Promise<CallToolResult> {
   try {
@@ -31,8 +34,11 @@ async function result(action: () => unknown): Promise<CallToolResult> {
   }
 }
 
-export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
-  const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: PA_DISCOVERY_GUIDANCE });
+export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; messaging?: { service: AgentMessagingService; identity: MessagingIdentity }; messagingOnly?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
+  const communication = 'Use the Personal Agent communication tools for messages to other people’s PAs. Only an explicit service delegation uses submit_task/eigos.delegate. Message delivery does not authorize a business action.';
+  const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: options.messagingOnly ? communication : PA_DISCOVERY_GUIDANCE + (options.messaging ? '\n' + communication : '') });
+  if (options.messaging) mountMessagingMcp(server, options.messaging.service, options.messaging.identity);
+  if (options.messagingOnly) return server;
   if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (!tasks.secured && network) mountNetworkMcp(server, network.service, principal, network.token);
   const read = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };

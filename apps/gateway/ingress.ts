@@ -3,6 +3,7 @@ import type { Config } from '../../packages/core/config.js';
 import { runtimeIngress, type RuntimeIngress } from '../../packages/core/runtime-authority.js';
 import { TASK_SCOPES, ONTOLOGY_OPERATOR_SCOPES, type Principal } from '../../packages/core/domain.js';
 import { createVerifier, type VerifyToken } from './auth.js';
+import { MESSAGING_SCOPES } from '../../packages/agent-messaging/contracts.js';
 
 /** Transport adaptation only: every ingress reaches the same TaskService,
  * membership store and authority. Forwarded headers cannot select an audience. */
@@ -33,7 +34,7 @@ export function createIngressRouter(config: Config, override?: VerifyToken, fact
       if (!ingress) return principal;
       if (![...ingress.agentClientIds, ...ingress.nativeClientIds].includes(principal.clientId)) return;
       const operator = principal.issuer === config.authority!.issuer && ingress.ontologyOperators?.some(binding => binding.clientId === principal.clientId && binding.subject === principal.subject && binding.tenant === principal.tenant);
-      const scopes: readonly string[] = operator ? [...TASK_SCOPES, ...ONTOLOGY_OPERATOR_SCOPES] : TASK_SCOPES;
+      const scopes: readonly string[] = [...TASK_SCOPES, ...(operator ? ONTOLOGY_OPERATOR_SCOPES : []), ...(config.EIGOS_MESSAGING_ENABLED === 'true' ? MESSAGING_SCOPES : [])];
       // Configuration only admits scopes already signed by the trusted issuer.
       // It never manufactures a grant, source permission or business effect.
       return { ...principal, scopes: principal.scopes.filter(scope => scopes.includes(scope)) };

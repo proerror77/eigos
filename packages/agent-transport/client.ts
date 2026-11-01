@@ -81,6 +81,7 @@ export class RelayClient {
       this.db.exec(`CREATE TABLE IF NOT EXISTS node_meta (key TEXT PRIMARY KEY,value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS node_outbox (id TEXT PRIMARY KEY,recipient TEXT NOT NULL,connection_id TEXT NOT NULL,content_digest TEXT NOT NULL,envelope TEXT NOT NULL,receipt TEXT);
         CREATE TABLE IF NOT EXISTS node_inbox (sender TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,envelope TEXT,sender_card TEXT NOT NULL,state TEXT NOT NULL,reason TEXT,expires_at INTEGER NOT NULL,PRIMARY KEY(sender,id));
+        CREATE TABLE IF NOT EXISTS node_retained (sender TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,envelope TEXT NOT NULL,sender_card TEXT NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(sender,id));
         CREATE INDEX IF NOT EXISTS node_pending ON node_inbox(state,expires_at);`);
       const identity = JSON.stringify([baseUrl, this.agentId]);
       const existing = this.db.prepare("SELECT value FROM node_meta WHERE key='identity'").get();
@@ -158,9 +159,9 @@ export class RelayClient {
     if (result.state !== 'active') fail('PEER_REVOKED_OR_EXPIRED', 403);
     return verifyCard(result.signedCard, peerId);
   }
-  async requestContact(peerId: string, requestId: string = randomUUID()): Promise<Connection> {
+  async requestContact(peerId: string, requestId: string = randomUUID(), beforeSend?: () => void | Promise<void>): Promise<Connection> {
     await this.peer(peerId);
-    return connectionSchema.parse(await this.request('/v1/contacts', 'POST', { peerId, requestId: uuidSchema.parse(requestId) }));
+    return connectionSchema.parse(await this.request('/v1/contacts', 'POST', { peerId, requestId: uuidSchema.parse(requestId) }, undefined, undefined, beforeSend));
   }
   /** Reuse a live contact after reconnecting; approval remains with its recipient. */
   async ensureContact(peerId: string): Promise<Connection> {
@@ -179,8 +180,8 @@ export class RelayClient {
     }
   }
   async contacts(): Promise<Connection[]> { return z.strictObject({ connections: z.array(connectionSchema).max(256) }).parse(await this.request('/v1/contacts')).connections; }
-  async respondContact(id: string, action: 'accept' | 'reject' | 'revoke'): Promise<Connection> {
-    return connectionSchema.parse(await this.request(`/v1/contacts/${uuidSchema.parse(id)}`, 'POST', { action }));
+  async respondContact(id: string, action: 'accept' | 'reject' | 'revoke', beforeSend?: () => void | Promise<void>): Promise<Connection> {
+    return connectionSchema.parse(await this.request(`/v1/contacts/${uuidSchema.parse(id)}`, 'POST', { action }, undefined, undefined, beforeSend));
   }
   /** Persist one immutable encrypted envelope before the first attempt. Keep the ID for every retry. */
   async queue(peerId: string, connectionId: string, content: unknown, options: { id?: string; expiresAt?: number } = {}): Promise<string> {
@@ -240,6 +241,7 @@ export class RelayClient {
     return this.pending();
   }
   async pending(): Promise<ReceivedMessage[]> {
+    this.db.prepare('DELETE FROM node_retained WHERE expires_at<=?').run(Date.now());
     this.db.prepare("UPDATE node_inbox SET state='rejected',reason='MESSAGE_EXPIRED_OR_INVALID',envelope=NULL WHERE state='pending' AND expires_at<=?").run(Date.now());
     const messages: ReceivedMessage[] = [];
     for (const row of this.db.prepare("SELECT * FROM node_inbox WHERE state='pending' ORDER BY rowid LIMIT 100").all()) {
@@ -252,6 +254,33 @@ export class RelayClient {
     const row = this.db.prepare('SELECT state FROM node_inbox WHERE sender=? AND id=?').get(agentIdSchema.parse(senderId), uuidSchema.parse(id)) ?? fail('INBOX_MESSAGE_NOT_FOUND', 404);
     if (row.state === 'rejected') fail('MESSAGE_REJECTED', 409);
     this.db.prepare("UPDATE node_inbox SET state='handled',envelope=NULL WHERE sender=? AND id=?").run(senderId, id);
+  }
+  /** Atomically transfer an inbox ciphertext to the host's recoverable inbox before clearing its old copy. */
+  retainInboxMessage(senderId: string, id: string) {
+    agentIdSchema.parse(senderId); uuidSchema.parse(id);
+    transaction(this.db, () => {
+      this.db.prepare('DELETE FROM node_retained WHERE expires_at<=?').run(Date.now());
+      const row = this.db.prepare('SELECT * FROM node_inbox WHERE sender=? AND id=?').get(senderId, id) ?? fail('INBOX_MESSAGE_NOT_FOUND', 404);
+      if (row.state === 'rejected' || Number(row.expires_at) <= Date.now()) fail('MESSAGE_REJECTED', 409);
+      const retained = this.db.prepare('SELECT digest FROM node_retained WHERE sender=? AND id=?').get(senderId, id);
+      if (retained && retained.digest !== row.digest) fail('MESSAGE_ID_CONFLICT', 409);
+      if (!retained) {
+        if (!row.envelope) fail('INBOX_MESSAGE_NOT_FOUND', 404);
+        this.db.prepare('INSERT INTO node_retained VALUES(?,?,?,?,?,?)')
+          .run(senderId, id, String(row.digest), String(row.envelope), String(row.sender_card), Number(row.expires_at));
+      }
+      this.db.prepare("UPDATE node_inbox SET state='handled',envelope=NULL WHERE sender=? AND id=?").run(senderId, id);
+    });
+  }
+  /** Exact, encrypted local read. The host must separately enforce current recipient/contact/application permission. */
+  async readRetainedMessage(senderId: string, id: string): Promise<ReceivedMessage> {
+    agentIdSchema.parse(senderId); uuidSchema.parse(id);
+    const row = this.db.prepare('SELECT * FROM node_retained WHERE sender=? AND id=?').get(senderId, id) ?? fail('INBOX_MESSAGE_NOT_FOUND', 404);
+    if (Number(row.expires_at) <= Date.now()) fail('MESSAGE_EXPIRED_OR_INVALID', 410);
+    const sender = await verifyCard(String(row.sender_card), senderId);
+    const { envelope, content } = await openEnvelope(String(row.envelope), sender, this.#keys);
+    if (envelope.id !== id || envelope.senderId !== senderId) fail('INVALID_ENVELOPE');
+    return { senderId, id, connectionId: envelope.connectionId, createdAt: envelope.createdAt, expiresAt: envelope.expiresAt, content };
   }
   rejected(): { senderId: string; id: string; reason: string }[] {
     return this.db.prepare("SELECT sender,id,reason FROM node_inbox WHERE state='rejected' ORDER BY rowid DESC LIMIT 100").all().map(row => ({ senderId: String(row.sender), id: String(row.id), reason: String(row.reason) }));

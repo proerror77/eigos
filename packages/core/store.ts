@@ -4,6 +4,7 @@ import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
 import { businessTransaction, assertBusinessTransaction } from './transaction.js';
 import { NetworkStore } from '../network/store.js';
+import { MessagingStore } from '../agent-messaging/store.js';
 import { createTaskNetworkOntologyReader } from '../ontology/network-read.js';
 import type { ExecutionCatalog } from './catalog.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -279,6 +280,7 @@ export class JobStore {
   memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
 
   createNetworkStore(now?: () => number): NetworkStore { return new NetworkStore(this.db, now); }
+  createMessagingStore(now?: () => number): MessagingStore { return new MessagingStore(this.db, now); }
   createNetworkReadStore(): NetworkStore { return new NetworkStore(this.db, undefined, false); }
 
   // Gateway calls this only after validating the enrolled member and acquiring its network lease.
