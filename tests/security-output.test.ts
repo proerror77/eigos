@@ -15,6 +15,7 @@ import { OntologyPlanningSession } from '../packages/coordinator/planning-sessio
 import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import {JobStore} from '../packages/core/store.js';
 import type {Job} from '../packages/core/domain.js';
+import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
 
 function fixture(now:()=>number=Date.now) {
   const f=securityFixture(now),a=f.installation('A'),b=f.installation('B'),policy=f.jobs.security.policies,until=new Date(Date.now()+3600000).toISOString();
@@ -36,6 +37,20 @@ function fixture(now:()=>number=Date.now) {
   }
   return {...f,a,b,pa,pb,policy,until,principal,tasks,claim,publish};
 }
+
+test('authorized PA sees a safe runtime-pause explanation without internal recovery details',()=>{
+  const f=fixture();try {
+    const receipt=f.tasks.submit(f.pa,{service:'eigos.delegate',goal:'Synthetic public query',requestId:randomUUID()});
+    const job=f.jobs.get(f.owner,receipt.id);
+    scheduleTaskRecovery(job,'validation_stalled','PRIVATE_INTERNAL_MODEL_DETAIL',{automatic:false});f.jobs.save(f.owner,job);
+    const before=structuredClone(f.jobs.get(f.owner,job.id)),view=f.tasks.get(f.pa,job.id);
+    assert.equal(view.id,job.id);assert.equal(view.state,'paused');assert.equal(view.revision,before.revision);
+    assert.match(view.error??'',/runtime repair/);
+    assert(!JSON.stringify(view).includes('PRIVATE_INTERNAL_MODEL_DETAIL'));
+    assert.equal(view.question,undefined);assert(!Object.hasOwn(view,'authorization'));
+    assert.deepEqual(f.jobs.get(f.owner,job.id),before,'Readback must not resume or mutate the paused task');
+  }finally{f.close();}
+});
 
 test('sealed native goal delivery extracts only bounded verified typed references and never child payloads',()=>{
   const f=fixture();try {

@@ -19,6 +19,12 @@ function fixture() {
   return {...f,install,task,tasks,principal,input};
 }
 
+test('runtime-pause explanation does not grant result access to a processing-only PA',()=>{
+  const f=fixture();try {
+    assert.throws(()=>f.tasks.get(f.principal,f.task.job.id),/AUTHORIZATION_REQUIRED/);
+  }finally{f.close();}
+});
+
 test('Foundation technical resume keeps the original grant, authority, deadline and request',()=>{
   const f=fixture();try {
     const before=f.jobs.get(f.owner,f.task.job.id),grant=f.jobs.security.taskGrant(f.principal.access,f.task.job.id);

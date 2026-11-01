@@ -3047,7 +3047,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "8edec0f952d10458e63fadb4e06d0d77381720112eaa7c4eb7a178c317332bed",
+      "sourceDigest": "bb7bd52e4a92690ab3b461b135c939aa7644a7dde6b740454fd4a9626aad2db1",
       "channels": [
         "model",
         "dispatch"
@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "72fb21396bb2c1011ac2f3fcba0faad9d81604f523a39a0f4c1164dd6136ffc9",
+      "sourceDigest": "b12af93cff53c36cf2aaeef8e7ee46f2ba22b92b3d2f173f37d4f7148259f10d",
       "channels": [
         "http-mcp-a2a"
       ],
