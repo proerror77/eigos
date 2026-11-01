@@ -4824,10 +4824,10 @@
         "authorization_control"
       ],
       "content": "Authenticated encrypted mailbox and enrollment HTTP boundary",
-      "currentControl": "Explicit loopback proxy trust, per-client ingress limits, exact owner and node proofs, bounded ciphertext",
+      "currentControl": "Explicit loopback proxy trust; Cloudflare adapter supplies trusted ingress address; distributed limits for PostgreSQL; exact owner and node proofs; bounded ciphertext",
       "targetControl": "Keep communication authorization separate from primary task and source grants",
       "stage": "S5",
-      "sourceDigest": "d88f3ba9db8bb8e233023d22a0c59c92f8a44b82be2b71f8c5f1492b27930b74"
+      "sourceDigest": "38dae4a6188c8d0715de795d9837699b057147ae7e13851282456d97a451220f"
     },
     {
       "id": "relay-private-storage",
@@ -5330,6 +5330,85 @@
       "currentControl": "Strict communication-only operations; preserved write request identity; no business-task adapter or private input in errors.",
       "targetControl": "Keep private communication separate from task creation and signed authorization.",
       "stage": "S5"
+    },
+    {
+      "id": "relay-postgres-storage",
+      "file": "packages/relay/postgres-store.ts",
+      "channels": [
+        "agent_transport",
+        "authorization_control"
+      ],
+      "content": "PostgreSQL encrypted Relay state and distributed limits",
+      "currentControl": "Per-schema transaction lock; hashed credentials and ingress addresses; proof replay rejection; contact approval, message quotas, revocation and bounded poll leases",
+      "targetControl": "Preserve communication-only authority and exact state across instances and cutover",
+      "stage": "S5",
+      "sourceDigest": "a4b20a00388c68adce8ce5bfb55a86f5b7c907202e2e40551645f42dd0a1cb7c"
+    },
+    {
+      "id": "relay-cloudflare-entry",
+      "file": "apps/relay/cloudflare.ts",
+      "channels": [
+        "agent_transport",
+        "authorization_control"
+      ],
+      "content": "Cloudflare Relay HTTPS and database request boundary",
+      "currentControl": "Exact HTTPS origin and JWT configuration; Cloudflare client address validation; request-owned Hyperdrive client; no task or source grant",
+      "targetControl": "Retain authenticated routing and communication isolation after production cutover",
+      "stage": "S5",
+      "sourceDigest": "cb0e7c3af2968800d0f08daa6e3c2469d5c911615155ca292c11e6de7f6db001"
+    },
+    {
+      "id": "relay-postgres-import",
+      "file": "packages/relay/postgres-import.ts",
+      "channels": [
+        "offline migration",
+        "agent_transport"
+      ],
+      "content": "Offline encrypted Relay snapshot import",
+      "currentControl": "Owned private self-contained snapshot, application ID and schema checks, transactional fresh destination, readback digests, fail-closed uncertain commits",
+      "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
+      "stage": "S5",
+      "sourceDigest": "fead0a5e80e43818875ee90f2029b6b39a8a774801b1ad6036190a49259f59bf"
+    },
+    {
+      "id": "relay-postgres-import-cli",
+      "file": "scripts/relay-postgres-import.mjs",
+      "channels": [
+        "operator-cli",
+        "offline migration"
+      ],
+      "content": "Explicit Relay snapshot import operator entry",
+      "currentControl": "Explicit apply, separate CA and private connection environment, hostname verification, no credential output",
+      "targetControl": "Prevent unreviewed live-store replacement or credential exposure",
+      "stage": "S5",
+      "sourceDigest": "eaa3c2c581b43fbcfe9a4a0d892bd070f8ef494db416cc1e275539cc646f1e40"
+    },
+    {
+      "id": "business-postgres-snapshot-audit",
+      "file": "packages/postgres/business-snapshot.ts",
+      "channels": [
+        "offline migration",
+        "ontology",
+        "authorization_control"
+      ],
+      "content": "Read-only shared business snapshot inventory before PostgreSQL migration",
+      "currentControl": "Owned offline snapshot, exact authority and policy digests, claim and draft fences, byte-bounded hashing and no row output",
+      "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
+      "stage": "S5",
+      "sourceDigest": "2422b32e81706d2e43e83dc98f0554d96b5a3596b44e5d4addf454a695254875"
+    },
+    {
+      "id": "business-postgres-preflight-cli",
+      "file": "scripts/business-postgres-preflight.mjs",
+      "channels": [
+        "operator-cli",
+        "offline migration"
+      ],
+      "content": "Business snapshot inventory operator entry",
+      "currentControl": "Requires private authority descriptor, reviewed policy digest and absolute snapshot; emits only inventory and digests",
+      "targetControl": "Keep production cutover separate from an inventory-only check",
+      "stage": "S5",
+      "sourceDigest": "f744b8ee4eca5288d69c8912111878c9441620e9138a194c6d150b84a49b03b7"
     }
   ]
 }

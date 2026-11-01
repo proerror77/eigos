@@ -34,3 +34,11 @@
 - `scripts/install-business-facts.mjs`：使用准确 active release digest/generation；加 `--apply` 才激活新增业务定义。只接受已核对的 v23 前身，或对已经完成的 v24 返回原结果；不改写旧事实或任务 pin。
 
 两个入口都要求明确的私有数据库路径；正式库还要求匹配的 `EIGOS_AUTHORITY_FILE`。先完成策略迁移，再安装本体发布。新对象类型与字段仍需按具体来源和任务单独审核授权，不能自动扩大旧授权。完成后检查发布摘要、旧任务回读、新任务实体／关系投影和来源撤销。本流程不调用供应商业务动作。
+
+## PostgreSQL 迁移前业务库盘点
+
+`node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理租约、运行中的恢复、开放草稿或未解决权限围栏的副本。
+
+报告仅包含表结构、唯一键信息、行数和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
+
+**此入口只是盘点，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
