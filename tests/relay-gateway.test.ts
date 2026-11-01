@@ -72,7 +72,8 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
       const response = await originalFetch(url,init);
       if (!response.ok && target.pathname === '/v1/agents') {
         const body = await response.clone().json().catch(() => ({})) as {error?: unknown};
-        if (typeof body.error === 'string' && /^[A-Z_]{1,64}$/.test(body.error)) console.error('Synthetic Relay registration rejected:',response.status,body.error);
+        const detail=response.headers.get('X-Fixture-Auth-Result');
+        if (typeof body.error === 'string' && /^[A-Z_]{1,64}$/.test(body.error)) console.error('Synthetic Relay registration rejected:',response.status,body.error,detail && /^[A-Za-z0-9_]{1,80}$/.test(detail) ? detail : 'unavailable');
       }
       return response;
     }
