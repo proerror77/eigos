@@ -138,3 +138,35 @@ node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay
 只接受 UTF-8 编码的绝对快照路径和新的 `eigos_relay_` 命名空间。导入检查数据库标识、完整性、表和列，绑定事先审查的文件 SHA-256，使用一个 PostgreSQL 事务分批复制并核对全部行，单行编码超过 2 MiB 时拒绝导入；导入回执记录文件摘要、逐表摘要和数量且通过数据库触发器禁止更新或删除；发现目标存在、外键失败或读回不一致时回滚，不覆盖原有 schema。若提交时连接中断，结果可能未知；必须先检查原目标的 `relay_migration_receipt` 与已审查摘要，不能自动重试或覆盖。回执只证明导入时的快照和目标读回一致，不证明导入后目标未发生变化；切换前仍须确保源端停止写入并核对目标后续变化。成功只表示快照已验证导入，不代表线上已切换。导入后须单独创建受限角色并授权该 schema 的表、序列和 `relay_cleanup(bigint,bigint,bigint)` 函数；不应将管理员密码交给 Worker。
 
 现有 Relay 使用的 origin、JWT audience、客户端凭据和 DPoP 地址校验相互绑定。切换前需要逐项确认新 origin、身份提供方 audience、已登记客户端和待发／待收消息的恢复方式；仅更改 DNS 或部署 Worker 不能迁移连接器身份。测试环境应使用独立身份签发器和合成节点，不应授予真实业务权限。
+
+### 节点地址切换
+
+`node scripts/relay-client-repoint.mjs --apply --source-stopped --config /private/cutover.json --credential /private/node.json --agent-id <existing-agent-id>` 是离线操作入口；可用 `--state` 指定非默认节点状态文件。`--source-stopped` 是操作员对源 Relay 已停止写入的明确断言，程序无法替代全体节点停写和源快照核对。**不得在旧 Relay 继续接收消息时切换节点。**
+
+配置文件须为当前用户持有的 `0600` JSON，包含以下已审查信息：
+
+```json
+{
+  "oldUrl": "https://old-relay.example.com",
+  "newUrl": "https://worker-name.account-subdomain.workers.dev",
+  "targetSchema": "eigos_relay_example",
+  "expectedSourceDigest": "<reviewed-snapshot-sha256>",
+  "workerName": "worker-name",
+  "workersSubdomain": "account-subdomain",
+  "projectRef": "<20-character-supabase-project-ref>",
+  "poolerHost": "<session-pooler-host>",
+  "runtimeRole": "<reviewed-hyperdrive-role>",
+  "caCertificateId": "<cloudflare-ca-certificate-id>",
+  "expectedCaSha256": "<reviewed-ca-pem-sha256>",
+  "expectedScriptEtag": "<reviewed-worker-script-hash>",
+  "expectedCompatibilityDate": "2026-10-02",
+  "expectedCompatibilityFlags": [],
+  "wranglerPath": "/absolute/path/to/wrangler",
+  "wranglerConfigPath": "/private/wrangler.json",
+  "auth": { "issuer": "https://issuer.example.com", "audience": "https://relay.example.com", "jwksUrl": "https://issuer.example.com/jwks", "clientIds": "<reviewed-client-ids>" }
+}
+```
+
+连接仍由 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE` 提供；密码只放私有环境或钥匙串，不放配置文件。`expectedScriptEtag` 必须来自已审查的构建／部署记录，不能临时信任目标自己返回的值。 `caCertificateId` 与 `expectedCaSha256` 必须分别来自已审查的 Cloudflare CA 配置和本地 CA 文件；本工具核对配置 ID 与本地文件摘要，但不会读取 Cloudflare 证书内容来证明两者相同。当前验证器只支持已审查的 `workers.dev` 地址、Supabase 会话连接池和直接数据库 Hyperdrive；自定义域名及其他数据库连接方式须先实现相应的独立绑定验证。
+
+入口会核对目标导入回执、原节点凭据、Cloudflare 100% 单版本部署和 Worker 版本／脚本摘要／兼容设置、Hyperdrive 目标、CA 与 TLS、认证参数，再向目标发送节点证明。切换前后会复核目标；本地状态在未完成时保持迁移围栏，客户端拒绝启动，重复执行可恢复中断。须在整个切换期间保持源 Relay 停写及目标部署配置不变。该入口不会审查数据库角色是否还拥有其他权限，也不会迁移 OAuth 签发配置、业务授权或其他节点；这些项目须单独核验，不能据此认定所有业务服务已经迁移。

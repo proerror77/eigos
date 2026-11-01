@@ -6,9 +6,11 @@ import pg from 'pg';
 import { createRelayApp } from './app.js';
 import { readRelayConfig } from './config.js';
 import { PostgresRelayStore } from '../../packages/relay/postgres-store.js';
+import { uuidSchema } from '../../packages/relay/contracts.js';
 
 interface RelayWorkerEnv {
   RELAY_DATABASE: { connectionString: string };
+  CF_VERSION_METADATA?: { id: string };
   RELAY_SCHEMA: string;
   EIGOS_RELAY_PUBLIC_URL: string;
   EIGOS_RELAY_OAUTH_ISSUER: string;
@@ -44,7 +46,10 @@ export default {
       // Relay responses are bounded JSON, so consume before closing request-owned
       // sockets. This avoids leaking database connections into another request.
       const bytes = await result.arrayBuffer();
-      return new Response([204, 205, 304].includes(result.status) ? null : bytes, { status: result.status, statusText: result.statusText, headers: result.headers });
+      const headers = new Headers(result.headers);
+      headers.delete('X-EIGOS-Relay-Worker-Version');
+      if (uuidSchema.safeParse(env.CF_VERSION_METADATA?.id).success) headers.set('X-EIGOS-Relay-Worker-Version',env.CF_VERSION_METADATA!.id);
+      return new Response([204, 205, 304].includes(result.status) ? null : bytes, { status: result.status, statusText: result.statusText, headers });
     } finally {
       relay.stop();
       await new Promise<void>(resolve => server.close(() => resolve()));

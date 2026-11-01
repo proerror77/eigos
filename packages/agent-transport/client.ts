@@ -1,7 +1,8 @@
-import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { constants, closeSync, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
+import type { Client as PostgresClient } from 'pg';
 import { z } from 'zod';
 import { agentIdSchema, connectionSchema, fail, mailItemSchema, MAX_CONTENT_BYTES, receiptSchema, relayOrigin, RelayError,
   RELAY_PROTOCOL, sha256, uuidSchema, type Connection, type Envelope, type Receipt, type VerifiedCard } from '../relay/contracts.js';
@@ -15,7 +16,7 @@ type Credentials = z.infer<typeof credentialsSchema>;
 export interface ReceivedMessage { senderId: string; id: string; connectionId: string; createdAt: number; expiresAt: number; content: unknown }
 
 function readPrivate(path: string): string {
-  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try { const stat = fstatSync(fd); if (!stat.isFile() || stat.nlink !== 1 || process.getuid && stat.uid !== process.getuid() || stat.mode & 0o077 || stat.size > 16000) throw new Error('Node credentials require an owned private regular file (0600)'); return readFileSync(fd, 'utf8'); }
   finally { closeSync(fd); }
 }
@@ -64,6 +65,136 @@ async function readJson(response: Response): Promise<unknown> {
   } catch (error) { if (error instanceof RelayError) throw error; return fail('INVALID_RELAY_RESPONSE', 502); }
 }
 
+/** Offline operator operation for a previously imported Relay. The caller
+ * must first stop source writes and independently verify that the target Worker
+ * is bound to this exact database/schema. A mismatch between the credential
+ * and state file is intentionally recoverable by invoking this operation again. */
+export async function repointRelayClient(options: {
+  oldUrl: string; newUrl: string; credentialPath: string; statePath?: string; agentId: string;
+  targetSchema: string; expectedSourceDigest: string; targetDatabase: PostgresClient;
+  verifyDestinationBinding: (input: { origin: string; schema: string; sourceDigest: string; workerVersion: string | null }) => Promise<boolean>;
+  fetch?: typeof fetch;
+}): Promise<{ status: 'migrated' | 'already-migrated'; recovered: boolean }> {
+  const { oldUrl:oldInput,newUrl:newInput,credentialPath:path,statePath:providedStatePath,agentId,targetSchema,expectedSourceDigest,targetDatabase,verifyDestinationBinding,fetch:fetcher } = options;
+  const oldUrl = relayOrigin(oldInput), newUrl = relayOrigin(newInput), statePath = providedStatePath ?? path + '.sqlite';
+  if (oldUrl === newUrl || resolve(path) !== path || resolve(statePath) !== statePath || path === statePath
+    || !/^eigos_relay_[a-z0-9_]{1,40}$/.test(targetSchema) || !/^[a-f0-9]{64}$/.test(expectedSourceDigest)
+    || typeof verifyDestinationBinding !== 'function') throw new Error('Invalid Relay migration options');
+  agentIdSchema.parse(agentId);
+  const unlock = lock(path + '.lock'); let db: DatabaseSync | undefined;
+  try {
+    if (!existsSync(path) || !existsSync(statePath)) throw new Error('Existing Relay credentials and state are required');
+    const parent = lstatSync(dirname(path));
+    if (!parent.isDirectory() || parent.isSymbolicLink() || parent.mode & 0o022 || (process.getuid && parent.uid !== process.getuid())) throw new Error('Relay credentials require an owned non-writable directory');
+    const initial = lstatSync(path), initialText = readPrivate(path);
+    let credentials: Credentials;
+    try { credentials = credentialsSchema.parse(JSON.parse(initialText)); } catch { throw new Error('Invalid Relay credentials'); }
+    if (![oldUrl,newUrl].includes(credentials.baseUrl)) throw new Error('Relay credentials are pinned to another origin');
+    const identity = await verifyCard(credentials.signedCard,agentId);
+    if (credentials.signingKey.x !== identity.card.signingKey.x || credentials.encryptionKey.x !== identity.card.encryptionKey.x) throw new Error('Node private keys do not match its signed identity');
+    db = openPrivateDatabase(statePath,0x45474e31);
+    const oldIdentity = JSON.stringify([oldUrl,agentId]), newIdentity = JSON.stringify([newUrl,agentId]);
+    const existing = db.prepare("SELECT value FROM node_meta WHERE key='identity'").get()?.value;
+    if (existing !== oldIdentity && existing !== newIdentity) throw new Error('Node state belongs to a different identity or relay');
+    const fence = JSON.stringify([1,oldUrl,newUrl,agentId,targetSchema,expectedSourceDigest]);
+    const existingFence = db.prepare("SELECT value FROM node_meta WHERE key='migration_fence'").get()?.value;
+    if (existingFence !== undefined && existingFence !== fence) throw new Error('Another Relay migration requires recovery');
+    if (targetDatabase.getTransactionStatus() !== 'I' || targetDatabase.pipeline !== false) throw new Error('An idle, non-pipelined target database client is required');
+    const schema = `"${targetSchema}"`;
+    let readOpen = false, targetExpires = 0;
+    try {
+      await targetDatabase.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'); readOpen = true;
+      await targetDatabase.query("SET LOCAL statement_timeout = '15s'");
+      const receipt = (await targetDatabase.query(`SELECT body FROM ${schema}.relay_migration_receipt WHERE slot=1`)).rows[0]?.body;
+      const agent = (await targetDatabase.query(`SELECT signed_card,credential_hash,state,expires_at FROM ${schema}.relay_agents WHERE id=$1`,[agentId])).rows[0];
+      if (!receipt || receipt.version !== 1 || receipt.status !== 'imported-not-activated' || receipt.sourceFileDigest !== expectedSourceDigest
+        || !agent || agent.signed_card !== credentials.signedCard || agent.credential_hash !== sha256(credentials.secret) || agent.state !== 'active'
+        || !Number.isSafeInteger(Number(agent.expires_at)) || Number(agent.expires_at) <= Date.now()) throw new Error('Target Relay receipt or node identity does not match');
+      targetExpires = Number(agent.expires_at);
+      await targetDatabase.query('COMMIT'); readOpen = false;
+    } catch (error) {
+      if (readOpen) {
+        try { await targetDatabase.query('ROLLBACK'); }
+        catch {
+          const client = targetDatabase as PostgresClient & { release?: (error?: Error) => void };
+          try { if (typeof client.release === 'function') client.release(new Error('Relay migration connection is unusable')); else await client.end(); } catch { /* connection is already unusable */ }
+        }
+      }
+      throw error;
+    }
+    const endpoint = `${newUrl}/v1/agents/${agentId}`, keys: NodeKeys = { signingKey:credentials.signingKey,encryptionKey:credentials.encryptionKey,identity };
+    const verifyTarget = async () => {
+      // Verify the deployed target before sending the long-lived node secret.
+      const health = await (fetcher ?? fetch)(`${newUrl}/health`, { method:'GET',redirect:'error',signal:AbortSignal.timeout(15000) });
+      if (!health.ok) { try { await health.body?.cancel(); } catch { /* discard an unusable response */ } throw new Error('Target Relay health check failed'); }
+      const workerVersion = health.headers.get('X-EIGOS-Relay-Worker-Version');
+      const info = z.strictObject({ status:z.literal('ok'),protocol:z.literal(RELAY_PROTOCOL),role:z.literal('encrypted-relay') }).safeParse(await readJson(health));
+      if (!info.success) throw new Error('Target Relay health response is invalid');
+      const binding = Object.freeze({ origin:newUrl, schema:targetSchema, sourceDigest:expectedSourceDigest, workerVersion });
+      if (!await verifyDestinationBinding(binding)) throw new Error('Target Worker binding has not been verified');
+      const proof = await createProof(keys,credentials.secret,'GET',endpoint);
+      const response = await (fetcher ?? fetch)(endpoint, { method:'GET',redirect:'error',signal:AbortSignal.timeout(15000),headers:{ Authorization:`DPoP ${credentials.secret}`,DPoP:proof,'X-EIGOS-Agent-ID':agentId } });
+      if (!response.ok) { try { await response.body?.cancel(); } catch { /* discard an unusable response */ } throw new Error('Target Relay did not authenticate the existing node'); }
+      if (response.headers.get('X-EIGOS-Relay-Worker-Version') !== workerVersion) { try { await response.body?.cancel(); } catch { /* discard an unusable response */ } throw new Error('Target Worker version changed'); }
+      const publicAgent = z.strictObject({ signedCard:z.string().max(4096),state:z.enum(['active','expired','revoked']),expiresAt:z.number().int() }).parse(await readJson(response));
+      if (publicAgent.signedCard !== credentials.signedCard || publicAgent.state !== 'active' || publicAgent.expiresAt !== targetExpires || publicAgent.expiresAt <= Date.now()) throw new Error('Target Relay node identity is not active');
+      if (!await verifyDestinationBinding(binding)) throw new Error('Target Worker binding has not been verified');
+    };
+    await verifyTarget();
+    const beforeWrite = lstatSync(path);
+    if (beforeWrite.dev !== initial.dev || beforeWrite.ino !== initial.ino || beforeWrite.size !== initial.size || beforeWrite.mtimeMs !== initial.mtimeMs || beforeWrite.ctimeMs !== initial.ctimeMs || !beforeWrite.isFile() || beforeWrite.isSymbolicLink() || beforeWrite.nlink !== 1 || beforeWrite.mode & 0o077 || (process.getuid && beforeWrite.uid !== process.getuid()) || sha256(readPrivate(path)) !== sha256(initialText)) throw new Error('Relay credentials changed during migration');
+    const temp = `${path}.repoint.tmp`; let staleStat: ReturnType<typeof lstatSync> | undefined;
+    try { staleStat = lstatSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    if (credentials.baseUrl !== newUrl && staleStat) {
+      const stat = staleStat; let stale: Credentials;
+      try { stale = credentialsSchema.parse(JSON.parse(readPrivate(temp))); } catch { throw new Error('Unrecognized Relay migration temporary file'); }
+      if (JSON.stringify(stale) !== JSON.stringify({ ...credentials,baseUrl:newUrl })) throw new Error('Unrecognized Relay migration temporary file');
+      const current = lstatSync(temp);
+      if (current.dev !== stat.dev || current.ino !== stat.ino || !current.isFile() || current.isSymbolicLink() || current.nlink !== 1) throw new Error('Relay migration temporary file changed');
+      unlinkSync(temp);
+    }
+    const recovered = existingFence === fence || (credentials.baseUrl === newUrl) !== (existing === newIdentity);
+    const already = credentials.baseUrl === newUrl && existing === newIdentity;
+    transaction(db, () => {
+      if (db!.prepare("SELECT value FROM node_meta WHERE key='identity'").get()?.value !== existing
+        || db!.prepare("SELECT value FROM node_meta WHERE key='migration_fence'").get()?.value !== existingFence) throw new Error('Node state changed during Relay migration');
+      if (existingFence === undefined) db!.prepare("INSERT INTO node_meta VALUES('migration_fence',?)").run(fence);
+      if (existing !== newIdentity) {
+        const result = db!.prepare("UPDATE node_meta SET value=? WHERE key='identity' AND value=?").run(newIdentity,oldIdentity);
+        if (result.changes !== 1) throw new Error('Node state changed during Relay migration');
+      }
+    });
+    if (credentials.baseUrl !== newUrl) {
+      let created = false, tempInfo: ReturnType<typeof fstatSync> | undefined;
+      try {
+        const fd = openSync(temp,constants.O_CREAT|constants.O_EXCL|constants.O_WRONLY|constants.O_NOFOLLOW,0o600); created = true; tempInfo = fstatSync(fd);
+        const content = JSON.stringify({ ...credentials,baseUrl:newUrl });
+        try { writeFileSync(fd,content); fsyncSync(fd); } finally { closeSync(fd); }
+        const staged = lstatSync(temp);
+        if (staged.dev !== tempInfo.dev || staged.ino !== tempInfo.ino || !staged.isFile() || staged.isSymbolicLink() || staged.nlink !== 1 || sha256(readPrivate(temp)) !== sha256(content)) throw new Error('Relay migration temporary file changed');
+        const current = lstatSync(path);
+        if (current.dev !== initial.dev || current.ino !== initial.ino || current.size !== initial.size || current.mtimeMs !== initial.mtimeMs || current.ctimeMs !== initial.ctimeMs || !current.isFile() || current.isSymbolicLink() || current.nlink !== 1 || current.mode & 0o077 || (process.getuid && current.uid !== process.getuid()) || sha256(readPrivate(path)) !== sha256(initialText)) throw new Error('Relay credentials changed during migration');
+        renameSync(temp,path); created = false;
+        const dir = openSync(dirname(path),constants.O_RDONLY); try { fsyncSync(dir); } finally { closeSync(dir); }
+      } finally {
+        if (created && tempInfo) {
+          try { const current = lstatSync(temp); if (current.dev === tempInfo.dev && current.ino === tempInfo.ino) unlinkSync(temp); }
+          catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+        }
+      }
+    }
+    await verifyTarget();
+    transaction(db, () => {
+      const finalText = readPrivate(path); let finalCredentials: Credentials;
+      try { finalCredentials = credentialsSchema.parse(JSON.parse(finalText)); } catch { throw new Error('Relay credentials changed during migration'); }
+      if (JSON.stringify(finalCredentials) !== JSON.stringify({ ...credentials,baseUrl:newUrl })
+        || db!.prepare("SELECT value FROM node_meta WHERE key='identity'").get()?.value !== newIdentity) throw new Error('Relay migration state changed');
+      if (db!.prepare("DELETE FROM node_meta WHERE key='migration_fence' AND value=?").run(fence).changes !== 1) throw new Error('Relay migration fence changed');
+    });
+    return { status:already && !recovered ? 'already-migrated' : 'migrated', recovered };
+  } finally { try { db?.close(); } finally { unlock(); } }
+}
+
 /** A node's private connector. It never forwards owner OAuth tokens or source credentials to peers. */
 export class RelayClient {
   readonly agentId: string;
@@ -83,6 +214,7 @@ export class RelayClient {
         CREATE TABLE IF NOT EXISTS node_inbox (sender TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,envelope TEXT,sender_card TEXT NOT NULL,state TEXT NOT NULL,reason TEXT,expires_at INTEGER NOT NULL,PRIMARY KEY(sender,id));
         CREATE TABLE IF NOT EXISTS node_retained (sender TEXT NOT NULL,id TEXT NOT NULL,digest TEXT NOT NULL,envelope TEXT NOT NULL,sender_card TEXT NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(sender,id));
         CREATE INDEX IF NOT EXISTS node_pending ON node_inbox(state,expires_at);`);
+      if (this.db.prepare("SELECT 1 FROM node_meta WHERE key='migration_fence'").get()) throw new Error('Relay migration requires recovery');
       const identity = JSON.stringify([baseUrl, this.agentId]);
       const existing = this.db.prepare("SELECT value FROM node_meta WHERE key='identity'").get();
       if (existing && existing.value !== identity) throw new Error('Node state belongs to a different identity or relay');

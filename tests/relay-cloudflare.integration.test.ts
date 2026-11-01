@@ -31,6 +31,13 @@ test('Cloudflare Relay accepts authenticated encrypted messages and enforces rep
     assert.equal((await a.receipt(a.agentId, id)).status, 'received');
     const raw = JSON.parse(readFileSync(join(dir, 'a.json'), 'utf8'));
     const keys: NodeKeys = { signingKey: raw.signingKey, encryptionKey: raw.encryptionKey, identity: a.identity };
+    if (process.env.EIGOS_TEST_CF_RELAY_VERSION) {
+      const selfUrl = `${baseUrl}/v1/agents/${a.agentId}`;
+      const selfProof = await createProof(keys,raw.secret,'GET',selfUrl);
+      const self = await fetch(selfUrl,{headers:{Authorization:'DPoP '+raw.secret,DPoP:selfProof,'X-EIGOS-Agent-ID':a.agentId}});
+      assert.equal(self.status,200);assert.equal(self.headers.get('X-EIGOS-Relay-Worker-Version'),process.env.EIGOS_TEST_CF_RELAY_VERSION);
+      await self.arrayBuffer();
+    }
     const proof = await createProof(keys, raw.secret, 'GET', baseUrl! + '/v1/contacts');
     const headers = { Authorization: 'DPoP ' + raw.secret, DPoP: proof, 'X-Eigos-Agent-Id': a.agentId };
     const first = await fetch(baseUrl! + '/v1/contacts', { headers });

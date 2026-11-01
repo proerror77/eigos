@@ -4704,13 +4704,13 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "93561dd79ad9328b08ebbbacc4f065c3d633f6e8c0e36f06673875afaa38896b",
+      "sourceDigest": "2f21f9d47f2ef14f3ab9e6a06937665410dd1f2720eeee2f5e400e5c98f11ea1",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Node keys, signed proofs, encrypted inbox and outbox",
-      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry Host ciphertext retention is atomic in the private node database; application reads separately revalidate current grant and exact original contact.",
+      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry. Host ciphertext retention is atomic in the private node database; application reads separately revalidate current grant and exact original contact. Offline repoint uses reviewed receipt, target identity, binding verification and a recoverable migration fence.",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -5352,10 +5352,10 @@
         "authorization_control"
       ],
       "content": "Cloudflare Relay HTTPS and database request boundary",
-      "currentControl": "Exact HTTPS origin and JWT configuration; Cloudflare client address validation; request-owned Hyperdrive client; no task or source grant",
+      "currentControl": "Exact HTTPS origin and JWT configuration; Cloudflare client address validation; request-owned Hyperdrive client; optional version metadata response; no task or source grant",
       "targetControl": "Retain authenticated routing and communication isolation after production cutover",
       "stage": "S5",
-      "sourceDigest": "cb0e7c3af2968800d0f08daa6e3c2469d5c911615155ca292c11e6de7f6db001"
+      "sourceDigest": "ffc0602ee6c3efa7af38cfd16dd85f889de920710be6902a76b342860640b40d"
     },
     {
       "id": "relay-postgres-import",
@@ -5580,6 +5580,32 @@
       "targetControl": "Complete claim creation, recovery, result fencing and full authorization before runtime activation",
       "stage": "S5",
       "sourceDigest": "7ca1974ab3bc4710541cfdb500855e753bdc8119adf3245eb22f15c6bc58023c"
+    },
+    {
+      "id": "relay-cloudflare-binding",
+      "file": "packages/relay/cloudflare-binding.ts",
+      "channels": [
+        "offline migration",
+        "agent_transport"
+      ],
+      "content": "Read-only Cloudflare and Supabase destination verification",
+      "currentControl": "Read-only reviewed version, script hash, compatibility, origin, Hyperdrive, TLS and auth settings; checks both deployment and Hyperdrive twice",
+      "targetControl": "Require source stop and independently verified destination before migrating node state",
+      "stage": "S5",
+      "sourceDigest": "4dc3fe38e9017f628fe3c5cae6931489a5c6d6bec931780cd04bf8ae422e0964"
+    },
+    {
+      "id": "relay-client-repoint-cli",
+      "file": "scripts/relay-client-repoint.mjs",
+      "channels": [
+        "offline migration",
+        "agent_transport"
+      ],
+      "content": "Operator-only offline Relay node origin migration",
+      "currentControl": "Requires explicit source-stop assertion, private configuration, verified TLS and destination binding; no credential output",
+      "targetControl": "Require source stop and independently verified destination before migrating node state",
+      "stage": "S5",
+      "sourceDigest": "11ba66334e5d41f1d1b95d3671b81261c6dae35d35b9f8b2adca036fa8a2c9fc"
     }
   ]
 }

@@ -64,7 +64,7 @@ jobs:
         run: echo 'Documentation-only change; no runtime checks required.'
   relay-postgres:
     needs: scope
-    if: ${{ needs.scope.result == 'success' && (contains(needs.scope.outputs.shards, 'tests/relay-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-schema.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-large-row.test.ts') || contains(needs.scope.outputs.shards, 'tests/membership-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-identity-audit.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-runtime-transaction.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-work-authority.test.ts')) }}
+    if: ${{ needs.scope.result == 'success' && (contains(needs.scope.outputs.shards, 'tests/relay-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-schema.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/business-postgres-large-row.test.ts') || contains(needs.scope.outputs.shards, 'tests/membership-postgres-import.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-identity-audit.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-runtime-transaction.test.ts') || contains(needs.scope.outputs.shards, 'tests/postgres-work-authority.test.ts') || contains(needs.scope.outputs.shards, 'tests/relay-client-repoint.test.ts')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -95,7 +95,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/relay-postgres-import.test.ts tests/business-postgres-schema.test.ts tests/business-postgres-import.test.ts tests/business-postgres-large-row.test.ts tests/membership-postgres-import.test.ts tests/postgres-identity-audit.test.ts tests/postgres-runtime-transaction.test.ts tests/postgres-work-authority.test.ts
+      - run: node --import tsx --test tests/relay-postgres-import.test.ts tests/business-postgres-schema.test.ts tests/business-postgres-import.test.ts tests/business-postgres-large-row.test.ts tests/membership-postgres-import.test.ts tests/postgres-identity-audit.test.ts tests/postgres-runtime-transaction.test.ts tests/postgres-work-authority.test.ts tests/relay-client-repoint.test.ts
   # Preserve required check names. Empty shards validate the scope without
   # installing dependencies or invoking Node's automatic test discovery.
   tests:
