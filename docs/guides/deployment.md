@@ -47,7 +47,7 @@ Gateway 的会员、安装、会话和撤销状态由 `MEMBERSHIP_DATABASE_PATH`
 
 两份快照导入后可执行 `node scripts/postgres-identity-audit.mjs --business-schema eigos_business_example --membership-schema eigos_membership_example --business-digest <reviewed-business-digest> --membership-digest <reviewed-membership-digest>`。该检查绑定两份迁移回执，在一致的只读事务中比较尚未过期的活跃身份投影与会员、安装及连接状态，仅输出总数与不匹配数量；不匹配时退出失败。它不核验全部授权、任务和外部效果，不能单独作为切换或授权依据。
 
-`packages/postgres/runtime-transaction.ts` 提供 PostgreSQL 写事务的基础围栏：同一业务 schema 的协作写入共享锁，在事务前后核对并锁定运行权威；提交结果不明时禁止自动重试。此组件尚未接入 Gateway 或 Worker，调用者仍须在同一事务中核对任务、领取和授权，且所有业务写入者必须采用同一锁，其中的权威行锁还需设计并验证最小权限数据库角色，不能让运行时因此取得修改权威的权限；不能据此启动 PostgreSQL 运行时。
+`packages/postgres/runtime-transaction.ts` 提供 PostgreSQL 写事务的基础围栏：同一业务 schema 的协作写入共享锁，在事务前后核对并锁定运行权威；提交结果不明时禁止自动重试。此组件尚未接入 Gateway 或 Worker，调用者仍须在同一事务中核对任务、领取和授权，且所有业务写入者必须采用同一锁，权威行锁通过固定查询路径的受控数据库函数取得；函数默认不授予 PUBLIC 执行权。合成测试验证了受限角色能调用该函数而不能读取或修改权威表。正式运行角色的配置和完整权限验证仍未完成，不能据此启动 PostgreSQL 运行时。
 
 **业务库盘点入口只读，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
 

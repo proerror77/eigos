@@ -5448,7 +5448,7 @@
       "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "a09ba878ad87dbfce9f590807efd8975e0d6f7db484acd0a1d9c3614a9555079"
+      "sourceDigest": "d5d88df80af898bd9f8e0f03e788ba9681eac5f34e526cfae882e99e4df4c6ec"
     },
     {
       "id": "business-postgres-import-cli",
@@ -5540,7 +5540,20 @@
       "currentControl": "Serializable transaction, shared advisory lock, authority checks before work and commit; no automatic retry after uncertain commit",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "f4405329d2a16fb693b611fd25427c4743aaa7495b32a9c8fb0529c95c9ffce9"
+      "sourceDigest": "03beb41442218864e24ff367291661716bf2191c195eb7f8b0fc7be0981bb2c6"
+    },
+    {
+      "id": "postgres-authority-lock",
+      "file": "packages/postgres/authority-lock.ts",
+      "channels": [
+        "authorization_control",
+        "postgres"
+      ],
+      "content": "Privileged runtime authority row lock function",
+      "currentControl": "Schema-qualified fixed search path, no arguments, transactionally revoked public execute, explicit runtime grant required",
+      "targetControl": "Allow authority fencing without granting runtime authority-table write privileges",
+      "stage": "S5",
+      "sourceDigest": "5a873f4587cf94564b0a2b453f03f132897e031ea552e65bbfb85d72bbea179b"
     }
   ]
 }

@@ -49,6 +49,10 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[budgetSchema])).rowCount, 0);
     const result = await importBusinessSnapshot(client, options); imported = true;
     assert.equal(result.status, 'imported-not-activated'); assert.equal(result.sourceFileDigest, plan.fileDigest);
+    const lockedAuthority = await client.query(`SELECT * FROM "${schema}".eigos_lock_runtime_authority()`);
+    assert.equal(lockedAuthority.rows[0].id, authority.id); assert.equal(lockedAuthority.rows[0].configuration_digest, authorityDigest);
+    const functionSecurity = await client.query("SELECT p.prosecdef, EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE(p.proacl,pg_catalog.acldefault('f',p.proowner))) a WHERE a.grantee=0 AND a.privilege_type='EXECUTE') AS public_exec FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=$1 AND p.proname='eigos_lock_runtime_authority'", [schema]);
+    assert.equal(functionSecurity.rows[0].prosecdef, true); assert.equal(functionSecurity.rows[0].public_exec, false);
     assert.deepEqual(result.tables, plan.tables.map(table => ({ name: table.name, rows: table.rows, digest: table.digest })));
     await assert.rejects(importBusinessSnapshot(client, options), /already exists/);
     assert.equal((await client.query(`SELECT value FROM "${schema}".network_state WHERE key='activity_epoch'`)).rows[0].value, epoch);

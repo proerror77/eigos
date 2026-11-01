@@ -4,6 +4,7 @@ import type { Client } from 'pg';
 import { compileBusinessSchema } from './business-schema.js';
 import { encodeBusinessRow, planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessTable } from './business-snapshot.js';
 import { validateBusinessJsonCompatibility } from './business-json-compat.js';
+import { installPostgresAuthorityLock } from './authority-lock.js';
 
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
@@ -123,6 +124,7 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
       await client.query('SELECT setval($1::regclass,$2::bigint,$3)', [found.rows[0].seq, (last > 0n ? last : 1n).toString(), last > 0n]);
     }
     if (mapping.triggerStatements.length) await client.query(mapping.triggerStatements.join(';\n'));
+    await installPostgresAuthorityLock(client, schema);
     await targetSize(client, maxDatabaseBytes);
     const rechecked = planBusinessSnapshot(snapshot, expectedAuthorityDigest, expectedPolicyDigest);
     if (JSON.stringify(plan) !== JSON.stringify(rechecked)) throw new Error('Business snapshot changed during import');

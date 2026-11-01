@@ -25,13 +25,13 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     try { if (typeof pooled.release === 'function') pooled.release(new Error('Transaction state is uncertain')); else if (typeof client.end === 'function') await client.end(); } catch { /* connection is already unusable */ }
   };
   const assertAuthority = async () => {
-    const result = await client.query(`SELECT id,revision,configuration_digest FROM "${schema}".runtime_authority WHERE slot=1 FOR UPDATE`);
+    const result = await client.query(`SELECT id,revision,configuration_digest FROM "${schema}".eigos_lock_runtime_authority()`);
     const row = result.rows[0];
     if (result.rowCount !== 1 || row?.id !== expected.id || String(row?.revision) !== String(expected.revision) || row?.configuration_digest !== expected.digest) throw new Error('PostgreSQL business authority changed');
   };
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); opened = true;
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`eigos-business:${schema}`]);
+    await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))', [`eigos-business:${schema}`]);
     await client.query(`SET LOCAL search_path TO "${schema}", pg_catalog, pg_temp`);
     await assertAuthority();
     const result = await action(client);
