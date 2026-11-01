@@ -170,3 +170,9 @@ node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay
 连接仍由 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE` 提供；密码只放私有环境或钥匙串，不放配置文件。`expectedScriptEtag` 必须来自已审查的构建／部署记录，不能临时信任目标自己返回的值。 `caCertificateId` 与 `expectedCaSha256` 必须分别来自已审查的 Cloudflare CA 配置和本地 CA 文件；本工具核对配置 ID 与本地文件摘要，但不会读取 Cloudflare 证书内容来证明两者相同。当前验证器只支持已审查的 `workers.dev` 地址、Supabase 会话连接池和直接数据库 Hyperdrive；自定义域名及其他数据库连接方式须先实现相应的独立绑定验证。
 
 入口会核对目标导入回执、原节点凭据、Cloudflare 100% 单版本部署和 Worker 版本／脚本摘要／兼容设置、Hyperdrive 目标、CA 与 TLS、认证参数，再向目标发送节点证明。切换前后会复核目标；本地状态在未完成时保持迁移围栏，客户端拒绝启动，重复执行可恢复中断。须在整个切换期间保持源 Relay 停写及目标部署配置不变。该入口不会审查数据库角色是否还拥有其他权限，也不会迁移 OAuth 签发配置、业务授权或其他节点；这些项目须单独核验，不能据此认定所有业务服务已经迁移。
+
+### 单独暂停和恢复本机 Gateway
+
+使用包含此功能的 `run-local.mjs` 启动器，并在启动前设置 `EIGOS_RELAY_CUTOVER_SIGNALS=true`，才可由同一系统用户向**启动器进程**发送 `SIGUSR1` 暂停 Gateway。启动器等待 Gateway 正常退出后写入 `Gateway paused; Worker remains running`；此前不能认为 Gateway 已停止。暂停完成后，`SIGUSR2` 启动一个新的 Gateway 进程并重新读取原环境所指向的 Relay 配置文件；需要另行检查 Gateway 健康状态、身份和目标地址。暂停期间提前发送的 `SIGUSR2` 会被忽略。默认未启用这些信号，已运行的旧启动器不会自动获得此能力。
+
+此控制只保留 Worker **进程**，不保证暂停期间任务授权租约仍有效或执行不中断。它不停止独立服务 Agent、PA、源 Relay 或其他写入者，也不验证数据库快照、迁移围栏、节点凭据和目标环境；必须分别完成和核实这些步骤，才能认定源端已停写。Gateway 非正常退出仍按启动器既有的故障处理停止进程组，不会被记录为成功暂停。

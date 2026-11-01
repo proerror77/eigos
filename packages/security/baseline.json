@@ -3824,12 +3824,12 @@
     {
       "id": "s5-scripts-run-local",
       "file": "scripts/run-local.mjs",
-      "sourceDigest": "9bcb1cf1a111627420881fa3720070c263d40313b7987c083586472fe52809a0",
+      "sourceDigest": "cc4bb6c65432a2e7b9bc6fc33187be153e58f39669125cf1419ca5c775531970",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation",
+      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation; opt-in local signals stop only Gateway, wait for clean exit, and require an explicit resume",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
