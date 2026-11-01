@@ -28,7 +28,7 @@ import { bindInitialSelection, recordedInitialSelection, verifyInitialPlan } fro
 import { secureAgentContext, secureRequest } from '../security/model.js';
 import { assertGoalCoverage, assertReadContractResult } from '../ontology/goal-coverage.js';
 import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
-import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion } from './read-dataflow.js';
+import { bindAcceptedObjects, dataflowArguments, dataflowValue, validateReadBindings, validatePlannedCompletion, validateKnownReadDependencies } from './read-dataflow.js';
 import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 import { externalDraftScopeSchema } from '../ontology/external-draft.js';
 import { assertPipelineReady } from '../ontology/pipeline/contracts.js';
@@ -352,6 +352,7 @@ export class AgentRuntime {
           const ref = objectRefSchema.safeParse(value);
           if (ref.success && !(reads.deliveredObjects ?? reads.objects).some(o => equal(o.ref, ref.data))) failure('Read referenced ontology objects before selecting an action');
         }
+        if (step.inputRefs.length) validateKnownReadDependencies(actionContext.graph, actionContext.owner, step, definition, checked, reads);
         if (!step.inputRefs.length && ctx.state.composition) validateCompositionInputs(ctx, step.action, checked, targets, this.catalog);
         if (!step.inputRefs.length) actionProgram.validate(actionContext, step.action, checked);
         if (!step.inputRefs.length) actionProgram.validatePlanning?.(actionContext, step.action, checked, reads);
@@ -564,10 +565,16 @@ export class AgentRuntime {
     let attempt: ExecutionAttempt | undefined;
     try {
       const root = this.context(claim);
+      // These refs were selected and read in the original model decision.
+      // Recheck them beside actual future outputs; never drop their receipts
+      // merely because another input in the same consumer was deferred.
+      const knownRefs = Object.values(step.input).flatMap(value => {
+        const parsed = objectRefSchema.safeParse(value); return parsed.success ? [parsed.data] : [];
+      });
       if (root.state.composition) {
         const derived=step.inputRefs.some(ref=>ref.compute);
         const access=derived?this.access(claim,signal).session.hostEvidenceSession():undefined;
-        if(access)access.prepareContext({actions:[step.action],refs:[plan.scope,step.contextScope!,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
+        if(access)access.prepareContext({actions:[step.action],refs:[plan.scope,step.contextScope!,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
         input=composedInputs(this.catalog,root,plan,step,id=>this.store.intent(claim.owner,id),access?(ref,object)=>{
           const result=access.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000}) as {status?:string;value?:unknown;reason?:string};
           if(result.status!=='known')failure(result.reason??'Deferred source input requires a new decision');
@@ -578,7 +585,7 @@ export class AgentRuntime {
       else if (step.inputRefs.length) {
         validateReadBindings(root.graph, program, step, program.definition(root.graph, step.action), step.input, new Map(plan.steps.filter(item=>item.id!==step.id).map(item=>[item.id,item])));
         const originalAccess=this.access(claim,signal), access={...originalAccess,session:originalAccess.session.hostEvidenceSession()};
-        access.session.prepareContext({actions:[step.action],refs:[plan.scope,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
+        access.session.prepareContext({actions:[step.action],refs:[plan.scope,...knownRefs,...dependencies.map(intent=>objectRefSchema.parse(intent.acceptedOutput?.object))]});
         input=bindAcceptedObjects(input,step.inputRefs,id=>dependencies.find(intent=>intent.stepId===id)?.acceptedOutput?.object,(ref,object)=>{
           const result=access.session.call('evaluate_ontology',{function:ref.compute!.function,object},{origin:'worker_context',maxOutputBytes:30000}) as {status?:string;value?:unknown;reason?:string};
           if(result.status!=='known')failure(result.reason??'Deferred source input requires a new decision');

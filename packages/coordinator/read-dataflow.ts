@@ -8,6 +8,7 @@ import type { AgentInputReference } from '../ontology/dataflow-contract.js';
 import type { ActionDefinition, ObjectRef } from '../ontology/model.js';
 import { objectRefSchema } from '../ontology/model.js';
 import type { OntologyObjectStore } from '../ontology/object-store.js';
+import type { PlanningSnapshot } from '../ontology/planning-contract.js';
 
 const invalid = (message: string): never => { throw new DomainError('CONFLICT', message); };
 export function dataflowArguments(json: string): Record<string, unknown> {
@@ -21,6 +22,26 @@ export function dataflowValue(value: unknown, path: string[]): unknown {
     value = (value as Record<string, unknown>)[key];
   }
   return structuredClone(value);
+}
+
+/** Check already selected inputs even when another input is deferred. A future
+ * binding defers that input only, not the freshness of its known siblings. */
+export function validateKnownReadDependencies(graph: OntologyObjectStore, owner: string, step: AgentStep,
+  definition: ActionDefinition, input: Record<string, unknown>, reads: PlanningSnapshot): void {
+  const deferred = new Set(step.inputRefs.map(ref => ref.targetKey));
+  for (const dependency of definition.read?.mcp?.requires ?? []) {
+    if (deferred.has(dependency.observationInput)) continue;
+    const value = input[dependency.observationInput];
+    if (value === undefined && dependency.optional) continue;
+    const ref = objectRefSchema.parse(value), status = graph.evaluate(owner, { function: dependency.evaluate, object: ref });
+    if (status.status !== 'known') invalid(`Known read dependency ${dependency.observationInput} is unavailable or expired at frontier validation. Re-read current source statuses and select fresh authorized inputs; no action in this frontier was dispatched.`);
+    const args = { function: dependency.evaluate, object: ref };
+    if (dependency.evidence !== 'accepted' && (!reads.objects.some(object => digest(object.ref) === digest(ref))
+      || !reads.reads.some(read => read.tool === 'evaluate_ontology' && read.status === 'ok'
+        && read.inputDigest === digest(args) && read.outputDigest === digest(status)))) {
+      invalid(`Read and evaluate known dependency ${dependency.observationInput} in this model decision before selecting the frontier.`);
+    }
+  }
 }
 
 /** Check the selected graph; never add a source action, choose a value or run it. */

@@ -120,8 +120,8 @@ export class OntologyPlanningSession {
     if (options.taskContext) this.readScope = 'request';
     if (graph.security) this.boundRefs = [...new Map([...boundRefs, ...(authorizationScope()?.grant?.inputs.map(i => i.object) ?? [])].map(ref => [key(ref), ref])).values()];
   }
-  /** A model has already selected the future bindings. Host verification reads
-   * only their actual accepted objects; it never invents a new model decision. */
+  /** A model has already selected the inputs and future bindings. Host checks
+   * their known inputs and actual accepted outputs without choosing new ones. */
   hostEvidenceSession() {
     return new OntologyPlanningSession(this.graph, this.owner, this.request, this.candidates, this.active, this.onRead, this.readScope, this.boundRefs,
       {...this.options, taskContext:undefined, priorReads:undefined});
