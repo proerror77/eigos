@@ -1,7 +1,7 @@
 import type { Client } from 'pg';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
-import { ontologyReleaseRefSchema, parseOntologyDocument, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
+import { ontologyIdSchema, ontologyReleaseRefSchema, parseOntologyDocument, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { compatibleDefinitionModels } from '../ontology/definition-compatibility.js';
 import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
@@ -25,6 +25,17 @@ function freeze<T>(value: T): T {
     Object.freeze(value);
   }
   return value;
+}
+
+/** Namespace visibility only. `admin` must be derived from an authenticated
+ * principal, never request input. Task grants, installation and field-level
+ * output checks remain the caller's responsibility in the same transaction. */
+export async function postgresAssertOntologyAccess(client: Client, owner: string, ontologyId: string, admin = false): Promise<void> {
+  const schema = postgresBusinessSchema(client), id = ontologyIdSchema.parse(ontologyId);
+  if (typeof owner !== 'string' || typeof admin !== 'boolean') throw new Error('Invalid ontology access context');
+  const result = await client.query(`SELECT n.owner FROM "${schema}".ontology_namespaces n JOIN "${schema}".ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=$1`, [id]);
+  if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Ontology is not available');
+  if (result.rows[0].owner !== null && result.rows[0].owner !== owner && !admin) throw new DomainError('FORBIDDEN', 'Ontology belongs to another owner');
 }
 
 /** Resolve an exact persisted release using the same trusted compiler as the

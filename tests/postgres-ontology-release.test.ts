@@ -9,7 +9,7 @@ import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresOntologyDefinitionCompatible, postgresOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
+import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
 
 test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const sqlite = new DatabaseSync(':memory:'), definitions = new DefinitionStore(sqlite);
@@ -22,7 +22,7 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]);
     await installPostgresAuthorityLock(client,schema);
-    for (const table of ['ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap']) {
+    for (const table of ['ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces']) {
       const columns = sqlite.prepare(`PRAGMA table_info("${table}")`).all().map(row => ({ name: String(row.name), type: String(row.type).toUpperCase() }));
       await client.query(`CREATE TABLE "${schema}"."${table}" (${columns.map(c => `"${c.name}" ${c.type === 'INTEGER' ? 'BIGINT' : 'TEXT'}`).join(',')})`);
       for (const row of sqlite.prepare(`SELECT * FROM "${table}"`).all()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${columns.map((_,i) => `$${i+1}`).join(',')})`,columns.map(c => row[c.name]));
@@ -53,6 +53,18 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     assert.deepEqual(first.ref,legacy.ref); assert.deepEqual(first.model.ref,legacy.model.ref);
     assert(Object.isFrozen(first.document)); assert(Object.isFrozen(first.ref));
     assert.notDeepEqual(first.ref,active.ref);
+    const namespaceAccess = (actor: string, id: string, admin = false) => postgresBusinessTransaction(client,schema,authority,c => postgresAssertOntologyAccess(c,actor,id,admin));
+    definitions.assertAccess(owner, active.ref.ontologyId);
+    await namespaceAccess(owner,active.ref.ontologyId);
+    const privateId = 'synthetic.private';
+    sqlite.prepare('INSERT INTO ontology_namespaces SELECT ?,?,name,active_release_id,generation,created_at FROM ontology_namespaces WHERE id=?').run(privateId,owner,active.ref.ontologyId);
+    await client.query(`INSERT INTO "${schema}".ontology_namespaces SELECT $1,$2,name,active_release_id,generation,created_at FROM "${schema}".ontology_namespaces WHERE id=$3`,[privateId,owner,active.ref.ontologyId]);
+    definitions.assertAccess(owner,privateId); await namespaceAccess(owner,privateId);
+    assert.throws(() => definitions.assertAccess('other-owner',privateId),/Ontology belongs to another owner/);
+    await assert.rejects(namespaceAccess('other-owner',privateId),/Ontology belongs to another owner/);
+    definitions.assertAccess('other-owner',privateId,true); await namespaceAccess('other-owner',privateId,true);
+    assert.throws(() => definitions.assertAccess(owner,'synthetic.missing'),/Ontology is not available/);
+    await assert.rejects(namespaceAccess(owner,'synthetic.missing'),/Ontology is not available/);
     delete (body.delegation as {ontologyRelease?: unknown}).ontologyRelease;
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(body)]);
     assert.deepEqual((await taskRelease()).ref,legacy.ref);
