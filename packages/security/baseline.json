@@ -5221,8 +5221,8 @@
         "build"
       ],
       "content": "Immutable runtime manifest including complete public Skill assets",
-      "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included",
-      "sourceDigest": "7da80e3413b6f265ca57213a70fa5410eafeb7b66f4f8f8bb5cc036bab266eec",
+      "currentControl": "Current source-derived runtime files and explicit reviewed Skill assets; no private configuration or credentials included; type-only declarations are excluded from the runtime manifest",
+      "sourceDigest": "686ab69a02a5fe81fa6658365b69791ad2f7c2409fc63abfa90c36ff6f040760",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },

@@ -29,6 +29,7 @@ test('immutable release retains JSON assets required by relocated runtime import
   const put = (path: string, content: string) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content); };
   try {
     put(join(source, 'apps/gateway/main.ts'), "import value from '../../packages/ontology/history/seed.json' with { type: 'json' }; console.log(value.version);");
+    put(join(source, 'apps/gateway/platform.d.ts'), 'declare const platform: string;');
     put(join(source, 'packages/ontology/history/seed.json'), '{"version":15}');
     put(join(source, 'packages/ontology/definitions/didi-readonly.json'), '{"version":"1"}');
     put(join(source, 'dist/packages/ontology/definitions/didi-readonly.json'), '{"version":"1"}');
@@ -47,6 +48,7 @@ test('immutable release retains JSON assets required by relocated runtime import
     for (const name of PA_SKILL_FILES) put(join(source, 'dist', PA_SKILL_DIRECTORY, name), `public asset ${name}`);
     put(join(source, 'dist/apps/gateway/orphan.js'), 'throw new Error("not a current source");');
     const files = releaseFiles(source);
+    assert(!files.includes('dist/apps/gateway/platform.d.js'), 'Type-only declarations do not emit runtime files');
     assert(files.includes('dist/packages/ontology/definitions/didi-readonly.json'));
     assert(!files.some(path => path.endsWith('/orphan.js')));
     for (const name of PA_SKILL_FILES) assert(files.includes(`dist/${PA_SKILL_DIRECTORY}/${name}`));
