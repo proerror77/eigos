@@ -182,6 +182,9 @@ export class TaskSecurity {
         else base.outputStatus='restricted';
       }
       if (job.error) base.error='Task did not produce an authorized deliverable; inspect its current state.';
+      else if (job.state==='paused' && recovery?.nextAction==='restore_runtime_then_resume' && !recovery.ownerInputRequired && !base.recovery) {
+        base.error='Execution is paused for runtime repair. Confirmed inputs remain saved; wait for service-side repair before continuing this same task.';
+      }
       const approval=job.delegation?.authorizationRequest;
       if(job.state==='auth-required' && approval && (!approval.maxAmount || !approval.payeeIds || !['sandbox','live_free'].includes(approval.environment))) base.outputStatus='restricted';
       if(job.state==='auth-required' && approval && approval.maxAmount && approval.payeeIds && (approval.environment==='sandbox' || approval.environment==='live_free') && allowed('authorization',approval)) base.authorization={planDigest:approval.planDigest,effects:[...approval.effects],maxAmount:{minor:approval.maxAmount.minor,currency:approval.maxAmount.currency},payeeIds:[...approval.payeeIds],environment:approval.environment,realOperationsAllowed:approval.realOperationsAllowed};

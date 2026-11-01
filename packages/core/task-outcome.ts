@@ -13,7 +13,7 @@ export function synchronizeTaskOutcome(job: Job): void {
     if (!d.goalCoverageHistory?.some(previous => previous.digest === coverage.digest)) d.goalCoverageHistory = [...(d.goalCoverageHistory ?? []), coverage];
     delete d.goalCoverage;
   }
-  if (!superseded && !d.agent && !d.goalCoverage && (d.outcome || job.state === 'completed')) return;
+  if (!superseded && !d.agent && !d.goalCoverage && (d.outcome?.requestRevision === d.request.revision || job.state === 'completed')) return;
   if (d.plan && d.outcome?.requestRevision === d.request.revision && d.outcome.status === 'unsatisfied' && ['failed', 'rejected'].includes(job.state)) return;
   if (job.state === 'completed') {
     if (!d.acceptance?.accepted || d.outcome?.status !== 'satisfied' || d.outcome.requestRevision !== d.request.revision) throw new Error('Completed Agent task lacks its current independent outcome');
