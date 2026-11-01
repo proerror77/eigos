@@ -3390,12 +3390,12 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "b6e82b81c191a6f47b4a06490591395656c6aadb157a609a410457360a86d216",
+      "sourceDigest": "95d14fa6c9c22186652e606d304e44532c38d03e3ff48d7540f02d2e19f5b0a2",
       "channels": [
         "authorization_control"
       ],
       "content": "Lease renewal, cancellation and completion lifecycle",
-      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission.",
+      "currentControl": "Authority-scoped execution, session release, revocation heartbeat and bounded original-operation audit; synchronous progress renews each due active task claim through its original lease, execution deadline and policy fences; A source authorization mismatch produces explicit blocked recovery without automatic resubmission or new permission. Cutover pauses new claims and waits for in-flight work without aborting it.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3824,12 +3824,12 @@
     {
       "id": "s5-scripts-run-local",
       "file": "scripts/run-local.mjs",
-      "sourceDigest": "cc4bb6c65432a2e7b9bc6fc33187be153e58f39669125cf1419ca5c775531970",
+      "sourceDigest": "0aff0dc730ae9b223f54ed1f25501462205c18c51cb5c2406489f81ea594065f",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Explicit foundation identity and current grants; migration stays inactive until reviewed activation; opt-in local signals stop only Gateway, wait for clean exit, and require an explicit resume",
+      "currentControl": "Explicit foundation identity and current grants; opt-in cutover drains Worker claims before Gateway shutdown and requires explicit restart and claim resumption",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },

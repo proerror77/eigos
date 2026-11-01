@@ -54,9 +54,11 @@ test('E2E: one managed launcher starts and stops Gateway, Worker, participant qu
     if (process.platform !== 'win32') {
       const workerPid = () => execFileSync('ps',['-axo','pid=,ppid=,command='],{encoding:'utf8'}).split('\n').map(line=>line.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/)).find(row=>row && Number(row[2])===child.pid && row[3]!.includes('dist/apps/worker/main.js'))?.[1];
       const originalWorker = workerPid(); assert(originalWorker);
+      for (const deadline=Date.now()+15000;!output.includes('Gateway cutover control ready') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway cutover control ready/);
       child.kill('SIGUSR1');
-      for (const deadline=Date.now()+15000;!output.includes('Gateway paused; Worker remains running') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
-      assert.match(output,/Gateway paused; Worker remains running/);
+      for (const deadline=Date.now()+15000;!output.includes('Gateway paused; Worker claims drained') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway paused; Worker claims drained/);
       assert.equal(workerPid(),originalWorker);
       await assert.rejects(fetch(gateway+'/health',{signal:AbortSignal.timeout(500)}));
       child.kill('SIGUSR2');
@@ -66,6 +68,11 @@ test('E2E: one managed launcher starts and stops Gateway, Worker, participant qu
         await new Promise(done=>setTimeout(done,50));
       }
       assert(resumed,diagnostics); assert.equal(workerPid(),originalWorker);
+      for (const deadline=Date.now()+15000;!output.includes('Gateway ready; Worker claims remain paused') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Gateway ready; Worker claims remain paused/);
+      child.kill('SIGUSR2');
+      for (const deadline=Date.now()+15000;!output.includes('Worker claims resumed') && Date.now()<deadline;) await new Promise(done=>setTimeout(done,50));
+      assert.match(output,/Worker claims resumed/); assert.equal(workerPid(),originalWorker);
     }
   } finally {
     if (child.exitCode === null && child.signalCode === null) {

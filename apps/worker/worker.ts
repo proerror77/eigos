@@ -24,6 +24,7 @@ export class Worker {
   private running = new Map<string, RunningWork>();
   private timer?: ReturnType<typeof setInterval>;
   private stopping = false;
+  private claimsPaused = false;
   private readonly leaseMs: number;
   private readonly pollMs: number;
   constructor(private store: JobStore, private options: WorkerOptions) {
@@ -33,7 +34,7 @@ export class Worker {
   }
 
   start(): void {
-    if (this.timer || this.stopping) return;
+    if (this.timer || this.stopping || this.claimsPaused) return;
     const poll = () => {
       try { this.tick(); } catch { console.error('Worker polling failed; durable work retained'); }
     };
@@ -44,7 +45,7 @@ export class Worker {
   }
 
   tick(): void {
-    if (this.stopping) return;
+    if (this.stopping || this.claimsPaused) return;
     const services = ['eigos.delegate'];
     while (this.running.size < 2) {
       const claim = this.store.claim(services, this.leaseMs);
@@ -181,6 +182,18 @@ export class Worker {
     }));
   }
 
+  /** Stop claiming new work and let already claimed work finish under its
+   * existing lease and authority. The process and heartbeat stay alive. */
+  async pauseClaims(): Promise<void> {
+    if (this.stopping) throw new Error('Worker is stopping');
+    this.claimsPaused = true; clearInterval(this.timer); this.timer = undefined;
+    await Promise.allSettled([...this.running.values()].map(run => run.done));
+    if (this.stopping) throw new Error('Worker is stopping');
+  }
+  resumeClaims(): void {
+    if (this.stopping) throw new Error('Worker is stopping');
+    this.claimsPaused = false; this.start();
+  }
   async close(): Promise<void> {
     this.stopping = true; clearInterval(this.timer);
     for (const run of this.running.values()) run.controller.abort();

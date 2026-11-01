@@ -173,6 +173,8 @@ node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay
 
 ### 单独暂停和恢复本机 Gateway
 
-使用包含此功能的 `run-local.mjs` 启动器，并在启动前设置 `EIGOS_RELAY_CUTOVER_SIGNALS=true`，才可由同一系统用户向**启动器进程**发送 `SIGUSR1` 暂停 Gateway。启动器等待 Gateway 正常退出后写入 `Gateway paused; Worker remains running`；此前不能认为 Gateway 已停止。暂停完成后，`SIGUSR2` 启动一个新的 Gateway 进程并重新读取原环境所指向的 Relay 配置文件；需要另行检查 Gateway 健康状态、身份和目标地址。暂停期间提前发送的 `SIGUSR2` 会被忽略。默认未启用这些信号，已运行的旧启动器不会自动获得此能力。
+使用包含此功能的 `run-local.mjs` 启动器，并在启动前设置 `EIGOS_RELAY_CUTOVER_SIGNALS=true`，并等待 `Gateway cutover control ready` 后，才可由同一系统用户向**启动器进程**发送 `SIGUSR1`。Worker 首先停止领取新任务，并在现有任务和恢复工作结束后确认排空；启动器随后正常停止 Gateway，并写入 `Gateway paused; Worker claims drained`。此前不能认为 Gateway 已停止。默认未启用这些信号，已运行的旧启动器不会自动获得此能力。
 
-此控制只保留 Worker **进程**，不保证暂停期间任务授权租约仍有效或执行不中断。它不停止独立服务 Agent、PA、源 Relay 或其他写入者，也不验证数据库快照、迁移围栏、节点凭据和目标环境；必须分别完成和核实这些步骤，才能认定源端已停写。Gateway 非正常退出仍按启动器既有的故障处理停止进程组，不会被记录为成功暂停。
+第一次 `SIGUSR2` 启动新的 Gateway 并重新读取 Relay 配置文件；出现 `Gateway ready; Worker claims remain paused` 后，须另行检查 Gateway 健康状态、身份、目标地址及节点重连。确认后第二次 `SIGUSR2` 恢复 Worker 领取任务，并等待 `Worker claims resumed`。其他阶段的过早恢复信号会被忽略。Worker 在排空时继续保持现有任务的授权和租约；如果任务长期不结束，Gateway 会保持运行，不能强行将其视为已暂停。
+
+此控制不停止独立服务 Agent、PA、源 Relay 或其他写入者，也不验证数据库快照、迁移围栏、节点凭据和目标环境；必须分别完成和核实这些步骤，才能认定源端已停写。Gateway 或 Worker 非正常退出仍按启动器既有的故障处理停止进程组，不会被记录为成功暂停。
