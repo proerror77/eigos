@@ -5676,10 +5676,10 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "7e335b87d3b04ec60e8fa4fd5baf5aad31855e568d2302120f356b9677313427",
+      "sourceDigest": "a96a604d10906b6fea3dd49848393387088eb802a7ca80c83acdef41dfd9821e",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction, staged kernel and bounded current labels; object binding, lineage and output authorization remain required",
-      "targetControl": "Fenced transaction, staged kernel and bounded current labels; object binding, lineage and output authorization remain required"
+      "currentControl": "Fenced transaction, staged kernel, bounded labels and direct binding evidence; current permissions, source and lineage checks remain required",
+      "targetControl": "Fenced transaction, staged kernel, bounded labels and direct binding evidence; current permissions, source and lineage checks remain required"
     },
     {
       "id": "resource-role-policy",

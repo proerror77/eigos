@@ -15,6 +15,11 @@ import { projectionInputs } from '../security/projections.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
+const sha=z.string().regex(/^[a-f0-9]{64}$/);
+const bindingEvidenceSchema=z.strictObject({object:objectRefSchema,revision:z.number().int().positive(),fields:z.array(nameSchema).max(200),
+  sourceBindingId:z.string().min(1).max(200),envelope:securityEnvelopeSchema,inputEnvelope:securityEnvelopeSchema.optional(),
+  projectionOrigin:z.strictObject({version:z.literal(1),contentDigest:sha,linksDigest:sha,inputDigest:sha}).optional(),
+  sourceObservation:z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)}).optional()});
 
 /** Resolve a current agent task-read grant. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
@@ -160,6 +165,33 @@ export async function postgresTaskCurrentLabels(client: Client, principal: Princ
   });
 }
 
+/** Read direct persisted evidence only. This is not an object permission:
+ * current roles, fields, labels, source authority and lineage must still be
+ * checked. Retained bindings under older grants are deliberately not resolved. */
+export async function postgresTaskDirectBindingEvidence(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder) {
+  const captured=structuredClone(principal), ref=objectRefSchema.parse(input);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
+    const result=await client.query(`SELECT b.owner,b.task_id,b.request_revision,b.object_revision,
+      CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS body
+      FROM "${schema}".security_bindings b JOIN "${schema}".ontology_objects o
+      ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
+      WHERE b.grant_id=$1 AND b.type=$2 AND b.object_id=$3 LIMIT 2`,[admission.grant.id,ref.type,ref.id]);
+    if(result.rowCount===0)return undefined;
+    if(result.rowCount!==1 || result.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const row=result.rows[0];
+    if(row.owner!==owner || row.task_id!==taskId || String(row.request_revision)!==String(admission.grant.requestRevision))throw new SecurityError('POLICY_CHANGED');
+    let evidence:z.infer<typeof bindingEvidenceSchema>;
+    try {evidence=bindingEvidenceSchema.parse(JSON.parse(String(row.body)));}
+    catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    if(evidence.object.type!==ref.type || evidence.object.id!==ref.id || String(row.object_revision)!==String(evidence.revision)
+      || evidence.envelope.ownerKey!==owner || evidence.inputEnvelope && evidence.inputEnvelope.ownerKey!==owner)throw new SecurityError('POLICY_CHANGED');
+    return evidence;
+  });
+}
+
 /** Construct an edge reader only after its trusted kernel has finished loading.
  * An evicted object must rebuild its kernel before creating a new reader;
  * passing an absent builder must never silently select the synchronous path. */
@@ -176,5 +208,7 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskReadClearance(client,principal,taskId,policyDigest),
     currentLabels: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef, revision: number, fields: string[]) =>
       postgresTaskCurrentLabels(client,principal,taskId,policyDigest,ref,revision,fields,builder),
+    directBindingEvidence: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
+      postgresTaskDirectBindingEvidence(client,principal,taskId,policyDigest,ref,builder),
   });
 }

@@ -31,7 +31,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]); await installPostgresAuthorityLock(client,schema);
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
-    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_labels','ontology_objects','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
+    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_labels','security_bindings','ontology_objects','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
@@ -64,6 +64,26 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const model=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.ontology(c,principal,task.job.id,policy));
     assert.deepEqual(model.ref,task.job.delegation!.ontologyRelease);
     const ref={type:'ServiceRequest',id:task.job.id};
+    const bindingRow=sqlite.prepare('SELECT body FROM security_bindings WHERE grant_id=? AND type=? AND object_id=?').get(task.grant.id,ref.type,ref.id)!;
+    const binding=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.directBindingEvidence(c,principal,task.job.id,policy,ref));
+    assert.deepEqual(await binding(),JSON.parse(String(bindingRow.body)));
+    assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.directBindingEvidence(c,principal,task.job.id,policy,{type:ref.type,id:'absent'})),undefined);
+    await client.query(`UPDATE "${schema}".security_bindings SET grant_id='older-grant' WHERE grant_id=$1 AND type=$2 AND object_id=$3`,[task.grant.id,ref.type,ref.id]);
+    assert.equal(await binding(),undefined);
+    await client.query(`UPDATE "${schema}".security_bindings SET grant_id=$1 WHERE grant_id='older-grant' AND type=$2 AND object_id=$3`,[task.grant.id,ref.type,ref.id]);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=repeat('x',1048577) WHERE grant_id=$1 AND type=$2 AND object_id=$3`,[task.grant.id,ref.type,ref.id]);
+    await assert.rejects(binding(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[bindingRow.body,task.grant.id,ref.type,ref.id]);
+    const alteredBinding={...JSON.parse(String(bindingRow.body)),object:{...ref,id:'different-object'}};
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(alteredBinding),task.grant.id,ref.type,ref.id]);
+    await assert.rejects(binding(),/POLICY_CHANGED/);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[bindingRow.body,task.grant.id,ref.type,ref.id]);
+    await client.query(`UPDATE "${schema}".security_bindings SET task_id='different-task' WHERE grant_id=$1 AND type=$2 AND object_id=$3`,[task.grant.id,ref.type,ref.id]);
+    await assert.rejects(binding(),/POLICY_CHANGED/);
+    await client.query(`UPDATE "${schema}".security_bindings SET task_id=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[task.job.id,task.grant.id,ref.type,ref.id]);
+    await client.query(`UPDATE "${schema}".ontology_objects SET revision=2 WHERE owner=$1 AND type=$2 AND id=$3`,[f.owner,ref.type,ref.id]);
+    assert.equal(await binding(),undefined);
+    await client.query(`UPDATE "${schema}".ontology_objects SET revision=1 WHERE owner=$1 AND type=$2 AND id=$3`,[f.owner,ref.type,ref.id]);
     const labels=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal']));
     const expectedLabels=sqlite.prepare("SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=? AND field IN ('*','originalGoal') ORDER BY field").all(f.owner,ref.type,ref.id).map(row=>({field:row.field,...JSON.parse(String(row.body))}));
     assert.deepEqual(labels,expectedLabels);
@@ -162,6 +182,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(read(),/POLICY_CHANGED/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.ontology(c,principal,task.job.id,policy)),/POLICY_CHANGED/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal'])),/POLICY_CHANGED/);
+    await assert.rejects(binding(),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);
