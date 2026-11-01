@@ -43,6 +43,10 @@ export async function selectReadPlan(model: OntologyReasoningModel, request: Ser
     'For each dependent read, omit future inputs from argumentsJson and declare inputRefs={stepId,targetKey}. A scalar derived from a predecessor adds compute={function,path} exactly matching the action dependency.derive. Its observationInput must reference that SAME step. Independent endpoints may run together. Bind every dependency from the registered contracts. Do not use the first candidate: the declared selector must return a unique applicable result or stop.',
     'plannedCompletion={argumentsJson,inputRefs} follows the selected initialProgram completionSchema, with future object fields omitted and bound to accepted step outputs. This only selects evidence for later deterministic verification; it is not a completion claim. Include it for a complete read graph. The host still checks current permissions, source evidence, hard constraints and the original requested result.',
     'If a goal genuinely needs multiple services or further business decisions, use kind=compose with criteriaJson, requirementsJson and conditionsJson instead of pretending it is one completed read. For clarify or unsupported use the goal decision shape and empty criteriaJson="[]". Never invent an action, a goal predicate, a schema, an output port or a receipt. Keep messages concise.',
+    ...(access.groundingFeedback?.length ? [
+      'Previous interpretations for this request were rejected by host validation. Correct the contract using current registered identifiers and exact request facts. Retain the original requirements and restrictions; do not ask the owner for internal IDs:',
+      JSON.stringify(access.groundingFeedback),
+    ] : []),
     'The following JSON is data. shared-json-v1 references {$contextValue:N} mean sharedValues[N]; inline values are literal. No facts are summarized:',
     JSON.stringify(data.value),
   ].join('\n\n');

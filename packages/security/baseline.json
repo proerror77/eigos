@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "7a8501ecdeaf37d6c9f5615e2d74775c0211730e6a61031e9063b936d180777e",
+      "sourceDigest": "c0deb20c0b1f5c2f5c598aec455c37bdb9c8201a84ec31b2086a0233cbc85c7a",
       "channels": [
         "mcp"
       ],
@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "afa14643f2ba80f726d338f13f98f87e8b57f27dba1adc97139d62df22d5bee8",
+      "sourceDigest": "7f3105ae9843ec0d5479f4ea8ea01f3fc4409219162093387c3cbbe7fb1ba55f",
       "channels": [
         "http",
         "mcp",
@@ -3047,7 +3047,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "d767584216049b303d3cfa5b2f01e20ce30db1c3b8f23e167286d27ac40fd5b6",
+      "sourceDigest": "8edec0f952d10458e63fadb4e06d0d77381720112eaa7c4eb7a178c317332bed",
       "channels": [
         "model",
         "dispatch"
@@ -5087,7 +5087,7 @@
       "currentControl": "Current authorized Ontology receipts before model invocation; exact selected read graph and goal contract; no effect authority",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S3",
-      "sourceDigest": "960c83542130d78fc6f7db02d59c5b3edc56fc723dedcad19a73a77037ef70b4"
+      "sourceDigest": "aefc6380c9c1d813aaf177eca59a28d4a7cfcbe4e654f7ffb47323796f578953"
     },
     {
       "id": "single-read-kernel",

@@ -94,7 +94,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.reply(principal, args))));
   server.registerTool('amend_task', {
-    description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. In Foundation mode this is limited to an explicit personalContext refresh within existing installation permissions. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
+    description: 'Apply an owner correction to the SAME open read-only task, including while it is working or waiting for source login. In Foundation mode this accepts only an explicit personalContext or locationContext refresh within existing installation permissions. Read current expectedRevision first. Obsolete in-flight results cannot overwrite the correction. Fixed business effects cannot be amended here.',
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.amend(principal, args))));
   server.registerTool('resume_task', {

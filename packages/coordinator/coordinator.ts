@@ -318,6 +318,11 @@ export class Coordinator {
       const currentRequest = preparer?.prepareRequest?.(d.request) ?? d.request;
       request = groundConditions(groundRequirements(currentRequest, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles, (selected ? [selected] : capabilities).flatMap(capability => [...capability.predicates.map(predicate => predicate.id), ...(capability.outcomePredicates ?? [])])), decision.conditionsJson, groundingAccess.session.retrievedRefs());
       preparer?.validateRequest?.(request);
+      // This pure contract validates the model's interpretation. Reject it in
+      // the existing feedback boundary before constructing executable state.
+      if (decision.kind === 'resolve' && decision.readPlan && selected) {
+        createReadContractCoverage({ request, capability: selected, input: JSON.parse(decision.inputJson) }, decision, grounded.evidence, this.store.ontologyReleaseForJob(claim.owner, claim.job));
+      }
     } catch (error) {
       signal.throwIfAborted();
       if (!this.store.claimActive(claim) || error instanceof ConnectionAuthorizationRequired || error instanceof DomainError && !['CONFLICT', 'INVALID_INPUT'].includes(error.code)) throw error;
