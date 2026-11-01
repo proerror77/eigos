@@ -5395,7 +5395,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output; retain and fingerprint original hidden row order",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "e3b9ba21735b6b7f38ffef78a13dfec0c37916e86c36531d9fa158f0b8a790b0"
+      "sourceDigest": "9fc0907549cc279f4df7db34360683fb971972295ae06051056971b1d91f9901"
     },
     {
       "id": "business-postgres-preflight-cli",

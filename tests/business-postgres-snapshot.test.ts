@@ -126,6 +126,14 @@ test('business snapshot inventory fails closed for active claims, drafts and uns
     db = new DatabaseSync(f.path);
     db.exec(`UPDATE jobs SET body='{"service":"fixture","delegation":{"nextAt":9007199254740992}}' WHERE id='bad-job'`); db.close();
     assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /safe runtime range/);
+    for (const body of [
+      '{"service":"first","service":"second"}',
+      '{"delegation":{"nextAt":1,"nextAt":2}}',
+      '{"delegation":{"request":{"revision":1,"revision":2}}}',
+    ]) {
+      db = new DatabaseSync(f.path); db.prepare('UPDATE jobs SET body=? WHERE id=?').run(body,'bad-job'); db.close();
+      assert.throws(() => planBusinessSnapshot(f.path,f.authorityDigest,f.policy), /Duplicate task JSON keys/);
+    }
     db = new DatabaseSync(f.path);
     db.exec(`DELETE FROM jobs WHERE id='bad-job'; INSERT INTO network_evidence_cards VALUES('numeric','fixture','{"taskId":1}')`); db.close();
     assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Network identity JSON is incompatible/);

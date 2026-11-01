@@ -106,6 +106,16 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
     // These job fields participate in SQLite JSON expression indexes and in
     // Worker selection. PostgreSQL numeric/text operators must not silently
     // coerce a historical value into a different indexed type.
+    // SQLite path extraction selects the first duplicate object key, while
+    // PostgreSQL JSONB and JSON.parse retain the last. Refuse ambiguous keys
+    // that affect selection or authorization instead of silently retargeting a
+    // historical task during migration.
+    const ambiguousJob = db.prepare(`SELECT 1 FROM jobs WHERE CASE WHEN json_valid(body) THEN
+      EXISTS (SELECT 1 FROM json_each(body) WHERE key IN ('service','executionMode','authorityId','state','revision','delegation') GROUP BY key HAVING count(*)>1)
+      OR EXISTS (SELECT 1 FROM json_each(body,'$.delegation') WHERE key IN ('backendVersion','nextAt','recoveryPending','request') GROUP BY key HAVING count(*)>1)
+      OR EXISTS (SELECT 1 FROM json_each(body,'$.delegation.request') WHERE key='revision' GROUP BY key HAVING count(*)>1)
+      ELSE 0 END LIMIT 1`).get();
+    if (ambiguousJob) throw new Error('Duplicate task JSON keys require explicit migration review');
     const jobPaths: { path: string; allowed: string[] }[] = [
       { path: '$.service', allowed: ['text', 'null'] },
       { path: '$.delegation.backendVersion', allowed: ['text', 'null'] },
