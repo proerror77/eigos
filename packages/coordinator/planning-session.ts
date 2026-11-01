@@ -257,6 +257,7 @@ export class OntologyPlanningSession {
     if (this.graph.security && !authorizationScope()?.synchronousRead) return this.graph.security.readSnapshot(() => this.call(tool, input, options));
     if (this.reads.length >= MAX_PLANNING_READS) throw new DomainError('CONFLICT', 'Planner tool-call limit reached');
     const before = new Map(this.seen), knownBefore = new Map(this.knownRefs), proposalCount = this.proposals.length, receiptId = randomUUID();
+    const bytesBefore = this.bytes, instructionBytesBefore = this.instructionBytes, exhaustedBefore = this.contextBudgetExhausted;
     this.callObjects = new Map(); this.callDelivered = new Map();
     const datasetRevision = this.graph.revision(this.owner);
     let output: unknown, status: PlanningReadReceipt['status'] = 'ok';
@@ -429,8 +430,16 @@ export class OntologyPlanningSession {
     const receipt: PlanningReadReceipt = { id: receiptId, at: new Date().toISOString(), tool, inputDigest: digest(input), outputDigest: digest(output), datasetRevision: this.graph.revision(this.owner), status, origin: options?.origin ?? 'model', ...(this.graph.security ? { accessDigest: accessDigest(), ...(authorizationScope()!.lineage.size ? {securityEnvelope: this.graph.security.outputEnvelope(this.owner)} : {}) } : {}), outputBytes: Buffer.byteLength(JSON.stringify(output)),
       objects: [...this.callObjects.values()], deliveredObjects: [...this.callDelivered.values()], instructionRefs, ...(contextRead ? { context: contextRead.context, definitions: contextRead.definitions } : {}),
       ...(actionDiscovery ? { actionBindings: { snapshotDigest: actionDiscovery.snapshotDigest, pins: actionDiscovery.items.flatMap(item => item.bindings.map(binding => binding.pin)) } } : {}) };
+    try { this.onRead(receipt); }
+    catch (error) {
+      // An uncommitted receipt cannot authorize a later decision or consume a
+      // model's delivered context. Preserve the original error for diagnosis.
+      this.seen = before; this.knownRefs = knownBefore; this.proposals.length = proposalCount;
+      this.callObjects.clear(); this.callDelivered.clear();
+      this.bytes = bytesBefore; this.instructionBytes = instructionBytesBefore; this.contextBudgetExhausted = exhaustedBefore;
+      throw error;
+    }
     this.reads.push(receipt);
-    this.onRead(receipt);
     return contextRead ? { data: output, receipt: { id: receipt.id, tool: receipt.tool, status: receipt.status, outputDigest: receipt.outputDigest } } : output;
   }
   finish(candidate?: ResolvedCandidate): PlanningSnapshot {

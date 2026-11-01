@@ -11,6 +11,7 @@ import { planningToolSchemas, type OntologyPlanningSession } from './planning-se
 import type { NativeMcpConnection } from '../capabilities/executor.js';
 import { objectRefSchema } from '../ontology/model.js';
 import { NativeModelTrace } from '../capabilities/native-model-timing.js';
+import {SecurityError} from '../security/store.js';
 
 const decisionSchema = z.object({ receiptIds: z.array(z.string().min(1)).max(20), decisionJson: z.string().min(2).max(100000) }).strict();
 const descriptions: Record<keyof typeof planningToolSchemas, string> = {
@@ -72,15 +73,29 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   let decision: { output: unknown; digest: string; receiptIds: string[] } | undefined;
   let closed = false;
   let toolAttempts = 0, readAttempts = 0;
+  const rejections: {tool:string;stage:'authority'|'tool'|'model_output';code:string;origins:string[]}[]=[];
+  const diagnosticFiles=new Set(['packages/core/store','packages/coordinator/ontology-mcp','packages/coordinator/planning-session',
+    'packages/coordinator/task-context','packages/security/store','packages/security/policy-store','packages/security/model']);
+  const reject=(name:string,stage:'authority'|'tool'|'model_output',error:unknown)=>{
+    const code=error instanceof SecurityError?error.reason:error instanceof DomainError?error.code:'REJECTED';
+    const origins=error instanceof Error?[...new Set((error.stack??'').split('\n').slice(1,17).flatMap(line=>{
+      const match=line.match(/((?:apps|packages)\/[A-Za-z0-9_/-]+)\.(js|ts):(\d{1,7}):(\d{1,5})(?:\)|$)/);
+      return match&&diagnosticFiles.has(match[1]!)?[`${match[1]}.${match[2]}:${match[3]}:${match[4]}`]:[];
+    }))].slice(0,4):[];
+    if(rejections.length<24)rejections.push({tool:Object.hasOwn(planningToolSchemas,name)||name==='submit_decision'?name:'other',stage,code,origins});
+    return code;
+  };
   const active = () => { signal.throwIfAborted(); if (closed) throw new Error('Ontology MCP session closed'); };
   const respond = (name: string, action: () => unknown): CallToolResult => {
     const span = trace.start('server_tool', name); let failed = false;
+    let stage:'authority'|'tool'|'model_output'='authority';
     try {
-      active(); const result = authorized(() => { authority?.assertCurrent(); const value = action(); session.authorizeModel(modelChannelId); return value; });
+      active(); const result = authorized(() => { authority?.assertCurrent(); stage='tool'; const value = action(); stage='model_output'; session.authorizeModel(modelChannelId); return value; });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
     } catch (error) {
       failed = true;
-      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: error instanceof DomainError ? error.code : 'REJECTED', message: error instanceof Error ? error.message : 'Ontology request rejected' }) }] };
+      const code=reject(name,stage,error);
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ error: code, message: error instanceof SecurityError?error.reason:error instanceof Error ? error.message : 'Ontology request rejected' }) }] };
     } finally { trace.end(span, failed ? 'failed' : 'completed'); }
   };
   const makeServer = () => {
@@ -124,7 +139,7 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
     res.once('finish', () => trace.end(span, res.statusCode >= 400 ? 'failed' : 'completed', res.statusCode));
     res.once('close', () => trace.end(span, 'interrupted'));
     try { authorized(() => { authority?.assertCurrent(); session.authorizeModel(modelChannelId); }); }
-    catch { res.status(403).json({error:'session_authority_ended'}); return; }
+    catch(error) { reject(String(req.body?.params?.name??'other'),'authority',error);res.status(403).json({error:'session_authority_ended'}); return; }
     if (req.body?.method === 'tools/call') {
       toolAttempts++;
       if (req.body.params?.name !== 'submit_decision') readAttempts++;
@@ -150,5 +165,6 @@ export async function openOntologyMcp(session: OntologyPlanningSession, signal: 
   const connection: NativeMcpConnection = { name: 'eigos_ontology', url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, token, tools: [...offered, 'submit_decision'], trace };
   return { connection, close, result: () => { active(); if (!decision) throw new Error('The model did not submit a decision through native Ontology MCP'); return decision; },
     evidence: () => ({ server: 'eigos_ontology' as const, transport: 'streamable-http' as const, sessionId, taskId: session.request.id, toolAttempts,
-      calls: session.receipts().map(r => ({ tool: r.tool, receiptId: r.id, status: r.status, inputDigest: r.inputDigest, outputDigest: r.outputDigest })), decisionSubmitted: !!decision }) };
+      calls: session.receipts().map(r => ({ tool: r.tool, receiptId: r.id, status: r.status, inputDigest: r.inputDigest, outputDigest: r.outputDigest })), decisionSubmitted: !!decision,
+      ...(rejections.length?{rejections:structuredClone(rejections)}:{}) }) };
 }

@@ -920,10 +920,21 @@ export class JobStore {
       || scope.actor.authorityRef.id !== claim.securityAuthorityId || scope.actor.claimRef !== digest(claim.token))) {
       throw new SecurityError('AUTHORIZATION_REQUIRED');
     }
-    const generation = scope?.readGeneration?.();
+    const readGeneration = scope?.readGeneration?.();
     try { return this.transaction(() => {
       this.assertRuntimeAuthority();
       if (!this.active(claim, Date.now())) return false;
+      // An external heartbeat can commit between the read and BEGIN IMMEDIATE.
+      // Synchronize only while holding this write fence, then revalidate every
+      // captured dependency. A changed grant/request/fact still rejects; local
+      // writes and later trigger side effects are never accepted as bookkeeping.
+      scope?.assertCurrent();
+      if (scope?.readGeneration?.() !== readGeneration) {
+        if (!scope?.readConflictRetryable?.()) throw new SecurityError('POLICY_CHANGED');
+        if (scope.lineage.size) this.security.policies.validateLineage(scope, this.security.policies.outputEnvelope(claim.owner));
+        scope.assertCurrent();
+      }
+      const generation = scope?.readGeneration?.();
       return this.withClaimMutation(claim, () => {
         const job = this.get(claim.owner, claim.job.id);
         if (job.id !== claim.job.id || job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION
