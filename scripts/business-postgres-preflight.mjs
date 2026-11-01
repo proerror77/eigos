@@ -16,6 +16,6 @@ try {
 } catch (error) {
   // Internal metadata may contain private paths or facts. Report only the
   // audited fail-closed reasons, never raw driver or validation messages.
-  const reason = error instanceof Error && /^(Snapshot |Business |A closed|Absolute snapshot|Invalid audit|Unsupported |NULL in required|Generated or hidden|WITHOUT ROWID)/.test(error.message) ? error.message : 'PRECHECK_FAILED';
+  const reason = error instanceof Error && /^(Snapshot |Business |A closed|Absolute snapshot|Invalid audit|Unsupported |NULL in required|Generated or hidden|Hidden row identity|Negative hidden row identity|WITHOUT ROWID)/.test(error.message) ? error.message : 'PRECHECK_FAILED';
   console.error(`Business preflight failed: ${reason}`); process.exitCode = 1;
 }

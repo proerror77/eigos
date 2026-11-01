@@ -26,7 +26,9 @@ function fixture() {
     INSERT INTO migration_sequence_probe(body) VALUES ('first'),('second'); DELETE FROM migration_sequence_probe WHERE id=2;
     INSERT INTO migration_sequence_probe(id,body) VALUES (9007199254740993,'high'); DELETE FROM migration_sequence_probe WHERE id=9007199254740993;
     CREATE TABLE migration_binary_probe(id TEXT PRIMARY KEY, payload BLOB NOT NULL, value INTEGER NOT NULL);
-    INSERT INTO migration_binary_probe VALUES('fixture',x'00FF',9007199254740993);`);
+    INSERT INTO migration_binary_probe VALUES('fixture',x'00FF',9007199254740993);
+    CREATE TABLE migration_rowid_probe(id TEXT PRIMARY KEY,rowid TEXT NOT NULL);
+    INSERT INTO migration_rowid_probe(_rowid_,id,rowid) VALUES(9007199254740993,'z-first','shadow'),(9007199254740994,'a-second','shadow');`);
   db.prepare('INSERT INTO migration_binary_probe VALUES(?,?,?)').run('large', Buffer.alloc(2 * 1024 * 1024, 0xa5), 1);
   db.exec("INSERT INTO network_events(event_id,kind,object_id,at) VALUES ('event-1','fixture','object','2026'),('event-2','fixture','object','2026'); DELETE FROM network_events WHERE event_id='event-2'");
   const policy = String(db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()!.digest);
@@ -44,6 +46,9 @@ test('business snapshot inventory binds authority, policy, rows, triggers and se
     assert(plan.tables.some(table => table.name === 'network_events' && table.maxIntegerPrimaryKey === '1'));
     assert.deepEqual(plan.sequences.find(sequence => sequence.table === 'migration_sequence_probe'), { table: 'migration_sequence_probe', lastValue: '9007199254740993' });
     assert(plan.tables.some(table => table.name === 'migration_binary_probe' && table.rows === 2 && table.maxRowBytes > 2 * 1024 * 1024 && table.totalEncodedBytes >= table.maxRowBytes));
+    const ordered=plan.tables.find(table=>table.name==='migration_rowid_probe');
+    assert.equal(plan.version,2);assert.equal(ordered?.maxRowid,'9007199254740994');
+    assert.equal(ordered?.columns.find(column=>column.name==='__eigos_rowid')?.sourceRowidAlias,'_rowid_');
     assert(!plan.sequences.some(sequence => sequence.table === 'network_events'));
     assert(plan.triggers > 0); assert(plan.indexes > 0);
     assert(plan.tables.some(table => table.uniqueKeys.some(key => key.origin === 'pk')));
@@ -73,6 +78,21 @@ test('business snapshot preserves a valid stale ontology draft without publishin
     db=new DatabaseSync(f.path);const invalidGeneration={...draft,baseGeneration:draft.baseGeneration+2};
     db.prepare('UPDATE ontology_definition_drafts SET body=? WHERE id=?').run(JSON.stringify(invalidGeneration),draft.id);db.close();
     assert.throws(()=>planBusinessSnapshot(f.path,f.authorityDigest,f.policy),/invalid open Ontology draft/);
+  } finally {rmSync(f.dir,{recursive:true,force:true});}
+});
+
+test('business fingerprint changes when row identities change but primary-key data does not', () => {
+  const f=fixture();
+  try {
+    const before=planBusinessSnapshot(f.path,f.authorityDigest,f.policy).tables.find(table=>table.name==='migration_rowid_probe')!;
+    const db=new DatabaseSync(f.path);
+    db.exec("UPDATE migration_rowid_probe SET _rowid_=1 WHERE id='z-first'; UPDATE migration_rowid_probe SET _rowid_=9007199254740993 WHERE id='a-second'; UPDATE migration_rowid_probe SET _rowid_=9007199254740994 WHERE id='z-first'");db.close();
+    const after=planBusinessSnapshot(f.path,f.authorityDigest,f.policy).tables.find(table=>table.name==='migration_rowid_probe')!;
+    assert.equal(after.rows,before.rows);assert.equal(after.maxRowid,before.maxRowid);assert.notEqual(after.digest,before.digest);
+    const exhausted=new DatabaseSync(f.path);exhausted.exec("UPDATE migration_rowid_probe SET _rowid_=9223372036854775807 WHERE id='z-first'");exhausted.close();
+    assert.throws(()=>planBusinessSnapshot(f.path,f.authorityDigest,f.policy),/Hidden row identity is exhausted/);
+    const negative=new DatabaseSync(f.path);negative.exec("UPDATE migration_rowid_probe SET _rowid_=-1 WHERE id='z-first'; UPDATE migration_rowid_probe SET _rowid_=-2 WHERE id='a-second'");negative.close();
+    assert.throws(()=>planBusinessSnapshot(f.path,f.authorityDigest,f.policy),/Negative hidden row identity/);
   } finally {rmSync(f.dir,{recursive:true,force:true});}
 });
 

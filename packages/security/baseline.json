@@ -5392,10 +5392,10 @@
         "authorization_control"
       ],
       "content": "Read-only shared business snapshot inventory before PostgreSQL migration",
-      "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output",
+      "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output; retain and fingerprint original hidden row order",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "e76c8189812e2ad42923518ffb8a97159d387f5e6aee58e5c7f3e47caceda8ec"
+      "sourceDigest": "e3b9ba21735b6b7f38ffef78a13dfec0c37916e86c36531d9fa158f0b8a790b0"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5408,7 +5408,7 @@
       "currentControl": "Requires private authority descriptor, reviewed policy digest and absolute snapshot; emits only inventory and digests",
       "targetControl": "Keep production cutover separate from an inventory-only check",
       "stage": "S5",
-      "sourceDigest": "f744b8ee4eca5288d69c8912111878c9441620e9138a194c6d150b84a49b03b7"
+      "sourceDigest": "08834aae7e3a099a527939f3d30afda9618b896930afe7892c5b9e30ee8428b1"
     },
     {
       "id": "business-postgres-schema-compiler",
@@ -5419,10 +5419,10 @@
         "authorization_control"
       ],
       "content": "Fail-closed PostgreSQL schema mapping for business and network records",
-      "currentControl": "Explicit reviewed type, uniqueness, JSON index and immutable or network-trigger mappings; unknown schema forms are rejected",
+      "currentControl": "Explicit reviewed type, uniqueness, JSON index and immutable or network-trigger mappings; generated row-order identities have a database update guard; unknown schema forms are rejected",
       "targetControl": "Preserve authority and evidence invariants while requiring data compatibility and runtime-port verification",
       "stage": "S5",
-      "sourceDigest": "d570807bc297011d447d6d16921ebf9a7fb06ba87cdabb859194869f8bef9c82"
+      "sourceDigest": "c6ed1ded29430c40a6ae36cc2e7c4e92d6194503e48c7091d5e4798d4181fe7f"
     },
     {
       "id": "business-postgres-json-compat",
@@ -5445,10 +5445,10 @@
         "authorization_control"
       ],
       "content": "Offline business database import and validation",
-      "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling",
+      "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling; preserve row order and sequence high-water marks",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "d5d88df80af898bd9f8e0f03e788ba9681eac5f34e526cfae882e99e4df4c6ec"
+      "sourceDigest": "1ea4018107bc66294365e7676e1fb69cd41afb100c78daee7c8a8d4ed613e260"
     },
     {
       "id": "business-postgres-import-cli",
@@ -5511,10 +5511,10 @@
         "authorization_control"
       ],
       "content": "Read-only comparison of active identity projections against imported membership",
-      "currentControl": "Reviewed receipt digests, read-only consistent transaction, bounded aggregate output and no activation",
+      "currentControl": "Reviewed receipt digests, read-only consistent transaction, bounded aggregate output and no activation; reject legacy business receipts lacking preserved row order",
       "targetControl": "Detect mismatched identity and revocation projections before runtime cutover",
       "stage": "S5",
-      "sourceDigest": "5900545bfb5ec4084913df9fcceffcf8ba03b8507416c63da291daac93f575f5"
+      "sourceDigest": "4f31f6ac7c3477d965e41858a4123214341556b96b4b22be81befa61e8a4d7ea"
     },
     {
       "id": "postgres-identity-audit-cli",

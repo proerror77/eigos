@@ -16,10 +16,10 @@ export async function auditImportedIdentities(client: Client, options: {
   let open = false;
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'); open = true;
-    for (const [schema, table, expected] of [[business, 'eigos_migration_receipt', businessFileDigest], [membership, 'eigos_membership_migration_receipt', membershipFileDigest]]) {
+    for (const [schema, table, expected, version] of [[business, 'eigos_migration_receipt', businessFileDigest, 2], [membership, 'eigos_membership_migration_receipt', membershipFileDigest, 1]] as const) {
       const result = await client.query(`SELECT body FROM ${schema}.${quote(table!)} WHERE slot=1`);
       const body = result.rows[0]?.body;
-      if (result.rowCount !== 1 || !body || body.version !== 1 || body.status !== 'imported-not-activated' || body.sourceFileDigest !== expected) throw new Error('Migration receipt does not match the reviewed snapshot');
+      if (result.rowCount !== 1 || !body || body.version !== version || body.status !== 'imported-not-activated' || body.sourceFileDigest !== expected) throw new Error('Migration receipt does not match the reviewed snapshot');
     }
     const rows = await client.query(`SELECT s.owner,s.member_id,s.client_id,s.installation_id,
       m.issuer,m.tenant,m.subject,m.status,m.accepted_at,r.member_id AS registration_member,r.client_id AS registration_client,r.revoked,c.blocked

@@ -6,11 +6,11 @@ import { runtimeAuthorityDigest, runtimeAuthoritySchema, storedRuntimeAuthority 
 import { DefinitionStore } from '../ontology/definition-store.js';
 import { ontologyReleaseRefSchema, parseOntologyDocument } from '../ontology/definition-contracts.js';
 
-export type BusinessColumn = { name: string; type: string; notNull: boolean; primaryKey: number };
+export type BusinessColumn = { name: string; type: string; notNull: boolean; primaryKey: number; sourceRowidAlias?: string };
 type UniqueKey = { name: string; origin: string; partial: boolean; columns: (string | null)[] };
-export type BusinessTable = { name: string; columns: BusinessColumn[]; uniqueKeys: UniqueKey[]; rows: number; totalEncodedBytes: number; maxRowBytes: number; maxIntegerPrimaryKey?: string | null; digest: string };
+export type BusinessTable = { name: string; columns: BusinessColumn[]; uniqueKeys: UniqueKey[]; rows: number; totalEncodedBytes: number; maxRowBytes: number; maxIntegerPrimaryKey?: string | null; maxRowid: string | null; digest: string };
 export interface BusinessSnapshotPlan {
-  version: 1;
+  version: 2;
   purpose: 'inventory-only';
   fileDigest: string;
   schemaDigest: string;
@@ -147,20 +147,28 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
     for (const name of names) {
       const tableInfo = db.prepare(`PRAGMA table_xinfo(${quote(name)})`).all();
       if (tableInfo.some(row => Number(row.hidden) !== 0)) throw new Error(`Generated or hidden column in ${name} is not supported`);
-      const columns = tableInfo.map(row => ({ name: String(row.name), type: String(row.type).toUpperCase(), notNull: Boolean(row.notnull), primaryKey: Number(row.pk) }));
+      const columns: BusinessColumn[] = tableInfo.map(row => ({ name: String(row.name), type: String(row.type).toUpperCase(), notNull: Boolean(row.notnull), primaryKey: Number(row.pk) }));
       if (!columns.length || columns.some(column => !['TEXT','INTEGER','BLOB'].includes(column.type))) throw new Error(`Unsupported column type in ${name}`);
+      const sourceNames = new Set(columns.map(column=>column.name.toLowerCase()));
+      if (sourceNames.has('__eigos_rowid')) throw new Error(`Reserved migration column name in ${name}`);
+      const rowidAlias = ['rowid','_rowid_','oid'].find(alias=>!sourceNames.has(alias));
+      if (!rowidAlias) throw new Error(`Hidden row identity is inaccessible in ${name}`);
       const textFields = columns.filter(column => column.type === 'TEXT');
       if (textFields.length && db.prepare(`SELECT 1 FROM ${quote(name)} WHERE ${textFields.map(column => `(typeof(${quote(column.name)})='text' AND instr(${quote(column.name)}, char(0))>0)`).join(' OR ')} LIMIT 1`).get()) throw new Error(`NUL text in ${name} cannot be migrated`);
       const keys = columns.filter(column => column.primaryKey > 0).sort((a, b) => a.primaryKey - b.primaryKey);
       if (!keys.length) throw new Error(`Table ${name} has no stable primary key`);
+      columns.push({name:'__eigos_rowid',type:'INTEGER',notNull:true,primaryKey:0,sourceRowidAlias:rowidAlias});
       // SQLite BINARY and PostgreSQL C collation both order UTF-8 text by
       // bytes. A target verifier must use the same key order and C collation.
       const ordering = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
       if (columns.some(column => column.name.startsWith('__eigos_migration_raw_'))) throw new Error(`Reserved migration column name in ${name}`);
       const rawFields = textFields.map((column, index) => `CAST(${quote(column.name)} AS BLOB) AS ${quote(`__eigos_migration_raw_${index}`)}`);
-      const statement = db.prepare(`SELECT ${[...columns.map(c => quote(c.name)), ...rawFields].join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
-      const fingerprint = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0;
+      const statement = db.prepare(`SELECT ${[...columns.map(c => c.sourceRowidAlias ? `${quote(c.sourceRowidAlias)} AS ${quote(c.name)}` : quote(c.name)), ...rawFields].join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
+      const fingerprint = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0, maxRowid: bigint | null = null;
       for (const row of statement.iterate()) {
+        const sourceRowid=row.__eigos_rowid;
+        if (typeof sourceRowid !== 'bigint') throw new Error(`Invalid hidden row identity in ${name}`);
+        if (maxRowid === null || sourceRowid > maxRowid) maxRowid=sourceRowid;
         for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !Buffer.from(String(row[column.name]), 'utf8').equals(Buffer.from(row[`__eigos_migration_raw_${index}`] as Uint8Array))) throw new Error(`Invalid UTF-8 text in ${name}`);
         const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
         const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
@@ -179,7 +187,9 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
         const value = maximum.get()?.value;
         maxIntegerPrimaryKey = value === null ? null : String(value);
       }
-      tables.push({ name, columns, uniqueKeys, rows, totalEncodedBytes, maxRowBytes, ...(maxIntegerPrimaryKey !== undefined ? { maxIntegerPrimaryKey } : {}), digest: fingerprint.digest('hex') });
+      if (maxRowid !== null && maxRowid < 0n) throw new Error(`Negative hidden row identity requires review in ${name}`);
+      if (maxRowid === 9223372036854775807n) throw new Error(`Hidden row identity is exhausted in ${name}`);
+      tables.push({ name, columns, uniqueKeys, rows, totalEncodedBytes, maxRowBytes, maxRowid:maxRowid?.toString() ?? null, ...(maxIntegerPrimaryKey !== undefined ? { maxIntegerPrimaryKey } : {}), digest: fingerprint.digest('hex') });
     }
     // AUTOINCREMENT remembers deleted high-water marks; MAX(id) alone is not
     // sufficient to preserve its non-reuse guarantee during migration.
@@ -188,10 +198,11 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
       const sequence = db.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name'); sequence.setReadBigInts(true);
       sequences = sequence.all().map(row => ({ table: String(row.name), lastValue: String(row.seq) }));
       if (sequences.some(row => !names.includes(row.table) || !/^\d+$/.test(row.lastValue))) throw new Error('Invalid SQLite sequence metadata');
+      if (sequences.some(row => BigInt(row.lastValue) >= 9223372036854775807n)) throw new Error('SQLite sequence is exhausted');
     }
     const after = hashFile(snapshot, info), finalInfo = lstatSync(snapshot);
     if (before !== after || finalInfo.dev !== info.dev || finalInfo.ino !== info.ino || finalInfo.nlink !== 1 || !finalInfo.isFile() || finalInfo.isSymbolicLink() || (finalInfo.mode & 0o077) !== 0 || (process.getuid && finalInfo.uid !== process.getuid()) || ['-wal', '-shm', '-journal'].some(suffix => existsSync(snapshot + suffix))) throw new Error('Snapshot changed during the audit');
-    return { version: 1, purpose: 'inventory-only', fileDigest: before,
+    return { version: 2, purpose: 'inventory-only', fileDigest: before,
       schemaDigest: hash(JSON.stringify(objects.map(row => [row.type, row.name, row.tbl_name, row.sql]))), authority,
       policyDigest: expectedPolicyDigest, tables, sequences, indexes: objects.filter(row => row.type === 'index').length, triggers: objects.filter(row => row.type === 'trigger').length };
   } finally { db.close(); }

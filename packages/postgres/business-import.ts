@@ -19,7 +19,7 @@ export interface BusinessImportOptions {
   maxDatabaseBytes: number;
 }
 export interface BusinessImportReceipt {
-  version: 1;
+  version: 2;
   status: 'imported-not-activated';
   sourceFileDigest: string;
   schemaDigest: string;
@@ -90,12 +90,12 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
     for (let index = 0; index < plan.tables.length; index++) {
       const table = plan.tables[index]!, columns = table.columns, keys = columns.filter(column => column.primaryKey > 0).sort((a,b) => a.primaryKey-b.primaryKey);
       const order = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
-      const statement = db.prepare(`SELECT ${columns.map(column => quote(column.name)).join(',')} FROM ${quote(table.name)} ORDER BY ${order}`); statement.setReadBigInts(true);
+      const statement = db.prepare(`SELECT ${columns.map(column => column.sourceRowidAlias ? `${quote(column.sourceRowidAlias)} AS ${quote(column.name)}` : quote(column.name)).join(',')} FROM ${quote(table.name)} ORDER BY ${order}`); statement.setReadBigInts(true);
       let batch: Record<string, unknown>[] = [], bytes = 0;
       async function flush() {
         if (!batch.length) return;
         const values: unknown[] = [], placeholders = batch.map(row => `(${columns.map(column => { values.push(sqlValue(row[column.name])); return `$${values.length}`; }).join(',')})`);
-        await client.query(`INSERT INTO ${quote(table.name)} (${columns.map(column => quote(column.name)).join(',')}) VALUES ${placeholders.join(',')}`, values);
+        await client.query(`INSERT INTO ${quote(table.name)} (${columns.map(column => quote(column.name)).join(',')}) OVERRIDING SYSTEM VALUE VALUES ${placeholders.join(',')}`, values);
         bytesSinceSizeCheck += bytes; batch = []; bytes = 0;
         if (bytesSinceSizeCheck >= batchBytes) { await targetSize(client, maxDatabaseBytes); bytesSinceSizeCheck = 0; }
       }
@@ -118,17 +118,28 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
       const sequence = identity.usesSqliteSequence ? plan.sequences.find(item => item.table === identity.table) : undefined;
       if (identity.usesSqliteSequence && !sequence && table.rows > 0) throw new Error('SQLite sequence metadata is missing');
       const highWater = sequence ? BigInt(sequence.lastValue) : 0n, last = max > highWater ? max : highWater;
-      const name = `"${schema}"."${identity.table}"`;
+      const name = `${quote(schema)}.${quote(identity.table)}`;
       const found = await client.query('SELECT pg_get_serial_sequence($1,$2) AS seq', [name, identity.column]);
       if (!found.rows[0]?.seq) throw new Error(`Identity sequence is unavailable in ${identity.table}`);
       await client.query('SELECT setval($1::regclass,$2::bigint,$3)', [found.rows[0].seq, (last > 0n ? last : 1n).toString(), last > 0n]);
     }
+    const rowidTables: string[] = [], rowidValues: string[] = [], rowidCalled: boolean[] = [];
+    for (const table of plan.tables) {
+      const maximum = table.maxRowid === null ? 0n : BigInt(table.maxRowid);
+      const originalSequence = plan.sequences.find(item=>item.table===table.name);
+      const highWater = originalSequence ? BigInt(originalSequence.lastValue) : 0n;
+      const last = maximum > highWater ? maximum : highWater;
+      if (last >= 9223372036854775807n) throw new Error('Hidden row identity is exhausted');
+      rowidTables.push(`${quote(schema)}.${quote(table.name)}`); rowidValues.push((last > 0n ? last : 1n).toString()); rowidCalled.push(last > 0n);
+    }
+    const rowidSequences = await client.query(`SELECT x.table_name,x.seq,pg_catalog.setval(x.seq::regclass,x.value,x.called) AS value FROM (SELECT table_name,($2::bigint[])[ord] AS value,($3::boolean[])[ord] AS called,pg_catalog.pg_get_serial_sequence(table_name,'__eigos_rowid') AS seq FROM pg_catalog.unnest($1::text[]) WITH ORDINALITY AS input(table_name,ord)) x`,[rowidTables,rowidValues,rowidCalled]);
+    if (rowidSequences.rowCount !== plan.tables.length || rowidSequences.rows.some(row=>!row.seq || row.value===null)) throw new Error('Hidden row identity sequence is unavailable');
     if (mapping.triggerStatements.length) await client.query(mapping.triggerStatements.join(';\n'));
     await installPostgresAuthorityLock(client, schema);
     await targetSize(client, maxDatabaseBytes);
     const rechecked = planBusinessSnapshot(snapshot, expectedAuthorityDigest, expectedPolicyDigest);
     if (JSON.stringify(plan) !== JSON.stringify(rechecked)) throw new Error('Business snapshot changed during import');
-    const receipt: BusinessImportReceipt = { version: 1, status: 'imported-not-activated', sourceFileDigest: plan.fileDigest,
+    const receipt: BusinessImportReceipt = { version: 2, status: 'imported-not-activated', sourceFileDigest: plan.fileDigest,
       schemaDigest: plan.schemaDigest, authorityDigest: plan.authority.digest, policyDigest: plan.policyDigest,
       tables: plan.tables.map(table => ({ name: table.name, rows: table.rows, digest: table.digest })) };
     await client.query('CREATE TABLE eigos_migration_receipt (slot BIGINT PRIMARY KEY CHECK(slot=1), body JSONB NOT NULL)');

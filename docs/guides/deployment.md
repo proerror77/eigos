@@ -39,7 +39,7 @@
 
 `node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理／网络租约、运行中的恢复或未解决权限围栏的副本。开放草稿会校验原始身份、文档、基准发布及代次后原样保留；过期基准不会自动重置或发布。
 
-报告仅包含表结构、唯一键信息、行数、编码总量、最大编码行大小和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
+报告仅包含表结构、唯一键信息、行数、编码总量、最大编码行大小和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。版本 2 还记录并校验每张业务表的 SQLite 隐含行序，导入时将其保存在 PostgreSQL 的 `__eigos_rowid`；新的行序使用独立序列，保留自增表的高水位。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
 
 Gateway 的会员、安装、会话和撤销状态由 `MEMBERSHIP_DATABASE_PATH` 指定；未设置时默认使用业务库路径加 `.members`。业务快照导入不会复制这些数据。切换前须一并迁移并核对会员身份、安装绑定、连接封禁、令牌及邀请状态，并验证它们与业务库中的授权和任务身份一致；不得通过重建安装或重新授予权限掩盖缺失记录。运行时 PostgreSQL 适配完成并验证两库的受控切换之前，不得把业务导入结果设为正式运行权威。
 
@@ -63,4 +63,4 @@ node scripts/business-postgres-import.mjs --apply --snapshot /private/offline-bu
 
 导入只创建新的私有 schema，不授予运行时角色，也不修改源文件或激活新权威。它拒绝未审查的 SQLite 结构、JSON 语义不兼容和源摘要变化；复制后按主键逐表回读摘要，保留序列高水位，在数据复制完成后再安装不可变历史和网络缓存失效触发器。业务 JSON 索引字段和网络身份键须保持已审查的类型，SQLite 与 PostgreSQL 对 JSON 有效性的差异会使导入回滚。提交响应丢失时，结果可能未知；应查询该 schema 的 `eigos_migration_receipt` 并核对摘要，不要重试覆盖。
 
-容量检查以 `pg_database_size` 为基础，并不包含 PostgreSQL WAL 或保证满足托管平台配额；必须保留额外空间并根据实际目标大小重新评估。大记录按单行处理，测试覆盖合成 42 MiB 任务；这不代表 Cloudflare 入口已具备读取相同大小任务的能力。业务运行时代码和 MCP／A2A 仍需完成 PostgreSQL 适配及权限、领取、取消、恢复和跨入口联调，才能启用目标库。
+容量检查以 `pg_database_size` 为基础，并不包含 PostgreSQL WAL 或保证满足托管平台配额；必须保留额外空间并根据实际目标大小重新评估。大记录按单行处理，测试覆盖合成 42 MiB 任务；这不代表 Cloudflare 入口已具备读取相同大小任务的能力。业务运行时代码和 MCP／A2A 仍需完成 PostgreSQL 适配及权限、领取、取消、恢复和跨入口联调，才能启用目标库；所有依赖 SQLite `rowid` 的排序和游标必须改用 `__eigos_rowid`，不能按主键或时间猜测顺序；数据库触发器拒绝普通更新改写已有行的该值，普通插入也不能显式指定该值；导入器使用明确的覆盖语法，运行角色还需禁止绕过序列。旧版不含行序的业务导入回执不能用于新版身份核对或正式切换。

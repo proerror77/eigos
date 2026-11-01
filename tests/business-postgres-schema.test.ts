@@ -19,6 +19,10 @@ test('business schema compiler refuses unreviewed indexes, triggers and conflict
     assert.throws(() => compileBusinessSchema(db), /Unreviewed trigger/);
     db.exec('DROP TRIGGER unexpected; DROP TABLE sample; CREATE TABLE sample(id TEXT PRIMARY KEY, body TEXT UNIQUE ON CONFLICT IGNORE)');
     assert.throws(() => compileBusinessSchema(db), /Unreviewed table semantics/);
+    db.exec('DROP TABLE sample; CREATE TABLE sample(id TEXT PRIMARY KEY,rowid TEXT,_rowid_ TEXT,oid TEXT)');
+    assert.throws(() => compileBusinessSchema(db), /Hidden row identity/);
+    db.exec('DROP TABLE sample; CREATE TABLE sample(id TEXT PRIMARY KEY,__eigos_rowid TEXT)');
+    assert.throws(() => compileBusinessSchema(db), /Hidden row identity/);
   } finally { db.close(); }
 });
 
@@ -68,6 +72,8 @@ test('synthetic business schema maps to PostgreSQL with guarded history and secu
     await rejectSql(malformed, '23514');
     const harmless = "INSERT INTO jobs VALUES('other','owner','context','unindexed','2026','2026','not-json')";
     sqlite.exec(harmless); await client.query(harmless);
+    await rejectSql("UPDATE jobs SET __eigos_rowid=999 WHERE id='other'",'428C9');
+    await rejectSql("UPDATE jobs SET __eigos_rowid=DEFAULT WHERE id='other'",'55000');
     sqlite.exec("UPDATE network_state SET value='0' WHERE key='activity_epoch'");
     await client.query("INSERT INTO network_state VALUES('activity_epoch','0') ON CONFLICT (key) DO UPDATE SET value='0'");
     const both = async (sql: string) => { sqlite.exec(sql); await client.query(sql); };
