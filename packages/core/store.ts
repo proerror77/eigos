@@ -30,12 +30,13 @@ import { actionSources } from '../security/component-authority.js';
 import type { OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { businessModelV9 } from '../ontology/business-model.js';
 import { migrateIntegratedOntology } from '../ontology/integration-migration.js';
-import { SecurityStore, SecurityLineageLimitError, type SecurityMode } from '../security/store.js';
+import { SecurityStore, SecurityError, SecurityLineageLimitError, type SecurityMode } from '../security/store.js';
 import { authorizationScope } from '../security/context.js';
 import {agentDispatchGrant} from './agent-authorization.js';
 import { storedRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from './runtime-authority.js';
 import { initializeTaskReadProjections, projectedTaskReadRelease } from '../ontology/task-read-projection.js';
 import { synchronizeTaskOutcome } from './task-outcome.js';
+import type { PlanningReadReceipt } from '../ontology/planning-contract.js';
 
 export interface ListFilter {
   limit: number;
@@ -97,6 +98,7 @@ export class JobStore {
           state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, body TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner, created_at, id);
+        CREATE INDEX IF NOT EXISTS jobs_owner_body_validity ON jobs(owner,id,typeof(body),json_valid(body));
         CREATE INDEX IF NOT EXISTS jobs_worker_ready ON jobs(
           json_extract(body,'$.service'), json_extract(body,'$.delegation.backendVersion'),
           COALESCE(json_extract(body,'$.executionMode'),'worker'),
@@ -908,6 +910,40 @@ export class JobStore {
     }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
   }
 
+  /** Append a server-owned read receipt without publishing business state.
+   * Only this field can change; ordinary checkpoints retain full projection. */
+  recordPlanningRead(claim: WorkClaim, receipt: PlanningReadReceipt): boolean {
+    const scope = authorizationScope();
+    if (this.security.enabled && (scope?.policies.security !== this.security || scope.actor.actorKind !== 'worker' || scope.operation !== 'task.process'
+      || scope.actor.ownerKey !== claim.owner || scope.actor.taskId !== claim.job.id
+      || scope.grant?.taskId !== claim.job.id || scope.actor.requestRevision !== claim.job.delegation?.request.revision
+      || scope.actor.authorityRef.id !== claim.securityAuthorityId || scope.actor.claimRef !== digest(claim.token))) {
+      throw new SecurityError('AUTHORIZATION_REQUIRED');
+    }
+    const generation = scope?.readGeneration?.();
+    try { return this.transaction(() => {
+      this.assertRuntimeAuthority();
+      if (!this.active(claim, Date.now())) return false;
+      return this.withClaimMutation(claim, () => {
+        const job = this.get(claim.owner, claim.job.id);
+        if (job.id !== claim.job.id || job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION
+          || this.authority && job.authorityId !== undefined && job.authorityId !== this.authority.id) {
+          throw new DomainError('CONFLICT', 'Planning receipt does not belong to this delegated task');
+        }
+        job.delegation.ontologyReads = [...(job.delegation.ontologyReads ?? []), structuredClone(receipt)];
+        const written = this.db.prepare('UPDATE jobs SET state=?,updated_at=?,body=? WHERE owner=? AND id=?')
+          .run(job.state, job.updatedAt, JSON.stringify(job), claim.owner, claim.job.id);
+        if (written.changes !== 1) throw lostClaimFence;
+        if (this.security.enabled) this.security.policies.accountForPlanningRead();
+        if (!this.mutationCurrent(claim)) throw lostClaimFence;
+        // A trigger or another write is not receipt bookkeeping. Never return
+        // a read assembled across that change, even if authority is unchanged.
+        if (scope?.readGeneration?.() !== generation) throw new SecurityError('POLICY_CHANGED');
+        return true;
+      });
+    }); } catch (error) { if (error === lostClaimFence) return false; throw error; }
+  }
+
   release(claim: WorkClaim): void {
     this.db.prepare('DELETE FROM work_claims WHERE job_id=? AND token=?').run(claim.job.id, claim.token);
   }
@@ -923,7 +959,8 @@ export class JobStore {
   /** Fresh ownership check without materializing an unrelated multi-megabyte
    * execution history. Corrupt stored JSON still fails closed. */
   private assertOwnedJob(owner: string, id: string): void {
-    const row=this.ownedTaskRow(owner,id,"typeof(body) AS body_type,json_valid(body) AS valid");
+    const row=this.db.prepare('SELECT typeof(body) AS body_type,json_valid(body) AS valid FROM jobs INDEXED BY jobs_owner_body_validity WHERE owner=? AND id=?').get(owner,id);
+    if(!row)throw new DomainError('NOT_FOUND','Task not found');
     if(row.body_type!=='text' || row.valid!==1)throw new SyntaxError('Stored task JSON is invalid');
   }
   private taskFence(owner: string, id: string): Pick<Job,'state'|'revision'> & {requestRevision:unknown;recoveryPending:unknown} {

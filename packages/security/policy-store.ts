@@ -24,7 +24,7 @@ import {DefinitionStore} from '../ontology/definition-store.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 
-// Count only direct audit inserts and checked claim renewals on this connection.
+// Count only direct audit writes and checked claim renewals on this connection.
 // Other writes, trigger side effects and other connections still invalidate the
 // snapshot; every authority/time check remains in place.
 const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
@@ -774,6 +774,11 @@ export class SecurityPolicies {
   /** JobStore calls this only after its one checked work_claims update succeeds.
    * Count that direct row, never trigger writes or an arbitrary progress callback. */
   accountForLeaseRenewal() {
+    readBookkeepingChanges.set(this.db,(readBookkeepingChanges.get(this.db)??0)+1);
+  }
+  /** One fenced jobs-row update appends only a planning receipt. It cannot
+   * publish objects or alter task business state; extra trigger writes count. */
+  accountForPlanningRead() {
     readBookkeepingChanges.set(this.db,(readBookkeepingChanges.get(this.db)??0)+1);
   }
   capture(scope:AuthorizationScope,envelope:SecurityEnvelope) {

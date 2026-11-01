@@ -18,6 +18,19 @@ export interface WorkerOptions {
   timeoutMs?: number;
 }
 type RunningWork = { controller: AbortController; done: Promise<void>; renewIfDue?: () => boolean };
+type FailurePhase = 'recovery_writeback' | 'claim_cleanup' | 'model_context_cleanup';
+const RECOVERY_WRITEBACK_MS = 30000;
+const diagnosticFiles = new Set(['apps/worker/worker', 'packages/core/store', 'packages/core/task-outcome',
+  'packages/security/store', 'packages/security/policy-store', 'packages/security/envelope', 'packages/security/model',
+  'packages/coordinator/coordinator', 'packages/coordinator/planning-session', 'packages/coordinator/task-context',
+  'packages/ontology/object-store', 'packages/ontology/task-projection', 'packages/ontology/execution-projection']);
+function workerErrorOrigins(error: unknown): string[] {
+  if (!(error instanceof Error)) return [];
+  return [...new Set((error.stack ?? '').split('\n').slice(1, 17).flatMap(line => {
+    const match = line.match(/((?:apps|packages)\/[A-Za-z0-9_/-]+)\.(js|ts):(\d{1,7}):(\d{1,5})(?:\)|$)/);
+    return match && diagnosticFiles.has(match[1]!) ? [`${match[1]}.${match[2]}:${match[3]}:${match[4]}`] : [];
+  }))].slice(0, 4);
+}
 
 // No HTTP listener or user Bearer token. Claims and fenced writes are in the shared core.
 export class Worker {
@@ -80,6 +93,9 @@ export class Worker {
     const { job, owner } = claim;
     const controller = new AbortController();
     let scope:AuthorizationScope|undefined, writebackScope:AuthorizationScope|undefined;
+    let writebackDeadline: number | undefined;
+    let recoveryWriteback: 'not_required' | 'committed' | 'fenced' | 'rejected' = 'not_required';
+    const failures: {phase:FailurePhase;error:unknown}[] = [];
     const run: RunningWork = { controller, done: Promise.resolve() };
     const inScope = <T>(action: () => T): T => writebackScope ? withAuthorization(writebackScope, action) : action();
     const timeoutMs = this.options.timeoutMs ?? 300000;
@@ -104,13 +120,20 @@ export class Worker {
         // Interruption stops execution, not the fenced recovery write. Retain
         // the original authority/lease checks without the execution deadline
         // hook, on a distinct scope so late execution keeps its abort guard.
-        writebackScope = { ...scope };
+        const assertCurrent = scope.assertCurrent;
+        const writebackProgress = () => {
+          if (writebackDeadline === undefined) return;
+          if (Date.now() >= writebackDeadline) throw new DomainError('CONFLICT', 'Recovery writeback deadline ended');
+          this.renewDueClaims();
+          if (Date.now() >= renewAt && !renew()) throw new DomainError('CONFLICT', 'Recovery writeback lost its original claim');
+        };
+        writebackScope = { ...scope, onProgress: writebackProgress,
+          assertCurrent: () => { assertCurrent(); writebackProgress(); } };
         const onProgress = () => {
           this.renewDueClaims();
           if (controller.signal.aborted) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
         };
         scope.onProgress = onProgress;
-        const assertCurrent = scope.assertCurrent;
         scope.assertCurrent = () => {
           assertCurrent();
           // Bounded synchronous metadata work can delay the timer. Renew only
@@ -127,58 +150,76 @@ export class Worker {
         finish: (id, evidence, outcome) => this.store.finishModelUsage(claim, id, evidence, outcome) }, () => this.options.coordinator.run(claim, controller.signal));
       };
       if(scope) await withAuthorization(scope,execute); else await execute();
-    }).catch(error => inScope(() => {
-      this.store.finish(claim, current => {
-        if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
-          request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
-        if (error instanceof ModelSessionError) current.delegation?.events.push({ at: new Date().toISOString(), event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
-        const readOnly = canRecoverReadOnly(current, this.store.intents(owner, current.id));
-        if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation && readOnly) {
-          scheduleTaskRecovery(current, 'reasoning_incomplete', '推理尚未形成有效决策，系统将保留当前信息继续处理，无需重复补充。');
-          return;
+    }).catch(error => {
+      writebackDeadline = Date.now() + RECOVERY_WRITEBACK_MS;
+      return inScope(() => {
+        try {
+          const saved = this.store.finish(claim, current => {
+            if (current.delegation?.agent?.composition && !current.artifact) current.artifact = partialGoalArtifact({ graph: this.store.ontologyForJob(owner, current), owner,
+              request: current.delegation.request, state: current.delegation.agent, intents: this.store.intents(owner, current.id), modelRuns: current.runs });
+            if (error instanceof ModelSessionError) current.delegation?.events.push({ at: new Date().toISOString(), event: 'worker_model_failed', evidence: `${error.stage}/${error.code}` });
+            const readOnly = canRecoverReadOnly(current, this.store.intents(owner, current.id));
+            if (error instanceof ReasoningBudgetExhausted && !controller.signal.aborted && current.delegation && readOnly) {
+              scheduleTaskRecovery(current, 'reasoning_incomplete', '推理尚未形成有效决策，系统将保留当前信息继续处理，无需重复补充。');
+              return;
+            }
+            if (error instanceof ConnectionAuthorizationRequired && error.connection && !controller.signal.aborted && current.delegation && canResumeSource(current, this.store.intents(owner, current.id))) {
+              const d = current.delegation;
+              current.state = 'auth-required'; d.phase = 'awaiting_authorization';
+              d.sourceAuthorization = structuredClone(error.connection);
+              current.updatedAt = new Date().toISOString(); current.question = error.message; delete current.error;
+              current.messages.push({ id: randomUUID(), role: 'agent', text: error.message, at: current.updatedAt });
+              return;
+            }
+            const intentId = current.delegation?.intentId;
+            const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
+            if (current.delegation && readOnly) {
+              if(error instanceof SecurityError && error.reason==='SOURCE_NOT_AUTHORIZED' && !controller.signal.aborted) {
+                scheduleTaskRecovery(current,'source_authorization_required',SOURCE_AUTHORIZATION_MESSAGE,{automatic:false,operation:'SOURCE_NOT_AUTHORIZED'});
+                return;
+              }
+              if (error instanceof DomainError && !controller.signal.aborted) {
+                scheduleTaskRecovery(current, 'validation_stalled', '当前执行未通过权限或状态校验。原任务与确认信息保留，需修复运行条件后继续。', { automatic: false });
+                return;
+              }
+              scheduleTaskRecovery(current, controller.signal.aborted ? this.stopping ? 'worker_interrupted' : 'worker_timeout' : 'model_unavailable',
+                '运行暂时中断，原任务、已确认信息和执行记录均已保留。系统会自动恢复；持续异常时等待运行环境修复，无需重复确认业务信息。');
+              return;
+            }
+            current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
+            current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'
+              : error instanceof ModelSessionError ? 'Worker model planning failed; existing observations retained, no automatic replay. Inspect the bounded failure event.'
+              : dispatched ? 'Action did not return an accepted result. Inspect recorded observations; no automatic replay.'
+              : 'Ontology backend could not validate a supported plan. No business action was dispatched.';
+            current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
+          });
+          recoveryWriteback = saved ? 'committed' : 'fenced';
+        } catch (writebackError) {
+          recoveryWriteback = 'rejected'; failures.push({phase:'recovery_writeback',error:writebackError}); throw writebackError;
         }
-        if (error instanceof ConnectionAuthorizationRequired && error.connection && !controller.signal.aborted && current.delegation && canResumeSource(current, this.store.intents(owner, current.id))) {
-          const d = current.delegation;
-          current.state = 'auth-required'; d.phase = 'awaiting_authorization';
-          d.sourceAuthorization = structuredClone(error.connection);
-          current.updatedAt = new Date().toISOString(); current.question = error.message; delete current.error;
-          current.messages.push({ id: randomUUID(), role: 'agent', text: error.message, at: current.updatedAt });
-          return;
-        }
-        const intentId = current.delegation?.intentId;
-        const dispatched = current.delegation?.agent ? this.store.intents(owner, current.id).some(i => this.store.attempts(owner, i.id).length > 0) : intentId ? this.store.intent(owner, intentId).state !== 'ready' : false;
-        if (current.delegation && readOnly) {
-          if(error instanceof SecurityError && error.reason==='SOURCE_NOT_AUTHORIZED' && !controller.signal.aborted) {
-            scheduleTaskRecovery(current,'source_authorization_required',SOURCE_AUTHORIZATION_MESSAGE,{automatic:false,operation:'SOURCE_NOT_AUTHORIZED'});
-            return;
-          }
-          if (error instanceof DomainError && !controller.signal.aborted) {
-            scheduleTaskRecovery(current, 'validation_stalled', '当前执行未通过权限或状态校验。原任务与确认信息保留，需修复运行条件后继续。', { automatic: false });
-            return;
-          }
-          scheduleTaskRecovery(current, controller.signal.aborted ? this.stopping ? 'worker_interrupted' : 'worker_timeout' : 'model_unavailable',
-            '运行暂时中断，原任务、已确认信息和执行记录均已保留。系统会自动恢复；持续异常时等待运行环境修复，无需重复确认业务信息。');
-          return;
-        }
-        current.state = 'failed'; if (current.delegation) current.delegation.phase = 'failed'; current.updatedAt = new Date().toISOString();
-        current.error = controller.signal.aborted ? 'Worker execution interrupted; inspect recorded observations before retrying.'
-          : error instanceof ModelSessionError ? 'Worker model planning failed; existing observations retained, no automatic replay. Inspect the bounded failure event.'
-          : dispatched ? 'Action did not return an accepted result. Inspect recorded observations; no automatic replay.'
-          : 'Ontology backend could not validate a supported plan. No business action was dispatched.';
-        current.messages.push({ id: randomUUID(), role: 'agent', text: current.error, at: current.updatedAt });
       });
-    })).finally(() => inScope(async () => {
+    }).finally(() => inScope(async () => {
       clearInterval(heartbeat); clearTimeout(timeout);
       // Keep an unresolved working claim until expiry if writeback failed.
       try { if (this.store.get(owner, job.id).state !== 'working') this.store.release(claim); }
-      finally { this.running.delete(job.id); await this.options.coordinator.releaseModelContext?.(claim); }
+      catch (error) { failures.push({phase:'claim_cleanup',error}); throw error; }
+      finally {
+        this.running.delete(job.id);
+        try { await this.options.coordinator.releaseModelContext?.(claim); }
+        catch (error) { failures.push({phase:'model_context_cleanup',error}); throw error; }
+      }
     }));
     // A storage failure must not cause an unhandled rejection or silently replay this attempt.
-    void run.done.catch(error => console.error('Worker writeback failed; lease recovery required', {
-      at: new Date().toISOString(), taskId: job.id, revision: job.revision,
-      requestRevision: job.delegation?.request.revision,
-      reason: error instanceof SecurityError ? error.reason : error instanceof DomainError ? error.code : 'WRITEBACK_FAILED',
-    }));
+    void run.done.catch(error => {
+      for (const failure of failures.length ? failures : [{phase:'recovery_writeback' as const,error}]) {
+        console.error(failure.phase === 'recovery_writeback' ? 'Worker writeback failed; lease recovery required' : 'Worker cleanup failed; task state retained', {
+          at: new Date().toISOString(), taskId: job.id, revision: job.revision,
+          requestRevision: job.delegation?.request.revision, phase: failure.phase, recoveryWriteback,
+          reason: failure.error instanceof SecurityError ? failure.error.reason : failure.error instanceof DomainError ? failure.error.code : 'WRITEBACK_FAILED',
+          origins: workerErrorOrigins(failure.error),
+        });
+      }
+    });
   }
 
   async close(): Promise<void> {
