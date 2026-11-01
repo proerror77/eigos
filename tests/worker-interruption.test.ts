@@ -37,6 +37,31 @@ test('heartbeat checks authority on each tick but only renews a current lease wh
   } finally { await worker.close(); f.close(); }
 });
 
+test('cancellation interrupts a current Foundation claim before its next renewal without changing grants', { timeout: 60000 }, async t => {
+  const clock = Date.now(); t.mock.method(Date, 'now', () => clock);
+  const f = securityFixture(() => clock), install = f.installation('Canceled before renewal');
+  f.approve(install.id); const task = f.task(install.id);
+  let entered!: () => void, signal: AbortSignal | undefined;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const worker = new Worker(f.jobs, { leaseMs: 30000, pollMs: 20, timeoutMs: 60000, coordinator: {
+    run: async (_claim, current) => { signal = current; entered(); await new Promise<void>((_resolve, reject) => {
+      current.addEventListener('abort', () => reject(new Error('Synthetic cancel')), { once: true });
+    }); },
+  } });
+  try {
+    worker.tick(); await started;
+    const grants = structuredClone(f.jobs.security.listGrants(f.owner)), current = f.jobs.get(f.owner, task.job.id);
+    current.state = 'canceled'; current.delegation!.phase = 'canceled'; f.jobs.save(f.owner, current);
+    assert(f.jobs.security.workAuthority(f.owner, current.id), 'Cancellation signal must not depend on grant revocation');
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(signal?.aborted, true);
+    await worker.close();
+    assert.equal(f.jobs.get(f.owner, task.job.id).state, 'canceled');
+    assert.equal(f.jobs.get(f.owner, task.job.id).artifact, undefined);
+    assert.deepEqual(f.jobs.security.listGrants(f.owner), grants);
+  } finally { await worker.close(); f.close(); }
+});
+
 for (const interruption of ['timeout', 'shutdown'] as const) {
   test(`Foundation Worker records ${interruption} recovery under its still-current original authority`, { timeout: 60000 }, async t => {
     const f = securityFixture(), install = f.installation('Interrupted read-only task');

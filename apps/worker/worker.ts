@@ -89,7 +89,8 @@ export class Worker {
       if (!this.store.renew(claim, this.leaseMs)) return false;
       renewAt = Date.now() + Math.floor(this.leaseMs / 3); return true;
     };
-    run.renewIfDue = () => !controller.signal.aborted && Date.now() < executionDeadline && (Date.now() < renewAt || renew());
+    run.renewIfDue = () => !controller.signal.aborted && Date.now() < executionDeadline
+      && !this.store.claimStateChanged(claim) && (Date.now() < renewAt || renew());
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
       try { scope?.assertCurrent(); if (!run.renewIfDue!()) controller.abort(); }

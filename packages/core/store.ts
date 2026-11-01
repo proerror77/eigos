@@ -858,6 +858,14 @@ export class JobStore {
     return true;
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
+  /** Early stop hint from the synchronized status column, never authorization
+   * to run. Full body/version/authority fences still guard renew and commits.
+   * A transaction may intentionally be projecting its own terminal state. */
+  claimStateChanged(claim: WorkClaim): boolean {
+    if (this.claimMutations.has(claim)) return false;
+    const row = this.db.prepare('SELECT state FROM jobs WHERE owner=? AND id=?').get(claim.owner, claim.job.id);
+    return !row || row.state !== (claim.recovery ? claim.job.state : 'working');
+  }
   private withClaimMutation<T>(claim:WorkClaim,action:()=>T):T {
     this.claimMutations.add(claim);
     try{return action();}finally{this.claimMutations.delete(claim);}
