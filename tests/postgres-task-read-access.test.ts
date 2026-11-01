@@ -15,11 +15,12 @@ import { sourceMatchesObservation } from '../packages/security/source-policy.js'
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
   // keep the fixture's copied projection valid throughout those checks.
-  const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE || process.env.EIGOS_TEST_LARGE_ROW==='1'?300000:0;
+  const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE || process.env.EIGOS_TEST_LARGE_ROW==='1'?1200000:0;
   const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000),sourceExpiry=new Date(Date.now()+3600000).toISOString();
   f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
   f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId:'synthetic-source',programId:'brief.prepare',programDigest:'b'.repeat(64),operations:['synthetic.read'],outputTypes:['ServiceRequest'],expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
+  assert(principal.access.actorKind==='agent');const parentGrantId=principal.access.agentGrant.id;
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
   const recipient={classification:'sensitive' as const,markings:['member_private','personal_data'] as const,channels:['agent_response'] as const,expiresAt:new Date(Date.now()+3600000).toISOString()};
   f.jobs.security.policies.setRecipient(installation.id,recipient,f.jobs.security.policies.revision());
@@ -70,6 +71,48 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const bindingRow=sqlite.prepare('SELECT body FROM security_bindings WHERE grant_id=? AND type=? AND object_id=?').get(task.grant.id,ref.type,ref.id)!;
     const binding=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.directBindingEvidence(c,principal,task.job.id,policy,ref));
     assert.deepEqual(await binding(),JSON.parse(String(bindingRow.body)));
+    const candidateFields=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.directFieldCandidates(c,principal,task.job.id,policy,ref));
+    const sqliteFields=()=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>f.jobs.security.policies.binding(scope,ref)?.fields);
+    const permittedFields=sqliteFields();assert(permittedFields?.includes('requestId') && permittedFields.includes('originalGoal'));
+    assert.deepEqual((await candidateFields())?.fields,permittedFields);
+    const parentRow=sqlite.prepare('SELECT body FROM security_grants WHERE id=?').get(parentGrantId)!;
+    const narrowedParent=JSON.parse(String(parentRow.body));narrowedParent.resources=[{type:'ServiceRequest',fields:['requestId']}];
+    sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(narrowedParent),parentGrantId);
+    await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[JSON.stringify(narrowedParent),parentGrantId]);
+    const narrowedFields=(await candidateFields())?.fields;
+    assert.deepEqual(narrowedFields,sqliteFields());assert(!narrowedFields?.includes('originalGoal'));
+    sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(parentRow.body!,parentGrantId);
+    await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[parentRow.body,parentGrantId]);
+    const sqliteRecipient=sqlite.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installation.id)!;
+    const restrictedRecipient={...recipient,markings:['member_private']};
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(JSON.stringify(restrictedRecipient),installation.id);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[JSON.stringify(restrictedRecipient),installation.id]);
+    assert.deepEqual((await candidateFields())?.fields,sqliteFields());
+    assert.equal(await candidateFields(),undefined);
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(sqliteRecipient.body!,installation.id);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[sqliteRecipient.body,installation.id]);
+    const noAgentChannel={...recipient,channels:['registered_model']};
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(JSON.stringify(noAgentChannel),installation.id);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[JSON.stringify(noAgentChannel),installation.id]);
+    assert.deepEqual((await candidateFields())?.fields,sqliteFields());
+    assert.equal(await candidateFields(),undefined);
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(sqliteRecipient.body!,installation.id);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[sqliteRecipient.body,installation.id]);
+    const fieldLabel=sqlite.prepare("SELECT body FROM security_labels WHERE owner=? AND type=? AND object_id=? AND field='originalGoal'").get(f.owner,ref.type,ref.id)!;
+    const internalLabel={...JSON.parse(String(fieldLabel.body)),classification:'internal'};
+    sqlite.prepare("UPDATE security_labels SET body=? WHERE owner=? AND type=? AND object_id=? AND field='originalGoal'").run(JSON.stringify(internalLabel),f.owner,ref.type,ref.id);
+    await client.query(`UPDATE "${schema}".security_labels SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND field='originalGoal'`,[JSON.stringify(internalLabel),f.owner,ref.type,ref.id]);
+    assert.deepEqual((await candidateFields())?.fields,sqliteFields());
+    sqlite.prepare("UPDATE security_labels SET body=? WHERE owner=? AND type=? AND object_id=? AND field='originalGoal'").run(fieldLabel.body!,f.owner,ref.type,ref.id);
+    await client.query(`UPDATE "${schema}".security_labels SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND field='originalGoal'`,[fieldLabel.body,f.owner,ref.type,ref.id]);
+    const bindingWithRestrictedInput=JSON.parse(String(bindingRow.body));
+    bindingWithRestrictedInput.inputEnvelope={...bindingWithRestrictedInput.envelope,classification:'sensitive',requiredMarkings:['health'],channels:['agent_response'],lineage:[],lineageComplete:true};
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(bindingWithRestrictedInput),task.grant.id,ref.type,ref.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(bindingWithRestrictedInput),task.grant.id,ref.type,ref.id]);
+    assert.deepEqual((await candidateFields())?.fields,sqliteFields());
+    assert.equal(await candidateFields(),undefined);
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(bindingRow.body!,task.grant.id,ref.type,ref.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[bindingRow.body,task.grant.id,ref.type,ref.id]);
     assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.directBindingEvidence(c,principal,task.job.id,policy,{type:ref.type,id:'absent'})),undefined);
     await client.query(`UPDATE "${schema}".security_bindings SET grant_id='older-grant' WHERE grant_id=$1 AND type=$2 AND object_id=$3`,[task.grant.id,ref.type,ref.id]);
     assert.equal(await binding(),undefined);
@@ -190,6 +233,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     sqlite.prepare('UPDATE security_roles SET body=? WHERE id=?').run(role.body!,role.id!);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[JSON.stringify(expiredRole),role.id]);
     assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest',staged)),false);
+    assert.equal(await candidateFields(),undefined);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[role.body,role.id]);
     // Historical task models must not revive a namespace role for an old
     // security policy version. SQLite evaluates roles against the reviewed
@@ -227,6 +271,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal'])),/POLICY_CHANGED/);
     await assert.rejects(binding(),/POLICY_CHANGED/);
     await assert.rejects(sourceAllowed(),/POLICY_CHANGED/);
+    await assert.rejects(candidateFields(),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);

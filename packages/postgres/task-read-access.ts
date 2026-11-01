@@ -2,7 +2,7 @@ import type { Client } from 'pg';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
-import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema } from '../security/contracts.js';
+import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
@@ -11,8 +11,10 @@ import { currentKernelImplementation } from '../ontology/definition-store.js';
 import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
-import { projectionInputs } from '../security/projections.js';
+import { projectionInputs, projectionMarkings, responseOnlyProjection } from '../security/projections.js';
 import { storedSourceSchema, sourceMatchesObservation, type ObservationSource } from '../security/source-policy.js';
+import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js';
+import { restrictionsFitRecipient } from '../security/field-restrictions.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -229,6 +231,41 @@ export async function postgresTaskSourceObservationAllowed(client: Client, princ
   return !!checked && sourceMatchesObservation(checked.sources.filter(source=>Date.parse(source.expiresAt)>Date.now()),checked.origin,ref.type);
 }
 
+/** Internal candidate fields for a direct binding, not permission to disclose.
+ * Source, task membership, provenance, dependencies and output checks remain. */
+export async function postgresTaskDirectFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder) {
+  const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
+  const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    const binding=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
+    if(!binding)return undefined;
+    if(binding.projectionOrigin && binding.sourceBindingId!=='task_context')throw new SecurityError('POLICY_CHANGED');
+    if(!await postgresTaskResourceViewAllowed(client,captured,taskId,policyDigest,'objectType',ref.type,builder))return undefined;
+    const model=builder===undefined?currentKernelImplementation():stagedKernelComponents(builder).model;
+    if(!model.hasType(ref.type) || model.isInterface(ref.type))return undefined;
+    const allowed=admission.parent.resources.find(resource=>resource.type===ref.type)?.fields??[];
+    const candidates=binding.fields.filter(field=>allowed.includes(field) && reviewedFieldPolicy(model,ref.type,field)!=='internal_only');
+    if(!candidates.length)return undefined;
+    const clearance=await postgresTaskReadClearance(client,captured,taskId,policyDigest);
+    if(!clearance)return undefined;
+    const labels=await postgresTaskCurrentLabels(client,captured,taskId,policyDigest,ref,binding.revision,candidates,builder);
+    const fields=candidates.filter(field=>{
+      const policy=reviewedFieldPolicy(model,ref.type,field),relevant=new Set([field,...projectionInputs(ref.type,field)]);
+      const base:SecurityEnvelope={version:SECURITY_CONTRACT,ownerKey:ownerKey(captured),policyVersion:POLICY_VERSION,
+        classification:policy==='task_sensitive'?'sensitive':'private',requiredMarkings:[...new Set([...(policy==='task_sensitive'?['member_private','personal_data'] as const:['member_private'] as const),...projectionMarkings(ref.type,field)])],
+        channels:admission.grant.channels.filter(channel=>!responseOnlyProjection(ref.type,field) || channel!=='registered_model'),lineage:[],lineageComplete:true};
+      const current=combineEnvelopes([base,...labels.filter(label=>label.field==='*' || relevant.has(label.field)).map(({field:_field,...label})=>({...base,...label}))]);
+      return restrictionsFitRecipient([current,...(binding.inputEnvelope?[binding.inputEnvelope]:[])],clearance,true);
+    });
+    const definition=model.object(ref.type);
+    if(!fields.includes(definition.primaryKey) || !fields.includes(definition.titleKey))return undefined;
+    if(!await postgresTaskResourceViewAllowed(client,captured,taskId,policyDigest,'objectType',ref.type,builder))return undefined;
+    return {revision:binding.revision,fields,clearanceExpiresAt:clearance.expiresAt};
+  });
+  if(!checked || Date.parse(checked.clearanceExpiresAt)<=Date.now())return undefined;
+  return {revision:checked.revision,fields:checked.fields};
+}
+
 /** Construct an edge reader only after its trusted kernel has finished loading.
  * An evicted object must rebuild its kernel before creating a new reader;
  * passing an absent builder must never silently select the synchronous path. */
@@ -249,5 +286,7 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskDirectBindingEvidence(client,principal,taskId,policyDigest,ref,builder),
     sourceObservationAllowed: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
       postgresTaskSourceObservationAllowed(client,principal,taskId,policyDigest,ref,builder),
+    directFieldCandidates: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
+      postgresTaskDirectFieldCandidates(client,principal,taskId,policyDigest,ref,builder),
   });
 }

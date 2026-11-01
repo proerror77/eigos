@@ -26,6 +26,7 @@ import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} fro
 import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
 import { reviewedFieldPolicy } from './field-policy.js';
 import { sourceAuthorizationSchema, storedSourceSchema, sourceMatchesObservation } from './source-policy.js';
+import { restrictionsFitRecipient } from './field-restrictions.js';
 export { sourceAuthorizationSchema } from './source-policy.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
@@ -591,7 +592,7 @@ export class SecurityPolicies {
       binding.fields=binding.fields.filter(field=>{
         if(!allowed.includes(field) || this.fieldPolicy(ref.type,field)==='internal_only')return false;
         const restrictions=[this.envelope(scope.actor.ownerKey,ref,binding.revision,[field],{},scope.grant!.channels),...(binding.inputEnvelope?[binding.inputEnvelope]:[])];
-        return restrictions.every(e=>this.qualified(e,clearance) && (scope.actor.actorKind!=='agent' || e.channels.includes('agent_response') && !!clearance?.channels.includes('agent_response')));
+        return restrictionsFitRecipient(restrictions,clearance,scope.actor.actorKind==='agent');
       });
       const definition=this.model.object(ref.type);
       if(!binding.fields.includes(definition.primaryKey) || !binding.fields.includes(definition.titleKey))return;
@@ -856,10 +857,6 @@ export class SecurityPolicies {
     const row=this.db.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installationId);
     const value=row?JSON.parse(String(row.body)) as {classification:'private'|'sensitive';markings:SecurityEnvelope['requiredMarkings'];channels:Channel[];expiresAt:string}:undefined;
     return value && Date.parse(value.expiresAt)>this.security.now()?value:undefined;
-  }
-  private qualified(envelope:SecurityEnvelope,clearance:ReturnType<SecurityPolicies['recipient']>):boolean {
-    const rank={private:0,sensitive:1,internal:2};
-    return !!clearance && rank[envelope.classification]<=rank[clearance.classification] && envelope.requiredMarkings.every(m=>clearance.markings.includes(m));
   }
   /** Trusted policy management only. This operation can only add restrictions;
    * removing a marking or lowering a class has no ordinary API. */

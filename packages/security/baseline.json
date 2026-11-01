@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "7b41992f7c23798c193683c961f032253c1e635f498210ca5f99fa56ea700621",
+      "sourceDigest": "c7c48c98146742475041070b1b49eddb342a43b6b85210855026828d18d9ad86",
       "channels": [
         "all-reads"
       ],
@@ -5676,10 +5676,10 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "7d28fcfc7157c0a09be2bb4e7f936954503b09fd595aa46e4d1cdc6862cfb834",
+      "sourceDigest": "fd8a77dc9ee459035d8631ab61e1857e0727e201fb2a40c283d8bdd1dc0766f9",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction, staged kernel, bounded labels, binding evidence and current source checks; full object, provenance, lineage and output authorization remain required",
-      "targetControl": "Fenced transaction, staged kernel, bounded labels, binding evidence and current source checks; full object, provenance, lineage and output authorization remain required"
+      "currentControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required",
+      "targetControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required"
     },
     {
       "id": "resource-role-policy",
@@ -5739,6 +5739,18 @@
       "content": "Reviewed source authorization and observation matching",
       "currentControl": "Current source, parent grant and historical readback versions must match",
       "targetControl": "Current source, parent grant and historical readback versions must match",
+      "stage": "S5"
+    },
+    {
+      "id": "field-recipient-restrictions",
+      "file": "packages/security/field-restrictions.ts",
+      "sourceDigest": "abe9da9ec95ee4610f4c5e925defd78742915100897f76955cb103dfcf106392",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Shared field restriction and recipient matching",
+      "currentControl": "Clearance and agent response channel evaluated for each restriction",
+      "targetControl": "Clearance and agent response channel evaluated for each restriction",
       "stage": "S5"
     }
   ]
