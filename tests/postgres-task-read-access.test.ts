@@ -10,9 +10,9 @@ import { postgresBusinessTransaction } from '../packages/postgres/runtime-transa
 import { postgresTaskReadGrant, postgresTaskReadOntology, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
-  // Remote fixture setup spans multiple round trips; keep its synthetic lease
-  // ahead of the real clock so the copied projection remains valid during it.
-  const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE?300000:0;
+  // Remote setup and large-row validation may outlast the synthetic lease;
+  // keep the fixture's copied projection valid throughout those checks.
+  const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE || process.env.EIGOS_TEST_LARGE_ROW==='1'?300000:0;
   const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000); f.approve(installation.id);
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   const sqlite=new DatabaseSync(f.database), schema=`eigos_business_${randomUUID().replaceAll('-','')}`;
@@ -29,6 +29,22 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
+    }
+    if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
+      // Generate the synthetic large value inside PostgreSQL; it must never be
+      // sent to the client by authorization or ontology-context reads.
+      await client.query(`UPDATE "${schema}".jobs SET body=jsonb_set(body::jsonb,'{padding}',to_jsonb(repeat('x',108452531)))::text WHERE id=$1`,[task.job.id]);
+      const observed=new Proxy(client,{get(target,property){
+        if(property==='query')return async(sql:string,values?:unknown[])=>{
+          const result=await target.query(sql,values);
+          for(const row of result.rows)for(const value of Object.values(row))if(typeof value==='string')assert(Buffer.byteLength(value)<=8*1024*1024,'A database response returned an unbounded task field');
+          return result;
+        };
+        const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+      }});
+      const large=await postgresBusinessTransaction(observed,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy));
+      assert.deepEqual(large.ref,task.job.delegation!.ontologyRelease);
+      await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(task.job),task.job.id]);
     }
     const original=f.jobs.security.scope(f.jobs.security.agentContext(principal),task.job.id,'task.result.read').grant!;
     const read=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadGrant(c,principal,task.job.id,policy));
