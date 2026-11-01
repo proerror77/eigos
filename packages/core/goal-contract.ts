@@ -21,6 +21,7 @@ export interface GoalAssessment {
   components: { contextId: string; status: 'verified' | 'unverified'; reason?: string; delivery?: Delivery }[];
 }
 function fail(message: string): never { throw new DomainError('CONFLICT', message); }
+export const GOAL_REQUIREMENT_REFERENCE_ERROR = 'Goal criterion references an unknown or repeated requirement';
 export const requestConstraintsDigest = (request: ServiceRequest) => digest({ requirements: request.requirements, successCriteria: request.successCriteria ?? [], conditions: request.conditions ?? [], executionEnvironment: request.executionEnvironment ?? 'live' });
 
 /** Freeze every goal condition before choosing components. Source quotations
@@ -28,12 +29,16 @@ export const requestConstraintsDigest = (request: ServiceRequest) => digest({ re
 export function createGoalContract(request: ServiceRequest, ontologyRelease: OntologyReleaseRef, input: unknown, capabilities: ServiceCapability[]): GoalContract {
   const criteria = goalCriteriaSchema.parse(input), ids = new Set<string>();
   const requirements = [...request.requirements, ...(request.successCriteria ?? [])];
+  const availableRequirementIds = requirements.map(requirement => requirement.id), available = new Set(availableRequirementIds);
   for (const criterion of criteria) {
     if (ids.has(criterion.id)) fail('Goal criteria require unique identities');
     ids.add(criterion.id);
     if (!request.messages.some(message => message.id === criterion.messageId && message.text.includes(criterion.quote))) fail('Goal criterion lacks an exact request quotation');
     if (!capabilities.some(capability => capability.goalOutcomes?.some(outcome => outcome.predicate === criterion.predicate && outcome.phase === criterion.phase))) fail('Goal criterion has no registered outcome verifier for its business phase');
-    if (new Set(criterion.requirementIds).size !== criterion.requirementIds.length || criterion.requirementIds.some(id => !requirements.some(requirement => requirement.id === id))) fail('Goal criterion references an unknown or repeated requirement');
+    const unknownRequirementIds = [...new Set(criterion.requirementIds.filter(id => !available.has(id)))];
+    const repeatedRequirementIds = [...new Set(criterion.requirementIds.filter((id, index, values) => values.indexOf(id) !== index))];
+    if (unknownRequirementIds.length || repeatedRequirementIds.length) fail(GOAL_REQUIREMENT_REFERENCE_ERROR + ': '
+      + JSON.stringify({ criterionId: criterion.id, unknownRequirementIds, repeatedRequirementIds, availableRequirementIds }));
   }
   for (const requirement of requirements.filter(value => value.strength === 'hard')) {
     if (!criteria.some(criterion => criterion.requirementIds.includes(requirement.id))) fail('Every fixed hard requirement must remain attached to the goal');

@@ -28,7 +28,7 @@ import { assertSemanticSubmission } from '../ontology/action-submission.js';
 import { agentModelContext } from './model-context.js';
 import { initialActionIds } from './initial-selection.js';
 import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
-import { createGoalContract, goalCriteriaSchema } from '../core/goal-contract.js';
+import { createGoalContract, goalCriteriaSchema, GOAL_REQUIREMENT_REFERENCE_ERROR } from '../core/goal-contract.js';
 import { GoalProgram, goalState } from './goal-program.js';
 import { componentContext } from '../core/composed-actions.js';
 import { secureRequest, secureGoalContext } from '../security/model.js';
@@ -318,6 +318,11 @@ export class Coordinator {
       const currentRequest = preparer?.prepareRequest?.(d.request) ?? d.request;
       request = groundConditions(groundRequirements(currentRequest, decision.requirementsJson, selected?.outcomePredicates, selected?.requirementRoles, (selected ? [selected] : capabilities).flatMap(capability => [...capability.predicates.map(predicate => predicate.id), ...(capability.outcomePredicates ?? [])])), decision.conditionsJson, groundingAccess.session.retrievedRefs());
       preparer?.validateRequest?.(request);
+      // This pure contract validates the model's interpretation. Reject it in
+      // the existing feedback boundary before constructing executable state.
+      if (decision.kind === 'resolve' && decision.readPlan && selected) {
+        createReadContractCoverage({ request, capability: selected, input: JSON.parse(decision.inputJson) }, decision, grounded.evidence, this.store.ontologyReleaseForJob(claim.owner, claim.job));
+      }
     } catch (error) {
       signal.throwIfAborted();
       if (!this.store.claimActive(claim) || error instanceof ConnectionAuthorizationRequired || error instanceof DomainError && !['CONFLICT', 'INVALID_INPUT'].includes(error.code)) throw error;
@@ -430,6 +435,7 @@ export class Coordinator {
   private groundingFailure(claim: WorkClaim, stage: 'interpretation' | 'input', error: unknown) {
     if (!this.store.claimActive(claim)) return;
     const message = error instanceof DomainError ? error.message : 'Interpretation does not match the registered schema; use exact capability inputs and quoted request facts';
+    const failureKey = (value: string) => value === GOAL_REQUIREMENT_REFERENCE_ERROR || value.startsWith(GOAL_REQUIREMENT_REFERENCE_ERROR + ':') ? GOAL_REQUIREMENT_REFERENCE_ERROR : value;
     this.store.finish(claim, job => {
       const d = job.delegation!, at = new Date().toISOString();
       // This path is reached only before resolution/dispatch or after a rolled-back
@@ -438,7 +444,7 @@ export class Coordinator {
       const feedback = { requestRevision: d.request.revision, stage, message, decisionDigest: job.runs?.at(-1)?.decisionDigest, at };
       d.groundingFeedback = [...(d.groundingFeedback ?? []), feedback]; d.phase = 'grounding'; d.nextAt = 0; job.updatedAt = at;
       d.events.push({ at, event: 'grounding_validation_rejected', evidence: digest(feedback) });
-      if (d.groundingFeedback.filter(f => f.requestRevision === d.request.revision && f.stage === stage && f.message === message).length >= 3) {
+      if (d.groundingFeedback.filter(f => f.requestRevision === d.request.revision && f.stage === stage && failureKey(f.message) === failureKey(message)).length >= 3) {
         scheduleTaskRecovery(job, 'validation_stalled', '自动解释持续未通过校验，等待运行处理；已确认信息保留，无需重复填写。', { automatic: false });
       } else if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', executionBudgetExceeded(job, 'modelTurns', MIN_REASONING_TURNS) ?? 'window');
     });

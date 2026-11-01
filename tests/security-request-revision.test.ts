@@ -13,6 +13,8 @@ import { taskContextFields } from '../packages/security/task-context.js';
 import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { executionContextRef } from '../packages/ontology/execution-projection.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
+import { requestLocations } from '../packages/core/location-context.js';
+import { Worker } from '../apps/worker/worker.js';
 
 async function fixture(options: { context?: boolean } = {}) {
   const f = securityFixture(Date.now, { unified: true }), installation = f.installation('Revision-scoped PA');
@@ -37,7 +39,7 @@ async function fixture(options: { context?: boolean } = {}) {
   const db = new DatabaseSync(f.database);
   const storedCoverage = () => db.prepare("SELECT body,revision FROM ontology_objects WHERE owner=? AND type='GoalCoverage' AND id=?").get(f.owner, coverage.digest);
   const originalCoverage = storedCoverage();
-  return { ...f, installation, principal, tasks, task, capability, input, coverage, parent, previousGrant, db, storedCoverage, originalCoverage,
+  return { ...f, installation, createInstallation: f.installation, principal, tasks, task, capability, input, coverage, parent, previousGrant, db, storedCoverage, originalCoverage,
     reply: () => tasks.reply(principal, { taskId: task.id, requestId: randomUUID(), expectedRevision: task.revision, answer: 'Use the public subway station' }),
     close: () => { db.close(); f.close(); } };
 }
@@ -63,6 +65,49 @@ test('a Foundation reply retires the old goal review and the next Worker claims 
     const scope = f.jobs.security.workerScope(f.owner, f.task.id, claim.securityAuthorityId!, claim.token);
     assert.equal(withAuthorization(scope, () => f.jobs.checkpoint(claim, job => { job.delegation!.goalCoverage = next; })), true);
     assert.equal(query(next.digest).items[0]!.ref.id, next.digest, 'A fresh review can be bound to the current grant');
+  } finally { f.close(); }
+});
+
+test('a Foundation owner location correction updates the same paused task within its current grant and deadline', { timeout: 60000 }, async t => {
+  const f = await fixture({ context: true });
+  try {
+    const location = { city: '北京市', origin: { name: 'Old home', source: 'current_location' as const, observedAt: new Date(Date.now() - 600000).toISOString() },
+      destination: { name: 'Old station', source: 'user_provided' as const } };
+    f.tasks.reply(f.principal, { taskId: f.task.id, requestId: randomUUID(), expectedRevision: f.task.revision, answer: 'Use these existing endpoint facts', locationContext: location });
+    const paused = f.jobs.get(f.owner, f.task.id); paused.state = 'paused'; paused.delegation!.phase = 'paused'; f.jobs.save(f.owner, paused);
+    const previous = f.jobs.security.taskGrant(f.jobs.security.agentContext(f.principal), paused.id);
+    const input = { taskId: paused.id, requestId: randomUUID(), expectedRevision: paused.revision!, answer: 'The old location was inaccurate; the origin is New home, destination unchanged.',
+      locationContext: { city: location.city, origin: { name: 'New home', source: 'user_provided' as const } } };
+    const amended = f.tasks.amend(f.principal, input), current = f.jobs.get(f.owner, paused.id);
+    const grant = f.jobs.security.taskGrant(f.jobs.security.agentContext(f.principal), paused.id);
+    assert.equal(amended.id, paused.id); assert.equal(current.contextId, paused.contextId); assert.equal(current.goal, paused.goal);
+    assert.equal(current.delegation!.request.revision, paused.delegation!.request.revision + 1);
+    assert.equal(current.delegation!.outcome!.requestRevision, current.delegation!.request.revision, 'A second correction cannot retain the prior revision assessment after its coverage was already retired');
+    assert.deepEqual(requestLocations(current.delegation!.request), { city: location.city, origin: input.locationContext.origin, destination: location.destination });
+    assert(current.delegation!.request.confirmedInputs!.location!.history.some(fact => fact.field === 'origin' && JSON.stringify(fact.value).includes('Old home')));
+    assert.notEqual(grant.id, previous.id); assert.equal(grant.installationId, previous.installationId); assert.equal(grant.expiresAt, previous.expiresAt);
+    assert.deepEqual(grant.operations, previous.operations); assert.deepEqual(grant.inputs, previous.inputs); assert.deepEqual(grant.outputs, previous.outputs); assert.deepEqual(grant.channels, previous.channels);
+    const foreign = f.createInstallation('Another PA'); f.approve(foreign.id);
+    const foreignPrincipal = { ...f.principal, access: f.coordinator.authenticate(f.principal, foreign.token) };
+    assert.throws(() => f.tasks.amend(foreignPrincipal, { ...input, expectedRevision: current.revision }), /AUTHORIZATION_REQUIRED/);
+    assert.throws(() => f.tasks.amend(f.principal, { ...input, requestId: randomUUID(), expectedRevision: paused.revision! - 1 }), /older task question or revision/);
+    assert.throws(() => f.tasks.amend(f.principal, { ...input, executionBudget: 'extended' }), /explicit .*context refresh/);
+    assert.throws(() => f.tasks.amend(f.principal, { ...input, requirements: [] }), /explicit .*context refresh/);
+    f.tasks.amend(f.principal, input);
+    assert.equal(f.jobs.security.taskGrant(f.jobs.security.agentContext(f.principal), paused.id).id, grant.id, 'An identical replay does not issue another grant');
+    assert.throws(() => f.tasks.amend(f.principal, { ...input, requestId: randomUUID() }), /older task question or revision/);
+    let claimed = false;
+    const worker = new Worker(f.jobs, { pollMs: 20, leaseMs: 15000, coordinator: { run: async claim => {
+      assert.equal(claim.job.id, paused.id);
+      assert.equal(claim.job.delegation!.request.revision, current.delegation!.request.revision);
+      f.jobs.finish(claim, job => { job.state = 'input-required'; job.question = 'Synthetic correction was claimed'; job.delegation!.phase = 'clarifying'; });
+      claimed = true;
+    } } });
+    try {
+      worker.start();
+      while (!claimed) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 20)); }
+    } finally { await worker.close(); }
+    assert.equal(f.jobs.get(f.owner, paused.id).state, 'input-required', 'The real Worker lifecycle can claim and project the corrected original task');
   } finally { f.close(); }
 });
 
