@@ -22,7 +22,7 @@ const schemaPattern = /^eigos_relay_[a-z0-9_]{1,40}$/;
 
 export const relayCleanupSql = `
 CREATE FUNCTION relay_cleanup(current_ms BIGINT, max_message_ms BIGINT, retention_ms BIGINT) RETURNS VOID
-LANGUAGE plpgsql SECURITY INVOKER AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path FROM CURRENT AS $$
 BEGIN
   UPDATE relay_messages SET state='expired',envelope=NULL,bytes=0 WHERE state='queued' AND expires_at<=current_ms;
   UPDATE relay_connections SET state='rejected' WHERE state='pending' AND created_at<=current_ms-max_message_ms;
@@ -99,7 +99,7 @@ export async function importRelaySnapshot(client: Client, snapshot: string, sche
     const found = await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [schema]);
     if (found.rowCount) throw new Error('Destination schema already exists');
     await client.query(`CREATE SCHEMA ${quote(schema)}`);
-    await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog`);
+    await client.query(`SET LOCAL search_path TO ${quote(schema)}, pg_catalog, pg_temp`);
     await client.query(ddl);
     const result = {} as Record<Table, number>;
     for (const table of order) {

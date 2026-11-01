@@ -55,6 +55,9 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
     let clock = 1800000000000;
     const store = new PostgresRelayStore(pool, schema, () => clock);
     try {
+      const shadow = await pool.connect();
+      try { await shadow.query('CREATE TEMP TABLE relay_agents(id TEXT)'); } finally { shadow.release(); }
+      assert.equal((await store.publicAgent('a')).signedCard, 'card-a');
       // Saturate the shared ingress bucket without 2,048 network round trips.
       const bucket = Math.floor(1800000000000 / 60000);
       await client.query(`INSERT INTO "${schema}".relay_limits SELECT 'ingress:test-' || n, $1, 1 FROM generate_series(1,2048) n`, [bucket]);

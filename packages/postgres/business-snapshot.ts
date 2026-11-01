@@ -4,9 +4,9 @@ import { constants, closeSync, existsSync, fstatSync, lstatSync, openSync, readS
 import { isAbsolute } from 'node:path';
 import { runtimeAuthorityDigest, runtimeAuthoritySchema, storedRuntimeAuthority } from '../core/runtime-authority.js';
 
-type Column = { name: string; type: string; notNull: boolean; primaryKey: number };
+export type BusinessColumn = { name: string; type: string; notNull: boolean; primaryKey: number };
 type UniqueKey = { name: string; origin: string; partial: boolean; columns: (string | null)[] };
-type Table = { name: string; columns: Column[]; uniqueKeys: UniqueKey[]; rows: number; digest: string };
+export type BusinessTable = { name: string; columns: BusinessColumn[]; uniqueKeys: UniqueKey[]; rows: number; totalEncodedBytes: number; maxRowBytes: number; maxIntegerPrimaryKey?: string | null; digest: string };
 export interface BusinessSnapshotPlan {
   version: 1;
   purpose: 'inventory-only';
@@ -14,7 +14,7 @@ export interface BusinessSnapshotPlan {
   schemaDigest: string;
   authority: { id: string; revision: number; digest: string };
   policyDigest: string;
-  tables: Table[];
+  tables: BusinessTable[];
   sequences: { table: string; lastValue: string }[];
   indexes: number;
   triggers: number;
@@ -36,15 +36,24 @@ function hashFile(path: string, expected: Stats): string {
 const required = ['jobs', 'work_claims', 'ontology_objects', 'ontology_links', 'ontology_definition_releases',
   'ontology_definition_drafts', 'security_policy_definitions', 'security_manager', 'security_fences', 'security_recoveries', 'runtime_authority'];
 
-function encoded(value: unknown, column: Column): unknown {
+function encoded(value: unknown, column: BusinessColumn, backend: 'sqlite' | 'postgres'): unknown {
   if (value === null) {
     if (column.notNull || column.primaryKey) throw new Error(`NULL in required column ${column.name}`);
     return null;
   }
-  if (column.type === 'INTEGER' && typeof value === 'bigint') return { integer: value.toString() };
+  if (column.type === 'INTEGER') {
+    if (typeof value === 'bigint') return { integer: value.toString() };
+    if (backend === 'postgres' && typeof value === 'string' && /^-?(0|[1-9]\d*)$/.test(value)) return { integer: BigInt(value).toString() };
+    if (backend === 'postgres' && typeof value === 'number' && Number.isSafeInteger(value)) return { integer: String(value) };
+  }
   if (column.type === 'TEXT' && typeof value === 'string' && !value.includes('\0')) return { text: value };
   if (column.type === 'BLOB' && value instanceof Uint8Array) return { bytes: Buffer.from(value).toString('base64') };
-  throw new Error(`Unsupported SQLite value for ${column.name}`);
+  throw new Error(`Unsupported database value for ${column.name}`);
+}
+
+/** Canonical source/target encoding; target BIGINT values are strings in pg. */
+export function encodeBusinessRow(row: Record<string, unknown>, columns: readonly BusinessColumn[], backend: 'sqlite' | 'postgres'): string {
+  return JSON.stringify(columns.map(column => encoded(row[column.name], column, backend)));
 }
 
 /** Read-only evidence for a stopped, self-contained business snapshot. This is
@@ -74,12 +83,51 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
     if (policy?.digest !== expectedPolicyDigest) throw new Error('Business policy does not match the reviewed digest');
     if (Number(db.prepare('SELECT count(*) AS n FROM work_claims').get()!.n) > 0) throw new Error('Snapshot contains Worker claims; recover and stop the Worker first');
     if (Number(db.prepare('SELECT count(*) AS n FROM security_manager WHERE expires_at>?').get(now)!.n) > 0) throw new Error('Snapshot contains an active security manager lease');
+    if (names.includes('network_lease') && Number(db.prepare('SELECT count(*) AS n FROM network_lease WHERE expires>?').get(now)!.n) > 0) throw new Error('Snapshot contains an active network lease');
     if (Number(db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running'").get()!.n) > 0) throw new Error('Snapshot contains running security recovery');
     if (Number(db.prepare("SELECT count(*) AS n FROM ontology_definition_drafts WHERE status='open'").get()!.n) > 0) throw new Error('Snapshot contains an open Ontology draft');
     if (Number(db.prepare("SELECT count(*) AS n FROM security_fences WHERE state NOT IN ('cleared','applied')").get()!.n) > 0) throw new Error('Snapshot contains an unresolved permission fence');
+    // These job fields participate in SQLite JSON expression indexes and in
+    // Worker selection. PostgreSQL numeric/text operators must not silently
+    // coerce a historical value into a different indexed type.
+    const jobPaths: { path: string; allowed: string[] }[] = [
+      { path: '$.service', allowed: ['text', 'null'] },
+      { path: '$.delegation.backendVersion', allowed: ['text', 'null'] },
+      { path: '$.executionMode', allowed: ['text', 'null'] },
+      { path: '$.delegation.nextAt', allowed: ['integer', 'null'] },
+      { path: '$.delegation.request.revision', allowed: ['integer', 'null'] },
+      { path: '$.delegation.recoveryPending', allowed: ['true', 'false', 'integer', 'null'] },
+    ];
+    for (const item of jobPaths) {
+      const placeholders = item.allowed.map(() => '?').join(',');
+      const invalid = db.prepare(`SELECT count(*) AS n FROM jobs WHERE CASE WHEN json_valid(body) THEN CASE WHEN json_type(body, ?) IS NOT NULL AND json_type(body, ?) NOT IN (${placeholders}) THEN 1 ELSE 0 END ELSE 0 END=1`).get(item.path, item.path, ...item.allowed);
+      if (Number(invalid!.n) > 0) throw new Error('Job JSON index types require explicit migration review');
+      if (item.path === '$.delegation.nextAt' || item.path === '$.delegation.request.revision') {
+        const unsafe = db.prepare(`SELECT count(*) AS n FROM jobs WHERE CASE WHEN json_valid(body) AND json_type(body, ?)='integer' THEN json_extract(body, ?) > 9007199254740991 OR json_extract(body, ?) < -9007199254740991 ELSE 0 END`).get(item.path, item.path, item.path);
+        if (Number(unsafe!.n) > 0) throw new Error('Job JSON integer exceeds the safe runtime range');
+      }
+    }
+    // SQLite unique expression indexes retain JSON scalar types, whereas PG
+    // text extraction would merge values such as the number 1 and string '1'.
+    // Network identities are string IDs; refuse unexpected historical types.
+    const networkIdentityPaths: Record<string, string[]> = {
+      network_evidence_cards: ['$.taskId'], network_inquiries: ['$.postId', '$.taskId'],
+      network_follows: ['$.profileId', '$.targetProfileId'], network_memberships: ['$.spaceId', '$.memberId'],
+    };
+    for (const [table, paths] of Object.entries(networkIdentityPaths)) if (names.includes(table)) {
+      for (const path of paths) {
+        const bad = db.prepare(`SELECT count(*) AS n FROM ${quote(table)} WHERE NOT json_valid(body) OR (CASE WHEN json_valid(body) THEN json_type(body, ?) END) NOT IN ('text','null')`).get(path);
+        if (Number(bad!.n) > 0) throw new Error(`Network identity JSON is incompatible in ${table}`);
+      }
+    }
+    if (names.includes('network_state')) {
+      const epoch = db.prepare("SELECT value FROM network_state WHERE key='activity_epoch'").get();
+      const value = String(epoch?.value ?? '');
+      if (!/^\d+$/.test(value) || BigInt(value) >= 9223372036854775807n) throw new Error('Network activity epoch is incompatible');
+    }
     const tableFlags = db.prepare('PRAGMA table_list').all().filter(row => row.schema === 'main' && names.includes(String(row.name)));
     if (tableFlags.length !== names.length || tableFlags.some(row => Number(row.wr) !== 0 || Number(row.strict) !== 0)) throw new Error('WITHOUT ROWID or STRICT tables require an explicit migration mapping');
-    const tables: Table[] = [];
+    const tables: BusinessTable[] = [];
     for (const name of names) {
       const tableInfo = db.prepare(`PRAGMA table_xinfo(${quote(name)})`).all();
       if (tableInfo.some(row => Number(row.hidden) !== 0)) throw new Error(`Generated or hidden column in ${name} is not supported`);
@@ -91,17 +139,26 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
       // bytes. A target verifier must use the same key order and C collation.
       const ordering = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
       const statement = db.prepare(`SELECT ${columns.map(c => quote(c.name)).join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
-      const fingerprint = createHash('sha256'); let rows = 0;
+      const fingerprint = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0;
       for (const row of statement.iterate()) {
-        const encodedRow = JSON.stringify(columns.map(column => encoded(row[column.name], column)));
-        fingerprint.update(`${Buffer.byteLength(encodedRow)}:`).update(encodedRow); rows++;
+        const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
+        const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
+        if (!Number.isSafeInteger(totalEncodedBytes)) throw new Error(`Snapshot table ${name} is too large to inventory safely`);
+        maxRowBytes = Math.max(maxRowBytes, bytes);
+        fingerprint.update(`${bytes}:`).update(encodedRow); rows++;
       }
       const uniqueKeys = db.prepare(`PRAGMA index_list(${quote(name)})`).all().filter(row => Number(row.unique) === 1).map(row => {
         const indexName = String(row.name);
         const indexColumns = db.prepare(`PRAGMA index_info(${quote(indexName)})`).all().map(index => index.name === null ? null : String(index.name));
         return { name: indexName, origin: String(row.origin), partial: Number(row.partial) === 1, columns: indexColumns };
       }).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
-      tables.push({ name, columns, uniqueKeys, rows, digest: fingerprint.digest('hex') });
+      let maxIntegerPrimaryKey: string | null | undefined;
+      if (keys.length === 1 && keys[0]!.type === 'INTEGER') {
+        const maximum = db.prepare(`SELECT MAX(${quote(keys[0]!.name)}) AS value FROM ${quote(name)}`); maximum.setReadBigInts(true);
+        const value = maximum.get()?.value;
+        maxIntegerPrimaryKey = value === null ? null : String(value);
+      }
+      tables.push({ name, columns, uniqueKeys, rows, totalEncodedBytes, maxRowBytes, ...(maxIntegerPrimaryKey !== undefined ? { maxIntegerPrimaryKey } : {}), digest: fingerprint.digest('hex') });
     }
     // AUTOINCREMENT remembers deleted high-water marks; MAX(id) alone is not
     // sufficient to preserve its non-reuse guarantee during migration.

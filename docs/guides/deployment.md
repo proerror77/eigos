@@ -37,8 +37,18 @@
 
 ## PostgreSQL 迁移前业务库盘点
 
-`node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理租约、运行中的恢复、开放草稿或未解决权限围栏的副本。
+`node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理／网络租约、运行中的恢复、开放草稿或未解决权限围栏的副本。
 
-报告仅包含表结构、唯一键信息、行数和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
+报告仅包含表结构、唯一键信息、行数、编码总量、最大编码行大小和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
 
 **此入口只是盘点，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
+
+预备的离线导入入口使用 `EIGOS_BUSINESS_POSTGRES_URL` 和绝对路径 `EIGOS_BUSINESS_POSTGRES_CA_FILE`；连接 URL 不允许附带可能覆盖 TLS 校验的参数。先审查盘点报告中的 `fileDigest`、权限策略摘要和容量，再显式执行：
+
+```sh
+node scripts/business-postgres-import.mjs --apply --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-policy-digest> --expected-file-digest <reviewed-file-digest> --schema eigos_business_example --max-database-bytes <reviewed-byte-budget>
+```
+
+导入只创建新的私有 schema，不授予运行时角色，也不修改源文件或激活新权威。它拒绝未审查的 SQLite 结构、JSON 语义不兼容和源摘要变化；复制后按主键逐表回读摘要，保留序列高水位，在数据复制完成后再安装不可变历史和网络缓存失效触发器。业务 JSON 索引字段和网络身份键须保持已审查的类型，SQLite 与 PostgreSQL 对 JSON 有效性的差异会使导入回滚。提交响应丢失时，结果可能未知；应查询该 schema 的 `eigos_migration_receipt` 并核对摘要，不要重试覆盖。
+
+容量检查以 `pg_database_size` 为基础，并不包含 PostgreSQL WAL 或保证满足托管平台配额；必须保留额外空间并根据实际目标大小重新评估。大记录按单行处理，测试覆盖合成 42 MiB 任务；这不代表 Cloudflare 入口已具备读取相同大小任务的能力。业务运行时代码和 MCP／A2A 仍需完成 PostgreSQL 适配及权限、领取、取消、恢复和跨入口联调，才能启用目标库。

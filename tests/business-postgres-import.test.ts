@@ -1,0 +1,95 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import pg from 'pg';
+import { JobStore } from '../packages/core/store.js';
+import { installRuntimeAuthority, runtimeAuthorityDigest, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
+import { planBusinessSnapshot } from '../packages/postgres/business-snapshot.js';
+import { importBusinessSnapshot } from '../packages/postgres/business-import.js';
+
+const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1';
+test('business snapshot import preserves data, authority, uniqueness, triggers and identity high-water marks', { skip: !enabled }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'eigos-business-import-')), path = join(dir, 'business.sqlite');
+  const store = new JobStore(path, { securityMode: 'foundation' }); store.createNetworkStore(); store.close();
+  const db = new DatabaseSync(path);
+  const authority: RuntimeAuthority = { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: 'https://eigos.example', issuer: 'https://issuer.example', ontologyId: 'eigos.business', databasePath: path, membershipDatabasePath: join(dir,'members.sqlite'),
+    ingresses: [{ origin: 'https://eigos.example', audience: 'https://eigos.example', tenantClaim: 'tenant_id', agentClientId: 'agent', agentClientIds: ['agent'], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] };
+  installRuntimeAuthority(db, authority);
+  db.exec(`INSERT INTO network_evidence_cards VALUES('evidence','owner','{"taskId":"task"}');
+    INSERT INTO jobs VALUES('task','owner','context','submitted','2026','2026','{"service":"eigos.delegate","delegation":{"backendVersion":"fixture","request":{"revision":1},"nextAt":1}}');
+    INSERT INTO ontology_objects VALUES('owner','type','object',1,'digest','{"source":{"id":"fixture"}}');
+    INSERT INTO ontology_object_versions VALUES('eigos.business','owner','type','object',1,'digest',NULL,NULL,'{}',0);
+    INSERT INTO network_events(event_id,kind,object_id,at) VALUES('event','fixture','object','2026');
+    INSERT INTO security_grants VALUES('grant','agent_access','owner','member','installation',NULL,NULL,1,'active',1,'{}');
+    CREATE TABLE migration_sequence_probe(id INTEGER PRIMARY KEY AUTOINCREMENT,body TEXT NOT NULL);
+    INSERT INTO migration_sequence_probe(id,body) VALUES(9007199254740993,'high'); DELETE FROM migration_sequence_probe WHERE id=9007199254740993;
+    INSERT INTO migration_sequence_probe(id,body) VALUES(1,'retained');
+    CREATE TABLE migration_binary_probe(id TEXT PRIMARY KEY,payload BLOB NOT NULL,value INTEGER NOT NULL);
+    INSERT INTO migration_binary_probe VALUES('fixture',x'00FF',9007199254740993);`);
+  const epoch = String(db.prepare("SELECT value FROM network_state WHERE key='activity_epoch'").get()!.value);
+  const policy = String(db.prepare('SELECT digest FROM security_policy_definitions WHERE slot=1').get()!.digest);
+  db.exec('PRAGMA journal_mode=DELETE'); db.close();
+  const authorityDigest = runtimeAuthorityDigest(authority), plan = planBusinessSnapshot(path, authorityDigest, policy);
+  const schema = `eigos_business_test_${randomBytes(6).toString('hex')}`;
+  const ca = process.env.EIGOS_TEST_PG_CA_FILE, local = process.env.EIGOS_TEST_PG_LOCAL === '1';
+  if (local && process.env.PGHOST !== '127.0.0.1') throw new Error('Local test mode requires 127.0.0.1');
+  if (!local && !ca) throw new Error('EIGOS_TEST_PG_CA_FILE is required');
+  const client = new pg.Client({ ssl: local ? false : { ca: readFileSync(ca!, 'utf8'), rejectUnauthorized: true }, connectionTimeoutMillis: 15000 });
+  const options = { snapshot: path, schema, expectedFileDigest: plan.fileDigest, expectedAuthorityDigest: authorityDigest, expectedPolicyDigest: policy, maxDatabaseBytes: 1_000_000_000 };
+  let connected = false, imported = false;
+  try {
+    await client.connect(); connected = true;
+    await assert.rejects(importBusinessSnapshot(client, { ...options, expectedFileDigest: '0'.repeat(64) }), /changed after review/);
+    const budgetSchema = `${schema}_budget`;
+    await assert.rejects(importBusinessSnapshot(client, { ...options, schema: budgetSchema, maxDatabaseBytes: 1 }), /size budget/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[budgetSchema])).rowCount, 0);
+    const result = await importBusinessSnapshot(client, options); imported = true;
+    assert.equal(result.status, 'imported-not-activated'); assert.equal(result.sourceFileDigest, plan.fileDigest);
+    assert.deepEqual(result.tables, plan.tables.map(table => ({ name: table.name, rows: table.rows, digest: table.digest })));
+    await assert.rejects(importBusinessSnapshot(client, options), /already exists/);
+    assert.equal((await client.query(`SELECT value FROM "${schema}".network_state WHERE key='activity_epoch'`)).rows[0].value, epoch);
+    await client.query('CREATE TEMP TABLE network_evidence_cards(owner TEXT, body TEXT)');
+    await client.query(`UPDATE "${schema}".jobs SET updated_at='2027' WHERE id='task'`);
+    assert.equal((await client.query(`SELECT value FROM "${schema}".network_state WHERE key='activity_epoch'`)).rows[0].value, String(Number(epoch) + 1));
+    await assert.rejects(client.query(`INSERT INTO "${schema}".security_grants VALUES('duplicate','agent_access','owner','member','installation',NULL,NULL,1,'active',1,'{}')`), error => !!error && typeof error === 'object' && 'code' in error && error.code === '23505');
+    const binary = (await client.query(`SELECT payload,value FROM "${schema}".migration_binary_probe`)).rows[0];
+    assert.deepEqual(binary.payload, Buffer.from([0,255])); assert.equal(binary.value, '9007199254740993');
+    const next = await client.query(`INSERT INTO "${schema}".migration_sequence_probe(body) VALUES('next') RETURNING id`);
+    assert.equal(next.rows[0].id, '9007199254740994');
+    const event = await client.query(`INSERT INTO "${schema}".network_events(event_id,kind,object_id,at) VALUES('event2','fixture','object','2026') RETURNING seq`);
+    assert.equal(event.rows[0].seq, '2');
+    await assert.rejects(client.query(`UPDATE "${schema}".ontology_object_versions SET body='changed'`), error => !!error && typeof error === 'object' && 'code' in error && error.code === '55000');
+    await assert.rejects(client.query(`DELETE FROM "${schema}".eigos_migration_receipt`), error => !!error && typeof error === 'object' && 'code' in error && error.code === '55000');
+    const acl = await client.query("SELECT count(*)::int AS n FROM pg_namespace n, LATERAL aclexplode(n.nspacl) a WHERE n.nspname=$1 AND a.grantee=0 AND a.privilege_type='USAGE'",[schema]);
+    assert.equal(acl.rows[0].n, 0);
+    // A successful commit whose response is lost must not be called a rollback.
+    const uncertainSchema = `${schema}_uncertain`; let observedCommitted = false;
+    try {
+      const disconnected = { query: async (sql: string, params?: unknown[]) => {
+        const value = await client.query(sql, params);
+        if (sql === 'COMMIT') throw new Error('simulated lost commit response');
+        return value;
+      } } as unknown as pg.Client;
+      await assert.rejects(importBusinessSnapshot(disconnected, { ...options, schema: uncertainSchema }), /commit outcome is unknown/);
+      observedCommitted = (await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [uncertainSchema])).rowCount === 1;
+      assert(observedCommitted);
+      const receipt = await client.query(`SELECT body FROM "${uncertainSchema}".eigos_migration_receipt WHERE slot=1`);
+      assert.equal(receipt.rows[0].body.sourceFileDigest, plan.fileDigest);
+    } finally { if (observedCommitted) await client.query(`DROP SCHEMA "${uncertainSchema}" CASCADE`); }
+    // SQLite permits this escaped NUL JSON; PostgreSQL JSONB does not. The
+    // comparison must reject it before any business rows can be committed.
+    const changed = new DatabaseSync(path);
+    changed.prepare('INSERT INTO ontology_objects VALUES(?,?,?,?,?,?)').run('owner','type','json-nul',1,'digest',JSON.stringify({ value: '\u0000' })); changed.close();
+    const incompatible = planBusinessSnapshot(path, authorityDigest, policy), rejectedSchema = `${schema}_json`;
+    await assert.rejects(importBusinessSnapshot(client, { ...options, schema: rejectedSchema, expectedFileDigest: incompatible.fileDigest }), /JSON compatibility mismatch/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [rejectedSchema])).rowCount, 0);
+
+  } finally {
+    if (connected && imported) await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await client.end(); rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -5342,7 +5342,7 @@
       "currentControl": "Per-schema transaction lock; hashed credentials and ingress addresses; proof replay rejection; contact approval, message quotas, revocation and bounded poll leases",
       "targetControl": "Preserve communication-only authority and exact state across instances and cutover",
       "stage": "S5",
-      "sourceDigest": "a4b20a00388c68adce8ce5bfb55a86f5b7c907202e2e40551645f42dd0a1cb7c"
+      "sourceDigest": "c01db6a276f12ef01a2331ce0a9492c2f0616d31306f4d7f9757d59d7355bea1"
     },
     {
       "id": "relay-cloudflare-entry",
@@ -5368,7 +5368,7 @@
       "currentControl": "Owned private self-contained snapshot, application ID and schema checks, transactional fresh destination, readback digests, fail-closed uncertain commits",
       "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
       "stage": "S5",
-      "sourceDigest": "fead0a5e80e43818875ee90f2029b6b39a8a774801b1ad6036190a49259f59bf"
+      "sourceDigest": "18919fc50546e402dbdc9a1bc4ca4e61b2e086c8dc448f2a6500c66f830a98a0"
     },
     {
       "id": "relay-postgres-import-cli",
@@ -5395,7 +5395,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim and draft fences, byte-bounded hashing and no row output",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "2422b32e81706d2e43e83dc98f0554d96b5a3596b44e5d4addf454a695254875"
+      "sourceDigest": "7dff8323a350a223192a78d3b698987fe422417fc34f3594097e8423e91cf5d1"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5409,6 +5409,59 @@
       "targetControl": "Keep production cutover separate from an inventory-only check",
       "stage": "S5",
       "sourceDigest": "f744b8ee4eca5288d69c8912111878c9441620e9138a194c6d150b84a49b03b7"
+    },
+    {
+      "id": "business-postgres-schema-compiler",
+      "file": "packages/postgres/business-schema.ts",
+      "channels": [
+        "offline migration",
+        "ontology",
+        "authorization_control"
+      ],
+      "content": "Fail-closed PostgreSQL schema mapping for business and network records",
+      "currentControl": "Explicit reviewed type, uniqueness, JSON index and immutable or network-trigger mappings; unknown schema forms are rejected",
+      "targetControl": "Preserve authority and evidence invariants while requiring data compatibility and runtime-port verification",
+      "stage": "S5",
+      "sourceDigest": "d570807bc297011d447d6d16921ebf9a7fb06ba87cdabb859194869f8bef9c82"
+    },
+    {
+      "id": "business-postgres-json-compat",
+      "file": "packages/postgres/business-json-compat.ts",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Compare SQLite and PostgreSQL JSON acceptance before import",
+      "currentControl": "Bounded comparisons reject incompatible indexed JSON values",
+      "targetControl": "Preserve business authority and evidence before separate runtime activation",
+      "stage": "S5",
+      "sourceDigest": "6297fa67a02f94230e6a18d7a9742356b94d9b66bd14e4aa5c8f828d1629c674"
+    },
+    {
+      "id": "business-postgres-import",
+      "file": "packages/postgres/business-import.ts",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Offline business database import and validation",
+      "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling",
+      "targetControl": "Preserve business authority and evidence before separate runtime activation",
+      "stage": "S5",
+      "sourceDigest": "a09ba878ad87dbfce9f590807efd8975e0d6f7db484acd0a1d9c3614a9555079"
+    },
+    {
+      "id": "business-postgres-import-cli",
+      "file": "scripts/business-postgres-import.mjs",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Explicit business database import operator entry",
+      "currentControl": "Explicit apply, reviewed snapshot and policy, verified TLS and no credential output",
+      "targetControl": "Preserve business authority and evidence before separate runtime activation",
+      "stage": "S5",
+      "sourceDigest": "54aba2fa226b70bd1ae306a34909b51f0db12feba305f60a96e343c3a584df6b"
     }
   ]
 }

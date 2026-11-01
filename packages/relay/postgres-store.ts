@@ -27,7 +27,7 @@ export class PostgresRelayStore {
     try {
       await db.query('BEGIN');
       await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [this.schema]);
-      await db.query(`SET LOCAL search_path TO "${this.schema}", pg_catalog`);
+      await db.query(`SET LOCAL search_path TO "${this.schema}", pg_catalog, pg_temp`);
       const result = await action(db);
       await db.query('COMMIT');
       return result;
