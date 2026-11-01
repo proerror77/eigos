@@ -22,7 +22,7 @@ export interface SubjectFacts { ownerKey: string; memberId: string; installation
 export interface Subject extends SubjectFacts { epoch: number; validUntil: number }
 export interface Fence { ownerKey: string; kind: 'member' | 'connection' | 'installation'; targetId: string; revision: number; state: 'pending' | 'applied' | 'cleared' }
 export class SecurityError extends DomainError {
-  constructor(readonly reason: 'AUTHORIZATION_REQUIRED' | 'ACCESS_REVOKED' | 'AUTHORITY_UNAVAILABLE' | 'REVOCATION_PENDING' | 'POLICY_CHANGED' | 'SOURCE_NOT_AUTHORIZED' | 'OUTPUT_NOT_ALLOWED' | 'INSUFFICIENT_ACCESS', message: string = reason) { super('FORBIDDEN', message); }
+  constructor(readonly reason: 'AUTHORIZATION_REQUIRED' | 'ACCESS_REVOKED' | 'AUTHORITY_UNAVAILABLE' | 'REVOCATION_PENDING' | 'POLICY_CHANGED' | 'SOURCE_NOT_AUTHORIZED' | 'OUTPUT_NOT_ALLOWED' | 'INSUFFICIENT_ACCESS', message: string = reason, readonly context?: 'personal_context') { super('FORBIDDEN', message); }
 }
 export class SecurityLineageLimitError extends SecurityError {
   constructor() { super('OUTPUT_NOT_ALLOWED'); }

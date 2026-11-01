@@ -28,11 +28,15 @@ A2A 的许可在 `metadata.authorization`，v2 预约付款交接在 `metadata.p
 
 `evaluate_ontology` 使用 `call` 代替 `query`；`check_access` 只诊断当前许可，不授予权限。游标只用于原安装、任务及查询，不能用来恢复被隐藏字段。来源事实通过已声明的 observedData／authorizedInput 投影提供，不直接导出私有 snapshot。
 
+`check_access` 需要已有 `taskId`，不是首次提交前的权限探测器。首次提交被拒绝时按接口返回的 `authorization` 指引处理；个人上下文不可用不等于缺少创建任务权限。两种协议的错误格式及处理见[接入指南](../integration.md#授权错误与下一步)。
+
 `POST /security/context` 返回当前安装、AgentGrant 与 epoch。健康检查包含 securityStage；缺失资格协调器时 foundation 返回 unavailable，不能默默回退 legacy。
 
 ## 与主线功能的边界
 
-legacy 保留原生本体注册表、会员网络、账号来源连接、用量汇总、技术续接与 Shopify PA 付款 v3。foundation 中未完成资源／任务／来源审查的注册表管理、网络、来源管理、用量、amend/resume、外部草稿和 v3 付款入口保持不可用；不会因合并代码而继承 legacy 权限。受保护的既有任务提交、版本化回复、准确许可、取消、原操作查证及 v2 预约付款走共同 TaskSecurity。
+legacy 保留原生本体注册表、会员网络、账号来源连接、用量汇总、技术续接与 Shopify PA 付款 v3。foundation 中未完成资源／任务／来源审查的注册表管理、网络、通用会员账号凭据上传、用量、外部草稿和 v3 付款入口保持不可用；不会因合并代码而继承 legacy 权限。受保护的任务提交、版本化回复、准确许可、取消、原操作查证及 v2 预约付款走共同 TaskSecurity。
+
+foundation 已支持受控的 `amend_task` 与 `resume_task`，MCP 和 A2A 共用权限检查。`amend_task` 只更新原开放只读任务的显式 `personalContext`／`locationContext`，保留未修改事实并拒绝迟到旧结果。`resume_task` 只由原 PA 在运行前置条件恢复后，持当前任务版本、处理权限及对应执行授权续接技术暂停；保留历史、预算和授权期限，不把补问回复当成技术恢复。详见[原任务续接合同](../integration.md#任务接口)。
 
 实际能力与 mode 以运行实例发现结果为准。代码合并、部署、数据迁移、来源资格和真实业务验收分别核验。
 
