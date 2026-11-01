@@ -1,7 +1,8 @@
 import type { Client } from 'pg';
+import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
-import { accessContextSchema, agentAccessGrantSchema, taskDataGrantSchema } from '../security/contracts.js';
+import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
@@ -90,6 +91,25 @@ export async function postgresTaskResourceViewAllowed(client: Client, principal:
     const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
     return roleAllows(currentKernelImplementation(),roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
   });
+}
+
+const recipientSchema = z.strictObject({ classification:z.enum(['private','sensitive']), markings:securityEnvelopeSchema.shape.requiredMarkings,
+  channels:securityEnvelopeSchema.shape.channels, expiresAt:z.iso.datetime({offset:true}) });
+
+/** Read current recipient clearance for an admitted task. This is not an
+ * output authorization: callers must also recompute and validate the complete
+ * current envelope, lineage, fields and channel at the point of output. */
+export async function postgresTaskReadClearance(client: Client, principal: Principal, taskId: string, policyDigest: string) {
+  const captured=structuredClone(principal);
+  const result=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    const schema=postgresBusinessSchema(client);
+    const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_recipients WHERE installation_id=$1 LIMIT 2`,[admission.actor.installationId]);
+    if (rows.rowCount === 0) return undefined;
+    if (rows.rowCount !== 1 || rows.rows[0].body === null) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const result=recipientSchema.parse(JSON.parse(String(rows.rows[0].body)));
+    return Date.parse(result.expiresAt)>Date.now()?result:undefined;
+  });
+  return result && Date.parse(result.expiresAt)>Date.now()?result:undefined;
 }
 
 /** Resolve the admitted task's exact read model. The returned model still

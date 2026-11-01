@@ -7,7 +7,8 @@ import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
+import { postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
+import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
@@ -16,6 +17,8 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000); f.approve(installation.id);
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
+  const recipient={classification:'sensitive' as const,markings:['member_private','personal_data'] as const,channels:['agent_response'] as const,expiresAt:new Date(Date.now()+3600000).toISOString()};
+  f.jobs.security.policies.setRecipient(installation.id,recipient,f.jobs.security.policies.revision());
   const sqlite=new DatabaseSync(f.database), schema=`eigos_business_${randomUUID().replaceAll('-','')}`;
   const stored=sqlite.prepare('SELECT body FROM security_grants WHERE id=?').get(task.grant.id)!;
   const readGrant=JSON.parse(String(stored.body)); readGrant.operations.push('task.result.read'); readGrant.channels.push('agent_response');
@@ -26,7 +29,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]); await installPostgresAuthorityLock(client,schema);
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
-    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
+    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
@@ -52,6 +55,27 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal((await read()).grant.id,original.id);
     const model=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy));
     assert.deepEqual(model.ref,task.job.delegation!.ontologyRelease);
+    const envelope={version:SECURITY_CONTRACT,ownerKey:f.owner,policyVersion:POLICY_VERSION,requiredMarkings:['member_private'] as const,classification:'private' as const,channels:['agent_response'] as const,lineage:[],lineageComplete:true};
+    const sqliteScope=f.jobs.security.scope(f.jobs.security.agentContext(principal),task.job.id,'task.result.read');
+    f.jobs.security.policies.requireRecipient(sqliteScope,{...envelope,requiredMarkings:[...envelope.requiredMarkings],channels:[...envelope.channels]},'agent_response');
+    const clearance=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadClearance(c,principal,task.job.id,policy));
+    assert.deepEqual(await clearance(),recipient);
+    const recipientBody=String(sqlite.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installation.id)!.body);
+    const expiredRecipient={...recipient,expiresAt:'2000-01-01T00:00:00.000Z'};
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(JSON.stringify(expiredRecipient),installation.id);
+    assert.throws(()=>f.jobs.security.policies.requireRecipient(sqliteScope,{...envelope,requiredMarkings:[...envelope.requiredMarkings],channels:[...envelope.channels]},'agent_response'),/OUTPUT_NOT_ALLOWED/);
+    sqlite.prepare('UPDATE security_recipients SET body=? WHERE installation_id=?').run(recipientBody,installation.id);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[JSON.stringify(expiredRecipient),installation.id]);
+    assert.equal(await clearance(),undefined);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientBody,installation.id]);
+    sqlite.prepare('DELETE FROM security_recipients WHERE installation_id=?').run(installation.id);
+    assert.throws(()=>f.jobs.security.policies.requireRecipient(sqliteScope,{...envelope,requiredMarkings:[...envelope.requiredMarkings],channels:[...envelope.channels]},'agent_response'),/OUTPUT_NOT_ALLOWED/);
+    sqlite.prepare('INSERT INTO security_recipients VALUES(?,?)').run(installation.id,recipientBody);
+    await client.query(`DELETE FROM "${schema}".security_recipients WHERE installation_id=$1`,[installation.id]); assert.equal(await clearance(),undefined);
+    await client.query(`INSERT INTO "${schema}".security_recipients VALUES($1,$2)`,[installation.id,recipientBody]);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=repeat('x',65537) WHERE installation_id=$1`,[installation.id]);
+    await assert.rejects(clearance(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientBody,installation.id]);
     for(const type of ['ServiceRequest','Place','NonexistentType']) {
       const expected=f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType',type);
       const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType',type));

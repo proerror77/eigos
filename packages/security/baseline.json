@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "472804eb7dd087edc7ed717f330705716e7184650b2fed212bac2e5a796a1351",
+      "sourceDigest": "5ef63aca617171aeae062b586214efe13b7e0c4bd1a57aa32ee92c53fbfc1903",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
       "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
