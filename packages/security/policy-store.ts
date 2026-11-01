@@ -105,8 +105,8 @@ export class SecurityPolicies {
       || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
     this.reviewedModels.add(model);
   }
-  private roleCache=new WeakMap<AuthorizationScope,z.infer<typeof roleSchema>[]>();
-  private labelCache=new WeakMap<AuthorizationScope,Map<string,{field:string;body:Record<string,unknown>}[]>>();
+  private roleCache=new WeakMap<AuthorizationScope,{generation:number|undefined;roles:z.infer<typeof roleSchema>[]}>();
+  private labelCache=new WeakMap<AuthorizationScope,{generation:number|undefined;labels:Map<string,{field:string;body:Record<string,unknown>}[]>}>();
   constructor(private db: DatabaseSync, readonly security: SecurityStore,readOnly=false) {
     const existing=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy'").get();
     const definitions=!!db.prepare("SELECT 1 FROM sqlite_master WHERE name='security_policy_definitions'").get();
@@ -184,9 +184,9 @@ export class SecurityPolicies {
   }
   resourceAllowed(scope: AuthorizationScope, kind: string, id: string, permission = 'resource.view'): boolean {
     scope.assertCurrent();
-    let roles=this.roleCache.get(scope);
-    if(!roles){roles=this.roles(scope.actor.memberId,scope.actor.installationId);this.roleCache.set(scope,roles);}
-    return this.roleAllows(roles,scope.actor.memberId,scope.actor.installationId,kind,id,permission);
+    const generation=scope.readGeneration?.();let cached=this.roleCache.get(scope);
+    if(!cached||cached.generation!==generation){cached={generation,roles:this.roles(scope.actor.memberId,scope.actor.installationId)};this.roleCache.set(scope,cached);}
+    return this.roleAllows(cached.roles,scope.actor.memberId,scope.actor.installationId,kind,id,permission);
   }
   resourceAllowedFor(memberId:string,installationId:string,kind:string,id:string,permission='resource.view'):boolean {
     return this.roleAllows(this.roles(memberId,installationId),memberId,installationId,kind,id,permission);
@@ -319,7 +319,9 @@ export class SecurityPolicies {
     result.requiredMarkings=[...new Set([...result.requiredMarkings,...fields.flatMap(field=>projectionMarkings(ref.type,field))])];
     if(fields.some(field=>responseOnlyProjection(ref.type,field)))result.channels=result.channels.filter(channel=>channel!=='registered_model');
     const scope=authorizationScope(),key=JSON.stringify([owner,ref.type,ref.id]);
-    let cache=scope?this.labelCache.get(scope):undefined;if(scope && !cache){cache=new Map();this.labelCache.set(scope,cache);}
+    const generation=scope?.readGeneration?.();let cached=scope?this.labelCache.get(scope):undefined;
+    if(scope&&(!cached||cached.generation!==generation)){cached={generation,labels:new Map()};this.labelCache.set(scope,cached);}
+    const cache=cached?.labels;
     let records=cache?.get(key);
     if(!records){records=this.db.prepare('SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=?').all(owner,ref.type,ref.id).map(row=>({field:String(row.field),body:JSON.parse(String(row.body))}));cache?.set(key,records);}
     const policyFields=new Set([...fields,...fields.flatMap(field=>projectionInputs(ref.type,field))]);
@@ -529,9 +531,10 @@ export class SecurityPolicies {
     const currentRoles=this.roles(scope.actor.memberId,scope.actor.installationId).filter(role=>Date.parse(role.expiresAt)>at);
     const validity=[this.security.agentGrant(scope.actor.installationId).expiresAt,scope.grant?.expiresAt,this.recipient(scope.actor.installationId)?.expiresAt,...this.sources(scope.actor.ownerKey,scope.actor.installationId).map(s=>s.expiresAt),...currentRoles.map(r=>r.expiresAt)].filter((v):v is string=>!!v).map(Date.parse);
     const validUntil=Math.min(...validity);
-    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
+    let readScope:AuthorizationScope;
+    const current=()=>{if(!active)throw new SecurityError('AUTHORIZATION_REQUIRED');const next=stamp(),now=this.security.now(),changed=next.version!==checked.version||next.changes!==checked.changes;if(changed || now>=validUntil || now<at){retryable=next.version!==checked.version&&next.changes===checked.changes&&now<validUntil&&now>=at;bindings.clear();members.clear();lineageDigests.clear();readScope.readCombinedEnvelope=undefined;this.roleCache.delete(readScope);this.labelCache.delete(readScope);generation++;}if(changed || now-at>=10 || now<at){scope.assertCurrent();checked=next;at=this.security.now();}};
     try {
-      return withAuthorization({...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readGeneration:()=>generation,readConflictRetryable:()=>retryable,assertCurrent:current},()=>{
+      return withAuthorization(readScope={...scope,synchronousRead:true,readBindings:bindings,readTaskMembers:members,readLineageDigests:lineageDigests,readCombinedEnvelope:undefined,readGeneration:()=>generation,readConflictRetryable:()=>retryable,assertCurrent:current},()=>{
         const value=action();if(value && typeof value==='object' && 'then' in value)throw new Error('Authorization read must be synchronous');return value;
       });
     }finally{active=false;scope.assertCurrent();if(this.security.now()>=validUntil)throw new SecurityError('POLICY_CHANGED');}
@@ -771,7 +774,13 @@ export class SecurityPolicies {
     const scope = this.scope(owner); this.requireResource(scope, 'function', functionId); this.requireResource(scope, 'function', functionId, 'function.invoke');
     return withInference(()=>integrityFunctions.has(functionId)?withIntegrity(action):action());
   }
-  outputEnvelope(owner: string): SecurityEnvelope { const scope = this.scope(owner); return combineEnvelopes([...scope.lineage.values()]); }
+  outputEnvelope(owner: string): SecurityEnvelope {
+    const scope=this.scope(owner),generation=scope.readGeneration?.(),keys=[...scope.lineage.keys()],cached=scope.synchronousRead?scope.readCombinedEnvelope:undefined;
+    if(cached && cached.generation===generation && cached.keys.length===keys.length && keys.every((key,index)=>key===cached.keys[index]))return structuredClone(cached.envelope);
+    const envelope=combineEnvelopes([...scope.lineage.values()]);
+    if(scope.synchronousRead)scope.readCombinedEnvelope={generation,keys,envelope:structuredClone(envelope)};
+    return envelope;
+  }
   /** JobStore calls this only after its one checked work_claims update succeeds.
    * Count that direct row, never trigger writes or an arbitrary progress callback. */
   accountForLeaseRenewal() {

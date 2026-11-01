@@ -58,7 +58,8 @@ export interface RunEvidence {
   purpose?: 'grounding' | 'planning' | 'document' | 'goal_coverage';
   nativeMcpCalls?: { server: string; tool: string; status: string; failure?: { message: string; argumentKeys: string[]; function?: string; objectType?: string } }[];
   ontologyMcp?: { server: 'eigos_ontology'; transport: 'streamable-http'; sessionId: string; taskId: string; toolAttempts: number;
-    calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean };
+    calls: { tool: string; receiptId: string; status: string; inputDigest: string; outputDigest: string }[]; decisionSubmitted: boolean;
+    rejections?: { tool: string; stage: 'authority' | 'tool' | 'model_output'; code: string; origins: string[] }[] };
 }
 export interface NativeMcpConnection { name: 'eigos_ontology'; url: string; token: string; tools: string[]; trace?: NativeModelTrace }
 export interface ModelRunOptions { mcp?: NativeMcpConnection; toolFree?: true }
