@@ -122,3 +122,19 @@ Relay 不持有节点私钥，但可见公开名片、联系关系、收发身�
 Relay 本身承载有限 JSON 消息。可选的[主实例任务适配器](relay-tasks.md)通过当前安装、公钥绑定与任务授权，把限定消息交给原 `TaskService`，并支持独立滴滴只读服务 Agent。它复用原任务防重、版本和输出保护；MCP/A2A 与 Relay 访问同一业务核心。未配置适配器时，收到普通消息不会创建任务或授权。
 
 相关资料：[任务验收](../architecture/task-closure.md)、[会员来源凭据](member-sources.md)、[JOSE](https://github.com/panva/jose)、[JWE](https://www.rfc-editor.org/rfc/rfc7516.html)、[DPoP](https://www.rfc-editor.org/rfc/rfc9449.html)。
+
+## Cloudflare 与 PostgreSQL 的隔离迁移预备
+
+`apps/relay/cloudflare.ts` 是 Worker 请求入口，`packages/relay/postgres-store.ts` 使用 PostgreSQL 事务和每个 Relay schema 的事务锁保护登记、配额、去重、撤销和收件语义。入口从 Cloudflare 的 `CF-Connecting-IP` 取得客户端地址，在共享存储中限制入口速率，并用有过期时间的租约限制跨实例长轮询。每个请求独立创建和关闭数据库客户端；Hyperdrive 承担连接复用。此入口仍需按目标账户配置、验收后才能投入使用，不会自动替换现有 Relay。
+
+Worker 配置示例见 [`apps/relay/wrangler.example.jsonc`](../../apps/relay/wrangler.example.jsonc)；复制到忽略目录后须调整 `main` 相对路径。Worker 绑定 `RELAY_DATABASE`（Hyperdrive）和 `RELAY_SCHEMA`；另需设置 `EIGOS_RELAY_PUBLIC_URL`、`EIGOS_RELAY_OAUTH_ISSUER`、`EIGOS_RELAY_OAUTH_AUDIENCE`、`EIGOS_RELAY_OAUTH_JWKS_URL`、`EIGOS_RELAY_CLIENT_IDS`，可选 `EIGOS_RELAY_TENANT_CLAIM`。生产只允许 HTTPS 和 JWT 登记。Hyperdrive 连接应使用可信数据库根证书和 `verify-full`，并关闭查询缓存；为 Relay 使用只具备其 schema 权限的独立数据库角色。
+
+离线导入入口先运行 `npm run build`。准备**已停止源写入且完成 checkpoint 的数据库副本**，将副本切换到 SQLite `DELETE` journal 模式并确保不存在 `-wal`／`-shm` 文件；不要更改原数据库。通过私有环境变量 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE` 提供 PostgreSQL 连接与根证书路径，连接 URL 不接受查询参数，密码中的特殊字符须做 URL 编码。之后显式执行：
+
+```sh
+node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay.sqlite --schema eigos_relay_example
+```
+
+只接受绝对快照路径和新的 `eigos_relay_` 命名空间。导入检查数据库标识、完整性、表和列，使用一个 PostgreSQL 事务复制并核对全部行；发现目标存在、外键失败或读回不一致时回滚，不覆盖原有 schema。成功只表示快照已验证导入，不代表线上已切换。导入后须单独创建受限角色并授权该 schema 的表、序列和 `relay_cleanup(bigint,bigint,bigint)` 函数；不应将管理员密码交给 Worker。
+
+现有 Relay 使用的 origin、JWT audience、客户端凭据和 DPoP 地址校验相互绑定。切换前需要逐项确认新 origin、身份提供方 audience、已登记客户端和待发／待收消息的恢复方式；仅更改 DNS 或部署 Worker 不能迁移连接器身份。测试环境应使用独立身份签发器和合成节点，不应授予真实业务权限。

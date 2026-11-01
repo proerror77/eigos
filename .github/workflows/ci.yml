@@ -62,6 +62,39 @@ jobs:
       - name: Documentation scope
         if: needs.scope.outputs.verify == 'false'
         run: echo 'Documentation-only change; no runtime checks required.'
+  relay-postgres:
+    needs: scope
+    if: ${{ needs.scope.result == 'success' && contains(needs.scope.outputs.shards, 'tests/relay-postgres-import.test.ts') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: fixture-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EIGOS_TEST_RELAY_POSTGRES: '1'
+      EIGOS_TEST_PG_LOCAL: '1'
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGDATABASE: postgres
+      PGPASSWORD: fixture-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --import tsx --test tests/relay-postgres-import.test.ts
   # Preserve required check names. Empty shards validate the scope without
   # installing dependencies or invoking Node's automatic test discovery.
   tests:
