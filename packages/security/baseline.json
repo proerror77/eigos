@@ -5528,6 +5528,19 @@
       "targetControl": "Detect mismatched identity and revocation projections before runtime cutover",
       "stage": "S5",
       "sourceDigest": "f6f546002ea31669bac4e7b524d05d4d9b54c7fe24daf47c20cd8680fca71b7b"
+    },
+    {
+      "id": "postgres-runtime-transaction",
+      "file": "packages/postgres/runtime-transaction.ts",
+      "channels": [
+        "authorization_control",
+        "postgres"
+      ],
+      "content": "PostgreSQL business mutation transaction primitive",
+      "currentControl": "Serializable transaction, shared advisory lock, authority checks before work and commit; no automatic retry after uncertain commit",
+      "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
+      "stage": "S5",
+      "sourceDigest": "f4405329d2a16fb693b611fd25427c4743aaa7495b32a9c8fb0529c95c9ffce9"
     }
   ]
 }
