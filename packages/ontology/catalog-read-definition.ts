@@ -1,3 +1,4 @@
-import { loadMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
-export const catalogReadDefinition = loadMcpReadModule(new URL('./definitions/shopify-catalog.json', import.meta.url));
+import { parseBundledMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
+import definition from './definitions/shopify-catalog.json' with { type: 'json' };
+export const catalogReadDefinition = parseBundledMcpReadModule(definition);
 export const catalogReadDefinitionRef = mcpReadModuleRef(catalogReadDefinition);

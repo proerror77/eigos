@@ -1,14 +1,31 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { didiReadDefinition } from '../packages/ontology/didi-read-definition.js';
-import { loadMcpReadModule, mcpReadModuleRef, parseMcpReadModule, resolveOntologyMcpRead } from '../packages/ontology/mcp-read.js';
+import { loadMcpReadModule, mcpReadModuleRef, parseBundledMcpReadModule, parseMcpReadModule, resolveOntologyMcpRead } from '../packages/ontology/mcp-read.js';
+import { orderTestModule } from '../packages/ontology/didi-order-test.js';
+import { meituanReadDefinition } from '../packages/ontology/meituan-read-definition.js';
+import { catalogReadDefinition } from '../packages/ontology/catalog-read-definition.js';
+import { rollingGoDefinition } from '../packages/ontology/rollinggo.js';
 import { createCurrentKernelDefinition } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { chooseDidi, setupDidi, input, observeDidi } from './fixtures/didi.js';
 import { owner } from './backend-fixture.js';
+
+test('bundled definitions match the reviewed size-limited files', () => {
+  for (const [name, bundled] of [
+    ['didi-order-test.json',orderTestModule],['didi-readonly.json',didiReadDefinition],
+    ['meituan-readonly.json',meituanReadDefinition],['shopify-catalog.json',catalogReadDefinition],['rollinggo-readonly.json',rollingGoDefinition],
+  ] as const) {
+    const file = new URL(`../packages/ontology/definitions/${name}`,import.meta.url);
+    assert(readFileSync(file).byteLength <= 128000);
+    assert.deepEqual(bundled,loadMcpReadModule(file));
+    assert.equal(mcpReadModuleRef(bundled).digest,mcpReadModuleRef(loadMcpReadModule(file)).digest);
+  }
+  assert.throws(()=>parseBundledMcpReadModule({padding:'x'.repeat(128001)}),/size limit/);
+});
 
 test('A separately maintained ontology file changes MCP tool and parameter binding without interpreter changes', () => {
   const directory = mkdtempSync(join(tmpdir(), 'eigos-ontology-')), file = join(directory, 'module.json');

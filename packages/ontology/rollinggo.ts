@@ -12,10 +12,9 @@ import {
   rollingGoInputSchema,
   rollingGoResultSchema,
 } from '../capabilities/rollinggo/connector.js';
-import { loadMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
-export const rollingGoDefinition = loadMcpReadModule(
-  new URL('./definitions/rollinggo-readonly.json', import.meta.url),
-);
+import { parseBundledMcpReadModule, mcpReadModuleRef } from './mcp-read.js';
+import definition from './definitions/rollinggo-readonly.json' with { type: 'json' };
+export const rollingGoDefinition = parseBundledMcpReadModule(definition);
 export const rollingGoModule = mcpReadModuleRef(rollingGoDefinition);
 export const rollingGoActionSchema = z.strictObject({
   scope: objectRefSchema.extend({ type: z.literal('RollingGoSearchTask') }),

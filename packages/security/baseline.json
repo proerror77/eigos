@@ -3618,7 +3618,7 @@
     {
       "id": "security-build",
       "file": "scripts/build.mjs",
-      "sourceDigest": "5df5f5f67e4dfe44a32525f86fb16ce73d3ae96f17dbf40b859b3c8d5661f779",
+      "sourceDigest": "1d4bb42f6fc13c815641f1b2a908883325e73bd597ce22f6e97c8de08a37f43a",
       "channels": [
         "build"
       ],
@@ -4489,7 +4489,7 @@
     {
       "id": "rollinggo-ontology",
       "file": "packages/ontology/rollinggo.ts",
-      "sourceDigest": "f03d11aeefb292344ed93640da756d382fced5249485a1daa9793e01fce2beac",
+      "sourceDigest": "e291f29206048df7c2cde95a1d2f5190a1b72f5fdc5f531e8ce5123fd291c12a",
       "channels": [
         "worker",
         "ontology"
