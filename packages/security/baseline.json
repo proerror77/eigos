@@ -5395,7 +5395,7 @@
       "currentControl": "Owned offline snapshot, exact authority and policy digests, claim and draft fences, byte-bounded hashing and no row output",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "7dff8323a350a223192a78d3b698987fe422417fc34f3594097e8423e91cf5d1"
+      "sourceDigest": "cc18aee798fd151b2b589e2651737a3f9d9c835e2d0cb089a1f9a9a34ff8be0e"
     },
     {
       "id": "business-postgres-preflight-cli",
@@ -5476,6 +5476,32 @@
       "currentControl": "Fixed denial advice; no raw policy details, request values or hidden object existence",
       "targetControl": "Preserve denial and original task; guidance grants no authority",
       "stage": "S2"
+    },
+    {
+      "id": "membership-postgres-import",
+      "file": "packages/postgres/membership-import.ts",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Offline member identity and installation snapshot transfer",
+      "currentControl": "Reviewed private snapshot, isolated schema, transactional import and readback, no runtime activation",
+      "targetControl": "Preserve identity and revocation state with independently verified runtime cutover",
+      "stage": "S5",
+      "sourceDigest": "04656864de632592d9d4f73b4a1f54c2838f8229aa0f7510de738f741d4870fb"
+    },
+    {
+      "id": "membership-postgres-import-cli",
+      "file": "scripts/membership-postgres-import.mjs",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Explicit private membership snapshot import operator entry",
+      "currentControl": "Reviewed private snapshot, isolated schema, transactional import and readback, no runtime activation",
+      "targetControl": "Preserve identity and revocation state with independently verified runtime cutover",
+      "stage": "S5",
+      "sourceDigest": "bf6f06f91b79e227eb7ff16dd22e041e03dbc6414c0a054964458170fcd60f15"
     }
   ]
 }

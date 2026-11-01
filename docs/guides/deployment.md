@@ -43,7 +43,9 @@
 
 Gateway 的会员、安装、会话和撤销状态由 `MEMBERSHIP_DATABASE_PATH` 指定；未设置时默认使用业务库路径加 `.members`。业务快照导入不会复制这些数据。切换前须一并迁移并核对会员身份、安装绑定、连接封禁、令牌及邀请状态，并验证它们与业务库中的授权和任务身份一致；不得通过重建安装或重新授予权限掩盖缺失记录。运行时 PostgreSQL 适配完成并验证两库的受控切换之前，不得把业务导入结果设为正式运行权威。
 
-**此入口只是盘点，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
+会员库可使用 `node scripts/membership-postgres-import.mjs --apply --snapshot /private/offline-members.sqlite --expected-file-digest <reviewed-digest> --schema eigos_membership_example --max-database-bytes <reviewed-byte-budget>` 导入独立私有 schema，连接环境与 CA 配置同业务导入。它仅接受当前已审查的会员库结构及不大于 64 MiB 的私有离线快照，逐表回读并记录摘要；不激活服务或授予运行时角色。导入后仍须核对会员库和业务库的一致性，并完成运行时适配。提交响应丢失时必须先检查目标 schema 的 `eigos_membership_migration_receipt`，不可覆盖重试。
+
+**业务库盘点入口只读，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
 
 预备的离线导入入口使用 `EIGOS_BUSINESS_POSTGRES_URL` 和绝对路径 `EIGOS_BUSINESS_POSTGRES_CA_FILE`；连接 URL 不允许附带可能覆盖 TLS 校验的参数。先审查盘点报告中的 `fileDigest`、权限策略摘要和容量，再显式执行：
 

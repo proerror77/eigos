@@ -133,14 +133,19 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
       if (tableInfo.some(row => Number(row.hidden) !== 0)) throw new Error(`Generated or hidden column in ${name} is not supported`);
       const columns = tableInfo.map(row => ({ name: String(row.name), type: String(row.type).toUpperCase(), notNull: Boolean(row.notnull), primaryKey: Number(row.pk) }));
       if (!columns.length || columns.some(column => !['TEXT','INTEGER','BLOB'].includes(column.type))) throw new Error(`Unsupported column type in ${name}`);
+      const textFields = columns.filter(column => column.type === 'TEXT');
+      if (textFields.length && db.prepare(`SELECT 1 FROM ${quote(name)} WHERE ${textFields.map(column => `(typeof(${quote(column.name)})='text' AND instr(${quote(column.name)}, char(0))>0)`).join(' OR ')} LIMIT 1`).get()) throw new Error(`NUL text in ${name} cannot be migrated`);
       const keys = columns.filter(column => column.primaryKey > 0).sort((a, b) => a.primaryKey - b.primaryKey);
       if (!keys.length) throw new Error(`Table ${name} has no stable primary key`);
       // SQLite BINARY and PostgreSQL C collation both order UTF-8 text by
       // bytes. A target verifier must use the same key order and C collation.
       const ordering = keys.map(column => quote(column.name) + (column.type === 'TEXT' ? ' COLLATE BINARY' : '')).join(',');
-      const statement = db.prepare(`SELECT ${columns.map(c => quote(c.name)).join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
+      if (columns.some(column => column.name.startsWith('__eigos_migration_raw_'))) throw new Error(`Reserved migration column name in ${name}`);
+      const rawFields = textFields.map((column, index) => `CAST(${quote(column.name)} AS BLOB) AS ${quote(`__eigos_migration_raw_${index}`)}`);
+      const statement = db.prepare(`SELECT ${[...columns.map(c => quote(c.name)), ...rawFields].join(',')} FROM ${quote(name)} ORDER BY ${ordering}`); statement.setReadBigInts(true);
       const fingerprint = createHash('sha256'); let rows = 0, totalEncodedBytes = 0, maxRowBytes = 0;
       for (const row of statement.iterate()) {
+        for (const [index, column] of textFields.entries()) if (typeof row[column.name] === 'string' && !Buffer.from(String(row[column.name]), 'utf8').equals(Buffer.from(row[`__eigos_migration_raw_${index}`] as Uint8Array))) throw new Error(`Invalid UTF-8 text in ${name}`);
         const encodedRow = encodeBusinessRow(row, columns, 'sqlite');
         const bytes = Buffer.byteLength(encodedRow); totalEncodedBytes += bytes;
         if (!Number.isSafeInteger(totalEncodedBytes)) throw new Error(`Snapshot table ${name} is too large to inventory safely`);

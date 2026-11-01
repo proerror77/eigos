@@ -88,7 +88,13 @@ test('business snapshot inventory fails closed for active claims, drafts and uns
     db.exec(`DELETE FROM jobs WHERE id='bad-job'; INSERT INTO network_evidence_cards VALUES('numeric','fixture','{"taskId":1}')`); db.close();
     assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Network identity JSON is incompatible/);
     db = new DatabaseSync(f.path);
-    db.exec("DELETE FROM network_evidence_cards; CREATE TABLE unsupported_fixture(id TEXT PRIMARY KEY,value REAL)"); db.close();
+    db.exec("DELETE FROM network_evidence_cards; UPDATE migration_sequence_probe SET body='bad' || char(0) || 'text'"); db.close();
+    assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /NUL text/);
+    db = new DatabaseSync(f.path);
+    db.exec("UPDATE migration_sequence_probe SET body=CAST(x'80' AS TEXT)"); db.close();
+    assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Invalid UTF-8/);
+    db = new DatabaseSync(f.path);
+    db.exec("UPDATE migration_sequence_probe SET body='first'; CREATE TABLE unsupported_fixture(id TEXT PRIMARY KEY,value REAL)"); db.close();
     assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, f.policy), /Unsupported column type/);
     db = new DatabaseSync(f.path);
     db.exec("DROP TABLE unsupported_fixture; CREATE TABLE generated_fixture(id TEXT PRIMARY KEY,x TEXT,derived TEXT GENERATED ALWAYS AS (x || 'y') STORED)"); db.close();
