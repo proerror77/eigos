@@ -139,6 +139,12 @@ node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay
 
 现有 Relay 使用的 origin、JWT audience、客户端凭据和 DPoP 地址校验相互绑定。切换前需要逐项确认新 origin、身份提供方 audience、已登记客户端和待发／待收消息的恢复方式；仅更改 DNS 或部署 Worker 不能迁移连接器身份。测试环境应使用独立身份签发器和合成节点，不应授予真实业务权限。
 
+### 导入后的运行角色授权
+
+`node scripts/relay-postgres-grant.mjs --apply --source-stopped --schema eigos_relay_live_<id> --role eigos_relay_live_<id> --source-digest <已审查快照的 SHA-256>` 只处理与目标 schema 同名的独立登录角色。连接环境沿用 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE`，不得把密码写入参数。工具要求目标角色无继承、无成员关系、无管理属性和目标外数据访问；在同一事务持有 Relay 锁，核对导入回执、各表内容摘要、列结构、约束、清理函数及消息序列，再授权运行所需的表操作、序列和清理函数。迁移回执不可由运行角色读取或更改。它只适用于导入后、目标尚未投入使用的状态；已经授权的角色会被拒绝，提交结果不明时必须先独立检查，不能盲目重试。
+
+`--source-stopped` 是操作员的断言，不是自动停写检查。授予权限不会部署或启用 Worker，也不能证明源 Relay 已停止写入。切换前仍需复查角色有效权限、目标部署绑定以及全部节点；为避免丢失并发写入，整个导入、授权和节点切换期间都要保持源端停写。
+
 ### 节点地址切换
 
 `node scripts/relay-client-repoint.mjs --apply --source-stopped --config /private/cutover.json --credential /private/node.json --agent-id <existing-agent-id>` 是离线操作入口；可用 `--state` 指定非默认节点状态文件。`--source-stopped` 是操作员对源 Relay 已停止写入的明确断言，程序无法替代全体节点停写和源快照核对。**不得在旧 Relay 继续接收消息时切换节点。**

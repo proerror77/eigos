@@ -22,6 +22,13 @@ const maxRowBytes = 2 * 1024 * 1024, batchBytes = 4 * 1024 * 1024, batchRows = 6
 const quote = (value: string) => `"${value.replaceAll('"', '""')}"`;
 const schemaPattern = /^eigos_relay_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
+/** The runtime shape emitted by this importer, including operational tables. */
+export function relayImportedLayout() {
+  const layout: Record<string, {name:string;type:string;notNull:boolean;identity:string}[]> = Object.fromEntries(order.map(table => [table, tables[table].map(name => ({name, type: integers.has(name) ? 'bigint' : 'text', notNull: !(table === 'relay_messages' && name === 'envelope'), identity: table === 'relay_messages' && name === 'seq' ? 'd' : ''}))]));
+  layout.relay_poll_leases = [{name:'id',type:'text',notNull:true,identity:''},{name:'agent_id',type:'text',notNull:true,identity:''},{name:'expires_at',type:'bigint',notNull:true,identity:''}];
+  layout.relay_migration_receipt = [{name:'slot',type:'bigint',notNull:true,identity:''},{name:'body',type:'jsonb',notNull:true,identity:''}];
+  return layout;
+}
 function snapshotDigest(path: string, expected: Stats): string {
   if (['-wal','-shm','-journal'].some(suffix => existsSync(path+suffix))) throw new Error('Snapshot must remain self-contained');
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -86,6 +93,37 @@ ${relayCleanupSql}
 
 function normalize(row: Record<string, unknown>, columns: readonly string[]): string {
   return JSON.stringify(columns.map(column => row[column] === null ? null : integers.has(column) ? String(row[column]) : row[column]));
+}
+
+/** Caller must hold the same Relay advisory lock in an open transaction.
+ * Verify the imported rows again before granting any runtime access. */
+export async function verifyImportedRelayRows(client: Client, schema: string, expectedFileDigest: string): Promise<void> {
+  if (!schemaPattern.test(schema) || !digestPattern.test(expectedFileDigest) || client.getTransactionStatus() !== 'T') throw new Error('Relay verification requires a valid locked transaction');
+  const receiptResult = await client.query(`SELECT body FROM ${quote(schema)}.relay_migration_receipt WHERE slot=1`);
+  const receipt = receiptResult.rows[0]?.body;
+  if (receiptResult.rowCount !== 1 || !receipt || receipt.version !== 1 || receipt.status !== 'imported-not-activated' || receipt.sourceFileDigest !== expectedFileDigest
+    || !receipt.tables || JSON.stringify(Object.keys(receipt.tables).sort()) !== JSON.stringify([...order].sort())) throw new Error('Relay import receipt does not match the reviewed snapshot');
+  for (const [index,table] of order.entries()) {
+    const expected = receipt.tables[table], columns = tables[table];
+    if (!expected || !Number.isSafeInteger(expected.rows) || expected.rows < 0 || !digestPattern.test(expected.digest)) throw new Error('Invalid Relay import receipt');
+    const textColumns = columns.filter(column => !integers.has(column));
+    const sizes = textColumns.map(column => `COALESCE(octet_length(${quote(column)}),0)`).join('+');
+    if (sizes && (await client.query(`SELECT 1 FROM ${quote(schema)}.${quote(table)} WHERE (${sizes}) > $1 LIMIT 1`, [maxRowBytes])).rowCount) throw new Error('Relay target row exceeds migration limit');
+    const cursor = quote(`eigos_relay_verify_${index}`), targetOrder = keys[table].map(column => quote(column) + (integers.has(column) ? '' : ' COLLATE "C"')).join(',');
+    const hash = createHash('sha256'); let count = 0;
+    await client.query(`DECLARE ${cursor} NO SCROLL CURSOR FOR SELECT ${columns.map(quote).join(',')} FROM ${quote(schema)}.${quote(table)} ORDER BY ${targetOrder}`);
+    try {
+      for (;;) {
+        const page = await client.query(`FETCH FORWARD 8 FROM ${cursor}`);
+        if (!page.rows.length) break;
+        for (const row of page.rows) { const encoded = normalize(row,columns), bytes = Buffer.byteLength(encoded); if (bytes > maxRowBytes) throw new Error('Relay target row exceeds migration limit'); hash.update(`${bytes}:`).update(encoded); count++; }
+      }
+    } finally { await client.query(`CLOSE ${cursor}`); }
+    if (count !== expected.rows || hash.digest('hex') !== expected.digest) throw new Error(`Relay imported data differs from the reviewed receipt: ${table}`);
+  }
+  const sequence = (await client.query(`SELECT s.last_value,s.is_called,(SELECT COALESCE(MAX(seq),0) FROM ${quote(schema)}.relay_messages) AS max_seq FROM ${quote(schema)}.relay_messages_seq_seq s`)).rows[0];
+  const last = BigInt(sequence.last_value), highest = BigInt(sequence.max_seq);
+  if (highest > 0n && (last < highest || last === highest && !sequence.is_called)) throw new Error('Relay message sequence could reuse an imported identity');
 }
 /** Import only into a new namespace; counts and data digests are checked before commit. */
 export async function importRelaySnapshot(client: Client, snapshot: string, schema: string, expectedFileDigest: string): Promise<Record<Table, number>> {

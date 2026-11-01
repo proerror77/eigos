@@ -5365,10 +5365,10 @@
         "agent_transport"
       ],
       "content": "Offline encrypted Relay snapshot import",
-      "currentControl": "Reviewed private source digest, bounded batched copy, readback fingerprints, immutable receipt and fail-closed uncertain commit",
+      "currentControl": "Reviewed private source digest, bounded batched copy, readback fingerprints, immutable receipt and fail-closed uncertain commit; imported rows and sequence are rechecked before granting runtime access",
       "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
       "stage": "S5",
-      "sourceDigest": "e8d41d8ea3fc2a1fe42147cce00aba8cd3d427ac38204425029479395909f72d"
+      "sourceDigest": "29e1f93f019f5e660a72b65598b01d3cce8de95e81103e2dfc3df2d388d3ca1b"
     },
     {
       "id": "relay-postgres-import-cli",
@@ -5606,6 +5606,32 @@
       "targetControl": "Require source stop and independently verified destination before migrating node state",
       "stage": "S5",
       "sourceDigest": "11ba66334e5d41f1d1b95d3671b81261c6dae35d35b9f8b2adca036fa8a2c9fc"
+    },
+    {
+      "id": "relay-postgres-grant",
+      "file": "packages/relay/postgres-grants.ts",
+      "channels": [
+        "offline migration",
+        "agent_transport"
+      ],
+      "content": "Relay runtime database privilege grant",
+      "currentControl": "Restricted dedicated login, exact receipt and row digest recheck, reviewed constraints and function bodies, advisory lock, isolated schema and effective table, column, sequence and function privilege audit",
+      "targetControl": "Grant only the reviewed imported Relay data to its dedicated runtime",
+      "stage": "S5",
+      "sourceDigest": "847a521a01fb5967fddb4b35c3f1f33b4760d6e0cf08d352138e159be9b910c8"
+    },
+    {
+      "id": "relay-postgres-grant-cli",
+      "file": "scripts/relay-postgres-grant.mjs",
+      "channels": [
+        "operator-cli",
+        "offline migration"
+      ],
+      "content": "Explicit Relay runtime privilege grant operator entry",
+      "currentControl": "Explicit apply and source-stop assertion, reviewed source digest, separate CA and private connection environment, no credential output",
+      "targetControl": "Prevent unreviewed grants or credential exposure",
+      "stage": "S5",
+      "sourceDigest": "3fe8fb16cd3bc66639061f7953a8985e247f658f0e361f9151caffa0d0c7dc51"
     }
   ]
 }
