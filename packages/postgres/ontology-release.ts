@@ -1,6 +1,7 @@
 import type { Client } from 'pg';
+import { z } from 'zod';
 import { digest } from '../core/delegation.js';
-import { DomainError } from '../core/domain.js';
+import { DomainError, taskIdSchema } from '../core/domain.js';
 import { ontologyIdSchema, ontologyReleaseRefSchema, parseOntologyDocument, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
 import { compatibleDefinitionModels } from '../ontology/definition-compatibility.js';
 import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
@@ -70,6 +71,49 @@ export async function postgresProjectedTaskOntologyRelease(client: Client, owner
   if (job.id !== taskId) return conflict('Stored task identity is invalid');
   const ref = validateTaskReadProjection(owner,job,String(row.proof),String(row.digest));
   return postgresOntologyRelease(client,ref);
+}
+
+const readContextSchema = z.strictObject({ ontologyId: ontologyIdSchema.optional(), release: ontologyReleaseRefSchema.optional(), taskId: taskIdSchema.optional() });
+
+/** Match the existing ontology read context without granting task access.
+ * The caller must derive owner/admin from the authenticated principal and
+ * enforce the task grant and field policy inside the same transaction. */
+export async function postgresOntologyReadContext(client: Client, owner: string, input: unknown = {}, admin = false) {
+  const schema = postgresBusinessSchema(client), context = readContextSchema.parse(input), q = `"${schema}"`;
+  if (context.taskId && (context.ontologyId || context.release)) throw new DomainError('INVALID_INPUT', 'Task reads already have an immutable ontology release');
+  if (context.ontologyId && context.release && context.ontologyId !== context.release.ontologyId) throw new DomainError('INVALID_INPUT', 'Ontology namespace and release differ');
+  let release;
+  if (context.taskId) {
+    release = await postgresProjectedTaskOntologyRelease(client,owner,context.taskId);
+    if (!release) {
+      const result = await client.query(`SELECT jsonb_typeof(body.value) AS kind,
+        CASE WHEN body.value#>'{delegation,ontologyRelease}' IS NULL OR body.value#>'{delegation,ontologyRelease}'='null'::jsonb THEN 'absent'
+          WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text)<=1024 THEN 'present' ELSE 'invalid' END AS ref_state,
+        CASE WHEN octet_length((body.value#>'{delegation,ontologyRelease}')::text)<=1024 THEN (body.value#>'{delegation,ontologyRelease}')::text END AS ref
+        FROM ${q}.jobs j CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body WHERE j.owner=$1 AND j.id=$2`,[owner,context.taskId]);
+      if (result.rowCount !== 1) throw new DomainError('NOT_FOUND','Task not found');
+      const row = result.rows[0];
+      if (row.kind !== 'object' || row.ref_state === 'invalid') return conflict('Stored ontology reference is invalid');
+      if (row.ref_state === 'absent') release = await postgresTaskOntologyRelease(client,owner,context.taskId);
+      else {
+        const ref = ontologyReleaseRefSchema.parse(JSON.parse(String(row.ref)));
+        await postgresAssertOntologyAccess(client,owner,ref.ontologyId,admin);
+        release = await postgresOntologyRelease(client,ref);
+      }
+    }
+  } else if (context.release) {
+    await postgresAssertOntologyAccess(client,owner,context.release.ontologyId,admin);
+    release = await postgresOntologyRelease(client,context.release);
+  }
+  else {
+    const id = context.ontologyId ?? 'eigos.business';
+    const row = (await client.query(`SELECT n.active_release_id,r.digest FROM ${q}.ontology_namespaces n JOIN ${q}.ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=$1`,[id])).rows[0];
+    if (!row) throw new DomainError('NOT_FOUND','Ontology is not available');
+    await postgresAssertOntologyAccess(client,owner,id,admin);
+    release = await postgresOntologyRelease(client,ontologyReleaseRefSchema.parse({ontologyId:id,releaseId:row.active_release_id,digest:row.digest}));
+  }
+  await postgresAssertOntologyAccess(client,owner,release.ref.ontologyId,admin);
+  return release;
 }
 
 /** Resolve an exact persisted release using the same trusted compiler as the

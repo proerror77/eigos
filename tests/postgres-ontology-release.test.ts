@@ -9,7 +9,7 @@ import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyRelease, postgresProjectedTaskOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
+import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyReadContext, postgresOntologyRelease, postgresProjectedTaskOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
 
 test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const sqlite = new DatabaseSync(':memory:'), definitions = new DefinitionStore(sqlite);
@@ -55,6 +55,11 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     assert.deepEqual(first.ref,legacy.ref); assert.deepEqual(first.model.ref,legacy.model.ref);
     assert(Object.isFrozen(first.document)); assert(Object.isFrozen(first.ref));
     assert.notDeepEqual(first.ref,active.ref);
+    const readContext = (input: unknown) => postgresBusinessTransaction(client,schema,authority,c => postgresOntologyReadContext(c,owner,input));
+    assert.deepEqual((await readContext({})).ref,active.ref);
+    assert.deepEqual((await readContext({release:legacy.ref})).ref,legacy.ref);
+    await assert.rejects(readContext({taskId:task,release:legacy.ref}),/Task reads already have an immutable ontology release/);
+    await assert.rejects(readContext({ontologyId:'synthetic.other',release:legacy.ref}),/Ontology namespace and release differ/);
     const project = () => postgresBusinessTransaction(observed,schema,authority,c => postgresProjectedTaskOntologyRelease(c,owner,task));
     assert.equal(await project(),undefined);
     const historical={...body,padding:'x'.repeat(16 * 1024 * 1024),delegation:{...body.delegation,backendVersion:'historical',request:{revision:1,unicode:'猫🐈',numbers:[1e-7,1e21,-0,1.25],keys:{'10':'ten','2':'two',z:'字'}}},artifact:{synthetic:true}};
@@ -64,6 +69,7 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(historical)]);
     await client.query(`INSERT INTO "${schema}".ontology_task_read_projections VALUES($1,$2,$3,$4)`,[owner,task,JSON.stringify(proof),digest(proof)]);
     assert.deepEqual((await project())?.ref,active.ref);
+    assert.deepEqual((await readContext({taskId:task})).ref,active.ref);
     assert(proofQueryBytes < 4096, `historical proof returned ${proofQueryBytes} bytes`);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c => postgresProjectedTaskOntologyRelease(c,'other-owner',task)),/Task not found/);
     await client.query(`UPDATE "${schema}".ontology_task_read_projections SET digest=$1`,['b'.repeat(64)]);
@@ -75,6 +81,9 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     await assert.rejects(project(),/exceed safe runtime limits/);
     assert(proofQueryBytes < 4096, `oversized proof input returned ${proofQueryBytes} bytes`);
     await client.query(`DELETE FROM "${schema}".ontology_task_read_projections`);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(historical)]);
+    assert.deepEqual((await readContext({taskId:task})).ref,legacy.ref,'historical reads retain the original explicit pin');
+    await assert.rejects(taskRelease(),/Historical backend tasks/);
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(body)]);
     const namespaceAccess = (actor: string, id: string, admin = false) => postgresBusinessTransaction(client,schema,authority,c => postgresAssertOntologyAccess(c,actor,id,admin));
     definitions.assertAccess(owner, active.ref.ontologyId);

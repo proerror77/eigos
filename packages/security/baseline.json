@@ -5652,7 +5652,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "5c4ab7436195a7ada45bf381811da62cbcd0e91166d15db0f6a06d82ed5976b0",
+      "sourceDigest": "70681cb7c52a412c21376c57d9a3f023fcd1fe408fde704c880fe102ce3f75da",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
