@@ -7,7 +7,8 @@ import { expandPromptData } from '../packages/coordinator/prompt-data.js';
 import { assertGoalCoverage } from '../packages/ontology/goal-coverage.js';
 import type { LegacyGrounding } from '../packages/core/delegation.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
-import { backend, evidence, owner } from './backend-fixture.js';
+import { backend, evidence, owner, principal } from './backend-fixture.js';
+import { scheduleTaskRecovery } from '../packages/core/task-recovery.js';
 import { didiFixture, input } from './fixtures/didi.js';
 import { didiDataflow, dataflowCompletion } from './fixtures/didi-dataflow.js';
 import { runNativeDidiTask } from './fixtures/secured-didi.js';
@@ -84,6 +85,12 @@ test('a read contract with a noncanonical requirement ID is corrected on the sam
       const current = f.store.get(owner, f.task.id);
       assert.match(current.delegation!.groundingFeedback!.at(-1)!.message, /unknown or repeated requirement/);
       assert.match(prompt, /unknown or repeated requirement/, 'The corrective model invocation receives the actual host feedback');
+      const feedback = current.delegation!.groundingFeedback!.at(-1)!.message;
+      const references = JSON.parse(feedback.slice(feedback.indexOf(':') + 1));
+      assert.deepEqual(references.unknownRequirementIds, ['destination_terminal']);
+      assert.deepEqual(references.availableRequirementIds, ['route_destination']);
+      assert.match(prompt, /availableRequirementIds/, 'The corrective invocation sees the effective merged ID set');
+      for (const criterion of decision.readPlan!.criteria) criterion.requirementIds = [...references.availableRequirementIds];
       assert.equal(f.source.calls.filter(call => call.method === 'tools/call').length, 0);
     }
   }, 2, { requirements: [{ id: 'route_destination', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } }] });
@@ -97,6 +104,55 @@ test('a read contract with a noncanonical requirement ID is corrected on the sam
     assert.equal(done.delegation!.groundingFeedback!.length, 1);
     assert(done.delegation!.request.requirements.some(requirement => requirement.id === 'route_destination'));
     assert(!done.delegation!.request.requirements.some(requirement => requirement.id === 'destination_terminal'));
+    assert.deepEqual(f.source.calls.filter(call => call.method === 'tools/call').map(call => call.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+  } finally { f.close(); }
+});
+
+test('detailed reference diagnostics preserve the three-failure pause when criterion names change', { timeout: 120000 }, async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = fixture((decision, request, attempt) => {
+    decision.requirementsJson = JSON.stringify([{ requirement: { id: 'destination_terminal', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } },
+      messageId: request.messages[0]!.id, quote: input.destination }]);
+    for (const criterion of decision.readPlan!.criteria) {
+      criterion.id += `_${attempt}`;
+      criterion.requirementIds = criterion.requirementIds.map(id => id === 'route_destination' ? 'destination_terminal' : id);
+    }
+  }, 3, { requirements: [{ id: 'route_destination', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } }] });
+  try {
+    await runNativeDidiTask(f.store, f.b.coordinator, owner, f.task.id, t.signal, () => t.mock.timers.tick(20));
+    const paused = f.store.get(owner, f.task.id);
+    assert.equal(paused.state, 'paused'); assert.equal(paused.delegation!.recovery!.code, 'validation_stalled');
+    assert.equal(f.requests(), 3); assert.equal(paused.delegation!.groundingFeedback!.length, 3);
+    assert.equal(new Set(paused.delegation!.groundingFeedback!.map(feedback => feedback.message)).size, 3, 'Each diagnostic retains its actual criterion identity');
+    assert.equal(f.source.calls.filter(call => call.method === 'tools/call').length, 0);
+    assert.equal(paused.id, f.task.id); assert.equal(paused.delegation!.request.revision, 1);
+  } finally { f.close(); }
+});
+
+test('a restored task with three retained legacy failures uses canonical references on its first decision', { timeout: 120000 }, async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = fixture((decision, request, attempt, prompt) => {
+    assert.equal(attempt, 1);
+    const packet = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!)) as { requirementReferences: { id: string; kind: string; role?: string }[] };
+    const reference = packet.requirementReferences.find(value => value.kind === 'location' && value.role === 'destination');
+    assert.deepEqual(reference, { id: 'route_destination', kind: 'location', role: 'destination' });
+    assert.match(prompt, /keeps existing\.id/);
+    decision.requirementsJson = JSON.stringify([{ requirement: { id: 'confirmed_destination', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } },
+      messageId: request.messages[0]!.id, quote: input.destination }]);
+    for (const criterion of decision.readPlan!.criteria) criterion.requirementIds = [reference!.id];
+  }, 1, { requirements: [{ id: 'route_destination', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } }] });
+  try {
+    const paused = f.store.get(owner, f.task.id);
+    paused.delegation!.groundingFeedback = Array.from({ length: 3 }, () => ({ requestRevision: 1, stage: 'interpretation' as const,
+      message: 'Goal criterion references an unknown or repeated requirement', at: paused.createdAt }));
+    scheduleTaskRecovery(paused, 'validation_stalled', 'Synthetic prior failures', { automatic: false }); f.store.save(owner, paused);
+    f.b.tasks.resume(principal, { taskId: paused.id, requestId: randomUUID(), expectedRevision: paused.revision! });
+    await runNativeDidiTask(f.store, f.b.coordinator, owner, f.task.id, t.signal, () => t.mock.timers.tick(20));
+    const done = f.store.get(owner, f.task.id);
+    assert.equal(done.state, 'completed', JSON.stringify(done.delegation?.recovery));
+    assert.equal(done.id, paused.id); assert.equal(done.delegation!.request.revision, 1);
+    assert.equal(f.requests(), 1); assert.equal(done.delegation!.groundingFeedback!.length, 3, 'Historical failures remain intact');
+    assert.equal(done.delegation!.acceptance!.accepted, true);
     assert.deepEqual(f.source.calls.filter(call => call.method === 'tools/call').map(call => call.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
   } finally { f.close(); }
 });
