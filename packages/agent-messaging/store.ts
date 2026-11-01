@@ -119,8 +119,10 @@ export class MessagingStore {
   private update(value: MessageRecord) {
     this.db.prepare('UPDATE messaging_messages SET body=? WHERE id=?').run(JSON.stringify(value), value.id);
   }
-  inbox(recipient: string): { cursor: number; message: MessageRecord }[] {
-    return this.db.prepare('SELECT rowid AS cursor,body FROM messaging_messages WHERE recipient=? ORDER BY rowid LIMIT 2001').all(recipient)
+  inbox(recipient: string, options: { after?: number; limit?: number } = {}): { cursor: number; message: MessageRecord }[] {
+    const after = options.after ?? 0, limit = options.limit ?? 201;
+    if (!Number.isSafeInteger(after) || after < 0 || !Number.isInteger(limit) || limit < 1 || limit > 2001) return messagingFail('INVALID_INPUT', 400);
+    return this.db.prepare('SELECT rowid AS cursor,body FROM messaging_messages WHERE recipient=? AND rowid>? ORDER BY rowid LIMIT ?').all(recipient, after, limit)
       .map(row => ({ cursor: Number(row.cursor), message: JSON.parse(String(row.body)) }));
   }
   hasReply(id: string) {

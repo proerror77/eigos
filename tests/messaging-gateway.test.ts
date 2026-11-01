@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { ClientFactory } from '@a2a-js/sdk/client';
@@ -162,5 +163,30 @@ test('the Gateway restarts with the same PA inbox ciphertext and original conver
     assert.equal(reply.conversationId, sent.conversationId);
     assert.equal(f.gateway.messaging!.store.installation(a.id)?.id, ga.id);
     assert.equal(f.gateway.store.list(a.owner, { limit: 20, offset: 0 }).total, 0);
+  } finally { await f.close(); }
+});
+
+test('the saved Grok PA CLI uses explicit A2A communication without entering the business adapter', { timeout: 60000 }, async () => {
+  const f = await messagingGatewayFixture();
+  try {
+    const a = await f.actor('CLI Alice'), b = await f.actor('CLI Bob'); await f.approve(a); const gb = await f.approve(b);
+    const identity = f.gateway.messaging!.identity(a.p, a.token), peer = f.gateway.messaging!.identity(b.p, b.token);
+    const contact = record.parse(await f.gateway.messaging!.execute(identity, { action: 'contact.request', endpointId: gb.id, requestId: randomUUID() }));
+    await f.gateway.messaging!.execute(peer, { action: 'contact.respond', contactId: contact.contactId, decision: 'accept', requestId: randomUUID() });
+    const profile = join(f.directory, 'cli-profile.json'), input = join(f.directory, 'cli-message.json'), output = join(f.directory, 'cli-receipt.json');
+    writeFileSync(profile, JSON.stringify({ baseUrl: f.base, credentialPath: a.credentialPath, displayName: 'CLI Alice PA' }), { mode: 0o600 });
+    const operation = { action: 'send', endpointId: gb.id, text: 'grok-cli-communication-canary', requestId: randomUUID() };
+    writeFileSync(input, JSON.stringify(operation), { mode: 0o600 });
+    const child = spawn(process.execPath, ['--import', './dist/tests/fixtures/messaging-cli-transport.js', 'integrations/grok/eigos-native/client.mjs',
+      '--profile', profile, 'communication', '--input', input, '--output', output], { cwd: process.cwd(),
+      env: { PATH: process.env.PATH, EIGOS_TEST_ORIGIN: f.base, EIGOS_TEST_HTTP: f.http, NODE_NO_WARNINGS: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let log = ''; child.stdout.on('data', data => { log += String(data); }); child.stderr.on('data', data => { log += String(data); });
+    const code = await new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+    assert.equal(code, 0, log);
+    const receipt = z.object({ schema: z.literal(COMMUNICATION_SCHEMA), result: z.object({ messageId: z.uuid() }) }).parse(JSON.parse(readFileSync(output, 'utf8')));
+    await f.gateway.messaging!.execute(peer, { action: 'list', limit: 20 });
+    const received = record.parse(await f.gateway.messaging!.execute(peer, { action: 'read', messageId: receipt.result.messageId })); assert.equal(received.text, operation.text);
+    assert.equal(f.gateway.store.list(a.owner, { limit: 20, offset: 0 }).total, 0); assert.equal(f.gateway.store.list(b.owner, { limit: 20, offset: 0 }).total, 0);
+    assert(!log.includes(a.token));
   } finally { await f.close(); }
 });

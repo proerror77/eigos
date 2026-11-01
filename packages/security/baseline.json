@@ -4793,13 +4793,13 @@
     {
       "id": "native-pa-relay-client",
       "file": "integrations/grok/eigos-native/client.mjs",
-      "sourceDigest": "683cdc8e2f206aed19228803c5074e833c6e918eaa5d9db446ee738dbb1c35fa",
+      "sourceDigest": "b043bb554b3bff2dfa86452c36d697d20b4af0fafcb2834b2acd270e701a10e7",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Installed PA transport requests, saved profiles and result receipts",
-      "currentControl": "Explicit transport choice, pinned authority/public key, private OAuth custody and stable task request identity",
+      "currentControl": "Explicit transport and communication choice, strict versioned operations, independent messaging OAuth purpose, pinned authority/public key, private OAuth custody and stable request identity",
       "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     },
@@ -5255,7 +5255,7 @@
     {
       "id": "pa-messaging-metadata",
       "file": "packages/agent-messaging/store.ts",
-      "sourceDigest": "6479d7ed97df70582ddab0aaee4980ea4ff3e6c2c18ae6e63071b6addc3d8e70",
+      "sourceDigest": "d0e8290513ac59c350d486325038c130c874080a74a8fd5ea25ade55e70214b8",
       "channels": [
         "sqlite"
       ],
@@ -5267,7 +5267,7 @@
     {
       "id": "pa-messaging-service",
       "file": "packages/agent-messaging/service.ts",
-      "sourceDigest": "70d9eaaf49d42132b3146590fb239deef13efe815d9bda08cedc128d59a503a3",
+      "sourceDigest": "585edb3e45385c5754b4dad6c8e0dc2d505767297f59fd8f2180dae5036efb50",
       "channels": [
         "mcp",
         "a2a",
@@ -5296,7 +5296,7 @@
     {
       "id": "pa-messaging-mcp",
       "file": "apps/gateway/messaging/mcp.ts",
-      "sourceDigest": "dfeea2b4b038334d277ecb158c57cdcca516864e480ade239e8b0d182cd3112e",
+      "sourceDigest": "16e05ed4ec881e68324d79056af140b0f744718a141b00ea24c05e3c611cd543",
       "channels": [
         "mcp"
       ],
@@ -5316,6 +5316,19 @@
       "content": "Controller approval, discoverability, key-custody consent and revocation.",
       "currentControl": "Own active session, exact origin and constant-time CSRF; five-minute session-bound single-use review; current installation ownership; agents cannot approve their own rights.",
       "targetControl": "Own active session, exact origin and constant-time CSRF; five-minute session-bound single-use review; current installation ownership; agents cannot approve their own rights.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-communication-client-input",
+      "file": "packages/agent-client/communication-input.ts",
+      "sourceDigest": "0bdd4a34dabe1dadde272486f20a9acc609d0799b25c5bcbc30e5e2488e38e90",
+      "channels": [
+        "a2a",
+        "private_file"
+      ],
+      "content": "Explicit PA communication requests from the installed client.",
+      "currentControl": "Strict communication-only operations; preserved write request identity; no business-task adapter or private input in errors.",
+      "targetControl": "Keep private communication separate from task creation and signed authorization.",
       "stage": "S5"
     }
   ]

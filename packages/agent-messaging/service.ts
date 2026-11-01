@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { lstatSync, mkdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { Principal } from '../core/domain.js';
@@ -128,16 +128,18 @@ export class AgentMessagingService {
     return { node, contact };
   }
   private cursor(value: unknown) {
-    const body = Buffer.from(JSON.stringify(value)).toString('base64url');
-    return body + '.' + createHmac('sha256', this.#cursorKey).update(body).digest('base64url');
+    const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', this.#cursorKey, iv);
+    const body = Buffer.concat([cipher.update(JSON.stringify(value), 'utf8'), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), body]).toString('base64url');
   }
   private after(cursor: string | undefined, context: string): number {
     if (!cursor) return 0;
     try {
-      const [body, mac] = cursor.split('.');
-      const expected = createHmac('sha256', this.#cursorKey).update(body!).digest(), actual = Buffer.from(mac!, 'base64url');
-      if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return messagingFail('CURSOR_STALE', 409);
-      const parsed = JSON.parse(Buffer.from(body!, 'base64url').toString());
+      const bytes = Buffer.from(cursor, 'base64url');
+      if (bytes.length <= 28) return messagingFail('CURSOR_STALE', 409);
+      const decipher = createDecipheriv('aes-256-gcm', this.#cursorKey, bytes.subarray(0, 12));
+      decipher.setAuthTag(bytes.subarray(12, 28));
+      const parsed = JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString('utf8'));
       if (parsed.context !== context || !Number.isSafeInteger(parsed.after) || parsed.after < 0 || parsed.expiresAt <= this.store.now()) return messagingFail('CURSOR_STALE', 409);
       return parsed.after;
     } catch { return messagingFail('CURSOR_STALE', 409); }
@@ -196,10 +198,6 @@ export class AgentMessagingService {
     if (op.action === 'list') {
       await this.refresh(own.id);
       const node = await this.node(own.id), contacts = await node.contacts(), accepted = new Set(contacts.filter(c => c.state === 'accepted').map(c => c.id));
-      const messages = this.store.inbox(own.id).filter(({ message }) => {
-        try { this.live(message.sender); } catch { return false; }
-        return message.deliveredAt && message.expiresAt > this.store.now() && accepted.has(message.connectionId);
-      });
       const contactViews = contacts.flatMap(c => {
         const peerId = c.requester === node.agentId ? c.recipient : c.requester;
         const peer = this.store.grants().find(g => g.agentId === peerId);
@@ -207,9 +205,18 @@ export class AgentMessagingService {
         return [{ contactId: c.id, state: c.state, endpoint: this.endpoint(peer), incoming: c.recipient === node.agentId }];
       });
       const context = digest([own.id, own.revision, contactViews.map(c => [c.contactId, c.state, c.endpoint.endpointId])]);
-      const after = this.after(op.cursor, context), remaining = messages.filter(item => item.cursor > after), selected = remaining.slice(0, op.limit);
-      return { items: selected.map(item => this.view(item.message)), contacts: contactViews,
-        ...(remaining.length > selected.length ? { cursor: this.cursor({ context, after: selected.at(-1)!.cursor, expiresAt: this.store.now() + 900000 }) } : {}) };
+      const after = this.after(op.cursor, context), scanLimit = 201, batch = this.store.inbox(own.id, { after, limit: scanLimit });
+      const items: ReturnType<AgentMessagingService['view']>[] = []; let last = after;
+      for (const { cursor, message } of batch) {
+        if (items.length === op.limit) break;
+        last = cursor;
+        if (!message.deliveredAt || message.expiresAt <= this.store.now() || !accepted.has(message.connectionId)) continue;
+        try { this.live(message.sender); } catch { continue; }
+        items.push(this.view(message));
+      }
+      const hasMore = batch.some(row => row.cursor > last) || batch.length === scanLimit;
+      return { items, contacts: contactViews,
+        ...(hasMore ? { cursor: this.cursor({ context, after: last, expiresAt: this.store.now() + 900000 }) } : {}) };
     }
     const record = this.store.message(op.messageId);
     if (record.sender !== own.id && record.recipient !== own.id) return messagingFail('NOT_FOUND', 404);

@@ -94,7 +94,7 @@ const client = await agent.a2a({ purpose: 'messaging' });
 - 发出前保存固定 requestId；相同写请求跨 MCP/A2A 重试，命中同一操作。更换正文、目标或联系决定必须用新 ID。
 - `stored` 表示正文已经可靠进入加密发件箱，`delivered_to_endpoint` 表示对端持久收件，`read` 是对端明确标记，`replied` 要求有效回信已被 Relay 接受或对端收件。仅有待准备元数据时为 `pending`。
 - Relay 回执与这些应用状态分开。收到回执、已读或回复都不表示服务任务已完成。
-- 列表/读取不标已读。新消息到达不会破坏已有信箱分页；遇到 `CURSOR_STALE` 时清理旧游标并重新领取。
+- 列表/读取不标已读。空页仍带 cursor 时继续领取；扫描位置会越过过期或不可见记录，不会被最早的一批旧记录截断。新消息到达不会破坏已有信箱分页；遇到 `CURSOR_STALE` 时清理旧游标并重新领取。
 - 服务或连接器重启后沿用原 endpoint、消息和会话。收到消息先保存密文再 ACK，并在同节点 SQLite 内原子保留密文后清理旧 inbox 副本。
 - 新联系不能恢复旧联系下的消息。已撤销或无效消息不阻塞其他获准联系人，暂态网络/权限服务错误保留重试。
 - 当前未读投递最长 24 小时，接口返回 expiresAt。过期不自动延期或换消息 ID 重发；本版本不提供永久聊天历史。
@@ -106,3 +106,5 @@ const client = await agent.a2a({ purpose: 'messaging' });
 测试覆盖真实 JWT、官方 MCP/A2A 客户端、真实 Relay HTTP/加密、跨协议回复、无业务授权通信、原服务任务兼容、原生 MCP 安装、撤销 fence/代次、旧联系隔离、消息持久化和进程重启。身份和消息是合成测试数据，不代表已完成某个手机产品的真实接入或正式部署。
 
 相关：[会员接入](agent-onboarding.md)、[原任务 Relay](relay-tasks.md)、[统一运行权威](../architecture/runtime-authority.md)。
+
+已有 Grok 原生 CLI 可用 `communication --input <私有操作文件> --output <私有回执>` 走独立的标准 A2A 消息路径；需要增加已获授权的 OAuth 范围时显式使用 `login --purpose both`。默认 login/a2a 的原任务行为保持不变。

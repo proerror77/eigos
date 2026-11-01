@@ -135,6 +135,9 @@ test('reply status requires durable ciphertext, and new arrivals do not invalida
     const first = await f.execute(f.a.identity, { action: 'send', endpointId: f.b.grant.id, text: 'first', requestId: randomUUID() });
     await f.execute(f.a.identity, { action: 'send', endpointId: f.b.grant.id, text: 'second', requestId: randomUUID() });
     const page = await f.execute(f.b.identity, { action: 'list', limit: 1 }); assert(page.cursor);
+    const tampered = Buffer.from(page.cursor, 'base64url'); tampered[tampered.length - 1]! ^= 1;
+    await assert.rejects(f.execute(f.b.identity, { action: 'list', cursor: tampered.toString('base64url'), limit: 1 }), /CURSOR_STALE/);
+    await assert.rejects(f.execute(f.a.identity, { action: 'list', cursor: page.cursor, limit: 1 }), /CURSOR_STALE/);
     await f.execute(f.a.identity, { action: 'send', endpointId: f.b.grant.id, text: 'third', requestId: randomUUID() });
     const next = await f.execute(f.b.identity, { action: 'list', cursor: page.cursor, limit: 1 }); assert.equal(next.items.length, 1);
     assert.notEqual(next.items[0].messageId, first.messageId);
@@ -144,6 +147,34 @@ test('reply status requires durable ciphertext, and new arrivals do not invalida
     assert.notEqual((await f.execute(f.a.identity, { action: 'status', messageId: first.messageId })).state, 'replied');
     await f.execute(f.b.identity, reply);
     assert.equal((await f.execute(f.a.identity, { action: 'status', messageId: first.messageId })).state, 'replied');
+  } finally { await f.close(); }
+});
+
+test('recipient pagination traverses more than 2001 expired records and reaches a later valid sender', async () => {
+  const f = await fixture();
+  try {
+    const contactId = await f.connect(), now = Date.now();
+    const insert = f.db.prepare('INSERT INTO messaging_messages VALUES(?,?,?,?)');
+    f.db.exec('BEGIN IMMEDIATE');
+    for (let i = 0; i < 2001; i++) {
+      const message = { id: randomUUID(), sender: f.a.grant.id, recipient: f.b.grant.id, conversationId: randomUUID(), connectionId: contactId,
+        textDigest: 'expired-synthetic-record', createdAt: now - 3600000, expiresAt: now - 1000, deliveredAt: now - 3000000 };
+      insert.run(message.id, message.sender, message.recipient, JSON.stringify(message));
+    }
+    f.db.exec('COMMIT');
+    const c = f.actor('Later sender');
+    const request = await f.execute(c.identity, { action: 'contact.request', endpointId: f.b.grant.id, requestId: randomUUID() });
+    await f.execute(f.b.identity, { action: 'contact.respond', contactId: request.contactId, decision: 'accept', requestId: randomUUID() });
+    const sent = await f.execute(c.identity, { action: 'send', endpointId: f.b.grant.id, text: 'reachable beyond the old inbox cap', requestId: randomUUID() });
+    let cursor: string | undefined, pages = 0; const ids: string[] = [];
+    do {
+      const page = await f.execute(f.b.identity, { action: 'list', limit: 1, ...(cursor ? { cursor } : {}) });
+      for (const item of page.items) ids.push(item.messageId);
+      if (page.cursor) assert.notEqual(page.cursor, cursor);
+      cursor = page.cursor; assert(++pages < 20, 'bounded scans must advance even across empty expired pages');
+    } while (cursor);
+    assert.deepEqual(ids, [sent.messageId]);
+    assert.equal((await f.execute(f.b.identity, { action: 'read', messageId: sent.messageId })).text, 'reachable beyond the old inbox cap');
   } finally { await f.close(); }
 });
 
