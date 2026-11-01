@@ -109,6 +109,8 @@ const schema = z.object({
   EIGOS_MEMBERSHIP_APPROVAL: z.enum(['self-service', 'manual', 'invite-only']).default('self-service'),
   ALLOWED_ORIGINS: z.string().default(''),
   EIGOS_EXECUTOR: z.enum(['disabled', 'codex']).default('disabled'),
+  EIGOS_MESSAGING_ENABLED: z.enum(['false', 'true']).default('false'),
+  EIGOS_MESSAGING_NODE_DIR: z.string().optional(),
   EIGOS_CODEX_BIN: z.string().default('codex'),
   EIGOS_CODEX_MODEL: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/).default('gpt-6-luna'),
   EIGOS_CODEX_REASONING_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('medium'),
@@ -129,6 +131,8 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
   const parsed = schema.parse(env);
   const c: Config = parsed.EIGOS_AUTHORITY_FILE ? { ...parsed, authority: readRuntimeAuthority(parsed.EIGOS_AUTHORITY_FILE) } : parsed;
   if (c.EIGOS_TASK_RELAY_FILE && (!c.authority || !isAbsolute(c.EIGOS_TASK_RELAY_FILE))) throw new Error('Task Relay requires the existing primary authority and an absolute private configuration file');
+  if (c.EIGOS_MESSAGING_ENABLED === 'true' && (!c.authority || !c.EIGOS_TASK_RELAY_FILE || !c.EIGOS_MESSAGING_NODE_DIR || !isAbsolute(c.EIGOS_MESSAGING_NODE_DIR)))
+    throw new Error('Messaging requires the existing primary Relay and an absolute private node directory');
   if (c.EIGOS_DIDI_RELAY_AGENT_ID && (!c.EIGOS_TASK_RELAY_FILE || !c.authority || c.EIGOS_DIDI_ENVIRONMENT !== 'production')) throw new Error('Relay source reads require the primary task relay and production read-only DiDi configuration');
   if (c.authority) {
     const primary = c.authority.ingresses.find(value => value.origin === c.authority!.canonicalOrigin)!;

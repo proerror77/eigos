@@ -71,6 +71,8 @@ test('Auth0 blueprint binds two distinct clients and a short-lived, consented RF
   assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:object_write')!.description, /exact preview/);
   assert.match(plan.api.scopes.find(scope => scope.value === 'ontology:publish')!.description, /your own ontology/);
   assert.deepEqual(auth0Plan('https://eigos.example', undefined, { memberSources: true }).api.scopes.filter(s => s.value.startsWith('sources:')).map(s => s.value), ['sources:read', 'sources:write']);
+  assert.equal(plan.api.scopes.some(scope => scope.value.startsWith('messaging:')), false);
+  assert.deepEqual(auth0Plan('https://eigos.example', undefined, { messaging: true }).api.scopes.filter(s => s.value.startsWith('messaging:')).map(s => s.value), ['messaging:read', 'messaging:write']);
   assert.throws(() => auth0Plan('http://eigos.example'));
   assert.throws(() => auth0Plan('https://eigos.example/path'));
   assert.throws(() => auth0Plan('https://eigos.example', 'https://attacker.example/callback'));

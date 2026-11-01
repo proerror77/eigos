@@ -9,16 +9,19 @@ import type { RelayClient } from '../agent-transport/client.js';
 import { taskRelayMetadataSchema } from '../agent-transport/task-contracts.js';
 import { ClientFactory, JsonRpcTransportFactory, type Client } from '@a2a-js/sdk/client';
 import { discoverA2A } from './a2a.js';
+import { communicationRequestSchema, COMMUNICATION_SCHEMA, messagingOperationSchema, type MessagingOperation } from '../agent-messaging/contracts.js';
 
-const metadataSchema = z.object({ version: z.literal(1), registration_endpoint: z.url(), issuer: z.url(), client_id: z.string().min(1), audience: z.url(), scopes: z.array(z.string()) });
-const admissionSchema = z.object({ registrationId: z.uuid(), status: z.string(), nextAction: z.string(), pollAfterSeconds: z.number(), links: z.record(z.string(), z.url()) });
+const metadataSchema = z.object({ version: z.literal(1), registration_endpoint: z.url(), issuer: z.url(), client_id: z.string().min(1), audience: z.url(), scopes: z.array(z.string()),
+  messaging: z.object({ scopes: z.array(z.string()), permissions_url: z.url(), schema: z.literal('eigos.agent-communication/1') }).optional() });
+const admissionSchema = z.object({ registrationId: z.uuid(), status: z.string(), nextAction: z.string(), pollAfterSeconds: z.number(), links: z.record(z.string(), z.url()),
+  messaging: z.object({ state: z.enum(['ready', 'authorization_required']), endpointId: z.uuid().optional(), scopes: z.array(z.string()).optional(), expiresAt: z.number().optional() }).optional() });
 export type AgentAdmission = z.infer<typeof admissionSchema>;
 type Metadata = z.infer<typeof metadataSchema>;
 type Device = Awaited<ReturnType<typeof oidc.initiateDeviceAuthorization>>;
 type Tokens = Awaited<ReturnType<typeof oidc.refreshTokenGrant>>;
 type State = { version: 1; baseUrl: string; issuer: string; clientId: string; registrationId: string; credential: string; displayName: string;
   accessToken?: string; refreshToken?: string; expiresAt?: number; bound?: boolean; refreshPending?: boolean; refreshCount?: number;
-  device?: Device; deviceExpiresAt?: number };
+  device?: Device; deviceExpiresAt?: number; devicePurpose?: 'services' | 'messaging' | 'both' };
 const stateSchema = z.object({ version: z.literal(1), baseUrl: z.url(), issuer: z.url(), clientId: z.string(), registrationId: z.uuid(), credential: z.string().regex(/^[A-Za-z0-9_-]{43}$/), displayName: z.string() });
 
 export class AgentConnectorError extends Error {
@@ -109,12 +112,19 @@ export class AgentConnector {
     return admission;
   }
   async status(): Promise<AgentAdmission> { return this.registrationRequest(''); }
-  async beginAuthorization(): Promise<{ verificationUri: string; userCode: string; expiresAt: number }> {
+  async beginAuthorization(options: { purpose?: 'services' | 'messaging' | 'both' } = {}): Promise<{ verificationUri: string; userCode: string; expiresAt: number }> {
     return this.lock(async () => {
       const status = await this.status();
       if (['agent_registration_revoked', 'registration_expired'].includes(status.status)) throw new AgentConnectorError(status.status, status);
+      const purpose = options.purpose ?? 'services';
+      if (purpose !== 'services' && !this.metadata.messaging) throw new AgentConnectorError('messaging_not_supported');
+      if (this.state.device && (this.state.deviceExpiresAt ?? 0) > Date.now() && (this.state.devicePurpose ?? 'services') !== purpose)
+        throw new AgentConnectorError('authorization_purpose_changed');
       if (!this.state.device || (this.state.deviceExpiresAt ?? 0) <= Date.now()) {
-        this.state.device = await oidc.initiateDeviceAuthorization(await this.discover(), { scope: this.metadata.scopes.join(' '), audience: this.metadata.audience });
+        const scopes = purpose === 'messaging' ? ['openid', 'offline_access', 'members:write', ...this.metadata.messaging!.scopes]
+          : [...this.metadata.scopes, ...(purpose === 'both' ? this.metadata.messaging!.scopes : [])];
+        this.state.device = await oidc.initiateDeviceAuthorization(await this.discover(), { scope: [...new Set(scopes)].join(' '), audience: this.metadata.audience });
+        this.state.devicePurpose = purpose;
         this.state.deviceExpiresAt = Date.now() + this.state.device.expires_in * 1000; this.save();
       }
       return { verificationUri: this.state.device.verification_uri_complete ?? this.state.device.verification_uri, userCode: this.state.device.user_code, expiresAt: this.state.deviceExpiresAt! };
@@ -124,7 +134,7 @@ export class AgentConnector {
     return this.lock(async () => {
       if (!this.state.device || (this.state.deviceExpiresAt ?? 0) <= Date.now()) throw new AgentConnectorError('authorization_required');
       const tokens = await oidc.pollDeviceAuthorizationGrant(await this.discover(), this.state.device);
-      this.install(tokens); delete this.state.device; delete this.state.deviceExpiresAt; this.save();
+      this.install(tokens); delete this.state.device; delete this.state.deviceExpiresAt; delete this.state.devicePurpose; this.save();
       const status = await this.bind(); this.state.bound = true; this.save(); return status;
     });
   }
@@ -152,9 +162,11 @@ export class AgentConnector {
     }).finally(() => { this.inflight = undefined; });
     return this.inflight;
   }
-  async accessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
+  async accessToken(options: { forceRefresh?: boolean; purpose?: 'services' | 'messaging' } = {}): Promise<string> {
     const admission = await this.status();
-    if (!['active','foundation_ready'].includes(admission.status)) throw new AgentConnectorError(admission.status, admission);
+    if (options.purpose === 'messaging') {
+      if (!['active', 'foundation_ready', 'data_authorization_required'].includes(admission.status) || admission.messaging?.state !== 'ready') throw new AgentConnectorError('messaging_authorization_required', admission);
+    } else if (!['active','foundation_ready'].includes(admission.status)) throw new AgentConnectorError(admission.status, admission);
     return this.rawToken(options.forceRefresh);
   }
   async registerMembership(profile: Profile, consent: true): Promise<AgentAdmission> {
@@ -190,9 +202,22 @@ export class AgentConnector {
     // No automatic replay of task-creating POSTs after errors or token races.
     return this.fetcher(url, { ...init, headers, redirect: 'error' });
   }
+  async messagingFetch(path: string | URL, init: RequestInit = {}): Promise<Response> {
+    const url = new URL(path, this.baseUrl);
+    if (url.origin !== this.baseUrl) throw new AgentConnectorError('credential_destination_mismatch');
+    const headers = new Headers(init.headers); headers.set('Authorization', `Bearer ${await this.accessToken({ purpose: 'messaging' })}`);
+    return this.fetcher(url, { ...init, headers, redirect: 'error' });
+  }
+  async communicate(input: MessagingOperation): Promise<unknown> {
+    const operation = messagingOperationSchema.parse(input);
+    const body = communicationRequestSchema.parse({ schema: COMMUNICATION_SCHEMA, operation });
+    const response = await this.messagingFetch('/communication', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+    if (!response.ok) throw new AgentConnectorError(response.status === 403 ? 'messaging_authorization_required' : 'messaging_request_failed');
+    return response.json();
+  }
   /** Official A2A SDK, using the same installed identity and rotating OAuth
    * credentials as MCP. Discovery is public; task POSTs are never replayed. */
-  async a2a(): Promise<Client> {
+  async a2a(options: { purpose?: 'services' | 'messaging' } = {}): Promise<Client> {
     const card = await discoverA2A(this.baseUrl, this.fetcher);
     const scheme = card.securitySchemes.eigos?.scheme;
     const issuerMetadata = this.metadata.issuer.replace(/\/$/, '') + '/.well-known/openid-configuration';
@@ -201,7 +226,7 @@ export class AgentConnector {
     }
     return new ClientFactory({
       clientConfig: { polling: true },
-      transports: [new JsonRpcTransportFactory({ fetchImpl: (input, init) => this.fetch(
+      transports: [new JsonRpcTransportFactory({ fetchImpl: (input, init) => (options.purpose === 'messaging' ? this.messagingFetch.bind(this) : this.fetch.bind(this))(
         input instanceof Request ? input.url : input.toString(),
         { ...init, signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(30000)]) : AbortSignal.timeout(30000) },
       ) })],

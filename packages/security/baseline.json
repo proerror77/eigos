@@ -2874,36 +2874,36 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "e0d29452442ab9f103ab0e05d90e82c94863a7fb35a927c0ca763d0ff1b85036",
+      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
       "channels": [
         "http"
       ],
       "content": "Ontology describe/query/evaluate and task authorization/reconcile responses; error and HTTP audit",
-      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged.",
+      "currentControl": "Foundation authenticated TaskView, controlled downloads and sanitized audit; Pipeline-only metadata entrypoints retain current installation and namespace authority; authentication failures provide public onboarding and canonical member-permission links without grants. Canonical redirects include the public PA guide and downloads; authenticated task routing and projections are unchanged. Opt-in PA communication uses explicit RPC dispatch and current member/installation facts; all business requests retain the original Foundation authentication.",
       "targetControl": "AccessContext plus resource/data policies and TaskView",
       "stage": "S2"
     },
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "84e235b88eb7ef83a12951bec29ee3a48eb01074b8433803f2feeafd470f4d4a",
+      "sourceDigest": "41452fa3c00320f280e97b213644a24ea87bd5803375cad4b97777ab7c3d3a32",
       "channels": [
         "mcp"
       ],
       "content": "All task/ontology tools including submit, reply, cancel, payment, reconcile and remediation",
-      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority. Service instructions describe intent-based discovery and preserve capability, source and task authorization checks.",
+      "currentControl": "Foundation task-bound reads and TaskView; operator-scoped Pipeline tools use operation allowlists without enabling generic definition editing or managed actions Original-PA read-only technical resume uses the shared current-grant, authority, revision and fixed-budget checks; tool discovery grants no authority. Service instructions describe intent-based discovery and preserve capability, source and task authorization checks. Messaging-only discovery exposes communication tools only; communication grants never manufacture business access.",
       "targetControl": "Shared policy and response projection on every tool",
       "stage": "S4"
     },
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "d2f497e840c042299af43d0c2d50a0c9a7b8b24caa0209280a134895c9a150a8",
+      "sourceDigest": "258348b96e23ff59ea199f4ea13ebc3f8abc3e8c4887c699f30a0de987cdbd57",
       "channels": [
         "a2a"
       ],
       "content": "SendMessage/get/list/cancel/wait; artifacts, delegation, runs, errors and totalSize",
-      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata. The public card points to the current connection guide and distinguishes discovery triggers from actual business availability.",
+      "currentControl": "Foundation v2 safe metadata includes the existing task state for technical pauses; current read/replay checks remain required and no raw Job delegation is exposed; Exposes bounded source-authorization recovery and original-PA resume guidance through the sealed TaskView metadata. The public card points to the current connection guide and distinguishes discovery triggers from actual business availability. Explicit PA communication data returns Message, validates tenant and rejects task references/mixed parts; it never creates a business Task.",
       "targetControl": "Actor-aware TaskView before protocol serialization",
       "stage": "S4"
     },
@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "0ba9b621ff7eb9adf44658e8bf9dd3b6e7decb1240459b7d41aff4eaafc5c469",
+      "sourceDigest": "a2d22dbd315879056d9ec68af3bd8b17a2a5d92fb4e869e8db441478a24c07ab",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2950,7 +2950,7 @@
     {
       "id": "member-ui",
       "file": "apps/gateway/members/routes.ts",
-      "sourceDigest": "010995536ac463f4f726061246f837166745b9d88003a85eb804616b7790f857",
+      "sourceDigest": "e0735bb1e2d80ed0a1209b8ed8a92991c24ca0507e1f81a9f72fbda5af07bd6a",
       "channels": [
         "member_ui"
       ],
@@ -2962,7 +2962,7 @@
     {
       "id": "member-page",
       "file": "apps/gateway/members/page.ts",
-      "sourceDigest": "11279af295efd83c938753485b75bb8ec9c1c01e00dae6ded5c49ac09890190f",
+      "sourceDigest": "f81bc9bb9edac014143f87f5e5a3fcf03c150129b4afd71076e8cbbb81035475",
       "channels": [
         "member_ui"
       ],
@@ -2998,7 +2998,7 @@
     {
       "id": "agent-routes",
       "file": "apps/gateway/members/agent-routes.ts",
-      "sourceDigest": "11bdddef490fd32e44aaa385c74c6ac89a35ee67ca6a71f123c92d6ba6e35b9e",
+      "sourceDigest": "75e693e11048db0ce291b6acc75a5b1a3d8db792726b1b348e19342921f157fc",
       "channels": [
         "http"
       ],
@@ -3342,12 +3342,12 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "cc1abf5334a448d675c38346d72573d97258665a6ddcc2d45b7c86450dac0efc",
+      "sourceDigest": "14c40eee444314724a10c57363478f944fec1e542c67cd5c959f8263b1670497",
       "channels": [
         "authorization_control"
       ],
       "content": "Subjects, grants, fences, task authority, audit and worker eligibility",
-      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility.",
+      "currentControl": "Foundation v2 persistent authority and task scopes, no automatic schema migration; Historical task authority is available only for explicit member review and never substitutes for current execution eligibility. Persistent identity generation includes cleared fences so restoring eligibility cannot revive old communication consent.",
       "targetControl": "Complete resource/data/output enforcement in S2-S4",
       "stage": "S1"
     },
@@ -3366,7 +3366,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "3c63efcbdcfa1272cc05b0149cdc37829eec6e80238623ca27d7cde5f55a419c",
+      "sourceDigest": "0917d4080bbce8d00f8d0634171412bc226b3b260313fce0585d639c4f0f6917",
       "channels": [
         "authorization_control"
       ],
@@ -3402,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "60718a95bb4b78ab44e2e87b20b362d966c1c4c3ca0c0b78af03067f76b8daa1",
+      "sourceDigest": "59765c03d969740ba2e2973bf37516237a69f42f6121add31e16e79674ac398e",
       "channels": [
         "authorization_control"
       ],
@@ -3692,12 +3692,12 @@
     {
       "id": "s5-packages-agent-client-client",
       "file": "packages/agent-client/client.ts",
-      "sourceDigest": "bc9e436be95edc3881ffba51da6a790113ddd06c3b11ddebae298bb3d38924a0",
+      "sourceDigest": "42ead0c6fbb0350ae2e35622e3ac2afa302d67bedc508371e678972663d9ad07",
       "channels": [
         "runtime"
       ],
       "content": "S5 source, client, migration or runtime integration contract",
-      "currentControl": "Official A2A SDK uses the existing installation-bound rotating OAuth flow; same-origin endpoint and onboarding issuer are pinned, task POSTs are not automatically replayed",
+      "currentControl": "Official A2A SDK uses the existing installation-bound rotating OAuth flow; same-origin endpoint and onboarding issuer are pinned, task POSTs are not automatically replayed Communication OAuth purpose and readiness are separate from Foundation business readiness; default service scopes are unchanged.",
       "targetControl": "Verified field projection, preserved evidence and no legacy authorization fallback",
       "stage": "S5"
     },
@@ -4337,7 +4337,7 @@
     {
       "id": "runtime-ingress",
       "file": "apps/gateway/ingress.ts",
-      "sourceDigest": "cde1c77953a2f36a7aeb1bdfce3f61d3a4c2b94675233f65dfdf918532521781",
+      "sourceDigest": "d72969b3a2578efdb406eab9f482b38f84900edc6d3d987d28ab57d3c8b10c70",
       "channels": [
         "http",
         "mcp",
@@ -4680,12 +4680,12 @@
     {
       "id": "relay-enrollment-issuer",
       "file": "packages/agent-transport/enrollment.ts",
-      "sourceDigest": "b200342ae8f586bc3c5370d4d77951bf906afcf0942cd4d6bc6c8f933fd47237",
+      "sourceDigest": "6027d3421b4e4085768c3002d621fb703ae43b79e0f32211b6242c8bbf6b25e5",
       "channels": [
         "authorization_control"
       ],
       "content": "Short-lived primary assertions for a specific transport public key",
-      "currentControl": "Current Foundation installation and grant, one-minute expiry, runtime-private signing key",
+      "currentControl": "Current Foundation installation and grant, one-minute expiry, runtime-private signing key Internal communication enrollment is minute-bound to the exact approved endpoint; caller checks separate current controller consent and identity fences.",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4704,13 +4704,13 @@
     {
       "id": "relay-node-client",
       "file": "packages/agent-transport/client.ts",
-      "sourceDigest": "899feb56a1081119bf02b18d96b486bc8b4b0c3915c1fa8581704ed2717c88fb",
+      "sourceDigest": "93561dd79ad9328b08ebbbacc4f065c3d633f6e8c0e36f06673875afaa38896b",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Node keys, signed proofs, encrypted inbox and outbox",
-      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry",
+      "currentControl": "Runtime-private keys, OS-held startup lock, paginated fixed-envelope retries, peer/contact/expiry and last-send callback; continuous bounded slots suppress active/handled duplicates and drain before retry Host ciphertext retention is atomic in the private node database; application reads separately revalidate current grant and exact original contact.",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },
@@ -4793,13 +4793,13 @@
     {
       "id": "native-pa-relay-client",
       "file": "integrations/grok/eigos-native/client.mjs",
-      "sourceDigest": "683cdc8e2f206aed19228803c5074e833c6e918eaa5d9db446ee738dbb1c35fa",
+      "sourceDigest": "b043bb554b3bff2dfa86452c36d697d20b4af0fafcb2834b2acd270e701a10e7",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Installed PA transport requests, saved profiles and result receipts",
-      "currentControl": "Explicit transport choice, pinned authority/public key, private OAuth custody and stable task request identity",
+      "currentControl": "Explicit transport and communication choice, strict versioned operations, independent messaging OAuth purpose, pinned authority/public key, private OAuth custody and stable request identity",
       "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     },
@@ -5197,7 +5197,7 @@
       ],
       "content": "Public connection metadata and Skill archive construction",
       "currentControl": "Explicit public field projection, configured transport selection and fixed asset allowlist; archive paths reject traversal and do not execute installers",
-      "sourceDigest": "0b1e8af10d394236f38eb92f96071230914965acd567614b6a4772cc75fae9e0",
+      "sourceDigest": "95ec9a256711a95e0dc9824dca6a0ea2c4394f29f8970e808de40c75d78ec0e7",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5234,8 +5234,101 @@
       ],
       "content": "JWT verifier and public OAuth resource/PA discovery metadata",
       "currentControl": "Existing signed issuer, audience, token purpose, lifetime and scope validation; guide URL is public pinned-origin metadata and grants no authority",
-      "sourceDigest": "efe93a2730edc6d292b6733f3307bbbca50e634675ba3931e796c8c94001dc48",
+      "sourceDigest": "ebde7535e89eec45aa2d4712b92fa1522ecf2bf6cf5f34b969039d005405a13c",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-contracts",
+      "file": "packages/agent-messaging/contracts.ts",
+      "sourceDigest": "df0d31634dd5281f0f6369f2b386cd5245c30e51a7eeabfae206ba79b7c86241",
+      "channels": [
+        "mcp",
+        "a2a",
+        "http"
+      ],
+      "content": "Bounded PA operations and explicit service-custody communication consent.",
+      "currentControl": "Strict versioned inputs; independent signed scopes; no caller-supplied owner/installation or executable command.",
+      "targetControl": "Strict versioned inputs; independent signed scopes; no caller-supplied owner/installation or executable command.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-metadata",
+      "file": "packages/agent-messaging/store.ts",
+      "sourceDigest": "d0e8290513ac59c350d486325038c130c874080a74a8fd5ea25ade55e70214b8",
+      "channels": [
+        "sqlite"
+      ],
+      "content": "Endpoint grants, fence generations, stable request keys and message routing/receipt metadata.",
+      "currentControl": "Existing authority connection; no message plaintext; same-key intent conflicts; durable payload milestones precede success states.",
+      "targetControl": "Existing authority connection; no message plaintext; same-key intent conflicts; durable payload milestones precede success states.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-service",
+      "file": "packages/agent-messaging/service.ts",
+      "sourceDigest": "585edb3e45385c5754b4dad6c8e0dc2d505767297f59fd8f2180dae5036efb50",
+      "channels": [
+        "mcp",
+        "a2a",
+        "relay",
+        "http"
+      ],
+      "content": "Private PA directory, accepted contacts and encrypted inbox/outbox routing.",
+      "currentControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution.",
+      "targetControl": "Fresh member/installation/fence generation, signed scope and controller grant; exact recipient/contact binding; atomic ciphertext handoff; no task/model/source execution.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-dispatch",
+      "file": "apps/gateway/messaging/rpc.ts",
+      "sourceDigest": "a1e220a2bfa0e740070dec5c749bf1593f09db77ad2d2499b65e09c01aed158f",
+      "channels": [
+        "mcp",
+        "a2a",
+        "http"
+      ],
+      "content": "Explicit transport-level PA communication dispatch.",
+      "currentControl": "Whitelist communication tools and reserved data schema; discovery carries no business authority; batch and unknown business calls retain Foundation gates.",
+      "targetControl": "Whitelist communication tools and reserved data schema; discovery carries no business authority; batch and unknown business calls retain Foundation gates.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-mcp",
+      "file": "apps/gateway/messaging/mcp.ts",
+      "sourceDigest": "16e05ed4ec881e68324d79056af140b0f744718a141b00ea24c05e3c611cd543",
+      "channels": [
+        "mcp"
+      ],
+      "content": "PA communication tools and bounded results/errors.",
+      "currentControl": "Same communication service and caller identity; no credentials or private body in errors; no implicit read/reply/business completion.",
+      "targetControl": "Same communication service and caller identity; no credentials or private body in errors; no implicit read/reply/business completion.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-messaging-controller",
+      "file": "apps/gateway/messaging/routes.ts",
+      "sourceDigest": "c90c5ce189a6e97ba64ea4224c693f0681b84c121a695a49ec3d688ad156756f",
+      "channels": [
+        "member_ui",
+        "http"
+      ],
+      "content": "Controller approval, discoverability, key-custody consent and revocation.",
+      "currentControl": "Own active session, exact origin and constant-time CSRF; five-minute session-bound single-use review; current installation ownership; agents cannot approve their own rights.",
+      "targetControl": "Own active session, exact origin and constant-time CSRF; five-minute session-bound single-use review; current installation ownership; agents cannot approve their own rights.",
+      "stage": "S5"
+    },
+    {
+      "id": "pa-communication-client-input",
+      "file": "packages/agent-client/communication-input.ts",
+      "sourceDigest": "0bdd4a34dabe1dadde272486f20a9acc609d0799b25c5bcbc30e5e2488e38e90",
+      "channels": [
+        "a2a",
+        "private_file"
+      ],
+      "content": "Explicit PA communication requests from the installed client.",
+      "currentControl": "Strict communication-only operations; preserved write request identity; no business-task adapter or private input in errors.",
+      "targetControl": "Keep private communication separate from task creation and signed authorization.",
       "stage": "S5"
     },
     {

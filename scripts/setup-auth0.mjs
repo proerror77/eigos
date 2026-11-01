@@ -9,11 +9,12 @@ const { values } = parseArgs({ options: {
   'public-url': { type: 'string' }, 'agent-callback': { type: 'string' }, tenant: { type: 'string' },
   connection: { type: 'string' },
   'member-sources': { type: 'boolean', default: false },
+  messaging: { type: 'boolean', default: false },
   'invite-beta': { type: 'boolean', default: false },
   output: { type: 'string', default: 'data/auth0-live' }, apply: { type: 'boolean', default: false },
 } });
 if (!values['public-url']) throw new Error('Usage: npm run setup:auth0 -- --public-url https://gateway-origin [--tenant tenant.auth0.com --apply]');
-const plan = auth0Plan(values['public-url'], values['agent-callback'], { memberSources: values['member-sources'], inviteBeta: values['invite-beta'] });
+const plan = auth0Plan(values['public-url'], values['agent-callback'], { memberSources: values['member-sources'], inviteBeta: values['invite-beta'], messaging: values.messaging });
 const directory = resolve(values.output), localData = resolve('data');
 if (!relative(localData, directory) || relative(localData, directory).startsWith('..') || relative(localData, directory).startsWith('/')) throw new Error('Use a dedicated directory under ignored data/ for private Auth0 configuration');
 mkdirSync(directory, { recursive: true, mode: 0o700 });
@@ -134,6 +135,7 @@ if (!values.apply) {
     }
     const apiReadback = api('get', `resource-servers/${encodeURIComponent(resource.id)}`);
     if (apiReadback.identifier !== plan.api.identifier || apiReadback.signing_alg !== 'RS256' || apiReadback.token_dialect !== 'rfc9068_profile' || apiReadback.token_lifetime !== 900 || apiReadback.allow_offline_access !== true || apiReadback.skip_consent_for_verifiable_first_party_clients !== false) throw new Error('API readback did not confirm the required token/consent contract');
+    if (values.messaging && ['messaging:read', 'messaging:write'].some(value => !(apiReadback.scopes ?? []).some(scope => scope.value === value))) throw new Error('Messaging scope readback did not confirm the explicitly requested communication ranges');
     if (mcp && JSON.stringify((apiReadback.scopes ?? []).map(scope => scope.value).sort()) !== JSON.stringify(plan.api.scopes.map(scope => scope.value).sort())) throw new Error('Invite beta API scope readback differs from its reviewed task-only plan');
     for (const [client, expected] of [[portal, plan.portal], [agent, plan.agent], [connector, plan.connector], ...(mcp ? [[mcp, plan.mcp]] : [])]) {
       const actual = api('get', `clients/${encodeURIComponent(client.client_id)}`);

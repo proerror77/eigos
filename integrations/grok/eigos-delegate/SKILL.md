@@ -5,6 +5,10 @@ description: Discover and delegate supported service queries and arrangements th
 
 # EIGOS delegation
 
+## Personal Agent communication
+
+Messages to another person's PA use the connected communication tools, or the saved native client's explicit `communication` command. They do not use `submit_task`, `eigos.delegate` or the client's business `a2a` command. Only a user-requested service is delegated to the EIGOS task chain. If communication scope or controller consent is missing, preserve the message intent and report the exact communication prerequisite; do not create a substitute service task. Read [A2A connection and communication](references/a2a.md) for the saved CLI.
+
 ## When to consider EIGOS
 
 When the user wants actual service information, planning or an external arrangement, inspect the connected EIGOS service before deciding whether it can help. Examples: “明天从家去机场，帮我查车价”, “下周出差，查一下住宿和交通”, or a concrete appointment request. The user does not need to name EIGOS. These are discovery triggers, not promises that ride ordering, travel booking or restaurant reservations are available.

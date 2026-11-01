@@ -43,6 +43,10 @@ import { mountPaOnboarding } from './pa-onboarding.js';
 import { createIngressRouter } from './ingress.js';
 import { decodeJwt } from 'jose';
 import { TaskRelayGateway, mountTaskRelay, readTaskRelayConfig } from './relay.js';
+import { AgentMessagingService } from '../../packages/agent-messaging/service.js';
+import { communicationRequestSchema, MESSAGING_SCOPES, MESSAGING_TOOLS, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
+import { communicationIntent, communicationScope } from './messaging/rpc.js';
+import { mountMessagingMemberRoutes } from './messaging/routes.js';
 
 const principalSchema = z.object({ issuer: z.string(), subject: z.string(), tenant: z.string(), clientId: z.string(), scopes: z.array(z.string()), access: accessContextSchema.optional() });
 const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value
@@ -65,6 +69,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   });
   app.disable('x-powered-by');
   const principals = new WeakMap<Request, Principal>();
+  const messagingIdentities = new WeakMap<Request, MessagingIdentity>();
   const store = new JobStore(config.DATABASE_PATH, { securityMode: config.EIGOS_SECURITY_MODE, authority: config.authority });
   const members = new MemberStore(config.MEMBERSHIP_DATABASE_PATH ?? (config.DATABASE_PATH === ':memory:' ? ':memory:' : `${config.DATABASE_PATH}.members`));
   let catalog: ExecutionCatalog, tasks: TaskService, network: NetworkService | undefined;
@@ -102,11 +107,25 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     } else store.admitMemberDidiSource();
   } catch (error) { network?.close(); store.close(); members.close(); throw error; }
   const security = store.security.enabled ? new AuthorizationCoordinator(store.security, members, store, catalog) : undefined;
-  let relay: TaskRelayGateway | undefined;
+  let relay: TaskRelayGateway | undefined, messaging: AgentMessagingService | undefined;
   try {
-    relay = config.EIGOS_TASK_RELAY_FILE ? new TaskRelayGateway(store, tasks, config.PUBLIC_URL, readTaskRelayConfig(config.EIGOS_TASK_RELAY_FILE), config.EIGOS_DIDI_RELAY_AGENT_ID) : undefined;
+    const relayConfig = config.EIGOS_TASK_RELAY_FILE ? readTaskRelayConfig(config.EIGOS_TASK_RELAY_FILE) : undefined;
+    relay = relayConfig ? new TaskRelayGateway(store, tasks, config.PUBLIC_URL, relayConfig, config.EIGOS_DIDI_RELAY_AGENT_ID) : undefined;
     security?.start();
-  } catch(error) { network?.close(); store.close(); members.close(); throw error; }
+    if (config.EIGOS_MESSAGING_ENABLED === 'true') {
+      if (!config.authority || !security || !relay?.enrollment || !relayConfig || !config.EIGOS_MESSAGING_NODE_DIR)
+        throw new Error('Messaging requires the primary JWT authority, its configured Relay enrollment issuer and a private node directory');
+      messaging = new AgentMessagingService(store.createMessagingStore(), members, { relayUrl: relayConfig.relayUrl,
+        nodeDirectory: config.EIGOS_MESSAGING_NODE_DIR, enrollment: relay.enrollment, available: () => !!security?.available && store.authorityCurrent(),
+        permissionsUrl: `${config.PUBLIC_URL}/members/communications`,
+        checkIdentity: facts => {
+          if (store.security.hasFence({ ownerKey: facts.ownerKey, kind: 'member', targetId: facts.memberId })
+            || store.security.hasFence({ ownerKey: facts.ownerKey, kind: 'connection', targetId: facts.clientId })
+            || store.security.hasFence({ ownerKey: facts.ownerKey, kind: 'installation', targetId: facts.installationId })) throw new MessagingError('MESSAGING_AUTHORIZATION_REQUIRED');
+          return store.security.identityGeneration(facts);
+        } });
+    }
+  } catch(error) { security?.close(); network?.close(); store.close(); members.close(); throw error; }
   app.use((req, res, next) => {
     if (!store.authorityCurrent()) { res.status(503).json({ error: 'runtime_authority_unavailable' }); return; }
     if (config.authority) {
@@ -162,7 +181,11 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   if (config.EIGOS_INVITE_BETA === 'true') app.get('/.well-known/eigos-pa-payment', (_req, res) => { res.status(404).json({ error: 'payment_unavailable_in_invite_beta' }); });
   app.get('/.well-known/eigos-pa-payment', (_req, res) => { const protocol = paPaymentProtocol(!security && !!config.EIGOS_SHOPIFY_PAYMENT_SANDBOX_URL); res.json(security ? { ...protocol, requestPath: 'metadata.payment.request', selectionPath: 'metadata.payment.selection', requestSchema: z.toJSONSchema(paPaymentRequestSchema.omit({ownerDigest:true,configurationDigest:true})) } : protocol); });
   mountMemberRoutes(app, config, members, loginProvider, security);
-  mountAgentRoutes(app, config, members, verify ?? createVerifier(config), security, config.authority ? req => ({ config: ingress.config(req), verify: ingress.verify(req), route: ingress.selected(req)! }) : undefined);
+  if (messaging) mountMessagingMemberRoutes(app, config, members, messaging);
+  mountAgentRoutes(app, config, members, verify ?? createVerifier(config), security, config.authority ? req => ({ config: ingress.config(req), verify: ingress.verify(req), route: ingress.selected(req)! }) : undefined, messaging);
+  if (messaging) app.get('/.well-known/eigos-communications', (_req, res) => res.json({ version: 1, schema: 'eigos.agent-communication/1',
+    tools: Object.keys(MESSAGING_TOOLS), scopes: MESSAGING_SCOPES, permissions_url: `${config.PUBLIC_URL}/members/communications`,
+    operationPath: '/communication', delivery: 'pull', custody: 'eigos-service', businessTasks: 'explicit_delegation_only' }));
   app.get(['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/a2a'], (req, res) => {
     if (config.EIGOS_AUTH_MODE !== 'jwt') { res.status(404).json({ error: 'oauth_not_configured', mode: 'local-development' }); return; }
     res.json(protectedResourceMetadata(ingress.config(req)));
@@ -172,9 +195,14 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     const match = /^Bearer ([^\s]+)$/i.exec(req.headers.authorization ?? '');
     try {
       if (!match?.[1]) throw new Error('Missing token');
+      const bearer = match[1];
       const verified = await ingress.verify(req)(match[1]);
-      const principal = config.authority ? ingress.principal(req, verified) : inviteBetaPrincipal(config, verified);
-      if (!principal) { res.status(403).json({ error: 'client_not_admitted', membership_url: `${config.PUBLIC_URL}/members` }); return; }
+      const admitted = config.authority ? ingress.principal(req, verified) : inviteBetaPrincipal(config, verified);
+      if (!admitted) { res.status(403).json({ error: 'client_not_admitted', membership_url: `${config.PUBLIC_URL}/members` }); return; }
+      const principal = { ...admitted, scopes: [...admitted.scopes] };
+      const rpcPath = req.originalUrl.split('?')[0]!;
+      const intent = messaging ? communicationIntent(rpcPath, ['GET', 'DELETE'].includes(req.method) ? undefined : req.body) : undefined;
+      let messagingOnly = false;
       if (security) {
         try {
           if (config.authority) {
@@ -186,10 +214,32 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
               members.agents.authorizeNative(principal, member.id, match[1], claims.exp * 1000);
             } else if (!route.agentClientIds.includes(principal.clientId)) throw new SecurityError('AUTHORIZATION_REQUIRED');
           } else if (principal.clientId !== config.OIDC_AGENT_CLIENT_ID) throw new SecurityError('AUTHORIZATION_REQUIRED');
-          principal.access = security.authenticate(principal, match[1]);
+          const messageIdentity = () => {
+            if (!principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) throw new MessagingError('MESSAGING_AUTHORIZATION_REQUIRED');
+            const identity = messaging!.identity(principal, bearer);
+            messagingIdentities.set(req, identity); delete principal.access; messagingOnly = true;
+          };
+          if (intent === 'call') {
+            const required = communicationScope(rpcPath, req.body);
+            if (!principal.scopes.includes(required)) {
+              res.setHeader('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${required}"`);
+              res.status(403).json({ error: 'insufficient_scope', scope: required, onboarding_url: `${config.PUBLIC_URL}/.well-known/eigos-agent-registration` }); return;
+            }
+            messageIdentity();
+          } else {
+            try { principal.access = security.authenticate(principal, match[1]); }
+            catch (error) {
+              if (intent !== 'discovery' || !principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) throw error;
+              messageIdentity();
+            }
+            if (intent === 'discovery' && messaging && principal.scopes.some(scope => (MESSAGING_SCOPES as readonly string[]).includes(scope))) {
+              messagingIdentities.set(req, messaging.identity(principal, match[1]));
+            }
+          }
         } catch(error) {
           const guidance = { onboarding_url: `${ingress.config(req).PUBLIC_URL}/.well-known/eigos-agent-registration`, permissions_url: `${config.PUBLIC_URL}/members/permissions` };
-          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason,...guidance,...securityErrorResponse(error,config.PUBLIC_URL)});
+          if (error instanceof MessagingError) res.status(error.status).json({ error: error.code, permissions_url: `${config.PUBLIC_URL}/members/communications` });
+          else if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason,...guidance,...securityErrorResponse(error,config.PUBLIC_URL)});
           else if(error instanceof AgentAccessError||error instanceof MemberAccessError) res.status(403).json({error:error.code,...guidance});
           else if(error instanceof DomainError) res.status(403).json({error:error.code});
           else next(error);
@@ -212,7 +262,8 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
         }
       }
       principals.set(req, principal);
-      Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes, extra: { principal } } });
+      Object.assign(req, { auth: { token: match[1], clientId: principal.clientId, scopes: principal.scopes,
+        extra: { principal, ...(messagingIdentities.has(req) ? { messagingIdentity: messagingIdentities.get(req), messagingOnly } : {}) } } });
       next();
     } catch {
       const discovery = config.EIGOS_AUTH_MODE === 'jwt' ? `, resource_metadata="${ingress.config(req).PUBLIC_URL}/.well-known/oauth-protected-resource"` : '';
@@ -223,6 +274,16 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
 
   if (!security) mountNetworkRoutes(app, config, members, network, authenticate, req => principals.get(req)!);
   if (relay) mountTaskRelay(app, relay, store, authenticate, req => principals.get(req)!);
+  if (messaging) app.post('/communication', authenticate, async (req, res) => {
+    try {
+      const input = communicationRequestSchema.parse(req.body), identity = messagingIdentities.get(req);
+      if (!identity) throw new MessagingError('MESSAGING_AUTHORIZATION_REQUIRED');
+      res.json(await messaging.execute(identity, input.operation));
+    } catch (error) {
+      if (error instanceof MessagingError) res.status(error.status).json({ error: error.code });
+      else res.status(error instanceof z.ZodError ? 400 : 503).json({ error: error instanceof z.ZodError ? 'INVALID_INPUT' : 'MESSAGING_UNAVAILABLE' });
+    }
+  });
   const sources = !security && config.EIGOS_MEMBER_SOURCE_KEY_FILE ? new MemberSourceService(store.memberSources(config.EIGOS_MEMBER_SOURCE_KEY_FILE, config.EIGOS_PAOTUI_SKILL_DIR!), members, tasks, config) : undefined;
   if (!security) mountSourceRoutes(app, sources, authenticate, req => principals.get(req)!);
   const definitions = new DefinitionService(store, tasks, catalog);
@@ -294,20 +355,22 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     }
   });
 
-  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, !security && config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions, { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length }), {
+  const mcp = createMcpHandler(ctx => createMcpServer(tasks, principalSchema.parse(ctx.authInfo?.extra?.principal), network ? { service: network, token: ctx.authInfo?.token ?? '' } : undefined, sources ? { service: sources, token: ctx.authInfo?.token ?? '' } : undefined, !security && config.EIGOS_INVITE_BETA === 'true' ? undefined : definitions,
+    { payment: config.EIGOS_INVITE_BETA !== 'true', runtime: runtimeIdentity, externalDrafts: !!config.EIGOS_SHOPIFY_CHECKOUT_MERCHANTS?.length,
+      ...(messaging && ctx.authInfo?.extra?.messagingIdentity ? { messaging: { service: messaging, identity: ctx.authInfo.extra.messagingIdentity as MessagingIdentity }, messagingOnly: ctx.authInfo.extra.messagingOnly === true } : {}) }), {
     legacy: 'stateless', maxSubscriptions: 0,
   });
   const handleMcp = toNodeHandler(mcp);
   app.all('/mcp', authenticate, async (req, res) => { await handleMcp(req, res, req.body); });
 
-  const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()));
+  const a2a = new A2AGateway(tasks, agentCard(config, tasks.services()), messaging);
   app.get('/.well-known/agent-card.json', async (req, res) => { res.json(AgentCard.toJSON(config.authority ? agentCard(ingress.config(req), tasks.services()) : await a2a.getAgentCard())); });
   const a2aScopes: Record<string, Scope> = {
     SendMessage: 'tasks:write', SendStreamingMessage: 'tasks:write',
     GetTask: 'tasks:read', ListTasks: 'tasks:read', SubscribeToTask: 'tasks:read', CancelTask: 'tasks:write',
   };
   app.use('/a2a', authenticate, (req, res, next) => {
-    const scope = a2aScopes[req.body?.method];
+    const scope = messaging && communicationIntent('/a2a', req.body) === 'call' ? communicationScope('/a2a', req.body) : a2aScopes[req.body?.method];
     if (scope && !principals.get(req)?.scopes.includes(scope)) {
       res.setHeader('WWW-Authenticate', `Bearer error="insufficient_scope", scope="${scope}"`);
       res.status(403).json({ error: 'insufficient_scope', scope });
@@ -319,7 +382,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     userBuilder: async req => {
       const p = principals.get(req);
       if (!p) throw new Error('Authentication middleware was not run');
-      return new AgentUser(p);
+      return new AgentUser(p, messagingIdentities.get(req));
     },
   }));
 
@@ -329,5 +392,5 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
     res.status(status).json({ error: status === 500 ? 'internal_error' : 'invalid_request' });
   };
   app.use(errors);
-  return { app, tasks, store, members, network, catalog, definitions, security, relay, scopes: SCOPES, close: async () => { await relay?.close(); security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
+  return { app, tasks, store, members, network, catalog, definitions, security, relay, messaging, scopes: SCOPES, close: async () => { await messaging?.close(); await relay?.close(); security?.close(); await tasks.close(); await mcp.close(); network?.close(); store.close(); members.close(); } };
 }

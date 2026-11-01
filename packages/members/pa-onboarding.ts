@@ -3,6 +3,7 @@ import { gzipSync } from 'node:zlib';
 import type { Config } from '../core/config.js';
 import { inviteBetaCodexConfig } from './native-mcp.js';
 import { PA_DISCOVERY_GUIDANCE } from '../core/services.js';
+import { MESSAGING_SCOPES } from '../agent-messaging/contracts.js';
 
 // The same reviewed files are used by the website, downloads and immutable releases.
 export const PA_SKILL_FILES = [
@@ -23,6 +24,8 @@ export function paConnectionInfo(c: Config) {
   return {
     version: 1, origin, skill: 'eigos-delegate', usage: PA_DISCOVERY_GUIDANCE, securityMode: c.EIGOS_SECURITY_MODE,
     admissionPolicy: c.EIGOS_MEMBERSHIP_APPROVAL,
+    ...(c.EIGOS_MESSAGING_ENABLED === 'true' ? { communication: { discovery: `${origin}/.well-known/eigos-communications`,
+      permissions: `${origin}/members/communications`, optionalScopes: MESSAGING_SCOPES, serviceDelegation: 'explicit_only', receiving: 'pull', custody: 'eigos-service' } } : {}),
     links: {
       guide: `${origin}/connect`, skill: `${origin}/connect/SKILL.md`,
       skillPackage: `${origin}/connect/eigos-delegate.tar.gz`,
