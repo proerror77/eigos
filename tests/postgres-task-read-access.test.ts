@@ -10,12 +10,15 @@ import { postgresBusinessTransaction } from '../packages/postgres/runtime-transa
 import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
+import { sourceMatchesObservation } from '../packages/security/source-policy.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
   // keep the fixture's copied projection valid throughout those checks.
   const clockOffset=process.env.EIGOS_TEST_PG_CA_FILE || process.env.EIGOS_TEST_LARGE_ROW==='1'?300000:0;
-  const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000); f.approve(installation.id);
+  const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000),sourceExpiry=new Date(Date.now()+3600000).toISOString();
+  f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
+  f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId:'synthetic-source',programId:'brief.prepare',programDigest:'b'.repeat(64),operations:['synthetic.read'],outputTypes:['ServiceRequest'],expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
   const recipient={classification:'sensitive' as const,markings:['member_private','personal_data'] as const,channels:['agent_response'] as const,expiresAt:new Date(Date.now()+3600000).toISOString()};
@@ -31,7 +34,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]); await installPostgresAuthorityLock(client,schema);
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
-    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_labels','security_bindings','ontology_objects','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
+    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','ontology_objects','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
@@ -84,6 +87,46 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`UPDATE "${schema}".ontology_objects SET revision=2 WHERE owner=$1 AND type=$2 AND id=$3`,[f.owner,ref.type,ref.id]);
     assert.equal(await binding(),undefined);
     await client.query(`UPDATE "${schema}".ontology_objects SET revision=1 WHERE owner=$1 AND type=$2 AND id=$3`,[f.owner,ref.type,ref.id]);
+    const origin={programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source'};
+    const providerBinding={...JSON.parse(String(bindingRow.body)),sourceBindingId:origin.sourceBindingId,sourceObservation:origin};
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(providerBinding),task.grant.id,ref.type,ref.id]);
+    const sourceAllowed=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.sourceObservationAllowed(c,principal,task.job.id,policy,ref));
+    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),origin,ref.type),true);
+    assert.equal(await sourceAllowed(),true);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify({...providerBinding,sourceObservation:{...origin,sourceBindingId:'different-source'}}),task.grant.id,ref.type,ref.id]);
+    assert.equal(await sourceAllowed(),false);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(providerBinding),task.grant.id,ref.type,ref.id]);
+    await client.query(`UPDATE "${schema}".security_sources SET state='revoked' WHERE installation_id=$1`,[installation.id]);assert.equal(await sourceAllowed(),false);
+    await client.query(`UPDATE "${schema}".security_sources SET state='active' WHERE installation_id=$1`,[installation.id]);
+    const originalSource=sqlite.prepare('SELECT body FROM security_sources WHERE owner=? AND installation_id=?').get(f.owner,installation.id)!;
+    const sourceBody=JSON.parse(String(originalSource.body));
+    const updateSource=(body:unknown)=>client.query(`UPDATE "${schema}".security_sources SET body=$1 WHERE installation_id=$2`,[JSON.stringify(body),installation.id]);
+    await client.query(`INSERT INTO "${schema}".security_sources(owner,installation_id,binding_id,program_id,state,body) SELECT $1,$2,'overflow-'||n,'program','active',$3 FROM generate_series(1,256) n`,[f.owner,installation.id,originalSource.body]);
+    await assert.rejects(sourceAllowed(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`DELETE FROM "${schema}".security_sources WHERE owner=$1 AND installation_id=$2 AND binding_id LIKE 'overflow-%'`,[f.owner,installation.id]);
+    await updateSource({...sourceBody,expiresAt:'2000-01-01T00:00:00.000Z'});assert.equal(await sourceAllowed(),false);
+    await updateSource({...sourceBody,parentGrant:{...sourceBody.parentGrant,revision:sourceBody.parentGrant.revision+1}});assert.equal(await sourceAllowed(),false);
+    await updateSource({...sourceBody,outputTypes:['Place']});assert.equal(await sourceAllowed(),false);
+    await updateSource({...sourceBody,bindingId:'different-source'});await assert.rejects(sourceAllowed(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`UPDATE "${schema}".security_sources SET body=repeat('x',65537) WHERE installation_id=$1`,[installation.id]);
+    await assert.rejects(sourceAllowed(),/OUTPUT_NOT_ALLOWED/);
+    const oldOrigin={...origin,sourceBindingId:'previous-source',programDigest:'c'.repeat(64)};
+    const historicalSource={...sourceBody,readbackVersions:[{sourceBindingId:oldOrigin.sourceBindingId,programDigest:oldOrigin.programDigest}]};
+    await updateSource(historicalSource);
+    sqlite.prepare('UPDATE security_sources SET body=? WHERE owner=? AND installation_id=?').run(JSON.stringify(historicalSource),f.owner,installation.id);
+    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),oldOrigin,ref.type),true);
+    sqlite.prepare('UPDATE security_sources SET body=? WHERE owner=? AND installation_id=?').run(originalSource.body!,f.owner,installation.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify({...providerBinding,sourceBindingId:oldOrigin.sourceBindingId,sourceObservation:oldOrigin}),task.grant.id,ref.type,ref.id]);
+    assert.equal(await sourceAllowed(),true);
+    await updateSource(sourceBody);assert.equal(await sourceAllowed(),false);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify({...providerBinding,sourceObservation:undefined}),task.grant.id,ref.type,ref.id]);
+    await client.query(`DELETE FROM "${schema}".security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=1`,[f.owner,ref.type,ref.id]);
+    await client.query(`INSERT INTO "${schema}".security_object_origins(owner,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4)`,[f.owner,ref.type,ref.id,JSON.stringify(origin)]);
+    assert.equal(await sourceAllowed(),true);
+    await client.query(`UPDATE "${schema}".security_object_origins SET body='invalid' WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=1`,[f.owner,ref.type,ref.id]);
+    await assert.rejects(sourceAllowed(),/OUTPUT_NOT_ALLOWED/);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[bindingRow.body,task.grant.id,ref.type,ref.id]);
+    assert.equal(await sourceAllowed(),false,'task-owned bindings are not provider source permissions');
     const labels=await postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal']));
     const expectedLabels=sqlite.prepare("SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=? AND field IN ('*','originalGoal') ORDER BY field").all(f.owner,ref.type,ref.id).map(row=>({field:row.field,...JSON.parse(String(row.body))}));
     assert.deepEqual(labels,expectedLabels);
@@ -183,6 +226,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.ontology(c,principal,task.job.id,policy)),/POLICY_CHANGED/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>stagedReader.currentLabels(c,principal,task.job.id,policy,ref,1,['originalGoal'])),/POLICY_CHANGED/);
     await assert.rejects(binding(),/POLICY_CHANGED/);
+    await assert.rejects(sourceAllowed(),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);

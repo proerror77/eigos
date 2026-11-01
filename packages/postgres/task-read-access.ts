@@ -12,6 +12,7 @@ import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/se
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import { projectionInputs } from '../security/projections.js';
+import { storedSourceSchema, sourceMatchesObservation, type ObservationSource } from '../security/source-policy.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -20,6 +21,7 @@ const bindingEvidenceSchema=z.strictObject({object:objectRefSchema,revision:z.nu
   sourceBindingId:z.string().min(1).max(200),envelope:securityEnvelopeSchema,inputEnvelope:securityEnvelopeSchema.optional(),
   projectionOrigin:z.strictObject({version:z.literal(1),contentDigest:sha,linksDigest:sha,inputDigest:sha}).optional(),
   sourceObservation:z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)}).optional()});
+const observationSourceSchema=z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)});
 
 /** Resolve a current agent task-read grant. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
@@ -192,6 +194,41 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
   });
 }
 
+/** Check only the provider-source portion of a direct binding. Object roles,
+ * field restrictions, provenance, lineage and recipient checks remain required. */
+export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder):Promise<boolean> {
+  const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
+  const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    const evidence=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
+    if(!evidence || ['task_context','task_submission','member_asset','task_projection'].includes(evidence.sourceBindingId))return undefined;
+    const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
+    let origin:ObservationSource | undefined=evidence.sourceObservation;
+    if(!origin) {
+      const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=1048576 THEN body END AS body
+        FROM "${schema}".security_object_origins WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,
+        [owner,ref.type,ref.id,evidence.revision]);
+      if(rows.rowCount===0)return undefined;
+      if(rows.rowCount!==1 || rows.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      try {origin=observationSourceSchema.parse(JSON.parse(String(rows.rows[0].body)));}
+      catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    }
+    if(origin.sourceBindingId!==evidence.sourceBindingId)return undefined;
+    const rows=await client.query(`SELECT binding_id,program_id,CASE WHEN octet_length(body)<=65536 THEN body END AS body
+      FROM "${schema}".security_sources WHERE owner=$1 AND installation_id=$2 AND state='active' LIMIT 257`,[owner,admission.actor.installationId]);
+    if(rows.rows.length>256 || rows.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const sources=rows.rows.map(row=>{
+      try {
+        const source=storedSourceSchema.parse(JSON.parse(String(row.body)));
+        if(source.installationId!==admission.actor.installationId || source.bindingId!==row.binding_id || source.programId!==row.program_id)throw new Error('Source identity changed');
+        return source;
+      } catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    }).filter(source=>source.parentGrant.id===admission.parent.id && source.parentGrant.revision===admission.parent.revision);
+    return {origin,sources};
+  });
+  return !!checked && sourceMatchesObservation(checked.sources.filter(source=>Date.parse(source.expiresAt)>Date.now()),checked.origin,ref.type);
+}
+
 /** Construct an edge reader only after its trusted kernel has finished loading.
  * An evicted object must rebuild its kernel before creating a new reader;
  * passing an absent builder must never silently select the synchronous path. */
@@ -210,5 +247,7 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskCurrentLabels(client,principal,taskId,policyDigest,ref,revision,fields,builder),
     directBindingEvidence: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
       postgresTaskDirectBindingEvidence(client,principal,taskId,policyDigest,ref,builder),
+    sourceObservationAllowed: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
+      postgresTaskSourceObservationAllowed(client,principal,taskId,policyDigest,ref,builder),
   });
 }

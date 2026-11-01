@@ -9,7 +9,7 @@ import { DomainError,type Job } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import type { ObjectBatch, ObjectSource, ObjectView } from '../ontology/object-store.js';
-import { POLICY_VERSION, SECURITY_CONTRACT, resourceRefSchema, securityEnvelopeSchema,grantRefSchema } from './contracts.js';
+import { POLICY_VERSION, SECURITY_CONTRACT, resourceRefSchema, securityEnvelopeSchema } from './contracts.js';
 import { SecurityError, type SecurityStore, type TaskDataGrant } from './store.js';
 import { authorizationScope, withAuthorization,withInference,withIntegrity, type AuthorizationScope } from './context.js';
 import { combineEnvelopes, requireChannel, type SecurityEnvelope, type Channel } from './envelope.js';
@@ -25,20 +25,15 @@ import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ont
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
 import { reviewedFieldPolicy } from './field-policy.js';
+import { sourceAuthorizationSchema, storedSourceSchema, sourceMatchesObservation } from './source-policy.js';
+export { sourceAuthorizationSchema } from './source-policy.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
 // Other writes, trigger side effects and other connections still invalidate the
 // snapshot; every authority/time check remains in place.
 const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
 
-const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
-export const sourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
-  programDigest: z.string().regex(/^[a-f0-9]{64}$/), operations: z.array(id).min(1).max(100),
-  outputTypes: z.array(nameSchema).min(1).max(200), expiresAt: instant });
-const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefSchema,
-  // Operator-reviewed predecessor versions may explain existing observations.
-  // They never authorize dispatch or enter newly provisioned task outputs.
-  readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
+const instant = z.iso.datetime({ offset: true });
 // JSON modules are shared objects; keep policy state private just as the former
 // file parse did, so another importer cannot mutate effective policy in place.
 const baseline = structuredClone(baselineJson) as {
@@ -618,9 +613,7 @@ export class SecurityPolicies {
       } else if(!['task_submission','member_asset'].includes(binding.sourceBindingId)) {
         const row=this.db.prepare('SELECT body FROM security_object_origins WHERE owner=? AND type=? AND object_id=? AND object_revision=?').get(scope.actor.ownerKey,ref.type,ref.id,binding.revision);
         const origin=binding.sourceObservation ?? (row?JSON.parse(String(row.body)) as SourceObservationOrigin:undefined);
-        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sources.some(s=>s.programId===origin.programId && s.outputTypes.includes(ref.type)
-          && (s.bindingId===origin.sourceBindingId && s.programDigest===origin.programDigest
-            || s.readbackVersions?.some(version=>version.sourceBindingId===origin.sourceBindingId && version.programDigest===origin.programDigest))))return;
+        if(!origin || origin.sourceBindingId!==binding.sourceBindingId || !sourceMatchesObservation(sources,origin,ref.type))return;
       }
       // Apply dependency visibility before filtering/counting rows. Otherwise a
       // WHERE miss could reveal a bit about data whose inputs were revoked.

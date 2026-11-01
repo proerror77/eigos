@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "533729aaf4df97477c5ac09f91d1c347a7af05d91d6529f418a9cc1ccac1b35e",
+      "sourceDigest": "7b41992f7c23798c193683c961f032253c1e635f498210ca5f99fa56ea700621",
       "channels": [
         "all-reads"
       ],
@@ -5676,10 +5676,10 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "a96a604d10906b6fea3dd49848393387088eb802a7ca80c83acdef41dfd9821e",
+      "sourceDigest": "7d28fcfc7157c0a09be2bb4e7f936954503b09fd595aa46e4d1cdc6862cfb834",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction, staged kernel, bounded labels and direct binding evidence; current permissions, source and lineage checks remain required",
-      "targetControl": "Fenced transaction, staged kernel, bounded labels and direct binding evidence; current permissions, source and lineage checks remain required"
+      "currentControl": "Fenced transaction, staged kernel, bounded labels, binding evidence and current source checks; full object, provenance, lineage and output authorization remain required",
+      "targetControl": "Fenced transaction, staged kernel, bounded labels, binding evidence and current source checks; full object, provenance, lineage and output authorization remain required"
     },
     {
       "id": "resource-role-policy",
@@ -5727,6 +5727,18 @@
       "content": "Trusted ontology definition registry",
       "currentControl": "Protected contracts and completed staged registry cannot be extended",
       "targetControl": "Protected contracts and completed staged registry cannot be extended",
+      "stage": "S5"
+    },
+    {
+      "id": "source-policy-contract",
+      "file": "packages/security/source-policy.ts",
+      "sourceDigest": "bc8dc8729d629d1435695018bc43d6d9890aab67eb5e5823327cc43244257d51",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Reviewed source authorization and observation matching",
+      "currentControl": "Current source, parent grant and historical readback versions must match",
+      "targetControl": "Current source, parent grant and historical readback versions must match",
       "stage": "S5"
     }
   ]
