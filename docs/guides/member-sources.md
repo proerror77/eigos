@@ -1,6 +1,8 @@
 # 会员连接自己的服务账号
 
-会员身份不授予服务器操作人的供应商账号。每个会员通过自己的 PA 获取来源凭据，并通过当前 EIGOS origin 的私有上传路径建立连接。凭据不得经过 MCP 参数、任务文本或模型上下文。
+会员身份不授予服务器操作人的供应商账号。需要本人服务账号时，PA 按当前实例明确支持的私有流程处理来源凭据；凭据不得经过 MCP 参数、任务文本或模型上下文。
+
+下述通用会员凭据上传与 `AgentConnector.connectSource` 流程仅在 **legacy 且显式启用会员来源配置** 时提供。正式实例使用 foundation 时，来源资格通过已登记的 Source 绑定及会员授权页审阅；不会开放本页的通用 Token 上传入口。PA 应以当前发现结果为准：未提供本人供应商账号的接入流程时，明确报告该前置条件缺失，不能把批准一个已有 Source 当作已完成客户滴滴／日历账号登录。foundation 的来源授权与原任务恢复见[接入指南](../integration.md#任务接口)。
 
 1. PA 读取 `list_source_connections` 与 `get_source_connection`。
 2. `begin_source_connection` 返回当前身份绑定的上传请求。

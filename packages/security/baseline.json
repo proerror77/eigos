@@ -2874,7 +2874,7 @@
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "f50d2d635fb20761526aa6da8ad7071bc83fbce08dce187375131065c0be0a0e",
+      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
       "channels": [
         "http"
       ],
@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "6ed508ba7e4f57316febda50f848837fcfaa68dcf3d378f3c27e3abdb108af06",
+      "sourceDigest": "41452fa3c00320f280e97b213644a24ea87bd5803375cad4b97777ab7c3d3a32",
       "channels": [
         "mcp"
       ],
@@ -2898,7 +2898,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "156f496ce929977acbdb2b4fc5b42cd2182b47bd20fe3d6fd0d8581fc7f5a496",
+      "sourceDigest": "258348b96e23ff59ea199f4ea13ebc3f8abc3e8c4887c699f30a0de987cdbd57",
       "channels": [
         "a2a"
       ],
@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "eba6a3a2cb7cc0367a87bc2736d8c2b3be1975d9f68f24fa968377cf31d0a1dc",
+      "sourceDigest": "4a24086cdc72fc49a9f1b80f162d0ee89becd9a4a472187182cd3a500253414d",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3060,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "90f521c6778d16ca8aee0bb0b4e31075f1d6de0d1f7437eabd864e705e7321e4",
+      "sourceDigest": "4c6ad72b11b1491fdc6dc0998741fd1850a59032323ee343fe881af620622229",
       "channels": [
         "model",
         "dispatch",
@@ -3342,7 +3342,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "e26019dae44e5ae6acc5b2f22b47149e72df534b92b4e7175524a5c36ba3ea9b",
+      "sourceDigest": "14c40eee444314724a10c57363478f944fec1e542c67cd5c959f8263b1670497",
       "channels": [
         "authorization_control"
       ],
@@ -3390,7 +3390,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "94ec47323dfae480286a03a2e9a301835905dcb6ff127378f84d59602ad0ada6",
+      "sourceDigest": "b6e82b81c191a6f47b4a06490591395656c6aadb157a609a410457360a86d216",
       "channels": [
         "authorization_control"
       ],
@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "b12af93cff53c36cf2aaeef8e7ee46f2ba22b92b3d2f173f37d4f7148259f10d",
+      "sourceDigest": "291d1265997a45f615a9e2891a4d872b5d2b7b528d9572bc94f213d54578c7a5",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -3668,7 +3668,7 @@
     {
       "id": "s5-integrations-grok-eigos-delegate-scripts-eigos-a2a",
       "file": "integrations/grok/eigos-delegate/scripts/eigos_a2a.py",
-      "sourceDigest": "e69cfd5ef9def0c542511b024ef13e748cee28827fc844a3ee5eae0f4d07ad60",
+      "sourceDigest": "570fa89868756696ae43bce037569b484320edf0761e655c5e25e25b7998e5dc",
       "channels": [
         "PA client"
       ],
@@ -5330,6 +5330,20 @@
       "currentControl": "Strict communication-only operations; preserved write request identity; no business-task adapter or private input in errors.",
       "targetControl": "Keep private communication separate from task creation and signed authorization.",
       "stage": "S5"
+    },
+    {
+      "id": "security-error-guidance",
+      "file": "packages/security/error-guidance.ts",
+      "sourceDigest": "3326293bcc4f323aca718a93708067510ac4f23565b1583295df4c2d48e5cc24",
+      "channels": [
+        "http",
+        "mcp",
+        "a2a"
+      ],
+      "content": "Safe authorization denial classification and current-origin review guidance",
+      "currentControl": "Fixed denial advice; no raw policy details, request values or hidden object existence",
+      "targetControl": "Preserve denial and original task; guidance grants no authority",
+      "stage": "S2"
     }
   ]
 }

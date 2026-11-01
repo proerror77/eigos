@@ -14,12 +14,30 @@ test('separate Python PA process uses v2 task identity and preserves denial with
     const config=join(f.directory,'pa.json'),tokenFile=join(f.directory,'bearer'),inputFile=join(f.directory,'input.json');writeFileSync(tokenFile,a.token,{mode:0o600});
     const cli=(...args:string[])=>run('python3',[script,'--config',config,...args],{timeout:30000,maxBuffer:1048576});
     await cli('configure','--card-url',f.base+'/.well-known/agent-card.json','--security-mode','foundation','--token-file',tokenFile,'--allow-loopback-http');
+    const denied=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Public query with unrelated personal context',personalContext:{self:true}},{authorization:'Bearer '+a.token});
+    assert.equal(denied.status,403);assert.equal(denied.value.authorization.stage,'personal_context');
+    assert.equal(denied.value.authorization.reviewUrl,f.base+'/members/permissions');assert.equal(denied.value.authorization.grantsAuthority,false);
     const own=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'Scoped independent PA input'},{authorization:'Bearer '+a.token});assert.equal(own.status,200);
     const task=JSON.parse((await cli('get','--task-id',own.value.id)).stdout);assert.equal(task.metadata.view,'eigos.task.v2');assert.ok(!('delegation' in task.metadata));
     writeFileSync(inputFile,JSON.stringify({object:{type:'ServiceRequest',id:own.value.id}}),{mode:0o600});
     const query=JSON.parse((await cli('query','--task-id',own.value.id,'--input-file',inputFile)).stdout);assert.equal(query.version,2);assert.equal(query.items[0].properties.originalGoal,'Scoped independent PA input');
     const other=await f.post('/tasks',{service:'eigos.delegate',requestId:randomUUID(),goal:'PRIVATE_OTHER_INSTALLATION'},{authorization:'Bearer '+b.token});
-    await assert.rejects(cli('get','--task-id',other.value.id),error=>{assert.ok(!JSON.stringify(error).includes('PRIVATE_OTHER_INSTALLATION'));return true;});
+    await assert.rejects(cli('get','--task-id',other.value.id),error=>{
+      assert.ok(!JSON.stringify(error).includes('PRIVATE_OTHER_INSTALLATION'));
+      const response=JSON.parse((error as Error & {stderr:string}).stderr);
+      assert.equal(response.code,'AUTHORIZATION_REQUIRED');
+      assert.equal(response.authorization.stage,'access');
+      assert.equal(response.authorization.reviewUrl,f.base+'/members/permissions');
+      assert.equal(response.authorization.grantsAuthority,false);
+      assert.equal(response.authorization.preserveOriginalTask,true);
+      return true;
+    });
+    const unapproved=f.install();writeFileSync(tokenFile,unapproved.token,{mode:0o600});
+    await assert.rejects(cli('get','--task-id',own.value.id),error=>{
+      const response=JSON.parse((error as Error & {stderr:string}).stderr);
+      assert.equal(response.code,'AUTHORIZATION_REQUIRED');assert.equal(response.authorization.stage,'access');
+      assert.equal(response.authorization.reviewUrl,f.base+'/members/permissions');return true;
+    });
     const before=readFileSync(config,'utf8');writeFileSync(tokenFile,'invalid',{mode:0o600});await assert.rejects(cli('configure','--card-url',f.base+'/.well-known/agent-card.json','--security-mode','foundation','--token-file',tokenFile,'--allow-loopback-http'));assert.equal(readFileSync(config,'utf8'),before);
     assert.ok(!readFileSync(config,'utf8').includes(a.token));
   }finally{await f.close();}

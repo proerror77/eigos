@@ -57,7 +57,16 @@ export class TaskSecurity {
     if (!job.delegation) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const oldGrants = security.listGrants(actor.ownerKey).filter(g => g.kind === 'task_data' && g.taskId === job.id);
     if (!previous && oldGrants.length) { security.taskGrant(actor, job.id); return; }
-    const personalInputs = security.withAgent(p, undefined, 'task.process', () => security.policies.personalBindings(actor.ownerKey, job));
+    const personalInputs = security.withAgent(p, undefined, 'task.process', () => {
+      try { return security.policies.personalBindings(actor.ownerKey, job); }
+      catch (error) {
+        // This boundary establishes which supplied context failed, without
+        // revealing whether a private object exists or enumerating its fields.
+        if (error instanceof SecurityError && ['AUTHORIZATION_REQUIRED', 'INSUFFICIENT_ACCESS'].includes(error.reason))
+          throw new SecurityError(error.reason, error.reason, 'personal_context');
+        throw error;
+      }
+    });
     if (personalInputs.length) requireScope(p, 'tasks:read');
     if (previous) security.revokeGrant(actor.ownerKey, previous.id, previous.revision);
     const sourceRules = security.policies.sources(actor.ownerKey, actor.installationId).flatMap(s => s.outputTypes.flatMap(type => {

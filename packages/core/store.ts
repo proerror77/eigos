@@ -858,6 +858,14 @@ export class JobStore {
     return true;
   }
   claimActive(claim: WorkClaim): boolean { return this.active(claim, Date.now()); }
+  /** Early stop hint from the synchronized status column, never authorization
+   * to run. Full body/version/authority fences still guard renew and commits.
+   * A transaction may intentionally be projecting its own terminal state. */
+  claimStateChanged(claim: WorkClaim): boolean {
+    if (this.claimMutations.has(claim)) return false;
+    const row = this.db.prepare('SELECT state FROM jobs WHERE owner=? AND id=?').get(claim.owner, claim.job.id);
+    return !row || row.state !== (claim.recovery ? claim.job.state : 'working');
+  }
   private withClaimMutation<T>(claim:WorkClaim,action:()=>T):T {
     this.claimMutations.add(claim);
     try{return action();}finally{this.claimMutations.delete(claim);}
@@ -905,7 +913,9 @@ export class JobStore {
   }
 
   private ownedTaskRow(owner: string, id: string, columns: string, fence = false) {
-    const sql=fence ? `WITH source AS MATERIALIZED (SELECT body,typeof(body) body_type,json_valid(body) valid FROM jobs WHERE owner=? AND id=?), owned AS MATERIALIZED (SELECT body_type,valid,CASE WHEN body_type='text' AND valid THEN jsonb(body) END parsed FROM source) SELECT ${columns} FROM owned` : `SELECT ${columns} FROM jobs WHERE owner=? AND id=?`;
+    // Keep large histories out of temporary blob tables. All scalar validation
+    // and duplicate-key detection below remain part of this fresh owned read.
+    const sql=fence ? `WITH source AS NOT MATERIALIZED (SELECT body,typeof(body) body_type,json_valid(body) valid FROM jobs WHERE owner=? AND id=?), owned AS NOT MATERIALIZED (SELECT body_type,valid,CASE WHEN body_type='text' AND valid THEN jsonb(body) END parsed FROM source) SELECT ${columns} FROM owned` : `SELECT ${columns} FROM jobs WHERE owner=? AND id=?`;
     const row=this.db.prepare(sql).get(owner,id);
     if(!row)throw new DomainError('NOT_FOUND','Task not found');
     return row;

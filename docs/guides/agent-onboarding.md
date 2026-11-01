@@ -2,6 +2,8 @@
 
 ## 客户 PA 接入与自然触发
 
+先读取当前实例的 `securityMode`、`admissionPolicy` 和可用传输；不能把通用指南中的默认自助模式当成该实例已经开放注册。官网发布新的 Skill 包不会更新客户宿主中已加载的副本。既有连接按宿主机制分别刷新 Skill 与工具发现，保留原安装、凭据和任务；只有实际生效后才能验收不提品牌名时的自然触发。
+
 已配置 JWT 和可用公开客户端的实例在 `/` 与 `/connect` 提供客户接入页。客户先完成本人账号开通，再选择 PA 支持的 MCP 或 A2A 连接方式，并导入 `eigos-delegate` Skill。原生 MCP 连接并不自动安装 Skill；下载文件也不代表宿主已加载。应让 PA 确认 Skill 可见、认证状态及当前可发现能力。
 
 - `/connect/agent.json`：公开连接信息，包含当前 origin、已配置的传输、会员／授权页、检查步骤及结果合同。没有客户身份、任务、来源凭据或访问令牌。
@@ -22,7 +24,7 @@ Skill 的选择依据是实际服务意图：用户说“明天从家去机场�
 
 客户的 Agent 从公开发现入口开始登记，Auth0 验证真实用户并签发令牌，EIGOS 校验会员资格、邀请和安装实例的停用状态。Gateway 不持有 Agent 的刷新令牌，也不另建 OAuth 授权服务器。
 
-需要本人服务账号的能力另走[会员自有账号授权](member-sources.md)：启用后发现文档列出 `sources:read`／`sources:write`，PA 经用户同意后在独立通道传输供应商 Token。`AgentConnector.connectSource` 和 `examples/connect-member-source.ts` 提供宿主侧入口；Token 不进入模型或任务，EIGOS 的 OAuth 登录令牌与供应商凭据分别管理。
+需要本人服务账号的能力按当前模式走[会员自有账号授权](member-sources.md)。legacy 显式启用该入口后，发现文档列出 `sources:read`／`sources:write`，PA 经用户同意通过 `AgentConnector.connectSource` 的独立通道传输供应商凭据。foundation 使用已登记的 Source 与会员授权页，不提供该通用上传入口；未发现本人账号接入方式时报告缺少前置条件。Token 不进入模型或任务，EIGOS 登录与供应商账号授权分别管理。
 
 ## 接入顺序
 

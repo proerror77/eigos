@@ -79,9 +79,9 @@ export class Worker {
   private execute(claim: WorkClaim): void {
     const { job, owner } = claim;
     const controller = new AbortController();
-    let scope:AuthorizationScope|undefined;
+    let scope:AuthorizationScope|undefined, writebackScope:AuthorizationScope|undefined;
     const run: RunningWork = { controller, done: Promise.resolve() };
-    const inScope = <T>(action: () => T): T => scope ? withAuthorization(scope, action) : action();
+    const inScope = <T>(action: () => T): T => writebackScope ? withAuthorization(writebackScope, action) : action();
     const timeoutMs = this.options.timeoutMs ?? 300000;
     const executionDeadline = Date.now() + timeoutMs;
     let renewAt = Date.now() + Math.floor(this.leaseMs / 3);
@@ -89,10 +89,11 @@ export class Worker {
       if (!this.store.renew(claim, this.leaseMs)) return false;
       renewAt = Date.now() + Math.floor(this.leaseMs / 3); return true;
     };
-    run.renewIfDue = () => !controller.signal.aborted && Date.now() < executionDeadline && (Date.now() < renewAt || renew());
+    run.renewIfDue = () => !controller.signal.aborted && Date.now() < executionDeadline
+      && !this.store.claimStateChanged(claim) && (Date.now() < renewAt || renew());
     this.running.set(job.id, run);
     const heartbeat = setInterval(() => {
-      try { scope?.assertCurrent(); if (!renew()) controller.abort(); }
+      try { scope?.assertCurrent(); if (!run.renewIfDue!()) controller.abort(); }
       catch { controller.abort(); }
     }, Math.min(this.pollMs, Math.floor(this.leaseMs / 3)));
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -100,6 +101,10 @@ export class Worker {
       if (controller.signal.aborted) throw new Error('Execution interrupted');
       scope=this.store.security.enabled ? this.store.security.workerScope(owner,job.id,claim.securityAuthorityId!,claim.token) : undefined;
       if (scope) {
+        // Interruption stops execution, not the fenced recovery write. Retain
+        // the original authority/lease checks without the execution deadline
+        // hook, on a distinct scope so late execution keeps its abort guard.
+        writebackScope = { ...scope };
         const onProgress = () => {
           this.renewDueClaims();
           if (controller.signal.aborted) throw new DomainError('CONFLICT', 'Execution lease or task authority ended');
@@ -169,7 +174,11 @@ export class Worker {
       finally { this.running.delete(job.id); await this.options.coordinator.releaseModelContext?.(claim); }
     }));
     // A storage failure must not cause an unhandled rejection or silently replay this attempt.
-    void run.done.catch(() => console.error('Worker writeback failed; lease recovery required'));
+    void run.done.catch(error => console.error('Worker writeback failed; lease recovery required', {
+      at: new Date().toISOString(), taskId: job.id, revision: job.revision,
+      requestRevision: job.delegation?.request.revision,
+      reason: error instanceof SecurityError ? error.reason : error instanceof DomainError ? error.code : 'WRITEBACK_FAILED',
+    }));
   }
 
   async close(): Promise<void> {

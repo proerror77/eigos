@@ -12,6 +12,8 @@ import type { TaskView } from '../../packages/security/task-service.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 import { PA_DISCOVERY_GUIDANCE } from '../../packages/core/services.js';
 import { paOnboardingAvailable } from '../../packages/members/pa-onboarding.js';
+import { SecurityError } from '../../packages/security/store.js';
+import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { communicationRequestSchema, MessagingError, type MessagingIdentity } from '../../packages/agent-messaging/contracts.js';
 import type { AgentMessagingService } from '../../packages/agent-messaging/service.js';
 
@@ -97,6 +99,12 @@ export class A2AGateway implements A2ARequestHandler {
 
   private adapt<T>(action: () => T, cancel = false): T {
     try { return action(); } catch (error) {
+      if (error instanceof SecurityError) {
+        const response = securityErrorResponse(error, this.card.supportedInterfaces[0]?.url);
+        throw new RequestMalformedError({ message: response.message, metadata: {
+          eigosCode: response.code, eigosAuthorization: JSON.stringify(response.authorization),
+        } });
+      }
       if (error instanceof DomainError) {
         if (error.code === 'NOT_FOUND') throw new TaskNotFoundError();
         if (cancel && error.code === 'CONFLICT') throw new TaskNotCancelableError(error.message);
