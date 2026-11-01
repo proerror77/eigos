@@ -903,7 +903,9 @@ export class JobStore {
   }
 
   private ownedTaskRow(owner: string, id: string, columns: string, fence = false) {
-    const sql=fence ? `WITH source AS MATERIALIZED (SELECT body,typeof(body) body_type,json_valid(body) valid FROM jobs WHERE owner=? AND id=?), owned AS MATERIALIZED (SELECT body_type,valid,CASE WHEN body_type='text' AND valid THEN jsonb(body) END parsed FROM source) SELECT ${columns} FROM owned` : `SELECT ${columns} FROM jobs WHERE owner=? AND id=?`;
+    // Keep large histories out of temporary blob tables. All scalar validation
+    // and duplicate-key detection below remain part of this fresh owned read.
+    const sql=fence ? `WITH source AS NOT MATERIALIZED (SELECT body,typeof(body) body_type,json_valid(body) valid FROM jobs WHERE owner=? AND id=?), owned AS NOT MATERIALIZED (SELECT body_type,valid,CASE WHEN body_type='text' AND valid THEN jsonb(body) END parsed FROM source) SELECT ${columns} FROM owned` : `SELECT ${columns} FROM jobs WHERE owner=? AND id=?`;
     const row=this.db.prepare(sql).get(owner,id);
     if(!row)throw new DomainError('NOT_FOUND','Task not found');
     return row;

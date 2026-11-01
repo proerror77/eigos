@@ -107,8 +107,17 @@ export class AgentRuntime {
     state.feedback.push({ at, kind, message, inputDigest });
     job.updatedAt = at;
     job.delegation!.events.push({ at, event: `agent_${kind}_feedback`, evidence: digest({ message, inputDigest }) });
-    if (kind !== 'runtime' && state.feedback.filter(f => f.kind === kind && f.message === message && f.inputDigest === inputDigest).length >= 3) {
-      scheduleTaskRecovery(job, 'validation_stalled', '同一输入持续未通过系统校验，原任务已保留；需要修复运行问题，不要求重复确认已有信息。', { automatic: false });
+    // A model can reword a rationale or reserialize the same failed proposal.
+    // Count the host failure, retaining input digests for audit. Only actual
+    // scope restoration or projected source evidence starts a new opportunity;
+    // model turns and accepted-but-unexecuted plans are not new evidence.
+    const failures = new Set(state.feedback.filter(f => f.kind === kind && f.message === message)
+      .map(f => digest({ message: f.message, inputDigest: f.inputDigest })));
+    const events = job.delegation!.events;
+    const progress = events.findLastIndex(event => ['agent_scope_initialized', 'agent_scope_resumed', 'agent_observation_projected'].includes(event.event));
+    const repeated = events.slice(progress + 1).filter(event => event.event === `agent_${kind}_feedback` && failures.has(event.evidence!)).length;
+    if (kind !== 'runtime' && repeated >= 3) {
+      scheduleTaskRecovery(job, 'validation_stalled', '相同校验失败重复出现，且没有新的已验证结果。原任务与确认信息已保留，需修复运行问题后继续。', { automatic: false });
     }
   }
   private pause(claim: WorkClaim, clarify: boolean, message: string, program?: AgentProgram, question?: { modelRunId: string; decision: import('../ontology/agent-actions.js').AgentDecision; ontologyPlanning: import('../ontology/planning-contract.js').PlanningSnapshot }) {

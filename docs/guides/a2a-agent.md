@@ -59,6 +59,8 @@ const current = await client.getTask(GetTaskRequest.fromJSON({ id: sent.id }));
 
 ## 补问与结果回读
 
+Foundation 的授权拒绝保留协议错误类型，原拒绝代码及同源审阅指引在 `google.rpc.ErrorInfo.metadata.eigosCode`、`eigosAuthorization`（JSON 字符串）中。只按返回的 `stage`／`nextAction` 引导，不从笼统拒绝推断缺少创建任务权限；格式见[授权错误](../integration.md#授权错误与下一步)。下载包的 Python 客户端仅输出经过枚举与同源路径校验的授权字段，不回显原始上游错误或私有资料；错误不会自动重试。
+
 `TASK_STATE_SUBMITTED`／`TASK_STATE_WORKING` 不代表完成。正常执行时按有界间隔查询原任务；`metadata.internalState=paused` 则表示技术暂停，保留原任务等待运行条件修复，不能一直报告“正在执行”或要求用户重述业务目标。`TASK_STATE_INPUT_REQUIRED` 才交给用户补充实际缺少的信息；回复绑定当前版本：
 
 ```ts

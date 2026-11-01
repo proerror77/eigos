@@ -27,6 +27,7 @@ import { TaskService } from '../../packages/core/tasks.js';
 import { publicTask as taskSummary } from './task-view.js';
 import { AuthorizationCoordinator } from '../../packages/security/coordinator.js';
 import { SecurityError } from '../../packages/security/store.js';
+import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { accessContextSchema } from '../../packages/security/contracts.js';
 import { digest } from '../../packages/core/delegation.js';
 import { MemberAccessError, MemberStore } from '../../packages/members/store.js';
@@ -48,6 +49,7 @@ const auditId = (value: unknown) => typeof value === 'number' && Number.isFinite
   : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined;
 
 export function createApp(config: Config, verify?: VerifyToken, catalogFactory?: (store: JobStore) => ExecutionCatalog, loginProvider?: LoginProvider, verifierFactory?: (config: Config) => VerifyToken) {
+  const securityAdvice = (error: unknown) => error instanceof SecurityError ? securityErrorResponse(error, config.PUBLIC_URL) : {};
   assertPersonalSourceConfig(config);
   assertSourceProxy(config);
   if (config.EIGOS_CSV_PILOT === 'true' && (process.env.NODE_ENV === 'production' || !['127.0.0.1', 'localhost', '::1'].includes(config.HOST) || !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(config.PUBLIC_URL).hostname))) throw new Error('CSV simulation requires non-production loopback');
@@ -187,7 +189,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
           principal.access = security.authenticate(principal, match[1]);
         } catch(error) {
           const guidance = { onboarding_url: `${ingress.config(req).PUBLIC_URL}/.well-known/eigos-agent-registration`, permissions_url: `${config.PUBLIC_URL}/members/permissions` };
-          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason,...guidance});
+          if(error instanceof SecurityError) res.status(error.reason==='AUTHORITY_UNAVAILABLE'||error.reason==='REVOCATION_PENDING'?503:403).json({error:error.reason,...guidance,...securityErrorResponse(error,config.PUBLIC_URL)});
           else if(error instanceof AgentAccessError||error instanceof MemberAccessError) res.status(403).json({error:error.code,...guidance});
           else if(error instanceof DomainError) res.status(403).json({error:error.code});
           else next(error);
@@ -243,7 +245,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
       const reader = operation === 'describe' ? undefined : network?.ontologyReader(p, token);
       res.json(operation === 'describe' ? tasks.describeOntology(p, req.body) : operation === 'query' ? tasks.queryOntology(p, req.body, reader) : operation === 'check-access' ? tasks.checkAccess(p,req.body) : tasks.evaluateOntology(p, req.body, reader));
     } catch (error) {
-      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message }); return; }
+      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : error.code === 'INVALID_INPUT' ? 400 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_ontology_input' }); return; }
       next(error);
     }
@@ -251,7 +253,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
 
   const taskHttp=(action:(req:Request)=>unknown):RequestHandler=>(req,res,next)=>{
     try {res.json(action(req));} catch(error) {
-      if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='NOT_FOUND'?404:error.code==='INVALID_INPUT'?400:409).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof DomainError){res.status(error.code==='FORBIDDEN'?403:error.code==='NOT_FOUND'?404:error.code==='INVALID_INPUT'?400:409).json({error:error instanceof SecurityError?error.reason:error.code,...securityAdvice(error)});return;}
       if(error instanceof z.ZodError){res.status(400).json({error:'invalid_task_input'});return;} next(error);
     }
   };
@@ -265,7 +267,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
       const artifact=tasks.downloadArtifact(principals.get(req)!,String(req.params.taskId),String(req.params.artifactId));
       res.set({'Content-Type':artifact.mediaType,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store','Content-Disposition':`attachment; filename="artifact"; filename*=UTF-8''${encodeURIComponent(artifact.name)}`}).send(artifact.content);
     } catch(error) {
-      if(error instanceof DomainError){res.status(error.code==='NOT_FOUND'?404:403).json({error:error instanceof SecurityError?error.reason:error.code});return;}
+      if(error instanceof DomainError){res.status(error.code==='NOT_FOUND'?404:403).json({error:error instanceof SecurityError?error.reason:error.code,...securityAdvice(error)});return;}
       if(error instanceof z.ZodError){res.status(400).json({error:'invalid_artifact'});return;}next(error);
     }
   });
@@ -274,7 +276,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
   app.post('/tasks/:taskId/authorize', authenticate, (req, res, next) => {
     try { res.json({ task: taskSummary(tasks.authorize(principals.get(req)!, String(req.params.taskId), req.body)) }); }
     catch (error) {
-      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
+      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_authorization' }); return; }
       next(error);
     }
@@ -287,7 +289,7 @@ export function createApp(config: Config, verify?: VerifyToken, catalogFactory?:
         : tasks.revokeAuthorization(p, id, z.object({ requestId: z.string().min(1).max(128) }).strict().parse(req.body).requestId);
       res.json({ task: taskSummary(task) });
     } catch (error) {
-      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message }); return; }
+      if (error instanceof DomainError) { res.status(error.code === 'FORBIDDEN' ? 403 : error.code === 'NOT_FOUND' ? 404 : 409).json({ error: error.code, message: error.message, ...securityAdvice(error) }); return; }
       if (error instanceof z.ZodError) { res.status(400).json({ error: 'invalid_business_action' }); return; } next(error);
     }
   });

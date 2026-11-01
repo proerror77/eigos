@@ -23,7 +23,83 @@ TERMINAL = {'TASK_STATE_COMPLETED', 'TASK_STATE_FAILED', 'TASK_STATE_CANCELED', 
 
 
 class ClientError(Exception):
-    pass
+    def __init__(self, message, *, authorization=None, code=None):
+        super().__init__(message)
+        self.authorization = authorization
+        self.code = code
+
+
+def authorization_advice(error, card_url):
+    """Accept bounded protocol advice, never upstream prose or arbitrary URLs."""
+    if not isinstance(error, dict):
+        return None
+    details = error.get('data', [])
+    if isinstance(error.get('authorization'), dict):
+        safe_keys = ('stage', 'nextAction', 'reviewPath', 'reviewUrl', 'preserveOriginalTask', 'grantsAuthority')
+        selected = {key: error['authorization'][key] for key in safe_keys if key in error['authorization']}
+        details = [{'@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'metadata': {
+            'eigosCode': error.get('code'), 'eigosAuthorization': json.dumps(selected),
+        }}]
+    if isinstance(details, dict):
+        details = details.get('details', [details])
+    if not isinstance(details, list):
+        return None
+    codes = {'AUTHORIZATION_REQUIRED', 'ACCESS_REVOKED', 'AUTHORITY_UNAVAILABLE', 'REVOCATION_PENDING',
+             'POLICY_CHANGED', 'SOURCE_NOT_AUTHORIZED', 'OUTPUT_NOT_ALLOWED', 'INSUFFICIENT_ACCESS'}
+    actions = {
+        'personal_context': ('review_request_context', '/members/permissions'),
+        'source': ('review_source_authorization', '/members/permissions'),
+        'output': ('review_output_authorization', '/members/permissions'),
+        'policy': ('reread_current_context', '/members/permissions'),
+        'runtime': ('wait_for_runtime', '/health'),
+        'connection': ('review_connection', '/members'),
+        'access': ('review_permissions', '/members/permissions'),
+    }
+    base = urllib.parse.urlsplit(card_url)
+    for detail in details[:8]:
+        if not isinstance(detail, dict) or detail.get('@type') != 'type.googleapis.com/google.rpc.ErrorInfo':
+            continue
+        metadata = detail.get('metadata')
+        if not isinstance(metadata, dict) or not isinstance(metadata.get('eigosCode'), str) or metadata['eigosCode'] not in codes:
+            continue
+        encoded = metadata.get('eigosAuthorization')
+        if not isinstance(encoded, str) or len(encoded) > 4096:
+            continue
+        try:
+            advice = json.loads(encoded)
+        except ValueError:
+            continue
+        if not isinstance(advice, dict) or not isinstance(advice.get('stage'), str):
+            continue
+        expected = actions.get(advice['stage'])
+        if not expected or (advice.get('nextAction'), advice.get('reviewPath')) != expected:
+            continue
+        if advice.get('grantsAuthority') is not False or advice.get('preserveOriginalTask') is not True:
+            continue
+        review_url = urllib.parse.urlunsplit((base.scheme, base.netloc, expected[1], '', ''))
+        supplied_url = advice.get('reviewUrl', review_url)
+        if not isinstance(supplied_url, str):
+            continue
+        try:
+            valid_url = address(supplied_url, True) == address(card_url, True) and urllib.parse.urlsplit(supplied_url).path == expected[1]
+        except (ClientError, TypeError, ValueError):
+            valid_url = False
+        if not valid_url:
+            continue
+        return {'code': metadata['eigosCode'], 'authorization': {
+            'stage': advice['stage'], 'nextAction': expected[0], 'reviewPath': expected[1], 'reviewUrl': supplied_url,
+            'preserveOriginalTask': True, 'grantsAuthority': False,
+        }}
+    return None
+
+
+def authorization_failure(error, card_url):
+    advice = authorization_advice(error, card_url)
+    if not advice:
+        return None
+    guide = advice['authorization']
+    return ClientError(f"{advice['code']}: {guide['nextAction']}; review {guide['reviewUrl']}. No automatic retry performed",
+                       code=advice['code'], authorization=guide)
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -100,6 +176,9 @@ class Client:
             except (OSError, ValueError, subprocess.TimeoutExpired):
                 raise ClientError('Registered Agent transport unavailable; preserve the request identity') from None
             if not isinstance(value, dict) or not isinstance(value.get('status'), int) or not 200 <= value['status'] < 300:
+                rejected = authorization_failure(value.get('body') if isinstance(value, dict) else None, self.config['cardUrl'])
+                if rejected:
+                    raise rejected
                 raise ClientError('Registered Agent request denied or interrupted; inspect admission and exact task permissions')
             return value.get('body')
         if body is not None:
@@ -113,6 +192,14 @@ class Client:
                 raw = response.read(MAX_RESPONSE + 1)
         except urllib.error.HTTPError as error:
             # Do not print response bodies, request headers or credentials.
+            try:
+                raw_error = error.read(8193)
+                body_error = json.loads(raw_error) if len(raw_error) <= 8192 else None
+            except (ValueError, UnicodeError, OSError):
+                body_error = None
+            rejected = authorization_failure(body_error, self.config['cardUrl'])
+            if rejected:
+                raise rejected from None
             if error.code in (401, 403):
                 raise ClientError('Authentication/permission denied; refresh credentials or obtain the required task scopes') from None
             raise ClientError(f'HTTP {error.code}; preserve the request ID and inspect task state before retrying') from None
@@ -147,6 +234,10 @@ class Client:
             raise ClientError('Invalid JSON-RPC response identity')
         if 'error' in response:
             code = response['error'].get('code') if isinstance(response['error'], dict) else None
+            code = code if isinstance(code, int) and not isinstance(code, bool) else None
+            rejected = authorization_failure(response['error'], self.config['cardUrl'])
+            if rejected:
+                raise rejected
             raise ClientError(f'A2A request rejected (code {code}); inspect inputs and task state. No automatic retry performed')
         result = response.get('result')
         task = result.get('task', result) if isinstance(result, dict) else None
@@ -623,5 +714,8 @@ if __name__ == '__main__':
         main()
     except (ClientError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
         message = str(error) if isinstance(error, ClientError) else 'Invalid configuration, protocol data or local request store; inspect setup'
-        print(json.dumps({'error': message}, ensure_ascii=False), file=sys.stderr)
+        output = {'error': message}
+        if isinstance(error, ClientError) and error.authorization is not None:
+            output.update({'code': error.code, 'authorization': error.authorization})
+        print(json.dumps(output, ensure_ascii=False), file=sys.stderr)
         sys.exit(1)

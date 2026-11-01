@@ -15,6 +15,22 @@ MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实�
 
 缺失认证配置默认拒绝。开发 Bearer 令牌只用于 loopback；会员使用受信发行者的 OAuth 身份。会员资格、令牌 scope、具体来源连接和准确业务许可都不能相互替代。令牌不得放入目标文本、模型参数或日志。
 
+## 授权错误与下一步
+
+Foundation 的 MCP 工具拒绝保留原 `code`，在文本 JSON 和 `structuredContent.error` 中返回同一份 `authorization`。A2A 保留现有协议错误类型，并在 `google.rpc.ErrorInfo.metadata` 的 `eigosCode` 中提供原代码、`eigosAuthorization` 中提供同一指引的 JSON 字符串。指引包含 `stage`、`nextAction`、当前实例的 `reviewUrl`（未提供实例时为相对 `reviewPath`），以及 `preserveOriginalTask=true`、`grantsAuthority=false`。
+
+兼容 HTTP 任务／本体入口保留原 HTTP 状态和 `error`，另外返回相同的 `code` 与 `authorization`。原生连接身份拒绝仍保留登记及权限页面链接。Python A2A 客户端只接受已知枚举、当前 origin 和固定审阅路径，输出可解析指引，不回显上游错误正文，也不自动重试。
+
+| 实际拒绝 | PA 的处理 |
+| --- | --- |
+| `stage=personal_context`、`nextAction=review_request_context` | 请求中的个人事实不可用或不在授权范围内。仅公共地点查询时省略无关 `personalContext`；确需个人事实时，让本人检查资料绑定和授权。不能据此声称缺少创建任务权限。 |
+| `stage=access` | 具体缺项尚未确定，按当前权限页检查安装、任务及数据范围；不猜测或自动扩大权限。 |
+| `stage=source`／`output` | 分别审阅来源或结果输出范围，保留原任务；来源可用不等于已执行，结果受限不等于可交付。 |
+| `POLICY_CHANGED` | 重读当前连接与原任务版本，核对后按原请求续接，不盲目重发提交。 |
+| `stage=connection`／`runtime` | 由本人处理收回的连接，或等待权限运行服务恢复；不换身份绕过。 |
+
+指引只使用实际拒绝类别和安全常量，不返回私有对象是否存在、隐藏字段或原请求内容。`check_access` 只适用于已获许可的现有任务，不能在首次提交被拒绝、尚无任务 ID 时调用。重试前确认原请求是否已被接受；错误响应、权限页或 PA 的回复都不批准购买、付款或新的访问范围。
+
 ## 任务接口
 
 以 MCP `tools/list` 返回的输入 schema 为准：

@@ -9,6 +9,7 @@ import { TaskService } from '../../packages/core/tasks.js';
 import { publicTask as taskSummary } from './task-view.js';
 import {secureDescribeSchema,secureQuerySchema,secureEvaluateSchema,checkAccessSchema} from '../../packages/security/view.js';
 import { SecurityError } from '../../packages/security/store.js';
+import { securityErrorResponse } from '../../packages/security/error-guidance.js';
 import { objectQuerySchema } from '../../packages/ontology/object-store.js';
 import { functionCallSchema } from '../../packages/ontology/object-functions.js';
 import { paPaymentReportSchema, paPaymentRouteSchema } from '../../packages/core/pa-payment.js';
@@ -18,20 +19,22 @@ import { ontologyIdSchema, ontologyReleaseRefSchema } from '../../packages/ontol
 import { mountDefinitionMcp } from './ontology/mcp.js';
 import { externalDraftPermitSchema } from '../../packages/ontology/external-draft.js';
 
-async function result(action: () => unknown): Promise<CallToolResult> {
+async function toolResult(action: () => unknown, instance?: string): Promise<CallToolResult> {
   try {
     const value = await action();
     return { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: { result: value } };
   } catch (error) {
     if(error instanceof z.ZodError) return {isError:true,content:[{type:'text',text:JSON.stringify({code:'INVALID_INPUT',message:'Input does not match the authorized tool contract'})}]};
     if (error instanceof DomainError) {
-      return { isError: true, content: [{ type: 'text', text: JSON.stringify({ code: error instanceof SecurityError ? error.reason : error.code, message: error.message }) }] };
+      const payload = error instanceof SecurityError ? securityErrorResponse(error, instance) : { code: error.code, message: error.message };
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify(payload) }], structuredContent: { error: payload } };
     }
     throw error;
   }
 }
 
 export function createMcpServer(tasks: TaskService, principal: Principal, network?: { service: NetworkService; token: string }, sources?: { service: MemberSourceService; token: string }, definitions?: DefinitionService, options: { payment?: boolean; externalDrafts?: boolean; runtime?: { instance: string; backend: string; releaseDigest?: string; ontologyTransport: 'native-mcp' } } = {}): McpServer {
+  const result = (action: () => unknown) => toolResult(action, options.runtime?.instance);
   const server = new McpServer({ name: 'eigos', version: '0.1.0' }, { instructions: PA_DISCOVERY_GUIDANCE });
   if (definitions) mountDefinitionMcp(server, definitions, principal);
   if (!tasks.secured && network) mountNetworkMcp(server, network.service, principal, network.token);
@@ -66,7 +69,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: z.object({}), annotations: read,
   }, () => result(() => { requireScope(principal, 'services:read'); return tasks.services(); }));
   server.registerTool('submit_task', {
-    description: 'Submit the original goal to a discovered service. For an already explicitly bound self, include personalContext.self and select only the needed default keys and known business references; do not bind the person again or ask the user to repeat existing facts. Explicit task overrides and clears take precedence over profile defaults. Before a location-dependent delegation, the PA obtains the actual task addresses and city from the user saved address or current location as appropriate, then supplies locationContext. EIGOS records it as Ontology RequestFact inputs before planning; the user should not repeat known addresses or city. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate still uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task.',
+    description: 'Submit the original goal to a discovered service. Include personalContext only when the goal needs authorized stored personal facts or preferences; self requests personal data, not caller identity. Public named-place queries normally omit personalContext and unverified street addresses. For an already bound self whose facts are needed, select only the needed defaults and known references; do not bind again or repeat known facts. Explicit overrides and clears take precedence. Before location-dependent delegation, obtain the actual needed endpoints and city through the PA authorized tools, then supply locationContext. It becomes Ontology RequestFact inputs before planning. Keep ordinary constraints in goal text; structured condition predicates must be discovered registered IDs, never user prose. eigos.delegate uses Ontology + LLM, source actions and independent acceptance. Reuse requestId for identical retries; never replace a pending task. On denial follow the returned authorization guidance, without inferring task-creation permission or requesting unrelated personal access.',
     inputSchema: submitSchema,
     annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, (args: unknown) => result(() => taskSummary(tasks.submit(principal, args))));
