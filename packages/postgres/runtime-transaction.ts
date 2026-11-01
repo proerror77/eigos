@@ -3,6 +3,14 @@ import type { Client } from 'pg';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
+const contexts = new WeakMap<object, string>();
+
+/** Only valid while the caller owns the business transaction callback. */
+export function postgresBusinessSchema(client: Client): string {
+  const schema = contexts.get(client);
+  if (!schema) throw new Error('An active PostgreSQL business transaction is required');
+  return schema;
+}
 
 export interface PostgresRuntimeAuthority {
   id: string;
@@ -32,9 +40,11 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); opened = true;
     await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))', [`eigos-business:${schema}`]);
-    await client.query(`SET LOCAL search_path TO "${schema}", pg_catalog, pg_temp`);
+    await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
     await assertAuthority();
-    const result = await action(client);
+    contexts.set(client, schema);
+    let result: T;
+    try { result = await action(client); } finally { contexts.delete(client); }
     await assertAuthority();
     committing = true; await client.query('COMMIT'); opened = false;
     return result;

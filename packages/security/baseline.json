@@ -5540,7 +5540,7 @@
       "currentControl": "Serializable transaction, shared advisory lock, authority checks before work and commit; no automatic retry after uncertain commit",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "03beb41442218864e24ff367291661716bf2191c195eb7f8b0fc7be0981bb2c6"
+      "sourceDigest": "1d14ecc21c32471dd7433f1df1c1d6e7557c9d04d3920ee74900747153ae252a"
     },
     {
       "id": "postgres-authority-lock",
@@ -5554,6 +5554,19 @@
       "targetControl": "Allow authority fencing without granting runtime authority-table write privileges",
       "stage": "S5",
       "sourceDigest": "5a873f4587cf94564b0a2b453f03f132897e031ea552e65bbfb85d72bbea179b"
+    },
+    {
+      "id": "postgres-work-authority",
+      "file": "packages/postgres/work-authority.ts",
+      "channels": [
+        "authorization_control",
+        "postgres"
+      ],
+      "content": "PostgreSQL task authority lookup inside a fenced business transaction",
+      "currentControl": "Matches current subject, parent and data grants, manager lease, policy digest, revisions and expiry; fails closed without transaction",
+      "targetControl": "Require independent claim, task state and policy scope validation before Worker execution",
+      "stage": "S5",
+      "sourceDigest": "469f2c430f250a7f4394b994204b0eef0910492861153e5ab14502baeb5ccc8a"
     }
   ]
 }
