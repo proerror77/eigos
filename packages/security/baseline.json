@@ -3438,7 +3438,7 @@
     {
       "id": "security-envelope",
       "file": "packages/security/envelope.ts",
-      "sourceDigest": "f54a2f6f0796ba7e36646724b5c475a03892204410ca282870b2260d8d5388bf",
+      "sourceDigest": "fb8424b78283df0affc73d5189a01f4646991d4c260b1c6e670e13e64777b28b",
       "channels": [
         "all-outputs"
       ],
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "01f2b81778dfd818b08d02b95787e47237723f7d54f5cd12d17c95cf103a1970",
+      "sourceDigest": "7876e519449bdce7033fe6ad0b004feb34aa59e86a9eab0414163f395a6ef4b6",
       "channels": [
         "all-reads"
       ],

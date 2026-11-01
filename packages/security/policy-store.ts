@@ -3,7 +3,7 @@ import { selfPersonRef, personalPreferenceRef, personalInputFields, personalCont
 import {taskContextMembers} from './task-context.js';
 import type { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import baselineJson from './baseline.json' with { type: 'json' };
 import { z } from 'zod';
 import { DomainError,type Job } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
@@ -41,7 +41,7 @@ const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefS
   // Operator-reviewed predecessor versions may explain existing observations.
   // They never authorize dispatch or enter newly provisioned task outputs.
   readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
-const baseline = JSON.parse(readFileSync(new URL('./baseline.json', import.meta.url), 'utf8')) as {
+const baseline = baselineJson as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
 /** Exact reviewed additive contract transition, for the offline RollingGo installer.
