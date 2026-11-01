@@ -3,13 +3,20 @@ import type { Client } from 'pg';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, string>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string }>();
 
 /** Only valid while the caller owns the business transaction callback. */
 export function postgresBusinessSchema(client: Client): string {
-  const schema = contexts.get(client);
-  if (!schema) throw new Error('An active PostgreSQL business transaction is required');
-  return schema;
+  const context = contexts.get(client);
+  if (!context) throw new Error('An active PostgreSQL business transaction is required');
+  return context.schema;
+}
+
+/** The descriptor digest captured before the transaction started. */
+export function postgresBusinessAuthorityDigest(client: Client): string {
+  const context = contexts.get(client);
+  if (!context) throw new Error('An active PostgreSQL business transaction is required');
+  return context.authorityDigest;
 }
 
 export interface PostgresRuntimeAuthority {
@@ -42,7 +49,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))', [`eigos-business:${schema}`]);
     await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
     await assertAuthority();
-    contexts.set(client, schema);
+    contexts.set(client, { schema, authorityDigest: expected.digest });
     let result: T;
     try { result = await action(client); } finally { contexts.delete(client); }
     await assertAuthority();

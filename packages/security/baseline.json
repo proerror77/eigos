@@ -5540,7 +5540,7 @@
       "currentControl": "Serializable transaction, shared advisory lock, authority checks before work and commit; no automatic retry after uncertain commit",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "1d14ecc21c32471dd7433f1df1c1d6e7557c9d04d3920ee74900747153ae252a"
+      "sourceDigest": "6a2fb0969c51cd8867082a5b9c45491d33606818e5948f94232910d24611b4c6"
     },
     {
       "id": "postgres-authority-lock",
@@ -5567,6 +5567,19 @@
       "targetControl": "Require independent claim, task state and policy scope validation before Worker execution",
       "stage": "S5",
       "sourceDigest": "469f2c430f250a7f4394b994204b0eef0910492861153e5ab14502baeb5ccc8a"
+    },
+    {
+      "id": "postgres-work-claim",
+      "file": "packages/postgres/work-claim.ts",
+      "channels": [
+        "authorization_control",
+        "postgres"
+      ],
+      "content": "PostgreSQL foundation Worker claim validation and renewal",
+      "currentControl": "Fenced transaction, original claim token and authority digest, current task revisions, grant identity and expiry rechecks",
+      "targetControl": "Complete claim creation, recovery, result fencing and full authorization before runtime activation",
+      "stage": "S5",
+      "sourceDigest": "7ca1974ab3bc4710541cfdb500855e753bdc8119adf3245eb22f15c6bc58023c"
     }
   ]
 }
