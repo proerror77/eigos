@@ -8,6 +8,7 @@ import { postgresBusinessSchema } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
+import { reviewedFieldPolicy } from '../security/field-policy.js';
 
 /** Resolve a current agent task-read grant. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
@@ -90,6 +91,16 @@ export async function postgresTaskResourceViewAllowed(client: Client, principal:
     if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
     return roleAllows(currentKernelImplementation(),roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
+  });
+}
+
+/** Return reviewed classification only; role, object binding, current labels,
+ * lineage and recipient clearance must all be checked separately. */
+export async function postgresTaskFieldClassification(client: Client, principal: Principal, taskId: string, policyDigest: string, type: string, field: string): Promise<string> {
+  const captured=structuredClone(principal);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'));
+    return reviewedFieldPolicy(currentKernelImplementation(),type,field);
   });
 }
 

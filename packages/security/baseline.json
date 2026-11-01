@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "8746110548bfa57e56b6b2d8eac2fdc43952a0791307d5c2adf7b30e49e16aa3",
+      "sourceDigest": "5614c72a6e00f19a2a741930be480f310769c086cb44b58097f2fdb58b6bd581",
       "channels": [
         "all-reads"
       ],
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "5ef63aca617171aeae062b586214efe13b7e0c4bd1a57aa32ee92c53fbfc1903",
+      "sourceDigest": "eb9ab0f254c4560d3be5897d433d7102f7066b4ce46fd91a9856ccb1314708c7",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
       "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
@@ -5691,6 +5691,18 @@
       "content": "Shared resource role and version checks",
       "currentControl": "Exact subject, resource version, role and expiration; no object or field authorization",
       "targetControl": "Exact subject, resource version, role and expiration; no object or field authorization",
+      "stage": "S5"
+    },
+    {
+      "id": "reviewed-field-policy",
+      "file": "packages/security/field-policy.ts",
+      "sourceDigest": "6c2dbb035101698d5285dc25eda569af8c3079a9585d5a4cb8b08d278bd142ca",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Shared reviewed field classification",
+      "currentControl": "Current model fingerprint and reviewed classification; unknown fields deny",
+      "targetControl": "Current model fingerprint and reviewed classification; unknown fields deny",
       "stage": "S5"
     }
   ]

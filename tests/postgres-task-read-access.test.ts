@@ -7,7 +7,7 @@ import pg from 'pg';
 import { securityFixture } from './fixtures/security.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
+import { postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
@@ -55,6 +55,11 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal((await read()).grant.id,original.id);
     const model=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy));
     assert.deepEqual(model.ref,task.job.delegation!.ontologyRelease);
+    for(const [type,field] of [['ServiceRequest','originalGoal'],['ServiceRequest','requestId'],['ServiceRequest','progress'],['ServiceRequest','unreviewed'],['NonexistentType','field']] as const) {
+      const expected=f.jobs.security.policies.fieldPolicy(type,field);
+      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskFieldClassification(c,principal,task.job.id,policy,type,field));
+      assert.equal(actual,expected);
+    }
     const envelope={version:SECURITY_CONTRACT,ownerKey:f.owner,policyVersion:POLICY_VERSION,requiredMarkings:['member_private'] as const,classification:'private' as const,channels:['agent_response'] as const,lineage:[],lineageComplete:true};
     const sqliteScope=f.jobs.security.scope(f.jobs.security.agentContext(principal),task.job.id,'task.result.read');
     f.jobs.security.policies.requireRecipient(sqliteScope,{...envelope,requiredMarkings:[...envelope.requiredMarkings],channels:[...envelope.channels]},'agent_response');

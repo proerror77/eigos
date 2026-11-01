@@ -24,6 +24,7 @@ import {DefinitionStore} from '../ontology/definition-store.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
+import { reviewedFieldPolicy } from './field-policy.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
 // Other writes, trigger side effects and other connections still invalidate the
@@ -268,11 +269,7 @@ export class SecurityPolicies {
     return 'ALLOWED';
   }
   fieldPolicy(type: string, field: string) {
-    const value = baseline.types[type];
-    if (!value || value.fingerprint !== this.model.fingerprint(type)) return 'internal_only';
-    if(Object.hasOwn(projectionFields(type),field)) return 'task_sensitive';
-    if (!value.fields[field] || this.model.properties(type)[field]?.restricted) return 'internal_only';
-    return value.fields[field]!;
+    return reviewedFieldPolicy(this.model,type,field);
   }
   fields(type:string) {return {...this.model.properties(type),...projectionFields(type)};}
   value(type:string,field:string,properties:Record<string,unknown>) {
