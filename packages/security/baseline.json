@@ -3022,7 +3022,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "cf59de5a1fe8a7c364b857ab255366303242d3add63622798dd8a41ba488ecf4",
+      "sourceDigest": "e94fa007ec283eb824e428c31f48a60cccd8ac4a532c8d291e49b8bcbad8b24b",
       "channels": [
         "model",
         "query"
@@ -3060,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "4c6ad72b11b1491fdc6dc0998741fd1850a59032323ee343fe881af620622229",
+      "sourceDigest": "63afa0d9412adca2be620afcfd29fa3e510f2748a42fca60d93730176783cf78",
       "channels": [
         "model",
         "dispatch",
@@ -3262,7 +3262,7 @@
     {
       "id": "read-dataflow",
       "file": "packages/coordinator/read-dataflow.ts",
-      "sourceDigest": "c62083ec3deb8460b6afd8cb05490d898896806611d5f1d117b4416dc86f9066",
+      "sourceDigest": "ef9bd804616a4b38fda49178da9b43a59882b57b15689b24188747e104410ea0",
       "channels": [
         "model",
         "dispatch",

@@ -5,6 +5,7 @@ import { digest } from '../packages/core/delegation.js';
 import type { AgentStep } from '../packages/ontology/agent-actions.js';
 import { didiDataflow, dataflowCompletion } from './fixtures/didi-dataflow.js';
 import { dataflowValue } from '../packages/coordinator/read-dataflow.js';
+import { checkedRideEstimate } from '../packages/ontology/ride-estimate-projection.js';
 import { chooseDidi, input, observeDidi, setupDidi } from './fixtures/didi.js';
 import { owner, principal } from './backend-fixture.js';
 
@@ -12,6 +13,71 @@ const choice: Parameters<typeof setupDidi>[0] = (ctx, access) => {
   observeDidi(ctx, access);
   return { kind: 'execute', requestRevision: ctx.request.revision, message: 'Model chooses this graph and its future evidence binding', steps: didiDataflow(ctx.state.scope), completionJson: '', plannedCompletion: dataflowCompletion };
 };
+
+for (const expired of [true, false]) test(`A mixed frontier ${expired ? 'rejects an expired' : 'accepts a current'} existing dependency before refreshing another input`, { timeout: 120000 }, async () => {
+  let forcedTime: number | undefined;
+  const f = setupDidi((ctx, access) => {
+    const observations = observeDidi(ctx, access), scope = ctx.state.scope;
+    const dest = observations.find(o => o.snapshot.actionInput.role === 'destination');
+    if (!dest) return { kind: 'execute', requestRevision: ctx.request.revision, message: 'Read one endpoint first',
+      steps: [didiDataflow(scope)[0]!], completionJson: '' };
+    assert.equal(dest.snapshot.data.kind, 'places');
+    if (dest.snapshot.data.kind !== 'places') assert.fail();
+    const steps = didiDataflow(scope), from = steps[1]!, price = steps[2]!;
+    price.dependsOn = ['from']; price.inputRefs = price.inputRefs.filter(ref => ref.stepId === 'from');
+    price.argumentsJson = JSON.stringify({ scope, destinationObservation: dest.ref, destinationPlaceId: dest.snapshot.data.places[1]!.id });
+    // The observation was actually read/evaluated while current. Only the host
+    // business clock moves before submission; the original lease stays valid.
+    if (expired) forcedTime = Date.parse(dest.snapshot.expiresAt) + 1;
+    return { kind: 'execute', requestRevision: ctx.request.revision, message: 'Refresh origin and use the existing destination',
+      steps: [from, price], completionJson: '', plannedCompletion: dataflowCompletion };
+  });
+  Object.defineProperty(f.store.ontology, 'now', { value: () => forcedTime ?? Date.now() });
+  try {
+    const job = f.b.submit(); await f.b.run(); await f.b.run();
+    const calls = f.calls.filter(call => call.method === 'tools/call').length;
+    assert.equal(calls, 1);
+    await f.b.run();
+    const current = f.store.get(owner, job.id);
+    if (expired) {
+      assert.equal(f.calls.filter(call => call.method === 'tools/call').length, calls,
+        'A known expired dependency must reject the whole frontier before any new source read');
+      assert.equal(f.store.intents(owner, job.id).length, 1, 'Only the original endpoint intent may exist');
+      assert(current.delegation!.agent!.feedback.some(feedback => feedback.kind === 'validation' && /destinationObservation.*expired/.test(feedback.message)));
+      assert.equal(current.delegation!.acceptance, undefined);
+    } else {
+      assert.equal(current.state, 'completed', JSON.stringify(current.delegation!.agent!.feedback));
+      assert.equal(current.delegation!.acceptance?.accepted, true);
+      assert.equal(f.calls.filter(call => call.name === 'taxi_estimate').length, 1);
+    }
+  } finally { f.close(); }
+});
+
+for (const missing of ['read', 'evaluation'] as const) test(`A mixed frontier cannot replace a missing model ${missing} with host receipts`, async () => {
+  const f = setupDidi((ctx, access) => {
+    observeDidi({ ...ctx, state: { ...ctx.state, observations: [] } }, access);
+    const ref = ctx.state.observations[0], scope = ctx.state.scope;
+    if (!ref) return { kind: 'execute', requestRevision: ctx.request.revision, message: 'Read one endpoint',
+      steps: [didiDataflow(scope)[0]!], completionJson: '' };
+    const view = missing === 'read' ? f.store.ontology.read(owner, ref)
+      : (access.session.call('query_ontology', { object: ref }) as { items: { properties: Record<string, unknown> }[] }).items[0]!;
+    const snapshot = checkedRideEstimate(view.properties.snapshot);
+    assert.equal(snapshot.data.kind, 'places'); if (snapshot.data.kind !== 'places') assert.fail();
+    const steps = didiDataflow(scope), price = steps[2]!;
+    price.dependsOn = ['from']; price.inputRefs = price.inputRefs.filter(input => input.stepId === 'from');
+    price.argumentsJson = JSON.stringify({ scope, destinationObservation: ref, destinationPlaceId: snapshot.data.places[1]!.id });
+    return { kind: 'execute', requestRevision: ctx.request.revision, message: 'Attempt mixed inputs without the required model evidence',
+      steps: [steps[1]!, price], completionJson: '', plannedCompletion: dataflowCompletion };
+  });
+  try {
+    const job = f.b.submit(); await f.b.run(); await f.b.run(); await f.b.run();
+    const current = f.store.get(owner, job.id);
+    assert.equal(f.calls.filter(call => call.method === 'tools/call').length, 1);
+    assert.equal(f.store.intents(owner, job.id).length, 1);
+    assert(current.delegation!.agent!.feedback.some(feedback => feedback.kind === 'validation'));
+    assert(!current.delegation!.acceptance?.accepted); assert(!current.artifact);
+  } finally { f.close(); }
+});
 
 test('Selected pure derivations bind non-first real sources, and planned completion has post-source host evidence', async () => {
   const t = setupDidi(choice);
