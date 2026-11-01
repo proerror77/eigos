@@ -3390,7 +3390,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "c7d65e72fe8e438c4752790b4c690c229d14e407c467914cd0b70a2a3693f2ab",
+      "sourceDigest": "4f3803e4d1ce18c216162967d9fc2afd9cfe71360b79f911bac1cd64d0ca73b8",
       "channels": [
         "authorization_control"
       ],
@@ -3824,7 +3824,7 @@
     {
       "id": "s5-scripts-run-local",
       "file": "scripts/run-local.mjs",
-      "sourceDigest": "d0f3a38bb3e27995d7513f9fafcfa2dfd63c1ed5e4671960c8455eb8c7701ccb",
+      "sourceDigest": "f75c57c0b3673d400580514e874fe227e9a24cc11f7483bb54c2c2404fbb1399",
       "channels": [
         "runtime"
       ],
@@ -4376,7 +4376,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "e4cf9fc03d79b590ef69969bfa2e18f7cb5d721d63838b69b78ab194a5833d2c",
+      "sourceDigest": "1a79eea4ddd038628bcf2a8c4cb008d3773b216469f10929c039770354651bb4",
       "channels": [
         "operator_cli"
       ],

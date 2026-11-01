@@ -39,7 +39,7 @@ test('the managed runtime still forcibly stops unresponsive children after its b
  }
  // Observe the real host deadline and accelerate only that parent's timer.
  // Child processes still receive SIGTERM, ignore it, then receive real SIGKILL.
- writeFileSync(join(root,'clock.mjs'),`import{writeFileSync}from'node:fs';const timer=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>{if(ms>=60000){writeFileSync(${JSON.stringify(observed)},String(ms));return timer(fn,50,...args);}return timer(fn,ms,...args);};`);
+ writeFileSync(join(root,'clock.mjs'),`import{writeFileSync}from'node:fs';const timer=globalThis.setTimeout;globalThis.setTimeout=(fn,ms,...args)=>{if(ms>=30000){writeFileSync(${JSON.stringify(observed)},String(ms));return timer(fn,50,...args);}return timer(fn,ms,...args);};`);
  const child=spawn(process.execPath,['--import',join(root,'clock.mjs'),'scripts/run-local.mjs','--built'],{cwd:root,detached:true,env:{...process.env,EIGOS_MANAGED_COMMERCE_SANDBOX:'false',EIGOS_FREE_BOOKING_BROWSER_CONFIG:''},stdio:['ignore','pipe','pipe']});
  let output='';
  try{
@@ -48,7 +48,7 @@ test('the managed runtime still forcibly stops unresponsive children after its b
    child.once('error',reject);child.stdout.on('data',chunk=>{output+=String(chunk);if(output.includes('gateway-ready')&&output.includes('worker-ready')){clearTimeout(timer);done();}});
   });
   const ended=once(child,'exit');assert(child.kill('SIGTERM'));const [code]=await ended;
-  assert.equal(code,0);assert.equal(readFileSync(observed,'utf8'),'90000');
+  assert.equal(code,0);assert.equal(readFileSync(observed,'utf8'),'50000');
  }finally{
   if(child.pid)try{process.kill(-child.pid,'SIGKILL');}catch{}
   rmSync(root,{recursive:true,force:true});
