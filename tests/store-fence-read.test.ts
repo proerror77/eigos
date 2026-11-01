@@ -53,3 +53,18 @@ test('lease fencing does not materialize unrelated large task histories into tem
   store.release(claim);
  }finally{store.close();}
 });
+
+test('owned metadata validation reads indexed validity without loading the large body',t=>{
+ const store=new JobStore(':memory:'),db=Reflect.get(store,'db') as DatabaseSync;
+ try{
+  const tasks=new TaskService(store,{catalog:new ExecutionCatalog([],[],[])}),job=tasks.submit(principal,{service:'eigos.delegate',requestId:randomUUID(),goal:'Synthetic metadata validation'});
+  db.prepare("UPDATE jobs SET body=json_set(body,'$.unrelatedHistoricalPayload',?) WHERE id=?").run('synthetic-history'.repeat(500000),job.id);
+  let query='';const prepare=db.prepare.bind(db);
+  t.mock.method(db,'prepare',(sql:string)=>{if(sql.startsWith('SELECT typeof(body) AS body_type'))query=sql;return prepare(sql);});
+  store.intents(owner,job.id);assert(query);
+  const table=prepare("SELECT rootpage FROM sqlite_master WHERE type='table' AND name='jobs'").get()!;
+  const instructions=prepare('EXPLAIN '+query).all(owner,job.id);
+  const bodyCursor=instructions.find(row=>row.opcode==='OpenRead'&&Number(row.p2)===Number(table.rootpage))?.p1;
+  assert(!instructions.some(row=>row.opcode==='Column'&&row.p1===bodyCursor&&Number(row.p2)===6),'Ownership/validity checks must not load jobs.body');
+ }finally{store.close();}
+});

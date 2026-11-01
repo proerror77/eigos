@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { Worker } from '../apps/worker/worker.js';
 import { securityFixture } from './fixtures/security.js';
 import { authorizationScope, type AuthorizationScope } from '../packages/security/context.js';
+import { SecurityError } from '../packages/security/store.js';
 import type { WorkClaim } from '../packages/core/store.js';
 
 const turn = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -31,6 +32,104 @@ test('cutover drains current work before pausing new claims and resumes explicit
     worker.resumeClaims(); await nextStarted;
     assert.equal(calls,2);
   } finally { release(); await worker.close(); f.close(); }
+});
+
+test('a model context cleanup rejection is distinguished from committed recovery writeback', async t => {
+  const f = securityFixture(), install = f.installation('Cleanup boundary');
+  f.approve(install.id); const task = f.task(install.id), warnings: unknown[][] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => { if (String(args[0]).startsWith('Worker ')) warnings.push(args); });
+  const secret = 'private-fixture-message-and-path-never-log';
+  let released!: () => void; const cleanup = new Promise<void>(resolve => { released = resolve; });
+  const worker = new Worker(f.jobs, { leaseMs: 30000, coordinator: {
+    run: async () => { throw new Error('Synthetic model interruption'); },
+    releaseModelContext: async () => {
+      released(); const error = new SecurityError('OUTPUT_NOT_ALLOWED', secret);
+      error.stack = `SecurityError: ${secret}\n at controller (file:///private/${secret}/dist/packages/security/policy-store.js:777:9)\n at ignored (/private/${secret}.js:1:2)`;
+      throw error;
+    },
+  } });
+  try {
+    worker.tick(); await cleanup; await turn(); await worker.close();
+    assert.equal(f.jobs.get(f.owner, task.job.id).delegation!.recovery?.code, 'model_unavailable');
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]![0]), /^Worker cleanup failed/);
+    const detail = warnings[0]![1]; assert(detail && typeof detail === 'object');
+    assert('phase' in detail && 'recoveryWriteback' in detail && 'origins' in detail);
+    assert.equal(detail.phase, 'model_context_cleanup'); assert.equal(detail.recoveryWriteback, 'committed');
+    assert.deepEqual(detail.origins, ['packages/security/policy-store.js:777:9']);
+    assert(!JSON.stringify(warnings).includes(secret));
+    assert.equal(f.jobs.security.listGrants(f.owner).filter(grant => grant.kind === 'task_data').length, 1);
+  } finally { await worker.close(); f.close(); }
+});
+
+test('cleanup cannot hide an earlier recovery writeback rejection', async t => {
+  const f = securityFixture(), install = f.installation('Two rejected phases');
+  f.approve(install.id); const task = f.task(install.id), warnings: unknown[][] = [];
+  t.mock.method(console, 'error', (...args: unknown[]) => { if (String(args[0]).startsWith('Worker ')) warnings.push(args); });
+  t.mock.method(f.jobs, 'finish', () => { throw new SecurityError('OUTPUT_NOT_ALLOWED'); });
+  let released!: () => void; const cleanup = new Promise<void>(resolve => { released = resolve; });
+  let before: ReturnType<typeof f.jobs.get> | undefined;
+  const worker = new Worker(f.jobs, { leaseMs: 30000, coordinator: {
+    run: async () => { before = f.jobs.get(f.owner, task.job.id); throw new Error('Synthetic model interruption'); },
+    releaseModelContext: async () => { released(); throw new SecurityError('ACCESS_REVOKED'); },
+  } });
+  try {
+    worker.tick(); await cleanup; await turn(); await worker.close();
+    assert(before);
+    assert.deepEqual(f.jobs.get(f.owner, task.job.id), before);
+    const details = warnings.map(entry => entry[1]);
+    assert(details.some(detail => detail && typeof detail === 'object' && 'phase' in detail && detail.phase === 'recovery_writeback'
+      && 'reason' in detail && detail.reason === 'OUTPUT_NOT_ALLOWED'));
+    assert(details.some(detail => detail && typeof detail === 'object' && 'phase' in detail && detail.phase === 'model_context_cleanup'
+      && 'reason' in detail && detail.reason === 'ACCESS_REVOKED'));
+  } finally { await worker.close(); f.close(); }
+});
+
+test('technical recovery renews its still-current original lease during a long projection', {timeout:60000}, async t => {
+  let clock=Date.now(); t.mock.method(Date,'now',()=>clock);
+  const f=securityFixture(()=>clock),install=f.installation('Long recovery projection');f.approve(install.id);
+  const task=f.task(install.id),request=structuredClone(task.job.delegation!.request),warnings:unknown[][]=[];
+  t.mock.method(console,'error',(...args:unknown[])=>{if(String(args[0]).startsWith('Worker '))warnings.push(args);});
+  let signal:AbortSignal|undefined,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
+  const bind=f.jobs.security.policies.bindTaskProjection.bind(f.jobs.security.policies),renew=f.jobs.renew.bind(f.jobs);
+  let renewals=0;
+  t.mock.method(f.jobs,'renew',(...args:Parameters<typeof renew>)=>{const value=renew(...args);if(value)renewals++;return value;});
+  t.mock.method(f.jobs.security.policies,'bindTaskProjection',(...args:Parameters<typeof bind>)=>{
+    if(signal?.aborted)for(let chunk=0;chunk<3;chunk++){clock+=6000;authorizationScope()!.assertCurrent();}
+    return bind(...args);
+  });
+  const worker=new Worker(f.jobs,{leaseMs:15000,pollMs:1000,timeoutMs:50,coordinator:{
+    run:async(_claim,current)=>{signal=current;entered();await new Promise<void>((_resolve,reject)=>current.addEventListener('abort',()=>reject(new Error('Synthetic timeout')),{once:true}));},
+  }});
+  try{
+    worker.tick();await started;await new Promise(resolve=>setTimeout(resolve,100));await worker.close();
+    const current=f.jobs.get(f.owner,task.job.id);
+    assert.equal(current.delegation?.recovery?.code,'worker_timeout',JSON.stringify(warnings));
+    assert.equal(renewals,3,'Each renewal must retain the original claim and interval');
+    assert.deepEqual(current.delegation?.request,request);assert.equal(current.revision,task.job.revision);
+    assert.equal(current.artifact,undefined);assert.deepEqual(warnings,[]);
+  }finally{await worker.close();f.close();}
+});
+
+test('technical recovery cannot renew beyond its bounded metadata window', {timeout:60000}, async t => {
+  let clock=Date.now();t.mock.method(Date,'now',()=>clock);
+  const f=securityFixture(()=>clock),install=f.installation('Recovery metadata window');f.approve(install.id);const task=f.task(install.id);
+  let signal:AbortSignal|undefined,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
+  const bind=f.jobs.security.policies.bindTaskProjection.bind(f.jobs.security.policies),renew=f.jobs.renew.bind(f.jobs);let renewals=0;
+  t.mock.method(console,'error',()=>{});
+  t.mock.method(f.jobs,'renew',(...args:Parameters<typeof renew>)=>{renewals++;return renew(...args);});
+  t.mock.method(f.jobs.security.policies,'bindTaskProjection',(...args:Parameters<typeof bind>)=>{
+    if(signal?.aborted){clock+=31000;authorizationScope()!.assertCurrent();}return bind(...args);
+  });
+  const worker=new Worker(f.jobs,{leaseMs:60000,pollMs:1000,timeoutMs:50,coordinator:{
+    run:async(_claim,current)=>{signal=current;entered();await new Promise<void>((_resolve,reject)=>current.addEventListener('abort',()=>reject(new Error('Synthetic timeout')),{once:true}));},
+  }});
+  try{
+    worker.tick();await started;await new Promise(resolve=>setTimeout(resolve,100));await worker.close();
+    const current=f.jobs.get(f.owner,task.job.id);
+    assert.equal(current.delegation?.recovery,undefined,'An overlong metadata write must roll back');
+    assert.equal(renewals,0,'Still-valid consent does not permit extending the recovery window');
+  }finally{await worker.close();f.close();}
 });
 
 test('heartbeat checks authority on each tick but only renews a current lease when due', { timeout: 60000 }, async t => {
