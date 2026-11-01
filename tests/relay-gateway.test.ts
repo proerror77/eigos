@@ -1,8 +1,8 @@
 // Authenticated HTTP and encrypted transport integration with an isolated synthetic identity provider.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, writeFileSync, rmSync, lstatSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
@@ -22,8 +22,17 @@ import { AgentConnector } from '../packages/agent-client/client.js';
 import { TaskRelayClient } from '../packages/agent-client/relay.js';
 import { RelayClient } from '../packages/agent-transport/client.js';
 import { RELAY_ENROLLMENT_CLIENT } from '../packages/agent-transport/enrollment.js';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-test('an existing PA enrolls and binds its key through the primary HTTP authority, then submits and reads the same encrypted task', { timeout: 120000 }, async () => {
+test('an existing PA enrolls and binds its key through the primary HTTP authority, then submits and reads the same encrypted task', { timeout: 240000 }, async () => {
+  const remote = process.env.EIGOS_TEST_CF_GATEWAY_RELAY_URL, remoteGateway = process.env.EIGOS_TEST_CF_GATEWAY_ORIGIN, remoteKey = process.env.EIGOS_TEST_CF_GATEWAY_KEY;
+  if (remote || remoteGateway || remoteKey) {
+    if (!remote || !remoteGateway || !remoteKey || !isAbsolute(remoteKey)) throw new Error('Incomplete isolated Cloudflare fixture');
+    const relayMatch = /^https:\/\/eigos-relay-stage-([a-f0-9]{12})\.([a-z0-9-]+)\.workers\.dev$/.exec(remote);
+    if (!relayMatch || remoteGateway !== `https://eigos-relay-idp-${relayMatch[1]}.${relayMatch[2]}.workers.dev`) throw new Error('Only paired synthetic Cloudflare hosts are permitted');
+    const keyStat=lstatSync(remoteKey);
+    if (!keyStat.isFile() || keyStat.isSymbolicLink() || keyStat.mode & 0o077 || (process.getuid && keyStat.uid !== process.getuid())) throw new Error('Synthetic key must be a private owned file');
+  }
   const directory = mkdtempSync(join(tmpdir(), 'eigos-relay-primary-')), originalFetch = globalThis.fetch;
   let holdRenew = false, releaseRenew: () => void = () => {}, enteredRenew: () => void = () => {};
   const renewEntered = new Promise<void>(resolve => { enteredRenew = resolve; });
@@ -32,33 +41,35 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
   const peerEntered = new Promise<void>(resolve => { enteredPeer = resolve; });
   const peerGate = new Promise<void>(resolve => { releasePeer = resolve; });
   const databasePath = join(directory, 'tasks.sqlite'), membershipDatabasePath = join(directory, 'members.sqlite');
-  const authority: RuntimeAuthority = { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: 'https://primary.example', issuer: 'https://identity.example/', ontologyId: 'eigos.business', databasePath, membershipDatabasePath,
-    ingresses: [{ origin: 'https://primary.example', audience: 'https://primary.example', tenantClaim: 'tenant_id', agentClientId: 'fixture-pa', agentClientIds: ['fixture-pa'], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] };
+  const primaryOrigin=remoteGateway ?? 'https://primary.example', relayOrigin=remote ?? 'https://relay.example';
+  const authority: RuntimeAuthority = { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: primaryOrigin, issuer: 'https://identity.example/', ontologyId: 'eigos.business', databasePath, membershipDatabasePath,
+    ingresses: [{ origin: primaryOrigin, audience: primaryOrigin, tenantClaim: 'tenant_id', agentClientId: 'fixture-pa', agentClientIds: ['fixture-pa'], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] };
   const initial = new JobStore(databasePath, { securityMode: 'foundation' }); initial.close();
   const db = new DatabaseSync(databasePath); installRuntimeAuthority(db, authority); db.close();
   const authorityFile = join(directory, 'authority.json'); writeFileSync(authorityFile, JSON.stringify(authority), { mode: 0o600 });
   const idp = await generateKeyPair('RS256'), idpPublic = await exportJWK(idp.publicKey), enrollment = await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true });
-  const keyFile = join(directory, 'enrollment.json'); writeFileSync(keyFile, JSON.stringify(await exportJWK(enrollment.privateKey)), { mode: 0o600 });
+  const keyFile = join(directory, 'enrollment.json'); writeFileSync(keyFile, remoteKey ? readFileSync(remoteKey) : JSON.stringify(await exportJWK(enrollment.privateKey)), { mode: 0o600 });
   const installationId = randomUUID(), relayFile = join(directory, 'relay.json');
-  writeFileSync(relayFile, JSON.stringify({ version: 1, relayUrl: 'https://relay.example', credentialPath: join(directory, 'gateway-node.json'), displayName: 'EIGOS', enrollmentKeyFile: keyFile, operatorInstallationId: installationId }), { mode: 0o600 });
+  writeFileSync(relayFile, JSON.stringify({ version: 1, relayUrl: relayOrigin, credentialPath: join(directory, 'gateway-node.json'), displayName: 'EIGOS', enrollmentKeyFile: keyFile, operatorInstallationId: installationId }), { mode: 0o600 });
   const config = readConfig({ EIGOS_AUTHORITY_FILE: authorityFile, EIGOS_TASK_RELAY_FILE: relayFile, EIGOS_SECURITY_MODE: 'foundation', EIGOS_AUTH_MODE: 'jwt', HOST: '127.0.0.1', PUBLIC_URL: authority.canonicalOrigin,
     DATABASE_PATH: databasePath, MEMBERSHIP_DATABASE_PATH: membershipDatabasePath, OAUTH_ISSUER: authority.issuer, OAUTH_AUDIENCE: authority.canonicalOrigin, OAUTH_JWKS_URL: authority.issuer + 'jwks', OIDC_AGENT_CLIENT_ID: 'fixture-pa' });
   const gateway = createApp(config, jwtVerifier(authority.issuer, authority.canonicalOrigin, createLocalJWKSet({ keys: [{ ...idpPublic, alg: 'RS256', kid: 'fixture' }] })), () => new ExecutionCatalog([], [], []));
-  const relayConfig: RelayConfig = { host: '127.0.0.1', port: 1, publicUrl: 'https://relay.example', databasePath: join(directory, 'relay.sqlite'), authMode: 'jwt',
-    issuer: authority.canonicalOrigin, audience: 'https://relay.example', tenantClaim: 'tenant_id', clientIds: [RELAY_ENROLLMENT_CLIENT] };
-  const relay = createRelayApp(relayConfig, { verifyOwner: relayJwtVerifier(relayConfig, createLocalJWKSet(gateway.relay!.enrollment!.jwks())) });
-  const primaryServer = gateway.app.listen(0, '127.0.0.1'), relayServer = relay.app.listen(0, '127.0.0.1');
-  await Promise.all([once(primaryServer, 'listening'), once(relayServer, 'listening')]);
-  const primaryLocal = `http://127.0.0.1:${(primaryServer.address() as { port: number }).port}`, relayLocal = `http://127.0.0.1:${(relayServer.address() as { port: number }).port}`;
+  const relayConfig: RelayConfig = { host: '127.0.0.1', port: 1, publicUrl: relayOrigin, databasePath: join(directory, 'relay.sqlite'), authMode: 'jwt',
+    issuer: authority.canonicalOrigin, audience: relayOrigin, tenantClaim: 'tenant_id', clientIds: [RELAY_ENROLLMENT_CLIENT] };
+  const relay = remote ? undefined : createRelayApp(relayConfig, { verifyOwner: relayJwtVerifier(relayConfig, createLocalJWKSet(gateway.relay!.enrollment!.jwks())) });
+  const primaryServer = gateway.app.listen(0, '127.0.0.1'), relayServer = relay?.app.listen(0, '127.0.0.1');
+  await Promise.all([once(primaryServer, 'listening'), ...(relayServer ? [once(relayServer, 'listening')] : [])]);
+  const primaryLocal = `http://127.0.0.1:${(primaryServer.address() as { port: number }).port}`, relayLocal = relayServer ? `http://127.0.0.1:${(relayServer.address() as { port: number }).port}` : undefined;
   globalThis.fetch = async (url, init) => {
     const target = new URL(String(url)), origin = target.origin === authority.canonicalOrigin ? primaryLocal : target.origin === relayConfig.publicUrl ? relayLocal : undefined;
-    if (!origin) throw new Error('Fixture forbids external network');
     if (holdRenew && target.origin === relayConfig.publicUrl && target.pathname.endsWith('/renew') && init?.method === 'POST') {
       holdRenew = false; enteredRenew(); await renewGate;
     }
     if (holdPeer && target.origin === relayConfig.publicUrl && target.pathname === `/v1/agents/${holdPeer}` && (!init?.method || init.method === 'GET')) {
       holdPeer = ''; enteredPeer(); await peerGate;
     }
+    if (remote && target.origin === relayConfig.publicUrl) return originalFetch(url,init);
+    if (!origin) throw new Error('Fixture forbids external network');
     const headers = new Headers(init?.headers); headers.set('Host', target.host);
     // The test TLS terminator preserves Host exactly; fetch itself rewrites Host after a URL rewrite.
     return new Promise<Response>((resolve, reject) => {
@@ -75,7 +86,7 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
       request.on('error', reject); request.end(init?.body === undefined ? undefined : String(init.body));
     });
   };
-  const nodes: RelayClient[] = [];
+  const nodes: RelayClient[] = []; let mcp: Client | undefined;
   try {
     const p = { issuer: authority.issuer, tenant: 'fixture', subject: 'synthetic-member', clientId: 'fixture-pa', scopes: ['services:read', 'tasks:read', 'tasks:write', 'members:write'] };
     const member = gateway.members.login(p); gateway.members.apply(member.id, { displayName: 'Synthetic member', locale: 'en', timezone: 'UTC', consent: true }, false);
@@ -95,7 +106,7 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     const agent = await AgentConnector.open({ baseUrl: authority.canonicalOrigin, credentialPath, displayName: 'Synthetic PA' });
     const primaryEnrollment = await agent.fetch('/relay/enroll-primary', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
     assert.equal(primaryEnrollment.status, 200, JSON.stringify(await primaryEnrollment.json()));
-    for (let i = 0; i < 100 && gateway.relay!.status !== 'connected'; i++) await delay(20);
+    for (let i = 0; i < (remote ? 1500 : 100) && gateway.relay!.status !== 'connected'; i++) await delay(20);
     assert.equal(gateway.relay!.status, 'connected');
     let node = await RelayClient.open({ baseUrl: relayConfig.publicUrl, credentialPath: join(directory, 'pa-node.json'), displayName: 'Synthetic PA' }); nodes.push(node);
     await agent.enrollTaskRelay(node);
@@ -108,7 +119,13 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     assert(!JSON.stringify(pa).includes(token)); assert(!JSON.stringify(pa).includes('synthetic-refresh-not-used'));
     const requestId = randomUUID();
     await pa.send({ kind: 'task.submit', requestId, input: { service: 'eigos.delegate', requestId, goal: 'Synthetic scoped task over encrypted transport' } });
-    const submitted = await pa.receive(requestId, AbortSignal.timeout(10000));
+    const submitted = await pa.receive(requestId, AbortSignal.timeout(remote ? 45000 : 10000));
+    mcp = new Client({name:'synthetic-relay-pa',version:'1'});
+    await mcp.connect(new StreamableHTTPClientTransport(new URL(primaryOrigin+'/mcp'),{fetch:globalThis.fetch,requestInit:{headers:{Authorization:`Bearer ${token}`}}}));
+    const mcpTask=await mcp.callTool({name:'get_task',arguments:{taskId:submitted.id}});
+    assert.equal((mcpTask.structuredContent as {result:{id:string}}).result.id,submitted.id);
+    const a2a=await agent.fetch('/a2a',{method:'POST',headers:{'content-type':'application/json','A2A-Version':'1.0'},body:JSON.stringify({jsonrpc:'2.0',id:'synthetic-read',method:'GetTask',params:{id:submitted.id}})});
+    assert.equal(a2a.status,200);assert.equal((await a2a.json() as {result:{id:string}}).result.id,submitted.id);
     node.close();
     node = await RelayClient.open({ baseUrl: relayConfig.publicUrl, credentialPath: join(directory, 'pa-node.json'), displayName: 'Synthetic PA' }); nodes.push(node);
     pa = new TaskRelayClient(node, agent);
@@ -116,10 +133,10 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     assert.equal(rebound.connectionId, binding.connectionId, 'A new PA process reuses the accepted contact');
     assert.equal((await pa.bind()).connectionId, binding.connectionId, 'Refreshing the binding does not create another contact');
     const readId = randomUUID(); await pa.send({ kind: 'task.get', requestId: readId, taskId: submitted.id });
-    const read = await pa.receive(readId, AbortSignal.timeout(10000)); assert.equal(read.id, submitted.id); assert.equal(read.authorityId, authority.id);
+    const read = await pa.receive(readId, AbortSignal.timeout(remote ? 45000 : 10000)); assert.equal(read.id, submitted.id); assert.equal(read.authorityId, authority.id);
     const revoke = await agent.fetch('/relay/revoke', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agentId: node.agentId }) }); assert.equal(revoke.status, 200);
     const deniedId = randomUUID(); await pa.send({ kind: 'task.get', requestId: deniedId, taskId: submitted.id });
-    await assert.rejects(pa.receive(deniedId, AbortSignal.timeout(10000)), /AUTHORIZATION_REQUIRED/);
+    await assert.rejects(pa.receive(deniedId, AbortSignal.timeout(remote ? 45000 : 10000)), /AUTHORIZATION_REQUIRED/);
     await assert.rejects(new TaskRelayClient(node, agent).bind(), /relay_binding_rejected/, 'Restarting the PA cannot reactivate its revoked transport key');
     const second = await RelayClient.open({ baseUrl: relayConfig.publicUrl, credentialPath: join(directory, 'second-pa-node.json'), displayName: 'Synthetic PA 2' }); nodes.push(second);
     await agent.enrollTaskRelay(second);
@@ -148,9 +165,9 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
   } finally {
     releaseRenew();
     releasePeer();
-    for (const node of nodes) node.close(); await gateway.close(); relay.stop(); relay.store.close();
-    primaryServer.closeAllConnections(); relayServer.closeAllConnections();
-    await Promise.all([new Promise<void>(r => primaryServer.close(() => r())), new Promise<void>(r => relayServer.close(() => r()))]);
+    await mcp?.close(); for (const node of nodes) node.close(); await gateway.close(); relay?.stop(); relay?.store.close();
+    primaryServer.closeAllConnections(); relayServer?.closeAllConnections();
+    await Promise.all([new Promise<void>(r => primaryServer.close(() => r())), ...(relayServer ? [new Promise<void>(r => relayServer.close(() => r()))] : [])]);
     globalThis.fetch = originalFetch; rmSync(directory, { recursive: true, force: true });
   }
 });
