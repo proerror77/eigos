@@ -135,6 +135,6 @@ Worker 配置示例见 [`apps/relay/wrangler.example.jsonc`](../../apps/relay/wr
 node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay.sqlite --schema eigos_relay_example
 ```
 
-只接受绝对快照路径和新的 `eigos_relay_` 命名空间。导入检查数据库标识、完整性、表和列，使用一个 PostgreSQL 事务复制并核对全部行；发现目标存在、外键失败或读回不一致时回滚，不覆盖原有 schema。成功只表示快照已验证导入，不代表线上已切换。导入后须单独创建受限角色并授权该 schema 的表、序列和 `relay_cleanup(bigint,bigint,bigint)` 函数；不应将管理员密码交给 Worker。
+只接受绝对快照路径和新的 `eigos_relay_` 命名空间。导入检查数据库标识、完整性、表和列，使用一个 PostgreSQL 事务复制并核对全部行；发现目标存在、外键失败或读回不一致时回滚，不覆盖原有 schema。若提交时连接中断，结果可能未知；必须先检查原目标，不能自动重试或覆盖。成功只表示快照已验证导入，不代表线上已切换。导入后须单独创建受限角色并授权该 schema 的表、序列和 `relay_cleanup(bigint,bigint,bigint)` 函数；不应将管理员密码交给 Worker。
 
 现有 Relay 使用的 origin、JWT audience、客户端凭据和 DPoP 地址校验相互绑定。切换前需要逐项确认新 origin、身份提供方 audience、已登记客户端和待发／待收消息的恢复方式；仅更改 DNS 或部署 Worker 不能迁移连接器身份。测试环境应使用独立身份签发器和合成节点，不应授予真实业务权限。

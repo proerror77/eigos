@@ -82,7 +82,7 @@ export async function importRelaySnapshot(client: Client, snapshot: string, sche
   const info = lstatSync(snapshot);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 || (info.mode & 0o077) !== 0 || (process.getuid && info.uid !== process.getuid())) throw new Error('Snapshot must be an owned private regular file');
   const db = new DatabaseSync(snapshot, { readOnly: true });
-  let transactionOpen = false;
+  let transactionOpen = false, commitSent = false;
   try {
     if (db.prepare('PRAGMA journal_mode').get()?.journal_mode !== 'delete') throw new Error('Snapshot must use DELETE journal mode');
     db.exec('BEGIN'); // Pin one source view across every imported table.
@@ -115,10 +115,12 @@ export async function importRelaySnapshot(client: Client, snapshot: string, sche
     }
     // Identity must not reuse a copied sequence after importing existing messages.
     await client.query("SELECT setval(pg_get_serial_sequence('relay_messages','seq'), COALESCE((SELECT max(seq) FROM relay_messages), 1), EXISTS(SELECT 1 FROM relay_messages))");
+    commitSent = true;
     await client.query('COMMIT'); transactionOpen = false;
     return result;
   } catch (error) {
-    if (transactionOpen) await client.query('ROLLBACK');
+    if (transactionOpen && !commitSent) await client.query('ROLLBACK');
+    if (commitSent) throw new Error('Relay import commit outcome is unknown; inspect the destination before retrying', { cause: error });
     throw error;
   } finally { db.close(); }
 }

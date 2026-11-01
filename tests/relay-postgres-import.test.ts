@@ -102,6 +102,20 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
       await b.respondContact(contact.id, 'revoke');
       await assert.rejects(a.send(b.agentId, contact.id, { hello: 'after revoke' }), error => error instanceof RelayError && error.code === 'CONTACT_NOT_ACCEPTED');
     } finally { a.close(); b.close(); app.stop(); server.close(); await once(server, 'close'); await httpStore.close(); }
+    // A lost COMMIT response may follow a successful server-side commit.
+    // The caller must inspect that schema instead of assuming rollback.
+    const uncertainSchema = `${schema}_uncertain`;
+    let observedCommitted = false;
+    try {
+      const disconnected = { query: async (sql: string, params?: unknown[]) => {
+        const value = await client.query(sql, params);
+        if (sql === 'COMMIT') throw new Error('simulated lost commit response');
+        return value;
+      } } as unknown as pg.Client;
+      await assert.rejects(importRelaySnapshot(disconnected, path, uncertainSchema), /commit outcome is unknown/);
+      observedCommitted = (await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [uncertainSchema])).rowCount === 1;
+      assert(observedCommitted);
+    } finally { if (observedCommitted) await client.query(`DROP SCHEMA "${uncertainSchema}" CASCADE`); }
     const corrupt = join(dir, 'corrupt.sqlite');
     const broken = new RelayStore(corrupt); broken.close();
     const brokenDb = new DatabaseSync(corrupt, { enableForeignKeyConstraints: false });

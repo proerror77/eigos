@@ -29,5 +29,5 @@ try {
 } catch (error) {
   // Driver errors may contain connection details; print only a safe code.
   const safe = error && typeof error === 'object' && 'code' in error && /^[A-Z0-9_]{1,32}$/.test(String(error.code)) ? String(error.code) : 'IMPORT_FAILED';
-  console.error(`Relay import failed (${safe}). No import was committed.`); process.exitCode = 1;
+  console.error(`Relay import failed (${safe}). Inspect the destination before retrying; commit status may be unknown.`); process.exitCode = 1;
 } finally { if (client) await client.end(); }
