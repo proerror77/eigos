@@ -28,7 +28,7 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 223);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 224);
   assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant'));
   assert(report.surfaces.some(surface=>surface.id==='relay-postgres-grant-cli'));
   const guidance = report.surfaces.find(surface => surface.id === 'security-error-guidance');

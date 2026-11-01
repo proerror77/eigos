@@ -5,6 +5,8 @@ import { accessContextSchema, agentAccessGrantSchema, taskDataGrantSchema } from
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
+import { roleAllows, roleSchema } from '../security/resource-role.js';
+import { currentKernelImplementation } from '../ontology/definition-store.js';
 
 /** Resolve a current agent task-read grant. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
@@ -67,12 +69,27 @@ export async function postgresTaskReadGrant(client: Client, principal: Principal
 
 /** Recheck admission after an awaited read. The action must additionally apply
  * object/field and recipient policy before exposing protected output. */
-export async function withPostgresTaskReadGrant<T>(client: Client, principal: Principal, taskId: string, policyDigest: string, action: () => Promise<T>): Promise<T> {
+export async function withPostgresTaskReadGrant<T>(client: Client, principal: Principal, taskId: string, policyDigest: string, action: (admission: Awaited<ReturnType<typeof postgresTaskReadGrant>>) => Promise<T>): Promise<T> {
   const captured = structuredClone(principal);
-  const before = await postgresTaskReadGrant(client,captured,taskId,policyDigest), result = await action();
+  const before = await postgresTaskReadGrant(client,captured,taskId,policyDigest), result = await action(before);
   const after = await postgresTaskReadGrant(client,captured,taskId,policyDigest);
   if (digest(before) !== digest(after)) throw new SecurityError('POLICY_CHANGED');
   return result;
+}
+
+/** Check resource.view against the reviewed security model, as SQLite does.
+ * The task's pinned model is independently validated but never substitutes
+ * for current policy. Object, field, source, lineage and output checks remain. */
+export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string): Promise<boolean> {
+  const captured = structuredClone(principal);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
+    const schema = postgresBusinessSchema(client);
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'));
+    const result = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
+    if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
+    return roleAllows(currentKernelImplementation(),roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
+  });
 }
 
 /** Resolve the admitted task's exact read model. The returned model still

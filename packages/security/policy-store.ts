@@ -9,7 +9,7 @@ import { DomainError,type Job } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import type { ObjectBatch, ObjectSource, ObjectView } from '../ontology/object-store.js';
-import { POLICY_VERSION, SECURITY_CONTRACT, resourceDefaults, resourceRefSchema, securityEnvelopeSchema,grantRefSchema } from './contracts.js';
+import { POLICY_VERSION, SECURITY_CONTRACT, resourceRefSchema, securityEnvelopeSchema,grantRefSchema } from './contracts.js';
 import { SecurityError, type SecurityStore, type TaskDataGrant } from './store.js';
 import { authorizationScope, withAuthorization,withInference,withIntegrity, type AuthorizationScope } from './context.js';
 import { combineEnvelopes, requireChannel, type SecurityEnvelope, type Channel } from './envelope.js';
@@ -23,6 +23,7 @@ import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
 import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
+import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
 // Other writes, trigger side effects and other connections still invalidate the
@@ -30,10 +31,6 @@ import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} fro
 const readBookkeepingChanges = new WeakMap<DatabaseSync, number>();
 
 const id = z.string().min(1).max(200), instant = z.iso.datetime({ offset: true });
-const roleSchema = z.strictObject({ subjectKind: z.enum(['member', 'installation']), subjectId: z.uuid(),
-  resource: z.union([resourceRefSchema, z.strictObject({ kind: z.literal('namespace'), id, version: id })]),
-  role: z.enum(['Viewer', 'Editor', 'Owner']), executeActions: z.array(nameSchema).max(100).default([]),
-  invokeFunctions: z.array(nameSchema).max(100).default([]), expiresAt: instant });
 export const sourceAuthorizationSchema = z.strictObject({ installationId: z.uuid(), bindingId: id, programId: id,
   programDigest: z.string().regex(/^[a-f0-9]{64}$/), operations: z.array(id).min(1).max(100),
   outputTypes: z.array(nameSchema).min(1).max(200), expiresAt: instant });
@@ -41,7 +38,9 @@ const storedSourceSchema=sourceAuthorizationSchema.extend({parentGrant:grantRefS
   // Operator-reviewed predecessor versions may explain existing observations.
   // They never authorize dispatch or enter newly provisioned task outputs.
   readbackVersions:z.array(z.strictObject({sourceBindingId:id,programDigest:z.string().regex(/^[a-f0-9]{64}$/)})).max(32).optional()});
-const baseline = baselineJson as {
+// JSON modules are shared objects; keep policy state private just as the former
+// file parse did, so another importer cannot mutate effective policy in place.
+const baseline = structuredClone(baselineJson) as {
   types: Record<string, { fingerprint: string; fields: Record<string, string> }>;
 };
 /** Exact reviewed additive contract transition, for the offline RollingGo installer.
@@ -176,10 +175,7 @@ export class SecurityPolicies {
     return {allowed:true,candidateDigest:digest(args.candidate),resource:args.resource,policyRevision:expectedRevision,published:false,declassificationAllowed:false};
   }
   resourceVersion(kind: string, id: string): string {
-    if (kind === 'objectType') return this.model.object(id).version;
-    if (kind === 'interface') return digest(this.model.describeType(id));
-    if (kind === 'function') return this.model.function(id).version;
-    return digest(kind === 'actionType' ? this.model.action(id) : this.model.link(id));
+    return resourceVersion(this.model,kind,id);
   }
   resourceAllowed(scope: AuthorizationScope, kind: string, id: string, permission = 'resource.view'): boolean {
     scope.assertCurrent();
@@ -192,13 +188,7 @@ export class SecurityPolicies {
   }
   private roles(memberId:string,installationId:string){return this.db.prepare('SELECT body FROM security_roles WHERE subject_id IN (?,?)').all(memberId,installationId).map(row=>roleSchema.parse(JSON.parse(String(row.body))));}
   private roleAllows(roles:z.infer<typeof roleSchema>[],memberId:string,installationId:string,kind:string,id:string,permission:string) {
-    let version: string; try { version = this.resourceVersion(kind, id); } catch { return false; }
-    return roles.some(value => {
-      const ref = value.resource;
-      if (Date.parse(value.expiresAt) <= this.security.now() || (value.subjectKind === 'member' ? value.subjectId !== memberId : value.subjectId !== installationId)) return false;
-      const matches = ref.kind === 'namespace' ? ref.id === this.model.ref.id && ref.version === this.model.ref.digest : ref.kind === kind && ref.id === id && ref.version === version;
-      return matches && (permission === 'action.execute' ? value.executeActions.includes(id) : permission === 'function.invoke' ? value.invokeFunctions.includes(id) : (resourceDefaults[value.role] as readonly string[]).includes(permission));
-    });
+    return roleAllows(this.model,roles,memberId,installationId,kind,id,permission,()=>this.security.now());
   }
   requireResource(scope: AuthorizationScope, kind: string, id: string, permission = 'resource.view') {
     if (!this.resourceAllowed(scope, kind, id, permission)) throw new SecurityError('AUTHORIZATION_REQUIRED');
