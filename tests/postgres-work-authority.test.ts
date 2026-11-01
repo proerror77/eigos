@@ -44,6 +44,26 @@ test('PostgreSQL task authority matches the existing SQLite checks', { skip: pro
     const read = () => postgresBusinessTransaction(client,schema,authority,c => postgresWorkAuthority(c,owner,taskId,policy));
     assert.deepEqual(await read(),store.security.workAuthority(owner,taskId,now));
     assert.equal(store.claimActive(claim),true); assert.equal(await active(),true);
+    const originalJob=String((await client.query(`SELECT body FROM "${schema}".jobs WHERE id=$1`,[taskId])).rows[0].body);
+    const largeJob=JSON.parse(originalJob);largeJob.syntheticPadding='x'.repeat(16*1024*1024);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(largeJob),taskId]);
+    let claimResultBytes=0;
+    const observed={pipeline:false,getTransactionStatus:()=>client.getTransactionStatus(),query:async(sql:string,values?:unknown[])=>{
+      const result=await client.query(sql,values);
+      if(sql.includes('.work_claims c JOIN'))claimResultBytes=Buffer.byteLength(JSON.stringify(result.rows));
+      return result;
+    }} as unknown as pg.Client;
+    assert.equal(await postgresBusinessTransaction(observed,schema,authority,c=>postgresClaimActive(c,claim,policy)),true);
+    assert(claimResultBytes>0 && claimResultBytes<4096,'Claim verification must not return the large task body');
+    const invalidState={...largeJob,state:{padding:'x'.repeat(1024*1024)}};
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(invalidState),taskId]);
+    assert.equal(await postgresBusinessTransaction(observed,schema,authority,c=>postgresClaimActive(c,claim,policy)),false);
+    assert(claimResultBytes<4096,'Invalid task fields must also be bounded');
+    const invalidRevision={...largeJob,delegation:{request:{revision:'1'}}};
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(invalidRevision),taskId]);
+    assert.equal(await postgresBusinessTransaction(observed,schema,authority,c=>postgresClaimActive(c,claim,policy)),false);
+    assert(claimResultBytes<4096);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[originalJob,taskId]);
     assert.equal(store.renew(claim,3600000),true); assert.equal(await postgresBusinessTransaction(client,schema,authority,c => postgresRenewClaim(c,claim,3600000,policy)),true);
     assert.equal(await postgresBusinessTransaction(client,schema,authority,c => postgresClaimActive(c,{...claim,token:'wrong'},policy)),false);
     assert.equal(store.claimActive({...claim,token:'wrong'}),false);
