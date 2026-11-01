@@ -10,6 +10,11 @@ import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
 import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
+import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { projectionInputs } from '../security/projections.js';
+
+const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
+  requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
 
 /** Resolve a current agent task-read grant. The principal and policy digest
  * must come from trusted authentication and reviewed server configuration.
@@ -132,6 +137,29 @@ export async function postgresTaskReadOntology(client: Client, principal: Princi
     postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder));
 }
 
+/** Internal restriction inputs for a current object revision. This does not
+ * establish an object binding, validate lineage, or authorize any output. */
+export async function postgresTaskCurrentLabels(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, revision: number, fields: string[], builder?: StagedKernelBuilder) {
+  const captured=structuredClone(principal), ref=objectRefSchema.parse(input);
+  const requested=z.array(nameSchema).min(1).max(200).parse(fields);
+  if(!Number.isSafeInteger(revision) || revision<1)throw new SecurityError('POLICY_CHANGED');
+  const relevant=[...new Set([...requested,...requested.flatMap(field=>projectionInputs(ref.type,field))])];
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
+    const object=await client.query(`SELECT revision FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[owner,ref.type,ref.id]);
+    if(object.rowCount!==1 || String(object.rows[0].revision)!==String(revision))throw new SecurityError('POLICY_CHANGED');
+    const labels=await client.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body
+      FROM "${schema}".security_labels WHERE owner=$1 AND type=$2 AND object_id=$3
+      ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
+    if(labels.rows.length>256 || labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    try {return labels.rows.map(row=>({field:String(row.field),...storedLabelSchema.parse(JSON.parse(String(row.body)))}))
+      .filter(label=>label.field==='*' || relevant.includes(label.field));}
+    catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+  });
+}
+
 /** Construct an edge reader only after its trusted kernel has finished loading.
  * An evicted object must rebuild its kernel before creating a new reader;
  * passing an absent builder must never silently select the synchronous path. */
@@ -146,5 +174,7 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskFieldClassification(client,principal,taskId,policyDigest,type,field,builder),
     clearance: (client: Client, principal: Principal, taskId: string, policyDigest: string) =>
       postgresTaskReadClearance(client,principal,taskId,policyDigest),
+    currentLabels: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef, revision: number, fields: string[]) =>
+      postgresTaskCurrentLabels(client,principal,taskId,policyDigest,ref,revision,fields,builder),
   });
 }
