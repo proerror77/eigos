@@ -4092,7 +4092,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "11d380723d521b30f7ffe53b4c57ede1c17c47cf124d8b4347d8373fefd03175",
+      "sourceDigest": "3d9b4d3fa423dc201df68224a5b276e236af9f7370b7cd4d34336cad1e34aecf",
       "channels": [
         "model",
         "artifact"

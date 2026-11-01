@@ -15,6 +15,7 @@ import { businessFactTypes, businessFactLinks } from './business-facts.js';
 import type { OntologyModel } from './model.js';
 import { rideEstimateObjects, rideEstimateActions, rideEstimateFunctions } from './ride-estimate.js';
 import { PipelineStore } from './pipeline/store.js';
+import { compatibleDefinitionModels } from './definition-compatibility.js';
 
 export type DefinitionResource = SerializableObjectType | SerializableInterface | SerializableLink | SerializableAction;
 export interface DefinitionEntry { kind: DefinitionKind; definition: DefinitionResource }
@@ -337,15 +338,7 @@ export class DefinitionStore {
       const row = this.db.prepare('SELECT f.release_id,r.digest FROM ontology_definition_fingerprints f JOIN ontology_definition_releases r ON r.id=f.release_id WHERE f.ontology_id=? AND f.kind=? AND f.api_name=? AND f.fingerprint=?').get(ref.ontologyId, input.kind, input.id, input.storedDigest);
       if (!row) return false;
       const original = this.resolve({ ontologyId: ref.ontologyId, releaseId: String(row.release_id), digest: String(row.digest) }).model;
-      if (input.kind === 'link') {
-        const old = original.link(input.id), current = target.link(input.id);
-        return digest(old) === input.storedDigest && digest(current) === input.currentDigest && digest({ from: old.from, to: old.to, writePolicy: old.writePolicy }) === digest({ from: current.from, to: current.to, writePolicy: current.writePolicy });
-      }
-      if (!input.properties || original.fingerprint(input.id) !== input.storedDigest || target.fingerprint(input.id) !== input.currentDigest) return false;
-      const old = original.object(input.id), current = target.object(input.id);
-      if (old.primaryKey !== current.primaryKey || old.titleKey !== current.titleKey || original.objectWritePolicy(input.id) !== target.objectWritePolicy(input.id)) return false;
-      const before = original.parseProperties(input.id, input.properties), after = target.parseProperties(input.id, input.properties);
-      return digest(before) === digest(input.properties) && digest(after) === digest(input.properties);
+      return compatibleDefinitionModels(original, target, input);
     } catch { return false; }
   }
   private event(ontologyId: string, actor: string, kind: string, body: unknown): void {

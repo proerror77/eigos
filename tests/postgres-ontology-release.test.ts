@@ -5,10 +5,11 @@ import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
 import { DefinitionStore } from '../packages/ontology/definition-store.js';
+import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
-import { postgresOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
+import { postgresOntologyDefinitionCompatible, postgresOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
 
 test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const sqlite = new DatabaseSync(':memory:'), definitions = new DefinitionStore(sqlite);
@@ -48,6 +49,26 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     const alias = {...legacy.ref,releaseId:randomUUID()};
     await client.query(`INSERT INTO "${schema}".ontology_definition_release_aliases VALUES($1,$2,$3,$4,$5,$6)`,[alias.releaseId,alias.ontologyId,legacy.ref.releaseId,alias.digest,'synthetic','2026']);
     assert.deepEqual((await postgresBusinessTransaction(client,schema,authority,c => postgresOntologyRelease(c,alias))).model.ref,legacy.model.ref);
+    await client.query(`CREATE TABLE "${schema}".ontology_definition_fingerprints(ontology_id TEXT,kind TEXT,api_name TEXT,fingerprint TEXT,release_id TEXT)`);
+    const link = legacy.document.links.map(value => value.id).find(id => {
+      try { return active.compatibleDefinition({kind:'link',id,storedDigest:digest(legacy.model.link(id)),currentDigest:digest(active.model.link(id))}); }
+      catch { return false; }
+    });
+    assert(link, 'fixture needs a compatible historical link');
+    const inputs = [
+      { kind:'link' as const,id:link,storedDigest:digest(legacy.model.link(link)),currentDigest:digest(active.model.link(link)) },
+      { kind:'object' as const,id:'ServiceRequest',storedDigest:active.model.fingerprint('ServiceRequest'),currentDigest:active.model.fingerprint('ServiceRequest'),properties:{requestId:'request',displayTitle:'Original request',originalGoal:'Read only'} },
+    ];
+    for (const input of inputs) {
+      const row=sqlite.prepare('SELECT * FROM ontology_definition_fingerprints WHERE ontology_id=? AND kind=? AND api_name=? AND fingerprint=?').get(active.ref.ontologyId,input.kind,input.id,input.storedDigest);
+      assert(row);
+      await client.query(`INSERT INTO "${schema}".ontology_definition_fingerprints VALUES($1,$2,$3,$4,$5)`,[row.ontology_id,row.kind,row.api_name,row.fingerprint,row.release_id]);
+      const expected=active.compatibleDefinition(input); assert.equal(expected,true);
+      assert.equal(await postgresBusinessTransaction(client,schema,authority,c => postgresOntologyDefinitionCompatible(c,active.ref,input)),expected);
+      const changed={...input,currentDigest:'b'.repeat(64)};
+      assert.equal(await postgresBusinessTransaction(client,schema,authority,c => postgresOntologyDefinitionCompatible(c,active.ref,changed)),active.compatibleDefinition(changed));
+    }
+    assert.equal(await postgresBusinessTransaction(client,schema,authority,c => postgresOntologyDefinitionCompatible(c,active.ref,{...inputs[0]!,storedDigest:'b'.repeat(64)})),false);
     await client.query(`UPDATE "${schema}".ontology_definition_releases SET model_digest=$1 WHERE id=$2`,['b'.repeat(64),legacy.ref.releaseId]);
     await assert.rejects(taskRelease(),/compiler or trusted handler/);
     const altered = structuredClone(legacy.document); altered.id='synthetic.other';

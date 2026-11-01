@@ -2,6 +2,8 @@ import type { Client } from 'pg';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import { ontologyReleaseRefSchema, parseOntologyDocument, type OntologyReleaseRef } from '../ontology/definition-contracts.js';
+import { compatibleDefinitionModels } from '../ontology/definition-compatibility.js';
+import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
 import { createCurrentKernelDefinition, createSeedDefinition } from '../ontology/seed-definition.js';
@@ -65,4 +67,21 @@ export async function postgresTaskOntologyRelease(client: Client, owner: string,
     catch { return conflict('Stored legacy ontology reference is invalid'); }
   }
   return postgresOntologyRelease(client, ontologyReleaseRefSchema.parse(ref));
+}
+
+/** Compare a stored fact's historical definition against its pinned target.
+ * Callers must still enforce the task's object-level and field permissions. */
+export async function postgresOntologyDefinitionCompatible(client: Client, targetRef: OntologyReleaseRef, supplied: DefinitionCompatibilityInput): Promise<boolean> {
+  const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(targetRef), input = structuredClone(supplied), q = `"${schema}"`;
+  const result = await client.query(`SELECT f.release_id,r.digest FROM ${q}.ontology_definition_fingerprints f JOIN ${q}.ontology_definition_releases r ON r.id=f.release_id WHERE f.ontology_id=$1 AND f.kind=$2 AND f.api_name=$3 AND f.fingerprint=$4`, [ref.ontologyId,input.kind,input.id,input.storedDigest]);
+  if (result.rowCount !== 1) return false;
+  const originalRef = ontologyReleaseRefSchema.safeParse({ ontologyId: ref.ontologyId, releaseId: result.rows[0].release_id, digest: result.rows[0].digest });
+  if (!originalRef.success) return false;
+  try {
+    const target = await postgresOntologyRelease(client, ref), original = await postgresOntologyRelease(client, originalRef.data);
+    return compatibleDefinitionModels(original.model, target.model, input);
+  } catch (error) {
+    if (error instanceof DomainError) return false;
+    throw error;
+  }
 }
