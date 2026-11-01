@@ -23,6 +23,7 @@ import type { AgentDecision } from '../packages/ontology/agent-actions.js';
 import type { ActionDiscoveryPage } from '../packages/core/action-bindings.js';
 import type { ServiceRequest } from '../packages/ontology/execution.js';
 import type { Job } from '../packages/core/domain.js';
+import { runNativeDidiTask } from './fixtures/secured-didi.js';
 
 const context = { city: '北京市', origin: { name: input.origin, address: sourcePlace(input.origin, 2).address_all, label: '家', source: 'saved_address' as const },
   destination: { name: input.destination, address: sourcePlace(input.destination, 2).address_all, label: '拳馆', source: 'user_provided' as const } };
@@ -279,4 +280,79 @@ test('airport terminal spellings match without merging terminals, entrances or o
   assert(!locationMatchesSource(supplied, '另一市', place));
   assert(!locationMatchesSource({ ...supplied, address: '机场路901号' }, '合成市', place));
   assert(!locationMatchesSource({ ...supplied, name: '合成T2大楼' }, '合成市', { ...place, name: '合成2号大楼' }));
+});
+
+test('whole-terminal requirement annotations match only the confirmed name, address and source terminal', () => {
+  const now = new Date().toISOString(), city = '合成市';
+  const supplied = { name: '合成国际机场2号航站楼', address: '机场路900号', source: 'user_provided' as const };
+  const place = { id: 'a'.repeat(64), name: supplied.name, address: '测试区机场路900号', addressAll: '测试区机场路900号' + supplied.name,
+    city, lng: 120, lat: 30, coordinateSystem: 'provider_unspecified' as const, identityKind: 'local_snapshot_digest' as const };
+  const reference = `${supplied.name}（${supplied.address}，整体 T2 POI，非出入口）`;
+  const request: ServiceRequest = { id: randomUUID(), revision: 1, originalGoal: '只查询整体航站楼的预估价，不下单、不付款。',
+    messages: [{ id: 'synthetic-goal', text: reference, receivedAt: now }], requirements: [{ id: 'terminal', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: reference },
+      provenance: { source: 'pa', interpretation: 'quoted_text', messageId: 'synthetic-goal', receivedAt: now, quote: reference } }] };
+  addLocationContext(request, { city, destination: supplied }, 'synthetic-context', now);
+  const facts = (ref: string, destination = place) => routeLocationFacts({ ...request, requirements: [{ ...request.requirements[0]!, expected: { ref } } as typeof request.requirements[number]] },
+    { origin: place, destination }, city).destination;
+  for (const ref of [reference, `${supplied.name}(${supplied.address},整体T2POI,非出入口)`, `${supplied.name}（${supplied.address}）`, `${supplied.name}（${supplied.address}，整体POI）`]) {
+    assert.equal(facts(ref), ref);
+    assert(!locationAliases(supplied, city).includes(ref.normalize('NFKC').replace(/\s+/g, '').toLowerCase()), 'Requirement descriptions are not map query aliases');
+  }
+  for (const ref of [
+    `${supplied.name}（机场路901号，整体T2POI，非出入口）`,
+    `${supplied.name}（${supplied.address}，整体T1POI，非出入口）`,
+    `${supplied.name}（${supplied.address}，整体T20POI，非出入口）`,
+    `${supplied.name}（${supplied.address}，6号出发口）`,
+    `${supplied.name}（${supplied.address}，整体T2POI，必须14点到达）`,
+    `${supplied.name}（${supplied.address}，整体T2POI，已付款）`,
+    `${supplied.name}（${supplied.address}，非出入口）`,
+    `${supplied.name}（${supplied.address}，整体T2POI，整体T2POI）`,
+    `${supplied.name}（${supplied.address}，整体T2POI，非出入口，另一个约束）`,
+    `机场（${supplied.address}，整体T2POI，非出入口）`,
+    `${supplied.name}（${supplied.address}，整体T2POI（非出入口））`,
+  ]) assert.notEqual(facts(ref), ref, ref);
+  for (const name of ['合成国际机场1号航站楼', supplied.name + '-23号门', supplied.name + '停车场']) {
+    assert.notEqual(facts(reference, { ...place, name, addressAll: place.address + name }), reference);
+  }
+  assert.notEqual(facts(reference, { ...place, address: '机场路901号', addressAll: '机场路901号' + place.name }), reference);
+  assert.notEqual(facts(reference, { ...place, city: '另一市' }), reference);
+  const withoutAddress = structuredClone(request); delete (withoutAddress.confirmedInputs!.location!.fields.destination!.value as { address?: string }).address;
+  assert.notEqual(routeLocationFacts(withoutAddress, { origin: place, destination: place }, city).destination, reference);
+  const requirement = request.requirements[0]!; assert.equal(requirement.kind, 'location');
+  assert(requirement.kind === 'location'); assert.equal(requirement.expected.ref, reference, 'The original hard requirement is retained');
+});
+
+test('the real Worker verifies the same read-only task with an annotated whole-terminal requirement', { timeout: 120000 }, async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = didiFixture(), store = new JobStore(':memory:'), destination = '合成国际机场2号航站楼', address = '地点2号';
+  const reference = `${destination}（${address}，整体 T2 POI，非出入口）`;
+  f.flags.transform = (body, request) => {
+    if (request.params?.name === 'maps_textsearch' && request.params.arguments.keywords === destination) {
+      body.result.content[0].text = JSON.stringify([sourcePlace(destination + '-23号门', 3), sourcePlace(destination, 2)]);
+    }
+    return body;
+  };
+  const model = didiModel((ctx, access) => {
+    const decision = chooseDidi(ctx, access);
+    return { ...decision, steps: decision.steps.map(step => {
+      if (step.action !== 'SearchDidiPlaces') return step;
+      const args = JSON.parse(step.argumentsJson), prepared = ctx.state.input as { origin: string; destination: string };
+      return { ...step, argumentsJson: JSON.stringify({ ...args, keywords: prepared[args.role as 'origin' | 'destination'] }) };
+    }) };
+  }, { mode: 'estimate', city: input.city, origin: input.origin, destination, serviceClass: '专车' });
+  const b = backend(createExecutionCatalog({ store, didi: { ...f.binding, connector: f.connector } }), model, store);
+  try {
+    const job = b.submit({ goal: '查询合成整体航站楼的专车预估价，只查价，不下单、不付款。',
+      locationContext: { city: input.city, origin: { name: input.origin, source: 'user_provided' }, destination: { name: destination, address, source: 'user_provided' } },
+      requirements: [{ id: 'terminal', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: reference } },
+        { id: 'no_order', strength: 'hard', kind: 'condition', expected: { predicate: 'execution.no_order' } }] });
+    await runNativeDidiTask(store, b.coordinator, owner, job.id, t.signal, () => t.mock.timers.tick(20), current => current.delegation?.agent?.feedback.some(f => f.kind === 'completion') === true);
+    const done = store.get(owner, job.id);
+    assert.equal(done.state, 'completed', JSON.stringify({ recovery: done.delegation?.recovery, feedback: done.delegation?.agent?.feedback }));
+    assert.equal(done.id, job.id); assert.equal(done.delegation!.request.revision, 1); assert.equal(done.goal, job.goal);
+    assert.equal(done.delegation!.acceptance!.accepted, true);
+    const requirement = done.delegation!.request.requirements.find(r => r.id === 'terminal')!;
+    assert(requirement.kind === 'location'); assert.equal(requirement.expected.ref, reference);
+    assert.deepEqual(f.calls.filter(c => c.method === 'tools/call').map(c => c.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
+  } finally { store.close(); f.close(); }
 });
