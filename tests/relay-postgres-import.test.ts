@@ -20,7 +20,9 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
   db.exec(`INSERT INTO relay_agents VALUES ('a','owner','card-a','{}','hash-a','active',2000000000000,1000000000000),('b','owner','card-b','{}','hash-b','active',2000000000000,1000000000000);
     INSERT INTO relay_connections VALUES ('connection','a','b','accepted',1000000000000);
     INSERT INTO relay_messages VALUES (27,'message','a','b','connection','digest','ciphertext',10,'queued',2000000000000,1000000000000);
-    INSERT INTO relay_proofs VALUES ('a','proof',2000000000000);`);
+    INSERT INTO relay_proofs VALUES ('a','proof',2000000000000);
+    INSERT INTO relay_limits VALUES ('node:a',1234567890,7);
+    INSERT INTO relay_commands VALUES ('owner','register','request-1','fingerprint','{}',1000000000000);`);
   db.exec('PRAGMA journal_mode=DELETE'); db.close();
   const schema = `eigos_relay_test_${randomBytes(8).toString('hex')}`;
   const ca = process.env.EIGOS_TEST_PG_CA_FILE;
@@ -30,7 +32,7 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
   try {
     await client.connect(); connected = true;
     const counts = await importRelaySnapshot(client, path, schema);
-    assert.equal(counts.relay_agents, 2); assert.equal(counts.relay_messages, 1); assert.equal(counts.relay_proofs, 1);
+    assert.deepEqual(counts, { relay_agents: 2, relay_commands: 1, relay_proofs: 1, relay_limits: 1, relay_connections: 1, relay_messages: 1 });
     const selected = await client.query(`SELECT seq, envelope, expires_at FROM "${schema}".relay_messages`);
     assert.deepEqual(selected.rows[0], { seq: '27', envelope: 'ciphertext', expires_at: '2000000000000' });
     await assert.rejects(importRelaySnapshot(client, path, schema), /already exists/);
