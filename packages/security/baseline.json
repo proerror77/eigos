@@ -5537,10 +5537,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Serializable transaction, shared advisory lock, authority checks before work and commit; no automatic retry after uncertain commit",
+      "currentControl": "Idle non-pipelined connection, transaction identity and savepoint checks, shared advisory lock, authority fencing and fail-closed uncertain commits",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "6a2fb0969c51cd8867082a5b9c45491d33606818e5948f94232910d24611b4c6"
+      "sourceDigest": "a338b063f55e85050b65c23679d48a64ccb013ad1caca258c5868bdd4453ed78"
     },
     {
       "id": "postgres-authority-lock",

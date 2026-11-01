@@ -51,7 +51,7 @@ test('PostgreSQL task authority matches the existing SQLite checks', { skip: pro
     assert.equal(store.claimActive({...claim,securityEpoch:2}),false);
     const changing = { ...claim, job: structuredClone(claim.job) };
     const beforeExpiry = BigInt((await client.query(`SELECT expires_at FROM "${schema}".work_claims WHERE job_id=$1`,[taskId])).rows[0].expires_at);
-    const interleaved = { query: async (sql: string, values?: unknown[]) => {
+    const interleaved = { pipeline: false, getTransactionStatus: () => client.getTransactionStatus(), query: async (sql: string, values?: unknown[]) => {
       const result = await client.query(sql,values);
       if (sql.includes('.work_claims c JOIN')) { changing.token='changed'; changing.job.id=randomUUID(); }
       return result;

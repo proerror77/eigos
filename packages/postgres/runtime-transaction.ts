@@ -28,11 +28,13 @@ export interface PostgresRuntimeAuthority {
 /** Serialize a PostgreSQL business mutation and fence it to the reviewed
  * authority. This primitive is not a Worker claim, an authorization grant or a
  * runtime adapter. Callers must check current task and permission fences inside
- * the same callback, and all business writers must use the same lock. External
- * side effects must not be performed inside the transaction. */
+ * the same callback, and all business writers must use the same lock. The
+ * client must be request-owned and every database operation must be awaited.
+ * External side effects must not be performed inside the transaction. */
 export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>): Promise<T> {
   if (!schemaPattern.test(schema) || !authority.id || !Number.isSafeInteger(authority.revision) || authority.revision < 1 || !digestPattern.test(authority.digest)) throw new Error('Invalid PostgreSQL business authority');
   if (active.has(client)) throw new Error('Nested PostgreSQL business transactions are not supported');
+  if (typeof client.getTransactionStatus !== 'function' || client.getTransactionStatus() !== 'I' || client.pipeline !== false) throw new Error('PostgreSQL business transaction requires an idle, non-pipelined client');
   const expected = { id: authority.id, revision: authority.revision, digest: authority.digest };
   active.add(client); let opened = false, committing = false;
   const discard = async () => {
@@ -46,13 +48,35 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
   };
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); opened = true;
+    if (client.getTransactionStatus() !== 'T') { committing = true; throw new Error('PostgreSQL business transaction did not start'); }
+    const transactionId = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
+    if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
+    const assertBoundary = async () => {
+      const status = client.getTransactionStatus();
+      if (status !== 'T') { committing = status !== 'E'; throw new Error('PostgreSQL business transaction boundary was lost'); }
+      const current = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
+      if (current !== transactionId) { committing = true; throw new Error('PostgreSQL business transaction identity changed'); }
+    };
     await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))', [`eigos-business:${schema}`]);
     await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
     await assertAuthority();
+    await assertBoundary();
+    await client.query('SAVEPOINT eigos_runtime_action_guard');
     contexts.set(client, { schema, authorityDigest: expected.digest });
     let result: T;
-    try { result = await action(client); } finally { contexts.delete(client); }
+    try { result = await action(client); }
+    catch (error) {
+      // Recover an aborted transaction only to verify that it is still the
+      // original one. Missing savepoint or a changed transaction ID means an
+      // earlier commit may have occurred, so the result is uncertain.
+      try { await client.query('ROLLBACK TO SAVEPOINT eigos_runtime_action_guard'); }
+      catch { committing = true; throw error; }
+      await assertBoundary();
+      throw error;
+    } finally { contexts.delete(client); }
+    await assertBoundary();
     await assertAuthority();
+    await assertBoundary();
     committing = true; await client.query('COMMIT'); opened = false;
     return result;
   } catch (error) {
