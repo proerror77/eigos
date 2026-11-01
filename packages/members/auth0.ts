@@ -4,6 +4,7 @@ import { SCOPES, TASK_SCOPES } from '../core/domain.js';
 import { SOURCE_SCOPES } from '../core/member-source.js';
 import { MEMBERSHIP_SCOPE } from './agents.js';
 import { INVITE_BETA_MCP_CALLBACK_URL, GROK_MCP_CALLBACK_URL } from './native-mcp.js';
+import { MESSAGING_SCOPES } from '../agent-messaging/contracts.js';
 
 type ManagementApi = (method: 'get' | 'patch', path: string, body?: unknown) => unknown;
 const clientPage = z.object({ clients: z.array(z.object({ client_id: z.string().min(1) })), next: z.string().min(1).optional() });
@@ -32,7 +33,7 @@ export function ensureAuth0ConnectionClients(api: ManagementApi, connectionId: s
   if ([...desired].some(id => !confirmed.has(id))) throw new Error('Connection readback did not confirm both OAuth clients');
 }
 
-export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback', options: { memberSources?: boolean; inviteBeta?: boolean } = {}) {
+export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3211/callback', options: { memberSources?: boolean; inviteBeta?: boolean; messaging?: boolean } = {}) {
   if (options.inviteBeta && options.memberSources) throw new Error('The invite beta does not publish private supplier-account scopes');
   const origin = new URL(publicUrl);
   if (origin.protocol !== 'https:' || origin.origin !== publicUrl || origin.username || origin.password) throw new Error('Auth0 requires an exact HTTPS Gateway origin');
@@ -54,7 +55,8 @@ export function auth0Plan(publicUrl: string, agentCallback = 'http://127.0.0.1:3
       skip_consent_for_verifiable_first_party_clients: false,
       // The self-service resource plan never provisions a global admin grant.
       // Operators must establish that issuer policy separately and explicitly.
-      scopes: [...SCOPES.filter(value => options.inviteBeta ? (TASK_SCOPES as readonly string[]).includes(value) : value !== 'ontology:admin').map(value => ({ value, description: scopeDescriptions[value] })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : [])],
+      scopes: [...SCOPES.filter(value => options.inviteBeta ? (TASK_SCOPES as readonly string[]).includes(value) : value !== 'ontology:admin').map(value => ({ value, description: scopeDescriptions[value] })), { value: MEMBERSHIP_SCOPE, description: 'Register your EIGOS membership with your consent' }, ...(options.memberSources ? SOURCE_SCOPES.map(value => ({ value, description: value === 'sources:read' ? 'Inspect your private service-account connection' : 'Connect, rotate and revoke your own read-only service-account credential' })) : []),
+        ...(options.messaging ? MESSAGING_SCOPES.map(value => ({ value, description: value === 'messaging:read' ? 'Read your PA inbox and permitted Agent directory under a separate communication grant' : 'Send and reply through accepted PA contacts under a separate communication grant' })) : [])],
     },
     portal: {
       name: `EIGOS member portal ${suffix}`, app_type: 'regular_web', oidc_conformant: true, is_first_party: true,

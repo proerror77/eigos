@@ -24,6 +24,18 @@ export class RelayEnrollmentIssuer {
     this.#kid = digest(this.#publicKey);
   }
   jwks() { return { keys: [{ ...this.#publicKey, kid: this.#kid, alg: 'EdDSA', use: 'sig' }] }; }
+  /** Internal transport enrollment for an explicitly approved service-custodied communication endpoint.
+   * The caller rechecks current membership, installation and the separate controller communication grant. */
+  async issueCommunication(ownerKey: string, tenant: string, agentId: string, grantExpiresAt: number) {
+    agentIdSchema.parse(agentId);
+    const now = this.#security.now(), expiresAt = Math.floor(Math.min(now + 60000, grantExpiresAt) / 1000);
+    if (!ownerKey || !tenant || !Number.isFinite(grantExpiresAt) || expiresAt * 1000 <= now) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    const assertion = await new SignJWT({ tenant_id: tenant, client_id: RELAY_ENROLLMENT_CLIENT, scope: 'relay:enroll', eigos_agent_id: agentId })
+      .setProtectedHeader({ alg: 'EdDSA', typ: 'at+jwt', kid: this.#kid }).setIssuer(this.issuer).setAudience(this.audience)
+      .setSubject(digest(ownerKey)).setIssuedAt(Math.floor(now / 1000)).setExpirationTime(expiresAt).setJti(randomUUID())
+      .sign(await importJWK(this.#key, 'EdDSA'));
+    return { accessToken: assertion, expiresAt: expiresAt * 1000, agentId };
+  }
   async issue(principal: Principal, bearer: string, agentId: string) {
     agentIdSchema.parse(agentId);
     const actor = this.#security.agentContext(principal), parent = this.#security.agentGrant(actor.installationId), now = this.#security.now();
