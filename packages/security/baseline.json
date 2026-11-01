@@ -4616,13 +4616,13 @@
     {
       "id": "primary-relay-entry",
       "file": "apps/gateway/relay.ts",
-      "sourceDigest": "660b3233fe5c9a23626c1572df67712b89bed2dbb29dc857eb68b4f5280c5e0a",
+      "sourceDigest": "43c1a0a89be4f11a6bb43d3a1b688cf1e99bd70ff90671500b160df783e6a995",
       "channels": [
         "http",
         "authorization_control"
       ],
       "content": "Node enrollment, installation binding, current source authorization and dispatch",
-      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send",
+      "currentControl": "Authenticated member and DPoP binding; exact primary authority; live grant and Worker lease checks; at most two source deliveries, each freshly authorized before send; shutdown rejects new enrollment or binding and drains started work before closing node state",
       "targetControl": "Preserve explicit task, source and output authority across encrypted transport",
       "stage": "S5"
     },

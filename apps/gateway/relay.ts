@@ -35,6 +35,8 @@ export class TaskRelayGateway {
   private running?: Promise<void>;
   private dispatching?: Promise<void>;
   private opening?: Promise<void>;
+  private closing?: Promise<void>;
+  private active = new Set<Promise<unknown>>();
   private state: 'starting' | 'connected' | 'unavailable' | 'stopped' = 'starting';
   readonly enrollment?: RelayEnrollmentIssuer;
   constructor(private store: JobStore, private tasks: TaskService, private gatewayOrigin: string, private config: z.infer<typeof relayConfigSchema>, private sourceAgentId?: string) {
@@ -43,12 +45,23 @@ export class TaskRelayGateway {
   }
   get status() { return this.state; }
   metadata() {
+    if (this.closing) throw new SecurityError('AUTHORITY_UNAVAILABLE');
+    return this.snapshotMetadata();
+  }
+  private snapshotMetadata() {
     if (!this.client) throw new SecurityError('AUTHORITY_UNAVAILABLE');
     return taskRelayMetadataSchema.parse({ protocol: TASK_RELAY_PROTOCOL, authorityId: this.store.authority!.id,
       gatewayOrigin: this.gatewayOrigin, relayUrl: this.config.relayUrl, gatewayAgentId: this.client.agentId, bindingPath: '/relay/bind', ...(this.enrollment ? { enrollmentPath: '/relay/enrollment' } : {}) });
   }
   start(): Promise<void> {
+    if (this.closing) return Promise.reject(new SecurityError('AUTHORITY_UNAVAILABLE'));
     return this.opening ??= this.open();
+  }
+  private track<T>(action: () => Promise<T>): Promise<T> {
+    if (this.closing) return Promise.reject(new SecurityError('AUTHORITY_UNAVAILABLE'));
+    const work = Promise.resolve().then(action); this.active.add(work);
+    void work.finally(() => this.active.delete(work)).catch(() => {});
+    return work;
   }
   private async open() {
     this.client = await RelayClient.open({ baseUrl: this.config.relayUrl, credentialPath: this.config.credentialPath, statePath: this.config.statePath, displayName: this.config.displayName });
@@ -101,6 +114,9 @@ export class TaskRelayGateway {
     }
   }
   async bind(principal: Principal, token: string, input: unknown, proof: string) {
+    return this.track(() => this.bindStarted(principal, token, input, proof));
+  }
+  private async bindStarted(principal: Principal, token: string, input: unknown, proof: string) {
     if (!this.client || this.state !== 'connected') throw new SecurityError('AUTHORITY_UNAVAILABLE');
     const body = z.strictObject({ signedCard: z.string().max(4096) }).parse(input);
     const card = await verifyCard(body.signedCard), peer = await this.client.peer(card.card.agentId);
@@ -116,9 +132,12 @@ export class TaskRelayGateway {
     this.store.security.relay.principal(card.card.agentId);
     if (contact.state === 'pending' && contact.recipient === this.client.agentId) contact = await this.client.respondContact(contact.id, 'accept');
     this.store.security.relay.principal(card.card.agentId);
-    return { ...binding, ...this.metadata(), connectionId: contact.id };
+    return { ...binding, ...this.snapshotMetadata(), connectionId: contact.id };
   }
   async enroll(principal: Principal, token: string, input: unknown, proof: string) {
+    return this.track(() => this.enrollStarted(principal, token, input, proof));
+  }
+  private async enrollStarted(principal: Principal, token: string, input: unknown, proof: string) {
     if (!this.enrollment) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const { signedCard } = z.strictObject({ signedCard: z.string().max(4096) }).parse(input);
     const card = await verifyCard(signedCard);
@@ -128,13 +147,20 @@ export class TaskRelayGateway {
     return result;
   }
   async enrollPrimary(principal: Principal, token: string, renewRequestId?: string) {
+    return this.track(() => this.enrollPrimaryStarted(principal, token, renewRequestId));
+  }
+  private async enrollPrimaryStarted(principal: Principal, token: string, renewRequestId?: string) {
     if (!this.client || !this.enrollment || this.store.security.agentContext(principal).installationId !== this.config.operatorInstallationId) throw new SecurityError('AUTHORIZATION_REQUIRED');
     const assertion = await this.enrollment.issue(principal, token, this.client.agentId);
     return renewRequestId ? this.client.renew(assertion.accessToken, z.uuid().parse(renewRequestId)) : this.client.register(assertion.accessToken);
   }
-  async close() {
+  close(): Promise<void> {
+    return this.closing ??= this.drain();
+  }
+  private async drain() {
     this.abort.abort();
     await this.opening?.catch(() => {});
+    await Promise.allSettled([...this.active]);
     await this.running;
     await this.dispatching;
     this.client?.close();
