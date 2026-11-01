@@ -68,7 +68,14 @@ test('an existing PA enrolls and binds its key through the primary HTTP authorit
     if (holdPeer && target.origin === relayConfig.publicUrl && target.pathname === `/v1/agents/${holdPeer}` && (!init?.method || init.method === 'GET')) {
       holdPeer = ''; enteredPeer(); await peerGate;
     }
-    if (remote && target.origin === relayConfig.publicUrl) return originalFetch(url,init);
+    if (remote && target.origin === relayConfig.publicUrl) {
+      const response = await originalFetch(url,init);
+      if (!response.ok && target.pathname === '/v1/agents') {
+        const body = await response.clone().json().catch(() => ({})) as {error?: unknown};
+        if (typeof body.error === 'string' && /^[A-Z_]{1,64}$/.test(body.error)) console.error('Synthetic Relay registration rejected:',response.status,body.error);
+      }
+      return response;
+    }
     if (!origin) throw new Error('Fixture forbids external network');
     const headers = new Headers(init?.headers); headers.set('Host', target.host);
     // The test TLS terminator preserves Host exactly; fetch itself rewrites Host after a URL rewrite.
