@@ -16,7 +16,7 @@ import { rideEstimateInputSchema, rideEstimateActionIds, rideEstimateActionSchem
 import { checkedRideEstimate, projectRideEstimate } from '../../ontology/ride-estimate-projection.js';
 import { didiBindingSchema, didiDataSchema, didiReceiptSchema, didiEndpoint, didiPlaceSchema, didiToolInputs, DIDI_TOOLS, type DidiBinding, type DidiPlace } from './contracts.js';
 import { DidiMcpConnector, type DidiConnector } from './connector.js';
-import { requestLocations, sameCity, locationMatchesSource, locationAliases, normalizedLocation } from '../../core/location-context.js';
+import { requestLocations, sameCity, locationMatchesSource, locationRequirementMatchesSource, locationAliases, normalizedLocation } from '../../core/location-context.js';
 
 export const DIDI_PROGRAM_REF = { id: 'ride.estimate.query', version: '1' } as const;
 const equal = (a: unknown, b: unknown) => a === undefined || b === undefined ? a === b : digest(a) === digest(b);
@@ -34,8 +34,7 @@ export function routeLocationFacts(request: ServiceRequest, route: { origin: Did
       const name = normalized(value); return [name, ...cityPrefixes.map(prefix => prefix + name)];
     });
     const supplied = context[r.role];
-    const knownAlias = supplied && context.city && locationMatchesSource(supplied, context.city, place)
-      && locationAliases(supplied, context.city).includes(normalizedLocation(r.expected.ref));
+    const knownAlias = supplied && context.city && locationRequirementMatchesSource(supplied, context.city, r.expected.ref, place);
     if (aliases.includes(normalized(r.expected.ref)) || knownAlias) locations[r.role] = r.expected.ref;
   }
   return locations;

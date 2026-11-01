@@ -90,4 +90,25 @@ export function locationAliases(location: TaskLocation, city: string): string[] 
   return [location.name, location.address, ...labels, ...combined].filter((value): value is string => !!value)
     .flatMap(value => [normalize(value), normalize(city) + normalize(value), normalize(city).replace(/市$/, '') + normalize(value)]);
 }
+/** Resolve a requirement's bounded name(address, whole-POI notes) syntax only
+ * against the confirmed location and the selected source place. These notes
+ * are evidence checks, not additional aliases allowed for provider queries. */
+export function locationRequirementMatchesSource(location: TaskLocation, city: string, reference: string,
+  place: { name: string; address: string; addressAll: string; city: string }): boolean {
+  if (!locationMatchesSource(location, city, place)) return false;
+  if (locationAliases(location, city).includes(normalize(reference))) return true;
+  const parsed = /^([^()]+)\(([^()]+)\)$/.exec(normalize(reference));
+  if (!parsed || !location.address) return false;
+  const names = (name: string) => [name, city + name, city.replace(/市$/, '') + name].map(normalizePlaceName);
+  // An address or a personal label cannot stand in for the canonical POI title.
+  if (!names(location.name).includes(normalizePlaceName(parsed[1]!))
+    || !names(place.name).includes(normalizePlaceName(location.name)) && !names(location.name).includes(normalizePlaceName(place.name))) return false;
+  const notes = parsed[2]!.split(/[,;；]/);
+  if (notes.length > 3 || new Set(notes).size !== notes.length || notes[0] !== normalize(location.address)) return false;
+  const terminal = /机场t([1-9]\d*)航站楼$/.exec(normalizePlaceName(place.name))?.[1];
+  const whole = notes.includes('整体poi') || !!terminal && notes.includes(`整体t${terminal}poi`);
+  return notes.slice(1).every(note => note === '整体poi'
+    || !!terminal && note === `整体t${terminal}poi`
+    || note === '非出入口' && !!terminal && whole);
+}
 export function normalizedLocation(value: string): string { return normalize(value); }
