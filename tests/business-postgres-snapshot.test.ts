@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { JobStore } from '../packages/core/store.js';
 import { installRuntimeAuthority, runtimeAuthorityDigest, type RuntimeAuthority } from '../packages/core/runtime-authority.js';
 import { encodeBusinessRow, planBusinessSnapshot } from '../packages/postgres/business-snapshot.js';
+import { DefinitionStore } from '../packages/ontology/definition-store.js';
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-business-snapshot-')), path = join(dir, 'business.sqlite');
@@ -52,6 +53,27 @@ test('business snapshot inventory binds authority, policy, rows, triggers and se
     assert.throws(() => planBusinessSnapshot(f.path, '0'.repeat(64), f.policy), /authority/);
     assert.throws(() => planBusinessSnapshot(f.path, f.authorityDigest, '0'.repeat(64)), /policy/);
   } finally { rmSync(f.dir, { recursive: true, force: true }); }
+});
+
+test('business snapshot preserves a valid stale ontology draft without publishing or rebasing it', () => {
+  const f=fixture();
+  try {
+    let db=new DatabaseSync(f.path);const definitions=new DefinitionStore(db);
+    const draft=definitions.createDraft('synthetic-owner','eigos.business','Unpublished working draft',true);
+    db.prepare('UPDATE ontology_namespaces SET generation=? WHERE id=?').run(draft.baseGeneration+1,draft.ontologyId);
+    assert(definitions.validate(draft.id).issues.some(issue=>issue.code==='base_changed'));
+    db.close();
+    const before=readFileSync(f.path),plan=planBusinessSnapshot(f.path,f.authorityDigest,f.policy);
+    assert.equal(plan.tables.find(table=>table.name==='ontology_definition_drafts')?.rows,1);
+    assert.deepEqual(readFileSync(f.path),before);
+    db=new DatabaseSync(f.path);const row=db.prepare('SELECT body FROM ontology_definition_drafts WHERE id=?').get(draft.id)!;
+    const stored=JSON.parse(String(row.body));assert.deepEqual(stored,draft);assert.equal(stored.baseGeneration,1);
+    stored.base.releaseId=randomUUID();db.prepare('UPDATE ontology_definition_drafts SET body=? WHERE id=?').run(JSON.stringify(stored),draft.id);db.close();
+    assert.throws(()=>planBusinessSnapshot(f.path,f.authorityDigest,f.policy),/invalid open Ontology draft/);
+    db=new DatabaseSync(f.path);const invalidGeneration={...draft,baseGeneration:draft.baseGeneration+2};
+    db.prepare('UPDATE ontology_definition_drafts SET body=? WHERE id=?').run(JSON.stringify(invalidGeneration),draft.id);db.close();
+    assert.throws(()=>planBusinessSnapshot(f.path,f.authorityDigest,f.policy),/invalid open Ontology draft/);
+  } finally {rmSync(f.dir,{recursive:true,force:true});}
 });
 
 test('business snapshot inventory fails closed for active claims, drafts and unsupported values', () => {

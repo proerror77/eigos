@@ -5392,10 +5392,10 @@
         "authorization_control"
       ],
       "content": "Read-only shared business snapshot inventory before PostgreSQL migration",
-      "currentControl": "Owned offline snapshot, exact authority and policy digests, claim and draft fences, byte-bounded hashing and no row output",
+      "currentControl": "Owned offline snapshot, exact authority and policy digests, claim fences, validated original draft references, byte-bounded hashing and no row output",
       "targetControl": "Preserve all authority, historical evidence, sequence and policy invariants at migration",
       "stage": "S5",
-      "sourceDigest": "cc18aee798fd151b2b589e2651737a3f9d9c835e2d0cb089a1f9a9a34ff8be0e"
+      "sourceDigest": "e76c8189812e2ad42923518ffb8a97159d387f5e6aee58e5c7f3e47caceda8ec"
     },
     {
       "id": "business-postgres-preflight-cli",

@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { constants, closeSync, existsSync, fstatSync, lstatSync, openSync, readSync, type Stats } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { runtimeAuthorityDigest, runtimeAuthoritySchema, storedRuntimeAuthority } from '../core/runtime-authority.js';
+import { DefinitionStore } from '../ontology/definition-store.js';
+import { ontologyReleaseRefSchema, parseOntologyDocument } from '../ontology/definition-contracts.js';
 
 export type BusinessColumn = { name: string; type: string; notNull: boolean; primaryKey: number };
 type UniqueKey = { name: string; origin: string; partial: boolean; columns: (string | null)[] };
@@ -85,7 +87,21 @@ export function planBusinessSnapshot(snapshot: string, expectedAuthorityDigest: 
     if (Number(db.prepare('SELECT count(*) AS n FROM security_manager WHERE expires_at>?').get(now)!.n) > 0) throw new Error('Snapshot contains an active security manager lease');
     if (names.includes('network_lease') && Number(db.prepare('SELECT count(*) AS n FROM network_lease WHERE expires>?').get(now)!.n) > 0) throw new Error('Snapshot contains an active network lease');
     if (Number(db.prepare("SELECT count(*) AS n FROM security_recoveries WHERE state='running'").get()!.n) > 0) throw new Error('Snapshot contains running security recovery');
-    if (Number(db.prepare("SELECT count(*) AS n FROM ontology_definition_drafts WHERE status='open'").get()!.n) > 0) throw new Error('Snapshot contains an open Ontology draft');
+    const openDrafts = db.prepare("SELECT id FROM ontology_definition_drafts WHERE status='open'").all();
+    if (openDrafts.length) {
+      const definitions = new DefinitionStore(db, () => now, {readOnly:true});
+      for (const row of openDrafts) {
+        try {
+          const draft = definitions.draft(String(row.id)), base = ontologyReleaseRefSchema.parse(draft.base);
+          const namespace = definitions.namespace(draft.ontologyId), document = parseOntologyDocument(draft.document);
+          if (draft.status !== 'open' || base.ontologyId !== draft.ontologyId || document.id !== draft.ontologyId
+            || !Number.isSafeInteger(draft.revision) || draft.revision < 1 || !Number.isSafeInteger(draft.baseGeneration)
+            || !Number.isSafeInteger(namespace.generation) || namespace.generation < 1 || draft.baseGeneration < 1 || draft.baseGeneration > namespace.generation || typeof draft.title !== 'string'
+            || !draft.title.trim() || draft.title.length > 200) throw new Error('Invalid draft');
+          definitions.resolve(base);
+        } catch { throw new Error('Snapshot contains an invalid open Ontology draft'); }
+      }
+    }
     if (Number(db.prepare("SELECT count(*) AS n FROM security_fences WHERE state NOT IN ('cleared','applied')").get()!.n) > 0) throw new Error('Snapshot contains an unresolved permission fence');
     // These job fields participate in SQLite JSON expression indexes and in
     // Worker selection. PostgreSQL numeric/text operators must not silently

@@ -37,7 +37,7 @@
 
 ## PostgreSQL 迁移前业务库盘点
 
-`node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理／网络租约、运行中的恢复、开放草稿或未解决权限围栏的副本。
+`node scripts/business-postgres-preflight.mjs --snapshot /private/offline-business.sqlite --authority /private/authority.json --policy-digest <reviewed-digest>` 对**停止写入后的私有 SQLite 副本**做只读盘点；先运行 `npm run build`。副本须完成 checkpoint、使用 `DELETE` journal 模式，且没有 WAL／SHM／journal 文件。它核对受保护的运行权威描述和已审查的权限策略摘要，拒绝尚有 Worker 领取、有效管理／网络租约、运行中的恢复或未解决权限围栏的副本。开放草稿会校验原始身份、文档、基准发布及代次后原样保留；过期基准不会自动重置或发布。
 
 报告仅包含表结构、唯一键信息、行数、编码总量、最大编码行大小和摘要、索引／触发器数量、SQLite 自增序列高水位以及源文件摘要，不包含行正文。它拒绝当前未定义映射的列类型、生成列、`WITHOUT ROWID` 和 `STRICT` 表，并检查无法无损进入 PostgreSQL 的值。报告本身仍属于内部迁移证据，应保存于仓库外的私有位置。
 

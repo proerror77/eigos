@@ -14,8 +14,10 @@ import { importBusinessSnapshot } from '../packages/postgres/business-import.js'
 const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1';
 test('business snapshot import preserves data, authority, uniqueness, triggers and identity high-water marks', { skip: !enabled }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'eigos-business-import-')), path = join(dir, 'business.sqlite');
-  const store = new JobStore(path, { securityMode: 'foundation' }); store.createNetworkStore(); store.close();
+  const store = new JobStore(path, { securityMode: 'foundation' }); store.createNetworkStore();
+  const draft=store.definitions.createDraft('synthetic-owner','eigos.business','Unpublished migration draft',true);store.close();
   const db = new DatabaseSync(path);
+  db.prepare('UPDATE ontology_namespaces SET generation=? WHERE id=?').run(draft.baseGeneration+1,draft.ontologyId);
   const authority: RuntimeAuthority = { version: 1, id: randomUUID(), revision: 1, canonicalOrigin: 'https://eigos.example', issuer: 'https://issuer.example', ontologyId: 'eigos.business', databasePath: path, membershipDatabasePath: join(dir,'members.sqlite'),
     ingresses: [{ origin: 'https://eigos.example', audience: 'https://eigos.example', tenantClaim: 'tenant_id', agentClientId: 'agent', agentClientIds: ['agent'], nativeClientIds: [], browserRedirect: false, newRegistrations: true }] };
   installRuntimeAuthority(db, authority);
@@ -62,6 +64,9 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     await assert.rejects(client.query(`INSERT INTO "${schema}".security_grants VALUES('duplicate','agent_access','owner','member','installation',NULL,NULL,1,'active',1,'{}')`), error => !!error && typeof error === 'object' && 'code' in error && error.code === '23505');
     const binary = (await client.query(`SELECT payload,value FROM "${schema}".migration_binary_probe`)).rows[0];
     assert.deepEqual(binary.payload, Buffer.from([0,255])); assert.equal(binary.value, '9007199254740993');
+    const importedDraft=(await client.query(`SELECT body FROM "${schema}".ontology_definition_drafts WHERE id=$1`,[draft.id])).rows[0];
+    assert.equal(importedDraft.body,JSON.stringify(draft));assert.deepEqual(JSON.parse(importedDraft.body),draft);
+    assert.equal(Number((await client.query(`SELECT generation FROM "${schema}".ontology_namespaces WHERE id=$1`,[draft.ontologyId])).rows[0].generation),draft.baseGeneration+1);
     const next = await client.query(`INSERT INTO "${schema}".migration_sequence_probe(body) VALUES('next') RETURNING id`);
     assert.equal(next.rows[0].id, '9007199254740994');
     const event = await client.query(`INSERT INTO "${schema}".network_events(event_id,kind,object_id,at) VALUES('event2','fixture','object','2026') RETURNING seq`);
