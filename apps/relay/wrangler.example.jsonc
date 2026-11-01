@@ -4,6 +4,7 @@
   "name": "eigos-relay-example",
   "main": "cloudflare.ts",
   "compatibility_date": "2026-10-02",
+  "compatibility_flags": ["global_fetch_strictly_public"],
   "workers_dev": true,
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "hyperdrive": [{ "binding": "RELAY_DATABASE", "id": "REPLACE_WITH_HYPERDRIVE_ID" }],

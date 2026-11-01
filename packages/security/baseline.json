@@ -5589,10 +5589,10 @@
         "agent_transport"
       ],
       "content": "Read-only Cloudflare and Supabase destination verification",
-      "currentControl": "Read-only reviewed version, script hash, compatibility, origin, Hyperdrive, TLS and auth settings; checks both deployment and Hyperdrive twice",
+      "currentControl": "Read-only reviewed version, script hash, compatibility, origin, Hyperdrive, TLS and auth settings; checks both deployment and Hyperdrive twice; require public routing for remote issuer key retrieval",
       "targetControl": "Require source stop and independently verified destination before migrating node state",
       "stage": "S5",
-      "sourceDigest": "4dc3fe38e9017f628fe3c5cae6931489a5c6d6bec931780cd04bf8ae422e0964"
+      "sourceDigest": "462aaad36b2fbe2a8b183fe2e774411f04e770ed71f44390f79be0feac1208f0"
     },
     {
       "id": "relay-client-repoint-cli",

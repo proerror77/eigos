@@ -36,7 +36,7 @@ export function verifyCloudflareRelayReadback(options:CloudflareRelayBindingOpti
       || !/^[a-z_][a-z0-9_]{0,62}$/.test(options.runtimeRole) || !uuid.safeParse(options.caCertificateId).success
       || !/^eigos_relay_[a-z0-9_]{1,40}$/.test(destination.schema) || !/^[a-f0-9]{64}$/.test(destination.sourceDigest)
       || !/^[a-f0-9]{64}$/.test(options.expectedCaSha256) || hash(options.caPem)!==options.expectedCaSha256
-      || !/^[a-f0-9]{64}$/.test(options.expectedScriptEtag) || !/^\d{4}-\d{2}-\d{2}$/.test(options.expectedCompatibilityDate) || !Array.isArray(options.expectedCompatibilityFlags) || new Set(options.expectedCompatibilityFlags).size!==options.expectedCompatibilityFlags.length || !uuid.safeParse(destination.workerVersion).success || destination.origin !== `https://${options.workerName}.${options.workersSubdomain}.workers.dev`) return false;
+      || !/^[a-f0-9]{64}$/.test(options.expectedScriptEtag) || !/^\d{4}-\d{2}-\d{2}$/.test(options.expectedCompatibilityDate) || !Array.isArray(options.expectedCompatibilityFlags) || !options.expectedCompatibilityFlags.includes('global_fetch_strictly_public') || new Set(options.expectedCompatibilityFlags).size!==options.expectedCompatibilityFlags.length || !uuid.safeParse(destination.workerVersion).success || destination.origin !== `https://${options.workerName}.${options.workersSubdomain}.workers.dev`) return false;
     const client=options.targetDatabase, ssl=(client as unknown as {ssl:unknown}).ssl;
     if(client.host!==options.poolerHost || client.port!==5432 || !client.database || !client.user?.endsWith('.'+options.projectRef)
       || client.getTransactionStatus()!=='I' || client.pipeline!==false || !ssl || typeof ssl!=='object') return false;
