@@ -1,15 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { z } from 'zod';
 import type { Job } from '../core/domain.js';
 import { digest } from '../core/delegation.js';
 import { assertBusinessTransaction } from '../core/transaction.js';
-import { ontologyReleaseRefSchema, type OntologyReleaseRef } from './definition-contracts.js';
+import type { OntologyReleaseRef } from './definition-contracts.js';
 import { DefinitionStore } from './definition-store.js';
+import { taskReadProofSchema, validateTaskReadProjection } from './task-read-proof.js';
 
-const proofSchema = z.strictObject({ version: z.literal(1), sourceAuthority: z.string().min(1).max(200),
-  taskId: z.uuid(), owner: z.string().min(1).max(2000), backend: z.string().min(1), original: ontologyReleaseRefSchema,
-  requestDigest: z.string().length(64), artifactDigest: z.string().length(64), target: ontologyReleaseRefSchema,
-  verifiedObjectCount: z.number().int().nonnegative(), factDigest: z.string().length(64), createdAt: z.iso.datetime() });
 
 export function initializeTaskReadProjections(db: DatabaseSync): void {
   db.exec(`CREATE TABLE IF NOT EXISTS ontology_task_read_projections(owner TEXT NOT NULL,task_id TEXT NOT NULL,body TEXT NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner,task_id));
@@ -35,12 +31,12 @@ export function installTaskReadProjection(db: DatabaseSync, owner: string, taskI
       || currentDigest !== object.definition_digest && !next.compatibleDefinition({ kind: 'object', id: String(object.type), storedDigest: String(object.definition_digest), currentDigest, properties }))
       throw new Error('Historical read projection would reinterpret a stored fact');
   }
-  const proof = proofSchema.parse({ version: 1, sourceAuthority, taskId, owner, backend: job.delegation.backendVersion, original: source.ref,
+  const proof = taskReadProofSchema.parse({ version: 1, sourceAuthority, taskId, owner, backend: job.delegation.backendVersion, original: source.ref,
     requestDigest: digest(job.delegation.request), artifactDigest: digest(job.artifact ?? null), target: next.ref,
     verifiedObjectCount: objects.length, factDigest: digest(objects), createdAt: new Date().toISOString() });
   const existing = db.prepare('SELECT body,digest FROM ontology_task_read_projections WHERE owner=? AND task_id=?').get(owner, taskId);
   if (existing) {
-    const old = proofSchema.parse(JSON.parse(String(existing.body)));
+    const old = taskReadProofSchema.parse(JSON.parse(String(existing.body)));
     if (digest(old) !== existing.digest || digest({ ...old, createdAt: '' }) !== digest({ ...proof, createdAt: '' })) throw new Error('Historical read projection already differs');
     return;
   }
@@ -50,11 +46,7 @@ export function installTaskReadProjection(db: DatabaseSync, owner: string, taskI
 export function projectedTaskReadRelease(db: DatabaseSync, owner: string, job: Job): OntologyReleaseRef | undefined {
   const row = db.prepare('SELECT body,digest FROM ontology_task_read_projections WHERE owner=? AND task_id=?').get(owner, job.id);
   if (!row) return;
-  const proof = proofSchema.parse(JSON.parse(String(row.body)));
-  if (digest(proof) !== row.digest || proof.owner !== owner || proof.taskId !== job.id || proof.backend !== job.delegation?.backendVersion
-    || digest(proof.original) !== digest(job.delegation?.ontologyRelease ?? null) || proof.requestDigest !== digest(job.delegation?.request)
-    || proof.artifactDigest !== digest(job.artifact ?? null)) throw new Error('Historical read projection no longer matches its source task');
-  return proof.target;
+  return validateTaskReadProjection(owner, job, String(row.body), String(row.digest));
 }
 
 /** Read grants may bind an older writer fingerprint only through the exact

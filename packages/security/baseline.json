@@ -4363,7 +4363,7 @@
     {
       "id": "historical-read-projection",
       "file": "packages/ontology/task-read-projection.ts",
-      "sourceDigest": "bbcba3d8f7587777bf1c6dbf313fe81723ebad0c73ddc2aa3cf15ed4e15e5cb2",
+      "sourceDigest": "98b2ee6c44749aa5efa9ed0a67282de03f728de5044ff71461af63d1dc2ad785",
       "channels": [
         "operator_cli",
         "task_read"
@@ -5632,6 +5632,30 @@
       "targetControl": "Prevent unreviewed grants or credential exposure",
       "stage": "S5",
       "sourceDigest": "3fe8fb16cd3bc66639061f7953a8985e247f658f0e361f9151caffa0d0c7dc51"
+    },
+    {
+      "channels": [
+        "task_read"
+      ],
+      "stage": "S5",
+      "id": "historical-read-proof",
+      "file": "packages/ontology/task-read-proof.ts",
+      "sourceDigest": "7e60c7bd843c8476da90fcc99dc47a59205117c7eda447e2a193bd7546c41feb",
+      "content": "Historical read witness validation",
+      "currentControl": "Exact owned task, backend, release and request and artifact digests",
+      "targetControl": "Exact owned task, backend, release and request and artifact digests"
+    },
+    {
+      "channels": [
+        "task_read"
+      ],
+      "stage": "S5",
+      "id": "postgres-ontology-read",
+      "file": "packages/postgres/ontology-release.ts",
+      "sourceDigest": "360f3ce80143e683c94d2927611a44a6c936ff075806397caf286ff6f02bfee3",
+      "content": "PostgreSQL ontology release and historical witness reader",
+      "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
+      "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
     }
   ]
 }

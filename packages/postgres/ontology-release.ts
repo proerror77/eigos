@@ -7,6 +7,8 @@ import type { DefinitionCompatibilityInput } from '../ontology/definition-store.
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
 import { createCurrentKernelDefinition, createSeedDefinition } from '../ontology/seed-definition.js';
+import { validateTaskReadProjection } from '../ontology/task-read-proof.js';
+import type { Job } from '../core/domain.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 
 let registry: TrustedDefinitionRegistry | undefined;
@@ -36,6 +38,25 @@ export async function postgresAssertOntologyAccess(client: Client, owner: string
   const result = await client.query(`SELECT n.owner FROM "${schema}".ontology_namespaces n JOIN "${schema}".ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=$1`, [id]);
   if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Ontology is not available');
   if (result.rows[0].owner !== null && result.rows[0].owner !== owner && !admin) throw new DomainError('FORBIDDEN', 'Ontology belongs to another owner');
+}
+
+/** Resolve an existing historical read witness, not an execution pin or a
+ * task/field authorization. The caller must check those permissions in the
+ * same fenced transaction. A witness currently requires the entire task body;
+ * this is not ready for Cloudflare execution with unbounded historical tasks. */
+export async function postgresProjectedTaskOntologyRelease(client: Client, owner: string, taskId: string) {
+  const schema = postgresBusinessSchema(client), q = `"${schema}"`;
+  if (!owner || !taskId) return conflict('Invalid task identity');
+  const result = await client.query(`SELECT p.body AS proof,p.digest,CASE WHEN p.task_id IS NOT NULL THEN j.body END AS task_body
+    FROM ${q}.jobs j LEFT JOIN ${q}.ontology_task_read_projections p ON p.owner=j.owner AND p.task_id=j.id
+    WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
+  if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');
+  const row = result.rows[0];
+  if (row.proof === null) return undefined;
+  const job = JSON.parse(String(row.task_body)) as Job;
+  if (job.id !== taskId) return conflict('Stored task identity is invalid');
+  const ref = validateTaskReadProjection(owner,job,String(row.proof),String(row.digest));
+  return postgresOntologyRelease(client,ref);
 }
 
 /** Resolve an exact persisted release using the same trusted compiler as the
