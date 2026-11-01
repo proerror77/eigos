@@ -7,7 +7,7 @@ import { compatibleDefinitionModels } from '../ontology/definition-compatibility
 import type { DefinitionCompatibilityInput } from '../ontology/definition-store.js';
 import { BACKEND_VERSION } from '../ontology/execution.js';
 import { compileOntologyDocument, type TrustedDefinitionRegistry } from '../ontology/model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition } from '../ontology/seed-definition.js';
+import { createCurrentKernelDefinition, createSeedDefinition, stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { validateTaskReadProjection } from '../ontology/task-read-proof.js';
 import type { Job } from '../core/domain.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
@@ -45,7 +45,7 @@ export async function postgresAssertOntologyAccess(client: Client, owner: string
  * task/field authorization. The caller must check those permissions in the
  * same fenced transaction. The database still parses the full task JSON.
  * Oversized proof inputs fail closed until streaming canonicalization exists. */
-export async function postgresProjectedTaskOntologyRelease(client: Client, owner: string, taskId: string) {
+export async function postgresProjectedTaskOntologyRelease(client: Client, owner: string, taskId: string, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   if (!owner || !taskId) return conflict('Invalid task identity');
   const result = await client.query(`SELECT p.task_id AS proof_id,
@@ -70,7 +70,7 @@ export async function postgresProjectedTaskOntologyRelease(client: Client, owner
   const job = JSON.parse(String(source.rows[0].task_body)) as Job;
   if (job.id !== taskId) return conflict('Stored task identity is invalid');
   const ref = validateTaskReadProjection(owner,job,String(row.proof),String(row.digest));
-  return postgresOntologyRelease(client,ref);
+  return postgresOntologyRelease(client,ref,builder);
 }
 
 const readContextSchema = z.strictObject({ ontologyId: ontologyIdSchema.optional(), release: ontologyReleaseRefSchema.optional(), taskId: taskIdSchema.optional() });
@@ -78,13 +78,13 @@ const readContextSchema = z.strictObject({ ontologyId: ontologyIdSchema.optional
 /** Match the existing ontology read context without granting task access.
  * The caller must derive owner/admin from the authenticated principal and
  * enforce the task grant and field policy inside the same transaction. */
-export async function postgresOntologyReadContext(client: Client, owner: string, input: unknown = {}, admin = false) {
+export async function postgresOntologyReadContext(client: Client, owner: string, input: unknown = {}, admin = false, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), context = readContextSchema.parse(input), q = `"${schema}"`;
   if (context.taskId && (context.ontologyId || context.release)) throw new DomainError('INVALID_INPUT', 'Task reads already have an immutable ontology release');
   if (context.ontologyId && context.release && context.ontologyId !== context.release.ontologyId) throw new DomainError('INVALID_INPUT', 'Ontology namespace and release differ');
   let release;
   if (context.taskId) {
-    release = await postgresProjectedTaskOntologyRelease(client,owner,context.taskId);
+    release = await postgresProjectedTaskOntologyRelease(client,owner,context.taskId,builder);
     if (!release) {
       const result = await client.query(`SELECT jsonb_typeof(body.value) AS kind,
         CASE WHEN body.value#>'{delegation,ontologyRelease}' IS NULL OR body.value#>'{delegation,ontologyRelease}'='null'::jsonb THEN 'absent'
@@ -94,23 +94,23 @@ export async function postgresOntologyReadContext(client: Client, owner: string,
       if (result.rowCount !== 1) throw new DomainError('NOT_FOUND','Task not found');
       const row = result.rows[0];
       if (row.kind !== 'object' || row.ref_state === 'invalid') return conflict('Stored ontology reference is invalid');
-      if (row.ref_state === 'absent') release = await postgresTaskOntologyRelease(client,owner,context.taskId);
+      if (row.ref_state === 'absent') release = await postgresTaskOntologyRelease(client,owner,context.taskId,builder);
       else {
         const ref = ontologyReleaseRefSchema.parse(JSON.parse(String(row.ref)));
         await postgresAssertOntologyAccess(client,owner,ref.ontologyId,admin);
-        release = await postgresOntologyRelease(client,ref);
+        release = await postgresOntologyRelease(client,ref,builder);
       }
     }
   } else if (context.release) {
     await postgresAssertOntologyAccess(client,owner,context.release.ontologyId,admin);
-    release = await postgresOntologyRelease(client,context.release);
+    release = await postgresOntologyRelease(client,context.release,builder);
   }
   else {
     const id = context.ontologyId ?? 'eigos.business';
     const row = (await client.query(`SELECT n.active_release_id,r.digest FROM ${q}.ontology_namespaces n JOIN ${q}.ontology_definition_releases r ON r.id=n.active_release_id WHERE n.id=$1`,[id])).rows[0];
     if (!row) throw new DomainError('NOT_FOUND','Ontology is not available');
     await postgresAssertOntologyAccess(client,owner,id,admin);
-    release = await postgresOntologyRelease(client,ontologyReleaseRefSchema.parse({ontologyId:id,releaseId:row.active_release_id,digest:row.digest}));
+    release = await postgresOntologyRelease(client,ontologyReleaseRefSchema.parse({ontologyId:id,releaseId:row.active_release_id,digest:row.digest}),builder);
   }
   await postgresAssertOntologyAccess(client,owner,release.ref.ontologyId,admin);
   return release;
@@ -119,8 +119,9 @@ export async function postgresOntologyReadContext(client: Client, owner: string,
 /** Resolve an exact persisted release using the same trusted compiler as the
  * SQLite authority. This is an internal building block: the caller must check
  * task/installation permissions and claim freshness in the same transaction. */
-export async function postgresOntologyRelease(client: Client, input: OntologyReleaseRef) {
+export async function postgresOntologyRelease(client: Client, input: OntologyReleaseRef, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(input), q = `"${schema}"`;
+  const staged = builder === undefined ? undefined : stagedKernelComponents(builder);
   let result = await client.query(`SELECT body,model_digest,created_at,sequence FROM ${q}.ontology_definition_releases WHERE id=$1 AND ontology_id=$2 AND digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
   if (!result.rowCount) result = await client.query(`SELECT r.body,r.model_digest,r.created_at,r.sequence FROM ${q}.ontology_definition_release_aliases a JOIN ${q}.ontology_definition_releases r ON r.id=a.canonical_id AND r.ontology_id=a.ontology_id AND r.digest=a.digest WHERE a.alias_id=$1 AND a.ontology_id=$2 AND a.digest=$3`, [ref.releaseId,ref.ontologyId,ref.digest]);
   if (result.rowCount !== 1) return conflict('The exact ontology release is unavailable');
@@ -128,8 +129,9 @@ export async function postgresOntologyRelease(client: Client, input: OntologyRel
   let document;
   try { document = parseOntologyDocument(JSON.parse(String(row.body))); }
   catch { return conflict('Stored ontology release is invalid'); }
-  if (document.id !== ref.ontologyId || digest(document) !== ref.digest) return conflict('Stored ontology release digest is invalid');
-  const model = compileOntologyDocument(document, trustedRegistry());
+  const documentDigest = digest(document);
+  if (document.id !== ref.ontologyId || documentDigest !== ref.digest) return conflict('Stored ontology release digest is invalid');
+  const model = staged && documentDigest === staged.documentDigest ? staged.model : compileOntologyDocument(document, staged?.registry ?? trustedRegistry());
   if (model.ref.digest !== row.model_digest) return conflict('Ontology compiler or trusted handler contract changed');
   const sequence = Number(row.sequence);
   if (!Number.isSafeInteger(sequence) || sequence < 1 || typeof row.created_at !== 'string') return conflict('Stored ontology release metadata is invalid');
@@ -138,7 +140,7 @@ export async function postgresOntologyRelease(client: Client, input: OntologyRel
 
 /** Resolve the release pinned to an owned task, including the explicit legacy
  * bootstrap reference. It does not grant access or validate a Worker claim. */
-export async function postgresTaskOntologyRelease(client: Client, owner: string, taskId: string) {
+export async function postgresTaskOntologyRelease(client: Client, owner: string, taskId: string, builder?: StagedKernelBuilder) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   if (!owner || !taskId) return conflict('Invalid task identity');
   const result = await client.query(`SELECT a.id AS authority_id,
@@ -165,19 +167,19 @@ export async function postgresTaskOntologyRelease(client: Client, owner: string,
     try { ref = JSON.parse(String(row.ref)); }
     catch { return conflict('Stored ontology reference is invalid'); }
   }
-  return postgresOntologyRelease(client, ontologyReleaseRefSchema.parse(ref));
+  return postgresOntologyRelease(client, ontologyReleaseRefSchema.parse(ref),builder);
 }
 
 /** Compare a stored fact's historical definition against its pinned target.
  * Callers must still enforce the task's object-level and field permissions. */
-export async function postgresOntologyDefinitionCompatible(client: Client, targetRef: OntologyReleaseRef, supplied: DefinitionCompatibilityInput): Promise<boolean> {
+export async function postgresOntologyDefinitionCompatible(client: Client, targetRef: OntologyReleaseRef, supplied: DefinitionCompatibilityInput, builder?: StagedKernelBuilder): Promise<boolean> {
   const schema = postgresBusinessSchema(client), ref = ontologyReleaseRefSchema.parse(targetRef), input = structuredClone(supplied), q = `"${schema}"`;
   const result = await client.query(`SELECT f.release_id,r.digest FROM ${q}.ontology_definition_fingerprints f JOIN ${q}.ontology_definition_releases r ON r.id=f.release_id WHERE f.ontology_id=$1 AND f.kind=$2 AND f.api_name=$3 AND f.fingerprint=$4`, [ref.ontologyId,input.kind,input.id,input.storedDigest]);
   if (result.rowCount !== 1) return false;
   const originalRef = ontologyReleaseRefSchema.safeParse({ ontologyId: ref.ontologyId, releaseId: result.rows[0].release_id, digest: result.rows[0].digest });
   if (!originalRef.success) return false;
   try {
-    const target = await postgresOntologyRelease(client, ref), original = await postgresOntologyRelease(client, originalRef.data);
+    const target = await postgresOntologyRelease(client, ref,builder), original = await postgresOntologyRelease(client, originalRef.data,builder);
     return compatibleDefinitionModels(original.model, target.model, input);
   } catch (error) {
     if (error instanceof DomainError) return false;

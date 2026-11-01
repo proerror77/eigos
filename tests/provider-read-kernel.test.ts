@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createSeedDefinition, createCurrentKernelDefinition, createConsolidatedKernelDefinition, createProviderReadKernelDefinition, createPAPaymentKernelDefinition, StagedKernelBuilder, CURRENT_KERNEL_VERSION, PROVIDER_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
+import { createSeedDefinition, createCurrentKernelDefinition, createConsolidatedKernelDefinition, createProviderReadKernelDefinition, createPAPaymentKernelDefinition, stagedKernelComponents, StagedKernelBuilder, CURRENT_KERNEL_VERSION, PROVIDER_READ_KERNEL_MODEL_REF } from '../packages/ontology/seed-definition.js';
 import { compileOntologyDocument } from '../packages/ontology/model-compiler.js';
 import { digest } from '../packages/core/delegation.js';
+import { z } from 'zod';
 import { catalogReadDefinition } from '../packages/ontology/catalog-read-definition.js';
 import { didiReadDefinition } from '../packages/ontology/didi-read-definition.js';
 import { meituanReadDefinition } from '../packages/ontology/meituan-read-definition.js';
@@ -10,16 +11,23 @@ import originalDidiModule from '../packages/ontology/history/didi-readonly-v1.js
 
 test('staged trusted kernel construction preserves exact releases and cannot skip stages', {timeout:120000}, () => {
   const originalSeed=createSeedDefinition(),original=createCurrentKernelDefinition(originalSeed.registry),builder=new StagedKernelBuilder();
-  assert.throws(()=>builder.result(),/not ready/); assert.throws(()=>builder.step(1),/Invalid kernel stage/);
+  assert.throws(()=>builder.result(),/not ready/); assert.throws(()=>stagedKernelComponents(builder),/not ready/); assert.throws(()=>builder.step(1),/Invalid kernel stage/);
   for(let i=0;i<StagedKernelBuilder.stages;i++) {
     const progress=builder.step(i); assert.equal(progress.completed,i+1);
     assert.deepEqual(builder.step(i),progress,'repeating an acknowledged stage does not rebuild it');
   }
   const staged=builder.result();assert.equal(digest(staged.document),digest(original.document));assert.deepEqual(staged.audit.model,original.audit.model);
+  assert.equal(stagedKernelComponents(builder).documentDigest,digest(original.document));
+  assert.throws(()=>staged.registry.protect(staged.document),/registry is sealed/);
+  assert.throws(()=>staged.registry.registerValidator('synthetic','1',z.string()),/registry is sealed/);
+  assert.throws(()=>staged.registry.registerFunction(stagedKernelComponents(builder).model.definitionSnapshot().functions[0]!),/registry is sealed/);
+  assert.throws(()=>staged.registry.registerAction(stagedKernelComponents(builder).model.action(stagedKernelComponents(builder).model.actionIds()[0]!)),/registry is sealed/);
+  staged.document.version='mutated-copy';assert.equal(builder.result().document.version,CURRENT_KERNEL_VERSION);
+  assert.throws(()=>stagedKernelComponents(Object.create(StagedKernelBuilder.prototype)),/private|member/i);
   assert.deepEqual(compileOntologyDocument(originalSeed.document,staged.registry).ref,originalSeed.audit.model);
   const provider=createProviderReadKernelDefinition();
   assert.deepEqual(compileOntologyDocument(provider.document,staged.registry).ref,provider.audit.model);
-  const altered=structuredClone(staged.document);altered.objects.find(type=>type.id==='ServiceRequest')!.name='tampered';
+  const altered=builder.result().document;altered.objects.find(type=>type.id==='ServiceRequest')!.name='tampered';
   assert.throws(()=>compileOntologyDocument(altered,staged.registry),/Trusted ontology kernel/);
 });
 

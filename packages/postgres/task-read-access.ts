@@ -8,6 +8,7 @@ import { postgresBusinessSchema } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
+import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 
 /** Resolve a current agent task-read grant. The principal and policy digest
@@ -82,25 +83,25 @@ export async function withPostgresTaskReadGrant<T>(client: Client, principal: Pr
 /** Check resource.view against the reviewed security model, as SQLite does.
  * The task's pinned model is independently validated but never substitutes
  * for current policy. Object, field, source, lineage and output checks remain. */
-export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string): Promise<boolean> {
+export async function postgresTaskResourceViewAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<boolean> {
   const captured = structuredClone(principal);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'));
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
     const result = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
     if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
-    return roleAllows(currentKernelImplementation(),roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
+    return roleAllows(builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model,roles,admission.actor.memberId,admission.actor.installationId,kind,id,'resource.view',Date.now);
   });
 }
 
 /** Return reviewed classification only; role, object binding, current labels,
  * lineage and recipient clearance must all be checked separately. */
-export async function postgresTaskFieldClassification(client: Client, principal: Principal, taskId: string, policyDigest: string, type: string, field: string): Promise<string> {
+export async function postgresTaskFieldClassification(client: Client, principal: Principal, taskId: string, policyDigest: string, type: string, field: string, builder?: StagedKernelBuilder): Promise<string> {
   const captured=structuredClone(principal);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
-    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'));
-    return reviewedFieldPolicy(currentKernelImplementation(),type,field);
+    await postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder);
+    return reviewedFieldPolicy(builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model,type,field);
   });
 }
 
@@ -125,8 +126,8 @@ export async function postgresTaskReadClearance(client: Client, principal: Princ
 
 /** Resolve the admitted task's exact read model. The returned model still
  * requires object, field, lineage and recipient checks before data leaves. */
-export async function postgresTaskReadOntology(client: Client, principal: Principal, taskId: string, policyDigest: string) {
+export async function postgresTaskReadOntology(client: Client, principal: Principal, taskId: string, policyDigest: string, builder?: StagedKernelBuilder) {
   const captured = structuredClone(principal);
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,() =>
-    postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin')));
+    postgresOntologyReadContext(client,ownerKey(captured),{taskId},captured.scopes.includes('ontology:admin'),builder));
 }

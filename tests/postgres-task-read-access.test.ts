@@ -9,6 +9,7 @@ import { installPostgresAuthorityLock } from '../packages/postgres/authority-loc
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
 import { postgresTaskFieldClassification, postgresTaskReadClearance, postgresTaskReadGrant, postgresTaskReadOntology, postgresTaskResourceViewAllowed, withPostgresTaskReadGrant } from '../packages/postgres/task-read-access.js';
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
+import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
@@ -34,6 +35,9 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
     }
+    const staged=new StagedKernelBuilder();
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged)),/not ready/);
+    for(let stage=0;stage<StagedKernelBuilder.stages;stage++)staged.step(stage);
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
@@ -46,18 +50,18 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
         };
         const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
       }});
-      const large=await postgresBusinessTransaction(observed,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy));
+      const large=await postgresBusinessTransaction(observed,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged));
       assert.deepEqual(large.ref,task.job.delegation!.ontologyRelease);
       await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(task.job),task.job.id]);
     }
     const original=f.jobs.security.scope(f.jobs.security.agentContext(principal),task.job.id,'task.result.read').grant!;
     const read=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadGrant(c,principal,task.job.id,policy));
     assert.equal((await read()).grant.id,original.id);
-    const model=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy));
+    const model=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged));
     assert.deepEqual(model.ref,task.job.delegation!.ontologyRelease);
     for(const [type,field] of [['ServiceRequest','originalGoal'],['ServiceRequest','requestId'],['ServiceRequest','progress'],['ServiceRequest','unreviewed'],['NonexistentType','field']] as const) {
       const expected=f.jobs.security.policies.fieldPolicy(type,field);
-      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskFieldClassification(c,principal,task.job.id,policy,type,field));
+      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskFieldClassification(c,principal,task.job.id,policy,type,field,staged));
       assert.equal(actual,expected);
     }
     const envelope={version:SECURITY_CONTRACT,ownerKey:f.owner,policyVersion:POLICY_VERSION,requiredMarkings:['member_private'] as const,classification:'private' as const,channels:['agent_response'] as const,lineage:[],lineageComplete:true};
@@ -83,7 +87,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientBody,installation.id]);
     for(const type of ['ServiceRequest','Place','NonexistentType']) {
       const expected=f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType',type);
-      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType',type));
+      const actual=await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType',type,staged));
       assert.equal(actual,expected);
     }
     assert.equal(f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType','ServiceRequest'),true);
@@ -93,7 +97,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(f.jobs.security.policies.resourceAllowedFor(f.member.id,installation.id,'objectType','ServiceRequest'),false);
     sqlite.prepare('UPDATE security_roles SET body=? WHERE id=?').run(role.body!,role.id!);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[JSON.stringify(expiredRole),role.id]);
-    assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest')),false);
+    assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest',staged)),false);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[role.body,role.id]);
     // Historical task models must not revive a namespace role for an old
     // security policy version. SQLite evaluates roles against the reviewed
@@ -108,7 +112,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     sqlite.prepare('UPDATE security_roles SET body=? WHERE id=?').run(role.body!,role.id!);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(historicalJob),task.job.id]);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[JSON.stringify(historicalRole),role.id]);
-    assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest')),false);
+    assert.equal(await postgresBusinessTransaction(client,schema,authority,c=>postgresTaskResourceViewAllowed(c,principal,task.job.id,policy,'objectType','ServiceRequest',staged)),false);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE id=$2`,[JSON.stringify(task.job),task.job.id]);
     await client.query(`UPDATE "${schema}".security_roles SET body=$1 WHERE id=$2`,[role.body,role.id]);
     await client.query(`INSERT INTO "${schema}".security_roles SELECT 'synthetic-'||n,$1,'{}' FROM generate_series(1,257) n`,[installation.id]);

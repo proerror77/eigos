@@ -5652,7 +5652,7 @@
       "stage": "S5",
       "id": "postgres-ontology-read",
       "file": "packages/postgres/ontology-release.ts",
-      "sourceDigest": "70681cb7c52a412c21376c57d9a3f023fcd1fe408fde704c880fe102ce3f75da",
+      "sourceDigest": "92910c39f1b76dbb820b2500fe716012f7bb8419b02c85c0f04b943eb163d725",
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "eb9ab0f254c4560d3be5897d433d7102f7066b4ce46fd91a9856ccb1314708c7",
+      "sourceDigest": "d188b8036ae2b899dd666ebfa7da8c6225fa7e6e6fae8c1dd6e25c886baad648",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
       "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
@@ -5708,13 +5708,25 @@
     {
       "id": "trusted-kernel-bootstrap",
       "file": "packages/ontology/seed-definition.ts",
-      "sourceDigest": "5698990e61e2ce0c6b654078e2a017dbd23bff9754818a1d02027ad51ad3f952",
+      "sourceDigest": "59525094e3c48a31372886f99ea59f377318d27038fff431e7e86ea0f0b0de27",
       "channels": [
         "authorization_control"
       ],
       "content": "Trusted historical and staged ontology registry construction",
       "currentControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
       "targetControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
+      "stage": "S5"
+    },
+    {
+      "id": "trusted-definition-registry",
+      "file": "packages/ontology/model-compiler.ts",
+      "sourceDigest": "dee57344339ee7be74992e5e8206d357f9b80400b85f566455403bf84375d72c",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Trusted ontology definition registry",
+      "currentControl": "Protected contracts and completed staged registry cannot be extended",
+      "targetControl": "Protected contracts and completed staged registry cannot be extended",
       "stage": "S5"
     }
   ]

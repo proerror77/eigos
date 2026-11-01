@@ -46,66 +46,73 @@ export function validateBusinessDefinitionExtensions(original: OntologyDocument,
 
 /** Explicit software contracts, supplied by trusted application code, never by definition JSON. */
 export class TrustedDefinitionRegistry {
-  private validators = new Map<string, { ref: HandlerRef; schema: z.ZodType; schemaDigest: string }>();
-  private functions = new Map<string, { ref: HandlerRef; definition: FunctionDefinition }>();
-  private actions = new Map<string, { ref: HandlerRef; definition: ActionDefinition }>();
-  private protectedResources = new Set<string>();
-  private protectedKernels: { resources: Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>; functions: Map<string, string> }[] = [];
-  private protectedKernelDigests = new Set<string>();
+  #sealed = false;
+  #validators = new Map<string, { ref: HandlerRef; schema: z.ZodType; schemaDigest: string }>();
+  #functions = new Map<string, { ref: HandlerRef; definition: FunctionDefinition }>();
+  #actions = new Map<string, { ref: HandlerRef; definition: ActionDefinition }>();
+  #protectedResources = new Set<string>();
+  #protectedKernels: { resources: Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>; functions: Map<string, string> }[] = [];
+  #protectedKernelDigests = new Set<string>();
 
   registerValidator(id: string, version: string, schema: z.ZodType, metadata: JsonSchema = z.toJSONSchema(schema)): HandlerRef {
+    if (this.#sealed) throw new Error('Trusted definition registry is sealed');
     const schemaDigest = digest(metadata);
     const ref = { id, version, digest: digest({ id, version, schemaDigest }) };
-    const key = refKey(ref), previous = this.validators.get(key);
+    const key = refKey(ref), previous = this.#validators.get(key);
     if (previous) return { ...previous.ref };
-    this.validators.set(key, { ref, schema, schemaDigest });
+    this.#validators.set(key, { ref, schema, schemaDigest });
     return { ...ref };
   }
   resolveValidator(ref: HandlerRef, schema: JsonSchema): z.ZodType {
-    const available = this.validators.get(refKey(ref));
+    const available = this.#validators.get(refKey(ref));
     if (!available) fail('The exact trusted validator version is unavailable');
     if (digest(schema) !== available.schemaDigest) fail('A trusted validator does not match the declared schema');
     return available.schema;
   }
   registerFunction(definition: FunctionDefinition): HandlerRef {
+    if (this.#sealed) throw new Error('Trusted definition registry is sealed');
     const ref = { id: definition.id, version: definition.version, digest: digest(definition) };
-    this.functions.set(refKey(ref), { ref, definition: structuredClone(definition) });
+    this.#functions.set(refKey(ref), { ref, definition: structuredClone(definition) });
     return { ...ref };
   }
   resolveFunction(ref: HandlerRef, definition: FunctionDefinition): void {
-    const available = this.functions.get(refKey(ref));
+    const available = this.#functions.get(refKey(ref));
     if (!available || digest(available.definition) !== digest(definition)) fail('The exact trusted function contract is unavailable');
   }
   registerAction(definition: ActionDefinition): HandlerRef {
+    if (this.#sealed) throw new Error('Trusted definition registry is sealed');
     const version = definition.operation?.version ?? definition.read?.version ?? definition.version;
     if (!version) fail('An executable trusted action requires an explicit version');
     const ref = { id: definition.id, version, digest: digest(definition) };
-    this.actions.set(refKey(ref), { ref, definition: structuredClone(definition) });
+    this.#actions.set(refKey(ref), { ref, definition: structuredClone(definition) });
     return { ...ref };
   }
   resolveAction(ref: HandlerRef, definition: ActionDefinition): void {
-    const available = this.actions.get(refKey(ref));
+    const available = this.#actions.get(refKey(ref));
     if (!available || digest(available.definition) !== digest(definition)) fail('The exact trusted action contract is unavailable');
   }
-  actionBindingStatus(ref: HandlerRef): { state: 'available' | 'unavailable'; handlerRef: HandlerRef } { return { state: this.actions.has(refKey(ref)) ? 'available' : 'unavailable', handlerRef: { ...ref } }; }
+  actionBindingStatus(ref: HandlerRef): { state: 'available' | 'unavailable'; handlerRef: HandlerRef } { return { state: this.#actions.has(refKey(ref)) ? 'available' : 'unavailable', handlerRef: { ...ref } }; }
   /** The trusted kernel is present in every namespace and cannot be replaced by a same-name resource. */
   protect(document: OntologyDocument): void {
+    if (this.#sealed) throw new Error('Trusted definition registry is sealed');
     const kernelDigest = digest({ objects: document.objects, interfaces: document.interfaces, links: document.links, actions: document.actions, functions: document.functions });
-    if (this.protectedKernelDigests.has(kernelDigest)) return;
+    if (this.#protectedKernelDigests.has(kernelDigest)) return;
     const kernel = { resources: new Map<string, { kind: DefinitionKind; id: string; digest: string; value: unknown }>(), functions: new Map<string, string>() };
-    for (const { kind, value } of resources(document)) { this.protectedResources.add(value.resourceId); kernel.resources.set(value.resourceId, { kind, id: value.id, digest: digest(value), value: structuredClone(value) }); }
+    for (const { kind, value } of resources(document)) { this.#protectedResources.add(value.resourceId); kernel.resources.set(value.resourceId, { kind, id: value.id, digest: digest(value), value: structuredClone(value) }); }
     for (const fn of document.functions) kernel.functions.set(fn.id, digest(fn));
-    this.protectedKernels.push(kernel);
-    this.protectedKernelDigests.add(kernelDigest);
+    this.#protectedKernels.push(kernel);
+    this.#protectedKernelDigests.add(kernelDigest);
   }
-  isProtected(resourceId: string): boolean { return this.protectedResources.has(resourceId); }
+  isProtected(resourceId: string): boolean { return this.#protectedResources.has(resourceId); }
+  /** Seal a completed runtime registry against further trusted registrations. */
+  seal(): void { this.#sealed = true; }
   assertProtected(document: OntologyDocument): void {
     const actual = resources(document);
-    if (actual.some(resource => resource.value.resourceId.startsWith('builtin:') && !this.protectedResources.has(resource.value.resourceId))) fail('Reserved trusted resource identity');
-    if (!this.protectedKernels.length) return;
+    if (actual.some(resource => resource.value.resourceId.startsWith('builtin:') && !this.#protectedResources.has(resource.value.resourceId))) fail('Reserved trusted resource identity');
+    if (!this.#protectedKernels.length) return;
     const byResource = new Map(actual.map(resource => [resource.value.resourceId, resource]));
     const byFunction = new Map(document.functions.map(fn => [fn.id, fn]));
-    const match = this.protectedKernels.some(kernel => [...kernel.resources].every(([resourceId, expected]) => {
+    const match = this.#protectedKernels.some(kernel => [...kernel.resources].every(([resourceId, expected]) => {
       const value = byResource.get(resourceId);
       return value && value.kind === expected.kind && value.value.id === expected.id && (digest(value.value) === expected.digest || value.kind === 'object' && compatibleBusinessObject(expected.value as SerializableObjectType, value.value as SerializableObjectType, document));
     }) && [...kernel.functions].every(([id, expected]) => { const fn = byFunction.get(id); return !!fn && digest(fn) === expected; }));

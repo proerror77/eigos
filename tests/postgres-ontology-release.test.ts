@@ -7,6 +7,7 @@ import pg from 'pg';
 import { DefinitionStore } from '../packages/ontology/definition-store.js';
 import { digest } from '../packages/core/delegation.js';
 import { BACKEND_VERSION } from '../packages/ontology/execution.js';
+import { StagedKernelBuilder, stagedKernelComponents } from '../packages/ontology/seed-definition.js';
 import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
 import { postgresBusinessTransaction } from '../packages/postgres/runtime-transaction.js';
 import { postgresAssertOntologyAccess, postgresOntologyDefinitionCompatible, postgresOntologyReadContext, postgresOntologyRelease, postgresProjectedTaskOntologyRelease, postgresTaskOntologyRelease } from '../packages/postgres/ontology-release.js';
@@ -32,6 +33,12 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
     const body = { id:task,authorityId:authority.id,delegation:{backendVersion:BACKEND_VERSION,ontologyRelease:legacy.ref} };
     await client.query(`INSERT INTO "${schema}".jobs VALUES($1,$2,$3)`,[task,owner,JSON.stringify(body)]);
+    const staged=new StagedKernelBuilder();
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresOntologyRelease(c,active.ref,staged)),/not ready/);
+    for(let stage=0;stage<StagedKernelBuilder.stages;stage++)staged.step(stage);
+    const stagedCurrent=await postgresBusinessTransaction(client,schema,authority,c=>postgresOntologyRelease(c,active.ref,staged));
+    assert.equal(stagedCurrent.model,stagedKernelComponents(staged).model,'exact current document uses the staged model');
+    assert.deepEqual((await postgresBusinessTransaction(client,schema,authority,c=>postgresOntologyRelease(c,legacy.ref,staged))).ref,legacy.ref);
     let taskQueryBytes = 0, proofQueryBytes = 0;
     const observed = new Proxy(client, { get(target, property) {
       if (property === 'query') return async (sql: string, values?: unknown[]) => {
