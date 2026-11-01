@@ -131,6 +131,74 @@ export function createConsolidatedKernelDefinition(registry = new TrustedDefinit
 export function createCurrentKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return complete(extendSingleReadKernel(createPersonalContextKernelDefinition(registry).document, registry), registry, false);
 }
+
+/** Incrementally reconstruct the same trusted registry without persisting a
+ * second ontology authority. Each completed stage has performed the same
+ * compile/protection and historical fingerprint checks as the normal builder.
+ * An interrupted or failed builder must be discarded and restarted. */
+export class StagedKernelBuilder {
+  private readonly registry = new TrustedDefinitionRegistry();
+  private position = 0;
+  private failed = false;
+  private composition?: SeedDefinition;
+  private checkout?: SeedDefinition;
+  private payment?: SeedDefinition;
+  private didi?: SeedDefinition;
+  private combined?: OntologyDocument;
+  private current?: SeedDefinition;
+  static readonly stages = 13;
+
+  step(expected: number): { completed: number; total: number; ready: boolean } {
+    if (this.failed) throw new Error('Failed kernel builder must be discarded');
+    if (!Number.isSafeInteger(expected) || expected < 0 || expected > this.position) throw new Error('Invalid kernel stage');
+    if (expected < this.position || this.position === StagedKernelBuilder.stages) return this.progress();
+    try {
+      switch (this.position) {
+        case 0: createSeedDefinition(this.registry); break;
+        case 1: this.composition = createCompositionKernelDefinition(this.registry); break;
+        case 2: this.checkout = checkoutKernelFromComposition(this.composition!.document,this.registry); break;
+        case 3: {
+          this.payment = complete(extendPAPaymentKernel(this.checkout!.document,this.registry),this.registry,false);
+          if (digest(this.payment.audit.model) !== digest(PA_PAYMENT_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original v19 model fingerprint changed');
+          break;
+        }
+        case 4: {
+          const provider = complete(extendProviderReadKernel(this.payment!.document,this.registry,historicalImplementation),this.registry,false);
+          if (digest(provider.audit.model) !== digest(PROVIDER_READ_KERNEL_MODEL_REF)) throw new DomainError('CONFLICT','The original provider-read v20 model fingerprint changed');
+          this.checkout=undefined; this.payment=undefined;
+          break;
+        }
+        case 5: this.didi = complete(extendDidiKernel(this.composition!.document,this.registry),this.registry,false); this.composition=undefined; break;
+        case 6: this.combined = extendPAPaymentKernel(extendCheckoutKernel(this.didi!.document,this.registry),this.registry); this.didi=undefined; break;
+        case 7: {
+          this.current = complete(extendConsolidatedKernel(this.combined!,this.registry,BUSINESS_MODEL_DEFINITION),this.registry,false);
+          if (this.current.audit.model.digest !== 'fabd8b85eb9e6199140eece8a71bb4b91ef9c0eb0edd2df30df848c035657107') throw new DomainError('CONFLICT','The original consolidated v21 fingerprint changed');
+          this.combined=undefined;
+          break;
+        }
+        case 8: {
+          this.current = complete(extendTaskClosureKernel(this.current!.document,this.registry,BUSINESS_MODEL_DEFINITION),this.registry,false);
+          if (this.current.audit.model.digest !== 'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4') throw new DomainError('CONFLICT','The original v22 kernel fingerprint changed');
+          break;
+        }
+        case 9: this.current = complete(extendRollingGoKernel(this.current!.document,this.registry),this.registry,false); break;
+        case 10: this.current = complete(extendBusinessFactsKernel(this.current!.document,this.registry),this.registry,false); break;
+        case 11: this.current = complete(extendPersonalContextKernel(this.current!.document,this.registry),this.registry,false); break;
+        case 12: this.current = complete(extendSingleReadKernel(this.current!.document,this.registry),this.registry,false); break;
+        default: throw new Error('Unknown kernel stage');
+      }
+      this.position++;
+      return this.progress();
+    } catch (error) { this.failed=true; throw error; }
+  }
+
+  result(): SeedDefinition {
+    if (this.failed || this.position !== StagedKernelBuilder.stages || !this.current) throw new Error('Kernel builder is not ready');
+    return this.current;
+  }
+
+  private progress() { return { completed:this.position,total:StagedKernelBuilder.stages,ready:this.position===StagedKernelBuilder.stages }; }
+}
 export function createPersonalContextKernelDefinition(registry = new TrustedDefinitionRegistry()): SeedDefinition {
   return complete(extendPersonalContextKernel(createBusinessFactsKernelDefinition(registry).document, registry), registry, false);
 }

@@ -5704,6 +5704,18 @@
       "currentControl": "Current model fingerprint and reviewed classification; unknown fields deny",
       "targetControl": "Current model fingerprint and reviewed classification; unknown fields deny",
       "stage": "S5"
+    },
+    {
+      "id": "trusted-kernel-bootstrap",
+      "file": "packages/ontology/seed-definition.ts",
+      "sourceDigest": "5698990e61e2ce0c6b654078e2a017dbd23bff9754818a1d02027ad51ad3f952",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Trusted historical and staged ontology registry construction",
+      "currentControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
+      "targetControl": "Historical fingerprints, validators and protected contracts verified before use; incomplete builders deny",
+      "stage": "S5"
     }
   ]
 }
