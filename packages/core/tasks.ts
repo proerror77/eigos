@@ -328,7 +328,7 @@ export class TaskService {
 
   amend(p: Principal, input: unknown, contextId?: string): Job {
     const args = versionedReplySchema.parse(input);
-    if (this.security && (!args.personalContext || args.requirements || args.locationContext || args.executionBudget)) throw new DomainError('FORBIDDEN', 'Foundation amendments are limited to an explicit personal-context refresh');
+    if (this.security && ((!args.personalContext && !args.locationContext) || args.requirements || args.executionBudget)) throw new DomainError('FORBIDDEN', 'Foundation amendments are limited to an explicit personal or location context refresh');
     return this.reply(p, args, contextId, undefined, true);
   }
 

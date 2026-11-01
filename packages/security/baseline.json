@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "7a8501ecdeaf37d6c9f5615e2d74775c0211730e6a61031e9063b936d180777e",
+      "sourceDigest": "43a322ed74ca2ec78a6c8181b1ad056b0b32b0de98e2500a7f1aa0fb4827bdf7",
       "channels": [
         "mcp"
       ],
@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "afa14643f2ba80f726d338f13f98f87e8b57f27dba1adc97139d62df22d5bee8",
+      "sourceDigest": "25c0e3f2430dfa9c3ca9093986ad7b0db5dccd5f7a51aaa50e81f47135788330",
       "channels": [
         "http",
         "mcp",
