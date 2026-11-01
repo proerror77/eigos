@@ -5422,7 +5422,7 @@
       "currentControl": "Explicit reviewed type, uniqueness, JSON index and immutable or network-trigger mappings; generated row-order identities have a database update guard; unknown schema forms are rejected",
       "targetControl": "Preserve authority and evidence invariants while requiring data compatibility and runtime-port verification",
       "stage": "S5",
-      "sourceDigest": "c6ed1ded29430c40a6ae36cc2e7c4e92d6194503e48c7091d5e4798d4181fe7f"
+      "sourceDigest": "2e438f4f23a3e70c6f295670e5eb21073a0992f859c43a3d8f247342b95b0af1"
     },
     {
       "id": "business-postgres-json-compat",

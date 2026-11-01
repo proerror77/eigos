@@ -42,6 +42,16 @@ test('synthetic business schema maps to PostgreSQL with guarded history and secu
     await client.connect(); connected = true; await client.query('BEGIN'); transaction = true;
     await client.query(`CREATE SCHEMA "${schema}"`); await client.query(`SET LOCAL search_path TO "${schema}", pg_catalog, pg_temp`);
     await client.query(mapping.schemaStatements.join(';\n'));
+    assert(mapping.schemaStatements.some(sql => sql.includes('CREATE INDEX "jobs_owner_body_validity"')));
+    for (const [id,body] of [['valid','{}'],['invalid','{']] as const) {
+      sqlite.prepare('INSERT INTO jobs(id,owner,context_id,state,created_at,updated_at,body) VALUES(?,?,?,?,?,?,?)').run(id,'fixture','context','input-required','2026','2026',body);
+      await client.query('INSERT INTO jobs(id,owner,context_id,state,created_at,updated_at,body) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,'fixture','context','input-required','2026','2026',body]);
+      const source = sqlite.prepare('SELECT typeof(body) AS kind,json_valid(body) AS valid FROM jobs INDEXED BY jobs_owner_body_validity WHERE owner=? AND id=?').get('fixture',id);
+      const target = (await client.query('SELECT eigos_try_jsonb(body) IS NOT NULL AS valid FROM jobs WHERE owner=$1 AND id=$2',['fixture',id])).rows[0];
+      assert.equal(source?.kind,'text'); assert.equal(Boolean(source?.valid),target.valid);
+    }
+    sqlite.prepare("DELETE FROM jobs WHERE owner='fixture'").run();
+    await client.query("DELETE FROM jobs WHERE owner='fixture'");
     const installed = await client.query('SELECT count(*)::int AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND NOT t.tgisinternal', [schema]);
     assert.equal(installed.rows[0].n, 0);
     // Network invalidation triggers must not rewrite the copied source epoch.
