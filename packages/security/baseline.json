@@ -3342,7 +3342,7 @@
     {
       "id": "security-store",
       "file": "packages/security/store.ts",
-      "sourceDigest": "14c40eee444314724a10c57363478f944fec1e542c67cd5c959f8263b1670497",
+      "sourceDigest": "58e7c13e09f898f2fe0d0cccbfb87d9873ffa8abfcb4f58828800f15228c975e",
       "channels": [
         "authorization_control"
       ],
@@ -5656,6 +5656,30 @@
       "content": "PostgreSQL ontology release and historical witness reader",
       "currentControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions",
       "targetControl": "Fenced transaction; trusted compilation; callers enforce task and field permissions"
+    },
+    {
+      "channels": [
+        "authorization_control"
+      ],
+      "stage": "S5",
+      "id": "security-errors",
+      "file": "packages/security/errors.ts",
+      "sourceDigest": "d5663688d83f674d15c64a43a01b547234d2d44bccda078d3635bc4e418a222d",
+      "content": "Shared authorization errors",
+      "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
+      "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
+    },
+    {
+      "channels": [
+        "authorization_control"
+      ],
+      "stage": "S5",
+      "id": "postgres-task-read-admission",
+      "file": "packages/postgres/task-read-access.ts",
+      "sourceDigest": "192441420a7f0806923548bdb229bd90cdb7ab2cb32537daca1ecaa600ba7664",
+      "content": "PostgreSQL agent task-read admission",
+      "currentControl": "Fenced transaction and explicit authority checks; no field-output authorization",
+      "targetControl": "Fenced transaction and explicit authority checks; no field-output authorization"
     }
   ]
 }
