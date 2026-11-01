@@ -14,6 +14,7 @@ import { groundRequirements } from '../packages/coordinator/requirements.js';
 import { executionContextRef } from '../packages/ontology/execution-projection.js';
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { requestLocations } from '../packages/core/location-context.js';
+import { Worker } from '../apps/worker/worker.js';
 
 async function fixture(options: { context?: boolean } = {}) {
   const f = securityFixture(Date.now, { unified: true }), installation = f.installation('Revision-scoped PA');
@@ -67,7 +68,7 @@ test('a Foundation reply retires the old goal review and the next Worker claims 
   } finally { f.close(); }
 });
 
-test('a Foundation owner location correction updates the same paused task within its current grant and deadline', async () => {
+test('a Foundation owner location correction updates the same paused task within its current grant and deadline', { timeout: 60000 }, async t => {
   const f = await fixture({ context: true });
   try {
     const location = { city: '北京市', origin: { name: 'Old home', source: 'current_location' as const, observedAt: new Date(Date.now() - 600000).toISOString() },
@@ -81,6 +82,7 @@ test('a Foundation owner location correction updates the same paused task within
     const grant = f.jobs.security.taskGrant(f.jobs.security.agentContext(f.principal), paused.id);
     assert.equal(amended.id, paused.id); assert.equal(current.contextId, paused.contextId); assert.equal(current.goal, paused.goal);
     assert.equal(current.delegation!.request.revision, paused.delegation!.request.revision + 1);
+    assert.equal(current.delegation!.outcome!.requestRevision, current.delegation!.request.revision, 'A second correction cannot retain the prior revision assessment after its coverage was already retired');
     assert.deepEqual(requestLocations(current.delegation!.request), { city: location.city, origin: input.locationContext.origin, destination: location.destination });
     assert(current.delegation!.request.confirmedInputs!.location!.history.some(fact => fact.field === 'origin' && JSON.stringify(fact.value).includes('Old home')));
     assert.notEqual(grant.id, previous.id); assert.equal(grant.installationId, previous.installationId); assert.equal(grant.expiresAt, previous.expiresAt);
@@ -94,6 +96,18 @@ test('a Foundation owner location correction updates the same paused task within
     f.tasks.amend(f.principal, input);
     assert.equal(f.jobs.security.taskGrant(f.jobs.security.agentContext(f.principal), paused.id).id, grant.id, 'An identical replay does not issue another grant');
     assert.throws(() => f.tasks.amend(f.principal, { ...input, requestId: randomUUID() }), /older task question or revision/);
+    let claimed = false;
+    const worker = new Worker(f.jobs, { pollMs: 20, leaseMs: 15000, coordinator: { run: async claim => {
+      assert.equal(claim.job.id, paused.id);
+      assert.equal(claim.job.delegation!.request.revision, current.delegation!.request.revision);
+      f.jobs.finish(claim, job => { job.state = 'input-required'; job.question = 'Synthetic correction was claimed'; job.delegation!.phase = 'clarifying'; });
+      claimed = true;
+    } } });
+    try {
+      worker.start();
+      while (!claimed) { t.signal.throwIfAborted(); await new Promise(resolve => setTimeout(resolve, 20)); }
+    } finally { await worker.close(); }
+    assert.equal(f.jobs.get(f.owner, paused.id).state, 'input-required', 'The real Worker lifecycle can claim and project the corrected original task');
   } finally { f.close(); }
 });
 
