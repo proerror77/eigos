@@ -22,11 +22,11 @@ import { TaskService } from '../packages/core/tasks.js';
 import { Coordinator } from '../packages/coordinator/coordinator.js';
 import { randomUUID } from 'node:crypto';
 
-function readModel(mutate?: (decision: LegacyGrounding) => void) {
+function readModel(mutate?: (decision: LegacyGrounding, request: ServiceRequest, attempt: number, prompt: string) => void, maxRequests = 1) {
   let requests = 0;
   const model = { ontologyTransport: 'native-mcp' as const, ontologyContextPreparation: 'worker_snapshot' as const,
     runStructured: async (prompt: string, _schema: object, _signal: AbortSignal, options?: unknown) => {
-      assert.equal(++requests, 1, 'No review, preparation, tool loop or completion model call');
+      assert(++requests <= maxRequests, 'No review, preparation, tool loop or completion model call');
       assert.deepEqual(options, { toolFree: true }, 'The executor must reject any hidden model tool loop');
       const packet = expandPromptData(JSON.parse(prompt.split('\n\n').at(-1)!)) as { request: ServiceRequest; ontology: { call: { tool: string }; result: unknown }[] };
       assert(packet.ontology.some(entry => entry.call.tool === 'read_task_context'));
@@ -38,18 +38,18 @@ function readModel(mutate?: (decision: LegacyGrounding) => void) {
         initialSteps: didiDataflow().map(step => ({ ...step, scopeInputs: ['scope'] })), plannedCompletion: dataflowCompletion,
         readPlan: { version: '1', criteria: request.messages.map((message, i) => ({ id: `estimate${i}`, description: 'Requested route estimate only',
           predicate: 'ride.estimate_observed', phase: 'quote', messageId: message.id, requirementIds: request.requirements.map(value => value.id) })) } };
-      mutate?.(decision);
+      mutate?.(decision, request, requests, prompt);
       return { output: { decisionJson: JSON.stringify(decision) }, evidence: evidence() };
     } };
   return { model, requests: () => requests };
 }
 
-function fixture(mutate?: (decision: LegacyGrounding) => void) {
+function fixture(mutate?: Parameters<typeof readModel>[0], maxRequests = 1, extra: object = {}) {
   const source = didiFixture(), store = new JobStore(':memory:');
   const catalog = createExecutionCatalog({ store, didi: { ...source.binding, connector: source.connector } });
-  const script = readModel(mutate), reasoner = new CodexReasoner(script.model), b = backend(catalog, reasoner, store);
+  const script = readModel(mutate, maxRequests), reasoner = new CodexReasoner(script.model), b = backend(catalog, reasoner, store);
   const task = b.submit({ goal: '查询北京西站到西二旗地铁站的车型估价，不下单、不付款。',
-    locationContext: { city: input.city, origin: { name: input.origin, source: 'user_provided' }, destination: { name: input.destination, source: 'user_provided' } } });
+    locationContext: { city: input.city, origin: { name: input.origin, source: 'user_provided' }, destination: { name: input.destination, source: 'user_provided' } }, ...extra });
   return { source, store, catalog, reasoner, b, task, requests: script.requests, close: () => { store.close(); source.close(); } };
 }
 
@@ -67,6 +67,37 @@ test('one actual model invocation selects and completes a whole read graph throu
     assert.deepEqual(f.source.calls.filter(call => call.method === 'tools/call').map(call => call.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
     assert(done.delegation!.agent!.plans.flatMap(plan => plan.steps).every(step => step.effect === 'read'));
     assert(!done.delegation!.ontologyReads!.some(read => read.tool === 'discover_actions'));
+  } finally { f.close(); }
+});
+
+test('a read contract with a noncanonical requirement ID is corrected on the same task before provider dispatch', { timeout: 120000 }, async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const f = fixture((decision, request, attempt, prompt) => {
+    decision.requirementsJson = JSON.stringify([{ requirement: { id: 'destination_terminal', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } },
+      messageId: request.messages[0]!.id, quote: input.destination }]);
+    if (attempt === 1) {
+      assert.equal(f.source.calls.filter(call => call.method === 'tools/call').length, 0);
+      for (const criterion of decision.readPlan!.criteria) criterion.requirementIds = criterion.requirementIds.map(id => id === 'route_destination' ? 'destination_terminal' : id);
+    }
+    else {
+      assert.equal(attempt, 2);
+      const current = f.store.get(owner, f.task.id);
+      assert.match(current.delegation!.groundingFeedback!.at(-1)!.message, /unknown or repeated requirement/);
+      assert.match(prompt, /unknown or repeated requirement/, 'The corrective model invocation receives the actual host feedback');
+      assert.equal(f.source.calls.filter(call => call.method === 'tools/call').length, 0);
+    }
+  }, 2, { requirements: [{ id: 'route_destination', strength: 'hard', kind: 'location', role: 'destination', expected: { ref: input.destination } }] });
+  try {
+    await runNativeDidiTask(f.store, f.b.coordinator, owner, f.task.id, t.signal, () => t.mock.timers.tick(20));
+    const done = f.store.get(owner, f.task.id);
+    assert.equal(done.state, 'completed', JSON.stringify({ recovery: done.delegation?.recovery, feedback: done.delegation?.groundingFeedback }));
+    assert.equal(done.delegation!.acceptance!.accepted, true);
+    assert.equal(done.id, f.task.id); assert.equal(done.delegation!.request.revision, 1); assert.equal(done.goal, f.task.goal);
+    assert.equal(f.requests(), 2); assert.equal(done.runs!.length, 2);
+    assert.equal(done.delegation!.groundingFeedback!.length, 1);
+    assert(done.delegation!.request.requirements.some(requirement => requirement.id === 'route_destination'));
+    assert(!done.delegation!.request.requirements.some(requirement => requirement.id === 'destination_terminal'));
+    assert.deepEqual(f.source.calls.filter(call => call.method === 'tools/call').map(call => call.name).sort(), ['maps_textsearch', 'maps_textsearch', 'taxi_estimate']);
   } finally { f.close(); }
 });
 
@@ -113,7 +144,7 @@ for (const [name, mutate] of [
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const f = fixture(mutate);
   try {
-    await runNativeDidiTask(f.store, f.b.coordinator, owner, f.task.id, t.signal, () => t.mock.timers.tick(20));
+    await runNativeDidiTask(f.store, f.b.coordinator, owner, f.task.id, t.signal, () => t.mock.timers.tick(20), job => !!job.delegation?.groundingFeedback?.length);
     const done = f.store.get(owner, f.task.id);
     assert.notEqual(done.state, 'completed'); assert(!done.delegation?.acceptance?.accepted);
     assert.equal(f.requests(), 1);

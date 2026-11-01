@@ -3047,7 +3047,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "d767584216049b303d3cfa5b2f01e20ce30db1c3b8f23e167286d27ac40fd5b6",
+      "sourceDigest": "a42624da0a1b85d6fa9004c267db26b9df8bf49c7bca148fdb1b2ce1128ebbe2",
       "channels": [
         "model",
         "dispatch"
@@ -5087,7 +5087,7 @@
       "currentControl": "Current authorized Ontology receipts before model invocation; exact selected read graph and goal contract; no effect authority",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S3",
-      "sourceDigest": "960c83542130d78fc6f7db02d59c5b3edc56fc723dedcad19a73a77037ef70b4"
+      "sourceDigest": "043d8b67661467546b03e4cfa64ec0751c1f8754eb48a57c0139c355809ef3e3"
     },
     {
       "id": "single-read-kernel",
