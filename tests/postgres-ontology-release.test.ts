@@ -32,11 +32,12 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
     const body = { id:task,authorityId:authority.id,delegation:{backendVersion:BACKEND_VERSION,ontologyRelease:legacy.ref} };
     await client.query(`INSERT INTO "${schema}".jobs VALUES($1,$2,$3)`,[task,owner,JSON.stringify(body)]);
-    let taskQueryBytes = 0;
+    let taskQueryBytes = 0, proofQueryBytes = 0;
     const observed = new Proxy(client, { get(target, property) {
       if (property === 'query') return async (sql: string, values?: unknown[]) => {
         const result = await target.query(sql, values);
         if (sql.includes('.jobs j JOIN')) taskQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
+        if (sql.includes('minimal.value')) proofQueryBytes = Buffer.byteLength(JSON.stringify(result.rows));
         return result;
       };
       const value = Reflect.get(target, property, target);
@@ -54,21 +55,25 @@ test('PostgreSQL resolves the exact task-pinned ontology and legacy release', { 
     assert.deepEqual(first.ref,legacy.ref); assert.deepEqual(first.model.ref,legacy.model.ref);
     assert(Object.isFrozen(first.document)); assert(Object.isFrozen(first.ref));
     assert.notDeepEqual(first.ref,active.ref);
-    const project = () => postgresBusinessTransaction(client,schema,authority,c => postgresProjectedTaskOntologyRelease(c,owner,task));
+    const project = () => postgresBusinessTransaction(observed,schema,authority,c => postgresProjectedTaskOntologyRelease(c,owner,task));
     assert.equal(await project(),undefined);
-    const historical={...body,delegation:{...body.delegation,backendVersion:'historical',request:{revision:1}},artifact:{synthetic:true}};
+    const historical={...body,padding:'x'.repeat(16 * 1024 * 1024),delegation:{...body.delegation,backendVersion:'historical',request:{revision:1,unicode:'猫🐈',numbers:[1e-7,1e21,-0,1.25],keys:{'10':'ten','2':'two',z:'字'}}},artifact:{synthetic:true}};
     const proof={version:1,sourceAuthority:'synthetic',taskId:task,owner,backend:'historical',original:legacy.ref,
       requestDigest:digest(historical.delegation.request),artifactDigest:digest(historical.artifact),target:active.ref,
       verifiedObjectCount:0,factDigest:'a'.repeat(64),createdAt:new Date().toISOString()};
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(historical)]);
     await client.query(`INSERT INTO "${schema}".ontology_task_read_projections VALUES($1,$2,$3,$4)`,[owner,task,JSON.stringify(proof),digest(proof)]);
     assert.deepEqual((await project())?.ref,active.ref);
+    assert(proofQueryBytes < 4096, `historical proof returned ${proofQueryBytes} bytes`);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c => postgresProjectedTaskOntologyRelease(c,'other-owner',task)),/Task not found/);
     await client.query(`UPDATE "${schema}".ontology_task_read_projections SET digest=$1`,['b'.repeat(64)]);
     await assert.rejects(project(),/Historical read projection no longer matches/);
     await client.query(`UPDATE "${schema}".ontology_task_read_projections SET digest=$1`,[digest(proof)]);
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify({...historical,artifact:{synthetic:false}})]);
     await assert.rejects(project(),/Historical read projection no longer matches/);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify({...historical,artifact:{payload:'x'.repeat(9 * 1024 * 1024)}})]);
+    await assert.rejects(project(),/exceed safe runtime limits/);
+    assert(proofQueryBytes < 4096, `oversized proof input returned ${proofQueryBytes} bytes`);
     await client.query(`DELETE FROM "${schema}".ontology_task_read_projections`);
     await client.query(`UPDATE "${schema}".jobs SET body=$1`,[JSON.stringify(body)]);
     const namespaceAccess = (actor: string, id: string, admin = false) => postgresBusinessTransaction(client,schema,authority,c => postgresAssertOntologyAccess(c,actor,id,admin));

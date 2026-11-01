@@ -42,18 +42,31 @@ export async function postgresAssertOntologyAccess(client: Client, owner: string
 
 /** Resolve an existing historical read witness, not an execution pin or a
  * task/field authorization. The caller must check those permissions in the
- * same fenced transaction. A witness currently requires the entire task body;
- * this is not ready for Cloudflare execution with unbounded historical tasks. */
+ * same fenced transaction. The database still parses the full task JSON.
+ * Oversized proof inputs fail closed until streaming canonicalization exists. */
 export async function postgresProjectedTaskOntologyRelease(client: Client, owner: string, taskId: string) {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   if (!owner || !taskId) return conflict('Invalid task identity');
-  const result = await client.query(`SELECT p.body AS proof,p.digest,CASE WHEN p.task_id IS NOT NULL THEN j.body END AS task_body
+  const result = await client.query(`SELECT p.task_id AS proof_id,
+    CASE WHEN octet_length(p.body)<=65536 THEN p.body END AS proof,
+    CASE WHEN octet_length(p.digest)=64 THEN p.digest END AS digest
     FROM ${q}.jobs j LEFT JOIN ${q}.ontology_task_read_projections p ON p.owner=j.owner AND p.task_id=j.id
     WHERE j.owner=$1 AND j.id=$2`, [owner,taskId]);
   if (result.rowCount !== 1) throw new DomainError('NOT_FOUND', 'Task not found');
   const row = result.rows[0];
-  if (row.proof === null) return undefined;
-  const job = JSON.parse(String(row.task_body)) as Job;
+  if (row.proof_id === null) return undefined;
+  if (row.proof === null || row.digest === null) return conflict('Historical proof exceeds safe runtime limits');
+  const source = await client.query(`SELECT CASE WHEN octet_length(minimal.value::text)<=8388608 THEN minimal.value::text END AS task_body
+    FROM ${q}.jobs j
+    CROSS JOIN LATERAL (SELECT ${q}.eigos_try_jsonb(j.body) AS value OFFSET 0) body
+    CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(body.value)='object' THEN jsonb_build_object(
+      'id',body.value->'id',
+      'delegation',jsonb_build_object('backendVersion',body.value#>'{delegation,backendVersion}', 'ontologyRelease',body.value#>'{delegation,ontologyRelease}')
+        || CASE WHEN body.value#>'{delegation,request}' IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('request',body.value#>'{delegation,request}') END,
+      'artifact',body.value->'artifact') END AS value OFFSET 0) minimal
+    WHERE j.owner=$1 AND j.id=$2`,[owner,taskId]);
+  if (source.rowCount !== 1 || source.rows[0].task_body === null) return conflict('Historical task proof inputs are invalid or exceed safe runtime limits');
+  const job = JSON.parse(String(source.rows[0].task_body)) as Job;
   if (job.id !== taskId) return conflict('Stored task identity is invalid');
   const ref = validateTaskReadProjection(owner,job,String(row.proof),String(row.digest));
   return postgresOntologyRelease(client,ref);
