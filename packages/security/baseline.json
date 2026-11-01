@@ -4170,7 +4170,7 @@
     {
       "id": "native-task-metadata-policy",
       "file": "packages/security/task-context.ts",
-      "sourceDigest": "6d35c461d64af4de5c81b61931dee0263eb6d5bf1df8640cab738e205168a5ca",
+      "sourceDigest": "9fbb96f736f61495dc816951a431e9b975c34888aff78ad649ef5ec13ac71e14",
       "channels": [
         "model",
         "artifact"
@@ -5751,6 +5751,30 @@
       "content": "Shared field restriction and recipient matching",
       "currentControl": "Clearance and agent response channel evaluated for each restriction",
       "targetControl": "Clearance and agent response channel evaluated for each restriction",
+      "stage": "S5"
+    },
+    {
+      "id": "task-context-closure",
+      "file": "packages/security/task-context-membership.ts",
+      "sourceDigest": "e882616005def39d551555d3cd20e66bc4d2dfb7941c86d94dba00a2d596b085",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Shared reviewed task metadata closure",
+      "currentControl": "Owned candidate and reviewed edge bounds; no access authorization",
+      "targetControl": "Owned candidate and reviewed edge bounds; no access authorization",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-context-membership",
+      "file": "packages/postgres/task-context-membership.ts",
+      "sourceDigest": "ed3f19e591de6b9691390645bb553b6433e5ee62cf3157d9292332223cfac2e6",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "PostgreSQL task metadata membership",
+      "currentControl": "Fenced task grant, exact owner and revision, malformed and ambiguous JSON rejection, bounded closure; no access authorization",
+      "targetControl": "Fenced task grant, exact owner and revision, malformed and ambiguous JSON rejection, bounded closure; no access authorization",
       "stage": "S5"
     }
   ]

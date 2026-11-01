@@ -11,6 +11,8 @@ import { createStagedPostgresTaskReader, postgresTaskFieldClassification, postgr
 import { POLICY_VERSION, SECURITY_CONTRACT } from '../packages/security/contracts.js';
 import { StagedKernelBuilder } from '../packages/ontology/seed-definition.js';
 import { sourceMatchesObservation } from '../packages/security/source-policy.js';
+import { taskContextMembers } from '../packages/security/task-context.js';
+import { postgresTaskContextMembers } from '../packages/postgres/task-context-membership.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
@@ -35,7 +37,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`,[authority.id,authority.revision,authority.digest]); await installPostgresAuthorityLock(client,schema);
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
-    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','ontology_objects','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
+    for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','ontology_objects','ontology_links','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
       await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
       for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
@@ -46,6 +48,52 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,c=>postgresTaskReadOntology(c,principal,task.job.id,policy,staged)),/not ready/);
     for(let stage=0;stage<StagedKernelBuilder.stages;stage++)staged.step(stage);
     const stagedReader=createStagedPostgresTaskReader(staged);
+    const contextObjects=[
+      {type:'RequestSpecification',id:'synthetic-spec',properties:{requestRevision:1}},
+      {type:'RequestInstruction',id:'synthetic-instruction',properties:{introducedRevision:1}},
+      {type:'RequestInstruction',id:'synthetic-future',properties:{introducedRevision:2}},
+      {type:'ExecutionContext',id:'synthetic-context',properties:{requestRevision:1}},
+      {type:'RequestInstruction',id:'synthetic-unlinked',properties:{introducedRevision:1}},
+      {type:'RegisteredCapability',id:`capability:${'a'.repeat(64)}`,properties:{definitionDigest:'a'.repeat(64)}},
+    ];
+    for(const object of contextObjects){
+      const body=JSON.stringify({source:{kind:'task',id:object.type==='RegisteredCapability'?'another-task':task.job.id},properties:object.properties});
+      sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,object.type,object.id,1,'a'.repeat(64),body);
+      await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,object.type,object.id,'a'.repeat(64),body]);
+    }
+    const contextLinks=[['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-instruction'],['RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','synthetic-future'],['CapabilityRequest','RegisteredCapability',`capability:${'a'.repeat(64)}`,'ServiceRequest',task.job.id]];
+    for(const [type,fromType,fromId,toType,toId] of contextLinks){
+      sqlite.prepare('INSERT INTO ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES(?,?,?,?,?,?,?)').run(f.owner,type!,fromType!,fromId!,toType!,toId!,'a'.repeat(64));
+      await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES($1,$2,$3,$4,$5,$6,$7)`,[f.owner,type,fromType,fromId,toType,toId,'a'.repeat(64)]);
+    }
+    const members=()=>postgresBusinessTransaction(client,schema,authority,c=>postgresTaskContextMembers(c,principal,task.job.id,policy,staged));
+    const sortRefs=(refs:{type:string;id:string}[])=>refs.map(ref=>JSON.stringify([ref.type,ref.id])).sort();
+    assert.deepEqual(sortRefs(await members()),sortRefs([...taskContextMembers(sqlite,f.owner,task.job.id,1).values()]));
+    const memberKeys=sortRefs(await members());assert(memberKeys.includes(JSON.stringify(['RequestInstruction','synthetic-instruction'])));assert(memberKeys.includes(JSON.stringify(['RegisteredCapability',`capability:${'a'.repeat(64)}`])));assert(!memberKeys.includes(JSON.stringify(['RequestInstruction','synthetic-future'])));assert(!memberKeys.includes(JSON.stringify(['RequestInstruction','synthetic-unlinked'])));
+    const duplicateSource=`{"source":{"kind":"task","id":"another-task","id":${JSON.stringify(task.job.id)}},"properties":{"requestRevision":1}}`;
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,'RequestSpecification','ambiguous-source',1,$2,$3)`,[f.owner,'a'.repeat(64),duplicateSource]);
+    await assert.rejects(members(),/POLICY_CHANGED/);
+    await client.query(`DELETE FROM "${schema}".ontology_objects WHERE owner=$1 AND type='RequestSpecification' AND id='ambiguous-source'`,[f.owner]);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body='invalid' WHERE owner=$1 AND type='RequestInstruction' AND id='synthetic-instruction'`,[f.owner]);
+    await assert.rejects(members(),/POLICY_CHANGED/);
+    const instruction=JSON.stringify({source:{kind:'task',id:task.job.id},properties:{introducedRevision:1}});
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type='RequestInstruction' AND id='synthetic-instruction'`,[instruction,f.owner]);
+    const oversized=JSON.stringify({source:{kind:'task',id:task.job.id},properties:{introducedRevision:1},padding:'x'.repeat(1048577)});
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type='RequestInstruction' AND id='synthetic-instruction'`,[oversized,f.owner]);
+    await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type='RequestInstruction' AND id='synthetic-instruction'`,[instruction,f.owner]);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,'RequestInstruction',$2,1,$3,$4)`,[f.owner,'x'.repeat(801),'a'.repeat(64),instruction]);
+    await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
+    await client.query(`DELETE FROM "${schema}".ontology_objects WHERE owner=$1 AND type='RequestInstruction' AND id=$2`,[f.owner,'x'.repeat(801)]);
+    await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) VALUES($1,'RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction',$2,$3)`,[f.owner,'x'.repeat(801),'a'.repeat(64)]);
+    await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
+    await client.query(`DELETE FROM "${schema}".ontology_links WHERE owner=$1 AND type='RequestSpecificationInstruction' AND to_id=$2`,[f.owner,'x'.repeat(801)]);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) SELECT $1,'RequestInstruction','overflow-'||n,1,$2,$3 FROM generate_series(1,2001) n`,[f.owner,'a'.repeat(64),instruction]);
+    await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
+    await client.query(`DELETE FROM "${schema}".ontology_objects WHERE owner=$1 AND type='RequestInstruction' AND id LIKE 'overflow-%'`,[f.owner]);
+    await client.query(`INSERT INTO "${schema}".ontology_links(owner,type,from_type,from_id,to_type,to_id,definition_digest) SELECT $1,'RequestSpecificationInstruction','RequestSpecification','synthetic-spec','RequestInstruction','overflow-'||n,$2 FROM generate_series(1,4001) n`,[f.owner,'a'.repeat(64)]);
+    await assert.rejects(members(),/INSUFFICIENT_ACCESS/);
+    await client.query(`DELETE FROM "${schema}".ontology_links WHERE owner=$1 AND type='RequestSpecificationInstruction' AND to_id LIKE 'overflow-%'`,[f.owner]);
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
@@ -272,6 +320,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(binding(),/POLICY_CHANGED/);
     await assert.rejects(sourceAllowed(),/POLICY_CHANGED/);
     await assert.rejects(candidateFields(),/POLICY_CHANGED/);
+    await assert.rejects(members(),/POLICY_CHANGED/);
     await client.query(`UPDATE "${schema}".security_subjects SET epoch=epoch-1 WHERE installation_id=$1`,[installation.id]);
     const grantBody=JSON.stringify(readGrant),field=`"taskId":"${task.job.id}"`,duplicate=grantBody.replace(field,`${field},${field}`); assert.notEqual(duplicate,grantBody);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[duplicate,task.grant.id]);
