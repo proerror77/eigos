@@ -74,6 +74,7 @@ export function singleReadPolicyContracts(model: SecurityStore['model']) {
 }
 const refKey = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 export const TASK_PROJECTION_TYPES = ['GoalCoverage','OutcomeAssessment','ExecutionFeedback',...Object.keys(taskContextFields)];
+const taskControlHistoryTypes = new Set(TASK_PROJECTION_TYPES);
 type SourceObservationOrigin = { programId: string; programDigest: string; sourceBindingId: string };
 export interface ObjectBinding { object: ObjectRef; revision: number; fields: string[]; sourceBindingId: string; envelope: SecurityEnvelope; inputEnvelope?: SecurityEnvelope; projectionOrigin?: ProjectionOrigin; sourceObservation?: SourceObservationOrigin }
 
@@ -643,7 +644,7 @@ export class SecurityPolicies {
         // revision, field set or expected digest is a different assertion.
         const dependencyKey=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields,dependency.contentDigest]);
         if(verifiedDependencies.has(dependencyKey))continue;
-        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskContextFields[dependency.object.type] || this.personalMutationHistory(scope,dependency)?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
+        const input=read(dependency.object,dependency.object.type==='ServiceRequest' || taskControlHistoryTypes.has(dependency.object.type) || this.personalMutationHistory(scope,dependency)?undefined:dependency.revision,dependency.object.type==='RegisteredCapability');
         if(!input || !dependency.fields || dependency.fields.some(f=>!input.fields.includes(f))){checked.set(key,undefined);return;}
         // Recursive reads may have proved this assertion while checking its
         // own ancestors. Do not repeat that database checkpoint on unwind.
@@ -814,13 +815,22 @@ export class SecurityPolicies {
     const row=this.db.prepare('SELECT body,revision FROM ontology_objects WHERE owner=? AND type=? AND id=?').get(scope.actor.ownerKey,dependency.object.type,dependency.object.id);
     if(!row)throw new SecurityError('OUTPUT_NOT_ALLOWED');
     if(dependency.object.type==='ServiceRequest' || Number(row.revision)===dependency.revision)return JSON.parse(String(row.body)).properties;
+    if(taskControlHistoryTypes.has(dependency.object.type) && !taskContextFields[dependency.object.type]) {
+      const current=JSON.parse(String(row.body));
+      if(dependency.revision>Number(row.revision) || current.source?.kind!=='task' || current.source.id!==scope.grant!.taskId
+        || current.properties?.requestRevision!==scope.grant!.requestRevision)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    }
     // Only reviewed task-control records may use their immutable writer history.
     // A changed provider fact never gains this exception; current grants and
     // current field labels still apply before this historical hash is checked.
-    if(!taskContextFields[dependency.object.type] && !this.personalMutationHistory(scope,dependency))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    if(!taskControlHistoryTypes.has(dependency.object.type) && !this.personalMutationHistory(scope,dependency))throw new SecurityError('OUTPUT_NOT_ALLOWED');
     const old=this.db.prepare('SELECT body,definition_digest FROM ontology_object_versions WHERE ontology_id=? AND owner=? AND type=? AND id=? AND revision=? AND deleted=0').get(this.model.ref.id,scope.actor.ownerKey,dependency.object.type,dependency.object.id,dependency.revision);
     if(!old || old.definition_digest!==this.model.fingerprint(dependency.object.type))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-    return JSON.parse(String(old.body)).properties;
+    const historical=JSON.parse(String(old.body));
+    if(taskControlHistoryTypes.has(dependency.object.type) && !taskContextFields[dependency.object.type]
+      && (historical.source?.kind!=='task' || historical.source.id!==scope.grant!.taskId
+        || historical.properties?.requestRevision!==scope.grant!.requestRevision))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    return historical.properties;
   }
   private lineageDigest(scope:AuthorizationScope,dependency:SecurityEnvelope['lineage'][number]) {
     const cache=scope.readLineageDigests,key=JSON.stringify([dependency.object.type,dependency.object.id,dependency.revision,dependency.fields]);
@@ -843,7 +853,7 @@ export class SecurityPolicies {
     }
     for (const dependency of envelope.lineage) {
       const binding=this.readBinding(scope,dependency.object,undefined,dependency.object.type==='RegisteredCapability');
-      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskContextFields[dependency.object.type] && binding.revision!==dependency.revision && !this.personalMutationHistory(scope,dependency)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      if (!binding || !dependency.fields || dependency.fields.some(f=>!binding.fields.includes(f)) || dependency.object.type!=='ServiceRequest' && !taskControlHistoryTypes.has(dependency.object.type) && binding.revision!==dependency.revision && !this.personalMutationHistory(scope,dependency)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       if (this.lineageDigest(scope,dependency)!==dependency.contentDigest) throw new SecurityError('OUTPUT_NOT_ALLOWED');
     }
   }

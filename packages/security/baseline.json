@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "01f2b81778dfd818b08d02b95787e47237723f7d54f5cd12d17c95cf103a1970",
+      "sourceDigest": "fd4ef4e8d0ed49aa3798528f0c4d1ded4e935957341b1164f9072323d0b3e946",
       "channels": [
         "all-reads"
       ],
