@@ -5502,6 +5502,32 @@
       "targetControl": "Preserve identity and revocation state with independently verified runtime cutover",
       "stage": "S5",
       "sourceDigest": "bf6f06f91b79e227eb7ff16dd22e041e03dbc6414c0a054964458170fcd60f15"
+    },
+    {
+      "id": "postgres-identity-audit",
+      "file": "packages/postgres/identity-audit.ts",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Read-only comparison of active identity projections against imported membership",
+      "currentControl": "Reviewed receipt digests, read-only consistent transaction, bounded aggregate output and no activation",
+      "targetControl": "Detect mismatched identity and revocation projections before runtime cutover",
+      "stage": "S5",
+      "sourceDigest": "5900545bfb5ec4084913df9fcceffcf8ba03b8507416c63da291daac93f575f5"
+    },
+    {
+      "id": "postgres-identity-audit-cli",
+      "file": "scripts/postgres-identity-audit.mjs",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Operator entry for imported identity projection audit",
+      "currentControl": "Reviewed receipt digests, read-only consistent transaction, bounded aggregate output and no activation",
+      "targetControl": "Detect mismatched identity and revocation projections before runtime cutover",
+      "stage": "S5",
+      "sourceDigest": "f6f546002ea31669bac4e7b524d05d4d9b54c7fe24daf47c20cd8680fca71b7b"
     }
   ]
 }

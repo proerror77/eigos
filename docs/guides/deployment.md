@@ -45,6 +45,8 @@ Gateway 的会员、安装、会话和撤销状态由 `MEMBERSHIP_DATABASE_PATH`
 
 会员库可使用 `node scripts/membership-postgres-import.mjs --apply --snapshot /private/offline-members.sqlite --expected-file-digest <reviewed-digest> --schema eigos_membership_example --max-database-bytes <reviewed-byte-budget>` 导入独立私有 schema，连接环境与 CA 配置同业务导入。它仅接受当前已审查的会员库结构及不大于 64 MiB 的私有离线快照，逐表回读并记录摘要；不激活服务或授予运行时角色。导入后仍须核对会员库和业务库的一致性，并完成运行时适配。提交响应丢失时必须先检查目标 schema 的 `eigos_membership_migration_receipt`，不可覆盖重试。
 
+两份快照导入后可执行 `node scripts/postgres-identity-audit.mjs --business-schema eigos_business_example --membership-schema eigos_membership_example --business-digest <reviewed-business-digest> --membership-digest <reviewed-membership-digest>`。该检查绑定两份迁移回执，在一致的只读事务中比较尚未过期的活跃身份投影与会员、安装及连接状态，仅输出总数与不匹配数量；不匹配时退出失败。它不核验全部授权、任务和外部效果，不能单独作为切换或授权依据。
+
 **业务库盘点入口只读，不写入 PostgreSQL，也不代表业务库可切换。** PostgreSQL 结构、全部业务和权限事务、历史不可变触发器、共享 Worker 领取及 MCP／A2A 运行路径仍需迁移并验证。切换后产生的新任务、授权和外部效果不能通过恢复旧 SQLite 副本抹除或重放。
 
 预备的离线导入入口使用 `EIGOS_BUSINESS_POSTGRES_URL` 和绝对路径 `EIGOS_BUSINESS_POSTGRES_CA_FILE`；连接 URL 不允许附带可能覆盖 TLS 校验的参数。先审查盘点报告中的 `fileDigest`、权限策略摘要和容量，再显式执行：
