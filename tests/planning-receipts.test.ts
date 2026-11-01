@@ -7,9 +7,72 @@ import {owner} from './backend-fixture.js';
 import {securityFixture} from './fixtures/security.js';
 import {withAuthorization,authorizationScope} from '../packages/security/context.js';
 import type {PlanningReadReceipt} from '../packages/ontology/planning-contract.js';
+import {DatabaseSync as ExternalDatabase} from 'node:sqlite';
+import {secureRequest} from '../packages/security/model.js';
 
 const receipt=():PlanningReadReceipt=>({id:randomUUID(),at:new Date().toISOString(),tool:'read_task_context',
   inputDigest:'a'.repeat(64),outputDigest:'b'.repeat(64),datasetRevision:1,status:'ok',objects:[]});
+
+for(const boundary of ['service','ontologyReads'] as const)
+test(`a receipt retains JSON.parse last-value semantics for duplicate ${boundary} keys`,()=>{
+ const f=securityFixture(),install=f.installation('Legacy receipt keys');f.approve(install.id);
+ const task=f.task(install.id),claim=f.jobs.claim(['eigos.delegate'],30000)!,db=Reflect.get(f.jobs,'db') as DatabaseSync;
+ const raw=String(db.prepare('SELECT body FROM jobs WHERE id=?').get(task.job.id)!.body);
+ const changed=boundary==='service'?raw.replace('"service":"eigos.delegate"','"service":"wrong","service":"eigos.delegate"')
+  :raw.replace('"delegation":{','"delegation":{"ontologyReads":[],"ontologyReads":'+JSON.stringify([receipt()])+',');
+ assert.notEqual(changed,raw);db.prepare('UPDATE jobs SET body=? WHERE id=?').run(changed,task.job.id);
+ const scope=f.jobs.security.workerScope(f.owner,task.job.id,claim.securityAuthorityId!,claim.token);
+ try{
+  const before=f.jobs.get(f.owner,task.job.id),item=receipt();
+  assert(withAuthorization(scope,()=>f.jobs.recordPlanningRead(claim,item)));
+  const after=f.jobs.get(f.owner,task.job.id);assert.deepEqual(after.delegation!.ontologyReads,[...(before.delegation!.ontologyReads??[]),item]);
+  before.delegation!.ontologyReads=after.delegation!.ontologyReads;assert.deepEqual(after,before);
+ }finally{f.close();}
+});
+
+test('a receipt synchronizes an external heartbeat before acquiring its write fence',t=>{
+ const f=securityFixture(),install=f.installation('External receipt heartbeat');f.approve(install.id);
+ const task=f.task(install.id),claim=f.jobs.claim(['eigos.delegate'],30000)!,policy=f.jobs.security.policies;
+ const scope=f.jobs.security.workerScope(f.owner,task.job.id,claim.securityAuthorityId!,claim.token);
+ const external=new ExternalDatabase(f.database),transaction=f.jobs.transaction.bind(f.jobs);let heartbeat=false;
+ t.mock.method(f.jobs,'transaction',(<T>(action:()=>T):T=>{
+  if(!heartbeat){external.prepare('UPDATE security_manager SET expires_at=expires_at+1 WHERE slot=1').run();heartbeat=true;}
+  return transaction(action);
+ }));
+ try{
+  const item=receipt();
+  withAuthorization(scope,()=>policy.readSnapshot(()=>assert(f.jobs.recordPlanningRead(claim,item))));
+  assert(heartbeat);assert.equal(f.jobs.get(f.owner,task.job.id).delegation!.ontologyReads!.at(-1)!.id,item.id);
+ }finally{external.close();f.close();}
+});
+
+for(const boundary of ['submission','field_label','object'] as const)
+test(`a receipt cannot synchronize past a changed ${boundary} proof`,t=>{
+ const f=securityFixture(),install=f.installation('Changed receipt submission');f.approve(install.id);
+ const policy=f.jobs.security.policies,until=new Date(Date.now()+60000).toISOString();
+ policy.setRole({subjectKind:'installation',subjectId:install.id,resource:{kind:'namespace',id:policy.model.ref.id,version:policy.model.ref.digest},role:'Viewer',executeActions:[],invokeFunctions:[],expiresAt:until},policy.revision());
+ policy.setRecipient(install.id,{classification:'sensitive',markings:['member_private','personal_data','precise_location','financial','account_private','health'],channels:['agent_response','registered_model'],expiresAt:until},policy.revision());
+ const task=f.task(install.id);policy.bindInputs(task.grant);
+ const claim=f.jobs.claim(['eigos.delegate'],30000)!,scope=f.jobs.security.workerScope(f.owner,task.job.id,claim.securityAuthorityId!,claim.token);
+ const external=new ExternalDatabase(f.database),transaction=f.jobs.transaction.bind(f.jobs);let changed=false;
+ t.mock.method(f.jobs,'transaction',(<T>(action:()=>T):T=>{
+  if(!changed){
+   if(boundary==='submission')external.prepare("UPDATE jobs SET body=json_set(body,'$.delegation.request.originalGoal',?) WHERE id=?").run('Synthetic changed instruction',task.job.id);
+   else if(boundary==='field_label')external.prepare("INSERT INTO security_labels(owner,type,object_id,field,body) VALUES(?,'ServiceRequest',?,'originalGoal',?) ON CONFLICT(owner,type,object_id,field) DO UPDATE SET body=excluded.body").run(f.owner,task.job.id,JSON.stringify({classification:'internal'}));
+   else external.prepare("UPDATE ontology_objects SET body=json_set(body,'$.properties.originalGoal',?) WHERE owner=? AND type='ServiceRequest' AND id=?").run('Synthetic changed object',f.owner,task.job.id);
+   changed=true;
+  }
+  return transaction(action);
+ }));
+ try{
+  withAuthorization(scope,()=>policy.readSnapshot(()=>withAuthorization({...authorizationScope()!},()=>{
+   const request=secureRequest(f.jobs.ontologyForJob(f.owner,task.job),f.owner,task.job.delegation!.request);
+   assert.equal(request.originalGoal,task.job.goal);assert(scope.lineage.size>0);
+   assert.throws(()=>f.jobs.recordPlanningRead(claim,receipt()),/OUTPUT_NOT_ALLOWED|POLICY_CHANGED/);
+  })));
+  assert(changed);assert.equal(f.jobs.get(f.owner,task.job.id).delegation!.ontologyReads?.length??0,0);
+ }finally{external.close();f.close();}
+});
 
 test('a planning read persists its receipt without republishing business state',async t=>{
  let checked=false,reading=false,publications=0;
@@ -81,7 +144,7 @@ test('a planning receipt rolls back when its lease expires during the write',t=>
  const db=Reflect.get(f.jobs,'db') as DatabaseSync,prepare=db.prepare.bind(db);let expired=false;
  t.mock.method(db,'prepare',(sql:string)=>{
   const statement=prepare(sql);
-  if(sql.startsWith('UPDATE jobs SET state=?,updated_at=?,body=?')){
+  if(sql.startsWith('UPDATE jobs SET state=?,updated_at=?,body=')){
    const run=statement.run.bind(statement);
    t.mock.method(statement,'run',(...args:Parameters<typeof run>)=>{const result=run(...args);clock+=30001;expired=true;return result;});
   }

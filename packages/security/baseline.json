@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "fd3e8986b3c01a11ebac540c9866110bb3383ee426b12b7c7004735aab4b48ab",
+      "sourceDigest": "a82bbbe6c978d3dd7b07a8c0702f6bf239e12935ae42761c658e29fea4fbf60b",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3022,7 +3022,7 @@
     {
       "id": "model-planning",
       "file": "packages/coordinator/planning-session.ts",
-      "sourceDigest": "e94fa007ec283eb824e428c31f48a60cccd8ac4a532c8d291e49b8bcbad8b24b",
+      "sourceDigest": "c6bda564a5df502559b568b4da067f6f469197a9b512591e79173f0143333ff0",
       "channels": [
         "model",
         "query"
@@ -3135,7 +3135,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "a0742af33d68b8547f95ea37dc0aadb3fcc0542ffa73f8ebe24310468b202f48",
+      "sourceDigest": "5788b2b564f5435d1dc74665b30f662ed984be1eef89bfbe6194c3469a946809",
       "channels": [
         "registered_model",
         "private_file"
@@ -3390,7 +3390,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "e2a85f15fe2173bab43ed8c1cc76952a5b0adb308965838f071058240bb7da46",
+      "sourceDigest": "28d02245a0720bd8dd4fe54731a02dc2940ca7d108fabe2367af4b821d44fbda",
       "channels": [
         "authorization_control"
       ],
@@ -3426,7 +3426,7 @@
     {
       "id": "security-context",
       "file": "packages/security/context.ts",
-      "sourceDigest": "4efc6606189071d7168b08328c7a36fa23bb72b3547d351f0fb8f2b203db222e",
+      "sourceDigest": "ff6a9beb8064ffbbff49f22b0a2574e42e3c7df288093cd735120f41ccb3be3b",
       "channels": [
         "internal"
       ],
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "c7c48c98146742475041070b1b49eddb342a43b6b85210855026828d18d9ad86",
+      "sourceDigest": "f3e14687130540887eda17b3cef08f823b69f33e0f84dfb7a949853b91a554fe",
       "channels": [
         "all-reads"
       ],
@@ -3824,7 +3824,7 @@
     {
       "id": "s5-scripts-run-local",
       "file": "scripts/run-local.mjs",
-      "sourceDigest": "0aff0dc730ae9b223f54ed1f25501462205c18c51cb5c2406489f81ea594065f",
+      "sourceDigest": "07be5cd37fdb5b0ef00daaaa32fc1df9502df505b7b402d015ba72b972740e9b",
       "channels": [
         "runtime"
       ],
@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "ad1978bff65d9a7d9a3530bda330f20f1079a0165b933e3bc6d8c906d2b087bd",
+      "sourceDigest": "900ba08c6debca32f59e7f8a41a1179fbe8d3df7291e076dfff240093852c964",
       "channels": [
         "model"
       ],
@@ -4376,7 +4376,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "a6f0ad74a5f8c465c6b6123de4d9663136e9326c3a835a686d73b9aecb86f608",
+      "sourceDigest": "e4cf9fc03d79b590ef69969bfa2e18f7cb5d721d63838b69b78ab194a5833d2c",
       "channels": [
         "operator_cli"
       ],

@@ -87,7 +87,9 @@ test('cleanup cannot hide an earlier recovery writeback rejection', async t => {
 
 test('technical recovery renews its still-current original lease during a long projection', {timeout:60000}, async t => {
   let clock=Date.now(); t.mock.method(Date,'now',()=>clock);
-  const f=securityFixture(()=>clock),install=f.installation('Long recovery projection');f.approve(install.id);
+  const f=securityFixture(()=>clock),install=f.installation('Long recovery projection',120000);f.approve(install.id);
+  // The independent Gateway remains alive while this Worker writes its pause.
+  Reflect.get(f.jobs,'db').prepare('UPDATE security_manager SET expires_at=? WHERE slot=1').run(clock+120000);
   const task=f.task(install.id),request=structuredClone(task.job.delegation!.request),warnings:unknown[][]=[];
   t.mock.method(console,'error',(...args:unknown[])=>{if(String(args[0]).startsWith('Worker '))warnings.push(args);});
   let signal:AbortSignal|undefined,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
@@ -95,7 +97,7 @@ test('technical recovery renews its still-current original lease during a long p
   let renewals=0;
   t.mock.method(f.jobs,'renew',(...args:Parameters<typeof renew>)=>{const value=renew(...args);if(value)renewals++;return value;});
   t.mock.method(f.jobs.security.policies,'bindTaskProjection',(...args:Parameters<typeof bind>)=>{
-    if(signal?.aborted)for(let chunk=0;chunk<3;chunk++){clock+=6000;authorizationScope()!.assertCurrent();}
+    if(signal?.aborted)for(let chunk=0;chunk<6;chunk++){clock+=6000;authorizationScope()!.assertCurrent();}
     return bind(...args);
   });
   const worker=new Worker(f.jobs,{leaseMs:15000,pollMs:1000,timeoutMs:50,coordinator:{
@@ -105,7 +107,7 @@ test('technical recovery renews its still-current original lease during a long p
     worker.tick();await started;await new Promise(resolve=>setTimeout(resolve,100));await worker.close();
     const current=f.jobs.get(f.owner,task.job.id);
     assert.equal(current.delegation?.recovery?.code,'worker_timeout',JSON.stringify(warnings));
-    assert.equal(renewals,3,'Each renewal must retain the original claim and interval');
+    assert.equal(renewals,6,'Each renewal must retain the original claim and interval');
     assert.deepEqual(current.delegation?.request,request);assert.equal(current.revision,task.job.revision);
     assert.equal(current.artifact,undefined);assert.deepEqual(warnings,[]);
   }finally{await worker.close();f.close();}
@@ -113,15 +115,17 @@ test('technical recovery renews its still-current original lease during a long p
 
 test('technical recovery cannot renew beyond its bounded metadata window', {timeout:60000}, async t => {
   let clock=Date.now();t.mock.method(Date,'now',()=>clock);
-  const f=securityFixture(()=>clock),install=f.installation('Recovery metadata window');f.approve(install.id);const task=f.task(install.id);
+  const f=securityFixture(()=>clock),install=f.installation('Recovery metadata window',120000);f.approve(install.id);const task=f.task(install.id);
+  Reflect.get(f.jobs,'db').prepare('UPDATE security_manager SET expires_at=? WHERE slot=1').run(clock+120000);
+  Reflect.get(f.jobs,'db').prepare('UPDATE security_subjects SET valid_until=? WHERE installation_id=?').run(clock+120000,install.id);
   let signal:AbortSignal|undefined,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});
   const bind=f.jobs.security.policies.bindTaskProjection.bind(f.jobs.security.policies),renew=f.jobs.renew.bind(f.jobs);let renewals=0;
   t.mock.method(console,'error',()=>{});
   t.mock.method(f.jobs,'renew',(...args:Parameters<typeof renew>)=>{renewals++;return renew(...args);});
   t.mock.method(f.jobs.security.policies,'bindTaskProjection',(...args:Parameters<typeof bind>)=>{
-    if(signal?.aborted){clock+=31000;authorizationScope()!.assertCurrent();}return bind(...args);
+    if(signal?.aborted){clock+=61000;authorizationScope()!.assertCurrent();}return bind(...args);
   });
-  const worker=new Worker(f.jobs,{leaseMs:60000,pollMs:1000,timeoutMs:50,coordinator:{
+  const worker=new Worker(f.jobs,{leaseMs:120000,pollMs:1000,timeoutMs:50,coordinator:{
     run:async(_claim,current)=>{signal=current;entered();await new Promise<void>((_resolve,reject)=>current.addEventListener('abort',()=>reject(new Error('Synthetic timeout')),{once:true}));},
   }});
   try{
@@ -129,6 +133,7 @@ test('technical recovery cannot renew beyond its bounded metadata window', {time
     const current=f.jobs.get(f.owner,task.job.id);
     assert.equal(current.delegation?.recovery,undefined,'An overlong metadata write must roll back');
     assert.equal(renewals,0,'Still-valid consent does not permit extending the recovery window');
+    assert(f.jobs.security.workAuthority(f.owner,task.job.id),'Only the metadata deadline ended; the original business authority is still current');
   }finally{await worker.close();f.close();}
 });
 
