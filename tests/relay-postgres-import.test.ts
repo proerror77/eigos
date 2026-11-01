@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
@@ -19,6 +19,7 @@ import { RelayClient } from '../packages/agent-transport/client.js';
 // Set these only for a dedicated disposable test database. No application data
 // is read, and the uniquely named test schema is removed after the test.
 const enabled = process.env.EIGOS_TEST_RELAY_POSTGRES === '1';
+const fileDigest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
 test('offline Relay import preserves queued data, uniqueness and sequence, and refuses an existing target', { skip: !enabled }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'relay-pg-import-'));
   const path = join(dir, 'relay.sqlite');
@@ -41,13 +42,19 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
   let connected = false, imported = false;
   try {
     await client.connect(); connected = true;
-    const counts = await importRelaySnapshot(client, path, schema); imported = true;
+    const counts = await importRelaySnapshot(client, path, schema, fileDigest(path)); imported = true;
     assert.deepEqual(counts, { relay_agents: 2, relay_commands: 1, relay_proofs: 1, relay_limits: 2, relay_connections: 1, relay_messages: 1 });
+    const receipt = (await client.query(`SELECT body FROM "${schema}".relay_migration_receipt WHERE slot=1`)).rows[0].body;
+    assert.equal(receipt.status,'imported-not-activated'); assert.equal(receipt.sourceFileDigest,fileDigest(path));
+    assert.equal(receipt.tables.relay_messages.rows,1); assert.match(receipt.tables.relay_messages.digest,/^[a-f0-9]{64}$/);
+    await assert.rejects(client.query(`DELETE FROM "${schema}".relay_migration_receipt`), /immutable/);
+    await assert.rejects(importRelaySnapshot(client,path,`${schema}_digest`,'0'.repeat(64)), /digest does not match/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[`${schema}_digest`])).rowCount,0);
     const selected = await client.query(`SELECT seq, envelope, expires_at FROM "${schema}".relay_messages`);
     assert.deepEqual(selected.rows[0], { seq: '27', envelope: 'ciphertext', expires_at: '2000000000000' });
     const exactInteger = await client.query(`SELECT bucket FROM "${schema}".relay_limits WHERE subject='large-bucket'`);
     assert.equal(exactInteger.rows[0].bucket, '9007199254740993');
-    await assert.rejects(importRelaySnapshot(client, path, schema), /already exists/);
+    await assert.rejects(importRelaySnapshot(client, path, schema, fileDigest(path)), /already exists/);
     await assert.rejects(client.query(`INSERT INTO "${schema}".relay_messages (id,sender,recipient,connection_id,digest,envelope,bytes,state,expires_at,created_at) VALUES ('message','a','b','connection','new','x',1,'queued',2000000000000,1000000000000)`), /unique constraint/i);
     const next = await client.query(`INSERT INTO "${schema}".relay_messages (id,sender,recipient,connection_id,digest,envelope,bytes,state,expires_at,created_at) VALUES ('message2','a','b','connection','new','x',1,'queued',2000000000000,1000000000000) RETURNING seq`);
     assert.equal(next.rows[0].seq, '29'); // the failed insert consumes 28, but may not reuse 27
@@ -115,17 +122,58 @@ test('offline Relay import preserves queued data, uniqueness and sequence, and r
         if (sql === 'COMMIT') throw new Error('simulated lost commit response');
         return value;
       } } as unknown as pg.Client;
-      await assert.rejects(importRelaySnapshot(disconnected, path, uncertainSchema), /commit outcome is unknown/);
+      await assert.rejects(importRelaySnapshot(disconnected, path, uncertainSchema, fileDigest(path)), /commit outcome is unknown/);
       observedCommitted = (await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [uncertainSchema])).rowCount === 1;
       assert(observedCommitted);
+      assert.equal((await client.query(`SELECT body FROM "${uncertainSchema}".relay_migration_receipt`)).rows[0].body.sourceFileDigest,fileDigest(path));
     } finally { if (observedCommitted) await client.query(`DROP SCHEMA "${uncertainSchema}" CASCADE`); }
+    const changed = join(dir,'changed.sqlite'); copyFileSync(path,changed);
+    const changedDigest = fileDigest(changed), changedSchema = `${schema}_changed`;
+    const changingClient = { query: async (sql: string, params?: unknown[]) => {
+      const value = await client.query(sql,params);
+      if (sql.startsWith('SELECT setval(')) appendFileSync(changed,Buffer.from([0]));
+      return value;
+    } } as unknown as pg.Client;
+    await assert.rejects(importRelaySnapshot(changingClient,changed,changedSchema,changedDigest), /snapshot changed/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[changedSchema])).rowCount,0);
+    for (const [label, expression] of [['nul', "'bad' || char(0) || 'tail'"], ['utf8', "CAST(x'80' AS TEXT)"]] as const) {
+      const invalidPath = join(dir,`${label}.sqlite`); copyFileSync(path,invalidPath);
+      const invalid = new DatabaseSync(invalidPath); invalid.exec(`UPDATE relay_agents SET signed_card=${expression} WHERE id='a'; PRAGMA journal_mode=DELETE;`); invalid.close();
+      const invalidSchema = `${schema}_${label}`;
+      await assert.rejects(importRelaySnapshot(client,invalidPath,invalidSchema,fileDigest(invalidPath)),/Invalid Relay text/);
+      assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[invalidSchema])).rowCount,0);
+    }
+    const batchPath = join(dir,'batch.sqlite'); copyFileSync(path,batchPath);
+    const batchDb = new DatabaseSync(batchPath); batchDb.exec('BEGIN');
+    const addCommand = batchDb.prepare('INSERT INTO relay_commands VALUES(?,?,?,?,?,?)');
+    for (let i=0;i<130;i++) addCommand.run(`owner-${i}`,'register',`request-${i}`,'fingerprint','{}',1000);
+    for (const actor of ['a','ä','😀','\uE000']) addCommand.run(actor,'register','unicode','fingerprint','{}',1000);
+    batchDb.exec('COMMIT; PRAGMA journal_mode=DELETE'); batchDb.close();
+    const batchSchema = `${schema}_batch`;
+    try {
+      const batchCounts = await importRelaySnapshot(client,batchPath,batchSchema,fileDigest(batchPath));
+      assert.equal(batchCounts.relay_commands,135);
+      assert.equal((await client.query(`SELECT body FROM "${batchSchema}".relay_migration_receipt`)).rows[0].body.tables.relay_commands.rows,135);
+    } finally { await client.query(`DROP SCHEMA IF EXISTS "${batchSchema}" CASCADE`); }
+    const largePath = join(dir,'large.sqlite'); copyFileSync(path,largePath);
+    const largeDb = new DatabaseSync(largePath); largeDb.prepare("UPDATE relay_agents SET signed_card=? WHERE id='a'").run('x'.repeat(2*1024*1024)); largeDb.exec('PRAGMA journal_mode=DELETE'); largeDb.close();
+    const largeSchema = `${schema}_large`;
+    await assert.rejects(importRelaySnapshot(client,largePath,largeSchema,fileDigest(largePath)),/Relay row exceeds migration limit/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[largeSchema])).rowCount,0);
+    const utf16Path = join(dir,'utf16.sqlite');
+    const utf16Init = new DatabaseSync(utf16Path); utf16Init.exec("PRAGMA encoding='UTF-16le'; CREATE TABLE init(id INTEGER); DROP TABLE init"); utf16Init.close(); chmodSync(utf16Path,0o600);
+    const utf16Store = new RelayStore(utf16Path); utf16Store.close();
+    const utf16 = new DatabaseSync(utf16Path); utf16.exec('PRAGMA journal_mode=DELETE'); utf16.close();
+    const utf16Schema = `${schema}_utf16`;
+    await assert.rejects(importRelaySnapshot(client,utf16Path,utf16Schema,fileDigest(utf16Path)),/UTF-8 encoding/);
+    assert.equal((await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1',[utf16Schema])).rowCount,0);
     const corrupt = join(dir, 'corrupt.sqlite');
     const broken = new RelayStore(corrupt); broken.close();
     const brokenDb = new DatabaseSync(corrupt, { enableForeignKeyConstraints: false });
     brokenDb.exec("INSERT INTO relay_connections VALUES ('bad','missing-a','missing-b','accepted',1); PRAGMA journal_mode=DELETE;");
     brokenDb.close();
     const rejectedSchema = `${schema}_bad`;
-    await assert.rejects(importRelaySnapshot(client, corrupt, rejectedSchema), /foreign key constraint/i);
+    await assert.rejects(importRelaySnapshot(client, corrupt, rejectedSchema, fileDigest(corrupt)), /foreign key constraint/i);
     const rolledBack = await client.query('SELECT 1 FROM pg_namespace WHERE nspname=$1', [rejectedSchema]);
     assert.equal(rolledBack.rowCount, 0);
   } finally {

@@ -5365,10 +5365,10 @@
         "agent_transport"
       ],
       "content": "Offline encrypted Relay snapshot import",
-      "currentControl": "Owned private self-contained snapshot, application ID and schema checks, transactional fresh destination, readback digests, fail-closed uncertain commits",
+      "currentControl": "Reviewed private source digest, bounded batched copy, readback fingerprints, immutable receipt and fail-closed uncertain commit",
       "targetControl": "Preserve ciphertext, replay state and receipts without creating business authority",
       "stage": "S5",
-      "sourceDigest": "18919fc50546e402dbdc9a1bc4ca4e61b2e086c8dc448f2a6500c66f830a98a0"
+      "sourceDigest": "e8d41d8ea3fc2a1fe42147cce00aba8cd3d427ac38204425029479395909f72d"
     },
     {
       "id": "relay-postgres-import-cli",
@@ -5381,7 +5381,7 @@
       "currentControl": "Explicit apply, separate CA and private connection environment, hostname verification, no credential output",
       "targetControl": "Prevent unreviewed live-store replacement or credential exposure",
       "stage": "S5",
-      "sourceDigest": "eaa3c2c581b43fbcfe9a4a0d892bd070f8ef494db416cc1e275539cc646f1e40"
+      "sourceDigest": "3cb586443b01beaa806fc6a2a3eb4b597de1c11bf69f008f47eae28d7c33e92b"
     },
     {
       "id": "business-postgres-snapshot-audit",
