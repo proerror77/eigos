@@ -1,3 +1,4 @@
+import { FLIGGY_PREDECESSOR } from '../ontology/fliggy-kernel.js';
 import {taskContextFields,TASK_CONTEXT_BINDING_VERSION} from './task-context-contract.js';
 import { selfPersonRef, personalPreferenceRef, personalInputFields, personalContextInputSchema, isPersonalAction } from '../ontology/personal-context.js';
 import {taskContextMembers} from './task-context.js';
@@ -54,7 +55,12 @@ export function rollingGoPolicyContracts(model: SecurityStore['model']) {
   return {before:policyContract({id:'eigos.business',version:'22',digest:'b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4'},priorFields,priorProjection),after:policyContract({id:'eigos.business',version:'23',digest:'2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127'},fields,projectionContract)};
 }
 function policyContract(model: SecurityStore['model']['ref'], fields: typeof baseline.types, projection: typeof projectionContract, reobservation = false) {
-  if (model.version !== '26' && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
+  if (/^(1[5-9]|2[0-6])$/.test(model.version)) {
+    const additions = new Set(['FliggySearchTask','FliggySearchObservation','FliggyTravelOption','TravelProduct']);
+    fields = Object.fromEntries(Object.entries(fields).filter(([id]) => !additions.has(id)));
+    projection = {...projection, fields: Object.fromEntries(Object.entries(projection.fields).filter(([id]) => !additions.has(id)))};
+  }
+  if (!['26','27'].includes(model.version) && fields.GoalCoverage) { fields = structuredClone(fields); fields.GoalCoverage!.fingerprint = PRIOR_GOAL_COVERAGE_FINGERPRINT; }
   if (!fields.Person && fields.RequestFact) { fields = structuredClone(fields); fields.RequestFact!.fingerprint = 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'; delete fields.RequestFact!.fields.personalBasis; }
   const taskFields = fields.Person ? taskContextFields : { ...taskContextFields, RequestFact: taskContextFields.RequestFact!.filter(field => field !== 'personalBasis') };
   return digest({model,fields,projection,taskContext:{version:TASK_CONTEXT_BINDING_VERSION,fields:taskFields,capabilityReader:'immutable-compatible-definition-v1'},
@@ -67,6 +73,11 @@ export function businessFactsPolicyContracts(model: SecurityStore['model']) {
 export function personalContextPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '25' || !model.hasType('Person')) throw new Error('Expected the reviewed personal-context v25 kernel');
   return { before: '61a64d7f6c60e3ff6a2506710ae27b2b75f179cc485eec412a7873dc5e02e0fa', after: policyContract(model.ref, baseline.types, projectionContract, true) };
+}
+export function fliggyPolicyContracts(previous: SecurityStore['model'], model: SecurityStore['model']) {
+  if (previous.ref.digest !== FLIGGY_PREDECESSOR || model.ref.version !== '27' || !model.hasType('TravelProduct')) throw new Error('Expected the reviewed Fliggy v26 -> v27 transition');
+  const fields = (m: SecurityStore['model']) => Object.fromEntries(Object.entries(baseline.types).filter(([id]) => m.hasType(id)));
+  return { before: policyContract(previous.ref, fields(previous), projectionContract, true), after: policyContract(model.ref, fields(model), projectionContract, true) };
 }
 export function singleReadPolicyContracts(model: SecurityStore['model']) {
   if (model.ref.version !== '26' || !model.properties('GoalCoverage').reviewOrigin!.schema.safeParse('ontology_read_contract').success) throw new Error('Expected the reviewed single-read v26 kernel');
@@ -91,11 +102,11 @@ export class SecurityPolicies {
     if (model === this.model || this.reviewedModels.has(model)) return;
     // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
     // their own model and action bindings; current data/source grants still gate reads.
-    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26'].includes(this.model.ref.version))
-      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', SINGLE_READ_PREDECESSOR].includes(model.ref.digest)
+    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26','27'].includes(this.model.ref.version))
+      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', FLIGGY_PREDECESSOR, SINGLE_READ_PREDECESSOR].includes(model.ref.digest)
       && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && (model.fingerprint(type.id) === this.model.fingerprint(type.id)
         || this.model.hasType('Person') && type.id === 'RequestFact' && model.fingerprint(type.id) === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'
-        || this.model.ref.version === '26' && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
+        || ['26','27'].includes(this.model.ref.version) && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
       && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
       && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
       && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {

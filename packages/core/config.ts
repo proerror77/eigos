@@ -53,6 +53,9 @@ const schema = z.object({
   EIGOS_PUBLIC_GEO_DISCOVERY_QUERIES: publicGeoQueries.optional(),
   EIGOS_SHOPIFY_CATALOG_MERCHANTS: merchantList('EIGOS_SHOPIFY_CATALOG_MERCHANTS').optional(),
   EIGOS_SHOPIFY_AUDIT_DIR: z.string().optional(),
+  EIGOS_FLIGGY_MODE: z.enum(['disabled','trial','key']).default('disabled'),
+  EIGOS_FLIGGY_KEY_FILE: z.string().optional(),
+  EIGOS_FLIGGY_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_ROLLINGGO_KEY_FILE: z.string().optional(),
   EIGOS_ROLLINGGO_KEY_SHA256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   EIGOS_DIDI_KEY_FILE: z.string().optional(),
@@ -166,6 +169,11 @@ function parseConfig(env: NodeJS.ProcessEnv, role: 'gateway' | 'worker'): Config
       throw new Error('Primary DiDi routes require one verified owner and the exact same pinned credential; ambiguous accounts are refused');
   }
   if (c.EIGOS_DIDI_ORDERS_ENABLED === 'mock' && (!c.EIGOS_DIDI_KEY_FILE || c.EIGOS_DIDI_ENVIRONMENT !== 'mock' || !c.EIGOS_DIDI_AUDIT_DIR || c.EIGOS_ACTION_SANDBOX !== 'true')) throw new Error('DiDi orders require explicit official mock configuration, durable audit and sandbox action authorization');
+  if (c.EIGOS_FLIGGY_MODE !== 'disabled' && !c.EIGOS_PERSONAL_SOURCE_OWNER
+    || c.EIGOS_FLIGGY_MODE === 'key' && (!c.EIGOS_FLIGGY_KEY_FILE || !isAbsolute(c.EIGOS_FLIGGY_KEY_FILE) || !c.EIGOS_FLIGGY_KEY_SHA256)
+    || c.EIGOS_FLIGGY_MODE !== 'key' && (c.EIGOS_FLIGGY_KEY_FILE || c.EIGOS_FLIGGY_KEY_SHA256)) {
+    throw new Error('Fliggy needs an explicit owner and mode; key mode requires an absolute private key file and pinned fingerprint');
+  }
   if (!!c.EIGOS_ROLLINGGO_KEY_FILE !== !!c.EIGOS_ROLLINGGO_KEY_SHA256 || c.EIGOS_ROLLINGGO_KEY_FILE && (!isAbsolute(c.EIGOS_ROLLINGGO_KEY_FILE) || !c.EIGOS_PERSONAL_SOURCE_OWNER)) throw new Error('RollingGo requires an absolute private key file, pinned fingerprint and explicit source owner');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_BINDING_ID) throw new Error('DiDi requires a private key file and an explicit account binding ID');
   if (!!c.EIGOS_DIDI_KEY_FILE !== !!c.EIGOS_DIDI_KEY_SHA256) throw new Error('DiDi requires a pinned credential fingerprint; rotate with a new binding');

@@ -1,0 +1,87 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "fliggy.travel-search",
+  "version": "1",
+  "completion": {
+    "evaluate": "fliggySearchStatus",
+    "planned": true
+  },
+  "actions": [
+    {
+      "id": "SearchFliggyFlights",
+      "description": "Read-only FlyAI travel search. Returns partial source discovery, reference or masked prices, never confirmed SKU availability, a reservation, payment or commission entitlement.",
+      "resultType": "FliggySearchObservation",
+      "mcp": {
+        "server": "fliggy-flyai",
+        "tool": "search_flight",
+        "arguments": {},
+        "argumentObject": {
+          "from": "scope",
+          "path": [
+            "criteria"
+          ]
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    },
+    {
+      "id": "SearchFliggyHotels",
+      "description": "Read-only FlyAI travel search. Returns partial source discovery, reference or masked prices, never confirmed SKU availability, a reservation, payment or commission entitlement.",
+      "resultType": "FliggySearchObservation",
+      "mcp": {
+        "server": "fliggy-flyai",
+        "tool": "search_hotels",
+        "arguments": {},
+        "argumentObject": {
+          "from": "scope",
+          "path": [
+            "criteria"
+          ]
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    },
+    {
+      "id": "SearchFliggyMarriottHotels",
+      "description": "Read-only FlyAI travel search. Returns partial source discovery, reference or masked prices, never confirmed SKU availability, a reservation, payment or commission entitlement.",
+      "resultType": "FliggySearchObservation",
+      "mcp": {
+        "server": "fliggy-flyai",
+        "tool": "search_marriott_hotels",
+        "arguments": {},
+        "argumentObject": {
+          "from": "scope",
+          "path": [
+            "criteria"
+          ]
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    },
+    {
+      "id": "SearchFliggyMarriottPackages",
+      "description": "Read-only FlyAI travel search. Returns partial source discovery, reference or masked prices, never confirmed SKU availability, a reservation, payment or commission entitlement.",
+      "resultType": "FliggySearchObservation",
+      "mcp": {
+        "server": "fliggy-flyai",
+        "tool": "search_marriott_packages",
+        "arguments": {},
+        "argumentObject": {
+          "from": "scope",
+          "path": [
+            "criteria"
+          ]
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    }
+  ]
+}

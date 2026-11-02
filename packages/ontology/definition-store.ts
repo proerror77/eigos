@@ -1,3 +1,4 @@
+import { FLIGGY_PREDECESSOR } from './fliggy-kernel.js';
 import { rollingGoObjects, rollingGoActions, rollingGoFunctions } from './rollinggo.js';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -8,7 +9,7 @@ import { definitionKindSchema, ontologyIdSchema, ontologyReleaseRefSchema, parse
   type DefinitionKind, type OntologyDocument, type OntologyReleaseRef, type SerializableAction, type SerializableInterface,
   type SerializableLink, type SerializableObjectType } from './definition-contracts.js';
 import { compileOntologyDocument, normalizeOntologyDocument, validateBusinessDefinitionExtensions, type TrustedDefinitionRegistry } from './model-compiler.js';
-import { createCurrentKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
+import { createCurrentKernelDefinition, createSingleReadKernelDefinition, createSeedDefinition, createRollingGoKernelDefinition, createTaskClosureKernelDefinition, createBusinessFactsKernelDefinition, createPersonalContextKernelDefinition } from './seed-definition.js';
 import { SINGLE_READ_PREDECESSOR } from './single-read-kernel.js';
 import { personalObjects, personalActions, personalLinks, PERSONAL_CONTEXT_PREDECESSOR } from './personal-context-kernel.js';
 import { businessFactTypes, businessFactLinks } from './business-facts.js';
@@ -236,7 +237,7 @@ export class DefinitionStore {
     return this.transaction(() => {
       const namespace = this.namespace();
       if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before read-contract installation');
-      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      const current = this.resolve(namespace.active), kernel = createSingleReadKernelDefinition(trustedTemplates().registry).document;
       if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
       if (current.model.ref.digest !== SINGLE_READ_PREDECESSOR) return conflict('Read contracts require the exact reviewed v25 predecessor');
       const document = structuredClone(current.document); document.version = '26';
@@ -244,6 +245,18 @@ export class DefinitionStore {
       document.objects[index] = structuredClone(kernel.objects.find(type => type.id === 'GoalCoverage')!);
       const release = this.insertRelease(document, 'system:install-single-read-contract', namespace.active);
       return this.activate('system:install-single-read-contract', release.ref, expectedGeneration, true);
+    });
+  }
+  /** Exact offline additive v26 -> v27 installation; no source grants or startup activation. */
+  installFliggyReadonly(expected: OntologyReleaseRef, expectedGeneration: number): OntologyNamespace {
+    return this.transaction(() => {
+      const namespace = this.namespace();
+      if (digest(namespace.active) !== digest(expected) || namespace.generation !== expectedGeneration) return conflict('Active ontology changed before Fliggy installation');
+      const current = this.resolve(namespace.active), kernel = trustedTemplates().kernel;
+      if (current.model.ref.digest === compiledModel(kernel, trustedTemplates().registry).ref.digest) return namespace;
+      if (current.model.ref.digest !== FLIGGY_PREDECESSOR) return conflict('Fliggy reads require the exact reviewed v26 predecessor');
+      const release = this.insertRelease(structuredClone(kernel), 'system:install-fliggy-readonly', namespace.active);
+      return this.activate('system:install-fliggy-readonly', release.ref, expectedGeneration, true);
     });
   }
   namespace(id = DEFAULT_ONTOLOGY): OntologyNamespace {

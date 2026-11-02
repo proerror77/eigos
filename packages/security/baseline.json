@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "26",
-    "digest": "78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020"
+    "version": "27",
+    "digest": "9192fae1100cde55f3ded736929f58cab00163d4678097f9d6ee0f7af735ab77"
   },
   "types": {
     "ServiceRequest": {
@@ -2868,13 +2868,60 @@
         "status": "task_sensitive",
         "authority": "task_sensitive"
       }
+    },
+    "FliggySearchTask": {
+      "fingerprint": "00ab03d595b8dffb89c278af0a4f83f61e7b7b662dfaab75d4e7632c3e421856",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "FliggySearchObservation": {
+      "fingerprint": "4792d2ea6ee195f07724a0618bc9143f4df67a1718a96e0f627a1919b7ec1971",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "FliggyTravelOption": {
+      "fingerprint": "16bca610ea45a1812a2e17624581ec2af4c8a422ba7fa62d9d62bd2405fcad6b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "kind": "task_sensitive",
+        "data": "internal_only",
+        "criteria": "internal_only",
+        "priceKind": "task_sensitive",
+        "comparisonStatus": "task_sensitive",
+        "commissionRate": "task_sensitive",
+        "commissionSettlement": "task_sensitive"
+      }
+    },
+    "TravelProduct": {
+      "fingerprint": "61431012018129a473479ee50c08c3a7fc53358908b97d109a08396348ad718d",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "sourceId": "task_sensitive",
+        "name": "task_sensitive",
+        "classification": "task_sensitive"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
+      "sourceDigest": "8a496f5b05f6ab4811446b4e3350d138f970300d8d61d6886de364cc170f461d",
       "channels": [
         "http"
       ],
@@ -3148,7 +3195,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "ddb1d363a3b4fe7ef4683b7b3b7c0cfdf1d4e264fbfaacfe62e8c6729efc3752",
+      "sourceDigest": "0341a4634ea9cca4fee74ab12fa15a4b4eb386c7debde7cad9c5a5dde33f7ff8",
       "channels": [
         "source",
         "dispatch"
@@ -3366,7 +3413,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "0917d4080bbce8d00f8d0634171412bc226b3b260313fce0585d639c4f0f6917",
+      "sourceDigest": "4deb487281e819965e29e12e601fe77884fe34e14a8348f7f391cac53b06d6be",
       "channels": [
         "authorization_control"
       ],
@@ -3378,7 +3425,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "dbfb30921d81694912aeb2a3a296597b6669936e13dcd906aac07dfc697645f1",
+      "sourceDigest": "caef415ffeb568550b7271508b5108d865f9041af346d3600ad67bd70840d9b0",
       "channels": [
         "authorization_control"
       ],
@@ -3474,7 +3521,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "4b0ba5268128652d8d4c7fa53c01dc9bf9b0c1582ec890caca5ac4cadedf9551",
+      "sourceDigest": "bc7f5d7f5e7bfdd90fe0e1eb85fe072e414e391a0448f15c72a4dc900e782d99",
       "channels": [
         "all-reads"
       ],
@@ -3486,7 +3533,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "9b8253a7643b2132433b8ecfa070517f3ad20f51e8f3057267e9a0761970648a",
+      "sourceDigest": "8bac0aa363b12137eeec012f573adac665ebc01fd4af35a3661ca95648f9d0ab",
       "channels": [
         "model-and-agent"
       ],
@@ -3582,7 +3629,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "eb96a85a81a0f0de67ca02f411032d5a863af11af0046f5bc461f1ec473e1b00",
+      "sourceDigest": "ff7a5cb4d252d01d07d398f45de36d6c8e613c4ef5b56e1df2b69cd17cfea6ee",
       "channels": [
         "internal"
       ],
@@ -4092,7 +4139,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "11d380723d521b30f7ffe53b4c57ede1c17c47cf124d8b4347d8373fefd03175",
+      "sourceDigest": "d2a448caf061390ebd8b69f29410f9ac06411561b93c12e8c1ff8f5798021f0d",
       "channels": [
         "model",
         "artifact"
@@ -5111,7 +5158,7 @@
       "currentControl": "Stopped authority, exact digest/revision, unchanged actions/functions/grants and expiry",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S4",
-      "sourceDigest": "108abe22a84f35d8803e8d39b6ccab54e148b67710d78daffc7189c00b69f0b5"
+      "sourceDigest": "9012eecfcd930d0d43a361b1441f179d3b76697e034d0f3973e814c0d836c6a5"
     },
     {
       "id": "single-read-policy-upgrade-cli",
@@ -5357,6 +5404,149 @@
       "targetControl": "Preserve original PA connection, tasks and permissions while checking the published Skill",
       "stage": "S5",
       "sourceDigest": "d4dc918fc4d81545c40bd47dc97b2d75d3f245d2dae0625956f62950fe788663"
+    },
+    {
+      "id": "fliggy-contracts",
+      "file": "packages/capabilities/fliggy/contracts.ts",
+      "sourceDigest": "9d229d1f87dd589953645a1fab2db2aa4b8171da93ff2961fef52780892f99a4",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-cli-guard",
+      "file": "packages/capabilities/fliggy/cli-guard.ts",
+      "sourceDigest": "a1a7670eb65188a79dd66e6d1c8f44e8eb08709cba8d9a0131062557c2c2d4a6",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-connector",
+      "file": "packages/capabilities/fliggy/connector.ts",
+      "sourceDigest": "522df066e0183ff6983df7de08d8f7d71090db3566c3f3adf3def8fd2b023f4f",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-program",
+      "file": "packages/capabilities/fliggy/program.ts",
+      "sourceDigest": "4226fcf89e6a59ae63f3791b29edbdd0c86758ca253c51693cd5fb39a7736684",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-ontology",
+      "file": "packages/ontology/fliggy.ts",
+      "sourceDigest": "907537be49b8b7f56ba7fe21b4b7f1cca7b1921ba2f8719baea4451d399ea1e4",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-evaluator",
+      "file": "packages/ontology/fliggy-functions.ts",
+      "sourceDigest": "c6d3d985d5b78d7f4b30e37726f494a73f1cc0051398a413b483060fb63d59e4",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-kernel",
+      "file": "packages/ontology/fliggy-kernel.ts",
+      "sourceDigest": "97b7c6f8055ceb9f71dfdee60d2f606a117d687a5c0169adb35ba4c5d6d6c131",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-product-pipeline",
+      "file": "packages/ontology/pipeline/fliggy-products.ts",
+      "sourceDigest": "8e1ee9fcc9a5dbd97d8f171aa7f0225d653d197c6010fb131fb8e042301ef7d0",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-policy-upgrade",
+      "file": "packages/security/fliggy-upgrade.ts",
+      "sourceDigest": "c843e8539bba31cd3fc3deebbbd637c16f2050e2d3ccf5809b1e86f143b1843f",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-policy-upgrade-cli",
+      "file": "scripts/upgrade-fliggy-policy.mjs",
+      "sourceDigest": "619f0fe9bd5f961ba92f95e1adb8f2e3cba125281bfe5d5364557cfb34c99f1d",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
+    },
+    {
+      "id": "fliggy-installer",
+      "file": "scripts/install-fliggy-readonly.mjs",
+      "sourceDigest": "cc8b57208c62ea7991a7ccf73bd67834d855f70bdf5227f11d0178fe208732a1",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Explicit FlyAI read source, partial travel candidates and source product identities; no SKU/room inference or transaction authority",
+      "currentControl": "Pinned CLI, exact MCP tool/criteria, private key or isolated trial mode, source/task/field authorization and provenance",
+      "targetControl": "Source evidence, schema and temporal validation; no booking/payment/redemption or implicit affiliate attribution",
+      "stage": "S4"
     }
   ]
 }
