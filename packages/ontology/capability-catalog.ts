@@ -8,6 +8,7 @@ import { objectRefSchema, type LinkDefinition, type ObjectTypeDefinition, type P
 import type { LinkWrite, ObjectWrite, OntologyObjectStore } from './object-store.js';
 import { moneySchema, type ProviderBinding, type ResolvedCandidate, type ServiceCapability, type ServiceRequest } from './execution.js';
 import type { Resolution } from '../coordinator/resolver.js';
+import {graphRead,graphRelated,graphQuery,graphIngest,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 
 type CapabilitySummary = ReturnType<ExecutionCatalog['summaries']>[number];
 export type CapabilityContextSummary = CapabilitySummary & { verificationHistory?: CapabilityVerificationHistory };
@@ -38,12 +39,12 @@ const canonical = (s: CapabilitySummary): CapabilitySummary => ({ ref: s.ref, na
   locationSemantics: s.locationSemantics, constraintEvaluation: s.constraintEvaluation, scopeReviewMode: s.scopeReviewMode, sourceAuthorization: undefined });
 
 /** Called under the same fenced transaction as interpretation, never by a model. */
-export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string, summaries: CapabilityProjectionSummary[]) {
+export function* projectCapabilityCatalogProgram(graph: ProjectionMetadata, owner: string, requestId: string, summaries: CapabilityProjectionSummary[]):GraphProgram<void> {
   if (summaries.length > 16) throw new DomainError('CONFLICT', 'Narrow the capability discovery scope');
   if (summaries.some(item => item.verificationHistory !== undefined) && (graph.security || authorizationScope())) throw new DomainError('FORBIDDEN', 'Task-scoped authority does not grant cross-task feedback history');
   const supportsHistory = Object.hasOwn(graph.model.properties('RegisteredCapability'), 'verificationHistory') && Object.hasOwn(graph.model.properties('RegisteredCapability'), 'contextRequestId');
   const request = { type: 'ServiceRequest', id: requestId }, objects: ObjectWrite[] = [], links: LinkWrite[] = [];
-  graph.read(owner, request);
+  (yield* graphRead(owner, request));
   for (const item of summaries) {
     const history = item.verificationHistory === undefined || !supportsHistory ? undefined : sanitizeCapabilityVerificationHistory(item.verificationHistory);
     const s = canonical(item), hash = digest(s), object = { type: 'RegisteredCapability', id: history ? contextualCapabilityId(hash, requestId, history) : `capability:${hash}` };
@@ -53,16 +54,16 @@ export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: stri
       ...(s.constraintEvaluation ? { constraintEvaluation: s.constraintEvaluation } : {}),
       ...(s.scopeReviewMode ? { scopeReviewMode: s.scopeReviewMode } : {}),
       ...(s.locationSemantics ? { locationSemantics: s.locationSemantics } : {}), definitionDigest: hash, ...(history ? {contextRequestId:requestId, verificationHistory:history} : {}) };
-    try { if (digest(graph.read(owner, object).properties) !== digest(properties)) throw new DomainError('CONFLICT', 'Registered capability snapshot changed'); }
+    try { if (digest((yield* graphRead(owner, object)).properties) !== digest(properties)) throw new DomainError('CONFLICT', 'Registered capability snapshot changed'); }
     catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; objects.push({ ref: object, properties }); }
     links.push({ type: 'CapabilityRequest', from: object, to: request });
   }
-  const removeLinks = (graph.related(owner, request, 'capabilities', { remaining: 1000 }) ?? []).filter(old => !links.some(l => l.from.id === old.ref.id)).map(old => ({ type: 'CapabilityRequest', from: old.ref, to: request }));
-  graph.ingest(owner, { objects, links, removeLinks }, { kind: 'task', id: requestId, observedAt: new Date().toISOString() });
+  const removeLinks = ((yield* graphRelated(owner, request, 'capabilities', { remaining: 1000 })) ?? []).filter(old => !links.some(l => l.from.id === old.ref.id)).map(old => ({ type: 'CapabilityRequest', from: old.ref, to: request }));
+  (yield* graphIngest(owner, { objects, links, removeLinks }, { kind: 'task', id: requestId, observedAt: new Date().toISOString() }));
 }
 
-export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string): CapabilityContextSummary[] {
-  const objects = graph.related(owner, { type: 'ServiceRequest', id: requestId }, 'capabilities', { remaining: 1000 }) ?? [];
+export function* readCapabilityCatalogProgram(graph: ProjectionMetadata, owner: string, requestId: string):GraphProgram<CapabilityContextSummary[]> {
+  const objects = (yield* graphRelated(owner, { type: 'ServiceRequest', id: requestId }, 'capabilities', { remaining: 1000 })) ?? [];
   if (objects.length > 16) throw new DomainError('CONFLICT', 'Capability context exceeds its retrieval bound');
   return objects.map(object => {
     const p = object.properties;
@@ -149,15 +150,15 @@ capabilityCatalogLinks.push(
   { id: 'PreparedCandidateEvidenceSubject', description: 'The source-backed business object represented by this prepared candidate', from: { type: 'PreparedCandidate', name: 'subject', many: false }, to: { type: 'EvidenceBacked', name: 'preparedCandidates', many: true } },
   { id: 'PreparedCandidateCheckoutRequirements', description: 'The current checkout request whose preparation is represented by this candidate', from: { type: 'PreparedCandidate', name: 'checkoutRequirements', many: false }, to: { type: 'CheckoutRequest', name: 'preparedCandidates', many: true } },
 );
-function subjectRelationship(graph: OntologyObjectStore, subject: { type: string; id: string }) {
+function subjectRelationship(graph: ProjectionMetadata, subject: { type: string; id: string }) {
   if (graph.model.implements(subject.type, 'EvidenceBacked')) return { type: 'PreparedCandidateEvidenceSubject', name: 'subject' };
   if (subject.type === 'CheckoutRequest') return { type: 'PreparedCandidateCheckoutRequirements', name: 'checkoutRequirements' };
   throw new DomainError('INVALID_INPUT', 'Prepared candidate subject has no registered business relationship');
 }
-function verifySubjectRelationship(graph: OntologyObjectStore, owner: string, candidate: { type: string; id: string }, subject?: { type: string; id: string }) {
+function* verifySubjectRelationshipProgram(graph: ProjectionMetadata, owner: string, candidate: { type: string; id: string }, subject?: { type: string; id: string }):GraphProgram<void> {
   const expected = subject ? subjectRelationship(graph, subject) : undefined;
   for (const name of ['subject', 'checkoutRequirements']) {
-    const values = graph.related(owner, candidate, name, { remaining: 1000 });
+    const values = (yield* graphRelated(owner, candidate, name, { remaining: 1000 }));
     if (!values || (name === expected?.name ? values.length !== 1 || digest(values[0]!.ref) !== digest(subject) : values.length !== 0)) throw new DomainError('CONFLICT', 'Prepared candidate business relationship changed');
   }
 }
@@ -180,24 +181,24 @@ function canonicalResolution(resolution: PreparedResolution): PreparedResolution
     ...(resolution.comparison ? { comparison: structuredClone({ requestId: resolution.comparison.requestId, requestRevision: resolution.comparison.requestRevision,
       offers: resolution.comparison.offers, merchantGroups: resolution.comparison.merchantGroups, productMatches: resolution.comparison.productMatches, coverage: resolution.comparison.coverage }) } : {}) };
 }
-function checkOwnedReferences(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, value: unknown): void {
+function* checkOwnedReferencesProgram(graph: ProjectionMetadata, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, value: unknown):GraphProgram<void> {
   if (!value || typeof value !== 'object') return;
   const reference = objectRefSchema.safeParse(value);
   if (reference.success) {
-    const object = graph.read(owner, reference.data);
+    const object = (yield* graphRead(owner, reference.data));
     const navigation = graph.model.sides(object.ref.type).find(side => side.side.name === 'request' && side.other.type === 'ServiceRequest');
-    const roots = navigation ? graph.related(owner, object.ref, 'request', { remaining: 1000 }) : undefined;
+    const roots = navigation ? (yield* graphRelated(owner, object.ref, 'request', { remaining: 1000 })) : undefined;
     if (object.ref.type === 'ServiceRequest' && object.ref.id !== request.id || object.properties.requestRevision !== undefined && object.properties.requestRevision !== request.revision || navigation && (roots?.length !== 1 || roots[0]!.ref.id !== request.id)) throw new DomainError('FORBIDDEN', 'Prepared candidate references another task or revision');
     return;
   }
-  for (const child of Object.values(value)) checkOwnedReferences(graph, owner, request, child);
+  for (const child of Object.values(value)) (yield* checkOwnedReferencesProgram(graph, owner, request, child));
 }
 /** Persist a public, typed preparation projection under the caller's existing
  * task transaction. No provider operation, model selection or private payload is accepted. */
-export function projectPreparedResolution(graph: OntologyObjectStore, owner: string, request: ServiceRequest, resolution: PreparedResolution, capability?: ServiceCapability): void {
+export function* projectPreparedResolutionProgram(graph: ProjectionMetadata, owner: string, request: ServiceRequest, resolution: PreparedResolution, capability?: ServiceCapability):GraphProgram<void> {
   if (resolution.candidates.length > 8) throw new DomainError('CONFLICT', 'Prepared candidate limit exceeded');
   const root = { type: 'ServiceRequest', id: request.id };
-  if (graph.read(owner, root).properties.revision !== request.revision) throw new DomainError('CONFLICT', 'Preparation belongs to another request revision');
+  if ((yield* graphRead(owner, root)).properties.revision !== request.revision) throw new DomainError('CONFLICT', 'Preparation belongs to another request revision');
   const value = canonicalResolution(resolution);
   const contract: PreparedCapability | undefined = capability ? { ref: ref.parse(capability.ref), ontologyRef: ref.parse(capability.ontologyRef), verifierRef: ref.parse(capability.verifierRef),
     actions: capabilityActionsSchema.parse(capability.actions), ...(capability.completion ? { completion: capability.completion } : {}), ...(capability.environment ? { environment: capability.environment } : {}) } : undefined;
@@ -207,7 +208,7 @@ export function projectPreparedResolution(graph: OntologyObjectStore, owner: str
   for (const candidate of value.candidates) {
     if (digest(candidate.binding.capabilityRef) !== digest(value.scope.capabilityRef)) throw new DomainError('CONFLICT', 'Prepared candidate belongs to another capability');
     if (candidate.binding.discovery && (candidate.binding.discovery.requestId !== request.id || candidate.binding.discovery.requestRevision !== request.revision)) throw new DomainError('FORBIDDEN', 'Discovered candidate binding belongs to another task');
-    checkOwnedReferences(graph, owner, request, candidate);
+    (yield* checkOwnedReferencesProgram(graph, owner, request, candidate));
   }
   const resolutionDigest = digest(value), capabilityDefinitionDigest = contract ? digest(contract) : undefined;
   const resolutionRef = { type: 'ResolutionContext', id: digest({ requestId: request.id, requestRevision: request.revision, resolutionDigest, capabilityDefinitionDigest }) };
@@ -222,44 +223,46 @@ export function projectPreparedResolution(graph: OntologyObjectStore, owner: str
     links.push({ type: 'CandidateRequest', from: candidateRef, to: root }, { type: 'CandidateResolution', from: candidateRef, to: resolutionRef });
     if (candidate.ontologySubject) links.push({ type: subjectRelationship(graph, candidate.ontologySubject).type, from: candidateRef, to: candidate.ontologySubject });
   }
-  const upserts = objects.flatMap(object => {
+  const upserts:ObjectWrite[]=[];
+  for (const object of objects) {
     try {
-      const old = graph.read(owner, object.ref);
+      const old = (yield* graphRead(owner, object.ref));
       if (digest(old.properties) !== digest(object.properties)) throw new DomainError('CONFLICT', 'Prepared resolution snapshot changed');
-      if (object.ref.type === 'PreparedCandidate') verifySubjectRelationship(graph, owner, object.ref, object.properties.ontologySubject as ResolvedCandidate['ontologySubject']);
-      return [];
-    } catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; return [object]; }
-  });
-  const removeLinks = (graph.related(owner, root, 'currentResolution', { remaining: 1000 }) ?? []).filter(old => old.ref.id !== resolutionRef.id).map(old => ({ type: 'CurrentPreparedResolution', from: root, to: old.ref }));
-  graph.ingest(owner, { objects: upserts, links, removeLinks }, { kind: 'task', id: request.id, observedAt: request.messages.at(-1)!.receivedAt });
+      if (object.ref.type === 'PreparedCandidate') (yield* verifySubjectRelationshipProgram(graph, owner, object.ref, object.properties.ontologySubject as ResolvedCandidate['ontologySubject']));
+      continue;
+    } catch (error) { if (!(error instanceof DomainError) || error.code !== 'NOT_FOUND') throw error; upserts.push(object); }
+  }
+  const removeLinks = ((yield* graphRelated(owner, root, 'currentResolution', { remaining: 1000 })) ?? []).filter(old => old.ref.id !== resolutionRef.id).map(old => ({ type: 'CurrentPreparedResolution', from: root, to: old.ref }));
+  (yield* graphIngest(owner, { objects: upserts, links, removeLinks }, { kind: 'task', id: request.id, observedAt: request.messages.at(-1)!.receivedAt }));
 }
-export function readPreparedResolution(graph: OntologyObjectStore, owner: string, requestId: string): PreparedResolution | undefined {
-  const root = { type: 'ServiceRequest', id: requestId }, requestRevision = graph.read(owner, root).properties.revision;
-  const contexts = graph.query(owner, { from: root, link: 'currentResolution', where: [{ property: 'requestRevision', op: 'eq', value: Number(requestRevision) }], limit: 50 });
+export function* readPreparedResolutionProgram(graph: ProjectionMetadata, owner: string, requestId: string):GraphProgram<PreparedResolution | undefined> {
+  const root = { type: 'ServiceRequest', id: requestId }, requestRevision = (yield* graphRead(owner, root)).properties.revision;
+  const contexts = (yield* graphQuery(owner, { from: root, link: 'currentResolution', where: [{ property: 'requestRevision', op: 'eq', value: Number(requestRevision) }], limit: 50 }));
   if (!contexts.items.length) return;
   if (contexts.page.hasMore || contexts.items.length !== 1) throw new DomainError('CONFLICT', 'Current prepared resolution is ambiguous');
-  const context = contexts.items[0]!, p = context.properties, rows = graph.related(owner, context.ref, 'candidates', { remaining: 1000 });
+  const context = contexts.items[0]!, p = context.properties, rows = (yield* graphRelated(owner, context.ref, 'candidates', { remaining: 1000 }));
   if (!rows || rows.length !== p.candidateCount) throw new DomainError('CONFLICT', 'Prepared candidate graph is incomplete');
-  const candidates = rows.sort((a, b) => Number(a.properties.sequence) - Number(b.properties.sequence)).map((object, sequence) => {
+  const candidates:ResolvedCandidate[]=[];
+  for(const [sequence,object] of rows.sort((a,b)=>Number(a.properties.sequence)-Number(b.properties.sequence)).entries()) {
     const fields = object.properties, { id: _id, name: _name, candidateId, requestRevision: revision, sequence: order, candidateDigest, ...body } = fields;
-    const roots = graph.related(owner, object.ref, 'request', { remaining: 1000 });
+    const roots = (yield* graphRelated(owner, object.ref, 'request', { remaining: 1000 }));
     if (revision !== requestRevision || roots?.length !== 1 || roots[0]!.ref.id !== requestId) throw new DomainError('FORBIDDEN', 'Prepared candidate belongs to another task');
     if (order !== sequence) throw new DomainError('CONFLICT', 'Prepared candidate sequence is incomplete');
     const candidate = publicCandidate({ ...body, id: candidateId } as unknown as ResolvedCandidate);
     if (digest(candidate) !== candidateDigest) throw new DomainError('CONFLICT', 'Prepared candidate evidence changed');
-    checkOwnedReferences(graph, owner, { id: requestId, revision: Number(requestRevision) }, candidate.ontologySubject);
-    verifySubjectRelationship(graph, owner, object.ref, candidate.ontologySubject);
-    return candidate;
-  });
+    (yield* checkOwnedReferencesProgram(graph, owner, { id: requestId, revision: Number(requestRevision) }, candidate.ontologySubject));
+    (yield* verifySubjectRelationshipProgram(graph, owner, object.ref, candidate.ontologySubject));
+    candidates.push(candidate);
+  }
   const value = canonicalResolution({ candidates, scope: { capabilityRef: p.capabilityRef, searchedBindingRefs: p.searchedBindingRefs, observedAt: p.observedAt, realSupply: p.realSupply,
     ...(p.coverage ? { coverage: p.coverage } : {}) }, ...(p.comparison ? { comparison: p.comparison } : {}) } as PreparedResolution);
   if (digest(value) !== p.resolutionDigest || context.ref.id !== digest({ requestId, requestRevision, resolutionDigest: p.resolutionDigest, capabilityDefinitionDigest: p.capabilityDefinitionDigest })) throw new DomainError('CONFLICT', 'Prepared resolution evidence changed');
   return value;
 }
 
-export function readPreparedCapability(graph: OntologyObjectStore, owner: string, requestId: string): PreparedCapability | undefined {
-  const request = { type: 'ServiceRequest', id: requestId }, revision = graph.read(owner, request).properties.revision;
-  const contexts = graph.related(owner, request, 'currentResolution', { remaining: 1000 });
+export function* readPreparedCapabilityProgram(graph: ProjectionMetadata, owner: string, requestId: string):GraphProgram<PreparedCapability | undefined> {
+  const request = { type: 'ServiceRequest', id: requestId }, revision = (yield* graphRead(owner, request)).properties.revision;
+  const contexts = (yield* graphRelated(owner, request, 'currentResolution', { remaining: 1000 }));
   if (!contexts?.length || contexts[0]!.properties.requestRevision !== revision) return;
   if (contexts.length !== 1) throw new DomainError('CONFLICT', 'Current prepared capability is ambiguous');
   const p = contexts[0]!.properties;
@@ -269,4 +272,20 @@ export function readPreparedCapability(graph: OntologyObjectStore, owner: string
     ...(p.capabilityEnvironment ? { environment: p.capabilityEnvironment as ServiceCapability['environment'] } : {}) };
   if (digest(contract) !== p.capabilityDefinitionDigest) throw new DomainError('CONFLICT', 'Prepared capability action definition changed');
   return contract;
+}
+
+export function projectCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string, summaries: CapabilityProjectionSummary[]) {
+  return runGraphProgram(graph,projectCapabilityCatalogProgram(graph,owner,requestId,summaries));
+}
+export function readCapabilityCatalog(graph: OntologyObjectStore, owner: string, requestId: string):CapabilityContextSummary[] {
+  return runGraphProgram(graph,readCapabilityCatalogProgram(graph,owner,requestId));
+}
+export function projectPreparedResolution(graph: OntologyObjectStore, owner: string, request:ServiceRequest, resolution:PreparedResolution, capability?:ServiceCapability):void {
+  return runGraphProgram(graph,projectPreparedResolutionProgram(graph,owner,request,resolution,capability));
+}
+export function readPreparedResolution(graph: OntologyObjectStore, owner: string, requestId:string):PreparedResolution|undefined {
+  return runGraphProgram(graph,readPreparedResolutionProgram(graph,owner,requestId));
+}
+export function readPreparedCapability(graph: OntologyObjectStore, owner: string, requestId:string):PreparedCapability|undefined {
+  return runGraphProgram(graph,readPreparedCapabilityProgram(graph,owner,requestId));
 }

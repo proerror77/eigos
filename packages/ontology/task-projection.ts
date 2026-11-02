@@ -1,4 +1,4 @@
-import { createCallerOutcomeProof } from './caller-outcome-proof.js';
+import { createCallerOutcomeProofProgram } from './caller-outcome-proof.js';
 import { outcomeAssessmentValues, outcomeAssessmentRef, hasTaskClosureProjection } from './outcome-assessment-values.js';
 import { z } from 'zod';
 import type { Job } from '../core/domain.js';
@@ -9,19 +9,20 @@ import { ontologyReceiptSchema } from '../capabilities/paotui-legacy-receipt.js'
 import { paotuiPublicPlaceSchema } from '../capabilities/paotui-public-locations.js';
 import { linkSnapshotDigest, type OntologyObjectStore, type ObjectBatch, type ObjectWrite, type ObjectSource } from './object-store.js';
 import type { ObjectRef } from './model.js';
-import { projectDomainSnapshot } from './domain-projection.js';
-import { projectCheckoutRequest, projectCommerceSnapshot } from './commerce-projection.js';
-import { projectCatalogRead } from './catalog-projection.js';
+import {graphRead,graphRelated,graphIngest,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
+import { projectDomainSnapshotProgram } from './domain-projection.js';
+import { projectCheckoutRequestProgram, projectCommerceSnapshotProgram } from './commerce-projection.js';
+import { projectCatalogReadProgram } from './catalog-projection.js';
 
-function upsert(graph: OntologyObjectStore, owner: string, type: string, id: string, values: Record<string, unknown>): ObjectWrite {
+function* upsertProgram(graph: ProjectionMetadata, owner: string, type: string, id: string, values: Record<string, unknown>): GraphProgram<ObjectWrite> {
   const ref = { type, id }; let expectedRevision: number | undefined;
-  try { expectedRevision = graph.read(owner, ref).revision; } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
+  try { expectedRevision = (yield* graphRead(owner, ref)).revision; } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
   const definition = graph.model.object(type);
   return { ref, properties: { [definition.primaryKey]: id, displayTitle: String(values.name ?? values.safeSummary ?? id).slice(0, 500), ...values }, ...(expectedRevision ? { expectedRevision } : {}) };
 }
 
 /** A read projection of the one current backend. No migration or execution of historical tasks. */
-export function projectTask(graph: OntologyObjectStore, owner: string, job: Job): void {
+export function* projectTaskProgram(graph: ProjectionMetadata, owner: string, job: Job): GraphProgram<void> {
   if (job.delegation?.backendVersion !== BACKEND_VERSION || job.service !== 'eigos.delegate') return;
   const request = job.delegation.request;
   const progress: Record<Job['state'], string> = { submitted: 'received', working: 'executing', paused: 'needs_review', 'input-required': 'clarifying', 'auth-required': 'awaiting_authorization', completed: 'accepted', failed: 'unmet', rejected: 'unmet', canceled: 'canceled' };
@@ -34,55 +35,55 @@ export function projectTask(graph: OntologyObjectStore, owner: string, job: Job)
   const confirmedInputs = request.confirmedInputs ? Object.fromEntries(Object.entries(request.confirmedInputs).map(([key, value]) => [key, { version: value.version, revision: value.revision, fields: value.fields }])) : undefined;
   const values = { ...(confirmedInputs ? { confirmedInputs } : {}), originalGoal: request.originalGoal, ...(request.conditions?.length ? { conditions: request.conditions } : {}), revision: request.revision, requestedOutcome: d.agent?.programRef.id ?? d.plan?.capabilityRef.id ?? (d.goalCoverage?.requestRevision === request.revision ? d.goalCoverage.capabilityRef.id : undefined) ?? d.resolution?.scope.capabilityRef.id ?? 'unresolved', progress: progress[job.state], createdAt: job.createdAt, ...(assessmentRef ? { currentAssessment: assessmentRef } : {}) };
   const source: ObjectSource = { kind: 'task', id: request.id, observedAt: job.updatedAt };
-  const saveRequest = (projectionState: string) => {
-    const object = upsert(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState });
+  function* saveRequestProgram(projectionState: string):GraphProgram<void> {
+    const object = (yield* upsertProgram(graph, owner, 'ServiceRequest', job.id, { ...values, projectionState }));
     // Recording a reasoning receipt does not change a business request or invalidate its cursor.
-    if (object.expectedRevision && digest(graph.read(owner, object.ref).properties) === digest(object.properties)) return;
-    graph.ingest(owner, { objects: [object] }, source);
+    if (object.expectedRevision && digest((yield* graphRead(owner, object.ref)).properties) === digest(object.properties)) return;
+    (yield* graphIngest(owner, { objects: [object] }, source));
   };
   let previousProjection = 'request_only';
   try {
-    const previous = graph.read(owner, { type: 'ServiceRequest', id: request.id }).properties;
+    const previous = (yield* graphRead(owner, { type: 'ServiceRequest', id: request.id })).properties;
     if (previous.revision === request.revision) previousProjection = String(previous.projectionState ?? 'request_only');
   } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
-  saveRequest(previousProjection);
+  (yield* saveRequestProgram(previousProjection));
   const root = { type: 'ServiceRequest', id: request.id };
   const coverage = d.goalCoverage;
   const coverageRef = coverage && closure ? { type: 'GoalCoverage', id: coverage.digest } : undefined;
-  const unchanged = (object: ObjectWrite) => !!object.expectedRevision && digest(graph.read(owner, object.ref).properties) === digest(object.properties);
+  function* unchangedProgram(object:ObjectWrite):GraphProgram<boolean> {return !!object.expectedRevision && digest((yield* graphRead(owner, object.ref)).properties) === digest(object.properties);}
   if (coverage && coverageRef) {
-    const object = upsert(graph, owner, coverageRef.type, coverageRef.id, {
+    const object = (yield* upsertProgram(graph, owner, coverageRef.type, coverageRef.id, {
       requestRevision: coverage.requestRevision, requestDigest: coverage.requestDigest, capabilityRef: coverage.capabilityRef, capabilityDigest: coverage.capabilityDigest,
       reviewOrigin: coverage.reviewOrigin, modelDecisionDigest: coverage.modelDecisionDigest, input: coverage.input, inputDigest: coverage.inputDigest, review: coverage.review, modelRunId: coverage.modelRunId, assessedAt: coverage.assessedAt, digest: coverage.digest,
-    });
-    if (!unchanged(object)) graph.ingest(owner, { objects: [object], links: [{ type: 'GoalCoverageRequest', from: coverageRef, to: root }] }, { ...source, observedAt: coverage.assessedAt });
+    }));
+    if (!(yield* unchangedProgram(object))) (yield* graphIngest(owner, { objects: [object], links: [{ type: 'GoalCoverageRequest', from: coverageRef, to: root }] }, { ...source, observedAt: coverage.assessedAt }));
   }
   if (outcome && assessmentRef) {
-    const callerProof = Object.hasOwn(graph.model.properties('OutcomeAssessment'),'callerProof') ? createCallerOutcomeProof(graph,owner,job) : undefined;
-    const assessment = upsert(graph, owner, assessmentRef.type, assessmentRef.id, outcomeAssessmentValues(outcome, job.state, callerProof));
+    const callerProof = Object.hasOwn(graph.model.properties('OutcomeAssessment'),'callerProof') ? (yield* createCallerOutcomeProofProgram(graph,owner,job)) : undefined;
+    const assessment = (yield* upsertProgram(graph, owner, assessmentRef.type, assessmentRef.id, outcomeAssessmentValues(outcome, job.state, callerProof)));
     const bindingRef = d.agent?.programRef ?? d.plan?.bindingRef;
-    const feedback = bindingRef ? upsert(graph, owner, 'ExecutionFeedback', digest({ request: request.id, revision: request.revision, bindingRef }), {
+    const feedback = bindingRef ? (yield* upsertProgram(graph, owner, 'ExecutionFeedback', digest({ request: request.id, revision: request.revision, bindingRef }), {
       requestRevision: request.revision, bindingRef, bindingDigest: d.agent?.programDigest ?? digest(d.plan!.bindingDigests), taskState: job.state,
       judgment: outcome.status, evidenceLevel: outcome.evidenceLevel ?? 'unverified', evidenceRefs: outcome.evidenceRefs, observedAt: outcome.assessedAt,
-    }) : undefined;
+    })) : undefined;
     // Reading/recording another model receipt does not change the assessment.
     // Avoid revalidating the entire relationship graph on every such checkpoint.
-    if (!unchanged(assessment) || feedback && !unchanged(feedback)) {
-      const sourceReceipts = outcome.evidenceRefs.length ? (graph.related(owner, root, 'sourceReceipts', { remaining: 5000 }) ?? []).filter(receipt => outcome.evidenceRefs.includes(receipt.ref.id) || outcome.evidenceRefs.includes(String(receipt.properties.sourceEventId))) : [];
+    if (!(yield* unchangedProgram(assessment)) || feedback && !(yield* unchangedProgram(feedback))) {
+      const sourceReceipts = outcome.evidenceRefs.length ? ((yield* graphRelated(owner, root, 'sourceReceipts', { remaining: 5000 })) ?? []).filter(receipt => outcome.evidenceRefs.includes(receipt.ref.id) || outcome.evidenceRefs.includes(String(receipt.properties.sourceEventId))) : [];
       const links = [{ type: 'AssessmentRequest', from: assessmentRef, to: root }, ...(callerProof ? [{type:'AssessmentCallerPlan',from:assessmentRef,to:callerProof.execution.plan}] : []), ...(coverageRef && coverage?.requestRevision === request.revision ? [{ type: 'AssessmentCoverage', from: assessmentRef, to: coverageRef }] : []), ...sourceReceipts.map(receipt => ({ type: 'AssessmentEvidence', from: assessmentRef, to: receipt.ref }))];
-      const old = feedback?.expectedRevision ? graph.related(owner, feedback.ref, 'assessment', { remaining: 1000 }) ?? [] : [];
-      graph.ingest(owner, { objects: [assessment, ...(feedback ? [feedback] : [])],
+      const old = feedback?.expectedRevision ? (yield* graphRelated(owner, feedback.ref, 'assessment', { remaining: 1000 })) ?? [] : [];
+      (yield* graphIngest(owner, { objects: [assessment, ...(feedback ? [feedback] : [])],
         links: [...links, ...(feedback ? [{ type: 'ExecutionFeedbackRequest', from: feedback.ref, to: root }, { type: 'ExecutionFeedbackAssessment', from: feedback.ref, to: assessmentRef }] : [])],
         removeLinks: feedback ? old.filter(o => o.ref.id !== assessmentRef.id).map(o => ({ type: 'ExecutionFeedbackAssessment', from: feedback.ref, to: o.ref })) : [],
-      }, { ...source, observedAt: outcome.assessedAt });
+      }, { ...source, observedAt: outcome.assessedAt }));
     }
   }
-  if (d.agent?.observations.length) saveRequest('typed_result');
+  if (d.agent?.observations.length) (yield* saveRequestProgram('typed_result'));
   if (job.state !== 'completed' || !job.artifact?.data.result) return;
-  if (job.delegation.agent?.completion && (job.artifact.data.result as Record<string, unknown>).paotuiAnswer) { saveRequest('typed_result'); return; }
+  if (job.delegation.agent?.completion && (job.artifact.data.result as Record<string, unknown>).paotuiAnswer) { (yield* saveRequestProgram('typed_result')); return; }
   const plan = job.delegation.plan;
-  const projected = projectReadResult(graph, owner, { request, capabilityId: plan?.capabilityRef.id ?? '', input: plan?.steps[0]?.input ?? {}, preparedReceipt: plan?.details.ontologyReceipt, result: job.artifact.data.result });
-  if (projected.state !== 'request_only') saveRequest(projected.state);
+  const projected = (yield* projectReadResultProgram(graph, owner, { request, capabilityId: plan?.capabilityRef.id ?? '', input: plan?.steps[0]?.input ?? {}, preparedReceipt: plan?.details.ontologyReceipt, result: job.artifact.data.result }));
+  if (projected.state !== 'request_only') (yield* saveRequestProgram(projected.state));
 }
 
 export interface PreparedObjectRead {
@@ -90,16 +91,16 @@ export interface PreparedObjectRead {
   preparedReceipt: unknown; result: unknown;
 }
 /** A verified read can inform planning before any business decision or completion. */
-export function projectReadResult(graph: OntologyObjectStore, owner: string, read: PreparedObjectRead): { state: 'request_only' | 'typed_result' | 'invalid_source'; subject?: ObjectRef } {
+export function* projectReadResultProgram(graph: ProjectionMetadata, owner: string, read: PreparedObjectRead): GraphProgram<{ state: 'request_only' | 'typed_result' | 'invalid_source'; subject?: ObjectRef }> {
   const request = read.request;
   if (!read.result || typeof read.result !== 'object') return { state: 'request_only' };
   const result = read.result as Record<string, unknown>;
-  if (result.catalogSnapshot !== undefined) return projectCatalogRead(graph, owner, request, read.capabilityId, read.input, result.catalogSnapshot);
+  if (result.catalogSnapshot !== undefined) return (yield* projectCatalogReadProgram(graph, owner, request, read.capabilityId, read.input, result.catalogSnapshot));
   let checkoutRequest: ObjectRef | undefined;
-  if (result.checkoutRequest !== undefined) checkoutRequest = projectCheckoutRequest(graph, owner, request, result.checkoutRequest);
-  if (result.ucpSnapshot !== undefined) return projectCommerceSnapshot(graph, owner, request, read.capabilityId, read.input, result.ucpSnapshot);
+  if (result.checkoutRequest !== undefined) checkoutRequest = (yield* projectCheckoutRequestProgram(graph, owner, request, result.checkoutRequest));
+  if (result.ucpSnapshot !== undefined) return (yield* projectCommerceSnapshotProgram(graph, owner, request, read.capabilityId, read.input, result.ucpSnapshot));
   if (checkoutRequest) return { state: 'typed_result', subject: checkoutRequest };
-  if (result.domainSnapshot !== undefined) return projectDomainSnapshot(graph, owner, read.capabilityId, request, read.input, result.domainSnapshot);
+  if (result.domainSnapshot !== undefined) return (yield* projectDomainSnapshotProgram(graph, owner, read.capabilityId, request, read.input, result.domainSnapshot));
   const parsed = ontologyReceiptSchema.safeParse(result.ontologyReceipt);
   if (!parsed.success) return { state: result.ontologyReceipt !== undefined ? 'invalid_source' : 'request_only' };
   const receipt = parsed.data, { ontologyReceipt: _receipt, ...business } = result;
@@ -112,16 +113,16 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
   const receiptRef = { type: 'SourceReceipt', id: receipt.id };
   const evidenceLevel = receipt.evidenceKind === 'fixture' ? 'synthetic' : 'live_readonly';
   const readSource: ObjectSource = { kind: evidenceLevel === 'synthetic' ? 'synthetic' : 'provider', id: receipt.id, observedAt: receipt.observedAt };
-  const add = (type: string, id: string, properties: Record<string, unknown>, evidenced = false) => {
-    const object = upsert(graph, owner, type, id, properties); objects.push(object);
+  function* addProgram(type: string, id: string, properties: Record<string, unknown>, evidenced = false):GraphProgram<ObjectRef> {
+    const object = (yield* upsertProgram(graph, owner, type, id, properties)); objects.push(object);
     if (evidenced) { evidenceSubjects.push({ object: object.ref, digest: digest(object.properties) }); links.push({ type: `${type}Evidence`, from: object.ref, to: receiptRef }); }
     return object.ref;
   };
   let quoteRef: ObjectRef | undefined, routeRef: ObjectRef | undefined;
-  const projectedRevision = (ref: ObjectRef) => {
+  function* projectedRevisionProgram(ref: ObjectRef):GraphProgram<number> {
     const next = objects.find(o => o.ref.id === ref.id && o.ref.type === ref.type)!;
     if (!next.expectedRevision) return 1;
-    const old = graph.read(owner, ref);
+    const old = (yield* graphRead(owner, ref));
     return old.revision + (digest(old.properties) === digest(next.properties) && digest(old.source) === digest(readSource) ? 0 : 1);
   };
   try {
@@ -130,34 +131,34 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
       const places = z.array(paotuiPublicPlaceSchema).max(100).parse(business.places);
       for (const [i, place] of places.entries()) {
         const native = place.poiId ?? place.id;
-        add('Place', digest({ namespace: 'meituan:poi', native, ...(native === undefined ? { receipt: receipt.id, index: i } : {}) }), {
+        (yield* addProgram('Place', digest({ namespace: 'meituan:poi', native, ...(native === undefined ? { receipt: receipt.id, index: i } : {}) }), {
           name: place.name, ...(place.address ? { address: { text: place.address, ...(place.city ? { city: place.city } : {}) } } : {}),
           ...(place.lat !== undefined && place.lng !== undefined ? { coordinates: { lat: place.lat, lng: place.lng }, coordinateUnit: 'degree', coordinateSystem: 'unknown' } : {}),
-        }, true);
+        }, true));
       }
     } else {
       const quote = z.object({ source: z.literal('meituan'), previewOnly: z.literal(true), orderCreated: z.literal(false), goods: z.object({ name: z.string(), category: z.string(), weightKg: z.number().positive() }), service: z.enum(['ordinary', 'express']), route: z.object({ sender: z.string().min(1), recipient: z.string().min(1) }), quote: z.object({ _previewTotal: z.union([z.string(), z.number().finite().nonnegative()]).transform(String).pipe(z.string().regex(/^\d+(?:\.\d{1,2})?$/)) }) }).parse(business);
       if (!receipt.sourceCalls.includes('delivery_preview') || receipt.sourceCalls.some(c => !['get_address_info', 'get_address_list', 'delivery_preview'].includes(c))) throw new DomainError('INVALID_INPUT', 'Invalid quote read');
       const input = read.input;
-      const parcel = add('Parcel', `parcel-${receipt.id}`, { contentsCategory: quote.goods.category, declaredContents: quote.goods.name, ...(typeof input?.weightKg === 'number' ? { declaredWeight: { amount: String(input.weightKg), unit: 'kg' } } : {}) });
-      routeRef = add('DeliveryRoute', `route-${receipt.id}`, { originSnapshot: { text: quote.route.sender }, destinationSnapshot: { text: quote.route.recipient }, selectedAt: receipt.observedAt });
-      const provider = add('Provider', 'meituan-paotui', { name: '美团跑腿' }), channel = add('Channel', 'meituan', { name: '美团个人只读渠道', accessScope: ['read'], supportedOperationRefs: ['delivery_preview'] });
+      const parcel = (yield* addProgram('Parcel', `parcel-${receipt.id}`, { contentsCategory: quote.goods.category, declaredContents: quote.goods.name, ...(typeof input?.weightKg === 'number' ? { declaredWeight: { amount: String(input.weightKg), unit: 'kg' } } : {}) }));
+      routeRef = (yield* addProgram('DeliveryRoute', `route-${receipt.id}`, { originSnapshot: { text: quote.route.sender }, destinationSnapshot: { text: quote.route.recipient }, selectedAt: receipt.observedAt }));
+      const provider = (yield* addProgram('Provider', 'meituan-paotui', { name: '美团跑腿' })), channel = (yield* addProgram('Channel', 'meituan', { name: '美团个人只读渠道', accessScope: ['read'], supportedOperationRefs: ['delivery_preview'] }));
       const [whole, fraction = ''] = quote.quote._previewTotal.split('.');
-      quoteRef = add('DeliveryQuote', receipt.id, { observedAt: receipt.observedAt, expiresAt: new Date(Date.parse(receipt.observedAt) + 300000).toISOString(), validityBasis: 'local_refresh_limit', priceKind: 'estimate', pricingCompleteness: 'unknown', serviceLevel: quote.service, quotedWeight: { amount: String(quote.goods.weightKg), unit: 'kg' }, requestRevision: request.revision,
-        parcelRevision: projectedRevision(parcel), routeRevision: projectedRevision(routeRef),
-        pricingTerms: { total: { minor: (BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'))).toString(), currency: 'CNY' }, scope: 'unknown', components: [] } }, true);
+      quoteRef = (yield* addProgram('DeliveryQuote', receipt.id, { observedAt: receipt.observedAt, expiresAt: new Date(Date.parse(receipt.observedAt) + 300000).toISOString(), validityBasis: 'local_refresh_limit', priceKind: 'estimate', pricingCompleteness: 'unknown', serviceLevel: quote.service, quotedWeight: { amount: String(quote.goods.weightKg), unit: 'kg' }, requestRevision: request.revision,
+        parcelRevision: (yield* projectedRevisionProgram(parcel)), routeRevision: (yield* projectedRevisionProgram(routeRef)),
+        pricingTerms: { total: { minor: (BigInt(whole!) * 100n + BigInt(fraction.padEnd(2, '0'))).toString(), currency: 'CNY' }, scope: 'unknown', components: [] } }, true));
       for (const [type, from, to] of [['ParcelRequest', parcel, { type: 'ServiceRequest', id: request.id }], ['RouteRequest', routeRef, { type: 'ServiceRequest', id: request.id }], ['QuoteParcel', quoteRef, parcel], ['QuoteRoute', quoteRef, routeRef], ['OfferRequest', quoteRef, { type: 'ServiceRequest', id: request.id }], ['OfferProvider', quoteRef, provider], ['OfferChannel', quoteRef, channel]] as const) links.push({ type, from, to });
     }
-    add('SourceReceipt', receipt.id, { sourceIdentity: receipt.server, sourceEventId: receipt.id, observedAt: receipt.observedAt, evidenceLevel, scope: receipt.capabilityRef.id === 'geo.search' ? 'public_locations' : 'delivery_quote', ...(receipt.capabilityRef.id === 'geo.search' && digest(read.input) === receipt.inputDigest ? { queryScope: { city: read.input.city, keyword: read.input.keyword } } : {}), contentDigest: receipt.resultDigest, subjects: evidenceSubjects.map(s => ({ ...s, linksDigest: linkSnapshotDigest(s.object, links) })), safeSummary: `已校验 ${receipt.tool} 只读回执` });
+    (yield* addProgram('SourceReceipt', receipt.id, { sourceIdentity: receipt.server, sourceEventId: receipt.id, observedAt: receipt.observedAt, evidenceLevel, scope: receipt.capabilityRef.id === 'geo.search' ? 'public_locations' : 'delivery_quote', ...(receipt.capabilityRef.id === 'geo.search' && digest(read.input) === receipt.inputDigest ? { queryScope: { city: read.input.city, keyword: read.input.keyword } } : {}), contentDigest: receipt.resultDigest, subjects: evidenceSubjects.map(s => ({ ...s, linksDigest: linkSnapshotDigest(s.object, links) })), safeSummary: `已校验 ${receipt.tool} 只读回执` }));
     links.push({ type: 'ReceiptRequest', from: receiptRef, to: { type: 'ServiceRequest', id: request.id } });
     const removeLinks: NonNullable<ObjectBatch['links']> = [];
     if (routeRef) {
-      for (const previous of graph.related(owner, { type: 'ServiceRequest', id: request.id }, 'selectedRoute', { remaining: 1000 }) ?? []) {
+      for (const previous of (yield* graphRelated(owner, { type: 'ServiceRequest', id: request.id }, 'selectedRoute', { remaining: 1000 })) ?? []) {
         if (previous.ref.id !== routeRef.id) removeLinks.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: request.id }, to: previous.ref });
       }
       links.push({ type: 'SelectedRoute', from: { type: 'ServiceRequest', id: request.id }, to: routeRef });
     }
-    graph.ingest(owner, { objects, links, removeLinks }, readSource);
+    (yield* graphIngest(owner, { objects, links, removeLinks }, readSource));
     return { state: 'typed_result', ...(quoteRef ? { subject: quoteRef } : {}) };
   } catch (error) {
     // Preserve the independently verified task artifact. A rejected projection is
@@ -165,4 +166,11 @@ export function projectReadResult(graph: OntologyObjectStore, owner: string, rea
     if (!(error instanceof z.ZodError || error instanceof DomainError && error.code === 'INVALID_INPUT')) throw error;
     return { state: 'invalid_source' };
   }
+}
+
+export function projectTask(graph: OntologyObjectStore, owner: string, job:Job):void {
+  return runGraphProgram(graph,projectTaskProgram(graph,owner,job));
+}
+export function projectReadResult(graph:OntologyObjectStore,owner:string,read:PreparedObjectRead):{state:'request_only'|'typed_result'|'invalid_source';subject?:ObjectRef} {
+  return runGraphProgram(graph,projectReadResultProgram(graph,owner,read));
 }

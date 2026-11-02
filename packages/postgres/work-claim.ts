@@ -1,6 +1,6 @@
 import type { Client } from 'pg';
 import type { WorkClaim } from '../core/store.js';
-import { postgresBusinessAuthorityDigest, postgresBusinessSchema } from './runtime-transaction.js';
+import { postgresBusinessAuthorityDigest, postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresWorkAuthority } from './work-authority.js';
 
 type ClaimFence = { owner: string; taskId: string; token: string; state: string; revision: number; requestRevision: number; recovery: boolean; authorityId: string; epoch: number; policyRevision: number };
@@ -30,7 +30,8 @@ async function active(client: Client, fence: ClaimFence, policyDigest: string): 
   const authority = await postgresWorkAuthority(client,fence.owner,fence.taskId,policyDigest);
   if (!authority || authority.id !== fence.authorityId || authority.authEpoch !== fence.epoch) return false;
   // A long authority query must not leave an already expired lease eligible.
-  return BigInt(String(row.expires_at)) > BigInt(Date.now());
+  if(BigInt(String(row.expires_at))<=BigInt(Date.now()))return false;
+  postgresConstrainReadDeadline(client,Number(row.expires_at));return true;
 }
 
 /** Current-claim fence for the foundation security mode. The caller must use a

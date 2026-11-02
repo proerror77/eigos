@@ -27,6 +27,7 @@ import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
 import { reviewedFieldPolicy } from './field-policy.js';
 import { sourceAuthorizationSchema, storedSourceSchema, sourceMatchesObservation } from './source-policy.js';
 import { restrictionsFitRecipient } from './field-restrictions.js';
+import {objectEnvelope,objectEnvelopeDependencies,type ObjectRestriction} from './object-envelope.js';
 export { sourceAuthorizationSchema } from './source-policy.js';
 
 // Count only direct audit writes and checked claim renewals on this connection.
@@ -294,22 +295,15 @@ export class SecurityPolicies {
   }
   integrityAllowed(type:string,field:string,allowed:string[]) {return integrityField(type,field,allowed);}
   envelope(owner: string, ref: ObjectRef, revision: number, fields: string[], properties: Record<string, unknown>, channels: Channel[]): SecurityEnvelope {
-    const policies = fields.map(f => this.fieldPolicy(ref.type, f));
-    const dependencies=fields.filter(f=>(ref.type!=='ServiceRequest' || !['progress','projectionState','currentAssessment','requestedOutcome'].includes(f)) && this.fieldPolicy(ref.type,f)!=='derived_from_inputs').sort();
-    const result:SecurityEnvelope={ version: SECURITY_CONTRACT, ownerKey: owner, policyVersion: POLICY_VERSION, requiredMarkings: policies.includes('task_sensitive') ? ['member_private', 'personal_data'] : ['member_private'],
-      classification: policies.includes('internal_only') ? 'internal' : policies.includes('task_sensitive') ? 'sensitive' : 'private', channels,
-      lineage: [{ object: ref, revision, fields: dependencies, contentDigest: digest(Object.fromEntries(dependencies.map(f => [f, this.value(ref.type,f,properties)]))) }], lineageComplete: true };
-    result.requiredMarkings=[...new Set([...result.requiredMarkings,...fields.flatMap(field=>projectionMarkings(ref.type,field))])];
-    if(fields.some(field=>responseOnlyProjection(ref.type,field)))result.channels=result.channels.filter(channel=>channel!=='registered_model');
     const scope=authorizationScope(),key=JSON.stringify([owner,ref.type,ref.id]);
     const generation=scope?.readGeneration?.();let cached=scope?this.labelCache.get(scope):undefined;
     if(scope&&(!cached||cached.generation!==generation)){cached={generation,labels:new Map()};this.labelCache.set(scope,cached);}
     const cache=cached?.labels;
     let records=cache?.get(key);
     if(!records){records=this.db.prepare('SELECT field,body FROM security_labels WHERE owner=? AND type=? AND object_id=?').all(owner,ref.type,ref.id).map(row=>({field:String(row.field),body:JSON.parse(String(row.body))}));cache?.set(key,records);}
-    const policyFields=new Set([...fields,...fields.flatMap(field=>projectionInputs(ref.type,field))]);
-    const labels=records.filter(row=>row.field==='*' || policyFields.has(row.field)).map(row=>({...result,...row.body} as SecurityEnvelope));
-    return labels.length?combineEnvelopes([result,...labels]):result;
+    return objectEnvelope({owner,ref,revision,fields,channels,policy:field=>this.fieldPolicy(ref.type,field),
+      values:Object.fromEntries(objectEnvelopeDependencies(ref,fields,field=>this.fieldPolicy(ref.type,field)).map(field=>[field,this.value(ref.type,field,properties)])),
+      labels:records.map(row=>({field:row.field,...row.body} as ObjectRestriction))});
   }
   bind(grant: TaskDataGrant, ref: ObjectRef, fields: string[], sourceBindingId: string, evidence?:SecurityEnvelope|(()=>SecurityEnvelope), sourceObservation?: SourceObservationOrigin) {
     if (sourceObservation) {

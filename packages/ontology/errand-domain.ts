@@ -1,3 +1,4 @@
+import {graphReadPrivate,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -57,11 +58,11 @@ export function projectTransactionPartyRole(graph: OntologyObjectStore, owner: s
     links: [...links, { type: 'TransactionPartyRoleEvidence', from: ref, to: receiptObject }] }, source);
   return ref;
 }
-export function assertTransactionPartyRoleWrite(graph: OntologyObjectStore, owner: string, object: ObjectWrite, source: ObjectSource) {
+export function* assertTransactionPartyRoleWriteProgram(graph: ProjectionMetadata, owner: string, object: ObjectWrite, source: ObjectSource):GraphProgram<void> {
   if (object.ref.type !== 'TransactionPartyRole') return;
   const assignment = transactionPartyRoleSchema.parse(object.properties.assignment);
   if (assignment.ownerDigest !== digest(owner) || source.id !== assignment.issuerIdentity || source.observedAt !== assignment.observedAt || source.kind === 'task' || source.kind === 'user' && !['sender', 'receiver'].includes(assignment.role)) fail('Party assignments require an owned valid source or explicit contact selection');
-  try { const old = graph.readPrivate(owner, object.ref); if (!same(old.properties, object.properties) || !same(old.source, source)) fail('Party roles are immutable; append a source-versioned successor'); }
+  try { const old = (yield* graphReadPrivate(owner, object.ref)); if (!same(old.properties, object.properties) || !same(old.source, source)) fail('Party roles are immutable; append a source-versioned successor'); }
   catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
 }
 export function compareErrandConstraints(actual: unknown, requested: unknown) {
@@ -111,4 +112,8 @@ export function evaluateErrandFunction(graph: OntologyObjectStore, owner: string
   const status = assignment.state === 'revoked' ? 'revoked' : Date.parse(assignment.expiresAt) <= graph.now() ? 'expired' : receipt.properties.evidenceLevel === 'user_asserted' ? 'declared' : 'assigned';
   if (receipt.properties.evidenceLevel === 'user_asserted' && !['sender', 'receiver'].includes(assignment.role)) return unknown('User declarations cannot establish commercial responsibility');
   return { status: 'known', value: { status, role: assignment.role, scope: assignment.scope, party: assignment.party, grantsAuthority: false }, evidenceRefs: [object.ref, receipt.ref, assignment.scope.object, assignment.party.object], evidenceLevels: [String(receipt.properties.evidenceLevel)] };
+}
+
+export function assertTransactionPartyRoleWrite(graph:OntologyObjectStore,owner:string,object:ObjectWrite,source:ObjectSource):void {
+  return runGraphProgram(graph,assertTransactionPartyRoleWriteProgram(graph,owner,object,source));
 }

@@ -1,7 +1,10 @@
 import type { OntologyObjectStore } from './object-store.js';
 
 type OperationName='read'|'readPrivate'|'query'|'related'|'ingest'|'containsLinks'|'relationshipDigest'|'tombstone';
-export type ProjectionMetadata=Pick<OntologyObjectStore,'model'|'now'|'releaseRef'>;
+export type ProjectionMetadata=Pick<OntologyObjectStore,'model'|'now'|'releaseRef'> & {
+  /** Truthy for an authority-bound graph. Policy execution stays in storage. */
+  readonly security?:unknown;
+};
 export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName>;
 export type GraphStorage={
   [K in OperationName]:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>>;

@@ -1,11 +1,11 @@
 import type { Client } from 'pg';
-import { ownerKey, type Principal } from '../core/domain.js';
+import { ownerKey, taskIdSchema, type Principal } from '../core/domain.js';
 import { taskContextFields } from '../security/task-context-contract.js';
 import { TASK_CONTEXT_EDGES, collectTaskContextMembers } from '../security/task-context-membership.js';
 import { SecurityError } from '../security/errors.js';
 import { postgresBusinessSchema } from './runtime-transaction.js';
 import { withPostgresTaskReadGrant } from './task-read-access.js';
-import { postgresOntologyReadContext } from './ontology-release.js';
+import { postgresTaskReadOntology } from './task-read-access.js';
 import type { StagedKernelBuilder } from '../ontology/seed-definition.js';
 
 /** Internal task-metadata membership only. Resource roles, field access,
@@ -13,7 +13,16 @@ import type { StagedKernelBuilder } from '../ontology/seed-definition.js';
 export async function postgresTaskContextMembers(client:Client,principal:Principal,taskId:string,policyDigest:string,builder?:StagedKernelBuilder) {
  const captured=structuredClone(principal),owner=ownerKey(captured);
  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
-  await postgresOntologyReadContext(client,owner,{taskId},captured.scopes.includes('ontology:admin'),builder);
+  await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
+  return postgresOwnedTaskContextMembers(client,owner,taskId,admission.grant.requestRevision);
+ });
+}
+
+/** Selection only; task read/process and output authorization belongs to the
+ * caller. Mutation commands use this after validating their current grant. */
+export async function postgresOwnedTaskContextMembers(client:Client,owner:string,taskId:string,requestRevision:number) {
+ taskIdSchema.parse(taskId);
+ if(!owner || !Number.isSafeInteger(requestRevision) || requestRevision<1)throw new SecurityError('POLICY_CHANGED');
   const q=`"${postgresBusinessSchema(client)}"`,types=Object.keys(taskContextFields).filter(type=>type!=='RegisteredCapability'),edges=[...TASK_CONTEXT_EDGES];
   // SQLite refuses malformed metadata and malformed objects touching reviewed
   // edges; never interpret such records as simply absent in PostgreSQL.
@@ -45,7 +54,6 @@ export async function postgresTaskContextMembers(client:Client,principal:Princip
    SELECT type,CASE WHEN octet_length(from_type)<=80 THEN from_type END AS from_type,CASE WHEN octet_length(from_id)<=800 THEN from_id END AS from_id,
     CASE WHEN octet_length(to_type)<=80 THEN to_type END AS to_type,CASE WHEN octet_length(to_id)<=800 THEN to_id END AS to_id FROM selected_links`,[owner,taskId,edges]);
   if(links.rows.length>4000 || links.rows.some(row=>row.from_type===null || row.from_id===null || row.to_type===null || row.to_id===null))throw new SecurityError('INSUFFICIENT_ACCESS');
-  try {return [...collectTaskContextMembers(rows.rows,links.rows,taskId,admission.grant.requestRevision).values()];}
+  try {return [...collectTaskContextMembers(rows.rows,links.rows,taskId,requestRevision).values()];}
   catch(error) {if(error instanceof SecurityError)throw error;throw new SecurityError('POLICY_CHANGED');}
- });
 }

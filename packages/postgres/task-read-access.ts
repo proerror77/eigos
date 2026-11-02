@@ -41,9 +41,9 @@ function freezeData<T>(input:T):T {
  * must come from trusted authentication and reviewed server configuration.
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
-export async function postgresAgentReadAdmission(client: Client, principal: Principal, policyDigest: string) {
+async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:'tasks:read'|'tasks:write') {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
-  requireScope(principal,'tasks:read');
+  requireScope(principal,scope);
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');
   const actor = accessContextSchema.parse(principal.access), owner = ownerKey(principal);
   if (actor.actorKind !== 'agent' || actor.ownerKey !== owner || actor.clientId !== principal.clientId
@@ -75,6 +75,21 @@ export async function postgresAgentReadAdmission(client: Client, principal: Prin
   return {actor,parent,policyRevision:revision,validUntil};
 }
 
+export async function postgresAgentReadAdmission(client:Client,principal:Principal,policyDigest:string) {
+  return postgresAgentAdmission(client,principal,policyDigest,'tasks:read');
+}
+export async function postgresAgentWriteAdmission(client:Client,principal:Principal,policyDigest:string) {
+  return postgresAgentAdmission(client,principal,policyDigest,'tasks:write');
+}
+export async function withPostgresAgentWrite<T>(client:Client,principal:Principal,policyDigest:string,
+  action:(admission:Awaited<ReturnType<typeof postgresAgentWriteAdmission>>)=>Promise<T>):Promise<T> {
+  const captured=structuredClone(principal),before=await postgresAgentWriteAdmission(client,captured,policyDigest);
+  const result=await action(before),after=await postgresAgentWriteAdmission(client,captured,policyDigest);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,after.validUntil);
+  return result;
+}
+
 export async function withPostgresAgentRead<T>(client:Client,principal:Principal,policyDigest:string,
   action:(admission:Awaited<ReturnType<typeof postgresAgentReadAdmission>>)=>Promise<T>):Promise<T> {
   const captured=structuredClone(principal),before=await postgresAgentReadAdmission(client,captured,policyDigest);
@@ -84,8 +99,8 @@ export async function withPostgresAgentRead<T>(client:Client,principal:Principal
   return result;
 }
 
-export async function postgresTaskReadGrant(client: Client, principal: Principal, taskId: string, policyDigest: string) {
-  const id=taskIdSchema.parse(taskId),base=await postgresAgentReadAdmission(client,principal,policyDigest);
+async function postgresTaskGrant(client: Client, principal: Principal, taskId: string, policyDigest: string,mode:'read'|'process'|'receipt') {
+  const id=taskIdSchema.parse(taskId),base=mode==='read'?await postgresAgentReadAdmission(client,principal,policyDigest):await postgresAgentWriteAdmission(client,principal,policyDigest);
   const {actor,parent}=base,owner=ownerKey(principal),q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
   const rows = await client.query(`SELECT d.revision,d.state,d.expires_at,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body
     FROM ${q}.security_grants d JOIN ${q}.jobs j ON j.id=$1 AND j.owner=d.owner
@@ -108,11 +123,22 @@ export async function postgresTaskReadGrant(client: Client, principal: Principal
   const grantRow = rows.rows[0], grant = taskDataGrantSchema.parse({ ...JSON.parse(String(grantRow.body)),revision:Number(grantRow.revision),status:grantRow.state });
   if (grant.ownerKey !== owner || grant.memberId !== actor.memberId || grant.installationId !== actor.installationId || grant.taskId !== id
     || grant.parentGrant.id !== parent.id || grant.parentGrant.revision !== parent.revision || grant.purpose !== 'delegated_task'
-    || !grant.operations.includes('task.result.read') || grant.inputs.length > 0 && !grant.operations.includes('member_asset.read')
-    || !grant.channels.includes('agent_response') || !parent.channels.includes('agent_response')) throw new SecurityError('AUTHORIZATION_REQUIRED');
+    || (mode==='read'?!grant.operations.includes('task.result.read'):mode==='process'&&!grant.operations.includes('task.process'))
+    || grant.inputs.length > 0 && !grant.operations.includes('member_asset.read')
+    || mode==='read'&&(!grant.channels.includes('agent_response')||!parent.channels.includes('agent_response'))) throw new SecurityError('AUTHORIZATION_REQUIRED');
   const validUntil=Math.min(base.validUntil,Number(grantRow.expires_at),Date.parse(grant.expiresAt));
   if(!Number.isSafeInteger(validUntil) || validUntil<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
   return { ...base,grant,validUntil };
+}
+
+export async function postgresTaskReadGrant(client:Client,principal:Principal,taskId:string,policyDigest:string) {
+  return postgresTaskGrant(client,principal,taskId,policyDigest,'read');
+}
+export async function postgresTaskProcessingGrant(client:Client,principal:Principal,taskId:string,policyDigest:string) {
+  return postgresTaskGrant(client,principal,taskId,policyDigest,'process');
+}
+export async function postgresTaskReceiptGrant(client:Client,principal:Principal,taskId:string,policyDigest:string) {
+  return postgresTaskGrant(client,principal,taskId,policyDigest,'receipt');
 }
 
 /** Recheck admission after an awaited read. The action must additionally apply

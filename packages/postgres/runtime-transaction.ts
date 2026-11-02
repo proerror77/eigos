@@ -4,7 +4,14 @@ import { SecurityError } from '../security/errors.js';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object }>();
+
+/** Identity of this exact transaction, not just its schema or pooled client. */
+export function postgresBusinessToken(client:Client):object {
+  const context=contexts.get(client);
+  if(!context)throw new Error('An active PostgreSQL business transaction is required');
+  return context.token;
+}
 
 /** A protected read must remain authorized when the transaction returns,
  * including the network wait for COMMIT. This never extends a grant/lease. */
@@ -72,7 +79,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({})};
     contexts.set(client,context);
     let result: T;
     try { result = await action(client); }

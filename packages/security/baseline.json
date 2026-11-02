@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "7f3105ae9843ec0d5479f4ea8ea01f3fc4409219162093387c3cbbe7fb1ba55f",
+      "sourceDigest": "9d6a76bb0532307d63115dffc0aeb073c63b95b3d5a44d1b4fbd4601b5983206",
       "channels": [
         "http",
         "mcp",
@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "a82bbbe6c978d3dd7b07a8c0702f6bf239e12935ae42761c658e29fea4fbf60b",
+      "sourceDigest": "a4c7ea9feb13d16c048424a3489fc54871fa47aaba3d79d7bd7b7a56dcd412e6",
       "channels": [
         "sqlite",
         "idempotency"
@@ -2937,7 +2937,7 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "bf233b48aa5a282b92ab4250d2ce0896921150fe5cd7b6bc00cecfc7d427ad5e",
+      "sourceDigest": "d67d197e2fd0d4dfedf39eab548d9b58dc0d4cbdb54623c01fd1e2585e532c97",
       "channels": [
         "query",
         "function"
@@ -3238,7 +3238,7 @@
     {
       "id": "task-projection",
       "file": "packages/ontology/task-projection.ts",
-      "sourceDigest": "ba452895ad59887b05c59c3a2bfd48ac5b859e1a145d452d9c0cd11ae090f3ba",
+      "sourceDigest": "18783cb5c5d001a9c251d19d38e5d6240281080d6dbb1aea292ff07462df87d6",
       "channels": [
         "ontology_write"
       ],
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "f3e14687130540887eda17b3cef08f823b69f33e0f84dfb7a949853b91a554fe",
+      "sourceDigest": "fccfd53f89331f240e49b830ee5d8ad1e499e5be8c5563d92d58e8594823ff9e",
       "channels": [
         "all-reads"
       ],
@@ -4118,7 +4118,7 @@
     {
       "id": "outcome-shared-projection",
       "file": "packages/ontology/outcome-assessment-values.ts",
-      "sourceDigest": "64ac0f205089251fb043dfb8501eea3dcd24cdec96fabbb8b3166dc8bddef8fa",
+      "sourceDigest": "72a67efb73990ff08ff72f0c35b842872dac47d77040085cd1db5531ef143b89",
       "channels": [
         "model",
         "artifact"
@@ -4131,7 +4131,7 @@
     {
       "id": "capability-context",
       "file": "packages/ontology/capability-catalog.ts",
-      "sourceDigest": "3ed64a1e0822fb091ac9a94bc29b1e51a2dec2d428eb24047291609575bed9ef",
+      "sourceDigest": "ae4686180e6478a368fb2c43d8545a7a09867939720fe45d22ebe02d3ec21bd6",
       "channels": [
         "model",
         "artifact"
@@ -4144,7 +4144,7 @@
     {
       "id": "caller-outcome-proof",
       "file": "packages/ontology/caller-outcome-proof.ts",
-      "sourceDigest": "c09fd00c156214526d8bb76df3e9f8d46e2fca437c99808f2b5b8e681e52da7d",
+      "sourceDigest": "50eee62b44d2f67969202f68219ff622ba8fa2e5b32accfe1ff6d98fc8dbe9f8",
       "channels": [
         "model",
         "artifact"
@@ -4183,7 +4183,7 @@
     {
       "id": "execution-projection",
       "file": "packages/ontology/execution-projection.ts",
-      "sourceDigest": "a0d0489a15a84f6d9bb71d96c5d451a9163dac2c5fa99d5d4ca2bec0195739aa",
+      "sourceDigest": "46c6bda07fd066d4321b8f6e407890b3ea5c0f5c4eeafc0ccbd06986ffaab666",
       "channels": [
         "model",
         "artifact"
@@ -5030,7 +5030,7 @@
     {
       "id": "packages-core-personal-context",
       "file": "packages/core/personal-context.ts",
-      "sourceDigest": "df9ec3747b09ae63e2a987523d43a3467380308c6bbbcf471a76a96b3527ab64",
+      "sourceDigest": "9f103f2894c32c303db7efec1ca0fc365571ebf6ae06d9bee59d3689ffe72e1a",
       "channels": [
         "sqlite",
         "registered_model"
@@ -5540,7 +5540,7 @@
       "currentControl": "Idle non-pipelined connection, transaction identity and savepoint checks, shared advisory lock, authority fencing and fail-closed uncertain commits",
       "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
       "stage": "S5",
-      "sourceDigest": "b7dc112b37c1bc4e3bc09f813434d589d511769b2cd8b19c039b50b724b83436"
+      "sourceDigest": "a7846a8d728105d58f28bbe43b87f191abb685a2bda9863c834d9066196dd4fe"
     },
     {
       "id": "postgres-authority-lock",
@@ -5579,7 +5579,7 @@
       "currentControl": "Fenced transaction, original claim token and authority digest, current task revisions, grant identity and expiry rechecks; claim verification returns bounded scalar fields instead of the task body",
       "targetControl": "Complete claim creation, recovery, result fencing and full authorization before runtime activation",
       "stage": "S5",
-      "sourceDigest": "ba431ebe7480161ed7151f70de7d0df2fcd5f3e8fe3afa2da4276ae860b88db5"
+      "sourceDigest": "f5096c8d0267b0d147d8e10157fbcd206fd33f58d514e3da29a1113be481128d"
     },
     {
       "id": "relay-cloudflare-binding",
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "e6029299052ba750e5392cd52b91674e2fdac3c19d5c3fa1c9fdb7b9c5a61198",
+      "sourceDigest": "bbe02bbf30534eae3bb1f589fed87660afb12207a4f4b65be7cb001068b1264a",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5768,7 +5768,7 @@
     {
       "id": "postgres-task-context-membership",
       "file": "packages/postgres/task-context-membership.ts",
-      "sourceDigest": "ed3f19e591de6b9691390645bb553b6433e5ee62cf3157d9292332223cfac2e6",
+      "sourceDigest": "c7fee22e253ed5a9fb6b0794ed7daf9eda9b69b58d7e5d38b6485aa7073e9bde",
       "channels": [
         "authorization_control"
       ],
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "16032e3b70fd5bf512594c3ae8dcae722017c13d9ffc8b133c025d409ed76e35",
+      "sourceDigest": "6ffdca5c0b4d4862b4a7a00a0c14749446abb92547e0d6d05322c19ccd522638",
       "channels": [
         "internal"
       ],
@@ -5903,7 +5903,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "a1cd369fcc803051c72e3fabfb72790244c1a1a94627ad5eacbb4bb45937e662",
+      "sourceDigest": "1ae3952370b1fa07efd174211a6050480037f844058e21491702697f07698518",
       "channels": [
         "internal"
       ],
@@ -5922,6 +5922,138 @@
       "content": "Checked catalog snapshot projection",
       "currentControl": "Same checked snapshot, task binding and immutable observation rules on both storage drivers; provider payloads do not create dispatch authority",
       "targetControl": "Same checked snapshot, task binding and immutable observation rules on both storage drivers; provider payloads do not create dispatch authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-projection-graph",
+      "file": "packages/postgres/projection-graph.ts",
+      "sourceDigest": "9af97ec4a1f75f86348b27c331e94ca69e5848f794caa495ac6bf5d4557e77a3",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL shared ontology projection storage",
+      "currentControl": "Exact transaction token, owner and immutable release; shared graph programs; bounded complete reads, CAS, provenance validators and savepoint rollback; privileged internal projections only",
+      "targetControl": "Exact transaction token, owner and immutable release; shared graph programs; bounded complete reads, CAS, provenance validators and savepoint rollback; privileged internal projections only",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-bindings",
+      "file": "packages/postgres/task-bindings.ts",
+      "sourceDigest": "bf6bf11714da8c495c7d44820b2d6282e68a01477b4f9057088173cd3596b532",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task projection bindings",
+      "currentControl": "Current grant-scoped task membership and personal input revisions; immutable content and relationship provenance; monotone restrictions and bounded retained read history",
+      "targetControl": "Current grant-scoped task membership and personal input revisions; immutable content and relationship provenance; monotone restrictions and bounded retained read history",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-grants",
+      "file": "packages/postgres/task-grants.ts",
+      "sourceDigest": "20c4800f4beb0c86153682451380e5df2d8cf161c03b4cc71b9f2f47f462a521",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task grant and execution authority issuance",
+      "currentControl": "Current authenticated installation and parent authority; fixed grant expiry, exact owned request and input revisions; atomic old-grant revocation and successor issuance",
+      "targetControl": "Current authenticated installation and parent authority; fixed grant expiry, exact owned request and input revisions; atomic old-grant revocation and successor issuance",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-personal",
+      "file": "packages/postgres/task-personal.ts",
+      "sourceDigest": "98e0c479bb8bb35d1e86587f349b36edc707c74f39eee90f119aaaaad51ce890",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL explicit personal input selection",
+      "currentControl": "Authenticated parent fields and current resource roles; exact owner and revision; explicit self, defaults, overrides and resource selection; no owner-wide model access",
+      "targetControl": "Authenticated parent fields and current resource roles; exact owner and revision; explicit self, defaults, overrides and resource selection; no owner-wide model access",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-storage",
+      "file": "packages/postgres/task-storage.ts",
+      "sourceDigest": "2bc3cb8210e14e27f3b0aa62e212f2ec2c3c4ae642ae6f051c9fdd0698cfc6dc",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL atomic task and ledger projection writer",
+      "currentControl": "Immutable task owner, runtime and release; bounded internal ledger, atomic shared task/execution/business projections and bindings; installation-scoped durable idempotency receipt",
+      "targetControl": "Immutable task owner, runtime and release; bounded internal ledger, atomic shared task/execution/business projections and bindings; installation-scoped durable idempotency receipt",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-task-commands",
+      "file": "packages/postgres/task-command-service.ts",
+      "sourceDigest": "db7893cd93c58052366bcb28cfaa0b28a6d2e8e06da4942ff8af6f99889e18e4",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task submit and cancellation",
+      "currentControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
+      "targetControl": "Current write admission before and after atomic commands; original-task idempotency; explicit personal inputs; current sealed output or writer-only receipt; no model/provider execution",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-admission",
+      "file": "packages/postgres/worker-admission.ts",
+      "sourceDigest": "736ce8d7e7db5f097455d3510bf93f7378578f6ef78c0bed9b31c2ae5a839520",
+      "channels": [
+        "internal"
+      ],
+      "content": "Persisted PostgreSQL Worker task authority",
+      "currentControl": "Exact current authority, parent/data grant, member/installation identity, epoch, fences, policy and fixed deadlines; no borrowed user token",
+      "targetControl": "Exact current authority, parent/data grant, member/installation identity, epoch, fences, policy and fixed deadlines; no borrowed user token",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-store",
+      "file": "packages/postgres/worker-store.ts",
+      "sourceDigest": "ee1c3a1c42e2b1a2b035335245576ea92ce87a69c8710ed736e49ef900f2d94c",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL durable Worker queue and writeback",
+      "currentControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
+      "targetControl": "Shared two-call budget; current task authority and original token for claim, renewal and checkpoint/finish; cancellation and late-result fences; expired external dispatch becomes unknown and retains original key",
+      "stage": "S5"
+    },
+    {
+      "id": "security-object-envelope",
+      "file": "packages/security/object-envelope.ts",
+      "sourceDigest": "776966727f67403e2974ced06d57af83054fb3b9eaf8e2ad205e119d108174e8",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared pure object restriction and lineage construction",
+      "currentControl": "Same reviewed dependency exclusions, content digests, field classifications, markings and monotone channel intersection on both storage adapters",
+      "targetControl": "Same reviewed dependency exclusions, content digests, field classifications, markings and monotone channel intersection on both storage adapters",
+      "stage": "S5"
+    },
+    {
+      "id": "task-submission-contract",
+      "file": "packages/core/task-submission.ts",
+      "sourceDigest": "894b678f6619d73f6d8d91498645e92c21fde3d604b4a8402c148fc0e4c60dd3",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared pure task submission construction",
+      "currentControl": "Preserves original authenticated goal, deliverable, messages, requirements, immutable ontology pin, personal/location context and cumulative budget; grants no execution authority",
+      "targetControl": "Preserves original authenticated goal, deliverable, messages, requirements, immutable ontology pin, personal/location context and cumulative budget; grants no execution authority",
+      "stage": "S5"
+    },
+    {
+      "id": "task-intent-cancellation",
+      "file": "packages/core/task-intents.ts",
+      "sourceDigest": "772aa4ce56aa53a84b6f199629bf0238165bf3d6469905d2f6b2f6114be2dc72",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared pure task intent cancellation",
+      "currentControl": "Ready operations cancel before dispatch; read/local replies stop; uncertain external effects retain original operation identity for audit without replay",
+      "targetControl": "Ready operations cancel before dispatch; read/local replies stop; uncertain external effects retain original operation identity for audit without replay",
       "stage": "S5"
     }
   ]

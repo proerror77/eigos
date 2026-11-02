@@ -60,9 +60,13 @@ const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema,
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 function failure(message: string): never { throw new DomainError('INVALID_INPUT', message); }
-class IncompleteRelationshipRead extends DomainError {
+export class IncompleteRelationshipRead extends DomainError {
   constructor() { super('CONFLICT', 'Relationship read is incomplete; narrow the investigation'); }
 }
+
+// Shared storage contracts; exporting these does not install an import tool or
+// authorize writes. Runtime adapters retain their own transaction/actor fence.
+export {sourceSchema as ontologySourceSchema,batchSchema as ontologyBatchSchema,cursorSchema as ontologyCursorSchema};
 
 /** Owned business objects only. Writes are internal source mappings, never public query operations. */
 export class OntologyObjectStore {

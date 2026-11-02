@@ -36,6 +36,7 @@ import {agentDispatchGrant} from './agent-authorization.js';
 import { storedRuntimeAuthority, runtimeAuthorityMatches, runtimeAuthorityDigest, claimAuthorityCurrent, type RuntimeAuthority } from './runtime-authority.js';
 import { initializeTaskReadProjections, projectedTaskReadRelease } from '../ontology/task-read-projection.js';
 import { synchronizeTaskOutcome } from './task-outcome.js';
+import { cancelTaskIntent } from './task-intents.js';
 import type { PlanningReadReceipt } from '../ontology/planning-contract.js';
 
 export interface ListFilter {
@@ -602,10 +603,7 @@ export class JobStore {
   cancelActions(owner: string, jobId: string): boolean {
     let pending = false;
     for (const intent of this.intents(owner, jobId)) {
-      if (intent.state === 'ready') intent.state = 'canceled_before_dispatch';
-      else if (['read', 'local'].includes(intent.effect) && ['dispatching', 'awaiting_remote', 'effect_unknown'].includes(intent.state)) { intent.state = 'canceled_after_dispatch'; intent.needsObservation = false; this.saveIntent(owner, intent); continue; }
-      if (intent.state === 'dispatching') intent.state = 'effect_unknown';
-      if (['effect_unknown', 'awaiting_remote'].includes(intent.state)) { pending = true; intent.nextAt = Date.now(); }
+      if (cancelTaskIntent(intent,Date.now())) pending = true;
       this.saveIntent(owner, intent);
     }
     return pending;

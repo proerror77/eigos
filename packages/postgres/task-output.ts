@@ -13,6 +13,7 @@ import { projectedValue, projectionFields, projectionMarkings, responseOnlyProje
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import { taskContextFields } from '../security/task-context-contract.js';
+import {objectEnvelope,objectEnvelopeDependencies} from '../security/object-envelope.js';
 import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
@@ -179,17 +180,10 @@ export async function withPostgresTaskReadAuthorization<T>(client: Client, princ
       }
     };
     const envelopeFor = async (ref: ObjectRef, revision: number, fields: string[], properties: Record<string, unknown>) => {
-      const policies = fields.map(field => reviewedFieldPolicy(model, ref.type, field));
-      const measured = fields.filter(field => (ref.type !== 'ServiceRequest' || !['progress', 'projectionState', 'currentAssessment', 'requestedOutcome'].includes(field))
-        && reviewedFieldPolicy(model, ref.type, field) !== 'derived_from_inputs').sort();
-      const base: SecurityEnvelope = { version: SECURITY_CONTRACT, policyVersion: POLICY_VERSION, ownerKey: owner,
-        classification: policies.includes('internal_only') ? 'internal' : policies.includes('task_sensitive') ? 'sensitive' : 'private',
-        requiredMarkings: [...new Set([...(policies.includes('task_sensitive') ? ['member_private', 'personal_data'] as const : ['member_private'] as const), ...fields.flatMap(field => projectionMarkings(ref.type, field))])],
-        channels: admission.grant.channels.filter(channel => !fields.some(field => responseOnlyProjection(ref.type, field)) || channel !== 'registered_model'),
-        lineage: [{ object: ref, revision, fields: measured,
-          contentDigest: digest(Object.fromEntries(await Promise.all(measured.map(async field => [field, await value(ref, field, properties)])))) }], lineageComplete: true };
-      const labels = await postgresTaskCurrentLabels(client, captured, taskId, policyDigest, ref, revision, fields, builder);
-      return combineEnvelopes([base, ...labels.map(({ field: _field, ...label }) => ({ ...base, ...label }))]);
+      const labels=await postgresTaskCurrentLabels(client,captured,taskId,policyDigest,ref,revision,fields,builder);
+      const values=Object.fromEntries(await Promise.all(objectEnvelopeDependencies(ref,fields,field=>reviewedFieldPolicy(model,ref.type,field)).map(async field=>[field,await value(ref,field,properties)])));
+      return objectEnvelope({owner,ref,revision,fields,channels:admission.grant.channels,
+        policy:field=>reviewedFieldPolicy(model,ref.type,field),values,labels});
     };
     const effectiveEnvelope = async (initial: SecurityEnvelope, channel:Channel='agent_response') => {
       await validateEnvelope(initial);

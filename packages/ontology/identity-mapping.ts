@@ -1,3 +1,4 @@
+import {graphReadPrivate,runGraphProgram,type GraphProgram,type ProjectionMetadata} from './graph-program.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
@@ -90,12 +91,12 @@ export function projectEntityIdentityAssertion(graph: OntologyObjectStore, owner
 }
 
 /** Also call from the central ingestion boundary for this concrete type. */
-export function assertIdentityAssertionWrite(graph: OntologyObjectStore, owner: string, object: ObjectWrite, source: ObjectSource): void {
+export function* assertIdentityAssertionWriteProgram(graph: ProjectionMetadata, owner: string, object: ObjectWrite, source: ObjectSource):GraphProgram<void> {
   if (object.ref.type !== 'EntityIdentityAssertion') return;
   const assertion = entityIdentityAssertionSchema.parse(object.properties.assertion);
   if (assertion.ownerDigest !== digest(owner) || !['synthetic', 'provider'].includes(source.kind) || source.id !== assertion.issuerIdentity || source.observedAt !== assertion.observedAt) fail('Identity assertions require a trusted owned source mapping');
   try {
-    const old = graph.readPrivate(owner, object.ref);
+    const old = (yield* graphReadPrivate(owner, object.ref));
     if (!same(old.properties, object.properties) || !same(old.source, source)) fail('Identity assertions are immutable; append a source-versioned successor');
   } catch (e) { if (!(e instanceof DomainError) || e.code !== 'NOT_FOUND') throw e; }
 }
@@ -139,4 +140,8 @@ export function evaluateIdentityFunction(graph: OntologyObjectStore, owner: stri
     : states.includes('revoked') ? 'revoked' : states.includes('expired') ? 'expired' : 'unknown';
   return { status: 'known', value: { status, identityKind: kind, left, right, reasons, ...(requested ? { requestedAssertion: requested, superseded: superseded.has(requested.id) } : {}),
     currentAssertions: applicable.filter(({ record }) => !superseded.has(record.ref.id)).map(({ record }) => record.ref), grantsAuthority: false, mergesObjects: false, transfersTerms: false }, evidenceRefs: refs, evidenceLevels: [...new Set(levels)] };
+}
+
+export function assertIdentityAssertionWrite(graph:OntologyObjectStore,owner:string,object:ObjectWrite,source:ObjectSource):void {
+  return runGraphProgram(graph,assertIdentityAssertionWriteProgram(graph,owner,object,source));
 }

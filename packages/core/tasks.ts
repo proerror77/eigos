@@ -1,3 +1,4 @@
+import { createSubmittedTask } from './task-submission.js';
 import { DELEGATE, digest, actionOperationKey } from './delegation.js';
 import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
 import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
@@ -297,29 +298,8 @@ export class TaskService {
       if (contextId && !this.store.hasContext(owner, contextId)) throw new DomainError('NOT_FOUND', 'Context not found');
       this.store.definitions.assertAccess(owner, args.ontologyId ?? 'eigos.business', p.scopes.includes('ontology:admin'));
       const ontologyRelease = this.store.definitions.active(args.ontologyId).ref;
-      const now = new Date().toISOString();
-      const job: Job = {
-        id: randomUUID(), contextId: contextId || randomUUID(), service: args.service,
-        goal: args.goal, deliverable: 'deliverable' in args ? args.deliverable : undefined, state: 'input-required',
-        messages: [{ id: args.requestId, role: 'user', text: args.goal, at: now }],
-        createdAt: now, updatedAt: now,
-      };
-        job.state = 'submitted'; job.revision = 1; job.runs = [];
-        job.executionMode = 'worker';
-        job.delegation = { backendVersion: BACKEND_VERSION, ontologyRelease, ontologyReadScope: p.scopes.includes('tasks:read') ? 'owner' : 'request', request: { id: job.id, revision: 1, originalGoal: args.goal,
-          executionEnvironment: args.executionEnvironment ?? 'live',
-          ...(args.capabilityRef ? { capabilityRef: args.capabilityRef } : {}),
-          requestedDeliverable: job.deliverable, messages: submissionInstructions(job.id, { id: args.requestId, text: args.goal, receivedAt: now }, job.deliverable),
-          requirements: (args.requirements ?? []).map(r => ({ ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: now } })) },
-          executionBudget: initialExecutionBudget(now, args.executionBudget), phase: 'grounding', events: [{ at: now, event: 'delegation_received' }] };
-      if (args.personalContext) {
-        job.delegation.request.personalContext = mergePersonalContext(args.personalContext);
-        if (!this.security) selectPersonalContext(this.store.ontologyForRelease(ontologyRelease), owner, job.delegation.request, args.personalContext);
-      }
-      if (args.locationContext) {
-        addLocationContext(job.delegation.request, args.locationContext, args.requestId, now);
-        job.delegation.events.push({ at: now, event: 'location_context_recorded' });
-      }
+      const job = createSubmittedTask(p,args,ontologyRelease,contextId);
+      if (args.personalContext && !this.security) selectPersonalContext(this.store.ontologyForRelease(ontologyRelease), owner, job.delegation!.request, args.personalContext);
       this.store.save(owner, job);
       return job;
     });
