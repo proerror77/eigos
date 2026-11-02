@@ -5,8 +5,10 @@ import pg from 'pg';
 import { readFileSync } from 'node:fs';
 const clientOptions = () => process.env.EIGOS_TEST_PG_CA_FILE ? { ssl: { ca: readFileSync(process.env.EIGOS_TEST_PG_CA_FILE, 'utf8'), rejectUnauthorized: true } } : {};
 import { postgresBusinessTransaction, postgresConstrainReadDeadline } from '../packages/postgres/runtime-transaction.js';
-import { installPostgresAuthorityLock } from '../packages/postgres/authority-lock.js';
+import { installPostgresAuthorityLock,postgresBusinessMutexValid } from '../packages/postgres/authority-lock.js';
 import { PostgresDatabase } from '../packages/postgres/database.js';
+import type {WorkClaim} from '../packages/core/store.js';
+import {BACKEND_VERSION} from '../packages/ontology/execution.js';
 
 test('PostgreSQL business mutations fence authority, roll back and report uncertain commits', { skip: process.env.EIGOS_TEST_PG_LOCAL !== '1' }, async () => {
   const client = new pg.Client(clientOptions()); await client.connect();
@@ -16,6 +18,8 @@ test('PostgreSQL business mutations fence authority, roll back and report uncert
     await client.query(`CREATE SCHEMA "${schema}"; CREATE TABLE "${schema}".runtime_authority(slot BIGINT PRIMARY KEY,id TEXT,revision BIGINT,configuration_digest TEXT); CREATE TABLE "${schema}".example(id BIGINT PRIMARY KEY,value BIGINT)`);
     await client.query(`INSERT INTO "${schema}".runtime_authority VALUES(1,$1,$2,$3)`, [authority.id,authority.revision,authority.digest]);
     await installPostgresAuthorityLock(client, schema);
+    assert.equal(await postgresBusinessMutexValid(client,schema),true);
+    await assert.rejects(client.query(`INSERT INTO "${schema}".eigos_business_mutex VALUES(true)`),/check constraint/);
     await postgresBusinessTransaction(client,schema,authority,async c => { await c.query('INSERT INTO example VALUES(1,10)'); });
     await client.query('BEGIN');
     await client.query(`UPDATE "${schema}".example SET value=11`);
@@ -52,7 +56,7 @@ test('concurrent PostgreSQL writers cannot silently lose an update', { skip: pro
     });
     const outcomes = await Promise.allSettled([write(first),write(second)]);
     const successful = outcomes.filter(result => result.status === 'fulfilled').length;
-    assert(successful >= 1);
+    assert.equal(successful,2,'a queued writer must take its snapshot after acquiring serialization');
     assert.equal(Number((await first.query(`SELECT value FROM "${schema}".example`)).rows[0].value),successful);
     for (const outcome of outcomes) if (outcome.status === 'rejected') assert.match(String(outcome.reason), /serializ|commit outcome is unknown/i);
   } finally { await first.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`); await first.end(); await second.end(); }
@@ -105,7 +109,7 @@ test('restricted runtime can lock authority without reading or updating its tabl
     await admin.query(`INSERT INTO "${schema}".example VALUES(1,0)`);
     await installPostgresAuthorityLock(admin,schema);
     assert.equal((await admin.query('SELECT has_function_privilege($1,$2,\'EXECUTE\') AS allowed', [role, `"${schema}".eigos_lock_runtime_authority()`])).rows[0].allowed,false);
-    await admin.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT EXECUTE ON FUNCTION "${schema}".eigos_lock_runtime_authority() TO "${role}"; GRANT SELECT,UPDATE ON "${schema}".example TO "${role}"; SET ROLE "${role}"`);
+    await admin.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT EXECUTE ON FUNCTION "${schema}".eigos_lock_runtime_authority() TO "${role}"; GRANT UPDATE ON "${schema}".eigos_business_mutex TO "${role}"; GRANT SELECT,UPDATE ON "${schema}".example TO "${role}"; SET ROLE "${role}"`);
     const privileges = await admin.query('SELECT has_table_privilege(current_user,$1,\'SELECT\') AS can_read, has_table_privilege(current_user,$1,\'UPDATE\') AS can_update', [`"${schema}".runtime_authority`]);
     assert.equal(privileges.rows[0].can_read,false); assert.equal(privileges.rows[0].can_update,false);
     await assert.rejects(admin.query(`SELECT * FROM "${schema}".runtime_authority`), /permission denied/);
@@ -197,4 +201,32 @@ test('database runtime releases each lease once and evicts an uncertain connecti
     await database.close();await database.close();assert.equal(ends,1);
     await assert.rejects(database.run(async()=>undefined),/runtime is closing/);assert.equal(connects,1);
   }
+});
+
+test('Worker heartbeat capacity is separate and both owned pools close once',async()=>{
+  let businessEnds=0,leaseEnds=0;
+  const business={connect:async()=>{throw new Error('unused');},end:async()=>{businessEnds++;}} as unknown as Pick<pg.Pool,'connect'|'end'>;
+  const lease={connect:async()=>{throw new Error('unused');},end:async()=>{leaseEnds++;}} as unknown as Pick<pg.Pool,'connect'|'end'>;
+  const authority={id:'authority',revision:1,digest:'a'.repeat(64)};
+  assert.throws(()=>new PostgresDatabase(business,'eigos_business_fixture',authority,{leasePool:business}),/separate/);
+  const database=new PostgresDatabase(business,'eigos_business_fixture',authority,{leasePool:lease});
+  await database.close();await database.close();assert.equal(businessEnds,1);assert.equal(leaseEnds,1);
+});
+
+test('heartbeat headers are captured before waiting for its connection lease',async()=>{
+  let connected!:(client:pg.PoolClient)=>void,started=false,released=0,token:unknown,revision:unknown;
+  const authority={id:'authority',revision:1,digest:'a'.repeat(64)},id=randomUUID(),at=new Date().toISOString();
+  const claim:WorkClaim={owner:JSON.stringify(['issuer','tenant','subject']),token:'original-token',securityAuthorityId:randomUUID(),securityEpoch:1,securityPolicyRevision:1,
+    job:{id,contextId:randomUUID(),service:'eigos.delegate',goal:'Synthetic',state:'working',revision:1,messages:[],createdAt:at,updatedAt:at,
+      delegation:{backendVersion:BACKEND_VERSION,phase:'grounding',events:[],request:{id,revision:1,originalGoal:'Synthetic',messages:[],requirements:[]}}}};
+  const client={pipeline:false,getTransactionStatus:()=>started?'T':'I',release:()=>{released++;},query:async(sql:string,values?:unknown[])=>{
+    if(sql==='BEGIN ISOLATION LEVEL READ COMMITTED')started=true;if(sql==='ROLLBACK')started=false;
+    if(sql.startsWith('WITH scope AS')){token=values?.[4];revision=values?.[5];}
+    return {rowCount:0,rows:[]};
+  }} as unknown as pg.PoolClient;
+  const business={connect:async()=>{throw new Error('unused');},end:async()=>{}} as unknown as Pick<pg.Pool,'connect'|'end'>;
+  const lease={connect:()=>new Promise<pg.PoolClient>(resolve=>{connected=resolve;}),end:async()=>{}};
+  const database=new PostgresDatabase(business,'eigos_business_fixture',authority,{leasePool:lease});
+  const renewal=database.renewClaim(claim,1000,'a'.repeat(64));claim.token='replacement-token';claim.job.revision=2;connected(client);
+  assert.equal(await renewal,false);assert.equal(token,'original-token');assert.equal(revision,1);assert.equal(released,1);await database.close();
 });

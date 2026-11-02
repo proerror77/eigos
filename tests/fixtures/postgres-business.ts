@@ -10,6 +10,7 @@ import {importBusinessSnapshot} from '../../packages/postgres/business-import.js
 import {postgresBusinessTransaction} from '../../packages/postgres/runtime-transaction.js';
 import {supabaseProxyOptions} from '../../packages/postgres/supabase-proxy.js';
 import {securityDefaults} from '../../packages/security/contracts.js';
+import {PostgresDatabase} from '../../packages/postgres/database.js';
 
 /** Actual offline importer, isolated schema, synthetic fixture data only. */
 export async function importPostgresFixture(f:ReturnType<typeof securityFixture>){
@@ -72,11 +73,12 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
   let pending:Promise<void>|undefined,failure:unknown;
   const refreshEligibility=()=>pending??(pending=refresh().catch(error=>{failure=error;throw error;}).finally(()=>{pending=undefined;}));
   const timer=setInterval(()=>{void refreshEligibility().catch(()=>{});},securityDefaults.authorityProjectionRefreshSeconds*1000);timer.unref();
-  return {client,schema,authority,policy,refreshEligibility,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
+  const database=new PostgresDatabase(new pg.Pool({...connection,max:2}),schema,authority,{leasePool:new pg.Pool({...connection,max:1})});
+  return {client,schema,authority,policy,database,refreshEligibility,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
     if(failure)throw new Error('Synthetic eligibility publisher failed',{cause:failure});
     return postgresBusinessTransaction(client,schema,authority,action);
   },close:async()=>{
-    clearInterval(timer);if(pending)await pending.catch(()=>{});await publisher.end();
+    clearInterval(timer);if(pending)await pending.catch(()=>{});await database.close();await publisher.end();
     try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await client.end();}
   }};
 }

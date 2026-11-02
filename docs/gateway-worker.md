@@ -32,6 +32,10 @@ Gateway 和 Worker 必须使用同一个持久 SQLite 文件，建议设置相�
 
 本体定义、发布引用、任务、授权和执行账本处于同一业务存储。新任务固定准确本体 release；Worker、MCP、A2A 和回读按该版本解析。会员登录会话使用独立会员库，Worker 不读取会员会话。详见[共享本体](../packages/ontology/README.md)。
 
+PostgreSQL 适配器把任务、授权、发布引用和本体投影放在同一业务事务中。共享业务事务先锁定永远为空的 `eigos_business_mutex`，再取得数据库快照，排队后读取的状态与资格保持一致。运行角色需要该空表的 `UPDATE` 权限，以及 `eigos_lock_runtime_authority()`、`eigos_current_runtime_authority()` 的执行权限；运行权威表的读取和修改继续由受限管理入口负责。
+
+Mac Worker 的 PostgreSQL 连接使用独立续租连接池：`new PostgresDatabase(businessPool, schema, authority, { leasePool })`。续租在独立事务中核对原令牌、任务版本、身份、授权及期限，只更新租约到期时间；业务提交、取消和结果写回继续经过共享业务事务。宿主层持有数据库凭据，模型进程使用任务范围内的本体工具。当前默认启动入口仍采用上文的 SQLite 路径；切换入口须完成对应协议、执行器与迁移验收。
+
 ## 领取与恢复
 
 领取、续租和结果提交绑定 owner、任务 revision、领取令牌及有效期。队列准备完成后才开始新租约；迟到结果不能覆盖取消、改版或失效领取。未知外部效果保留原操作身份，只进行原键查证。

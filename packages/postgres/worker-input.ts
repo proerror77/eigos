@@ -1,7 +1,7 @@
 import type {Client} from 'pg';
 import {z} from 'zod';
 import {digest} from '../core/delegation.js';
-import type {WorkClaim} from '../core/store.js';
+import type {PostgresWorkReference} from './work-claim.js';
 import type {ServiceRequest} from '../ontology/execution.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {combineEnvelopes,type SecurityEnvelope} from '../security/envelope.js';
@@ -14,7 +14,7 @@ import {postgresTaskReadHistory} from './task-lineage.js';
 /** Return a checked copy of the original model request and persist its input
  * influence in the same transaction. A caller runs the model only after this
  * transaction commits; no database client is lent to the model process. */
-export async function postgresWorkerRequest(client:Client,claim:WorkClaim,policy:string,modelChannel:string,builder?:StagedKernelBuilder):Promise<ServiceRequest>{
+export async function postgresWorkerRequest(client:Client,claim:PostgresWorkReference,policy:string,modelChannel:string,builder?:StagedKernelBuilder):Promise<ServiceRequest>{
   const q=`"${postgresBusinessSchema(client)}"`;
   return withPostgresWorkerEvidenceAuthorization(client,claim,policy,async(auth,admission)=>{
     const rows=await client.query(`SELECT CASE WHEN octet_length((source.value#>'{delegation,request}')::text)<=8388608

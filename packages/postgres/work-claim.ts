@@ -1,17 +1,35 @@
 import type { Client } from 'pg';
 import type { WorkClaim } from '../core/store.js';
+import type {Job} from '../core/domain.js';
 import { postgresBusinessAuthorityDigest, postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
 import { postgresWorkAuthority } from './work-authority.js';
 
-type ClaimFence = { owner: string; taskId: string; token: string; state: string; revision: number; requestRevision: number; recovery: boolean; authorityId: string; epoch: number; policyRevision: number };
-function capture(claim: WorkClaim): ClaimFence | undefined {
+export type PostgresClaimFence = Readonly<{ owner: string; taskId: string; token: string; state: string; revision: number; requestRevision: number; recovery: boolean; authorityId: string; epoch: number; policyRevision: number }>;
+export type PostgresWorkReference=Pick<WorkClaim,'owner'|'token'|'recovery'|'securityAuthorityId'|'securityEpoch'|'securityPolicyRevision'>&{
+  job:Pick<Job,'id'|'state'|'revision'>&{delegation?:{request:{revision:number}}};
+};
+/** Capture only lease headers, never multi-megabyte model/ontology histories. */
+export function postgresWorkReference(claim:PostgresWorkReference){
+  return Object.freeze({owner:claim.owner,token:claim.token,recovery:claim.recovery,securityAuthorityId:claim.securityAuthorityId,securityEpoch:claim.securityEpoch,
+    securityPolicyRevision:claim.securityPolicyRevision,job:Object.freeze({id:claim.job.id,state:claim.job.state,revision:claim.job.revision,
+      delegation:Object.freeze({request:Object.freeze({revision:claim.job.delegation?.request?.revision??0})})})});
+}
+export function postgresValidClaimFence(input:PostgresClaimFence):PostgresClaimFence|undefined{
+  if(typeof input.owner!=='string'||!input.owner||input.owner.length>2000||typeof input.taskId!=='string'||!input.taskId||input.taskId.length>128
+    ||typeof input.token!=='string'||!input.token||input.token.length>200||typeof input.authorityId!=='string'||!input.authorityId||input.authorityId.length>128
+    ||typeof input.state!=='string'||!input.state||input.state.length>32||typeof input.recovery!=='boolean'||!Number.isSafeInteger(input.revision)||input.revision<0
+    ||!Number.isSafeInteger(input.requestRevision)||input.requestRevision<1||!Number.isSafeInteger(input.epoch)||input.epoch<1
+    ||!Number.isSafeInteger(input.policyRevision)||input.policyRevision<1)return;
+  return Object.freeze({...input});
+}
+export function postgresCaptureClaim(claim:PostgresWorkReference):PostgresClaimFence|undefined {
   const revision = claim.job.revision ?? 0, requestRevision = claim.job.delegation?.request?.revision ?? 0;
   if (!claim.owner || !claim.job.id || !claim.token || !Number.isSafeInteger(revision) || !Number.isSafeInteger(requestRevision)
     || !claim.securityAuthorityId || !Number.isSafeInteger(claim.securityEpoch) || !Number.isSafeInteger(claim.securityPolicyRevision)) return;
-  return { owner:claim.owner,taskId:claim.job.id,token:claim.token,state:claim.job.state,revision,requestRevision,recovery:claim.recovery === true,
-    authorityId:claim.securityAuthorityId,epoch:claim.securityEpoch!,policyRevision:claim.securityPolicyRevision! };
+  return postgresValidClaimFence({ owner:claim.owner,taskId:claim.job.id,token:claim.token,state:claim.job.state,revision,requestRevision,recovery:claim.recovery === true,
+    authorityId:claim.securityAuthorityId,epoch:claim.securityEpoch!,policyRevision:claim.securityPolicyRevision! });
 }
-async function active(client: Client, fence: ClaimFence, policyDigest: string): Promise<boolean> {
+async function active(client: Client, fence: PostgresClaimFence, policyDigest: string): Promise<boolean> {
   const schema = postgresBusinessSchema(client), authorityDigest = postgresBusinessAuthorityDigest(client), q = `"${schema}"`;
   const row = (await client.query(`SELECT c.revision,c.expires_at,p.revision AS policy_revision,
     pg_catalog.jsonb_typeof(body.value) AS body_type,
@@ -36,15 +54,15 @@ async function active(client: Client, fence: ClaimFence, policyDigest: string): 
 
 /** Current-claim fence for the foundation security mode. The caller must use a
  * fenced business transaction and must separately check its operation scope. */
-export async function postgresClaimActive(client: Client, claim: WorkClaim, policyDigest: string): Promise<boolean> {
+export async function postgresClaimActive(client: Client, claim: PostgresWorkReference, policyDigest: string): Promise<boolean> {
   postgresBusinessSchema(client);
-  const fence = capture(claim);
+  const fence = postgresCaptureClaim(claim);
   return fence ? active(client,fence,policyDigest) : false;
 }
 
 /** Renew only the original unexpired token after rechecking current authority. */
-export async function postgresRenewClaim(client: Client, claim: WorkClaim, leaseMs: number, policyDigest: string): Promise<boolean> {
-  const schema = postgresBusinessSchema(client), fence = capture(claim);
+export async function postgresRenewClaim(client: Client, claim: PostgresWorkReference, leaseMs: number, policyDigest: string): Promise<boolean> {
+  const schema = postgresBusinessSchema(client), fence = postgresCaptureClaim(claim);
   if (!fence || !Number.isSafeInteger(leaseMs) || leaseMs <= 0 || !await active(client,fence,policyDigest)) return false;
   const now = Date.now(), expires = now + leaseMs;
   if (!Number.isSafeInteger(expires)) return false;

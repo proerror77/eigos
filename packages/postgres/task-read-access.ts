@@ -17,7 +17,7 @@ import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js
 import { restrictionsFitRecipient } from '../security/field-restrictions.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import type { ServiceRequest } from '../ontology/execution.js';
-import type {WorkClaim} from '../core/store.js';
+import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {postgresClaimActive} from './work-claim.js';
 
@@ -184,10 +184,10 @@ export async function withPostgresTaskReadSnapshot<T>(client:Client,principal:Pr
  * as an Agent. No tasks:read/result permission is manufactured. Only checked
  * evidence helpers may consume this short-lived scope; the callback performs
  * no model/provider I/O and may append its own read receipts after reading. */
-export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:WorkClaim,policyDigest:string,
+export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
   action:(principal:Principal,admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
   if(snapshots.has(client))throw new Error('Nested PostgreSQL read snapshots are not supported');
-  const captured=structuredClone(claim),owner=ownerIdentitySchema.parse(captured.owner);
+  const captured=postgresWorkReference(claim),owner=ownerIdentitySchema.parse(captured.owner);
   if(!await postgresClaimActive(client,captured,policyDigest))throw new SecurityError('ACCESS_REVOKED');
   const before=await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest);
   if(before.authority.id!==captured.securityAuthorityId||before.authority.authEpoch!==captured.securityEpoch||before.policyRevision!==captured.securityPolicyRevision)throw new SecurityError('POLICY_CHANGED');

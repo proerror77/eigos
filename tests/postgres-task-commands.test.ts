@@ -73,7 +73,7 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     assert.equal(successor.grant.requestRevision,2);
     const old=await t.client.query(`SELECT state,revision FROM ${q}.security_grants WHERE id=$1`,[previous.grant.id]);
     assert.equal(old.rows[0].state,'revoked');assert.equal(Number(old.rows[0].revision),2);
-    const commands=new PostgresTaskCommandService({run:t.run},t.policy);
+    const commands=new PostgresTaskCommandService(t.database,t.policy);
     // A real Gateway refreshes eligibility when it authenticates each Agent
     // request. This fixture supplies identity explicitly and models that step;
     // it does not replace Worker claim checks or extend grants/claim tokens.
@@ -99,9 +99,30 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
       await t.client.query(`INSERT INTO ${q}.jobs(id,owner,context_id,state,created_at,updated_at,body) VALUES($1,$2,$3,'submitted',$4,$4,$5)`,
         [id,f.owner,body.contextId,'2000-01-01T00:00:00.000Z',JSON.stringify(body)]);
     }
-    const worker=new PostgresWorkerStore({run:t.run},t.policy);
-    const first=await worker.claim(['eigos.delegate'],30000),second=await worker.claim(['eigos.delegate'],30000);
+    const worker=new PostgresWorkerStore(t.database,t.policy);
+    const first=await worker.claim(['eigos.delegate'],30000);assert(first);
+    let heartbeat:Promise<void>|undefined,heartbeatFailure:unknown;
+    const timer=setInterval(()=>{if(!heartbeat)heartbeat=worker.renew(first,30000).then(ok=>{if(!ok)throw new Error('Synthetic Worker heartbeat lost its lease');})
+      .catch(error=>{heartbeatFailure=error;}).finally(()=>{heartbeat=undefined;});},5000);timer.unref();
+    let second;
+    try{second=await worker.claim(['eigos.delegate'],30000);}finally{clearInterval(timer);if(heartbeat)await heartbeat;}
+    assert.equal(heartbeatFailure,undefined);assert(second);
     assert(first);assert(second);assert.notEqual(first.job.id,second.job.id);
+    const grantRow=(await t.client.query(`SELECT g.id,g.body FROM ${q}.security_task_authorities a JOIN ${q}.security_grants g ON g.id=a.data_grant_id WHERE a.id=$1`,[first.securityAuthorityId])).rows[0];assert(grantRow);
+    const expiryBefore=(await t.client.query(`SELECT expires_at FROM ${q}.work_claims WHERE job_id=$1`,[first.job.id])).rows[0].expires_at;
+    await t.client.query(`UPDATE ${q}.security_grants SET body=(body::jsonb||'{"unexpected_fixture_field":true}'::jsonb)::text WHERE id=$1`,[grantRow.id]);
+    assert.equal(await worker.renew(first,30000),false,'invalid persisted delegation cannot renew a token');
+    assert.equal((await t.client.query(`SELECT expires_at FROM ${q}.work_claims WHERE job_id=$1`,[first.job.id])).rows[0].expires_at,expiryBefore,'denial rolls back the timestamp update');
+    await t.client.query(`UPDATE ${q}.security_grants SET body=$1 WHERE id=$2`,[grantRow.body,grantRow.id]);
+    assert.equal(await worker.renew(first,30000),true);
+    let releaseBlock!:()=>void,entered!:()=>void;
+    const gate=new Promise<void>(resolve=>{releaseBlock=resolve;}),holding=new Promise<void>(resolve=>{entered=resolve;});
+    const blocked=t.database.run(async()=>{entered();await gate;});await holding;
+    let boundary:ReturnType<typeof setTimeout>|undefined;
+    try{
+      const renewed=await Promise.race([worker.renew(first,30000),new Promise<boolean>(resolve=>{boundary=setTimeout(()=>resolve(false),5000);})]);
+      assert.equal(renewed,true,'a retained unrelated business lock cannot block lease renewal');
+    }finally{clearTimeout(boundary);releaseBlock();await blocked;}
     assert.equal(await worker.claim(['eigos.delegate'],30000),undefined,'two shared active calls');
     assert.equal(await worker.active(first),true);assert.equal(await worker.renew(first,30000),true);
     assert.equal(await worker.active({...first,token:'another-token'}),false);

@@ -6,6 +6,14 @@ const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
 const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object }>();
 
+/** Reserve one request-owned connection before its first awaited command. */
+export function reservePostgresTransactionClient(client:Client):()=>void{
+  if(active.has(client))throw new Error('Nested PostgreSQL transactions are not supported');
+  if(typeof client.getTransactionStatus!=='function'||client.getTransactionStatus()!=='I'||client.pipeline!==false)throw new Error('PostgreSQL transaction requires an idle, non-pipelined client');
+  active.add(client);let released=false;
+  return()=>{if(!released){released=true;active.delete(client);}};
+}
+
 /** Identity of this exact transaction, not just its schema or pooled client. */
 export function postgresBusinessToken(client:Client):object {
   const context=contexts.get(client);
@@ -50,10 +58,9 @@ export interface PostgresRuntimeAuthority {
  * External side effects must not be performed inside the transaction. */
 export async function postgresBusinessTransaction<T>(client: Client, schema: string, authority: PostgresRuntimeAuthority, action: (client: Client) => Promise<T>): Promise<T> {
   if (!schemaPattern.test(schema) || !authority.id || !Number.isSafeInteger(authority.revision) || authority.revision < 1 || !digestPattern.test(authority.digest)) throw new Error('Invalid PostgreSQL business authority');
-  if (active.has(client)) throw new Error('Nested PostgreSQL business transactions are not supported');
-  if (typeof client.getTransactionStatus !== 'function' || client.getTransactionStatus() !== 'I' || client.pipeline !== false) throw new Error('PostgreSQL business transaction requires an idle, non-pipelined client');
+  const releaseClient=reservePostgresTransactionClient(client);
   const expected = { id: authority.id, revision: authority.revision, digest: authority.digest };
-  active.add(client); let opened = false, committing = false;
+  let opened = false, committing = false;
   const discard = async () => {
     const pooled = client as Client & { release?: (error?: Error) => void };
     try { if (typeof pooled.release === 'function') pooled.release(new Error('Transaction state is uncertain')); else if (typeof client.end === 'function') await client.end(); } catch { /* connection is already unusable */ }
@@ -66,6 +73,9 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE'); opened = true;
     if (client.getTransactionStatus() !== 'T') { committing = true; throw new Error('PostgreSQL business transaction did not start'); }
+    // LOCK is a utility statement: acquire serialization before the first MVCC
+    // snapshot. A SELECT-based lock would retain facts from before the wait.
+    await client.query(`LOCK TABLE "${schema}".eigos_business_mutex IN EXCLUSIVE MODE`);
     const transactionId = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
     if (typeof transactionId !== 'string' || !/^\d+$/.test(transactionId)) throw new Error('PostgreSQL transaction identity unavailable');
     const assertBoundary = async () => {
@@ -74,7 +84,6 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
       const current = (await client.query('SELECT pg_catalog.pg_current_xact_id()::text AS id')).rows[0]?.id;
       if (current !== transactionId) { committing = true; throw new Error('PostgreSQL business transaction identity changed'); }
     };
-    await client.query('SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))', [`eigos-business:${schema}`]);
     await client.query(`SET LOCAL search_path TO pg_catalog, "${schema}", pg_temp`);
     await assertAuthority();
     await assertBoundary();
@@ -105,5 +114,5 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     if (opened && !committing) { try { await client.query('ROLLBACK'); } catch { await discard(); throw new Error('PostgreSQL business transaction rollback failed; connection discarded', { cause: error }); } }
     if (committing) { await discard(); throw new Error('PostgreSQL business transaction commit outcome is unknown; inspect the operation receipt before retrying', { cause: error }); }
     throw error;
-  } finally { active.delete(client); }
+  } finally { releaseClient(); }
 }

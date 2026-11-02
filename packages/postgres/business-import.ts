@@ -69,7 +69,7 @@ export async function importBusinessSnapshot(client: Client, options: BusinessIm
   if (!schemaPattern.test(schema) || !digestPattern.test(expectedFileDigest) || !Number.isSafeInteger(maxDatabaseBytes) || maxDatabaseBytes < 1) throw new Error('Invalid business import options');
   const plan: BusinessSnapshotPlan = planBusinessSnapshot(snapshot, expectedAuthorityDigest, expectedPolicyDigest);
   if (plan.fileDigest !== expectedFileDigest) throw new Error('Business snapshot changed after review');
-  if (plan.tables.some(table => table.name === 'eigos_migration_receipt')) throw new Error('Business snapshot collides with migration metadata');
+  if (plan.tables.some(table => ['eigos_migration_receipt','eigos_business_mutex'].includes(table.name))) throw new Error('Business snapshot collides with migration metadata');
   const db = new DatabaseSync(snapshot, { readOnly: true }); let transactionOpen = false, commitSent = false;
   try {
     db.exec('PRAGMA query_only=ON; BEGIN');

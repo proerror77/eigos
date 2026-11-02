@@ -21,7 +21,7 @@ import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresT
   postgresTaskResourceViewValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
-import type {WorkClaim} from '../core/store.js';
+import type {PostgresWorkReference} from './work-claim.js';
 import { postgresOntologyDefinitionCompatible } from './ontology-release.js';
 
 type Dependency = SecurityEnvelope['lineage'][number];
@@ -340,7 +340,7 @@ export async function withPostgresTaskReadAuthorization<T>(client:Client,princip
 
 /** Internal Worker evidence boundary. Reads require the separately configured
  * registered model channel. Validation alone permits no protected disclosure. */
-export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,claim:WorkClaim,policyDigest:string,
+export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
   action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string):Promise<T>{
   if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
   return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>

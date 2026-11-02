@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "b56c1a416a21885ad172d1dd804352ea58a6cea1ffbb04d5ce9c3dc3bf8fedd5",
+      "sourceDigest": "edb485aa2daea235cc633849331b2eb502342f496d0cea1811c8ad194a5cb357",
       "channels": [
         "http",
         "mcp",
@@ -5342,7 +5342,7 @@
       "currentControl": "Per-schema transaction lock; hashed credentials and ingress addresses; proof replay rejection; contact approval, message quotas, revocation and bounded poll leases",
       "targetControl": "Preserve communication-only authority and exact state across instances and cutover",
       "stage": "S5",
-      "sourceDigest": "c01db6a276f12ef01a2331ce0a9492c2f0616d31306f4d7f9757d59d7355bea1"
+      "sourceDigest": "89c94dd28505f7f259695dd403e01a736c6b3e9eb807afa1f7e830ee0ff6bf88"
     },
     {
       "id": "relay-cloudflare-entry",
@@ -5448,7 +5448,7 @@
       "currentControl": "Isolated schema, transactional import, per-table digests and fail-closed commit handling; preserve row order and sequence high-water marks",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "1ea4018107bc66294365e7676e1fb69cd41afb100c78daee7c8a8d4ed613e260"
+      "sourceDigest": "974450bffe6db15a3cf38a5acfafc12aa3ecf3b84d2d97f56923165888833057"
     },
     {
       "id": "business-postgres-import-cli",
@@ -5537,10 +5537,10 @@
         "postgres"
       ],
       "content": "PostgreSQL business mutation transaction primitive",
-      "currentControl": "Idle non-pipelined connection, transaction identity and savepoint checks, shared advisory lock, authority fencing and fail-closed uncertain commits",
-      "targetControl": "Require task, claim and authorization fences in the same transaction before runtime activation",
+      "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
+      "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "a7846a8d728105d58f28bbe43b87f191abb685a2bda9863c834d9066196dd4fe"
+      "sourceDigest": "45b219b09b6fba45f658aa3730a295bf766b72caf4c810edee9ff30404945b52"
     },
     {
       "id": "postgres-authority-lock",
@@ -5550,10 +5550,10 @@
         "postgres"
       ],
       "content": "Privileged runtime authority row lock function",
-      "currentControl": "Schema-qualified fixed search path, no arguments, transactionally revoked public execute, explicit runtime grant required",
-      "targetControl": "Allow authority fencing without granting runtime authority-table write privileges",
+      "currentControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
+      "targetControl": "Empty transaction mutex precedes the first data snapshot; fixed-schema security-definer authority readers revoke PUBLIC execution and preserve denial of direct authority-table access",
       "stage": "S5",
-      "sourceDigest": "5a873f4587cf94564b0a2b453f03f132897e031ea552e65bbfb85d72bbea179b"
+      "sourceDigest": "2ea6fa3edb0f7cc805eaf5abc0a3471fa41ca2f1df3f6dacc2ee4aa87e87a6f3"
     },
     {
       "id": "postgres-work-authority",
@@ -5579,7 +5579,7 @@
       "currentControl": "Fenced transaction, original claim token and authority digest, current task revisions, grant identity and expiry rechecks; claim verification returns bounded scalar fields instead of the task body",
       "targetControl": "Complete claim creation, recovery, result fencing and full authorization before runtime activation",
       "stage": "S5",
-      "sourceDigest": "f5096c8d0267b0d147d8e10157fbcd206fd33f58d514e3da29a1113be481128d"
+      "sourceDigest": "b8abf777c960c752f0862b91d53e07415aa2677245260f6c3b12e37bdf91444e"
     },
     {
       "id": "relay-cloudflare-binding",
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "9ea6ff778fb647036e47463e6846c3df09634e15a0cac9fa44ff3867cf759e69",
+      "sourceDigest": "085828e615be611d3dae4f83af10aa276abb4f8bde00ec5c5a58b70870939357",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5792,7 +5792,7 @@
     {
       "id": "business-postgres-verification",
       "file": "packages/postgres/business-verify.ts",
-      "sourceDigest": "272bc405f64ceccbef0d0ce5f175ec846681c5e7c80fec08e8d7e475e4601a4e",
+      "sourceDigest": "f085e92d3e65f3938368b596b51b9f9e7f9adda9ccb46d7f05f2684321abe04c",
       "channels": [
         "offline migration",
         "authorization_control"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "93302b94ec4b18e4b0bb9c2b177c3cc9218100199eab73d5921a98318d6ff694",
+      "sourceDigest": "fc0d2d116b0bb79bc31f5939b346be91ae2b5237d065a5ca091b815f4ee4d472",
       "channels": [
         "internal"
       ],
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "1a6f32ade6e81d3e5ee860435edba7840bee60a0edbab087d601920479c5e6e3",
+      "sourceDigest": "8b32e3cc2a957e49c728fe0a8936c8a8675dbae26e7dc44980c1fd6a76d6b1d1",
       "channels": [
         "internal"
       ],
@@ -5999,7 +5999,7 @@
     {
       "id": "postgres-worker-admission",
       "file": "packages/postgres/worker-admission.ts",
-      "sourceDigest": "736ce8d7e7db5f097455d3510bf93f7378578f6ef78c0bed9b31c2ae5a839520",
+      "sourceDigest": "ea30366fe20262918ec6df62895af7351a1a0b8d3e9c7fd9da3b929a762bffbc",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "d468577966702c708c002746faa7a25057784c7f118319a076f77ef0fe37f884",
+      "sourceDigest": "51a9da76a2d888de723eaa6c87bf5ddad7999afe3aa9cc09387319b759516ff8",
       "channels": [
         "internal"
       ],
@@ -6110,7 +6110,7 @@
     {
       "id": "postgres-worker-input",
       "file": "packages/postgres/worker-input.ts",
-      "sourceDigest": "c4e7f6ebf06c9fa6e59d0e4deb41221d6324321e30511d6191b942ba928b6783",
+      "sourceDigest": "9af2ed1d796ff1452178ebec89ed6ab66631fa39e33121cad9fe32c83d72d282",
       "channels": [
         "internal"
       ],
@@ -6122,7 +6122,7 @@
     {
       "id": "postgres-worker-output",
       "file": "packages/postgres/worker-output.ts",
-      "sourceDigest": "81f2dbbb16d6930db85ebbcd66955a265d2b03e51e2c84ede876945598b9b1f5",
+      "sourceDigest": "1295c81d9938ff9e4fba9dc984f5ee76c4ec4a596dc199ee248afbcc650fcd74",
       "channels": [
         "internal"
       ],
@@ -6141,6 +6141,30 @@
       "content": "Explicit local Supabase PostgreSQL CONNECT transport",
       "currentControl": "Supabase destination and loopback HTTP proxy allowlists, pinned host/port, bounded headers and timeout; PostgreSQL TLS retains original hostname and CA verification; no global proxy or implicit route changes",
       "targetControl": "Supabase destination and loopback HTTP proxy allowlists, pinned host/port, bounded headers and timeout; PostgreSQL TLS retains original hostname and CA verification; no global proxy or implicit route changes",
+      "stage": "S5"
+    },
+    {
+      "id": "task-reply-program",
+      "file": "packages/core/reply-program.ts",
+      "sourceDigest": "7d3b24a96ddcf919c92804b343ac3ac6e619ad2881988cd4fcbce255df04c933",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared synchronous/asynchronous original-task reply transition",
+      "currentControl": "Same version, input, personal/location, immutable operation and reconciliation boundaries; typed storage effects execute once inside the caller transaction; no model/provider calls",
+      "targetControl": "Same version, input, personal/location, immutable operation and reconciliation boundaries; typed storage effects execute once inside the caller transaction; no model/provider calls",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-independent-lease-renewal",
+      "file": "packages/postgres/lease-renewal.ts",
+      "sourceDigest": "534fcff9c4d1c86d56bd6e3e31c2cf298e5479f26ee84f9bc6bd40566f2e4ea4",
+      "channels": [
+        "internal"
+      ],
+      "content": "Independent PostgreSQL Worker heartbeat transaction",
+      "currentControl": "Only the original unexpired token expiry can change; current runtime/subject/parent/data/policy/epoch/task state and strict persisted contracts; dedicated client capacity; invalid metadata rolls back and uncertain commits evict",
+      "targetControl": "Only the original unexpired token expiry can change; current runtime/subject/parent/data/policy/epoch/task state and strict persisted contracts; dedicated client capacity; invalid metadata rolls back and uncertain commits evict",
       "stage": "S5"
     }
   ]

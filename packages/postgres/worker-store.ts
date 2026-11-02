@@ -10,7 +10,7 @@ import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
 import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline} from './runtime-transaction.js';
-import {postgresClaimActive,postgresRenewClaim} from './work-claim.js';
+import {postgresClaimActive,postgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
@@ -20,7 +20,7 @@ class LostClaim extends Error{}
 /** Durable queue shared by Mac Workers. Each method releases its transaction
  * before the caller can run a model or contact a provider. */
 export class PostgresWorkerStore {
-  constructor(private readonly db:Pick<PostgresDatabase,'run'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
   }
   private async expire(client:Client){
@@ -97,20 +97,15 @@ export class PostgresWorkerStore {
       }
     });
   }
-  async active(claim:WorkClaim){return this.db.run(async client=>{
+  async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.db.run(async client=>{
     if(!await postgresClaimActive(client,claim,this.policy))return false;
     const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
     return admission.authority.id===claim.securityAuthorityId&&admission.authority.authEpoch===claim.securityEpoch&&admission.policyRevision===claim.securityPolicyRevision;
   });}
-  async renew(claim:WorkClaim,leaseMs:number){return this.db.run(async client=>{
-    if(!Number.isSafeInteger(leaseMs)||leaseMs<100||leaseMs>300000)return false;
-    const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
-    if(admission.authority.id!==claim.securityAuthorityId||admission.policyRevision!==claim.securityPolicyRevision)return false;
-    return postgresRenewClaim(client,claim,leaseMs,this.policy);
-  });}
-  readRequest(claim:WorkClaim,modelChannel:string){return this.db.run(client=>postgresWorkerRequest(client,structuredClone(claim),this.policy,modelChannel,this.kernel));}
+  renew(claim:WorkClaim,leaseMs:number){return this.db.renewClaim(claim,leaseMs,this.policy);}
+  readRequest(claim:WorkClaim,modelChannel:string){const reference=postgresWorkReference(claim);return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel));}
   private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean){
-    const original=structuredClone(claim);
+    const original=postgresWorkReference(claim);
     try{return await this.db.run(async client=>{
       if(!await postgresClaimActive(client,original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);

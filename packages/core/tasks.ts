@@ -1,3 +1,4 @@
+import {runReplyProgram,replyTransition} from './reply-program.js';
 import { createSubmittedTask } from './task-submission.js';
 import { DELEGATE, digest, actionOperationKey } from './delegation.js';
 import { ObservationTasks } from './observation-tasks.js';
@@ -17,7 +18,7 @@ import { validatePlanningSnapshot } from '../coordinator/planning-session.js';
 import { initialExecutionBudget, continueExecutionBudget, executionBudgetStatus, remainingModelTurns, pauseExecutionBudget, MIN_REASONING_TURNS } from './execution-budget.js';
 import { canRecoverReadOnly, canResumeSource } from './task-recovery.js';
 import { projectPreparedResolution } from '../ontology/capability-catalog.js';
-import { restoreOriginalDeliverableInstruction, submissionInstructions } from './request-instructions.js';
+import { restoreOriginalDeliverableInstruction } from './request-instructions.js';
 import { assertAgentDecisionOrigin, agentPlanAuthorization, createAgentObjectWriteGrant, createAgentSandboxGrant, createAgentExternalDraftGrant, validateAgentAuthority } from './agent-authorization.js';
 import { externalDraftPermitSchema } from '../ontology/external-draft.js';
 import { paPaymentReportSchema, paPaymentRouteSchema, recordPAPaymentSelection, verifyPAPaymentRequest, paymentRouteQuestion } from './pa-payment.js';
@@ -27,12 +28,11 @@ import { objectRefSchema } from '../ontology/model.js';
 import type { AgentActionPlan, AgentDecision, AgentExecutionState } from '../ontology/agent-actions.js';
 import { resolveManagedInterfaceAction } from '../ontology/declarative-actions.js';
 import { GoalProgram } from '../coordinator/goal-program.js';
-import { addLocationContext, prepareLocationContext } from './location-context.js';
 import { componentContext, resolveComposedStep } from './composed-actions.js';
 import { AuthorizedOntologyView } from '../security/view.js';
 import { TaskSecurity } from '../security/task-service.js';
 import { selectPersonalContext } from './personal-context.js';
-import { isPersonalAction, selfPersonRef, personalPreferenceRef, personalPreferenceKey, mergePersonalContext } from '../ontology/personal-context.js';
+import { isPersonalAction, selfPersonRef, personalPreferenceRef, personalPreferenceKey } from '../ontology/personal-context.js';
 import { compileJsonSchema } from '../ontology/model-compiler.js';
 import { authorizationScope } from '../security/context.js';
 import { accessDigest } from '../security/model.js';
@@ -372,76 +372,13 @@ export class TaskService {
     if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
     if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
     const replied = this.store.once(owner, `${amendment ? 'amend' : 'reply'}:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
-      const job = this.store.get(owner, args.taskId);
-      // The browser's displayed question must still be current under the write lock.
-      if (expected && (job.revision !== expected.revision || job.updatedAt !== expected.updatedAt)) throw new DomainError('CONFLICT', 'Task changed; refresh before replying');
-      if (args.expectedRevision !== undefined && job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'This reply belongs to an older task question or revision');
-      if (job.delegation?.agent?.paPayment) throw new DomainError('CONFLICT', 'Use select_payment_route, report_payment_result or reconcile_task for the original PA payment; text is not payment evidence');
-      if ((args.locationContext || args.personalContext) && (job.delegation?.plan || this.store.intents(owner, job.id).some(intent => !['read', 'local'].includes(intent.effect)))) throw new DomainError('CONFLICT', 'An address correction cannot change a fixed business operation; reconcile its original operation first');
-      if (job.delegation) job.delegation.ontologyReadScope = p.scopes.includes('tasks:read') ? 'owner' : 'request';
-      const keepSourceWait = amendment && job.state === 'auth-required' && !!job.delegation?.sourceAuthorization;
-      if (amendment) {
-        if (/^(?:请|帮我)?(?:继续|重试|恢复|再试一次|resume|retry|continue)[。.!！\s]*$/iu.test(args.answer.trim())) throw new DomainError('INVALID_INPUT', 'Technical continuation uses resume_task and must not become a new business confirmation');
-        if (!['submitted', 'working', 'input-required', 'paused', 'auth-required'].includes(job.state) || job.state === 'auth-required' && !keepSourceWait || job.delegation?.plan
-          || this.store.intents(owner, job.id).some(i => !['read', 'local'].includes(i.effect))) throw new DomainError('CONFLICT', 'Only an open read-only task may accept a versioned correction; fixed business operations retain their reconciliation boundary');
-      } else {
-        if (job.service === DELEGATE && job.state === 'auth-required') throw new DomainError('CONFLICT', 'Use the task authorization endpoint to approve the plan; cancel the task to decline');
-        if (job.state !== 'input-required') throw new DomainError('CONFLICT', 'Task is not waiting for input');
-      }
-      job.updatedAt = new Date().toISOString();
-      job.messages.push({ id: args.requestId, role: 'user', text: args.answer, at: job.updatedAt });
-      if (job.service === DELEGATE) {
-        if (job.delegation!.plan) {
-          if (args.requirements?.length) throw new DomainError('CONFLICT', 'Fixed business requirements cannot be changed while an original action requires reconciliation');
-          const d = job.delegation!;
-          if (d.pendingActionInput) {
-            d.actionReply = { intentId: d.pendingActionInput.intentId, messageId: args.requestId, answer: args.answer };
-            const waiting = this.store.intent(owner, d.pendingActionInput.intentId); waiting.nextAt = Date.now(); this.store.saveIntent(owner, waiting);
-          }
-          else for (const intent of this.store.intents(owner, job.id)) if (intent.state === 'needs_review' || intent.state === 'effect_unknown') { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = Date.now(); this.store.saveIntent(owner, intent); }
-          d.nextAt = 0; d.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
-          continueExecutionBudget(job, 'input', args.executionBudget);
-          this.store.save(owner, job); return job;
-        }
-        const request = job.delegation!.request;
-        const previousProgram = job.delegation!.agent?.programRef ?? job.delegation!.suspendedAgent?.programRef;
-        delete job.delegation!.suspendedAgent;
-        if (job.delegation!.agent) {
-          const intents = this.store.intents(owner, job.id);
-          const fixedEffect = intents.some(i => (['order', 'payment', 'reserve', 'object_write'].includes(i.effect) || ['effect_unknown', 'awaiting_remote', 'dispatching', 'needs_review'].includes(i.state) && !['read', 'local'].includes(i.effect)) && !['ready', 'canceled_before_dispatch', 'rejected'].includes(i.state));
-          if (fixedEffect) {
-            if (args.requirements?.length) throw new DomainError('CONFLICT', 'An original business operation is fixed or uncertain; reconcile it before creating changed requirements');
-            request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
-            for (const intent of intents) if (!['read', 'local'].includes(intent.effect) && ['needs_review', 'effect_unknown'].includes(intent.state)) { intent.state = 'effect_unknown'; intent.failedQueries = 0; intent.nextAt = 0; this.store.saveIntent(owner, intent); }
-            job.delegation!.nextAt = 0; job.delegation!.phase = 'executing'; job.state = 'working'; job.revision = (job.revision ?? 0) + 1; delete job.question;
-            this.store.save(owner, job); return job;
-          }
-          this.store.cancelActions(owner, job.id);
-          job.delegation!.agentHistory = [...(job.delegation!.agentHistory ?? []), job.delegation!.agent!];
-          delete job.delegation!.agent;
-        }
-        request.revision++; request.messages.push({ id: args.requestId, text: args.answer, receivedAt: job.updatedAt });
-        if (args.personalContext) {
-          request.personalContext = mergePersonalContext(args.personalContext, request.personalContext);
-          if (!this.security) selectPersonalContext(this.store.ontologyForJob(owner, job), owner, request, args.personalContext);
-        }
-        if (args.locationContext) addLocationContext(request, args.locationContext, args.requestId, job.updatedAt);
-        else prepareLocationContext(request);
-        for (const r of args.requirements ?? []) {
-          const previous = request.requirements.findIndex(x => x.id === r.id);
-          const next = { ...r, provenance: { source: 'pa' as const, interpretation: 'structured' as const, messageId: args.requestId, receivedAt: job.updatedAt } };
-          if (previous < 0) request.requirements.push(next); else { request.supersededRequirements = [...(request.supersededRequirements ?? []), request.requirements[previous]!]; request.requirements[previous] = next; }
-        }
-        if (request.requirements.length > 40) throw new DomainError('INVALID_INPUT', 'Too many task requirements');
-        if (previousProgram) job.delegation!.request = this.catalogForJob(owner, job).agentProgram(previousProgram, owner)?.prepareRequest?.(request) ?? request;
-        job.state = 'submitted'; job.executionMode = 'worker'; job.revision = (job.revision ?? 0) + 1; delete job.question; job.delegation!.phase = 'grounding';
-        continueExecutionBudget(job, 'input', args.executionBudget);
-        if (remainingModelTurns(job) < MIN_REASONING_TURNS) pauseExecutionBudget(job, 'modelTurns', 'task');
-        if (job.delegation!.recovery) { job.delegation!.recoveryHistory = [...(job.delegation!.recoveryHistory ?? []), job.delegation!.recovery!]; delete job.delegation!.recovery; }
-        if (keepSourceWait) { job.state = 'auth-required'; job.delegation!.phase = 'awaiting_authorization'; }
-      }
-      this.store.save(owner, job);
-      return job;
+      const job = this.store.get(owner,args.taskId);
+      return runReplyProgram({
+        intents:this.store.intents.bind(this.store),intent:this.store.intent.bind(this.store),saveIntent:this.store.saveIntent.bind(this.store),
+        cancelActions:this.store.cancelActions.bind(this.store),saveTask:this.store.save.bind(this.store),
+        personal:(owner,job,input)=>selectPersonalContext(this.store.ontologyForJob(owner,job),owner,job.delegation!.request,input),
+        prepare:(owner,job,program,request)=>this.catalogForJob(owner,job).agentProgram(program,owner)?.prepareRequest?.(request)??request,
+      },replyTransition(job,owner,args,{foundation:!!this.security,canRead:p.scopes.includes('tasks:read'),amendment,expected}));
     });
     return replied;
   }

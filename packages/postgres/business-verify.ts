@@ -4,6 +4,7 @@ import type { Client } from 'pg';
 import { canonical } from '../core/delegation.js';
 import { encodeBusinessRow, planBusinessSnapshot, type BusinessSnapshotPlan, type BusinessTable } from './business-snapshot.js';
 import { compileBusinessSchema } from './business-schema.js';
+import {postgresBusinessMutexValid} from './authority-lock.js';
 
 const schemaPattern=/^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern=/^[a-f0-9]{64}$/;
@@ -48,8 +49,9 @@ export async function verifyBusinessSnapshot(client:Client,options:BusinessVerif
     if(receiptRows.rowCount!==1 || canonical(receiptRows.rows[0]?.body)!==canonical(expected))throw new Error('Business migration receipt does not match the reviewed snapshot');
     const tables=await client.query(`SELECT c.relname FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname=$1 AND c.relkind IN ('r','p','v','m','f') ORDER BY c.relname COLLATE "C" LIMIT 10001`,[schema]);
-    const expectedNames=[...plan.tables.map(table=>table.name),'eigos_migration_receipt'].sort();
+    const expectedNames=[...plan.tables.map(table=>table.name),'eigos_migration_receipt','eigos_business_mutex'].sort();
     if(expectedNames.length>10000 || tables.rows.length>10000 || canonical(tables.rows.map(row=>row.relname).sort())!==canonical(expectedNames))throw new Error('Business destination table inventory differs from the reviewed snapshot');
+    if(!await postgresBusinessMutexValid(client,schema))throw new Error('Business destination serialization relation differs from the reviewed contract');
     for(const [index,table] of plan.tables.entries())await verifyTable(client,schema,table,index);
     const sequences=await verifySequences(client,schema,plan,identities);
     const after:BusinessSnapshotPlan=planBusinessSnapshot(snapshot,expectedAuthorityDigest,expectedPolicyDigest);
