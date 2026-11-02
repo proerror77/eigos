@@ -9,7 +9,7 @@ import { currentKernelImplementation } from '../packages/ontology/definition-sto
 import { OntologyObjectStore } from '../packages/ontology/object-store.js';
 import { AuthorizedOntologyView } from '../packages/security/view.js';
 import { PostgresTaskReadService } from '../packages/postgres/task-read-service.js';
-import { withPostgresTaskReadAuthorization, withPostgresWorkerEvidenceAuthorization, type PostgresFunctionReadAuthorization } from '../packages/postgres/task-output.js';
+import { withPostgresTaskReadAuthorization, type PostgresFunctionReadAuthorization } from '../packages/postgres/task-output.js';
 import { taskProtocolFixture } from './fixtures/task-protocol.js';
 import type { TaskServicePort } from '../packages/core/task-service-port.js';
 import { postgresEvaluateAuthorizedFunction } from '../packages/postgres/ontology-functions.js';
@@ -96,16 +96,22 @@ test('PostgreSQL registered functions retain invocation, private proof, incomple
       const submitted = await new PostgresTaskCommandService(t.database, t.policy).submit(writer, { requestId: 'processing-only', goal: 'Synthetic processing-only model function scope' });
       const worker = new PostgresWorkerStore(t.database, t.policy), claim = await worker.claim(['eigos.delegate'], 30000);
       assert(claim); assert.equal(claim.job.id, submitted.id);
-      await t.client.query(`UPDATE ${q}.security_roles SET body=jsonb_set(body::jsonb,'{invokeFunctions}','["offerFreshness","taskOutcomeStatus"]'::jsonb)::text WHERE subject_id=$1`, [installation.id]);
-      await t.run(c => withPostgresWorkerEvidenceAuthorization(c, claim, t.policy, async (auth, admission, principal) => {
-        assert.equal(principal.access?.actorKind, 'worker'); assert(!principal.scopes.includes('tasks:read'));
-        assert(!admission.grant.operations.includes('task.query')); assert(!admission.grant.operations.includes('task.result.read'));
-        const computed = await postgresEvaluateAuthorizedFunction(c, principal, submitted.id, 1,
-          { function: 'taskOutcomeStatus', object: { type: 'ServiceRequest', id: submitted.id } }, t.policy, auth);
-        assert.equal(computed.computation.status, 'unknown'); assert.equal(computed.envelope.ownerKey, f.owner);
-      }, undefined, 'synthetic:sql-native'));
-      await assert.rejects(service.get(p, submitted.id), /AUTHORIZATION_REQUIRED/);
-      assert.equal(await worker.finish(claim, job => { job.state = 'paused'; }), true);
+      let heartbeat:Promise<void>|undefined,heartbeatFailure:unknown;
+      const timer=setInterval(()=>{if(!heartbeat)heartbeat=worker.renew(claim,30000).then(ok=>{if(!ok)throw new Error('Synthetic function Worker lost its original lease');})
+        .catch(error=>{heartbeatFailure=error;}).finally(()=>{heartbeat=undefined;});},5000);timer.unref();
+      try{
+        await t.client.query(`UPDATE ${q}.security_roles SET body=jsonb_set(body::jsonb,'{invokeFunctions}','["offerFreshness","taskOutcomeStatus"]'::jsonb)::text WHERE subject_id=$1`, [installation.id]);
+        await worker.readEvidence(claim, 'synthetic:sql-native', async (auth, admission, principal, c) => {
+          assert.equal(principal.access?.actorKind, 'worker'); assert(!principal.scopes.includes('tasks:read'));
+          assert(!admission.grant.operations.includes('task.query')); assert(!admission.grant.operations.includes('task.result.read'));
+          const computed = await postgresEvaluateAuthorizedFunction(c, principal, submitted.id, 1,
+            { function: 'taskOutcomeStatus', object: { type: 'ServiceRequest', id: submitted.id } }, t.policy, auth);
+          assert.equal(computed.computation.status, 'unknown'); assert.equal(computed.envelope.ownerKey, f.owner);
+        });
+        await assert.rejects(service.get(p, submitted.id), /AUTHORIZATION_REQUIRED/);
+        assert.equal(await worker.finish(claim, job => { job.state = 'paused'; }), true);
+      }finally{clearInterval(timer);if(heartbeat)await heartbeat;}
+      assert.equal(heartbeatFailure,undefined);
       await t.client.query(`UPDATE ${q}.security_roles SET body=$1 WHERE subject_id=$2`, [role, installation.id]);
       sqlite.prepare('DELETE FROM security_bindings WHERE grant_id=? AND type=? AND object_id=?').run(grant.id, receipt.type, receipt.id);
       await t.client.query(`DELETE FROM ${q}.security_bindings WHERE grant_id=$1 AND type=$2 AND object_id=$3`, [grant.id, receipt.type, receipt.id]);
