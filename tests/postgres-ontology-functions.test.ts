@@ -1,3 +1,4 @@
+import {digest} from '../packages/core/delegation.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -97,7 +98,14 @@ test('PostgreSQL registered functions retain invocation, private proof, incomple
       const worker = new PostgresWorkerStore(t.database, t.policy), claim = await worker.claim(['eigos.delegate'], 30000);
       assert(claim); assert.equal(claim.job.id, submitted.id);
       let heartbeat:Promise<void>|undefined,heartbeatFailure:unknown;
-      const timer=setInterval(()=>{if(!heartbeat)heartbeat=worker.renew(claim,30000).then(ok=>{if(!ok)throw new Error('Synthetic function Worker lost its original lease');})
+      const timer=setInterval(()=>{if(!heartbeat)heartbeat=worker.renew(claim,30000).then(async ok=>{
+        if(ok)return;
+        // The original token must stop renewing once its successful finish
+        // receipt commits, including while physical cleanup is still returning.
+        const finished=await t.client.query(`SELECT 1 FROM ${q}.requests WHERE owner=$1 AND operation=$2 AND request_id=$3`,
+          [f.owner,`eigos.worker.finish:${t.authority.digest}`,digest([claim.job.id,claim.token])]);
+        if(finished.rowCount!==1)throw new Error('Synthetic function Worker lost its original lease before finish');
+      })
         .catch(error=>{heartbeatFailure=error;}).finally(()=>{heartbeat=undefined;});},5000);timer.unref();
       try{
         await t.client.query(`UPDATE ${q}.security_roles SET body=jsonb_set(body::jsonb,'{invokeFunctions}','["offerFreshness","taskOutcomeStatus"]'::jsonb)::text WHERE subject_id=$1`, [installation.id]);
