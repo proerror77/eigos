@@ -2,7 +2,7 @@
 
 MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实例的接口与能力，再提交明确目标；服务配置和业务授权分别检查。
 
-Foundation 还支持显式准备[长期观察合同](guides/observation-contracts.md)：MCP 使用 `prepare_observation_contract`，A2A 向原任务发送同名 action 的结构化请求，返回独立的暂停守护任务。当前阶段仅保存合同、回读和撤销，`monitoring:false`；不能通过普通恢复启动监测。原任务继续保持完成。
+Foundation 还支持显式准备[长期观察合同](guides/observation-contracts.md)：MCP 使用 `prepare_observation_contract`，A2A 向原任务发送同名 action 的结构化请求，返回独立的暂停守护任务。配置后可通过 `activate_observation_contract` 请求已安装的受控只读观察器；`report_observation_change` 只提示独立重读。准备或激活不证明监测有效，须检查 monitoring 和新鲜度；普通恢复不用于激活。原任务继续保持完成。
 
 显式启用[个人 Agent 通信](guides/agent-communication.md)后，同一入口还可通过独立通信许可和 Relay 收发 PA 消息。普通通信返回消息回执，不创建业务任务；明确服务委托继续沿用本文的原任务链。手机接入不要求安装常驻连接器。
 

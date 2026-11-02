@@ -179,7 +179,9 @@ export class TaskSecurity {
           && declaration.target.fields.every(field=>parent.resources.some(resource=>resource.type===declaration.target.object.type && resource.fields.includes(field)) && security.policies.fieldPolicy(declaration.target.object.type,field)!=='internal_only')
           && security.policies.sources(actor.ownerKey,actor.installationId).some(source=>source.bindingId===pins.sourceBindingId && source.programId===pins.programRef.id
             && source.programDigest===pins.configurationDigest && source.operations.includes(declaration.read.action) && source.outputTypes.includes(declaration.target.object.type));
-        base.observation=this.store.watchContracts.view(actor.ownerKey,job.id,permitted?'current':'unavailable');
+        const runtime=this.store.watchContracts.runtime(actor.ownerKey,job.id);
+        const current=permitted && (!runtime || runtime.state!=='active' || this.store.observationAuthorized(actor.ownerKey,job.id,runtime.id));
+        base.observation=this.store.watchContracts.view(actor.ownerKey,job.id,current?'current':'unavailable');
         return base;
       }
       const allowed=(id:string,content:unknown)=>{

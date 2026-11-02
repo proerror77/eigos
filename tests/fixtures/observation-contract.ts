@@ -7,17 +7,19 @@ import { securedProgramFixture } from './secured-program.js';
 import { participantIntake } from './ontology-pipeline.js';
 import { OntologyObjectStore } from '../../packages/ontology/object-store.js';
 import type { PrepareObservation } from '../../packages/ontology/observation-contract.js';
+import type { ObservationAdapter } from '../../packages/ontology/observation-runtime.js';
+import { digest } from '../../packages/core/delegation.js';
 
 /** Known synthetic source data and a completed fixture task. No model, source
  * call, business operation or live account is used to prepare a contract. */
-export function observationContractFixture() {
+export function observationContractFixture(options: { canonicalSource?: boolean; adapter?: ObservationAdapter } = {}) {
   const source = participantFixture();
   let sourceCalls = 0;
   source.source.call = async () => { sourceCalls++; throw new Error('Contract preparation must not call a provider'); };
-  const f = securedProgramFixture(() => new ParticipantBookingProgram(source.source), source.input, () => { throw new Error('No model may run for a contract'); }, securityFixture(() => Date.now()));
+  const f = securedProgramFixture(() => Object.assign(new ParticipantBookingProgram(source.source), options.adapter ? { sourceObserver: options.adapter } : {}), source.input, () => { throw new Error('No model may run for a contract'); }, securityFixture(() => Date.now()));
   const graph = f.jobs.ontology, now = Date.now(), at = new Date(now).toISOString();
   const intake = participantIntake(graph.model, f.program);
-  const event = { type: 'Event', id: 'private-synthetic-event' }, scope = { type: 'RegistrationTask', id: 'private-synthetic-read-scope' };
+  const event = { type: 'Event', id: options.canonicalSource ? `pipeline:${digest({ owner: f.owner, source: intake.source.id, account: 'PRIVATE_ACCOUNT', type: 'Event', nativeId: 'PRIVATE_NATIVE' })}` : 'private-synthetic-event' }, scope = { type: 'RegistrationTask', id: 'private-synthetic-read-scope' };
   const fields = ['displayTitle', 'title', 'serviceUrl', 'kind', 'startsAt', 'endsAt', 'timeZone'];
   const values = { displayTitle: 'Synthetic event', title: 'Synthetic event', serviceUrl: 'https://luma.com/synthetic-watch', kind: 'event_registration',
     startsAt: new Date(now + 86400000).toISOString(), endsAt: new Date(now + 90000000).toISOString(), timeZone: 'Asia/Shanghai' };
@@ -49,5 +51,5 @@ export function observationContractFixture() {
     startsAt: new Date().toISOString(), until: new Date(Date.now() + 60000).toISOString(), maxStalenessMs: 60000, strategy: { mode: 'poll', intervalMs: 10000 },
     terminal: { kind: 'horizon_only' }, perReadBudget: { timeoutMs: 1000, maxCost: { minor: '0', currency: 'CNY' } },
     lifetimeBudget: { maxReads: 10, maxModelTurns: 4, maxActiveMs: 10000, maxCost: { minor: '0', currency: 'CNY' } } });
-  return { ...f, input, original, grant, event, scope, release, intake, raw, db, sourceCalls: () => sourceCalls, close: () => { db.close(); f.close(); source.store.close(); } };
+  return { ...f, input, original, grant, event, scope, release, intake, raw, db, eventValues: values, sourceCalls: () => sourceCalls, close: () => { db.close(); f.close(); source.store.close(); } };
 }

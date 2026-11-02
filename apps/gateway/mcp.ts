@@ -5,6 +5,7 @@ import { mountNetworkMcp } from './network/mcp.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
+import { observationControlSchema, observationHintSchema } from '../../packages/ontology/observation-runtime.js';
 import { DomainError, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { publicTask as taskSummary } from './task-view.js';
@@ -88,6 +89,14 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Record an explicitly delegated, bounded observation contract for a completed owned task, creating a separate paused guardian. Requires current task/source/field permissions, exact published mapping and read input, horizon and lifetime budgets. This stage does not start monitoring or authorize source calls, calendar edits, orders or payments. Target account/native identity remains unverified until a trusted observer binds it. Read lifecycle with get_task; cancel_task revokes the contract. Never infer this delegation from task completion.',
     inputSchema: prepareObservationSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.prepareObservationContract(principal, args))));
+  if (tasks.secured) server.registerTool('activate_observation_contract', {
+    description: 'Activate or explicitly resume this guardian with its current revision. Requires an installed reviewed read-only observer and a trusted binding matching the declared account/native canonical identity. Preserves the original horizon and cumulative budget. Activation is not proof of fresh monitoring; inspect get_task. No models, repair, calendar edits, orders or payments are authorized.',
+    inputSchema: observationControlSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.activateObservationContract(principal, args))));
+  if (tasks.secured) server.registerTool('report_observation_change', {
+    description: 'Submit an authenticated hint for this active guardian. Reuse the event ID and digest for duplicate delivery. A hint is not source truth: it only durably wakes the original bound read for independent verification. Accepts no source properties or credentials.',
+    inputSchema: observationHintSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.reportObservationChange(principal, args))));
   if (!tasks.secured && options.externalDrafts) server.registerTool('authorize_checkout_draft', {
     description: 'Authorize exactly one live unpaid checkout draft for the merchant, items and source preview returned by this owned task. Copy its planDigest and draft unchanged; expiresAt may copy draft.sourceExpiresAt and must not exceed it. This grants no order, payment, customer-data submission or later edit. Reuse requestId for identical retries.',
     inputSchema: externalDraftPermitSchema.omit({ action: true, environment: true }).extend({ taskId: taskIdSchema }).strict(),

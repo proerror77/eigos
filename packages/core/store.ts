@@ -1,5 +1,6 @@
 import { projectCapabilityCatalog } from '../ontology/capability-catalog.js';
 import { ObservationContractStore } from './observation-store.js';
+import { ObservationAuthority } from './observation-authority.js';
 import { personalSourceAdmitted, sourceOwner, type PersonalSource } from './personal-source.js';
 import { didiSourceOwner, type DidiMemberConnection } from './didi-source.js';
 import { initializeMemberSources, MemberSourceVault } from './member-source.js';
@@ -47,7 +48,7 @@ export interface ListFilter {
   updatedAfter?: string;
 }
 
-export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string }
+export interface WorkClaim { owner: string; job: Job; token: string; recovery?: boolean; securityAuthorityId?: string; securityEpoch?: number; securityPolicyRevision?: number; modelContextKey?: string; observationRuntimeId?: string }
 // Throwing through the shared transaction is essential: returning false from
 // inside it would commit a dispatch marker whose lease expired during the save.
 const lostClaimFence = Symbol('lost-claim-fence');
@@ -69,6 +70,7 @@ function equivalentFingerprint(a: string, b: string): boolean {
 export class JobStore {
   private db: DatabaseSync;
   private ontologyCatalog?: ExecutionCatalog;
+  private observationAuthority?: ObservationAuthority;
   readonly definitions: DefinitionStore;
   readonly pipelineFacts: PipelineFactStore;
   readonly watchContracts: ObservationContractStore;
@@ -280,7 +282,14 @@ export class JobStore {
     projectCapabilityCatalog(this.projectionForJob(owner,job),owner,taskId,summaries);
     if(this.security.enabled)this.security.policies.bindTaskProjection(owner,taskId);
   }
-  setOntologyCatalog(catalog: ExecutionCatalog): void { catalog.secureWith(this.security); this.ontologyCatalog = catalog; }
+  setOntologyCatalog(catalog: ExecutionCatalog): void { catalog.secureWith(this.security); this.ontologyCatalog = catalog; this.observationAuthority = new ObservationAuthority(this, catalog); }
+  observationAuthorized(owner: string, taskId: string, runtimeId: string): boolean { return !!this.observationAuthority?.current(owner, taskId, runtimeId); }
+  /** Trusted producer graph only: consumer task grants never acquire new data
+   * from an observation. Callers must validate the observer authority and lease. */
+  observationProducer(ref: OntologyReleaseRef): OntologyObjectStore {
+    const release = this.definitions.resolve(ref);
+    return this.projectionBase.forModel(release.model, { ontologyId: ref.ontologyId, releaseRef: ref, compatibleDefinition: release.compatibleDefinition });
+  }
 
   memberSources(keyPath: string, readerDirectory: string): MemberSourceVault { return new MemberSourceVault(this.db, keyPath, readerDirectory, Date.now, true); }
 
@@ -773,6 +782,11 @@ export class JobStore {
       markModelUsageUnknown(this.db, String(row.owner), job.id, digest(String(row.claim_token)));
       if (job.service !== 'eigos.delegate' || job.delegation?.backendVersion !== BACKEND_VERSION) continue;
       if (this.parkUnavailableOntology(String(row.owner), job, now)) continue;
+      if (job.delegation.observationContract) {
+        this.watchContracts.abandonRunning(String(row.owner), job.id);
+        if (job.state === 'working') { job.delegation.phase = 'observing'; job.delegation.nextAt = now; this.saveRecoveredWork(String(row.owner), job, now); }
+        continue;
+      }
       if ((job.delegation?.plan || job.delegation?.agent) && (job.revision ?? 0) === Number(row.revision)) {
         const owner = String(row.owner); const intents = this.intents(owner, job.id);
         for (const intent of intents) if (intent.state === 'dispatching') { intent.state = 'effect_unknown'; intent.nextAt = now; this.saveIntent(owner, intent); }
@@ -804,12 +818,20 @@ export class JobStore {
         AND COALESCE(json_extract(body,'$.delegation.nextAt'),0)<=?
         AND id NOT IN (SELECT job_id FROM work_claims)
         ${this.authority ? "AND json_extract(body,'$.authorityId')=:runtimeAuthority" : ''}
-        ${this.security.enabled ? this.security.workPredicate : ''} ORDER BY created_at,id LIMIT 1`);
+        ${this.security.enabled ? `AND ((${this.security.workPredicate.slice(4)}) OR EXISTS (SELECT 1 FROM observation_runtime observed WHERE observed.owner=jobs.owner AND observed.task_id=jobs.id AND observed.state='active'))` : ''} ORDER BY created_at,id LIMIT 1`);
       const named = { ...(this.security.enabled ? { securityNow:at,securityDefinition:this.security.policies.definitionDigest } : {}), ...(this.authority ? { runtimeAuthority:this.authority.id } : {}) };
       const values = [this.security.enabled ? 'worker-security-v2' : 'worker',...services,BACKEND_VERSION,at];
       const row = Object.keys(named).length ? query.get(named,...values) : query.get(...values);
       if (!row) return;
       const job = JSON.parse(String(row.body)) as Job;
+      const observation = job.delegation?.observationContract ? this.watchContracts.runtime(String(row.owner), job.id) : undefined;
+      if (observation && !this.observationAuthority?.current(String(row.owner), job.id, observation.id)) {
+        if (this.observationAuthority?.transient(String(row.owner), job.id, observation.id)) {
+          observation.health = 'stale'; observation.nextAt = at + 1000; this.watchContracts.saveRuntime(observation);
+          job.delegation!.nextAt = observation.nextAt; this.save(String(row.owner), job); return;
+        }
+        this.watchContracts.pause(String(row.owner), job.id, 'authorization_unavailable'); job.state = 'paused'; this.save(String(row.owner), job); return;
+      }
       if (this.parkUnavailableOntology(String(row.owner), job, at)) return;
       if (job.state === 'submitted') {
         job.state = 'working'; job.updatedAt = new Date(now ?? Date.now()).toISOString();
@@ -823,7 +845,7 @@ export class JobStore {
         this.db.prepare('INSERT INTO runtime_work_claims VALUES(?,?,?)').run(job.id, token, runtimeAuthorityDigest(this.authority));
       }
       const authority = this.security.workAuthority(String(row.owner), job.id, at);
-      return { owner: String(row.owner), job, token, ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
+      return { owner: String(row.owner), job, token, ...(observation ? { observationRuntimeId: observation.id, securityPolicyRevision: this.security.policies.revision() } : {}), ...(authority ? { securityAuthorityId: authority.id, securityEpoch: authority.authEpoch, securityPolicyRevision: this.security.policies.revision() } : {}), ...(job.state !== 'working' ? { recovery: true } : {}) };
     });
   }
 
@@ -856,6 +878,8 @@ export class JobStore {
       && (current.revision ?? 0) === (claim.job.revision ?? 0);
   }
   private processingAuthorityCurrent(claim:WorkClaim,now:number):boolean {
+    if (claim.observationRuntimeId) return claim.securityPolicyRevision === this.security.policies.revision()
+      && !!this.observationAuthority?.current(claim.owner, claim.job.id, claim.observationRuntimeId, this.claimMutations.has(claim));
     if (this.security.enabled) {
       const authority = this.security.workAuthority(claim.owner, claim.job.id, now);
       if (!authority || authority.id !== claim.securityAuthorityId || authority.authEpoch !== claim.securityEpoch || claim.securityPolicyRevision!==this.security.policies.revision()) return false;

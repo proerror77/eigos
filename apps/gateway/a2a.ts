@@ -4,6 +4,7 @@ import type { A2ARequestHandler, ServerCallContext, User } from '@a2a-js/sdk/ser
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError, RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError } from '@a2a-js/sdk/errors';
 import { z } from 'zod';
 import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
+import { observationControlSchema, observationHintSchema } from '../../packages/ontology/observation-runtime.js';
 import type { Config } from '../../packages/core/config.js';
 import { DomainError, ownerKey, submitSchema, versionedReplySchema, resumeTaskSchema, type Job, type JobState, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
@@ -162,7 +163,12 @@ export class A2AGateway implements A2ARequestHandler {
       let job: Job;
       if (message.metadata?.taskOperation !== undefined && !['reply', 'amend', 'resume'].includes(String(message.metadata.taskOperation))) throw new RequestMalformedError('Unknown task continuation operation');
       if (message.taskId) {
-        if (input && typeof input === 'object' && 'action' in input && input.action === 'prepare_observation_contract') {
+        if (input && typeof input === 'object' && 'action' in input && ['activate_observation_contract', 'report_observation_change'].includes(String(input.action))) {
+          if (message.metadata?.taskOperation !== undefined || 'taskId' in input && input.taskId !== message.taskId) throw new RequestMalformedError('Observation control does not match this guardian');
+          const values = { ...input, taskId: message.taskId, requestId: message.messageId };
+          job = input.action === 'activate_observation_contract' ? this.tasks.activateObservationContract(p, observationControlSchema.parse(values), message.contextId || undefined)
+            : this.tasks.reportObservationChange(p, observationHintSchema.parse(values), message.contextId || undefined);
+        } else if (input && typeof input === 'object' && 'action' in input && input.action === 'prepare_observation_contract') {
           if (message.metadata?.taskOperation !== undefined) throw new RequestMalformedError('Observation preparation is a separate delegation, not a continuation operation');
           if ('originalTaskId' in input && input.originalTaskId !== message.taskId) throw new RequestMalformedError('Original task reference does not match');
           const observation = prepareObservationSchema.parse({ ...input, originalTaskId: message.taskId, requestId: message.messageId });

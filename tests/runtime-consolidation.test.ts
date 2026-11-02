@@ -73,6 +73,13 @@ test('offline consolidation preserves private observation declarations and their
     const source=f.sources[1]!,db=new DatabaseSync(source.tasks),body=JSON.stringify({version:'1',privateTarget:'synthetic-private-target',lifetimeBudget:{maxReads:10}}),event=JSON.stringify({kind:'configured',digest:'synthetic-audit'});
     db.prepare('INSERT INTO observation_contracts VALUES(?,?,?,?,?,?,?)').run(f.owner,source.job.id,source.job.id,1,'configured',Date.now()+60000,body);
     db.prepare('INSERT INTO observation_contract_events VALUES(?,?,?,?)').run(f.owner,source.job.id,1,event);db.close();
+    const runtimeDb=new DatabaseSync(source.tasks),readId=randomUUID(),runtimeBody=JSON.stringify({source:'private-observer-runtime',generation:1});
+    runtimeDb.prepare('INSERT INTO observation_runtime VALUES(?,?,?,?,?,?)').run(f.owner,source.job.id,randomUUID(),'paused',0,runtimeBody);
+    runtimeDb.prepare('INSERT INTO observation_reads VALUES(?,?,?,?,?)').run(f.owner,readId,source.job.id,'queued',runtimeBody);
+    runtimeDb.prepare('INSERT INTO observation_inbox VALUES(?,?,?,?)').run(f.owner,readId,source.job.id,runtimeBody);
+    runtimeDb.prepare('INSERT INTO observation_receipts VALUES(?,?,?,?)').run(f.owner,readId,source.job.id,event);
+    runtimeDb.prepare('INSERT INTO observation_late_results VALUES(?,?,?,?)').run(f.owner,readId,'a'.repeat(64),event);
+    runtimeDb.prepare('INSERT INTO observation_hints VALUES(?,?,?,?)').run(f.owner,source.job.id,'hint','b'.repeat(64));runtimeDb.close();
     const plan=planConsolidation(f.input);
     consolidateSnapshots({...f.input,outputDirectory:f.destination,expectedSourceDigest:plan.sourceDigest,authority:f.authority});
     const merged=new DatabaseSync(f.authority.databasePath);
@@ -80,6 +87,11 @@ test('offline consolidation preserves private observation declarations and their
       assert.equal(merged.prepare('SELECT body FROM observation_contracts WHERE owner=? AND task_id=?').get(f.owner,source.job.id)!.body,body);
       assert.equal(merged.prepare('SELECT body FROM observation_contract_events WHERE owner=? AND task_id=?').get(f.owner,source.job.id)!.body,event);
       assert.throws(()=>merged.exec('DELETE FROM observation_contract_events'),/immutable/);
+      for(const table of ['observation_runtime','observation_reads','observation_inbox'])assert.equal(merged.prepare(`SELECT body FROM ${table} WHERE owner=?`).get(f.owner)!.body,runtimeBody);
+      assert.equal(merged.prepare('SELECT body FROM observation_receipts WHERE owner=?').get(f.owner)!.body,event);
+      assert.equal(merged.prepare('SELECT body FROM observation_late_results WHERE owner=?').get(f.owner)!.body,event);
+      assert.equal(merged.prepare('SELECT digest FROM observation_hints WHERE owner=?').get(f.owner)!.digest,'b'.repeat(64));
+      assert.throws(()=>merged.exec('DELETE FROM observation_receipts'),/immutable/);
     }finally{merged.close();}
   }finally{f.close();}
 });

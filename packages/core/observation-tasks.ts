@@ -9,12 +9,40 @@ import { TaskSecurity } from '../security/task-service.js';
 import { prepareObservationSchema, type PrepareObservation, type ObservationPins } from '../ontology/observation-contract.js';
 import { assertDefinitionJson } from '../ontology/definition-contracts.js';
 import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { observationControlSchema, observationHintSchema } from '../ontology/observation-runtime.js';
+import { ObservationAuthority } from './observation-authority.js';
 
-const conflict = (message: string): never => { throw new DomainError('CONFLICT', message); };
+function conflict(message: string): never { throw new DomainError('CONFLICT', message); }
 /** Stage one: explicit, inactive delegation only. All actual source input/target
  * binding, polling and execution authorization remain future observer work. */
 export class ObservationTasks {
   constructor(private store: JobStore, private catalog: ExecutionCatalog) {}
+  activate(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write'); requireScope(p, 'tasks:read');
+    if (!this.store.security.enabled) throw new DomainError('FORBIDDEN', 'Foundation authority is required');
+    const args = observationControlSchema.parse(input), owner = ownerKey(p);
+    return new TaskSecurity(this.store).mutate(p, args.taskId, () => this.store.onceInTransaction(owner, 'activate_observation_contract', args.requestId, digest(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (contextId && job.contextId !== contextId || job.revision !== args.expectedRevision || !job.delegation?.observationContract || !['paused', 'working'].includes(job.state)) conflict('Read the current guardian revision before activation');
+      const authority = new ObservationAuthority(this.store, this.catalog), bound = authority.bind(owner, job.id, p);
+      const old = this.store.watchContracts.runtime(owner, job.id);
+      const runtime = this.store.watchContracts.activate(owner, job.id, structuredClone(p), bound.adapter.ref, bound.target, bound.bindingDigest);
+      if (old?.state !== 'active') job.revision = (job.revision ?? 1) + 1;
+      job.state = 'working'; job.delegation.phase = 'observing'; job.delegation.nextAt = runtime.nextAt; job.updatedAt = new Date(this.store.security.now()).toISOString();
+      this.store.save(owner, job); return job;
+    }));
+  }
+  hint(p: Principal, input: unknown, contextId?: string): Job {
+    requireScope(p, 'tasks:write');
+    const args = observationHintSchema.parse(input), owner = ownerKey(p);
+    if (!this.store.security.enabled) throw new DomainError('FORBIDDEN', 'Foundation authority is required');
+    return new TaskSecurity(this.store).mutate(p, args.taskId, () => this.store.onceInTransaction(owner, 'observation_hint', args.requestId, digest(args), () => {
+      const job = this.store.get(owner, args.taskId);
+      if (contextId && job.contextId !== contextId || !job.delegation?.observationContract) conflict('Notification does not match this guardian');
+      this.store.watchContracts.hint(owner, job.id, args.eventId, args.contentDigest);
+      job.delegation.nextAt = this.store.security.now(); this.store.save(owner, job); return job;
+    }));
+  }
   prepare(p: Principal, input: unknown, contextId?: string): Job {
     requireScope(p, 'tasks:write'); requireScope(p, 'tasks:read');
     if (!this.store.security.enabled) throw new DomainError('FORBIDDEN', 'Observation contracts require Foundation task and source authority');
