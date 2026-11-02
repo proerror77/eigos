@@ -2,6 +2,8 @@
 
 `hotel.search.query` exposes one read-only `SearchRollingGoHotels` action through the shared MCP/A2A task catalog. It calls the international RollingGo MCP endpoint, `https://mcp.rollinggo.ai/mcp`, using a Bearer API Key. No booking, order or payment tools are admitted.
 
+The international endpoint is an account/service node, not an overseas-only inventory filter. The existing connector can query both Chinese and overseas hotel destinations; use explicit country/city criteria and check the returned source data. Hotel coverage does not establish domestic or international flight availability. A configured Key and a published action also do not replace the installation's source authorization or an accepted PA task.
+
 Configure Gateway and Worker with the same private settings:
 
 - `EIGOS_ROLLINGGO_KEY_FILE`: absolute path to a regular file owned by the process user, with permissions `0600`, containing the API Key.
@@ -19,3 +21,5 @@ For an existing v22 Foundation authority, stop Gateway/Worker and take a consist
 For an existing published business database, run `node scripts/install-rollinggo-readonly.mjs --database /absolute/private/tasks.sqlite` to preview the additive installation. Review its active digest and generation, then pass those exact values as `--expected-digest` and `--expected-generation` with `--apply`. In the primary runtime also load its `EIGOS_AUTHORITY_FILE` environment. The installer publishes and activates only the missing RollingGo definitions; it grants no source or task permissions. Gateway and Worker must use the same active release. Existing active v22 and task-pinned releases remain resolvable without enabling RollingGo or rewriting their metadata. Do not create a parallel production store.
 
 Official references: [Quick start](https://global.rollinggo.store/docs/mcp-docs/quick-start/), [tool reference](https://global.rollinggo.store/docs/mcp-docs/mcp-tool-reference/). The live international `tools/list` schema caps search results at 10 and uses lower-case place types; it takes precedence over older examples. Unit tests use synthetic source data.
+
+国内端点的机场与航班查询是独立 opt-in 能力，状态、限制及升级流程见[机票接入](rollinggo-flight.md)。酒店配置不会自动启用机票。
