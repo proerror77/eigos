@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "fa7800a9e412faf65a1751cee79c1c4adccd948176bb6dc51f43a6a0effbfdb5",
+      "sourceDigest": "daa6509b930a5a7a05efc385aa5230beb50245b1a90cff0d4724f6e455d673c3",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "fc0d2d116b0bb79bc31f5939b346be91ae2b5237d065a5ca091b815f4ee4d472",
+      "sourceDigest": "8f4ef740283a2bc514c60f9e4ff564b7b1ff031a2a40e2ca8f40df348437aced",
       "channels": [
         "internal"
       ],
@@ -5891,7 +5891,7 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "6544b9219568d07493335ed6dbe72950ba48c0df7b794fbded77e63436c44ad7",
+      "sourceDigest": "8310bc35a1dba458402e61c313625c305df0978ed7723e8cb8ffc36a7646a981",
       "channels": [
         "internal"
       ],
@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "f473566e59e80021ae446236bf109e3bbba9d1f07a02898034fcf7981b1a01a5",
+      "sourceDigest": "ef1a6ae16762ff349f5f63c9fadfa9da57857e22d70378a2267934f1e16c5be9",
       "channels": [
         "internal"
       ],
@@ -6237,6 +6237,18 @@
       "content": "PostgreSQL authorized Ontology discovery",
       "currentControl": "Current installation and policy before and after discovery; immutable task release, same shared field and role filters; bounded role data and expiry enforced at commit",
       "targetControl": "Current installation and policy before and after discovery; immutable task release, same shared field and role filters; bounded role data and expiry enforced at commit",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-ontology-query",
+      "file": "packages/postgres/ontology-query.ts",
+      "sourceDigest": "f59c16098c07a7e090f1b589b078c3a14e116444f7fb4cf85db78c7fc5e366f7",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL task-scoped Ontology queries",
+      "currentControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
+      "targetControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
       "stage": "S5"
     }
   ]

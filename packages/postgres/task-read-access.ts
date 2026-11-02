@@ -31,7 +31,10 @@ const bindingEvidenceSchema=z.strictObject({object:objectRefSchema,revision:z.nu
 const observationSourceSchema=z.looseObject({programId:z.string().min(1).max(200),programDigest:sha,sourceBindingId:z.string().min(1).max(200)});
 type ReadOntology=Awaited<ReturnType<typeof postgresOntologyReadContext>>;
 export type PostgresTaskReadAdmission=Omit<Awaited<ReturnType<typeof postgresTaskReadGrant>>,'actor'>&{actor:Extract<AccessContext,{actorKind:'agent'|'worker'}>};
-const snapshots=new WeakMap<Client,{key:string;admission:PostgresTaskReadAdmission;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>}>();
+type ReadSnapshot={key:string;admission:PostgresTaskReadAdmission;ontology:Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>;
+  roles?:Promise<z.infer<typeof roleSchema>[]>;clearance?:Promise<z.infer<typeof recipientSchema>|undefined>;
+  labels?:Map<string,Promise<{revision:number;values:({field:string}&z.infer<typeof storedLabelSchema>)[]}>>};
+const snapshots=new WeakMap<Client,ReadSnapshot>();
 const snapshotKey=(principal:Principal,taskId:string,policyDigest:string)=>digest([principal,taskId,policyDigest]);
 function freezeData<T>(input:T):T {
   if(input && typeof input==='object' && !Object.isFrozen(input)) {
@@ -228,9 +231,13 @@ export async function postgresTaskResourceViewValidUntil(client: Client, princip
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
     await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
-    const result = await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
-    if (result.rows.length > 256 || result.rows.some(row=>row.body===null)) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-    const roles = result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body))));
+    const load=async()=>{
+      const result=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_roles WHERE subject_id IN ($1,$2) LIMIT 257`,[admission.actor.memberId,admission.actor.installationId]);
+      if(result.rows.length>256||result.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      return freezeData(result.rows.map(row=>roleSchema.parse(JSON.parse(String(row.body)))));
+    };
+    const snapshot=snapshots.get(client);
+    const roles=await(snapshot?(snapshot.roles??=load()):load());
     return {roles,actor:admission.actor,model:builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model};
   });
   const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,'resource.view',()=>now));
@@ -261,13 +268,16 @@ export async function postgresTaskReadClearance(client: Client, principal: Princ
   const captured=structuredClone(principal);
   const result=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
     const schema=postgresBusinessSchema(client);
-    const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_recipients WHERE installation_id=$1 LIMIT 2`,[admission.actor.installationId]);
-    if (rows.rowCount === 0) return undefined;
-    if (rows.rowCount !== 1 || rows.rows[0].body === null) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-    const result=recipientSchema.parse(JSON.parse(String(rows.rows[0].body)));
-    return Date.parse(result.expiresAt)>Date.now()?result:undefined;
+    const load=async()=>{
+      const rows=await client.query(`SELECT CASE WHEN octet_length(body)<=65536 THEN body END AS body FROM "${schema}".security_recipients WHERE installation_id=$1 LIMIT 2`,[admission.actor.installationId]);
+      if(rows.rowCount===0)return undefined;
+      if(rows.rowCount!==1||rows.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      return freezeData(recipientSchema.parse(JSON.parse(String(rows.rows[0].body))));
+    };
+    const snapshot=snapshots.get(client);
+    return snapshot?(snapshot.clearance??=load()):load();
   });
-  return result && Date.parse(result.expiresAt)>Date.now()?result:undefined;
+  return result && Date.parse(result.expiresAt)>Date.now()?structuredClone(result):undefined;
 }
 
 /** Resolve the admitted task's exact read model. The returned model still
@@ -295,15 +305,23 @@ export async function postgresTaskCurrentLabels(client: Client, principal: Princ
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{
     await postgresTaskReadOntology(client,captured,taskId,policyDigest,builder);
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
-    const object=await client.query(`SELECT revision FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[owner,ref.type,ref.id]);
-    if(object.rowCount!==1 || String(object.rows[0].revision)!==String(revision))throw new SecurityError('POLICY_CHANGED');
-    const labels=await client.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body
-      FROM "${schema}".security_labels WHERE owner=$1 AND type=$2 AND object_id=$3
-      ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
-    if(labels.rows.length>256 || labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
-    try {return labels.rows.map(row=>({field:String(row.field),...storedLabelSchema.parse(JSON.parse(String(row.body)))}))
-      .filter(label=>label.field==='*' || relevant.includes(label.field));}
-    catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    const load=async()=>{
+      const object=await client.query(`SELECT revision FROM "${schema}".ontology_objects WHERE owner=$1 AND type=$2 AND id=$3`,[owner,ref.type,ref.id]);
+      if(object.rowCount!==1)throw new SecurityError('POLICY_CHANGED');
+      const current=Number(object.rows[0].revision);
+      if(!Number.isSafeInteger(current)||current<1)throw new SecurityError('POLICY_CHANGED');
+      const labels=await client.query(`SELECT field,CASE WHEN octet_length(body)<=65536 THEN body END AS body
+        FROM "${schema}".security_labels WHERE owner=$1 AND type=$2 AND object_id=$3
+        ORDER BY field LIMIT 257`,[owner,ref.type,ref.id]);
+      if(labels.rows.length>256||labels.rows.some(row=>row.body===null))throw new SecurityError('OUTPUT_NOT_ALLOWED');
+      try{return freezeData({revision:current,values:labels.rows.map(row=>({field:String(row.field),...storedLabelSchema.parse(JSON.parse(String(row.body)))}))});}
+      catch{throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    };
+    const snapshot=snapshots.get(client),key=JSON.stringify([ref.type,ref.id]);
+    let pending=snapshot?.labels?.get(key);
+    if(!pending){pending=load();if(snapshot){snapshot.labels??=new Map();if(snapshot.labels.size>=64)snapshot.labels.delete(snapshot.labels.keys().next().value!);snapshot.labels.set(key,pending);}}
+    const labels=await pending;if(labels.revision!==revision)throw new SecurityError('POLICY_CHANGED');
+    return structuredClone(labels.values.filter(label=>label.field==='*'||relevant.includes(label.field)));
   });
 }
 

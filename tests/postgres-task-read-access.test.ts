@@ -230,6 +230,27 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await assert.rejects(readObject(place,['address']),/INSUFFICIENT_ACCESS/);
     const visibleRequest=await readObject({type:'ServiceRequest',id:task.job.id},['originalGoal']);
     assert.equal(visibleRequest.object.properties.originalGoal,task.job.goal);
+    await postgresBusinessTransaction(client,schema,authority,async c=>{
+      const query=c.query,counts={roles:0,recipients:0,labels:0};
+      c.query=new Proxy(query,{apply(target,thisArg,args){
+        const sql=typeof args[0]==='string'?args[0]:args[0]?.text;
+        if(typeof sql==='string'&&sql.includes('SELECT'))for(const [name,table] of Object.entries({roles:'security_roles',recipients:'security_recipients',labels:'security_labels'})){
+          if(sql.includes('.'+table))counts[name as keyof typeof counts]++;
+        }
+        return Reflect.apply(target,thisArg,args);
+      }});
+      try{
+        await withPostgresTaskReadAuthorization(c,principal,task.job.id,policy,async auth=>{
+          const first=await auth.readObject(place),before=structuredClone(first.object);
+          first.object.properties.name='A caller must not alter the cached source row';
+          assert.deepEqual((await auth.readObject(place)).object,before);
+          const clearance=await postgresTaskReadClearance(c,principal,task.job.id,policy);assert(clearance);
+          const expected=structuredClone(clearance);clearance.channels.length=0;
+          assert.deepEqual(await postgresTaskReadClearance(c,principal,task.job.id,policy),expected);
+        },staged);
+        assert.deepEqual(counts,{roles:1,recipients:1,labels:1},'one immutable read callback does not repeat WAN metadata reads');
+      }finally{c.query=query;}
+    });
     let escaped:PostgresTaskReadAuthorization|undefined;
     await postgresBusinessTransaction(client,schema,authority,c=>withPostgresTaskReadAuthorization(c,principal,task.job.id,policy,async auth=>{escaped=auth;},staged));
     await assert.rejects(escaped!.output(outputId,deliverable),/AUTHORIZATION_REQUIRED/);
@@ -280,12 +301,13 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(sourceRows.rowCount,1);
     const shortSource={...JSON.parse(String(sourceRows.rows[0].body)),expiresAt:new Date(Date.now()+1000).toISOString()};
     await client.query(`UPDATE "${schema}".security_sources SET body=$1 WHERE owner=$2 AND installation_id=$3`,[JSON.stringify(shortSource),f.owner,installation.id]);
-    const originalQuery=client.query,originalNow=Date.now,at=Date.now();let sourceSeen=false,recipientSeen=false,finalChecks=0;
+    const originalQuery=client.query,originalNow=Date.now,at=Date.now();let sourceSeen=false,finalChecks=0;
     client.query=(async (...args:unknown[])=>{
       const result=await Reflect.apply(originalQuery,client,args),sql=String(args[0]);
       if(sql.includes('.security_sources'))sourceSeen=true;
-      if(sourceSeen && sql.includes('.security_recipients'))recipientSeen=true;
-      if(recipientSeen && sql.includes('.security_grants d JOIN') && ++finalChecks===1)Date.now=()=>at+2000;
+      // Recipient metadata may already be memoized inside this read. Advance
+      // time at the fresh outer admission after source evidence was checked.
+      if(sourceSeen && sql.includes('.security_grants d JOIN') && ++finalChecks===1)Date.now=()=>at+2000;
       return result;
     }) as typeof client.query;
     Date.now=()=>at;

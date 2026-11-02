@@ -55,14 +55,27 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     const model = builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model;
     validUntil = admission.validUntil;
     const checked = new Map<string, Binding | undefined>(), dependencies = new Set<string>();
+    // This callback cannot mutate task/auth data. Keep repeated immutable row
+    // reads inside its SQL snapshot, with a strict byte bound and cloned values.
+    const objects = new Map<string, { bytes: number; value: { revision: number; definitionDigest: string; body: z.infer<typeof bodySchema> } }>();
+    let objectBytes = 0;
     let nodes = 0;
     const raw = async (ref: ObjectRef) => {
+      const objectKey = key(ref), cached = objects.get(objectKey);
+      if (cached) return structuredClone(cached.value);
       const result = await client.query(`SELECT revision,definition_digest,CASE WHEN octet_length(body)<=1048576 THEN body END AS body
         FROM ${q}.ontology_objects WHERE owner=$1 AND type=$2 AND id=$3 LIMIT 2`, [owner, ref.type, ref.id]);
       if (result.rowCount !== 1 || result.rows[0].body === null) throw new SecurityError('OUTPUT_NOT_ALLOWED');
       const row = result.rows[0], revision = Number(row.revision);
       if (!Number.isSafeInteger(revision) || revision < 1) throw new SecurityError('OUTPUT_NOT_ALLOWED');
-      return { revision, definitionDigest: String(row.definition_digest), body: bodySchema.parse(JSON.parse(String(row.body))) };
+      const value = { revision, definitionDigest: String(row.definition_digest), body: bodySchema.parse(JSON.parse(String(row.body))) };
+      const bytes = Buffer.byteLength(String(row.body));
+      while (objects.size >= 512 || objectBytes + bytes > 8388608) {
+        const first = objects.keys().next().value; if (first === undefined) break;
+        objectBytes -= objects.get(first)!.bytes; objects.delete(first);
+      }
+      objects.set(objectKey, { bytes, value }); objectBytes += bytes;
+      return structuredClone(value);
     };
     const value = async (ref: ObjectRef, field: string, properties: Record<string, unknown>): Promise<unknown> => {
       if (!responseOnlyProjection(ref.type, field) || Object.hasOwn(properties, field)) return projectedValue(ref.type, field, properties);

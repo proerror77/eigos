@@ -4,7 +4,7 @@ import {digest} from '../core/delegation.js';
 import {DomainError} from '../core/domain.js';
 import {ownerIdentitySchema} from '../security/contracts.js';
 import {SecurityError} from '../security/errors.js';
-import {objectRefSchema,type ObjectRef,type OntologyModel} from '../ontology/model.js';
+import {objectRefSchema,type ObjectRef,type OntologyModel,type PropertyDefinition} from '../ontology/model.js';
 import {ontologyReleaseRefSchema,type OntologyReleaseRef} from '../ontology/definition-contracts.js';
 import {isVirtualRef,networkLinkIds} from '../ontology/network-model.js';
 import {IncompleteRelationshipRead,linkSnapshotDigest,objectQuerySchema,ontologyCursorSchema,ontologyBatchSchema,ontologySourceSchema,
@@ -18,6 +18,15 @@ import {assertTransactionPartyRoleWriteProgram} from '../ontology/errand-domain.
 
 function fail(message:string):never {throw new DomainError('INVALID_INPUT',message);}
 type RawObject={view:ObjectView;definitionDigest:string;body:string};
+/** Prepared by a task authorization boundary, never from request JSON. The
+ * visible set is applied before data predicates, pagination and response size. */
+export interface PostgresQueryBoundary {
+  refs: readonly ObjectRef[];
+  revision: number;
+  after?: ObjectRef;
+  properties(type: string): Record<string, PropertyDefinition>;
+  project(ref: ObjectRef, target: string, selected?: string[]): Promise<ObjectView>;
+}
 
 /** Privileged projection storage only, never a public ontology reader. The
  * enclosing task/source command supplies its authorization and mutation fence.
@@ -164,10 +173,21 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private async revision(){const values:unknown[]=[],where=this.owned(values),rows=await this.sql(`SELECT revision FROM ${this.table('revisions')} WHERE ${where}`,values);
     const revision=rows.rowCount?Number(this.one(rows).revision):0;if(!Number.isSafeInteger(revision)||revision<0)throw new DomainError('CONFLICT','Invalid dataset revision');return revision;}
   async query(owner:string,input:ObjectQuery,budget:ReadBudget={remaining:1000},readScope?:string):Promise<OntologyQueryResult>{
+    return this.queryRows(owner,input,budget,readScope);
+  }
+  async queryVisible(owner:string,input:ObjectQuery,budget:ReadBudget,readScope:string,boundary:PostgresQueryBoundary):Promise<OntologyQueryResult>{
+    this.assertOpen(owner);
+    if(input.cursor)throw new DomainError('INVALID_INPUT','Visible queries require an admitted opaque cursor');
+    return this.queryRows(owner,input,budget,readScope,{...boundary,
+      refs:z.array(objectRefSchema).max(2000).parse(boundary.refs),
+      revision:z.number().int().nonnegative().safe().parse(boundary.revision),
+      after:boundary.after?objectRefSchema.parse(boundary.after):undefined});
+  }
+  private async queryRows(owner:string,input:ObjectQuery,budget:ReadBudget,readScope?:string,boundary?:PostgresQueryBoundary):Promise<OntologyQueryResult>{
     this.assertOpen(owner);const args=objectQuerySchema.parse(structuredClone(input));
     if('type' in args&&isVirtualRef({type:args.type}))throw new DomainError('FORBIDDEN','Network facts require their authorized read view');
     if('as' in args&&args.as){const ref='object' in args?args.object:args.from;if(!this.model.isInterface(args.as)||!this.model.implements(ref.type,args.as))fail('Object does not implement the requested interface');}
-    const revision=await this.revision(),query=digest({...args,cursor:undefined,...(readScope?{readScope}:{})});let last:ObjectRef|undefined;
+    const datasetRevision=await this.revision(),revision=boundary?.revision??datasetRevision,query=digest({...args,cursor:undefined,...(readScope?{readScope}:{})});let last:ObjectRef|undefined=boundary?.after;
     if(args.cursor){let cursor:z.infer<typeof ontologyCursorSchema>;try{cursor=ontologyCursorSchema.parse(JSON.parse(Buffer.from(args.cursor,'base64url').toString()));}catch{return fail('Invalid ontology cursor');}
       if(cursor.owner!==digest(this.owner)||(cursor.ontologyId??'eigos.business')!==this.ontologyId||cursor.query!==query||cursor.model!==this.model.ref.digest||cursor.revision!==revision)throw new DomainError('CONFLICT','Query context changed; restart the bounded query');last=cursor.last;}
     let target:string,historical=false;const values:unknown[]=[],where:string[]=[];let from:string;
@@ -182,7 +202,8 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }else{target=args.type;const types=this.model.concreteTypes(target);from=this.table('objects')+' o';where.push(this.owned(values,'o'));values.push(types);where.push(`o.type=ANY($${values.length}::text[])`);
       if(args.currentDefinitionsOnly){const current=[];for(const type of types){values.push(type,this.model.fingerprint(type));current.push(`(o.type=$${values.length-1} AND o.definition_digest=$${values.length})`);}where.push(current.length?'('+current.join(' OR ')+')':'FALSE');}}
     if(!historical){values.push(this.ontologyId);where.push(`NOT EXISTS(SELECT 1 FROM "${this.schema}".ontology_tombstones deleted WHERE deleted.ontology_id=$${values.length} AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id)`);}
-    const properties=this.model.properties(target);
+    if(boundary){values.push(JSON.stringify(boundary.refs));where.push(`EXISTS(SELECT 1 FROM jsonb_to_recordset($${values.length}::jsonb) AS visible(type text,id text) WHERE visible.type=o.type AND visible.id=o.id)`);}
+    const properties=boundary?boundary.properties(target):this.model.properties(target);
     for(const name of args.select??[]){if(!Object.hasOwn(properties,name))fail('Unknown selected property');if(properties[name]!.restricted)throw new DomainError('FORBIDDEN','Restricted property cannot be selected');}
     for(const filter of args.where){const property=properties[filter.property];if(!property||property.derived||['struct','array'].includes(property.kind))fail('Filter requires a registered stored scalar property');
       if(property.restricted)throw new DomainError('FORBIDDEN','Restricted property cannot be filtered');if(!['eq','in'].includes(filter.op)&&!['integer','timestamp','decimal'].includes(property.kind))fail('Unsupported comparison for this property');
@@ -201,11 +222,11 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         const kind=properties[filter.property]!.kind,normalize=(v:unknown)=>kind==='timestamp'?Date.parse(String(v)):kind==='decimal'?BigInt(String(v).replace('.','').padEnd(String(v).split('.')[0]!.length+6,'0')):v;
         const a=normalize(value) as string|number|bigint|boolean;if(filter.op==='in')return(filter.value as unknown[]).some(value=>a===normalize(value));const b=normalize(filter.value) as typeof a;
         return filter.op==='eq'?a===b:filter.op==='lt'?a<b:filter.op==='lte'?a<=b:filter.op==='gt'?a>b:a>=b;});
-      if(matches){const view=this.project(object,target,args.select),size=Buffer.byteLength(JSON.stringify(view));if(bytes+size>60000){if(!items.length)fail('Object projection exceeds response limit');hasMore=true;break;}items.push(view);bytes+=size;}
+      if(matches){const view=boundary?await boundary.project(ref,target,args.select):this.project(object,target,args.select),size=Buffer.byteLength(JSON.stringify(view));if(bytes+size>60000){if(!items.length)fail('Object projection exceeds response limit');hasMore=true;break;}items.push(view);bytes+=size;}
       last=ref;
     }
     const cursor=hasMore&&last?Buffer.from(JSON.stringify({owner:digest(this.owner),ontologyId:this.ontologyId,query,model:this.model.ref.digest,revision,last})).toString('base64url'):undefined;
-    if(await this.revision()!==revision)throw new DomainError('CONFLICT','Objects changed during query; retry against the current revision');
+    if(await this.revision()!==datasetRevision)throw new DomainError('CONFLICT','Objects changed during query; retry against the current revision');
     return {model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
   }
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget):Promise<ObjectView[]>{const result=await this.query(owner,{from,link,limit:50},budget);if(result.page.hasMore)throw new IncompleteRelationshipRead();return result.items;}
