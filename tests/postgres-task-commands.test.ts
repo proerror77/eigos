@@ -73,10 +73,20 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     assert.equal(successor.grant.requestRevision,2);
     const old=await t.client.query(`SELECT state,revision FROM ${q}.security_grants WHERE id=$1`,[previous.grant.id]);
     assert.equal(old.rows[0].state,'revoked');assert.equal(Number(old.rows[0].revision),2);
-    const service=new PostgresTaskCommandService({run:t.run},t.policy);
+    const commands=new PostgresTaskCommandService({run:t.run},t.policy);
+    // A real Gateway refreshes eligibility when it authenticates each Agent
+    // request. This fixture supplies identity explicitly and models that step;
+    // it does not replace Worker claim checks or extend grants/claim tokens.
+    const service=new Proxy(commands,{get(target,key){
+      const value=Reflect.get(target,key);if(typeof value!=='function'||key==='close')return value;
+      return async(...args:unknown[])=>{await t.refreshEligibility();return Reflect.apply(value,target,args);};
+    }});
+
     const created=await service.submit(p,{goal:'Synthetic PostgreSQL public command',requestId:'command-submit'});
     assert.equal(created.goal,'Synthetic PostgreSQL public command');
     assert.equal((await service.submit(p,{goal:'Synthetic PostgreSQL public command',requestId:'command-submit'})).id,created.id);
+    await assert.rejects(service.submit(p,{goal:'Unsupported Unicode \ud800',requestId:'unsupported-unicode'}),/not representable/);
+    assert.equal(Number((await t.client.query(`SELECT count(*) AS n FROM ${q}.requests WHERE request_id='unsupported-unicode'`)).rows[0].n),0);
     const writeScopes=p.scopes.filter(scope=>scope!=='tasks:read');
     const writer={...p,scopes:writeScopes,access:{...p.access,tokenScopes:writeScopes}};
     const receipt=await service.submit(writer,{goal:'Private writer-only goal',requestId:'write-only'});

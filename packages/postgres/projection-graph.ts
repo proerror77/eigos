@@ -209,12 +209,31 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     return {model:this.model.ref,items,page:{limit:args.limit,scanned,hasMore,cursor},datasetRevision:revision,...('type'in args&&args.currentDefinitionsOnly?{definitionScope:'current_definitions_only' as const}:{})};
   }
   async related(owner:string,from:ObjectRef,link:string,budget:ReadBudget):Promise<ObjectView[]>{const result=await this.query(owner,{from,link,limit:50},budget);if(result.page.hasMore)throw new IncompleteRelationshipRead();return result.items;}
-  private async remember(ref:ObjectRef,revision:number,definitionDigest:string,body:string,release:OntologyReleaseRef|null=this.releaseRef){
-    const prior=await this.sql(`SELECT definition_digest,body,deleted FROM "${this.schema}".ontology_object_versions
-      WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 AND revision=$5 LIMIT 2`,[this.ontologyId,this.owner,ref.type,ref.id,revision]);
-    if(prior.rowCount){const row=this.one(prior);if(row.definition_digest!==definitionDigest||row.body!==body||Number(row.deleted)!==0)throw new DomainError('CONFLICT','An immutable object writer version already differs');return;}
-    await this.sql(`INSERT INTO "${this.schema}".ontology_object_versions(ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,deleted)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,0)`,[this.ontologyId,this.owner,ref.type,ref.id,revision,definitionDigest,release?.releaseId??null,release?.digest??null,body]);
+  private async persistObject(ref:ObjectRef,revision:number,definitionDigest:string,body:string,old?:RawObject){
+    const versions=[...(old?[{revision:old.view.revision,definition_digest:old.definitionDigest,release_id:null,release_digest:null,body:old.body}]:[]),
+      {revision,definition_digest:definitionDigest,release_id:this.releaseRef.releaseId,release_digest:this.releaseRef.digest,body}];
+    const columns=(this.scoped?'ontology_id,':'')+'owner,type,id,revision,definition_digest,body',conflict=(this.scoped?'ontology_id,':'')+'owner,type,id';
+    const row=this.one(await this.sql(`WITH expected AS(
+        SELECT $1::text AS ontology_id,$2::text AS owner,$3::text AS type,$4::text AS id,v.*,
+          "${this.schema}".eigos_try_jsonb(v.body) IS NOT NULL AS compatible
+        FROM jsonb_to_recordset($9::jsonb) AS v(revision bigint,definition_digest text,release_id text,release_digest text,body text)),
+      remembered AS(INSERT INTO "${this.schema}".ontology_object_versions(ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,deleted)
+        SELECT ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,0 FROM expected WHERE compatible ORDER BY revision
+        ON CONFLICT(ontology_id,owner,type,id,revision) DO NOTHING RETURNING revision),
+      written AS(INSERT INTO ${this.table('objects')} AS dataset_row(${columns}) SELECT ${this.scoped?'$1,':''}$2,$3,$4,$5,$6,$7 WHERE(SELECT bool_and(compatible) FROM expected)
+        ON CONFLICT(${conflict}) DO UPDATE SET revision=excluded.revision,definition_digest=excluded.definition_digest,body=excluded.body
+        WHERE dataset_row.revision=$8 AND dataset_row.definition_digest=$10 AND dataset_row.body=$11
+        RETURNING revision,body=$7 AND definition_digest=$6 AS matches)
+      SELECT(SELECT bool_and(compatible) FROM expected) AS body_valid,
+        (SELECT count(*) FROM written)=1 AS wrote,(SELECT min(revision) FROM written) AS revision,
+        COALESCE((SELECT bool_and(matches) FROM written),false) AS matches,
+        NOT EXISTS(SELECT 1 FROM expected e WHERE NOT EXISTS(SELECT 1 FROM remembered r WHERE r.revision=e.revision)
+          AND NOT EXISTS(SELECT 1 FROM "${this.schema}".ontology_object_versions v WHERE v.ontology_id=e.ontology_id AND v.owner=e.owner
+            AND v.type=e.type AND v.id=e.id AND v.revision=e.revision AND v.definition_digest=e.definition_digest AND v.body=e.body AND v.deleted=0)) AS versions_valid`,
+      [this.ontologyId,this.owner,ref.type,ref.id,revision,definitionDigest,body,old?.view.revision??0,JSON.stringify(versions),old?.definitionDigest??null,old?.body??null]));
+    if(row.body_valid!==true)fail('Ontology object JSON is not representable in PostgreSQL storage');
+    if(row.versions_valid!==true)throw new DomainError('CONFLICT','An immutable object writer version already differs');
+    if(row.wrote!==true||row.matches!==true||Number(row.revision)!==revision)throw new DomainError('CONFLICT','Object revision changed; explicit current revision required');
   }
   private async optionalRaw(ref:ObjectRef):Promise<RawObject|undefined>{
     try{return await this.raw(ref,{remaining:1},true);}
@@ -279,15 +298,10 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
           if(object.ref.type==='OrderLine'&&(previous.sourceAgreement!==undefined||properties.sourceAgreement!==undefined))throw new DomainError('CONFLICT','An existing order line cannot acquire or replace its sealed source agreement');
           if(object.ref.type==='Shipment'&&digest(previous.expectedAllocation??null)!==digest(properties.expectedAllocation??null))throw new DomainError('CONFLICT','An existing shipment cannot acquire or replace its original expected allocation');
           if(old.view.revision!==object.expectedRevision)throw new DomainError('CONFLICT','Object revision changed; explicit current revision required');
-          await this.remember(object.ref,old.view.revision,old.definitionDigest,old.body,null);
         }else if(object.expectedRevision!==undefined)throw new DomainError('CONFLICT','Expected object revision does not exist');
         if(!old)inserted.add(key(object.ref));
         const revision=(old?.view.revision??0)+1;if(!Number.isSafeInteger(revision))throw new DomainError('CONFLICT','Object revision exceeds its supported range');
-        const values:unknown[]=[...(this.scoped?[this.ontologyId]:[]),this.owner,object.ref.type,object.ref.id,revision,this.model.fingerprint(object.ref.type),body];
-        const columns=(this.scoped?'ontology_id,':'')+'owner,type,id,revision,definition_digest,body',conflict=(this.scoped?'ontology_id,':'')+'owner,type,id';
-        await this.sql(`INSERT INTO ${this.table('objects')}(${columns}) VALUES(${values.map((_,i)=>'$'+(i+1)).join(',')})
-          ON CONFLICT(${conflict}) DO UPDATE SET revision=excluded.revision,definition_digest=excluded.definition_digest,body=excluded.body`,values);
-        await this.remember(object.ref,revision,this.model.fingerprint(object.ref.type),body);
+        await this.persistObject(object.ref,revision,this.model.fingerprint(object.ref.type),body,old);
         this.cacheObject(object.ref,{body,definitionDigest:this.model.fingerprint(object.ref.type),view:{ref:object.ref,revision,properties,source,createdAt}});
         changed=true;touched.set(key(object.ref),object.ref);
       }

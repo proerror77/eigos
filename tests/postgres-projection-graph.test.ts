@@ -74,6 +74,20 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
     const stale:ObjectBatch={objects:[{ref:place,expectedRevision:99,properties:{placeId:place.id,displayTitle:'Stale change',name:'Stale change'}}]};
     assert.throws(()=>graph.ingest(owner,stale,source),/revision changed/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>(await PostgresProjectionGraph.create(c,owner,release.ref)).ingest(owner,stale,source)),/revision changed/);await compare();
+    const changed:ObjectBatch={objects:[{ref:place,expectedRevision:1,properties:{...placeProperties,name:'Fenced update'}}]};
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref);await target.read(owner,place);
+      // Deliberately bypass the graph inside this disposable transaction. The
+      // persisted CAS must still reject a stale cached writer observation.
+      await c.query(`UPDATE "${schema}".ontology_objects SET revision=revision+1 WHERE owner=$1 AND type=$2 AND id=$3`,[owner,place.type,place.id]);
+      await target.ingest(owner,changed,source);
+    }),/revision changed/);await compare();
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref);
+      await c.query(`INSERT INTO "${schema}".ontology_object_versions(ontology_id,owner,type,id,revision,definition_digest,release_id,release_digest,body,deleted)
+        SELECT $1,owner,type,id,revision+1,definition_digest,NULL,NULL,body,0 FROM "${schema}".ontology_objects WHERE owner=$2 AND type=$3 AND id=$4`,[release.ref.ontologyId,owner,place.type,place.id]);
+      await target.ingest(owner,changed,source);
+    }),/immutable object writer version/);await compare();
     const failed={type:'Place',id:'rolled-back-place'},bad:ObjectBatch={objects:[{ref:failed,properties:{placeId:failed.id,displayTitle:'Must roll back',name:'Must roll back'}}],links:[{type:'PlaceEvidence',from:failed,to:{type:'SourceReceipt',id:'missing-receipt'}}]};
     assert.throws(()=>graph.ingest(owner,bad,source),/not found/);
     await postgresBusinessTransaction(client,schema,authority,async c=>{
@@ -104,6 +118,13 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
       const target=await PostgresProjectionGraph.create(c,owner,release.ref);
       await assert.rejects(target.ingest(owner,missing,taskSource),/Relationship cardinality/);
       await assert.rejects(target.read(owner,orphan),/not found/);
+    });await compare();
+    const unicode={type:'RequestInstruction',id:'unsupported-json-unicode'};
+    await postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref);
+      await assert.rejects(target.ingest(owner,{objects:[{ref:unicode,properties:{...instructions.objects[0]!.properties,id:unicode.id,text:'\ud800'}}],
+        links:[{type:'RequestInstructionRequest',from:unicode,to:{type:'ServiceRequest',id}}]},taskSource),/not representable/);
+      await assert.rejects(target.read(owner,unicode),/not found/);
     });await compare();
     let escaped:PostgresProjectionGraph|undefined;
     await postgresBusinessTransaction(client,schema,authority,async c=>{escaped=await PostgresProjectionGraph.create(c,owner,release.ref);});

@@ -118,9 +118,13 @@ export class PostgresTaskStorage {
     if(Buffer.byteLength(JSON.stringify(job))>50331648)throw new DomainError('CONFLICT','Task exceeds its safe runtime bound');
     await this.query('SAVEPOINT eigos_task_save');
     try{
-      await this.query(`INSERT INTO ${q}.jobs(id,owner,context_id,state,created_at,updated_at,body) VALUES($1,$2,$3,$4,$5,$6,$7)
-        ON CONFLICT(id) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at,body=excluded.body WHERE jobs.owner=excluded.owner`,
+      const written=await this.query(`WITH checked AS(SELECT ${q}.eigos_try_jsonb($7::text) IS NOT NULL AS valid),
+        written AS(INSERT INTO ${q}.jobs(id,owner,context_id,state,created_at,updated_at,body) SELECT $1,$2,$3,$4,$5,$6,$7 FROM checked WHERE valid
+          ON CONFLICT(id) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at,body=excluded.body WHERE jobs.owner=excluded.owner RETURNING id)
+        SELECT valid,(SELECT count(*) FROM written)=1 AS wrote FROM checked`,
         [job.id,owner,job.contextId,job.state,job.createdAt,job.updatedAt,JSON.stringify(job)]);
+      if(written.rowCount!==1||written.rows[0]?.valid!==true)throw new DomainError('INVALID_INPUT','Task JSON is not representable in PostgreSQL storage');
+      if(written.rows[0].wrote!==true)throw new DomainError('FORBIDDEN','Task owner mismatch');
       if(job.service!=='eigos.delegate'||job.delegation?.backendVersion!==BACKEND_VERSION||!job.delegation.ontologyRelease)throw new DomainError('CONFLICT','Task has no current pinned execution context');
       const graph=await PostgresProjectionGraph.create(this.client,owner,job.delegation.ontologyRelease,this.builder,{now:this.now});
       await graph.run(metadata=>projectTaskProgram(metadata,owner,job));
