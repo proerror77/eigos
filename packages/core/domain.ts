@@ -86,6 +86,8 @@ export interface JobMessage {
   at: string;
 }
 export interface Job {
+  /** Server-generated lifecycle projection; never accepted from submissions. */
+  observation?: import('../ontology/observation-contract.js').ObservationContractView;
   id: string;
   authorityId?: string;
   contextId: string;

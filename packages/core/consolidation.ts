@@ -22,6 +22,7 @@ const normalize = (value: unknown): unknown => value instanceof Uint8Array ? { b
   : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k,v]) => [k,normalize(v)])) : value;
 const hashFile = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
 const businessTables = new Set(['jobs','requests','action_intents','action_attempts','action_intent_versions','action_observations','plan_grants','budget_reservations',
+  'observation_contracts','observation_contract_events',
   'aftersales_cases','outcome_feedback','capability_claims','capability_verifications','capability_change_proposals','preparation_contexts','member_model_usage',
   'ontology_objects','ontology_links','ontology_object_versions','ontology_scoped_objects','ontology_scoped_links','ontology_tombstones',
   'member_didi_source_admissions','personal_source_binding','member_source_credentials','member_source_fingerprints','member_source_requests']);

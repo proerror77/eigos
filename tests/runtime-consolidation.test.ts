@@ -67,3 +67,19 @@ test('changed snapshots, identity consent conflicts and task collisions fail wit
     const next=planConsolidation(f.input);assert.throws(()=>consolidateSnapshots({...f.input,outputDirectory:f.destination,expectedSourceDigest:next.sourceDigest,authority:f.authority}),/UNIQUE/);assert(!existsSync(f.destination));
   }finally{f.close();}
 });
+test('offline consolidation preserves private observation declarations and their append-only audit',()=>{
+  const f=fixture();try{
+    // Storage-only historical fixture: preserve bytes without reinterpreting or activating a contract.
+    const source=f.sources[1]!,db=new DatabaseSync(source.tasks),body=JSON.stringify({version:'1',privateTarget:'synthetic-private-target',lifetimeBudget:{maxReads:10}}),event=JSON.stringify({kind:'configured',digest:'synthetic-audit'});
+    db.prepare('INSERT INTO observation_contracts VALUES(?,?,?,?,?,?,?)').run(f.owner,source.job.id,source.job.id,1,'configured',Date.now()+60000,body);
+    db.prepare('INSERT INTO observation_contract_events VALUES(?,?,?,?)').run(f.owner,source.job.id,1,event);db.close();
+    const plan=planConsolidation(f.input);
+    consolidateSnapshots({...f.input,outputDirectory:f.destination,expectedSourceDigest:plan.sourceDigest,authority:f.authority});
+    const merged=new DatabaseSync(f.authority.databasePath);
+    try{
+      assert.equal(merged.prepare('SELECT body FROM observation_contracts WHERE owner=? AND task_id=?').get(f.owner,source.job.id)!.body,body);
+      assert.equal(merged.prepare('SELECT body FROM observation_contract_events WHERE owner=? AND task_id=?').get(f.owner,source.job.id)!.body,event);
+      assert.throws(()=>merged.exec('DELETE FROM observation_contract_events'),/immutable/);
+    }finally{merged.close();}
+  }finally{f.close();}
+});

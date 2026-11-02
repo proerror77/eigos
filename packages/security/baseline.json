@@ -2886,7 +2886,7 @@
     {
       "id": "mcp",
       "file": "apps/gateway/mcp.ts",
-      "sourceDigest": "41452fa3c00320f280e97b213644a24ea87bd5803375cad4b97777ab7c3d3a32",
+      "sourceDigest": "f9de6665bfc317e4a695dcdef6f2227f8470bbb98d58fa973e13c45ace7b3607",
       "channels": [
         "mcp"
       ],
@@ -2898,7 +2898,7 @@
     {
       "id": "a2a",
       "file": "apps/gateway/a2a.ts",
-      "sourceDigest": "258348b96e23ff59ea199f4ea13ebc3f8abc3e8c4887c699f30a0de987cdbd57",
+      "sourceDigest": "db2ebb985621e5a2343d2e8495ddc386f25b14b2411afe422bead24a5dfd5641",
       "channels": [
         "a2a"
       ],
@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "7f3105ae9843ec0d5479f4ea8ea01f3fc4409219162093387c3cbbe7fb1ba55f",
+      "sourceDigest": "10aeb5e5a5b44904c5083a833dc9b02e11c732dc411a2754d7fa0ccb7d6576de",
       "channels": [
         "http",
         "mcp",
@@ -2924,7 +2924,7 @@
     {
       "id": "job-store",
       "file": "packages/core/store.ts",
-      "sourceDigest": "a82bbbe6c978d3dd7b07a8c0702f6bf239e12935ae42761c658e29fea4fbf60b",
+      "sourceDigest": "16b66644bc214653dacb82f94c4d6a3e23d6ff519d2b4da1ab33523b16a33ee0",
       "channels": [
         "sqlite",
         "idempotency"
@@ -3402,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "59765c03d969740ba2e2973bf37516237a69f42f6121add31e16e79674ac398e",
+      "sourceDigest": "6648fc927a8735cc4bf5ea2e6ce8ff30a976050a53b114407dda300b7110c662",
       "channels": [
         "authorization_control"
       ],
@@ -3510,7 +3510,7 @@
     {
       "id": "security-task-view",
       "file": "packages/security/task-service.ts",
-      "sourceDigest": "291d1265997a45f615a9e2891a4d872b5d2b7b528d9572bc94f213d54578c7a5",
+      "sourceDigest": "868d9615ae91a87bf8e88fefbfcbb8dc26294652e3d35f3ddba5ba6bcef06c0f",
       "channels": [
         "http-mcp-a2a"
       ],
@@ -4066,7 +4066,7 @@
     {
       "id": "fixed-scope-message-references",
       "file": "packages/core/delegation.ts",
-      "sourceDigest": "7dd3695f2accb7d9f5084c9e1a712fc68b1eb69b19b35b67998814b34ae36a25",
+      "sourceDigest": "86a7545dbbb0b7b6ddde2ae0129cf73d96090e5ff577665d517450ab8675d929",
       "channels": [
         "model",
         "artifact"
@@ -4351,7 +4351,7 @@
     {
       "id": "runtime-consolidation",
       "file": "packages/core/consolidation.ts",
-      "sourceDigest": "e1b72b9bd578707a4c571b8bae0d38327ac8f83616953ee56a62450c5d2836ab",
+      "sourceDigest": "851b33cbfa742d41860ad9dc72cdf742f5f659c0070207f87ec432bce07f169e",
       "channels": [
         "operator_cli"
       ],
@@ -5357,6 +5357,45 @@
       "targetControl": "Preserve original PA connection, tasks and permissions while checking the published Skill",
       "stage": "S5",
       "sourceDigest": "d4dc918fc4d81545c40bd47dc97b2d75d3f245d2dae0625956f62950fe788663"
+    },
+    {
+      "id": "observation-contract-schema",
+      "file": "packages/ontology/observation-contract.ts",
+      "channels": [
+        "task_control_input",
+        "task_metadata"
+      ],
+      "content": "Explicit bounded observation declaration; expected target identity and source input are not source truth",
+      "currentControl": "Strict owner-free PA input, explicit horizons/limits, read-only declared action; identity remains unverified",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "b02321a4565f09221d0a0f52744f8ee6f420c47e3018871edb9cf49a99cf385f"
+    },
+    {
+      "id": "observation-contract-storage",
+      "file": "packages/core/observation-store.ts",
+      "channels": [
+        "sqlite_private"
+      ],
+      "content": "Inactive guardian contract, lifetime caps and append-only revocation audit",
+      "currentControl": "Owner-scoped shared business transactions, immutable declaration digest, CAS revocation, bounded indexed capacity",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "5f2affa8113a9c36d4a404c576d40310e9e332d0fbd3db648a6e1e61dfd00b41"
+    },
+    {
+      "id": "observation-task-boundary",
+      "file": "packages/core/observation-tasks.ts",
+      "channels": [
+        "mcp",
+        "a2a",
+        "task_metadata"
+      ],
+      "content": "Separate inactive guardian for a completed task; current source/field/reference checks",
+      "currentControl": "Current original-task authority and published mapping; fresh control-only task grant, no inherited data or execution authority",
+      "targetControl": "Reviewed contract-only metadata; observer activation remains unavailable",
+      "stage": "S2",
+      "sourceDigest": "519462b0dda5f71be4e6e954db3748a2282b075fca48bddda528c6b6cb064781"
     }
   ]
 }
