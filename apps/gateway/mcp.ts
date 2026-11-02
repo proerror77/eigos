@@ -4,6 +4,7 @@ import { sourceBeginSchema, sourceRevokeSchema } from '../../packages/core/membe
 import { mountNetworkMcp } from './network/mcp.js';
 import { McpServer, type CallToolResult } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { prepareObservationSchema } from '../../packages/ontology/observation-contract.js';
 import { DomainError, versionedReplySchema, resumeTaskSchema, requireScope, submitSchema, ontologySubmitSchema, taskIdSchema, remediationSchema, requestIdSchema, type Principal } from '../../packages/core/domain.js';
 import { TaskService } from '../../packages/core/tasks.js';
 import { publicTask as taskSummary } from './task-view.js';
@@ -83,6 +84,10 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     description: 'Read an owned task business summary with current revision, pending question, authorization/recovery status and intact artifacts. While submitted/working, use waitMs up to 30000 to await a terminal state or needed action without rapid repeated calls. Timeout returns the unchanged original task and never cancels execution. Internal model and ontology histories stay in EIGOS. Technical recovering/paused states do not request business input: preserve this task and confirmed facts; never create a replacement. Only input-required asks for missing owner facts. Works across MCP/A2A.',
     inputSchema: z.object({ taskId: taskIdSchema, waitMs: z.number().int().min(0).max(30000).optional() }).strict(), annotations: read,
   }, ({ taskId, waitMs }) => result(async () => taskSummary(await tasks.getAfterWait(principal, taskId, waitMs))));
+  if (tasks.secured) server.registerTool('prepare_observation_contract', {
+    description: 'Record an explicitly delegated, bounded observation contract for a completed owned task, creating a separate paused guardian. Requires current task/source/field permissions, exact published mapping and read input, horizon and lifetime budgets. This stage does not start monitoring or authorize source calls, calendar edits, orders or payments. Target account/native identity remains unverified until a trusted observer binds it. Read lifecycle with get_task; cancel_task revokes the contract. Never infer this delegation from task completion.',
+    inputSchema: prepareObservationSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, args => result(() => taskSummary(tasks.prepareObservationContract(principal, args))));
   if (!tasks.secured && options.externalDrafts) server.registerTool('authorize_checkout_draft', {
     description: 'Authorize exactly one live unpaid checkout draft for the merchant, items and source preview returned by this owned task. Copy its planDigest and draft unchanged; expiresAt may copy draft.sourceExpiresAt and must not exceed it. This grants no order, payment, customer-data submission or later edit. Reuse requestId for identical retries.',
     inputSchema: externalDraftPermitSchema.omit({ action: true, environment: true }).extend({ taskId: taskIdSchema }).strict(),
@@ -107,7 +112,7 @@ export function createMcpServer(tasks: TaskService, principal: Principal, networ
     inputSchema: versionedReplySchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.amend(principal, args))));
   server.registerTool('resume_task', {
-    description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. In Foundation mode only the original PA with current task-processing permission and execution authority can resume, using the current expectedRevision without increasing its budget or expiry. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged.',
+    description: 'Resume the SAME technically paused read-only task after its runtime prerequisite has been restored. In Foundation mode only the original PA with current task-processing permission and execution authority can resume, using the current expectedRevision without increasing its budget or expiry. No owner answer or repeated business confirmation is needed. Preserve history and cumulative usage; this grants no new business authority. Do not repeatedly call while the failure is unchanged. An inactive observation contract cannot be activated with this tool.',
     inputSchema: resumeTaskSchema, annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, args => result(() => taskSummary(tasks.resume(principal, args))));
   if (options.payment !== false) server.registerTool('select_payment_route', {

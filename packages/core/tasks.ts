@@ -1,4 +1,5 @@
 import { DELEGATE, digest, actionOperationKey } from './delegation.js';
+import { ObservationTasks } from './observation-tasks.js';
 import { isActionAdapter, type ExecutionCatalog } from './catalog.js';
 import { BACKEND_VERSION, moneySchema } from '../ontology/execution.js';
 import { proposePlan, validatePlan } from '../coordinator/plan.js';
@@ -72,6 +73,10 @@ export class TaskService {
     return context;
   }
   get secured() { return !!this.security; }
+  prepareObservationContract(p: Principal, input: unknown, contextId?: string): Job {
+    if (this.stopping) throw new DomainError('CONFLICT', 'Gateway is shutting down');
+    return new ObservationTasks(this.store, this.options.catalog).prepare(p, input, contextId);
+  }
 
   services() {
     if (this.security) return [{id:'eigos.delegate',name:'Task-scoped EIGOS execution',description:'Delegate within the current installation and task grants. Resources, source operations, model processing and delivery channels require independent permission.',requiredInputs:['goal'],tags:['delegation'],examples:[],inputModes:['text/plain','application/json'],outputModes:['application/json','text/markdown']}];
@@ -345,6 +350,7 @@ export class TaskService {
     const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner, args.taskId), d = job.delegation;
+      if (d?.observationContract) throw new DomainError('CONFLICT', 'Observation contracts remain inactive until a reviewed observer is installed');
       if (contextId && contextId !== job.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
       if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
       const intents = this.store.intents(owner, job.id);
@@ -380,6 +386,7 @@ export class TaskService {
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
     const current = this.store.get(owner, args.taskId);
+    if (current.delegation?.observationContract) throw new DomainError('CONFLICT', 'An immutable observation contract cannot become an execution task through replies or amendments');
     if (current.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
     if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
     if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
@@ -546,6 +553,13 @@ export class TaskService {
       if (job.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
       if (job.service === DELEGATE && job.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
       if (job.state === 'completed' || job.state === 'failed' || job.state === 'rejected') throw new DomainError('CONFLICT', 'Terminal tasks cannot be canceled');
+      if (job.delegation?.observationContract) {
+        const contract = this.store.watchContracts.get(owner, job.id);
+        if (contract.digest !== job.delegation.observationContract.digest) throw new DomainError('CONFLICT', 'Observation contract integrity changed');
+        this.store.watchContracts.revoke(owner, job.id, contract.revision);
+        job.revision = (job.revision ?? 1) + 1;
+        job.delegation.events.push({ at: new Date().toISOString(), event: 'observation_contract_revoked', evidence: contract.digest });
+      }
       job.state = 'canceled';
       if (job.delegation?.plan || job.delegation?.agent) { job.delegation.recoveryPending = this.store.cancelActions(owner, job.id); job.delegation.nextAt = 0; }
       if (job.delegation?.agent?.paPayment) { job.delegation.agent.paPayment.status = 'withdrawn'; job.delegation.agent.paPayment.recoveryAttempts = 0; job.delegation.recoveryPending = true; }

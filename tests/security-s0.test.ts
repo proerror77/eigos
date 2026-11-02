@@ -28,7 +28,10 @@ test('S0 inventories every definition and nested subtree without changing runtim
   const before = structuredClone(businessModel.ref), report = buildSecurityInventory(baseline(), undefined, root);
   assert.deepEqual(report.issues, []);
   assert.equal(report.counts.objectTypes, 202); assert.equal(report.counts.properties, 1852); assert.equal(report.counts.interfaces, 14);
-  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 198);
+  assert(report.counts.nestedPaths > report.counts.properties); assert.equal(report.counts.surfaces, 201);
+  for (const id of ['observation-contract-schema', 'observation-contract-storage', 'observation-task-boundary']) {
+    assert(report.surfaces.some(surface => surface.id === id), `Unreviewed observation contract surface: ${id}`);
+  }
   const guidance = report.surfaces.find(surface => surface.id === 'security-error-guidance');
   assert(guidance); assert.equal(guidance.file, 'packages/security/error-guidance.ts');
   assert.deepEqual(guidance.channels, ['http', 'mcp', 'a2a']);

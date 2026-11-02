@@ -65,6 +65,8 @@ export const proposalSchema = z.object({
 }).strict();
 export type PlanProposal = z.infer<typeof proposalSchema>;
 export interface Delegation {
+  /** Inactive, separate guardian delegation; never permission to reopen history. */
+  observationContract?: { id: string; digest: string };
   goalCoverage?: import('../ontology/goal-coverage.js').GoalCoverage;
   goalCoverageHistory?: import('../ontology/goal-coverage.js').GoalCoverage[];
   groundingDecisions?: { modelRunId: string; decision: Grounding }[];
