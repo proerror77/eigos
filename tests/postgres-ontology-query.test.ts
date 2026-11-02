@@ -55,6 +55,7 @@ test('PostgreSQL task queries filter visibility before predicates and pages, ret
       const queries: ObjectQuery[] = [{ object: { type: 'ServiceRequest', id: task.job.id } }, { type: 'Place' },
         { type: 'Place', where: [{ property: 'name', op: 'eq', value: 'c-visible' }], select: ['name'] },
         { from: hotel, as: 'Located', link: 'location' },
+        { object: hotel, as: 'Located' },
         { type: 'Place', where: [{ property: 'address', op: 'eq', value: 'not a scalar' }] }];
       const expected = queries.slice(0, -1).map(query => source.query(input(query)));
       const sourcePage = source.query(input({ type: 'Place', limit: 1 }));

@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "daa6509b930a5a7a05efc385aa5230beb50245b1a90cff0d4724f6e455d673c3",
+      "sourceDigest": "9f705573c21cd825758d3eefacecbbc9e448751fd59896afc9e517c5624c7b73",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "8f4ef740283a2bc514c60f9e4ff564b7b1ff031a2a40e2ca8f40df348437aced",
+      "sourceDigest": "741b1fa8edf13f508a04c3fda29945e63a572be0524c5fcc29464c0b2c3c7b73",
       "channels": [
         "internal"
       ],
@@ -5891,7 +5891,7 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "8310bc35a1dba458402e61c313625c305df0978ed7723e8cb8ffc36a7646a981",
+      "sourceDigest": "68c4ba1ba04e7a40ee7e8f7ffbb51ac43ce1070887d1d8745ca4309536c38744",
       "channels": [
         "internal"
       ],
@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "063859c6838e9dd36fb520b1954680cf02d3d1ef36efaf1e75dbacfa75aa6b4b",
+      "sourceDigest": "32aa5d3e92857ee1b000bbe5c5c9e0a303b896b3bc94d9b417f54350cefca780",
       "channels": [
         "internal"
       ],
@@ -6242,13 +6242,37 @@
     {
       "id": "postgres-ontology-query",
       "file": "packages/postgres/ontology-query.ts",
-      "sourceDigest": "f59c16098c07a7e090f1b589b078c3a14e116444f7fb4cf85db78c7fc5e366f7",
+      "sourceDigest": "dacee20520357a8859ae2d30d72a9ae8b6553d13accd6880923f8530ca4ead0e",
       "channels": [
         "internal"
       ],
       "content": "PostgreSQL task-scoped Ontology queries",
       "currentControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
       "targetControl": "Complete bounded task binding and current field/lineage/recipient visibility before predicates and pagination; exact release/revision, opaque installation/grant/policy cursors and checked field projection; raw graph never exposed",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-ontology-read-query",
+      "file": "packages/postgres/ontology-read-query.ts",
+      "sourceDigest": "afa6774fb6bd1974c77e48047015974be5966da08909e6a19a40107b3114c59c",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared PostgreSQL authorized query on an admitted snapshot",
+      "currentControl": "Current task, actor, field, role, label, source and lineage checks before data predicates/pages; isolated callback cursors and original persistent public cursors; no database mutation or model/provider I/O",
+      "targetControl": "Current task, actor, field, role, label, source and lineage checks before data predicates/pages; isolated callback cursors and original persistent public cursors; no database mutation or model/provider I/O",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-ontology-functions",
+      "file": "packages/postgres/ontology-functions.ts",
+      "sourceDigest": "ef5c6fd3e99b38854db273fcf598aceca1b8e9f461df4afc7d4c9f6f7953ea6f",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL registered read-only calculation runtime",
+      "currentControl": "Separate current function viewing and invocation; original owned task/release and bounded checked graph; no business writes, private source bodies only inside trusted proof frames, incomplete reads become unknown; all actual inputs and derived access restrictions remain in output influence",
+      "targetControl": "Separate current function viewing and invocation; original owned task/release and bounded checked graph; no business writes, private source bodies only inside trusted proof frames, incomplete reads become unknown; all actual inputs and derived access restrictions remain in output influence",
       "stage": "S5"
     }
   ]

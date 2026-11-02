@@ -79,6 +79,16 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
         evaluateFunction(graph,owner,call,{remaining:1000}),'missing business completion evidence stays unknown');
     });
     await compare();
+    const sourceBudget={remaining:2};graph.query(owner,{object:place},sourceBudget);assert.equal(sourceBudget.remaining,0);
+    await postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref),budget={remaining:2};
+      await target.query(owner,{object:place},budget);assert.deepEqual(budget,sourceBudget);
+    });
+    assert.throws(()=>graph.query(owner,{object:place},{remaining:1}),/work budget/);
+    await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref);
+      await target.query(owner,{object:place},{remaining:1});
+    }),/work budget/);
     const stale:ObjectBatch={objects:[{ref:place,expectedRevision:99,properties:{placeId:place.id,displayTitle:'Stale change',name:'Stale change'}}]};
     assert.throws(()=>graph.ingest(owner,stale,source),/revision changed/);
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,async c=>(await PostgresProjectionGraph.create(c,owner,release.ref)).ingest(owner,stale,source)),/revision changed/);await compare();

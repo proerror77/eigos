@@ -227,6 +227,11 @@ export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:Post
  * The task's pinned model is independently validated but never substitutes
  * for current policy. Object, field, source, lineage and output checks remain. */
 export async function postgresTaskResourceViewValidUntil(client: Client, principal: Principal, taskId: string, policyDigest: string, kind: string, id: string, builder?: StagedKernelBuilder): Promise<number> {
+  return postgresTaskResourcePermissionValidUntil(client,principal,taskId,policyDigest,kind,id,'resource.view',builder);
+}
+
+export async function postgresTaskResourcePermissionValidUntil(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  kind: string, id: string, permission:'resource.view'|'function.invoke'|'action.execute', builder?: StagedKernelBuilder): Promise<number> {
   const captured = structuredClone(principal);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission => {
     const schema = postgresBusinessSchema(client);
@@ -240,7 +245,7 @@ export async function postgresTaskResourceViewValidUntil(client: Client, princip
     const roles=await(snapshot?(snapshot.roles??=load()):load());
     return {roles,actor:admission.actor,model:builder === undefined ? currentKernelImplementation() : stagedKernelComponents(builder).model};
   });
-  const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,'resource.view',()=>now));
+  const now=Date.now(),matching=checked.roles.filter(role=>roleAllows(checked.model,[role],checked.actor.memberId,checked.actor.installationId,kind,id,permission,()=>now));
   return matching.reduce((latest,role)=>Math.max(latest,Date.parse(role.expiresAt)),0);
 }
 
@@ -299,7 +304,7 @@ export async function postgresTaskReadOntology(client: Client, principal: Princi
 export async function postgresTaskCurrentLabels(client: Client, principal: Principal, taskId: string, policyDigest: string,
   input: ObjectRef, revision: number, fields: string[], builder?: StagedKernelBuilder) {
   const captured=structuredClone(principal), ref=objectRefSchema.parse(input);
-  const requested=z.array(nameSchema).min(1).max(200).parse(fields);
+  const requested=z.array(nameSchema).max(200).parse(fields);
   if(!Number.isSafeInteger(revision) || revision<1)throw new SecurityError('POLICY_CHANGED');
   const relevant=[...new Set([...requested,...requested.flatMap(field=>projectionInputs(ref.type,field))])];
   return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async()=>{

@@ -3,13 +3,15 @@ import { z } from 'zod';
 import { digest } from '../core/delegation.js';
 import { DomainError, ownerKey, type Principal } from '../core/domain.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
-import { objectRefSchema, type ObjectRef } from '../ontology/model.js';
+import { nameSchema, objectRefSchema, type ObjectRef } from '../ontology/model.js';
 import { stagedKernelComponents, type StagedKernelBuilder } from '../ontology/seed-definition.js';
 import { MAX_SECURITY_LINEAGE_ITEMS, securityEnvelopeSchema } from '../security/contracts.js';
 import { combineEnvelopes, requireChannel, type Channel, type SecurityEnvelope } from '../security/envelope.js';
 import { SecurityError, SecurityLineageLimitError } from '../security/errors.js';
 import { assertProjectionOrigin } from '../security/projection-origin.js';
-import { projectedValue, projectionFields, responseOnlyProjection } from '../security/projections.js';
+import { projectedValue, projectionFields, responseOnlyProjection, integrityField, integrityFunctions } from '../security/projections.js';
+import { assertReviewedModel } from '../security/model-review.js';
+import { ontologySourceSchema } from '../ontology/object-store.js';
 import { reviewedFieldPolicy } from '../security/field-policy.js';
 import { submissionDigest } from '../security/submission-digest.js';
 import { taskContextFields } from '../security/task-context-contract.js';
@@ -18,9 +20,10 @@ import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime
 import { postgresTaskContextMembers } from './task-context-membership.js';
 import { postgresTaskCurrentLabels, postgresTaskDirectBindingEvidence, postgresTaskDirectFieldCandidates,
   postgresTaskReadClearance, postgresTaskReadOntology, postgresTaskRetainedBindingEvidence, postgresTaskRetainedFieldCandidates,
-  postgresTaskResourceViewValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
+  postgresTaskResourceViewValidUntil, postgresTaskResourcePermissionValidUntil, postgresTaskSourceObservationValidUntil, withPostgresTaskReadSnapshot,withPostgresWorkerReadSnapshot,type PostgresTaskReadAdmission } from './task-read-access.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import type { ObjectView } from '../ontology/object-store.js';
+import type { Computation } from '../ontology/object-functions.js';
 import type {PostgresWorkReference} from './work-claim.js';
 import { postgresOntologyDefinitionCompatible } from './ontology-release.js';
 
@@ -37,9 +40,22 @@ export interface PostgresTaskReadAuthorization {
   authorizeEvidence(input:SecurityEnvelope):Promise<SecurityEnvelope>;
   readTaskRoot(): Promise<{ object: ObjectView; envelope: SecurityEnvelope }>;
   readObject(input: ObjectRef, selected?: string[]): Promise<{ object: ObjectView; envelope: SecurityEnvelope }>;
+  readView(input:ObjectRef,target:string,selected?:string[],derive?:(id:string,ref:ObjectRef)=>Promise<PostgresDerivedRead>):Promise<{object:ObjectView;envelope:SecurityEnvelope}>;
+  /** Registered calculation only; resource viewing does not grant invocation. */
+  withFunction<T>(id:string,action:(authorization:PostgresFunctionReadAuthorization)=>Promise<T>):Promise<T>;
   output(outputId: string, content: unknown): Promise<SecurityEnvelope | undefined>;
   artifacts(): Promise<{id:string;name:string;mediaType:string;size:number}[]>;
   download(artifactId:string): Promise<{id:string;name:string;mediaType:string;size:number;content:Buffer}>;
+}
+
+export interface PostgresDerivedRead {computation:Computation;envelope:SecurityEnvelope}
+
+export interface PostgresFunctionReadAuthorization extends PostgresTaskReadAuthorization {
+  /** Trusted validators only; this body must never become a tool response. */
+  readPrivate(input:ObjectRef):Promise<ObjectView>;
+  evidencePropertiesDigest(input:ObjectRef):Promise<string>;
+  withIntegrity<T>(action:()=>Promise<T>):Promise<T>;
+  integrity():boolean;
 }
 
 /** One request-owned, read-only use of the fenced business transaction.
@@ -230,9 +246,117 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
     };
     let available = true;
     const assertAvailable = () => { if (!available) throw new SecurityError('AUTHORIZATION_REQUIRED'); };
+    let calculation:{id:string;integrity:boolean;validUntil:number}|undefined;
+    const boundObject=async(input:ObjectRef)=>{
+      assertAvailable();
+      const ref=objectRefSchema.parse(input),evidence=await binding(ref);
+      if(!evidence)throw new SecurityError('AUTHORIZATION_REQUIRED');
+      const row=await raw(ref),graph=ontology.model;
+      if(row.revision!==evidence.revision||!graph.hasType(ref.type)||graph.isInterface(ref.type))throw new SecurityError('POLICY_CHANGED');
+      const tombstone=await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`,[ontology.ref.ontologyId,owner,ref.type,ref.id]);
+      if(tombstone.rowCount)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
+      const expected=graph.fingerprint(ref.type);
+      if(row.definitionDigest!==expected&&!await postgresOntologyDefinitionCompatible(client,ontology.ref,{
+        kind:'object',id:ref.type,storedDigest:row.definitionDigest,currentDigest:expected,properties:row.body.properties,
+      },builder))throw new SecurityError('POLICY_CHANGED');
+      return {ref,evidence,row,graph};
+    };
+    async function readViewValue(input:ObjectRef,target:string|undefined,selected?:string[],derive?:(id:string,ref:ObjectRef)=>Promise<PostgresDerivedRead>):Promise<{object:ObjectView;envelope:SecurityEnvelope}>{
+        assertAvailable();
+        const requested = selected === undefined ? undefined : z.array(z.string().min(1).max(200)).min(1).max(20).parse(selected);
+        const {ref,evidence,row,graph}=await boundObject(input),view=target??ref.type;
+        if(view!==ref.type){
+          if(!graph.isInterface(view)||!graph.implements(ref.type,view))throw new DomainError('INVALID_INPUT','Object does not implement the requested interface');
+          const until=await postgresTaskResourceViewValidUntil(client,captured,taskId,policyDigest,'interface',view,builder);
+          if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');validUntil=Math.min(validUntil,until);
+        }
+        const definitions = { ...graph.properties(view), ...projectionFields(view) };
+        const fields = requested ?? Object.keys(definitions).filter(field => {
+          const property = definitions[field]!;
+          return !('restricted' in property && property.restricted) && !('derived' in property && property.derived);
+        });
+        const properties: Record<string, unknown> = {},concrete:Record<string,unknown>={},technical:Record<string,unknown>={};
+        const derived:NonNullable<ObjectView['derived']>={},derivedInputs:SecurityEnvelope[]=[];
+        const inspect = async (content: unknown) => {
+          const pending = [content]; let count = 0;
+          while (pending.length) {
+            if (++count > 10000) throw new SecurityLineageLimitError();
+            const next = pending.pop(); if (!next || typeof next !== 'object') continue;
+            const reference = objectRefSchema.safeParse(next);
+            if (reference.success) { if (!await binding(reference.data)) return false; }
+            else pending.push(...Object.values(next));
+          }
+          return true;
+        };
+        for (const field of fields) {
+          const property = definitions[field],actual=graph.propertyName(ref.type,view,field);
+          if (!property) throw new DomainError('INVALID_INPUT', 'Unknown property');
+          if ('restricted' in property && property.restricted) throw new SecurityError('INSUFFICIENT_ACCESS');
+          if (!evidence.fields.includes(actual)) {
+            if(calculation?.integrity&&integrityField(ref.type,actual,evidence.fields)){
+              const content=await value(ref,actual,row.body.properties);if(content!==undefined)technical[field]=content;continue;
+            }
+            if (requested||calculation&&reviewedFieldPolicy(model,ref.type,actual)!=='internal_only') throw new SecurityError('INSUFFICIENT_ACCESS');
+            continue;
+          }
+          if('derived'in property&&property.derived){
+            if(!derive)throw new DomainError('CONFLICT','Derived calculation requires the authorized function runtime');
+            const id=property.derived,result=await authorization.withFunction(id,async()=>derive(id,ref)),computation=result.computation;derivedInputs.push(result.envelope);
+            if(computation.status==='known'){properties[field]=computation.value;concrete[actual]=computation.value;}
+            derived[field]={status:computation.status,reason:computation.reason,functionRef:{id:property.derived,version:graph.function(property.derived).version},
+              evidenceRefs:computation.evidenceRefs,evidenceLevels:computation.evidenceLevels};
+            // A derived value depends on its calculation inputs. This separate
+            // raw-value guard also retains current field permission/labels.
+            const guard=await envelopeFor(ref,row.revision,[actual],row.body.properties);
+            guard.lineage=[{object:ref,revision:row.revision,fields:[actual],contentDigest:digest({[actual]:await value(ref,actual,row.body.properties)})}];
+            derivedInputs.push(guard);continue;
+          }
+          const content = await value(ref, actual, row.body.properties);
+          if (!await inspect(content)) {
+            if (requested||calculation&&!(ref.type==='ServiceRequest'&&actual==='currentAssessment')) throw new SecurityError('INSUFFICIENT_ACCESS');
+            continue;
+          }
+          if (content !== undefined) {properties[field] = content;concrete[actual]=content;}
+        }
+        const current = await envelopeFor(ref, row.revision, Object.keys(concrete), concrete);
+        const envelope = await effectiveEnvelope(combineEnvelopes([current, ...(evidence.inputEnvelope ? [evidence.inputEnvelope] : []),...derivedInputs]));
+        const source = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).parse(row.body.source);
+        const createdAt = z.iso.datetime({ offset: true }).parse(row.body.createdAt);
+        assertAvailable();
+        return { object: { ref, revision: row.revision, createdAt, source, properties:{...properties,...technical},...(Object.keys(derived).length?{derived}:{}) }, envelope };
+    }
     const authorization: PostgresTaskReadAuthorization = {
       async validateEvidence(input) {assertAvailable();const result=await currentEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
       async authorizeEvidence(input) {assertAvailable();const result=await effectiveEnvelope(securityEnvelopeSchema.parse(input));assertAvailable();return result;},
+      async withFunction(id,action) {
+        assertAvailable();const name=nameSchema.parse(id);
+        assertReviewedModel(model,ontology.model);
+        const view=await postgresTaskResourcePermissionValidUntil(client,captured,taskId,policyDigest,'function',name,'resource.view',builder);
+        const invoke=await postgresTaskResourcePermissionValidUntil(client,captured,taskId,policyDigest,'function',name,'function.invoke',builder);
+        const until=Math.min(view,invoke);if(until<=Date.now())throw new SecurityError('AUTHORIZATION_REQUIRED');
+        ontology.model.function(name);
+        const previous=calculation,frame={id:name,integrity:!!previous?.integrity||integrityFunctions.has(name),validUntil:until};
+        const assertFrame=()=>{assertAvailable();if(calculation!==frame)throw new SecurityError('AUTHORIZATION_REQUIRED');if(Math.min(validUntil,frame.validUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');};
+        const privateObject=async(input:ObjectRef)=>{
+          assertFrame();if(!frame.integrity)throw new SecurityError('AUTHORIZATION_REQUIRED');
+          const {ref,row}=await boundObject(input);assertFrame();
+          return {ref,revision:row.revision,properties:structuredClone(row.body.properties),
+            source:ontologySourceSchema.parse(row.body.source),createdAt:z.iso.datetime({offset:true}).parse(row.body.createdAt)};
+        };
+        const guarded=new Proxy({...authorization},{get(target,property,receiver){
+          const method=Reflect.get(target,property,receiver);if(typeof method!=='function')return method;
+          return async(...args:unknown[])=>{assertFrame();const result=await Reflect.apply(method,target,args);assertFrame();return result;};
+        }});
+        const scoped:PostgresFunctionReadAuthorization=Object.freeze({...guarded,
+          async readPrivate(input:ObjectRef){return privateObject(input);},
+          async evidencePropertiesDigest(input:ObjectRef){return digest((await privateObject(input)).properties);},
+          async withIntegrity<R>(next:()=>Promise<R>):Promise<R>{assertFrame();const before=frame.integrity;frame.integrity=true;try{return await next();}finally{frame.integrity=before;}},
+          integrity(){assertFrame();return frame.integrity;},
+        });
+        calculation=frame;validUntil=Math.min(validUntil,until);
+        try {const result=await action(scoped);assertFrame();return result;}
+        finally {calculation=previous;}
+      },
       async readTaskRoot() {
         assertAvailable();
         const ref={type:'ServiceRequest',id:taskId},evidence=await binding(ref);
@@ -285,56 +409,8 @@ async function withTaskAuthorization<T>(client: Client, principal: Principal, ta
           throw error;
         }
       },
-      async readObject(input, selected) {
-        assertAvailable();
-        const ref = objectRefSchema.parse(input), requested = selected === undefined ? undefined : z.array(z.string().min(1).max(200)).min(1).max(20).parse(selected);
-        const evidence = await binding(ref);
-        if (!evidence) throw new SecurityError('AUTHORIZATION_REQUIRED');
-        const row = await raw(ref), graph = ontology.model;
-        if (row.revision !== evidence.revision || !graph.hasType(ref.type) || graph.isInterface(ref.type)) throw new SecurityError('POLICY_CHANGED');
-        const tombstone = await client.query(`SELECT 1 FROM ${q}.ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 1`, [ontology.ref.ontologyId, owner, ref.type, ref.id]);
-        if (tombstone.rowCount) throw new DomainError('NOT_FOUND', 'Ontology object was tombstoned');
-        const expected = graph.fingerprint(ref.type);
-        if (row.definitionDigest !== expected && !await postgresOntologyDefinitionCompatible(client, ontology.ref, {
-          kind: 'object', id: ref.type, storedDigest: row.definitionDigest, currentDigest: expected, properties: row.body.properties,
-        }, builder)) throw new SecurityError('POLICY_CHANGED');
-        const definitions = { ...graph.properties(ref.type), ...projectionFields(ref.type) };
-        const fields = requested ?? Object.keys(definitions).filter(field => {
-          const property = definitions[field]!;
-          return !('restricted' in property && property.restricted) && !('derived' in property && property.derived);
-        });
-        const properties: Record<string, unknown> = {};
-        const inspect = async (content: unknown) => {
-          const pending = [content]; let count = 0;
-          while (pending.length) {
-            if (++count > 10000) throw new SecurityLineageLimitError();
-            const next = pending.pop(); if (!next || typeof next !== 'object') continue;
-            const reference = objectRefSchema.safeParse(next);
-            if (reference.success) { if (!await binding(reference.data)) return false; }
-            else pending.push(...Object.values(next));
-          }
-          return true;
-        };
-        for (const field of fields) {
-          const property = definitions[field];
-          if (!property) throw new DomainError('INVALID_INPUT', 'Unknown property');
-          if ('restricted' in property && property.restricted) throw new SecurityError('INSUFFICIENT_ACCESS');
-          if ('derived' in property && property.derived) throw new DomainError('CONFLICT', 'Derived calculation requires the authorized function runtime');
-          if (!evidence.fields.includes(field)) { if (requested) throw new SecurityError('INSUFFICIENT_ACCESS'); continue; }
-          const content = await value(ref, field, row.body.properties);
-          if (!await inspect(content)) {
-            if (requested) throw new SecurityError('INSUFFICIENT_ACCESS');
-            continue;
-          }
-          if (content !== undefined) properties[field] = content;
-        }
-        const current = await envelopeFor(ref, row.revision, Object.keys(properties), properties);
-        const envelope = await effectiveEnvelope(combineEnvelopes([current, ...(evidence.inputEnvelope ? [evidence.inputEnvelope] : [])]));
-        const source = z.object({ kind: z.enum(['synthetic', 'user', 'provider', 'task']), id: z.string().min(1).max(200), observedAt: z.iso.datetime({ offset: true }) }).parse(row.body.source);
-        const createdAt = z.iso.datetime({ offset: true }).parse(row.body.createdAt);
-        assertAvailable();
-        return { object: { ref, revision: row.revision, createdAt, source, properties }, envelope };
-      },
+      async readObject(input,selected){return readViewValue(input,undefined,selected);},
+      async readView(input,target,selected,derive){return readViewValue(input,target,selected,derive);},
     };
     try { return await action(Object.freeze(authorization)); }
     finally { available = false; }
@@ -354,10 +430,10 @@ export async function withPostgresTaskReadAuthorization<T>(client:Client,princip
 /** Internal Worker evidence boundary. Reads require the separately configured
  * registered model channel. Validation alone permits no protected disclosure. */
 export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
-  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string):Promise<T>{
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string):Promise<T>{
   if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
   return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>
-    withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission),builder,{admission,modelChannel}));
+    withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel}));
 }
 
 /** Check an existing worker seal without exposing unsealed task data. */

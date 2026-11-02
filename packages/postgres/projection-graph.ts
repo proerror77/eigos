@@ -162,12 +162,22 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }return true;
   }
   async relationshipDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
+    return this.relationshipDigestRows(owner,ref,budget);
+  }
+  async relationshipDigestVisible(owner:string,ref:ObjectRef,budget:ReadBudget,visible:(link:LinkWrite)=>Promise<boolean>):Promise<string>{
+    return this.relationshipDigestRows(owner,ref,budget,visible);
+  }
+  private async relationshipDigestRows(owner:string,ref:ObjectRef,budget:ReadBudget,visible?:(link:LinkWrite)=>Promise<boolean>):Promise<string>{
     this.assertOpen(owner);await this.raw(ref,budget);
     const values:unknown[]=[],where=this.owned(values);values.push(ref.type,ref.id);const n=values.length;
     const rows=await this.sql(`SELECT type,to_type,to_id,definition_digest FROM ${this.table('links')} WHERE ${where} AND from_type=$${n-1} AND from_id=$${n}
       AND to_type<>'SourceReceipt' ORDER BY type COLLATE "C",to_type COLLATE "C",to_id COLLATE "C" LIMIT 201`,values);
     this.charge(budget,rows.rows.length);if(rows.rows.length>200)throw new DomainError('CONFLICT','Relationship evidence exceeds the read bound');
-    const links:LinkWrite[]=[];for(const row of rows.rows){await this.linkDefinition(String(row.type),String(row.definition_digest));links.push({type:String(row.type),from:ref,to:{type:String(row.to_type),id:String(row.to_id)}});}
+    const links:LinkWrite[]=[];for(const row of rows.rows){
+      const link={type:String(row.type),from:ref,to:{type:String(row.to_type),id:String(row.to_id)}};
+      if(visible&&!await visible(link))continue;
+      await this.linkDefinition(link.type,String(row.definition_digest));links.push(link);
+    }
     return linkSnapshotDigest(ref,links);
   }
   async evidencePropertiesDigest(owner:string,ref:ObjectRef,budget:ReadBudget):Promise<string>{
