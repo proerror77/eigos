@@ -15,6 +15,8 @@ import { projectionInputs, projectionMarkings, responseOnlyProjection } from '..
 import { storedSourceSchema, sourceMatchesObservation, type ObservationSource } from '../security/source-policy.js';
 import { combineEnvelopes, type SecurityEnvelope } from '../security/envelope.js';
 import { restrictionsFitRecipient } from '../security/field-restrictions.js';
+import { submissionDigest } from '../security/submission-digest.js';
+import type { ServiceRequest } from '../ontology/execution.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -202,6 +204,65 @@ export async function postgresTaskDirectBindingEvidence(client: Client, principa
   });
 }
 
+/** Retained same-task evidence under the current grant. This does not grant
+ * object access: current role, source, fields, provenance, lineage and output
+ * checks remain mandatory. The caller may request historical capability
+ * evidence only for the reviewed lineage traversal. */
+export async function postgresTaskRetainedBindingEvidence(client:Client,principal:Principal,taskId:string,policyDigest:string,
+ input:ObjectRef,historicalCapability:boolean,builder?:StagedKernelBuilder) {
+  if(typeof historicalCapability!=='boolean')throw new Error('Invalid retained binding mode');
+  const captured=structuredClone(principal),ref=objectRefSchema.parse(input),owner=ownerKey(captured);
+  return withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
+    await postgresOntologyReadContext(client,owner,{taskId},captured.scopes.includes('ontology:admin'),builder);
+    if(await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder))return undefined;
+    const q=`"${postgresBusinessSchema(client)}"`;
+    const rows=await client.query(`SELECT b.object_revision,CASE WHEN octet_length(b.body)<=1048576 THEN b.body END AS binding_body,
+      CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS object_body
+      FROM ${q}.security_bindings b JOIN ${q}.security_grants issued ON issued.id=b.grant_id
+      JOIN ${q}.ontology_objects o ON o.owner=b.owner AND o.type=b.type AND o.id=b.object_id AND o.revision=b.object_revision
+      WHERE b.owner=$1 AND b.task_id=$2 AND b.request_revision=$3 AND issued.installation_id=$4 AND issued.owner=$1 AND issued.kind='task_data'
+      AND b.type=$5 AND b.object_id=$6 ORDER BY issued.__eigos_rowid DESC LIMIT 1`,
+      [owner,taskId,admission.grant.requestRevision,admission.actor.installationId,ref.type,ref.id]);
+    if(rows.rowCount===0)return undefined;
+    if(rows.rowCount!==1 || rows.rows[0].binding_body===null || rows.rows[0].object_body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    let binding:z.infer<typeof bindingEvidenceSchema>,object:{source?:{kind?:unknown;id?:unknown};properties?:{definitionDigest?:unknown;requestRevision?:unknown}};
+    try {
+      binding=bindingEvidenceSchema.parse(JSON.parse(String(rows.rows[0].binding_body)));
+      const value:unknown=JSON.parse(String(rows.rows[0].object_body));
+      if(!value || typeof value!=='object' || Array.isArray(value))throw new Error('Invalid object');
+      object=value;
+    }
+    catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    if(binding.object.type!==ref.type || binding.object.id!==ref.id || String(binding.revision)!==String(rows.rows[0].object_revision)
+      || binding.envelope.ownerKey!==owner || binding.inputEnvelope && binding.inputEnvelope.ownerKey!==owner)throw new SecurityError('POLICY_CHANGED');
+    if(historicalCapability && ref.type==='RegisteredCapability' && binding.sourceBindingId==='task_context'
+      && object?.source?.kind==='task' && ref.id===`capability:${object?.properties?.definitionDigest}`)return binding;
+    if(binding.sourceBindingId==='task_projection' && ['GoalCoverage','OutcomeAssessment','ExecutionFeedback'].includes(ref.type)
+      && object?.source?.kind==='task' && object.source.id===taskId && object?.properties?.requestRevision===admission.grant.requestRevision)return binding;
+    if(['task_context','task_submission','member_asset','task_projection'].includes(binding.sourceBindingId))return undefined;
+    const origins=await client.query(`SELECT CASE WHEN octet_length(body)<=1048576 THEN body END AS body FROM ${q}.security_object_origins
+      WHERE owner=$1 AND type=$2 AND object_id=$3 AND object_revision=$4 LIMIT 2`,[owner,ref.type,ref.id,binding.revision]);
+    if(origins.rowCount===0)return undefined;
+    if(origins.rowCount!==1 || origins.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    let origin:z.infer<typeof observationSourceSchema> & {inputEnvelope?:z.infer<typeof securityEnvelopeSchema>};
+    try {origin=observationSourceSchema.extend({inputEnvelope:securityEnvelopeSchema.optional()}).parse(JSON.parse(String(origins.rows[0].body)));}
+    catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    const submission=origin.inputEnvelope?.submission;
+    if(origin.inputEnvelope && origin.inputEnvelope.ownerKey!==owner)throw new SecurityError('POLICY_CHANGED');
+    if(origin.sourceBindingId!==binding.sourceBindingId || !submission || submission.taskId!==taskId || submission.requestRevision!==admission.grant.requestRevision)return undefined;
+    const request=await client.query(`SELECT CASE WHEN json_typeof(source.value#>'{delegation,request}')='object'
+      AND octet_length((source.value#>'{delegation,request}')::text)<=8388608 THEN (source.value#>'{delegation,request}')::text END AS body
+      FROM ${q}.jobs j CROSS JOIN LATERAL (SELECT CASE WHEN ${q}.eigos_try_jsonb(j.body) IS NOT NULL THEN j.body::json ELSE '{}'::json END AS value OFFSET 0) source
+      WHERE j.owner=$1 AND j.id=$2 LIMIT 2`,[owner,taskId]);
+    if(request.rowCount!==1 || request.rows[0].body===null)throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    let current:string;try {current=submissionDigest(JSON.parse(String(request.rows[0].body)) as ServiceRequest);}catch {throw new SecurityError('OUTPUT_NOT_ALLOWED');}
+    if(current!==submission.contentDigest)return undefined;
+    const output=admission.grant.outputs.find(item=>item.type===ref.type && item.programId===origin.programId && item.programDigest===origin.programDigest && item.sourceBindingId===origin.sourceBindingId);
+    if(!output)return undefined;
+    return {...binding,fields:binding.fields.filter(field=>output.fields.includes(field))};
+  });
+}
+
 /** Check only the provider-source portion of a direct binding. Object roles,
  * field restrictions, provenance, lineage and recipient checks remain required. */
 export async function postgresTaskSourceObservationAllowed(client: Client, principal: Principal, taskId: string, policyDigest: string,
@@ -291,6 +352,8 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskCurrentLabels(client,principal,taskId,policyDigest,ref,revision,fields,builder),
     directBindingEvidence: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
       postgresTaskDirectBindingEvidence(client,principal,taskId,policyDigest,ref,builder),
+    retainedBindingEvidence: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef, historicalCapability:boolean) =>
+      postgresTaskRetainedBindingEvidence(client,principal,taskId,policyDigest,ref,historicalCapability,builder),
     sourceObservationAllowed: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
       postgresTaskSourceObservationAllowed(client,principal,taskId,policyDigest,ref,builder),
     directFieldCandidates: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>

@@ -3462,7 +3462,7 @@
     {
       "id": "security-model",
       "file": "packages/security/model.ts",
-      "sourceDigest": "a8dcc3ecf7cf610590c68f74eb02afa1ee73298d019e57c7331d35c524b9e850",
+      "sourceDigest": "999eb5693b9cf943d6db4a0aba5f15daf5af271faee982f04cf46d4efd08edd6",
       "channels": [
         "model"
       ],
@@ -5676,10 +5676,10 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "7198acddcbbba16ea3b38df1d8f8bbaac25ab1aea5dab26da4e5b02323aebbc1",
+      "sourceDigest": "bddcad7173d42c184af516163da53f6d2f2288e4ed1aa134aa8026c11a37f920",
       "content": "PostgreSQL agent task-read admission",
-      "currentControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required",
-      "targetControl": "Fenced transaction, staged kernel, roles, bounded labels, direct field candidates and source checks; provenance, lineage and output authorization remain required"
+      "currentControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and source checks; provenance, lineage and output authorization remain required",
+      "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and source checks; provenance, lineage and output authorization remain required"
     },
     {
       "id": "resource-role-policy",
@@ -5813,6 +5813,18 @@
       "content": "Operator entry for read-only imported business verification",
       "currentControl": "Explicit reviewed inputs and verified TLS; no runtime activation or credential output",
       "targetControl": "Explicit reviewed inputs and verified TLS; no runtime activation or credential output",
+      "stage": "S5"
+    },
+    {
+      "id": "security-submission-digest",
+      "file": "packages/security/submission-digest.ts",
+      "sourceDigest": "8cf4ef8cedee31bf0c1fc41c4cb916bbecd6504b2c0ca7bc6e5a5488b2019673",
+      "channels": [
+        "authorization_control"
+      ],
+      "content": "Exact user-submission fingerprint for retained evidence",
+      "currentControl": "User-supplied structured request content only; no independent authority",
+      "targetControl": "User-supplied structured request content only; no independent authority",
       "stage": "S5"
     }
   ]

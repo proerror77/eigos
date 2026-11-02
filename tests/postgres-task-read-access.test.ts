@@ -15,6 +15,7 @@ import { taskContextMembers } from '../packages/security/task-context.js';
 import { postgresTaskContextMembers } from '../packages/postgres/task-context-membership.js';
 import { postgresTaskContextBindingCandidate } from '../packages/postgres/task-context-binding.js';
 import { digest } from '../packages/core/delegation.js';
+import { submissionDigest } from '../packages/security/submission-digest.js';
 
 test('PostgreSQL task read admission preserves identity, revocation and grant fences', {skip:process.env.EIGOS_TEST_PG_LOCAL !== '1'}, async () => {
   // Remote setup and large-row validation may outlast the synthetic lease;
@@ -34,7 +35,14 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   const sqlite=new DatabaseSync(f.database), schema=`eigos_business_${randomUUID().replaceAll('-','')}`;
   const stored=sqlite.prepare('SELECT body FROM security_grants WHERE id=?').get(task.grant.id)!;
   const readGrant=JSON.parse(String(stored.body)); readGrant.operations.push('task.result.read'); readGrant.channels.push('agent_response');
+  readGrant.outputs.push({programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source',type:'Place',fields:['id','name']});
   sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(readGrant),task.grant.id);
+  // Preserve a realistic order: two prior task grants precede the current one.
+  sqlite.prepare('UPDATE security_grants SET rowid=100 WHERE id=?').run(task.grant.id);
+  const priorIds=[randomUUID(),randomUUID()];
+  for(const [index,id] of priorIds.entries())sqlite.prepare(`INSERT INTO security_grants(rowid,id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
+    SELECT ?,?,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,'revoked',expires_at,json_set(body,'$.id',?,'$.status','revoked') FROM security_grants WHERE id=?`)
+    .run(10+index,id,id,task.grant.id);
   const policy=f.jobs.security.policies.definitionDigest, authority={id:randomUUID(),revision:1,digest:'a'.repeat(64)};
   const client=new pg.Client(process.env.EIGOS_TEST_PG_CA_FILE?{ssl:{ca:readFileSync(process.env.EIGOS_TEST_PG_CA_FILE,'utf8'),rejectUnauthorized:true}}:{}); await client.connect();
   try {
@@ -43,8 +51,13 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     await client.query(`CREATE FUNCTION "${schema}".eigos_try_jsonb(value TEXT) RETURNS JSONB LANGUAGE plpgsql IMMUTABLE STRICT AS $$ BEGIN RETURN value::jsonb; EXCEPTION WHEN invalid_text_representation OR numeric_value_out_of_range OR untranslatable_character THEN RETURN NULL; END $$`);
     for(const table of ['jobs','security_settings','security_manager','security_subjects','security_fences','security_grants','security_policy','security_policy_definitions','security_roles','security_recipients','security_sources','security_object_origins','security_labels','security_bindings','ontology_objects','ontology_links','ontology_definition_releases','ontology_definition_release_aliases','ontology_definition_bootstrap','ontology_namespaces','ontology_task_read_projections']) {
       const cols=sqlite.prepare(`PRAGMA table_info("${table}")`).all();
-      await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')})`);
-      for(const row of sqlite.prepare(`SELECT * FROM "${table}"`).iterate()) await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${cols.map((_,i)=>`$${i+1}`).join(',')})`,cols.map(c=>row[String(c.name)]));
+      const rowIdentity=table==='security_grants';
+      await client.query(`CREATE TABLE "${schema}"."${table}" (${cols.map(c=>`"${c.name}" ${String(c.type).toUpperCase()==='INTEGER'?'BIGINT':'TEXT'}`).join(',')}${rowIdentity?',"__eigos_rowid" BIGINT NOT NULL':''})`);
+      const select=rowIdentity?`SELECT rowid AS __eigos_rowid,* FROM "${table}" ORDER BY rowid`:`SELECT * FROM "${table}"`;
+      for(const row of sqlite.prepare(select).iterate()) {
+        const values=cols.map(c=>row[String(c.name)]);if(rowIdentity)values.push(row.__eigos_rowid);
+        await client.query(`INSERT INTO "${schema}"."${table}" VALUES (${values.map((_,i)=>`$${i+1}`).join(',')})`,values);
+      }
     }
     const staged=new StagedKernelBuilder();
     assert.throws(()=>createStagedPostgresTaskReader(undefined as unknown as StagedKernelBuilder),/Invalid staged kernel builder/);
@@ -148,6 +161,77 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(sqliteContext(actionRef),undefined);assert.equal(await contextCandidate(actionRef),undefined);
     sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(actionBody,f.owner,actionRef.type,actionRef.id);
     await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[actionBody,f.owner,actionRef.type,actionRef.id]);
+    const place={type:'Place',id:'retained-place'},placeBody=JSON.stringify({source:{kind:'provider',id:'synthetic-source'},properties:{id:'retained-place',name:'Synthetic',address:'private'}});
+    sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,place.type,place.id,1,'a'.repeat(64),placeBody);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,place.type,place.id,'a'.repeat(64),placeBody]);
+    const retainedBase={object:place,revision:1,fields:['id','name','address'],sourceBindingId:'synthetic-source',envelope:rootBinding.envelope};
+    const earlier={...retainedBase,fields:['id']};
+    for(const [index,value] of [earlier,retainedBase].entries()){
+      sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(priorIds[index]!,f.owner,task.job.id,1,place.type,place.id,1,JSON.stringify(value));
+      await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[priorIds[index],f.owner,task.job.id,place.type,place.id,JSON.stringify(value)]);
+    }
+    const submission={taskId:task.job.id,requestRevision:1,contentDigest:submissionDigest(task.job.delegation!.request)};
+    const retainedOrigin={programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source',inputEnvelope:{...metadataEnvelope,submission}};
+    sqlite.prepare('INSERT INTO security_object_origins(owner,type,object_id,object_revision,body) VALUES(?,?,?,?,?)').run(f.owner,place.type,place.id,1,JSON.stringify(retainedOrigin));
+    await client.query(`INSERT INTO "${schema}".security_object_origins(owner,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4)`,[f.owner,place.type,place.id,JSON.stringify(retainedOrigin)]);
+    const retained=(item:{type:string;id:string},historical=false)=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.retainedBindingEvidence(c,principal,task.job.id,policy,item,historical));
+    const privatePolicy=f.jobs.security.policies as unknown as {retainedBinding:(scope:unknown,item:{type:string;id:string},historical:boolean)=>unknown};
+    const sqliteRetained=(item:{type:string;id:string},historical=false)=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>privatePolicy.retainedBinding(scope,item,historical));
+    const retainedPlace=await retained(place);assert.deepEqual(retainedPlace,sqliteRetained(place));assert.deepEqual(retainedPlace?.fields,['id','name']);
+    const foreignGrant=randomUUID(),foreignInstallation=randomUUID();
+    sqlite.prepare(`INSERT INTO security_grants(rowid,id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
+      SELECT 110,?,kind,owner,member_id,?,parent_id,parent_revision,revision,'revoked',expires_at,body FROM security_grants WHERE id=?`).run(foreignGrant,foreignInstallation,task.grant.id);
+    await client.query(`INSERT INTO "${schema}".security_grants(id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body,__eigos_rowid)
+      SELECT $1,kind,owner,member_id,$2,parent_id,parent_revision,revision,'revoked',expires_at,body,110 FROM "${schema}".security_grants WHERE id=$3`,[foreignGrant,foreignInstallation,task.grant.id]);
+    const foreignBinding={...retainedBase,fields:['address']};
+    sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(foreignGrant,f.owner,task.job.id,1,place.type,place.id,1,JSON.stringify(foreignBinding));
+    await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[foreignGrant,f.owner,task.job.id,place.type,place.id,JSON.stringify(foreignBinding)]);
+    assert.deepEqual(await retained(place),sqliteRetained(place),'newer evidence from another installation must not be used');
+    const storedJob=String(sqlite.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(f.owner,task.job.id)!.body),retainedChangedJob=JSON.parse(storedJob);retainedChangedJob.delegation.request.originalGoal='different synthetic goal';
+    sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(retainedChangedJob),f.owner,task.job.id);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[JSON.stringify(retainedChangedJob),f.owner,task.job.id]);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(storedJob,f.owner,task.job.id);
+    await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[storedJob,f.owner,task.job.id]);
+    const withoutOutput={...readGrant,outputs:[]};
+    sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(withoutOutput),task.grant.id);
+    await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[JSON.stringify(withoutOutput),task.grant.id]);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(readGrant),task.grant.id);
+    await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[JSON.stringify(readGrant),task.grant.id]);
+    const changedOrigin={...retainedOrigin,inputEnvelope:{...retainedOrigin.inputEnvelope,submission:{...submission,contentDigest:'c'.repeat(64)}}};
+    sqlite.prepare('UPDATE security_object_origins SET body=? WHERE owner=? AND type=? AND object_id=? AND object_revision=1').run(JSON.stringify(changedOrigin),f.owner,place.type,place.id);
+    await client.query(`UPDATE "${schema}".security_object_origins SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND object_revision=1`,[JSON.stringify(changedOrigin),f.owner,place.type,place.id]);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    sqlite.prepare('UPDATE security_object_origins SET body=? WHERE owner=? AND type=? AND object_id=? AND object_revision=1').run(JSON.stringify(retainedOrigin),f.owner,place.type,place.id);
+    await client.query(`UPDATE "${schema}".security_object_origins SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND object_revision=1`,[JSON.stringify(retainedOrigin),f.owner,place.type,place.id]);
+    const wrongTask={...retainedBase,sourceBindingId:'task_submission'};
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(wrongTask),priorIds[1]!,place.type,place.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(wrongTask),priorIds[1],place.type,place.id]);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined,'newer invalid evidence must not fall back to an older grant');
+    sqlite.prepare('UPDATE security_bindings SET body=? WHERE grant_id=? AND type=? AND object_id=?').run(JSON.stringify(retainedBase),priorIds[1]!,place.type,place.id);
+    await client.query(`UPDATE "${schema}".security_bindings SET body=$1 WHERE grant_id=$2 AND type=$3 AND object_id=$4`,[JSON.stringify(retainedBase),priorIds[1],place.type,place.id]);
+    const historicalCap={type:'RegisteredCapability',id:`capability:${'f'.repeat(64)}`},historicalCapBody=JSON.stringify({source:{kind:'task',id:'previous-task'},properties:{definitionDigest:'f'.repeat(64)}});
+    const historicalBinding={object:historicalCap,revision:1,fields:['id','name'],sourceBindingId:'task_context',envelope:rootBinding.envelope};
+    sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,historicalCap.type,historicalCap.id,1,'a'.repeat(64),historicalCapBody);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,historicalCap.type,historicalCap.id,'a'.repeat(64),historicalCapBody]);
+    sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(priorIds[1]!,f.owner,task.job.id,1,historicalCap.type,historicalCap.id,1,JSON.stringify(historicalBinding));
+    await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[priorIds[1],f.owner,task.job.id,historicalCap.type,historicalCap.id,JSON.stringify(historicalBinding)]);
+    assert.equal(await retained(historicalCap),undefined);assert.equal(sqliteRetained(historicalCap),undefined);
+    assert.deepEqual(await retained(historicalCap,true),sqliteRetained(historicalCap,true));
+    const projection={type:'GoalCoverage',id:'retained-projection'},projectionBody=JSON.stringify({source:{kind:'task',id:task.job.id},properties:{requestRevision:1}});
+    const projectionBinding={object:projection,revision:1,fields:['id','displayTitle'],sourceBindingId:'task_projection',envelope:rootBinding.envelope};
+    sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,projection.type,projection.id,1,'a'.repeat(64),projectionBody);
+    await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,projection.type,projection.id,'a'.repeat(64),projectionBody]);
+    sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(priorIds[1]!,f.owner,task.job.id,1,projection.type,projection.id,1,JSON.stringify(projectionBinding));
+    await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[priorIds[1],f.owner,task.job.id,projection.type,projection.id,JSON.stringify(projectionBinding)]);
+    assert.deepEqual(await retained(projection),sqliteRetained(projection));
+    const laterProjection=JSON.stringify({source:{kind:'task',id:task.job.id},properties:{requestRevision:2}});
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(laterProjection,f.owner,projection.type,projection.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[laterProjection,f.owner,projection.type,projection.id]);
+    assert.equal(sqliteRetained(projection),undefined);assert.equal(await retained(projection),undefined);
+    sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(projectionBody,f.owner,projection.type,projection.id);
+    await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[projectionBody,f.owner,projection.type,projection.id]);
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
