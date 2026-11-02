@@ -123,7 +123,7 @@ test('technical recovery cannot renew beyond its bounded metadata window', {time
   t.mock.method(console,'error',()=>{});
   t.mock.method(f.jobs,'renew',(...args:Parameters<typeof renew>)=>{renewals++;return renew(...args);});
   t.mock.method(f.jobs.security.policies,'bindTaskProjection',(...args:Parameters<typeof bind>)=>{
-    if(signal?.aborted){clock+=61000;authorizationScope()!.assertCurrent();}return bind(...args);
+    if(signal?.aborted){clock+=46000;authorizationScope()!.assertCurrent();}return bind(...args);
   });
   const worker=new Worker(f.jobs,{leaseMs:120000,pollMs:1000,timeoutMs:50,coordinator:{
     run:async(_claim,current)=>{signal=current;entered();await new Promise<void>((_resolve,reject)=>current.addEventListener('abort',()=>reject(new Error('Synthetic timeout')),{once:true}));},

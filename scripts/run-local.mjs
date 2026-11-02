@@ -17,9 +17,9 @@ function stop(code = 0) {
   if (stopping) return;
   stopping = true; process.exitCode = code;
   for (const child of children) child.kill('SIGTERM');
-  // Allow the Worker's bounded 60s recovery write plus context cleanup. Killing
-  // the group after 10s rolled back valid long-history shutdown records.
-  forced = setTimeout(() => { for (const child of children) child.kill('SIGKILL'); }, 90000);
+  // Keep the Worker's 45s recovery and cleanup inside launchd's effective 60s
+  // ceiling, rather than relying on a configured timeout the OS clamps.
+  forced = setTimeout(() => { for (const child of children) child.kill('SIGKILL'); }, 50000);
   forced.unref();
 }
 function start(role) {

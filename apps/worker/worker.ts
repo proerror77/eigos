@@ -21,7 +21,7 @@ type RunningWork = { controller: AbortController; done: Promise<void>; renewIfDu
 type FailurePhase = 'recovery_writeback' | 'claim_cleanup' | 'model_context_cleanup';
 // Large existing histories can need over 30s to persist a fenced pause. This
 // budget records recovery only; the original execution deadline remains intact.
-const RECOVERY_WRITEBACK_MS = 60000;
+const RECOVERY_WRITEBACK_MS = 45000;
 const diagnosticFiles = new Set(['apps/worker/worker', 'packages/core/store', 'packages/core/task-outcome',
   'packages/security/store', 'packages/security/policy-store', 'packages/security/envelope', 'packages/security/model',
   'packages/coordinator/coordinator', 'packages/coordinator/planning-session', 'packages/coordinator/task-context',

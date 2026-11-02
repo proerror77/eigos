@@ -3390,7 +3390,7 @@
     {
       "id": "security-worker-loop",
       "file": "apps/worker/worker.ts",
-      "sourceDigest": "28d02245a0720bd8dd4fe54731a02dc2940ca7d108fabe2367af4b821d44fbda",
+      "sourceDigest": "f0ebc91264931492a0c7bbfe3b2e4c7ae32dcefd07eca0ea19d4f14f01cf3ed3",
       "channels": [
         "authorization_control"
       ],
@@ -3824,7 +3824,7 @@
     {
       "id": "s5-scripts-run-local",
       "file": "scripts/run-local.mjs",
-      "sourceDigest": "07be5cd37fdb5b0ef00daaaa32fc1df9502df505b7b402d015ba72b972740e9b",
+      "sourceDigest": "d74863f2192f7a1f6ac31c9af60958ed773aa9440b8b4d305a5a48bcd535db32",
       "channels": [
         "runtime"
       ],
@@ -4376,7 +4376,7 @@
     {
       "id": "primary-deployment",
       "file": "scripts/deploy-primary.mjs",
-      "sourceDigest": "e4cf9fc03d79b590ef69969bfa2e18f7cb5d721d63838b69b78ab194a5833d2c",
+      "sourceDigest": "1a79eea4ddd038628bcf2a8c4cb008d3773b216469f10929c039770354651bb4",
       "channels": [
         "operator_cli"
       ],
@@ -5787,6 +5787,32 @@
       "content": "PostgreSQL task context binding candidate",
       "currentControl": "Current task membership, binding, fields, provenance and capability checks; lineage and output authorization remain required",
       "targetControl": "Current task membership, binding, fields, provenance and capability checks; lineage and output authorization remain required",
+      "stage": "S5"
+    },
+    {
+      "id": "business-postgres-verification",
+      "file": "packages/postgres/business-verify.ts",
+      "sourceDigest": "272bc405f64ceccbef0d0ce5f175ec846681c5e7c80fec08e8d7e475e4601a4e",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Offline imported business snapshot and sequence verification",
+      "currentControl": "Read-only transaction, reviewed source and receipt, bounded row and sequence checks; writer fence, schema security and cutover remain separate",
+      "targetControl": "Read-only transaction, reviewed source and receipt, bounded row and sequence checks; writer fence, schema security and cutover remain separate",
+      "stage": "S5"
+    },
+    {
+      "id": "business-postgres-verification-cli",
+      "file": "scripts/business-postgres-verify.mjs",
+      "sourceDigest": "72a024539297e6a1402f0540ea20eae3675aa8e1438cdbdfa9b7c79acb65e753",
+      "channels": [
+        "offline migration",
+        "authorization_control"
+      ],
+      "content": "Operator entry for read-only imported business verification",
+      "currentControl": "Explicit reviewed inputs and verified TLS; no runtime activation or credential output",
+      "targetControl": "Explicit reviewed inputs and verified TLS; no runtime activation or credential output",
       "stage": "S5"
     }
   ]
