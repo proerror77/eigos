@@ -27,7 +27,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   assert(principal.access.actorKind==='agent');const parentGrantId=principal.access.agentGrant.id;
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
-  for(const type of ['RequestSpecification','RegisteredCapability','RegisteredActionType'])f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:type,version:f.jobs.security.policies.resourceVersion('objectType',type)},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
+  for(const type of ['Place','RequestSpecification','RegisteredCapability','RegisteredActionType'])f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:type,version:f.jobs.security.policies.resourceVersion('objectType',type)},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'actionType',id:'ReadCommerceContext',version:f.jobs.security.policies.resourceVersion('actionType','ReadCommerceContext')},role:'Viewer',expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const recipient={classification:'sensitive' as const,markings:['member_private','personal_data'] as const,channels:['agent_response'] as const,expiresAt:new Date(Date.now()+3600000).toISOString()};
   f.jobs.security.policies.setRecipient(installation.id,recipient,f.jobs.security.policies.revision());
@@ -179,6 +179,12 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const privatePolicy=f.jobs.security.policies as unknown as {retainedBinding:(scope:unknown,item:{type:string;id:string},historical:boolean)=>unknown};
     const sqliteRetained=(item:{type:string;id:string},historical=false)=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>privatePolicy.retainedBinding(scope,item,historical));
     const retainedPlace=await retained(place);assert.deepEqual(retainedPlace,sqliteRetained(place));assert.deepEqual(retainedPlace?.fields,['placeId','name']);
+    const retainedFields=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.retainedFieldCandidates(c,principal,task.job.id,policy,place));
+    assert.deepEqual((await retainedFields())?.fields,['placeId','name']);
+    const recipientRow=sqlite.prepare('SELECT body FROM security_recipients WHERE installation_id=?').get(installation.id)!;
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[JSON.stringify({...recipient,channels:['registered_model']}),installation.id]);
+    assert.equal(await retainedFields(),undefined);
+    await client.query(`UPDATE "${schema}".security_recipients SET body=$1 WHERE installation_id=$2`,[recipientRow.body,installation.id]);
     const retainedSource=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.sourceObservationAllowed(c,principal,task.job.id,policy,place));
     assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),true);
     assert.equal(await retainedSource(),true);
@@ -199,7 +205,7 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const storedJob=String(sqlite.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(f.owner,task.job.id)!.body),retainedChangedJob=JSON.parse(storedJob);retainedChangedJob.delegation.request.originalGoal='different synthetic goal';
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(retainedChangedJob),f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[JSON.stringify(retainedChangedJob),f.owner,task.job.id]);
-    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);assert.equal(await retainedFields(),undefined);
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(storedJob,f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[storedJob,f.owner,task.job.id]);
     const withoutOutput={...readGrant,outputs:[]};

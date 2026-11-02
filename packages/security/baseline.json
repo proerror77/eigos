@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "62714b7d5c27046606b7b30bcfd72b54b425d4669857bd95a661a155d0d3abaf",
+      "sourceDigest": "52adcb015c35e0ce2f2973c624e8a774e8274d823d43baac9c78bea5a8475e00",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"

@@ -299,13 +299,15 @@ export async function postgresTaskSourceObservationAllowed(client: Client, princ
   return !!checked && sourceMatchesObservation(checked.sources.filter(source=>Date.parse(source.expiresAt)>Date.now()),checked.origin,ref.type);
 }
 
-/** Internal candidate fields for a direct binding, not permission to disclose.
+/** Internal candidate fields for a binding, not permission to disclose.
  * Source, task membership, provenance, dependencies and output checks remain. */
-export async function postgresTaskDirectFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
-  input: ObjectRef, builder?: StagedKernelBuilder) {
+async function postgresTaskFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, retained: boolean, builder?: StagedKernelBuilder) {
   const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
-    const binding=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
+    const binding=retained
+      ? await postgresTaskRetainedBindingEvidence(client,captured,taskId,policyDigest,ref,false,builder)
+      : await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
     if(!binding)return undefined;
     if(binding.projectionOrigin && binding.sourceBindingId!=='task_context')throw new SecurityError('POLICY_CHANGED');
     if(!await postgresTaskResourceViewAllowed(client,captured,taskId,policyDigest,'objectType',ref.type,builder))return undefined;
@@ -335,6 +337,18 @@ export async function postgresTaskDirectFieldCandidates(client: Client, principa
   return checked;
 }
 
+export async function postgresTaskDirectFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder) {
+  return postgresTaskFieldCandidates(client,principal,taskId,policyDigest,input,false,builder);
+}
+
+/** Field candidates for retained evidence only. Source, task membership,
+ * provenance, dependencies and output authorization remain mandatory. */
+export async function postgresTaskRetainedFieldCandidates(client: Client, principal: Principal, taskId: string, policyDigest: string,
+  input: ObjectRef, builder?: StagedKernelBuilder) {
+  return postgresTaskFieldCandidates(client,principal,taskId,policyDigest,input,true,builder);
+}
+
 /** Construct an edge reader only after its trusted kernel has finished loading.
  * An evicted object must rebuild its kernel before creating a new reader;
  * passing an absent builder must never silently select the synchronous path. */
@@ -359,5 +373,7 @@ export function createStagedPostgresTaskReader(builder: StagedKernelBuilder) {
       postgresTaskSourceObservationAllowed(client,principal,taskId,policyDigest,ref,builder),
     directFieldCandidates: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
       postgresTaskDirectFieldCandidates(client,principal,taskId,policyDigest,ref,builder),
+    retainedFieldCandidates: (client: Client, principal: Principal, taskId: string, policyDigest: string, ref: ObjectRef) =>
+      postgresTaskRetainedFieldCandidates(client,principal,taskId,policyDigest,ref,builder),
   });
 }
