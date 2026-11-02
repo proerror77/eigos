@@ -55,11 +55,26 @@ test('business snapshot import preserves data, authority, uniqueness, triggers a
     const result = await importBusinessSnapshot(client, options); imported = true;
     assert.equal(result.status, 'imported-not-activated'); assert.equal(result.sourceFileDigest, plan.fileDigest);
     const verified=await verifyBusinessSnapshot(client,options);
-    assert.equal(verified.status,'verified-at-snapshot');assert.equal(verified.runtimeActivated,false);assert(Number.isFinite(Date.parse(verified.transactionStartedAt)));assert.deepEqual(verified.tables,result.tables);
+    assert.equal(verified.status,'verified-at-snapshot');assert.equal(verified.runtimeActivated,false);assert.equal(verified.writerFenceVerified,false);
+    assert.equal(verified.sequenceObservation.atomicWithRows,false);assert(verified.sequenceObservation.checked>=plan.tables.length);
+    assert(Number.isFinite(Date.parse(verified.transactionStartedAt)));assert.deepEqual(verified.tables,result.tables);
     await client.query('BEGIN');
     try {await assert.rejects(verifyBusinessSnapshot(client,options),/idle, non-pipelined/);assert.equal(client.getTransactionStatus(),'T');}
     finally {await client.query('ROLLBACK');}
     await assert.rejects(verifyBusinessSnapshot(client,{...options,expectedFileDigest:'0'.repeat(64)}),/changed after review/);
+    const sequence=(await client.query('SELECT pg_get_serial_sequence($1,$2) AS name',[`"${schema}"."migration_sequence_probe"`,'id'])).rows[0]!.name;
+    await client.query('SELECT setval($1::regclass,$2::bigint,true)',[sequence,'1']);
+    await assert.rejects(verifyBusinessSnapshot(client,options),/sequence high-water mark differs/);
+    await client.query('SELECT setval($1::regclass,$2::bigint,true)',[sequence,'9007199254740993']);
+    const noSequencePrivilege=new Proxy(client,{get(target,property){
+      if(property==='query')return async(sql:unknown,values?:unknown)=>{
+        const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
+        if(typeof sql==='string' && sql.includes('has_sequence_privilege'))result.rows[0].readable=false;
+        return result;
+      };
+      const value=Reflect.get(target,property,target);return typeof value==='function'?value.bind(target):value;
+    }});
+    await assert.rejects(verifyBusinessSnapshot(noSequencePrivilege,options),/sequence configuration or read privilege differs/);
     const forgedReceipt=new Proxy(client,{get(target,property){
       if(property==='query')return async(sql:unknown,values?:unknown)=>{
         const result=await (target.query as (...args:any[])=>Promise<any>).call(target,sql,values);
