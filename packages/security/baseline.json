@@ -6346,6 +6346,18 @@
       "currentControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
       "targetControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
       "stage": "S5"
+    },
+    {
+      "id": "postgres-worker-loop",
+      "file": "apps/worker/postgres-worker.ts",
+      "sourceDigest": "715ce22d454681e38e216cc5b66859134a6c745f6c78d091eeb01fc9a34211e7",
+      "channels": [
+        "internal"
+      ],
+      "content": "Mac PostgreSQL durable execution loop",
+      "currentControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
+      "targetControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
+      "stage": "S5"
     }
   ]
 }
