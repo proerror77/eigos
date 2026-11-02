@@ -54,4 +54,3 @@ export function readDependencyFixture(size: number, suppliedClock?: () => number
     close: () => { db.close(); f.close(); },
   };
 }
-
