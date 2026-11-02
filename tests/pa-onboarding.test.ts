@@ -4,12 +4,13 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../apps/gateway/app.js';
 import { readConfig, type Config } from '../packages/core/config.js';
-import { PA_SKILL_FILES, PA_SKILL_VERSION, PA_SKILL_MARKER, paConnectionInfo, paOnboardingAvailable, paSkillArchive, paSkillFiles } from '../packages/members/pa-onboarding.js';
+import { PA_SKILL_FILES, PA_SKILL_VERSION, PA_SKILL_MARKER, paConnectionInfo, paOnboardingAvailable, paSkillArchive, paSkillFiles, paSkillInstallFiles } from '../packages/members/pa-onboarding.js';
 
 const secret = 'fixture-private-secret-never-publish';
 const config = (directory: string, extra: Partial<Config> = {}): Config => ({
@@ -112,6 +113,21 @@ test('installed Skill verification separates current files from host activation 
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('the managed PA install includes generated metadata and preserves canonical file hashes despite private handoff instructions', () => {
+  const privateNote = 'Use the saved profile at /private/synthetic-user/pa-profile.json; credentials stay in the host.';
+  const installed = paSkillInstallFiles(paConnectionInfo(config('/private/synthetic-runtime')), privateNote);
+  assert(installed.files['connection.json']); assert(installed.files['manifest.json']);
+  const manifest = JSON.parse(installed.files['manifest.json'].toString());
+  for (const entry of manifest.files) {
+    const bytes = installed.files[entry.path]; assert(bytes);
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), entry.sha256);
+    assert(!bytes.includes(Buffer.from(privateNote)), 'Private host instructions must not invalidate the published package');
+  }
+  assert(installed.handoff.includes(privateNote));
+  assert(!installed.files['SKILL.md']!.includes(Buffer.from('/private/synthetic-user')));
+  assert.equal(manifest.version, PA_SKILL_VERSION);
 });
 
 test('public onboarding, OAuth and A2A point to the same guide without authenticating, enrolling or granting business access', async () => {

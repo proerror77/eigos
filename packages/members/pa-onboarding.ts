@@ -80,6 +80,12 @@ export function paSkillFiles(connection: PaConnectionInfo): Record<string, Buffe
   return files;
 }
 
+/** Keep private host instructions out of the canonical, integrity-checked package. */
+export function paSkillInstallFiles(connection: PaConnectionInfo, localInstructions: string) {
+  const files = paSkillFiles(connection);
+  return { files, handoff: files['SKILL.md']!.toString('utf8') + '\n' + localInstructions };
+}
+
 /** A small ustar download of the fixed skill files; no shell or install code runs. */
 export function paSkillArchive(files: Record<string, Buffer>): Buffer {
   const blocks: Buffer[] = [];

@@ -4806,13 +4806,13 @@
     {
       "id": "primary-pa-profile-setup",
       "file": "scripts/setup-primary-pa.mjs",
-      "sourceDigest": "40f4f13081d5cae28eb0de22b2fb56763b8d35141e619a6eb71c2285c2ed797d",
+      "sourceDigest": "5acceef07634d10f148fbef8e0d58271d9ec034332510e79cbb3bf6b0834cc62",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Primary PA client links and saved Relay identity configuration",
-      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile. The verified release exports the complete public Skill folder while retaining existing endpoint and Relay identity checks.",
+      "currentControl": "Verify the deployed release, current public Skill contract and existing Relay pins before preserving an owned profile. Install the entire canonical package including generated manifest and connection metadata; keep private host instructions only in the separate handoff.",
       "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     },
@@ -5197,7 +5197,7 @@
       ],
       "content": "Public connection metadata and Skill archive construction",
       "currentControl": "Explicit public field projection, fixed asset allowlist and deterministic file manifest; host activation is not attested by file integrity. The customer account flow never accepts provider or payment credentials",
-      "sourceDigest": "ba70af993fabdb9d8dec0ec34aaec8c3317101b48e9621102a1c58903cc0b795",
+      "sourceDigest": "a01d779f0bc82ba0dbed7fea90e8c47ef6c66f440301b8a0e61c797598bbc268",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
