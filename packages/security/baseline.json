@@ -2937,13 +2937,13 @@
     {
       "id": "ontology-store",
       "file": "packages/ontology/object-store.ts",
-      "sourceDigest": "a0c0ac77cf83b55413871ca3dd43889f92d9448152f86a22762e513f6740e517",
+      "sourceDigest": "bf233b48aa5a282b92ab4250d2ce0896921150fe5cd7b6bc00cecfc7d427ad5e",
       "channels": [
         "query",
         "function"
       ],
       "content": "Direct read, query, related, evaluate, derived values, source metadata and cursors",
-      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents",
+      "currentControl": "Current row/field/source authorization; policy-equivalent immutable release labels only; readable removal notices survive while restricted fields remain hidden; conditional source/validity indexes preserve stored object contents; internal relationship reads reject incomplete pages or authorization-filtered sets without exposing hidden counts",
       "targetControl": "AuthorizedOntologyView and safe pagination/provenance projection",
       "stage": "S2"
     },

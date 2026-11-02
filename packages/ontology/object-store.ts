@@ -60,6 +60,9 @@ const batchSchema = z.object({ objects: z.array(z.object({ ref: objectRefSchema,
 const cursorSchema = z.object({ owner: z.string(), ontologyId: z.string().optional(), query: z.string(), model: z.string(), revision: z.number().int(), last: objectRefSchema }).strict();
 const key = (ref: ObjectRef) => JSON.stringify([ref.type, ref.id]);
 function failure(message: string): never { throw new DomainError('INVALID_INPUT', message); }
+class IncompleteRelationshipRead extends DomainError {
+  constructor() { super('CONFLICT', 'Relationship read is incomplete; narrow the investigation'); }
+}
 
 /** Owned business objects only. Writes are internal source mappings, never public query operations. */
 export class OntologyObjectStore {
@@ -662,17 +665,20 @@ export class OntologyObjectStore {
     return { model: this.model.ref, items, page: { limit: args.limit, scanned, hasMore, cursor }, datasetRevision: revision,
       ...('type' in args && args.currentDefinitionsOnly ? { definitionScope: 'current_definitions_only' } : {}) };
   }
-  /** Single bounded relationship read for registered functions; never follows unlimited pages. */
-  related(owner: string, from: ObjectRef, link: string, budget: ReadBudget): ObjectView[] | undefined {
+  /** Complete, bounded relationship read for trusted calculations and writes.
+   * Incompleteness must throw: callers must never interpret it as no neighbors.
+   * Interactive readers use query() and its explicit continuation instead. */
+  related(owner: string, from: ObjectRef, link: string, budget: ReadBudget): ObjectView[] {
     const result = this.query(owner, { from, link, limit: 50 }, budget);
     if (this.guard()) {
       const nav = this.model.navigation(from.type, link), side = nav.direction === 'forward' ? 'from' : 'to';
       // Completeness is used only inside trusted calculations, never returned as
       // a hidden neighbor count. Missing rows cannot imply a zero/full result.
-      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM ontology_links WHERE owner=? AND type=? AND ${side}_type=? AND ${side}_id=?`).get(owner, nav.link.id, from.type, from.id)?.n ?? 0);
-      if (total !== result.items.length) return undefined;
+      const total = Number(this.db.prepare(`SELECT count(*) AS n FROM ${this.linkTable} WHERE ${this.owned()} AND type=? AND ${side}_type=? AND ${side}_id=?`).get(...this.ownerParameters(owner), nav.link.id, from.type, from.id)?.n ?? 0);
+      if (total !== result.items.length) throw new IncompleteRelationshipRead();
     }
-    return result.page.hasMore ? undefined : result.items;
+    if (result.page.hasMore) throw new IncompleteRelationshipRead();
+    return result.items;
   }
   evaluate(owner: string, input: unknown, budget: ReadBudget = { remaining: 1000 }) {
     return this.security?this.security.readSnapshot(()=>this.evaluateRaw(owner,input,budget)):this.evaluateRaw(owner,input,budget);
@@ -688,8 +694,11 @@ export class OntologyObjectStore {
     let computation;
     try { computation = guard ? guard.infer(owner, args.function, () => evaluateFunction(calculationStore, owner, args, budget)) : evaluateFunction(calculationStore, owner, args, budget); }
     catch (error) {
-      if (!guard || !(error instanceof SecurityError && ['INSUFFICIENT_ACCESS','AUTHORIZATION_REQUIRED','OUTPUT_NOT_ALLOWED'].includes(error.reason) || error instanceof DomainError && error.code === 'NOT_FOUND')) throw error;
-      computation = { status: 'unknown' as const, reason: 'insufficient_access', evidenceRefs: [], evidenceLevels: [] };
+      if (error instanceof IncompleteRelationshipRead) computation = { status: 'unknown' as const, reason: error.message, evidenceRefs: [], evidenceLevels: [] };
+      else {
+        if (!guard || !(error instanceof SecurityError && ['INSUFFICIENT_ACCESS','AUTHORIZATION_REQUIRED','OUTPUT_NOT_ALLOWED'].includes(error.reason) || error instanceof DomainError && error.code === 'NOT_FOUND')) throw error;
+        computation = { status: 'unknown' as const, reason: 'insufficient_access', evidenceRefs: [], evidenceLevels: [] };
+      }
     }
     const functionRef={id:definition.id,version:definition.version};
     const model=this.security?{id:this.model.ref.id,version:'authorized.v2',digest:digest({functionRef,access:accessDigest()})}:this.model.ref;

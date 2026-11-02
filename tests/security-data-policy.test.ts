@@ -56,6 +56,23 @@ function fixture(extraTypes:string[]=[]) {
   return { ...f,a,b,pa,pb,role,task,place,raw,va:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pa),vb:new AuthorizedOntologyView(f.jobs.ontology,f.jobs.security,pb),close:()=>{rawDb.close();f.close();} };
 }
 
+test('internal relationship completeness cannot turn an unauthorized neighbor into an empty result', () => {
+  const f = fixture();
+  try {
+    f.role(f.a.id);
+    const place = f.place('completeness-private'), task = f.task(f.a, [place]);
+    f.jobs.security.withAgent(f.pa, task.job.id, 'task.query', () => {
+      const query = f.jobs.ontology.query(f.owner, { from: place.object, link: 'sourceReceipts', limit: 50 });
+      assert.equal(query.items.length, 0, 'The task has no binding to the source receipt');
+      assert.equal(query.page.hasMore, false, 'A filtered page is not proof of complete absence');
+      assert.throws(() => f.jobs.ontology.related(f.owner, place.object, 'sourceReceipts', { remaining: 1000 }), error => {
+        assert(error instanceof Error); assert.equal(error.message, 'Relationship read is incomplete; narrow the investigation');
+        assert(!error.message.includes('receipt-')); return true;
+      });
+    });
+  } finally { f.close(); }
+});
+
 test('authorized discovery exposes shared contracts and pages each catalogue without disclosing unavailable implementations', () => {
   const f = fixture(['HotelProperty', 'RideEstimate', 'Proposal', 'RequestingParty', 'ProductOffer']);
   try {
