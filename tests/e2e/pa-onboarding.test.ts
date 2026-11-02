@@ -33,7 +33,11 @@ test('E2E: a compiled Gateway serves the complete PA skill from its built assets
     }
     assert(ready, output);
     const guide = await (await fetch(base + '/connect/agent.json')).json(); assert.equal(guide.origin, origin);
-    for (const path of ['/connect', '/connect/SKILL.md', '/connect/references/a2a.md', '/connect/references/relay.md', '/connect/references/test-payments.md', '/connect/scripts/eigos_a2a.py']) {
+    assert.equal(guide.accountCustody.owner, 'pa'); assert.equal(guide.accountCustody.customerFlowCredentialsAccepted, false);
+    const manifest = await (await fetch(base + '/connect/manifest.json')).json();
+    assert.equal(manifest.version, guide.skillContract.version);
+    assert.equal(manifest.hostActivation, 'not_attested_by_file_integrity');
+    for (const path of ['/connect', '/connect/SKILL.md', '/connect/references/a2a.md', '/connect/references/relay.md', '/connect/references/test-payments.md', '/connect/scripts/eigos_a2a.py', '/connect/scripts/check_connection.py']) {
       const response = await fetch(base + path); assert.equal(response.status, 200, path); assert((await response.text()).length > 0);
     }
     const archive = await fetch(base + '/connect/eigos-delegate.tar.gz'); assert.equal(archive.status, 200);

@@ -6,6 +6,8 @@ MCP 与 A2A 共用任务、身份、权限和执行状态。先发现当前实�
 
 客户从当前实例的 `/connect` 开始，取得公开连接配置、完整 `eigos-delegate` Skill 和只读检查指令。PA 可读取 `/connect/agent.json`；OAuth 发现、登记发现和 Agent Card 均指向同一接入说明。MCP 或 A2A 接通一种即可，Skill 另按宿主规则安装并启用。详见[客户 PA 接入](guides/agent-onboarding.md#客户-pa-接入与自然触发)。
 
+公开 `/connect/manifest.json` 提供 Skill 版本和文件摘要；包内自检只证明本地文件与当前发布一致，宿主实际加载及认证连接分别确认。客户的第三方账号、Key、日历 Token 和付款信息留在客户 PA；EIGOS 只管理会员／PA 身份、任务与数据协作许可和获准结果，不在新客户流程接收这些凭据。缺少服务连接时引导回 PA 的私有授权流程。详见[PA 自有账号与来源授权](guides/member-sources.md)。
+
 ## 发现与认证
 
 - `GET /health` 返回实例、运行契约和构建摘要。

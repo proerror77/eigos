@@ -4806,13 +4806,13 @@
     {
       "id": "primary-pa-profile-setup",
       "file": "scripts/setup-primary-pa.mjs",
-      "sourceDigest": "40f4f13081d5cae28eb0de22b2fb56763b8d35141e619a6eb71c2285c2ed797d",
+      "sourceDigest": "5acceef07634d10f148fbef8e0d58271d9ec034332510e79cbb3bf6b0834cc62",
       "channels": [
         "agent_transport",
         "private_file"
       ],
       "content": "Primary PA client links and saved Relay identity configuration",
-      "currentControl": "Verify the deployed release and existing Relay pins before preserving an owned profile. The verified release exports the complete public Skill folder while retaining existing endpoint and Relay identity checks.",
+      "currentControl": "Verify the deployed release, current public Skill contract and existing Relay pins before preserving an owned profile. Install the entire canonical package including generated manifest and connection metadata; keep private host instructions only in the separate handoff.",
       "targetControl": "Preserve the authenticated installation and reviewed runtime identity across client updates",
       "stage": "S5"
     },
@@ -5170,8 +5170,8 @@
         "http"
       ],
       "content": "Public PA connection page, metadata and complete Skill download",
-      "currentControl": "Configured JWT transports only; fixed GET routes and reviewed assets; no member enrollment, credential ingestion or business grants",
-      "sourceDigest": "a58b159fa70d2b81f24fe51a1f0454bc9ab7d62ea14adebf6c9792ec8555e534",
+      "currentControl": "Fixed public GET routes and reviewed assets with no-store publication; no enrollment, credential ingestion or business grants",
+      "sourceDigest": "035e21bd507699c102bc3d458d5f1adfb495e655fb6090ca9da92f4ea9c0b136",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5183,8 +5183,8 @@
         "member_ui"
       ],
       "content": "Customer connection instructions and clipboard interaction",
-      "currentControl": "Escaped public configuration, same-origin script under CSP and explicit distinction between download, login, permission and usable result",
-      "sourceDigest": "8c9ff13e37173fe6902b7032eb23c2980569191bf4ddd8c57a34a5bb76ae67f7",
+      "currentControl": "Escaped public configuration and same-origin CSP; Skill file integrity, published version and host self-reported activation stay distinct. Customer third-party and payment credentials remain in the PA",
+      "sourceDigest": "aba8a690277396dda70999190897650135c15b656dd870d03c0e4403373baef5",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5196,8 +5196,8 @@
         "agent_transport"
       ],
       "content": "Public connection metadata and Skill archive construction",
-      "currentControl": "Explicit public field projection, configured transport selection and fixed asset allowlist; archive paths reject traversal and do not execute installers",
-      "sourceDigest": "95ec9a256711a95e0dc9824dca6a0ea2c4394f29f8970e808de40c75d78ec0e7",
+      "currentControl": "Explicit public field projection, fixed asset allowlist and deterministic file manifest; host activation is not attested by file integrity. The customer account flow never accepts provider or payment credentials",
+      "sourceDigest": "a01d779f0bc82ba0dbed7fea90e8c47ef6c66f440301b8a0e61c797598bbc268",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5209,8 +5209,8 @@
         "a2a"
       ],
       "content": "Shared intent-based PA capability discovery guidance",
-      "currentControl": "Current service discovery, user delegation preference, independent permission and original-task accepted delivery remain separate requirements",
-      "sourceDigest": "ce904e10c9d5f6bb993c1e823f48557a212d42fdab91de439816b988176caa2a",
+      "currentControl": "Shared MCP/A2A service-intent guidance and bounded discovery; PA-owned third-party credentials and separate task/data-sharing grants; no implicit provider or execution authority",
+      "sourceDigest": "35953133c20c96d6b03390d75e8c10ebc360ffe9c7079aed002e9a64c035c9c0",
       "targetControl": "Preserve existing identity, member, task, source and output authorization boundaries",
       "stage": "S5"
     },
@@ -5826,6 +5826,19 @@
       "currentControl": "User-supplied structured request content only; no independent authority",
       "targetControl": "User-supplied structured request content only; no independent authority",
       "stage": "S5"
+    },
+    {
+      "id": "pa-skill-file-check",
+      "file": "integrations/grok/eigos-delegate/scripts/check_connection.py",
+      "channels": [
+        "private_file",
+        "http"
+      ],
+      "content": "Public Skill manifest comparison and local installed-file checks",
+      "currentControl": "Explicit pinned origin, fixed bounded file set and no redirects or credentials; integrity and package freshness do not attest host activation; host marker is labeled self-reported; no task or provider operation",
+      "targetControl": "Preserve original PA connection, tasks and permissions while checking the published Skill",
+      "stage": "S5",
+      "sourceDigest": "d4dc918fc4d81545c40bd47dc97b2d75d3f245d2dae0625956f62950fe788663"
     }
   ]
 }
