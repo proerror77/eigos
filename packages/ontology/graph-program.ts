@@ -1,19 +1,21 @@
 import type { OntologyObjectStore } from './object-store.js';
 import { withIntegrity } from '../security/context.js';
 
+type PlanningOperationName='revision'|'evaluate'|'virtualMembership'|'pipelineChanges';
 type OperationName='read'|'readPrivate'|'query'|'related'|'ingest'|'containsLinks'|'relationshipDigest'|'evidencePropertiesDigest'|'tombstone';
 export type ProjectionMetadata=Pick<OntologyObjectStore,'model'|'now'|'releaseRef'> & {
   /** Truthy for an authority-bound graph. Policy execution stays in storage. */
   readonly security?:unknown;
 };
-export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName>;
+export type SyncGraphStorage=Pick<OntologyObjectStore,OperationName> & Partial<Pick<OntologyObjectStore,PlanningOperationName>>;
+export type PlanningGraphStorage={ [K in PlanningOperationName]?:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>> };
 export type GraphStorage={
   [K in OperationName]:(...args:Parameters<OntologyObjectStore[K]>)=>ReturnType<OntologyObjectStore[K]>|Promise<ReturnType<OntologyObjectStore[K]>>;
-} & {
+} & { planning?:PlanningGraphStorage } & {
   /** Only a trusted proof program can enter this internal validation scope. */
   withGraphIntegrity?<T>(action:()=>Promise<T>):Promise<T>;
 };
-type StorageOperation={ [K in OperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName];
+type StorageOperation={ [K in OperationName|PlanningOperationName]:{method:K;args:Parameters<OntologyObjectStore[K]>} }[OperationName|PlanningOperationName];
 type Operation=StorageOperation|{method:'integrity';program:GraphProgram<unknown>};
 export type GraphProgram<T>=Generator<Operation,T,unknown>;
 
@@ -66,8 +68,24 @@ export function* graphMap<T,R>(values:readonly T[],project:(value:T,index:number
 export function* graphTombstone(...args:Parameters<OntologyObjectStore['tombstone']>):GraphProgram<ReturnType<OntologyObjectStore['tombstone']>> {
   return (yield {method:'tombstone',args}) as ReturnType<OntologyObjectStore['tombstone']>;
 }
-function perform(graph:GraphStorage,operation:StorageOperation):unknown {
+export function* graphRevision(...args:Parameters<OntologyObjectStore['revision']>):GraphProgram<ReturnType<OntologyObjectStore['revision']>> {
+  return (yield {method:'revision',args}) as ReturnType<OntologyObjectStore['revision']>;
+}
+export function* graphEvaluate(...args:Parameters<OntologyObjectStore['evaluate']>):GraphProgram<ReturnType<OntologyObjectStore['evaluate']>> {
+  return (yield {method:'evaluate',args}) as ReturnType<OntologyObjectStore['evaluate']>;
+}
+export function* graphVirtualMembership(...args:Parameters<OntologyObjectStore['virtualMembership']>):GraphProgram<ReturnType<OntologyObjectStore['virtualMembership']>> {
+  return (yield {method:'virtualMembership',args}) as ReturnType<OntologyObjectStore['virtualMembership']>;
+}
+export function* graphPipelineChanges(...args:Parameters<OntologyObjectStore['pipelineChanges']>):GraphProgram<ReturnType<OntologyObjectStore['pipelineChanges']>> {
+  return (yield {method:'pipelineChanges',args}) as ReturnType<OntologyObjectStore['pipelineChanges']>;
+}
+function perform(graph:GraphStorage,operation:StorageOperation,planning:PlanningGraphStorage|undefined):unknown {
   switch(operation.method) {
+    case 'revision':if(!planning?.revision)throw new Error('Graph does not support revision');return planning.revision(...operation.args);
+    case 'evaluate':if(!planning?.evaluate)throw new Error('Graph does not support evaluate');return planning.evaluate(...operation.args);
+    case 'virtualMembership':if(!planning?.virtualMembership)throw new Error('Graph does not support virtualMembership');return planning.virtualMembership(...operation.args);
+    case 'pipelineChanges':if(!planning?.pipelineChanges)throw new Error('Graph does not support pipelineChanges');return planning.pipelineChanges(...operation.args);
     case 'read':return graph.read(...operation.args);
     case 'readPrivate':return graph.readPrivate(...operation.args);
     case 'query':return graph.query(...operation.args);
@@ -88,7 +106,7 @@ export function runGraphProgram<T>(graph:SyncGraphStorage,program:GraphProgram<T
     let value:unknown;
     try {
       const operation=step.value;
-      value=operation.method==='integrity'?withIntegrity(()=>runGraphProgram(graph,operation.program)):perform(graph,operation);
+      value=operation.method==='integrity'?withIntegrity(()=>runGraphProgram(graph,operation.program)):perform(graph,operation,graph);
       if(value && (typeof value==='object'||typeof value==='function') && 'then' in value && typeof value.then==='function')throw new Error('Synchronous graph program received asynchronous storage');
     } catch(error) {step=program.throw(error);continue;}
     step=program.next(value);
@@ -108,7 +126,7 @@ export async function runGraphProgramAsync<T>(graph:GraphStorage,program:GraphPr
       if(operation.method==='integrity') {
         const action=()=>runGraphProgramAsync(graph,operation.program);
         value=await(graph.withGraphIntegrity?graph.withGraphIntegrity(action):withIntegrity(action));
-      }else value=await perform(graph,operation);
+      }else value=await perform(graph,operation,graph.planning);
     }
     catch(error) {step=program.throw(error);continue;}
     step=program.next(value);

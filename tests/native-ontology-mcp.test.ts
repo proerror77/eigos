@@ -11,7 +11,7 @@ import { reasonWithOntology } from '../packages/coordinator/reasoning-loop.js';
 import { backend, owner, evidence } from './backend-fixture.js';
 import {SecurityError} from '../packages/security/store.js';
 import type {PlanningReadReceipt} from '../packages/ontology/planning-contract.js';
-import type {AsyncNativePlanningSession,NativePlanningSession} from '../packages/coordinator/native-planning-session.js';
+import type {AsyncNativePlanningSession,AsyncPlanningSession,NativePlanningSession} from '../packages/coordinator/native-planning-session.js';
 import {setTimeout as delay} from 'node:timers/promises';
 
 async function fixture(finalSchema?: object,onRead?:(receipt:PlanningReadReceipt)=>void,adapt?:(session:OntologyPlanningSession)=>NativePlanningSession) {
@@ -227,4 +227,35 @@ test('plain model JSON cannot replace native MCP completion and the attempted ru
     }), /did not submit a decision through native/);
     assert.equal(runs, 1); assert.equal(f.b.store.get(owner, f.job.id).artifact, undefined);
   } finally { await f.close(); }
+});
+
+test('native reasoning awaits SQL-shaped authorization and durable run evidence around the model call',async()=>{
+ const f=await fixture();let channelChecks=0,recorded=false,reading=false;
+ const session:AsyncPlanningSession={asynchronous:true,graph:{security:true},request:f.session.request,
+  usesTaskContext:()=>f.session.usesTaskContext(),receipts:()=>f.session.receipts(),lastReceipt:()=>f.session.lastReceipt(),readBudget:()=>f.session.readBudget(),
+  modelSessionKey:()=>f.session.modelSessionKey(),
+  async prepareContext(...args){await delay(5);return f.session.prepareContext(...args);},
+  async catalog(){await delay(5);return f.session.catalog();},
+  async authorizeModel(){await delay(5);channelChecks++;},
+  async call(...args){assert(reading);await delay(5);return f.session.call(...args);},
+  async acceptReceipts(ids){assert(reading);await delay(5);f.session.acceptReceipts(ids);},
+  async runNativeRead(action){assert.equal(reading,false);reading=true;try{return await action();}finally{reading=false;}},
+ };
+ try{
+  const result=await reasonWithOntology({ontologyTransport:'native-mcp',async runStructured(_prompt,_schema,_signal,options){
+   assert(channelChecks>=1);assert.equal(reading,false,'no database read scope remains open during a model call');
+   const connection=options!.mcp!,client=new Client({name:'async-reasoning-contract',version:'1'});
+   const transport=new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:{Authorization:`Bearer ${connection.token}`}}});
+   await client.connect(transport);
+   try{
+    const context=value(await client.callTool({name:'read_task_context',arguments:{}}));
+    const decision=value(await client.callTool({name:'submit_decision',arguments:{receiptIds:[context.receipt.id],decisionJson:JSON.stringify({message:'Actual transport receipt'})}}));
+    return{output:{decisionDigest:decision.decisionDigest},evidence:evidence()};
+   }finally{await client.close();await transport.close();}
+  }},'Read the original task.',{},session,new AbortController().signal,async run=>{
+   await delay(20);assert.equal(run.ontologyMcp?.decisionSubmitted,true);assert(channelChecks>=2);recorded=true;
+  });
+  assert.equal(recorded,true,'the reasoning result cannot escape before its run evidence commits');
+  assert.deepEqual(result.output,{message:'Actual transport receipt'});
+ }finally{await f.close();}
 });

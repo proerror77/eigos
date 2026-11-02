@@ -3606,7 +3606,7 @@
     {
       "id": "model-turn-channel",
       "file": "packages/coordinator/reasoning-loop.ts",
-      "sourceDigest": "be0698b854289df561cbff637ec0013a203468f735e8b6faa014529a0cc02ed2",
+      "sourceDigest": "e4868fd5cf69c8113a8135b048498eeade9bee3d0a8d4f6ba2e53888a7ec4349",
       "channels": [
         "model"
       ],
@@ -4196,7 +4196,7 @@
     {
       "id": "native-task-context",
       "file": "packages/coordinator/task-context.ts",
-      "sourceDigest": "f96a4f000cdc1c285da19b1a1f36276a6a2007f8ec8eb1bfa64d8e4da82087ee",
+      "sourceDigest": "4affce3a996596c0b8dd153a58fc3f44bb6039405eec406346ad0898c150e35c",
       "channels": [
         "model"
       ],
@@ -5903,7 +5903,7 @@
     {
       "id": "ontology-graph-program",
       "file": "packages/ontology/graph-program.ts",
-      "sourceDigest": "dec4dda20511da2c769c99e76ec4ed855fb6fd71e10ade945327e858bd611716",
+      "sourceDigest": "396b703d7d06151e697fbd978eaff401cb855c933c91a8584955503c8ec983d3",
       "channels": [
         "internal"
       ],
@@ -6278,7 +6278,7 @@
     {
       "id": "native-async-planning-session",
       "file": "packages/coordinator/native-planning-session.ts",
-      "sourceDigest": "06e64c7b9c0f052ad6ef2f7c40d77bc9cca0ee3a825c3e2ecd47b443872e82bb",
+      "sourceDigest": "1d6f3bd977989168720b4851f1258813afb027dedc3727f456904bf9e136ea7e",
       "channels": [
         "internal"
       ],
@@ -6297,6 +6297,18 @@
       "content": "Committed Worker finish receipt and control-row release",
       "currentControl": "Result and runtime-binding removal share the fenced business commit; only exact-token rows with matching runtime/owner/fingerprint finish receipt are cleaned separately in READ COMMITTED; no business replay, lease renewal or missing-binding shortcut",
       "targetControl": "Result and runtime-binding removal share the fenced business commit; only exact-token rows with matching runtime/owner/fingerprint finish receipt are cleaned separately in READ COMMITTED; no business replay, lease renewal or missing-binding shortcut",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-planning-read-graph",
+      "file": "packages/postgres/planning-read-graph.ts",
+      "sourceDigest": "14a3e53394681c3049b9cd40b884c2a0c2ced8f4f213734da8cff832f29f73f1",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL original-task planning context graph",
+      "currentControl": "Fresh admitted processing-only Worker or Agent snapshot; bounded current binding, field, role, source and model checks; shared task instructions/context/conditions and field-removal notices, no private proof or writes, graph expires at callback exit",
+      "targetControl": "Fresh admitted processing-only Worker or Agent snapshot; bounded current binding, field, role, source and model checks; shared task instructions/context/conditions and field-removal notices, no private proof or writes, graph expires at callback exit",
       "stage": "S5"
     }
   ]

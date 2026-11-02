@@ -1,3 +1,6 @@
+import { runGraphProgram, type ProjectionMetadata, type GraphProgram, graphQuery, graphVirtualMembership, graphRead, graphRelated, graphTombstone, graphPipelineChanges } from '../ontology/graph-program.js';
+import { readOntologyRequestProgram, readExecutionContextProgram } from '../ontology/execution-projection.js';
+import { readCapabilityCatalogProgram, readPreparedResolutionProgram, readPreparedCapabilityProgram } from '../ontology/capability-catalog.js';
 import { personalResourceRoles } from '../ontology/personal-context.js';
 import { authorizationScope } from '../security/context.js';
 import { authorizedDefinitions } from '../security/view.js';
@@ -7,8 +10,8 @@ import { DomainError } from '../core/domain.js';
 import type { Ref, ServiceRequest } from '../ontology/execution.js';
 import { objectRefSchema, type ActionDefinition, type ObjectRef, type InterfaceDefinition } from '../ontology/model.js';
 import type { LinkWrite, ObjectView, OntologyObjectStore } from '../ontology/object-store.js';
-import { readCapabilityCatalog, readPreparedCapability, readPreparedResolution, type PreparedCapability, type PreparedResolution } from '../ontology/capability-catalog.js';
-import { actionProperties, readExecutionContext, readOntologyRequest, type ExecutionContextView } from '../ontology/execution-projection.js';
+import { readCapabilityCatalog, type PreparedCapability, type PreparedResolution } from '../ontology/capability-catalog.js';
+import { actionProperties, type ExecutionContextView } from '../ontology/execution-projection.js';
 import { isExecutionBookkeepingType } from '../ontology/execution-model.js';
 import type { PlanningContextReceipt, PlanningDefinitionReceipt, PlanningReadReceipt } from '../ontology/planning-contract.js';
 import { managedDiscoveryTypes } from '../ontology/managed-discovery.js';
@@ -71,12 +74,12 @@ const conflict = (message: string): never => { throw new DomainError('CONFLICT',
 const requestLinks = ['specifications', 'capabilities', 'currentResolution'] as const;
 export const instructionCoverageDigest = (refs: ObjectRef[]) => digest([...new Set(refs.map(refKey))].sort());
 
-function instructionRows(graph: OntologyObjectStore, owner: string, request: ServiceRequest): { specification: ObjectView; rows: ObjectView[] } {
-  const specifications = graph.query(owner, { from: { type: 'ServiceRequest', id: request.id }, link: 'specifications', where: [{ property: 'requestRevision', op: 'eq', value: request.revision }], limit: 2 });
+function* instructionRowsProgram(graph: ProjectionMetadata, owner: string, request: ServiceRequest): GraphProgram<{ specification: ObjectView; rows: ObjectView[] }> {
+  const specifications = (yield* graphQuery(owner, { from: { type: 'ServiceRequest', id: request.id }, link: 'specifications', where: [{ property: 'requestRevision', op: 'eq', value: request.revision }], limit: 2 }));
   if (specifications.items.length !== 1 || specifications.page.hasMore) return conflict('Current request specification is missing or ambiguous');
   const specification = specifications.items[0]!, rows: ObjectView[] = []; let cursor: string | undefined;
   do {
-    const page = graph.query(owner, { from: specification.ref, link: 'instructions', limit: 50, ...(cursor ? { cursor } : {}) });
+    const page = (yield* graphQuery(owner, { from: specification.ref, link: 'instructions', limit: 50, ...(cursor ? { cursor } : {}) }));
     rows.push(...page.items); cursor = page.page.cursor;
     if (rows.length > 2000) return conflict('Instruction index exceeds the supported task bound');
   } while (cursor);
@@ -84,7 +87,7 @@ function instructionRows(graph: OntologyObjectStore, owner: string, request: Ser
   if (rows.length !== request.messages.length || rows.some((row, index) => row.properties.sequence !== index || row.properties.messageId !== request.messages[index]!.id || row.properties.text !== request.messages[index]!.text)) return conflict('Current instruction graph differs from its authenticated request');
   return { specification, rows };
 }
-function instructionCursor(graph: OntologyObjectStore, owner: string, request: ServiceRequest, after: number): string {
+function instructionCursor(graph: ProjectionMetadata, owner: string, request: ServiceRequest, after: number): string {
   return Buffer.from(JSON.stringify({ owner: digest(owner), requestId: request.id, requestRevision: request.revision, requestDigest: digest(request), modelDigest: graph.model.ref.digest, after })).toString('base64url');
 }
 function initialInstructions(request: ServiceRequest, rows: ObjectView[]) {
@@ -103,11 +106,13 @@ function initialInstructions(request: ServiceRequest, rows: ObjectView[]) {
   const delivered = new Set([...selected, ...(goalSource ? [0] : [])]);
   return { selected, delivered, goalSource, missing: rows.findIndex((_row, index) => !delivered.has(index)) };
 }
-export function readTaskInstructions(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) {
+export function readTaskInstructions(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) { return runGraphProgram(graph, readTaskInstructionsProgram(graph, owner, requestId, requestRevision, input)); }
+
+export function* readTaskInstructionsProgram(graph: ProjectionMetadata, owner: string, requestId: string, requestRevision: number, input: z.infer<typeof taskInstructionsSchema>) {
   if (input.cursor && input.messageIds) throw new DomainError('INVALID_INPUT', 'Choose an instruction page or exact message IDs');
-  const request = readOntologyRequest(graph, owner, requestId);
+  const request = (yield* readOntologyRequestProgram(graph, owner, requestId));
   if (request.revision !== requestRevision) return conflict('Instruction request revision changed');
-  const { rows } = instructionRows(graph, owner, request);
+  const { rows } = (yield* instructionRowsProgram(graph, owner, request));
   let after = -1;
   if (input.cursor) {
     let cursor: z.infer<typeof instructionCursorSchema>;
@@ -134,25 +139,27 @@ export function readTaskInstructions(graph: OntologyObjectStore, owner: string, 
 /** Task membership is distinct from owner visibility. Shared provider, channel,
  * address and action metadata can be read exactly, but cannot be used as a
  * reverse-navigation bridge into another task. */
-export function taskObjectMembership(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): 'current' | 'foreign' | 'shared' {
+export function taskObjectMembership(graph: OntologyObjectStore, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): 'current' | 'foreign' | 'shared' { return runGraphProgram(graph, taskObjectMembershipProgram(graph, owner, request, ref)); }
+
+export function* taskObjectMembershipProgram(graph: ProjectionMetadata, owner: string, request: Pick<ServiceRequest, 'id' | 'revision'>, ref: ObjectRef): GraphProgram<'current' | 'foreign' | 'shared'> {
   if (ref.type === 'ServiceRequest') return ref.id === request.id ? 'current' : 'foreign';
-  const virtual = graph.virtualMembership(owner, request, ref);
+  const virtual = (yield* graphVirtualMembership(owner, request, ref));
   if (virtual) return virtual;
-  const object = graph.read(owner, ref);
+  const object = (yield* graphRead(owner, ref));
   // Attempt.requestRevision is the durable Job/claim fence. A technical resume
   // can advance it without changing the business request. Membership follows
   // the sealed step and plan instead of conflating those two revision domains.
   const executionParent: Record<string, string> = { ExecutionStep: 'plan', ExecutionInput: 'step', ExecutionAttempt: 'step', ExecutionResult: 'step' };
   const parentName = executionParent[ref.type];
   if (parentName) {
-    const parents = graph.related(owner, ref, parentName, { remaining: 1000 });
-    return parents?.length === 1 ? taskObjectMembership(graph, owner, request, parents[0]!.ref) : 'foreign';
+    const parents = (yield* graphRelated(owner, ref, parentName, { remaining: 1000 }));
+    return parents?.length === 1 ? (yield* taskObjectMembershipProgram(graph, owner, request, parents[0]!.ref)) : 'foreign';
   }
   if (typeof object.properties.requestRevision === 'number' && object.properties.requestRevision !== request.revision) return 'foreign';
   if (typeof object.properties.requestId === 'string' && object.properties.requestId !== request.id) return 'foreign';
   const navigation = graph.model.sides(ref.type).find(side => side.side.name === 'request' && side.other.type === 'ServiceRequest');
   if (navigation) {
-    const roots = graph.related(owner, ref, 'request', { remaining: 1000 });
+    const roots = (yield* graphRelated(owner, ref, 'request', { remaining: 1000 }));
     return roots?.length === 1 && roots[0]!.ref.id === request.id ? 'current' : 'foreign';
   }
   return 'shared';
@@ -168,7 +175,7 @@ function safeDefinition(type: object, relevantTypes: Set<string>): object {
 
 /** Return a compact, exact subset of the registered model. Action input schemas
  * remain complete; unrelated action definitions are not repeatedly transported. */
-function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], actions: ActionDefinition[], discoveryTypes: readonly string[] = [], composed = false): Record<string, unknown> {
+function definitionBundle(graph: ProjectionMetadata, objects: ObjectView[], actions: ActionDefinition[], discoveryTypes: readonly string[] = [], composed = false, visible?: ReturnType<typeof authorizedDefinitions>): Record<string, unknown> {
   const names = new Set(objects.map(object => object.ref.type));
   discoveryTypes.forEach(type => names.add(type));
   names.add('ServiceRequest'); names.add('SourceReceipt');
@@ -183,7 +190,7 @@ function definitionBundle(graph: OntologyObjectStore, objects: ObjectView[], act
     for (const side of graph.model.sides(type).filter(side => side.direction === 'forward')) names.add(side.other.type);
   }
   if (graph.security) {
-    const visible = authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model);
+    if(!visible)throw new DomainError('FORBIDDEN','Authorized definitions are required for task context');
     const actionIds = new Set(actions.map(action => action.id));
     const types: object[] = [], deferredTypes: string[] = []; let bytes = 0;
     for (const type of visible.types.filter(type => names.has(type.id))) {
@@ -233,11 +240,13 @@ function priorDefinition(receipts: readonly PlanningReadReceipt[], requested: st
 /** Read only persisted, public Ontology projections. The caller supplies an
  * authority boundary, never the request, execution state or source response. */
 export function readTaskContext(graph: OntologyObjectStore, owner: string, requestId: string, requestRevision: number, binding: TaskContextBinding,
-  receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}): TaskContextRead {
-  const request = readOntologyRequest(graph, owner, requestId);
+  receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}): TaskContextRead { return runGraphProgram(graph, readTaskContextProgram(graph, owner, requestId, requestRevision, binding, receiptId, previousReads, input, graph.security && input.includeDefinitions !== false ? authorizedDefinitions(graph.security.security, authorizationScope()!, graph.model) : undefined)); }
+
+export function* readTaskContextProgram(graph: ProjectionMetadata, owner: string, requestId: string, requestRevision: number, binding: TaskContextBinding, receiptId: string, previousReads: readonly PlanningReadReceipt[] = [], input: z.infer<typeof taskContextSchema> = {}, visibleDefinitions?: ReturnType<typeof authorizedDefinitions>): GraphProgram<TaskContextRead> {
+  const request = (yield* readOntologyRequestProgram(graph, owner, requestId));
   if (request.revision !== requestRevision) return conflict('The current Ontology request revision changed');
-  const instructionProjection = instructionRows(graph, owner, request), initial = initialInstructions(request, instructionProjection.rows);
-  const executionView = readExecutionContext(graph, owner, requestId, requestRevision);
+  const instructionProjection = (yield* instructionRowsProgram(graph, owner, request)), initial = initialInstructions(request, instructionProjection.rows);
+  const executionView = (yield* readExecutionContextProgram(graph, owner, requestId, requestRevision));
   let actions: ActionDefinition[] = [];
   if (binding.program) {
     if (!executionView || !same(executionView.programRef, binding.program.ref) || executionView.programDigest !== binding.program.configurationDigest || !same([...executionView.actionIds].sort(), [...binding.program.actionIds].sort())) return conflict('Ontology execution binding differs from the active program');
@@ -252,9 +261,9 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     const allowed = managedDiscoveryTypes(graph.model, graph.model.actionDefinitions().map(action => action.id));
     if (!binding.program && !executionView?.composition || binding.purpose !== 'agent' || binding.managedDiscoveryTypes.some(type => !allowed.includes(type))) return conflict('Managed discovery differs from the current published program');
   }
-  const capabilities = readCapabilityCatalog(graph, owner, requestId);
-  const resolution = readPreparedResolution(graph, owner, requestId);
-  const capability = readPreparedCapability(graph, owner, requestId);
+  const capabilities = (yield* readCapabilityCatalogProgram(graph, owner, requestId));
+  const resolution = (yield* readPreparedResolutionProgram(graph, owner, requestId));
+  const capability = (yield* readPreparedCapabilityProgram(graph, owner, requestId));
   if (!binding.program && capability) {
     const registered = capability.actions.flatMap(operation => {
       const definition = graph.model.actionForOperation(operation.ref.id);
@@ -270,8 +279,8 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   // Leave room for the Agent's focused source queries and gate evaluations.
   // Omitted objects remain navigable references, never delivered evidence.
   let objectBytes = 0;
-  const addObject = (object: ObjectView, required = true): boolean => {
-    if (taskObjectMembership(graph, owner, request, object.ref) === 'foreign') throw new DomainError('FORBIDDEN', 'Task context cannot include another request or revision');
+  const addObject = function* (object: ObjectView, required = true): GraphProgram<boolean>{
+    if ((yield* taskObjectMembershipProgram(graph, owner, request, object.ref)) === 'foreign') throw new DomainError('FORBIDDEN', 'Task context cannot include another request or revision');
     if (object.ref.type === 'RequestInstruction') {
       const sequence = Number(object.properties.sequence);
       if (!initial.delivered.has(sequence) || instructionProjection.rows[sequence]?.ref.id !== object.ref.id) {
@@ -300,42 +309,42 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
     unread.delete(refKey(object.ref)); return true;
   };
   const addLink = (edge: LinkWrite) => { links.set(JSON.stringify(edge), edge); };
-  addObject(graph.read(owner, requestRef));
-  if (executionView?.scope) addObject(graph.read(owner, executionView.scope));
-  for (const object of executionView?.objects ?? []) addObject(object);
+  (yield* addObject((yield* graphRead(owner, requestRef))));
+  if (executionView?.scope) (yield* addObject((yield* graphRead(owner, executionView.scope))));
+  for (const object of executionView?.objects ?? []) (yield* addObject(object));
   for (const edge of executionView?.links ?? []) addLink(edge);
   for (const link of requestLinks) {
     if (!graph.model.sides('ServiceRequest').some(side => side.side.name === link)) continue;
     let cursor: string | undefined;
     do {
-      const page = graph.query(owner, { from: requestRef, link, limit: 50, ...(cursor ? { cursor } : {}) });
+      const page = (yield* graphQuery(owner, { from: requestRef, link, limit: 50, ...(cursor ? { cursor } : {}) }));
       const navigation = graph.model.navigation('ServiceRequest', link);
       for (const object of page.items) {
         if (object.properties.requestRevision !== undefined && object.properties.requestRevision !== requestRevision) continue;
-        addObject(object);
+        (yield* addObject(object));
         addLink(navigation.direction === 'forward' ? { type: navigation.link.id, from: requestRef, to: object.ref } : { type: navigation.link.id, from: object.ref, to: requestRef });
       }
       cursor = page.page.cursor;
     } while (cursor);
   }
   for (const ref of binding.refs ?? []) if (!unread.has(refKey(ref))) {
-    const deleted = graph.model.objectWritePolicy(ref.type) === 'managed' ? graph.tombstone(owner, ref) : undefined;
+    const deleted = graph.model.objectWritePolicy(ref.type) === 'managed' ? (yield* graphTombstone(owner, ref)) : undefined;
     if (deleted && executionView) {
       executionView.tombstonedRefs ??= [];
       if (!executionView.tombstonedRefs.some(value => same(value.ref, ref))) executionView.tombstonedRefs.push(deleted);
-    } else addObject(graph.read(owner, ref));
+    } else (yield* addObject((yield* graphRead(owner, ref))));
   }
   const personalFields = request.confirmedInputs?.personal?.fields;
   let personal: TaskContextPayload['personal'];
   if (personalFields?.subject?.status === 'confirmed') {
     const person = objectRefSchema.parse(personalFields.subject.value), defaults: NonNullable<TaskContextPayload['personal']>['defaults'] = [], resources: NonNullable<TaskContextPayload['personal']>['resources'] = [];
-    addObject(graph.read(owner, person)); addLink({ type: 'RequestServedPerson', from: requestRef, to: person });
+    (yield* addObject((yield* graphRead(owner, person)))); addLink({ type: 'RequestServedPerson', from: requestRef, to: person });
     for (const fact of Object.values(personalFields)) {
-      if (fact.personalBasis) { for (const source of fact.personalBasis.sources) if (source.authority === 'eigos') addObject(graph.read(owner, source.object)); defaults.push({ field: fact.field, sources: fact.personalBasis.sources }); }
+      if (fact.personalBasis) { for (const source of fact.personalBasis.sources) if (source.authority === 'eigos') (yield* addObject((yield* graphRead(owner, source.object)))); defaults.push({ field: fact.field, sources: fact.personalBasis.sources }); }
       if (fact.field.startsWith('resource') && fact.value) {
         const value = fact.value as { object: ObjectRef; fields: string[]; role: keyof typeof personalResourceRoles; revision: number };
-        const object = graph.query(owner, { object: value.object, select: value.fields }).items[0];
-        if (object) { addObject(object); resources.push({ object: object.ref, role: value.role, revision: object.revision }); addLink({ type: personalResourceRoles[value.role].link, from: requestRef, to: object.ref }); }
+        const object = (yield* graphQuery(owner, { object: value.object, select: value.fields })).items[0];
+        if (object) { (yield* addObject(object)); resources.push({ object: object.ref, role: value.role, revision: object.revision }); addLink({ type: personalResourceRoles[value.role].link, from: requestRef, to: object.ref }); }
       }
     }
     personal = { person, defaults, resources };
@@ -355,11 +364,11 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
           if (followed.has(identity)) continue;
           if (followed.size >= 8) { pendingRelationships.push({ from: resource.object, link: navigation.side.name }); continue; }
           followed.add(identity);
-          const page = graph.query(owner, { from: resource.object, as: implementation.id, link: relation.name, limit: 2 });
+          const page = (yield* graphQuery(owner, { from: resource.object, as: implementation.id, link: relation.name, limit: 2 }));
           if (page.page.hasMore) pendingRelationships.push({ from: resource.object, link: navigation.side.name, ...(page.page.cursor ? { cursor: page.page.cursor } : {}) });
           for (const target of page.items) {
             const selected = { ...target, properties: Object.fromEntries(Object.entries(target.properties).filter(([field]) => ['name', 'address', 'coordinates'].includes(field))) };
-            if (addObject(selected, false)) addLink({ type: navigation.link.id, from: resource.object, to: target.ref });
+            if ((yield* addObject(selected, false))) addLink({ type: navigation.link.id, from: resource.object, to: target.ref });
           }
         }
       }
@@ -368,25 +377,25 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   for (const specification of [...objects.values()].filter(object => object.ref.type === 'RequestSpecification')) {
     const instructionNavigation = graph.model.navigation(specification.ref.type, 'instructions');
     for (const instruction of instructionProjection.rows) {
-      if (addObject(instruction, false)) addLink({ type: instructionNavigation.link.id, from: specification.ref, to: instruction.ref });
+      if ((yield* addObject(instruction, false))) addLink({ type: instructionNavigation.link.id, from: specification.ref, to: instruction.ref });
     }
     for (const link of ['constraints']) {
       const navigation = graph.model.navigation(specification.ref.type, link);
       let cursor: string | undefined;
       do {
-        const page = graph.query(owner, { from: specification.ref, link, limit: 50, ...(cursor ? { cursor } : {}) });
+        const page = (yield* graphQuery(owner, { from: specification.ref, link, limit: 50, ...(cursor ? { cursor } : {}) }));
         for (const object of page.items) {
-          addObject(object); addLink({ type: navigation.link.id, from: specification.ref, to: object.ref });
+          (yield* addObject(object)); addLink({ type: navigation.link.id, from: specification.ref, to: object.ref });
         }
         cursor = page.page.cursor;
       } while (cursor);
     }
   }
   for (const context of [...objects.values()].filter(object => object.ref.type === 'ResolutionContext')) {
-    const candidates = graph.related(owner, context.ref, 'candidates', { remaining: 1000 });
+    const candidates = (yield* graphRelated(owner, context.ref, 'candidates', { remaining: 1000 }));
     if (!candidates) return conflict('Prepared candidate context exceeds its bound');
     for (const candidate of candidates) {
-      addObject(candidate); addLink({ type: 'CandidateResolution', from: candidate.ref, to: context.ref });
+      (yield* addObject(candidate)); addLink({ type: 'CandidateResolution', from: candidate.ref, to: context.ref });
     }
   }
   // Business objects may expose their own outgoing typed evidence and input
@@ -395,25 +404,25 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
   for (const object of objects.values()) {
     if (expanded.has(refKey(object.ref)) || isExecutionBookkeepingType(object.ref.type) || object.ref.type === 'ServiceRequest') continue;
     expanded.add(refKey(object.ref));
-    if (taskObjectMembership(graph, owner, request, object.ref) !== 'current') continue;
+    if ((yield* taskObjectMembershipProgram(graph, owner, request, object.ref)) !== 'current') continue;
     for (const navigation of graph.model.sides(object.ref.type).filter(side => side.direction === 'forward' && side.side.name !== 'supersedes' && !(object.ref.type === 'RequestSpecification' && side.side.name === 'instructions'))) {
-      const page = graph.query(owner, { from: object.ref, link: navigation.side.name, limit: 12 }, { remaining: 1000 });
+      const page = (yield* graphQuery(owner, { from: object.ref, link: navigation.side.name, limit: 12 }, { remaining: 1000 }));
       if (page.page.hasMore) pendingRelationships.push({ from: object.ref, link: navigation.side.name, ...(page.page.cursor ? { cursor: page.page.cursor } : {}) });
       for (const target of page.items) {
-        if (taskObjectMembership(graph, owner, request, target.ref) === 'foreign') continue;
-        addObject(target, false); addLink({ type: navigation.link.id, from: object.ref, to: target.ref });
+        if ((yield* taskObjectMembershipProgram(graph, owner, request, target.ref)) === 'foreign') continue;
+        (yield* addObject(target, false)); addLink({ type: navigation.link.id, from: object.ref, to: target.ref });
       }
     }
   }
   const execution = executionView ? (({ objects: _objects, links: _links, ...view }) => view)(executionView) : undefined;
-  const sourceChanges = graph.pipelineChanges(owner, requestId, requestRevision);
+  const sourceChanges = (yield* graphPipelineChanges(owner, requestId, requestRevision));
   const bindingDigest = digest({ purpose: binding.purpose, program: binding.program ? { ref: binding.program.ref, configurationDigest: binding.program.configurationDigest, actionIds: [...binding.program.actionIds].sort() } : undefined,
     ...(binding.managedDiscoveryTypes ? { managedDiscoveryTypes: [...binding.managedDiscoveryTypes].sort() } : {}) });
   const context: PlanningContextReceipt = { version: '1', ownerDigest: digest(owner), requestId, requestRevision, bindingDigest, requestDigest: digest(request), executionDigest: digest(sourceChanges.length ? { execution: execution ?? null, sourceChanges } : execution ?? null),
     instructionCount: instructionProjection.rows.length, instructionRefsDigest: instructionCoverageDigest(instructionProjection.rows.map(row => row.ref)), requireCompleteInstructions: binding.purpose === 'grounding' };
   const bundle = input.includeDefinitions === false
     ? { model: graph.model.ref, types: [], actions: [], functions: [], definitionRetrieval: 'describe_ontology' }
-    : definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition);
+    : definitionBundle(graph, [...objects.values()], actions, binding.managedDiscoveryTypes, !!executionView?.composition, visibleDefinitions);
   const reused = priorDefinition(previousReads, input.definitionReceiptId, context, graph.model.ref.digest, bundle);
   const definitions: PlanningDefinitionReceipt = reused ?? { modelDigest: graph.model.ref.digest, bindingDigest, payloadDigest: digest(bundle), originalReceiptId: receiptId, payload: bundle };
   const modelRequest: TaskRequestView = { ...request, messages: [...initial.selected].sort((a, b) => a - b).map(index => request.messages[index]!), messageView: initial.selected.size === request.messages.length ? 'complete' : 'partial' };
@@ -436,11 +445,15 @@ export function readTaskContext(graph: OntologyObjectStore, owner: string, reque
 
 export function assertTaskContextCurrent(graph: OntologyObjectStore, owner: string, context: PlanningContextReceipt): void {
   if (graph.security && !authorizationScope()?.synchronousRead) return graph.security.readSnapshot(() => assertTaskContextCurrent(graph, owner, context));
+  return runGraphProgram(graph, assertTaskContextCurrentProgram(graph, owner, context));
+}
+
+export function* assertTaskContextCurrentProgram(graph: ProjectionMetadata, owner: string, context: PlanningContextReceipt): GraphProgram<void> {
   if (context.ownerDigest !== digest(owner)) return conflict('Task context belongs to another owner');
-  const request = readOntologyRequest(graph, owner, context.requestId);
+  const request = (yield* readOntologyRequestProgram(graph, owner, context.requestId));
   if (request.revision !== context.requestRevision || digest(request) !== context.requestDigest) return conflict('Task business context changed after its read');
-  const view = readExecutionContext(graph, owner, context.requestId, context.requestRevision);
+  const view = (yield* readExecutionContextProgram(graph, owner, context.requestId, context.requestRevision));
   const execution = view ? (({ objects: _objects, links: _links, ...value }) => value)(view) : undefined;
-  const sourceChanges = graph.pipelineChanges(owner, context.requestId, context.requestRevision);
+  const sourceChanges = (yield* graphPipelineChanges(owner, context.requestId, context.requestRevision));
   if (digest(sourceChanges.length ? { execution: execution ?? null, sourceChanges } : execution ?? null) !== context.executionDigest) return conflict('Task execution context changed before the decision was accepted');
 }

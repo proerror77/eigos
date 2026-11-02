@@ -17,3 +17,11 @@ export type NativePlanningSession=OntologyPlanningSession|AsyncNativePlanningSes
 export function isAsyncNativePlanningSession(session:NativePlanningSession):session is AsyncNativePlanningSession {
   return 'asynchronous'in session&&session.asynchronous===true;
 }
+
+/** Complete host reasoning contract. Storage-backed implementations release
+ * their SQL transaction before model execution and await durable evidence. */
+export interface AsyncPlanningSession extends AsyncNativePlanningSession {
+  prepareContext(...args:Parameters<OntologyPlanningSession['prepareContext']>):Promise<ReturnType<OntologyPlanningSession['prepareContext']>>;
+  modelSessionKey():ReturnType<OntologyPlanningSession['modelSessionKey']>;
+}
+export type ReasoningPlanningSession=OntologyPlanningSession|AsyncPlanningSession;
