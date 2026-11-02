@@ -22,6 +22,7 @@ function sourceProofInternal(store:OntologyObjectStore,owner:string,ref:ObjectRe
   scopes.EntityIdentityAssertion = 'identity_mapping'; scopes.TransactionPartyRole = 'party_role';
   scopes.DidiOrderObservation = 'domain_ride';
   scopes.RollingGoSearchObservation = 'domain_hotel';
+  for (const type of ['RollingGoFlightObservation', 'Airport', 'FlightSegment', 'FlightFare']) scopes[type] = 'domain_itinerary';
   scopes.CatalogRead = 'goods_offer';
   scopes.CatalogObservation = 'goods_offer'; scopes.CatalogEndpoint = 'goods_offer';
   scopes.ShopifyCheckoutProducts = 'goods_offer'; scopes.ShopifyCheckoutObservation = 'checkout_session';

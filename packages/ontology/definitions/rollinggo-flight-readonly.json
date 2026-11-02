@@ -1,0 +1,149 @@
+{
+  "format": "eigos.ontology.mcp-reads.v1",
+  "id": "rollinggo.flight-search",
+  "version": "1",
+  "completion": {
+    "evaluate": "rollingGoFlightSearchStatus",
+    "planned": true
+  },
+  "actions": [
+    {
+      "id": "SearchRollingGoAirports",
+      "description": "Read-only domestic RollingGo airport code lookup.",
+      "resultType": "RollingGoFlightObservation",
+      "mcp": {
+        "server": "rollinggo-flight",
+        "tool": "searchAirports",
+        "arguments": {
+          "keyword": {
+            "from": "scope",
+            "path": [
+              "keyword"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    },
+    {
+      "id": "SearchRollingGoOneWayFlights",
+      "description": "Read-only domestic RollingGo flight reference search. No booking, payment, seats guarantee or ticket issuance.",
+      "resultType": "RollingGoFlightObservation",
+      "mcp": {
+        "server": "rollinggo-flight",
+        "tool": "searchFlights",
+        "arguments": {
+          "adultNumber": {
+            "from": "scope",
+            "path": [
+              "adultNumber"
+            ]
+          },
+          "childNumber": {
+            "from": "scope",
+            "path": [
+              "childNumber"
+            ]
+          },
+          "cabinGrade": {
+            "from": "scope",
+            "path": [
+              "cabinGrade"
+            ]
+          },
+          "fromCity": {
+            "from": "scope",
+            "path": [
+              "fromCity"
+            ]
+          },
+          "toCity": {
+            "from": "scope",
+            "path": [
+              "toCity"
+            ]
+          },
+          "fromDate": {
+            "from": "scope",
+            "path": [
+              "fromDate"
+            ]
+          },
+          "tripType": {
+            "from": "scope",
+            "path": [
+              "tripType"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    },
+    {
+      "id": "SearchRollingGoRoundTripFlights",
+      "description": "Read-only domestic RollingGo flight reference search. No booking, payment, seats guarantee or ticket issuance.",
+      "resultType": "RollingGoFlightObservation",
+      "mcp": {
+        "server": "rollinggo-flight",
+        "tool": "searchFlights",
+        "arguments": {
+          "adultNumber": {
+            "from": "scope",
+            "path": [
+              "adultNumber"
+            ]
+          },
+          "childNumber": {
+            "from": "scope",
+            "path": [
+              "childNumber"
+            ]
+          },
+          "cabinGrade": {
+            "from": "scope",
+            "path": [
+              "cabinGrade"
+            ]
+          },
+          "fromCity": {
+            "from": "scope",
+            "path": [
+              "fromCity"
+            ]
+          },
+          "toCity": {
+            "from": "scope",
+            "path": [
+              "toCity"
+            ]
+          },
+          "fromDate": {
+            "from": "scope",
+            "path": [
+              "fromDate"
+            ]
+          },
+          "tripType": {
+            "from": "scope",
+            "path": [
+              "tripType"
+            ]
+          },
+          "retDate": {
+            "from": "scope",
+            "path": [
+              "retDate"
+            ]
+          }
+        },
+        "requires": [],
+        "inputMatchesScope": [],
+        "encoding": "json"
+      }
+    }
+  ]
+}

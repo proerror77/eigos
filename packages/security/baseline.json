@@ -3,8 +3,8 @@
   "enforcement": "not_installed",
   "model": {
     "id": "eigos.business",
-    "version": "26",
-    "digest": "78e73e56caaed8c894b716a0ed486dd98442beed1234a7c29e557821ba2f4020"
+    "version": "27",
+    "digest": "497adf927ee9b99133d51f8ecb989673ad740db9e678108dcf211ba1c26ad781"
   },
   "types": {
     "ServiceRequest": {
@@ -2868,13 +2868,76 @@
         "status": "task_sensitive",
         "authority": "task_sensitive"
       }
+    },
+    "RollingGoFlightTask": {
+      "fingerprint": "90184338b523a33165a38067048ea447be25b1894ce86229536dcc1d02a6d98b",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "input": "task_sensitive",
+        "allowedActions": "internal_only",
+        "configurationDigest": "internal_only"
+      }
+    },
+    "RollingGoFlightObservation": {
+      "fingerprint": "f9c71770056cf1f41afd0aada70ef26664aa5082a0519122eb7ce64078db3236",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "snapshot": "internal_only"
+      }
+    },
+    "Airport": {
+      "fingerprint": "1025ea04241c52d929b94e7cf093481a07daecb3b13d2e00e9a05a3a44bb2dac",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "airportCode": "task_sensitive",
+        "airportName": "task_sensitive",
+        "cityCode": "task_sensitive",
+        "cityName": "task_sensitive",
+        "countryCode": "task_sensitive",
+        "countryName": "task_sensitive"
+      }
+    },
+    "FlightSegment": {
+      "fingerprint": "f560b0d93cc0d530ba888f924216cbda7e4a256e3be130bda5f3c2cff07ef738",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "flightNumber": "task_sensitive",
+        "depAirport": "task_sensitive",
+        "arrAirport": "task_sensitive",
+        "depTime": "task_sensitive",
+        "arrTime": "task_sensitive",
+        "carrierCode": "task_sensitive",
+        "airlineName": "task_sensitive"
+      }
+    },
+    "FlightFare": {
+      "fingerprint": "a50a9b2fca2d3112799f93996cc906ecaec1d367bf5f4413f8213b8a708bbd46",
+      "fields": {
+        "id": "task_private",
+        "displayTitle": "task_private",
+        "requestRevision": "task_private",
+        "observedAt": "task_sensitive",
+        "expiresAt": "task_sensitive",
+        "criteria": "internal_only",
+        "sourceOption": "internal_only",
+        "priceKind": "task_sensitive",
+        "priceBasis": "task_sensitive",
+        "amountUnit": "task_sensitive",
+        "pricingCompleteness": "task_sensitive"
+      }
     }
   },
   "surfaces": [
     {
       "id": "ontology-http",
       "file": "apps/gateway/app.ts",
-      "sourceDigest": "fbc55f0d3762f8859ab9beeaac13199d451c4a012518a364b1ae91f712564a53",
+      "sourceDigest": "aef5784ef69ab8b9b1c6278628e7f5d71c37c35df1557af41bcaa87c61cb83bc",
       "channels": [
         "http"
       ],
@@ -3148,7 +3211,7 @@
     {
       "id": "source-catalog",
       "file": "packages/capabilities/catalog.ts",
-      "sourceDigest": "ddb1d363a3b4fe7ef4683b7b3b7c0cfdf1d4e264fbfaacfe62e8c6729efc3752",
+      "sourceDigest": "3a7f64deadb1c9a2572341d01744c9b3300da42ebe972590e38620056fb1e6f9",
       "channels": [
         "source",
         "dispatch"
@@ -3366,7 +3429,7 @@
     {
       "id": "security-config",
       "file": "packages/core/config.ts",
-      "sourceDigest": "0917d4080bbce8d00f8d0634171412bc226b3b260313fce0585d639c4f0f6917",
+      "sourceDigest": "65ea300227b3419ba53136bd135cacc96b347bc57398f08e9450c3ebb4f3f390",
       "channels": [
         "authorization_control"
       ],
@@ -3378,7 +3441,7 @@
     {
       "id": "security-worker-runtime",
       "file": "apps/worker/runtime.ts",
-      "sourceDigest": "dbfb30921d81694912aeb2a3a296597b6669936e13dcd906aac07dfc697645f1",
+      "sourceDigest": "10bf8bbb56576ef6df19ceb05dc64f2bb756213758238fe9cbb91fbdc44d2b58",
       "channels": [
         "authorization_control"
       ],
@@ -3474,7 +3537,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "4b0ba5268128652d8d4c7fa53c01dc9bf9b0c1582ec890caca5ac4cadedf9551",
+      "sourceDigest": "1af2c24eb159c07d9c3cd6a4e0e9a37fe0ea5a7064edf633044d53e6b023fa3e",
       "channels": [
         "all-reads"
       ],
@@ -3486,7 +3549,7 @@
     {
       "id": "security-safe-projections",
       "file": "packages/security/projections.ts",
-      "sourceDigest": "9b8253a7643b2132433b8ecfa070517f3ad20f51e8f3057267e9a0761970648a",
+      "sourceDigest": "9984ab4a949b15390746fa04638c91243277ef43af68118da048f36eb9b65064",
       "channels": [
         "model-and-agent"
       ],
@@ -3582,7 +3645,7 @@
     {
       "id": "source-evidence-validation",
       "file": "packages/ontology/object-evidence.ts",
-      "sourceDigest": "eb96a85a81a0f0de67ca02f411032d5a863af11af0046f5bc461f1ec473e1b00",
+      "sourceDigest": "fe9e613a67a68488277c9b6753d90ce99bf95c37037b6423260e82da94107ba2",
       "channels": [
         "internal"
       ],
@@ -4092,7 +4155,7 @@
     {
       "id": "definition-registry",
       "file": "packages/ontology/definition-store.ts",
-      "sourceDigest": "11d380723d521b30f7ffe53b4c57ede1c17c47cf124d8b4347d8373fefd03175",
+      "sourceDigest": "5cebfc698de5f03ffe7e6b43f6454a473be76f0d65e3b1544755aaa8b0ae3a8f",
       "channels": [
         "model",
         "artifact"
@@ -5111,7 +5174,7 @@
       "currentControl": "Stopped authority, exact digest/revision, unchanged actions/functions/grants and expiry",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S4",
-      "sourceDigest": "108abe22a84f35d8803e8d39b6ccab54e148b67710d78daffc7189c00b69f0b5"
+      "sourceDigest": "9012eecfcd930d0d43a361b1441f179d3b76697e034d0f3973e814c0d836c6a5"
     },
     {
       "id": "single-read-policy-upgrade-cli",
@@ -5357,6 +5420,123 @@
       "targetControl": "Preserve original PA connection, tasks and permissions while checking the published Skill",
       "stage": "S5",
       "sourceDigest": "d4dc918fc4d81545c40bd47dc97b2d75d3f245d2dae0625956f62950fe788663"
+    },
+    {
+      "id": "flight-contracts",
+      "file": "packages/capabilities/rollinggo-flight/contracts.ts",
+      "sourceDigest": "a1ddefba58ba6a98eb9d9d91200ab3a4adc4116276b5e9492226eb6571f9886f",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-connector",
+      "file": "packages/capabilities/rollinggo-flight/connector.ts",
+      "sourceDigest": "a49574a09511995736f50d41bf473d98fd506c63d3dbbfc4bee5a2b1eb231a23",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-program",
+      "file": "packages/capabilities/rollinggo-flight/program.ts",
+      "sourceDigest": "422ad1577e0d749e63e12f9271740ec4a0fe7c2e2a82997fabbb70d1286a6aee",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-ontology",
+      "file": "packages/ontology/rollinggo-flight.ts",
+      "sourceDigest": "0b16148c090785c74ce2b10f6a58992917ff27e96963fd7771152d77cdfd19fb",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-evaluator",
+      "file": "packages/ontology/rollinggo-flight-functions.ts",
+      "sourceDigest": "71fcd76a0770544a7f02d51c677a66fdb78e34e4eaf0205331c1878b6e9313c0",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-kernel",
+      "file": "packages/ontology/rollinggo-flight-kernel.ts",
+      "sourceDigest": "fda2a94601025ad536847651a3be2301f84a33803633ceff796e39129890e89d",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-policy-upgrade",
+      "file": "packages/security/rollinggo-flight-upgrade.ts",
+      "sourceDigest": "11ff8def1a12cea732f19b91f3290ef8f4a0e2c8d3fa38ae9d3a0515007a7a76",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-policy-upgrade-cli",
+      "file": "scripts/upgrade-rollinggo-flight-policy.mjs",
+      "sourceDigest": "12138b3a29270aeaefa01c1896e195d53357e0cc8fb4f511a130082bb6c3afcf",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
+    },
+    {
+      "id": "flight-installer",
+      "file": "scripts/install-rollinggo-flight-readonly.mjs",
+      "sourceDigest": "7d96324609e03788f5837e205c5d1fb4f74c2bdc193319a9cfe45ac29e5d6a3b",
+      "channels": [
+        "worker",
+        "ontology"
+      ],
+      "content": "Private query criteria and bounded source observations; no booking, payment or issuance",
+      "currentControl": "Explicit opt-in, pinned private credential, exact owner and task revision, read-only tool allowlist",
+      "targetControl": "Current task/source/field permissions and source-backed evidence validation",
+      "stage": "S4"
     }
   ]
 }
