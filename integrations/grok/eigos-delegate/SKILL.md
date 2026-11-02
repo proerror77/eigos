@@ -5,6 +5,8 @@ description: Discover and delegate supported service queries and arrangements th
 
 # EIGOS delegation
 
+Skill contract marker: eigos-delegate@1.1.0. Report this marker only from the instructions actually loaded by your host; a downloaded or remote copy alone does not prove activation.
+
 ## Personal Agent communication
 
 Messages to another person's PA use the connected communication tools, or the saved native client's explicit `communication` command. They do not use `submit_task`, `eigos.delegate` or the client's business `a2a` command. Only a user-requested service is delegated to the EIGOS task chain. If communication scope or controller consent is missing, preserve the message intent and report the exact communication prerequisite; do not create a substitute service task. Read [A2A connection and communication](references/a2a.md) for the saved CLI.
@@ -24,6 +26,14 @@ Use the saved primary HTTPS connection, or the public connection.json supplied w
 Use the host's native EIGOS MCP connection by default. An already selected A2A path is also supported; read [A2A connection and continuation](references/a2a.md) only when using its saved client. Native MCP discovery or calls must not be replaced with Shell, curl, Python or another identity to bypass a failed native connection. Native MCP and A2A must reach the same instance and member identity when both are used.
 
 For a connection check, read runtime identity, admission and available service definitions only. Do not create a task, request supplier credentials or order anything merely to test the connection. Report which checks actually passed, which need user action, and whether the skill is visible to this PA. Do not use historical loopback profiles or old successful tasks as evidence for the current deployment.
+
+Report the Skill contract marker from the instructions actually loaded by this host. The downloaded package contains a manifest and `scripts/check_connection.py`: run it with `--directory <installed-skill-directory> --origin <saved-origin>` and, only if known from the loaded instructions, `--loaded-marker <marker>`. It reads fixed public Skill files and public metadata only, without credentials or tasks. It checks file integrity and the published package separately from host activation. A host marker is explicitly a self-report, not remote attestation. Refresh modified or outdated files through the host's supported mechanism, retaining the original connection and task. If the host cannot inspect local files, report file verification as unavailable; do not manufacture a successful check. This file check does not replace the authenticated native MCP/A2A check.
+
+## Customer accounts stay in the PA
+
+The customer's third-party accounts, API keys, calendar tokens, payment information and wallets stay in the PA's private credential store. EIGOS membership binds the customer and the PA identity; it does not enroll those third-party accounts. Connect a needed service using the PA host's own supported private authorization flow, only when the requested task needs it. Never upload a supplier key or payment credential to EIGOS, including legacy credential-upload APIs.
+
+When EIGOS needs customer-owned service data, use the current supported PA/source read contract with the exact task, scope, deadline and result fields. Return only authorized task-relevant facts and permitted evidence; an ordinary PA message or a self-reported connection is not a verified source result. An EIGOS source/data-sharing grant permits bounded collaboration, not credential custody. If this host or instance has no compatible PA-owned source connector, report that missing prerequisite and retain the task; do not substitute the platform operator's account or claim that approving an existing source logged the customer into a provider. Payments require the PA's own supported payment route and explicit user authority; this query-only onboarding enables none.
 
 ## Discover current capabilities
 

@@ -15,7 +15,7 @@ export const onboardingScript = `document.querySelectorAll('[data-copy]').forEac
 export function paOnboardingPage(c: Config): string {
   const connection = paConnectionInfo(c), beta = c.EIGOS_INVITE_BETA === 'true';
   const instructions = paBootstrapPrompt(c);
-  const selfCheck = '请检查刚连接的 EIGOS：确认你已发现并启用 eigos-delegate Skill，读取当前实例和可发现的服务，说明哪些能力已有访问权限、哪些还需要我授权。这次只检查连接，不创建任务。';
+  const selfCheck = '请检查刚连接的 EIGOS：先从你当前已加载的 eigos-delegate 指引中读出版本标记；找不到就明确报告尚未加载，不要把网页或下载文件当作已启用。按 Skill 的检查方式核对本机文件与当前发布版本，再通过原连接读取实例、接入状态和可发现的服务。分别报告文件版本、宿主加载、登录、会员与权限状态。第三方账号、Key 和付款信息留在我的 PA；缺少服务连接时，引导我在 PA 内处理。这次只检查连接，不创建任务。';
   const membership = c.EIGOS_MEMBERSHIP_APPROVAL === 'invite-only'
     ? '登录会员中心并同意开通资料，再兑换绑定本人身份的邀请。'
     : c.EIGOS_MEMBERSHIP_APPROVAL === 'manual'
@@ -31,16 +31,16 @@ export function paOnboardingPage(c: Config): string {
 <h1>让你的 PA 知道，<br>什么时候找 EIGOS。</h1><p class="lead">连接自己的个人助手。需要查询或安排服务时，让它检查 EIGOS 当前可用能力，处理必要授权，并把同一个任务的实际结果带回来。</p>
 ${beta ? '<p class="notice">本轮邀请内测提供基于已有材料的文档、分析、计划和任务说明。实际服务范围以连接后的发现结果为准，尚不开放真实预订、采购、付款或对外发送。</p>' : '<p class="muted">出行、住宿、旅行与预约是检查服务的场景。是否有相应服务、能否查询或办理，由当前部署及你的权限决定。</p>'}
 </section><div class="steps">
-<section class="step"><div class="step-body"><h2>先开通你自己的账号</h2><p>${membership} PA 的登录和服务权限会分别检查。</p><a class="button" href="/members">登录 / 注册</a></div></section>
+<section class="step"><div class="step-body"><h2>先开通你自己的账号</h2><p>${membership} 开通会员并连接你的 PA；滴滴、日历等第三方账号、Key 和付款信息继续由你自己的 PA 保管。</p><a class="button" href="/members">登录 / 注册</a></div></section>
 <section class="step" id="connect"><div class="step-body"><h2>连接 PA，并启用 EIGOS Skill</h2><p>把下面的接入指令交给你的 PA，让它按支持的方式完成配置。MCP 或 A2A 接通一种即可；Skill 告诉它何时使用 EIGOS。</p>
 <label for="connection-prompt">交给 PA 的接入指令</label><textarea id="connection-prompt" readonly rows="7">${escape(instructions)}</textarea>
 <div class="actions"><button type="button" class="primary" data-copy="connection-prompt">复制接入指令</button><a class="button" href="/connect/eigos-delegate.tar.gz" download>下载完整 Skill</a><a href="/connect/SKILL.md">查看 Skill</a></div>
-<p class="muted">下载后解压，将 <code>eigos-delegate</code> 文件夹放入 PA 支持的 Skill 目录，或使用宿主支持的导入方式。刷新或重启后，确认它已出现在 PA 的可用 Skill 中。接入包包含使用指引和公开连接信息，不含个人凭据。</p>
+<p class="muted">当前发布版本 ${escape(connection.skillContract.version)}。下载后解压，将 <code>eigos-delegate</code> 文件夹放入 PA 支持的 Skill 目录，或使用宿主支持的导入方式。刷新或重启后，再检查 PA 实际加载的版本；官网更新不会自动更新已有副本。接入包包含公开指引和文件校验信息，不含个人凭据。</p>
 ${native ? `<details><summary>Codex · 原生 MCP</summary><p>将下面的连接配置加入 Codex 的 <code>~/.codex/config.toml</code>。已有同名连接时更新该连接，保留其他配置。</p><label for="codex-config">公开连接配置</label><textarea id="codex-config" readonly rows="8">${escape(native.codexConfig)}</textarea><div class="actions"><button type="button" data-copy="codex-config">复制配置</button></div><p>运行 <code>codex mcp login eigos</code>，在显示的页面完成本人授权。连接配置与 Skill 都需要在宿主中生效。</p></details>
 <details><summary>Grok Bot · 支持原生 MCP 的宿主</summary><p>在宿主的 MCP 连接设置中使用地址 <code>${escape(native.url)}</code>，公开客户端 ID 为 <code>${escape(native.clientId)}</code>。请求范围为 <code>${escape(native.scopes.join(' '))}</code>，随后完成本人登录。实际兼容性以该宿主的连接检查为准。</p><p>用宿主支持的方式导入完整 Skill；仅保存网址不会自动启用使用规则。</p></details>` : '<p class="muted">本实例未配置原生 MCP 的公开登录客户端。请使用下方已配置的 A2A 方式。</p>'}
 ${connection.transports.a2a ? `<details><summary>A2A · 支持 Agent 连接的 PA</summary><p>让 PA 从 <a href="${escape(connection.transports.a2a.agentCard)}">Agent Card</a> 和 <a href="${escape(connection.transports.a2a.registration)}">接入发现信息</a> 开始，完成独立登记及本人设备授权。保持同一个安装登记，按返回的下一步和等待间隔继续。</p><p>需要 PA 本身支持 A2A 客户端和安全凭据管理；本页面不会替不支持的宿主安装执行能力。</p></details>` : ''}
 </div></section>
-<section class="step"><div class="step-body"><h2>完成授权，再让 PA 检查连接</h2><p>按 PA 返回的页面完成本人登录、会员准入和必要权限。已有授权继续沿用；数据或服务范围不足时，只补充所需部分。</p>
+<section class="step"><div class="step-body"><h2>完成授权，再让 PA 检查连接</h2><p>按 PA 返回的页面完成 EIGOS 登录、会员准入和本次任务所需权限。第三方服务在你的 PA 内连接和授权；这里只批准 EIGOS 在约定范围内与 PA 协作，不要求上传服务账号或付款凭据。已有授权继续沿用；确实缺少权限时，只补充所需部分。</p>
 ${connection.links.permissions ? '<p><a href="/members/permissions">查看并管理我的授权范围</a></p>' : ''}
 <label for="check-prompt">连接后交给 PA 的检查指令</label><textarea id="check-prompt" readonly rows="4">${escape(selfCheck)}</textarea><div class="actions"><button type="button" data-copy="check-prompt">复制检查指令</button></div><p class="muted">网站可打开、Skill 已下载、OAuth 已登录，分别是不同检查。以 PA 实际读到的身份、权限和服务为准；连接检查不产生业务订单。</p></div></section>
 <section class="step"><div class="step-body"><h2>直接说你想完成什么</h2><p>不必每次提到 EIGOS。PA 会根据任务意图检查服务，再决定如何处理。</p><div class="examples">

@@ -420,6 +420,9 @@ test('the public PA guide leads through Foundation authorization, permitted disc
   try {
     const guide = await f.call('/connect/agent.json').then(r => r.json());
     assert.equal(guide.origin, f.base); assert.equal(guide.transports.mcp, undefined);
+    assert.equal(guide.accountCustody.owner, 'pa');
+    assert.equal(guide.accountCustody.customerFlowCredentialsAccepted, false);
+    assert.equal(guide.accountCustody.paymentCredentialsAccepted, false);
     assert.equal(guide.transports.a2a.registration, f.base + '/.well-known/eigos-agent-registration');
     const skill = await f.call(new URL(guide.links.skill).pathname).then(r => r.text()); assert(skill.includes(f.base + '/connect/agent.json'));
     const agent = await AgentConnector.open({ baseUrl: guide.origin, credentialPath: join(f.directory, 'sdk', 'credentials.json'), displayName: 'Protected A2A Agent', fetch: f.fetcher });
@@ -449,6 +452,8 @@ test('the public PA guide leads through Foundation authorization, permitted disc
     const discovery = new Client({ name: 'new-pa-discovery', version: '1' });
     try {
       await discovery.connect(new StreamableHTTPClientTransport(new URL(f.base + '/mcp'), { fetch: (input, init) => agent.fetch(input instanceof Request ? input.url : input.toString(), init) }));
+      const tools = await discovery.listTools();
+      for (const name of ['begin_source_connection', 'get_source_connection', 'revoke_source_connection']) assert(!tools.tools.some(tool => tool.name === name), 'Foundation onboarding must not offer a provider credential upload flow');
       const services = await discovery.callTool({ name: 'list_services', arguments: {} }); assert(!services.isError);
       assert.equal((services.structuredContent as { result: { id: string }[] }).result[0]!.id, 'eigos.delegate');
       const contracts = await discovery.callTool({ name: 'describe_ontology', arguments: { kind: 'actions', search: 'ReadParticipantRegistration', limit: 5 } }); assert(!contracts.isError);
