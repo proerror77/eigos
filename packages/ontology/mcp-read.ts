@@ -24,12 +24,14 @@ export const mcpReadBindingSchema = z.strictObject({
   server: z.string().regex(/^[a-z][a-z0-9-]{0,79}$/),
   tool: z.string().regex(/^[A-Za-z][A-Za-z0-9_.-]{0,99}$/),
   arguments: z.record(field, argument).refine(v => Object.keys(v).length <= 32),
+  argumentObject: z.strictObject({ from: z.literal('scope'), path }).optional(),
   encoding: z.enum(['string', 'json']).optional(), transport: z.enum(['mcp', 'discovery']).optional(),
   connection: z.record(field, argument).optional(),
   requires: z.array(mcpDependencySchema).max(8),
   inputMatchesScope: z.array(z.strictObject({ input: field, byInput: field, scopeFields: z.record(field, field) })).max(8),
   route: z.record(field, field).optional(),
 }).superRefine((value, ctx) => {
+  if (value.argumentObject && (Object.keys(value.arguments).length || value.encoding !== 'json')) ctx.addIssue({ code: 'custom', message: 'A whole scope argument object requires JSON encoding and no per-field arguments' });
   const names = value.requires.map(r => r.name);
   if (new Set(names).size !== names.length) ctx.addIssue({ code: 'custom', message: 'Duplicate MCP dependency name' });
   const visit = (a: Expression, depth = 0) => {
@@ -109,12 +111,17 @@ export function resolveOntologyMcpRead(binding: McpReadBinding, input: Record<st
     }
     return at(source.from === 'selection' ? selections[source.name] : source.from === 'input' ? input : source.from === 'scope' ? scope : context, source.path);
   };
-  const args = Object.fromEntries(Object.entries(current.arguments).map(([key, source]) => {
+  let args = Object.fromEntries(Object.entries(current.arguments).map(([key, source]) => {
     const value = evaluate(source);
     if (current.encoding === 'json') return [key, structuredClone(value)];
     if (!['string', 'number', 'boolean'].includes(typeof value) || typeof value === 'number' && !Number.isFinite(value)) invalid('Ontology MCP arguments must resolve to scalar values');
     return [key, String(value)];
   }));
+  if (current.argumentObject) {
+    const value = z.record(field, z.json()).parse(at(scope, current.argumentObject.path));
+    if (Object.keys(value).length > 32) invalid('Ontology MCP argument object exceeds its field bound');
+    args = structuredClone(value);
+  }
   return { server: current.server, tool: current.tool, transport: current.transport ?? 'mcp', args, selections,
     connection: Object.fromEntries(Object.entries(current.connection ?? {}).map(([k, v]) => [k, evaluate(v)])),
     route: current.route ? Object.fromEntries(Object.entries(current.route).map(([role, name]) => [role, selections[name]])) : undefined };

@@ -71,10 +71,16 @@ test('a parent-created v22 database opens and retains active and task-pinned rel
       const personal = store.definitions.installPersonalContext(facts.active, facts.generation);
       assert.deepEqual(store.definitions.installPersonalContext(personal.active, personal.generation), personal);
       const readContract = store.definitions.installSingleReadContract(personal.active, personal.generation);
-      assert.equal(store.definitions.active().model.ref.digest, currentKernelImplementation().ref.digest);
+      assert.equal(store.definitions.active().model.ref.version, '26');
       assert.deepEqual(store.definitions.installSingleReadContract(readContract.active, readContract.generation), readContract);
       assert.equal(store.ontologyForJob(fixture.owner, job).model.ref.version, '22');
-      assert.equal(CURRENT_KERNEL_VERSION, '26');
+      assert.throws(()=>store.definitions.installFliggyReadonly(readContract.active,readContract.generation+1),/changed/);
+      const fliggy=store.definitions.installFliggyReadonly(readContract.active,readContract.generation);
+      assert.equal(store.definitions.active().model.ref.digest,currentKernelImplementation().ref.digest);
+      assert.deepEqual(store.definitions.installFliggyReadonly(fliggy.active,fliggy.generation),fliggy);
+      assert.equal(store.definitions.resolve(readContract.active).model.ref.version,'26');
+      assert.equal(store.ontologyForJob(fixture.owner,job).model.ref.version,'22');
+      assert.equal(CURRENT_KERNEL_VERSION,'27');
     } finally {
       store.close();
     }

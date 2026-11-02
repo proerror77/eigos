@@ -1,3 +1,4 @@
+import { evaluateFliggy } from './fliggy-functions.js';
 import { evaluateRollingGo } from './rollinggo-functions.js';
 import { evaluateBusinessFact } from './business-fact-functions.js';
 import { validateCallerOutcomeProof } from './caller-outcome-proof.js';
@@ -37,7 +38,7 @@ const simple = (name: string) => z.object({ function: z.literal(name), object: o
 export const functionCallSchema = z.union([
   ...productAttributeFunctionSchemas, ...identityFunctionSchemas, ...errandFunctionSchemas,
   simple('authorizationStatus'), simple('bookingObservationStatus'), simple('stripePaymentStatus'),
-  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('businessFactStatus'),
+  simple('registrationStatus'), simple('rollingGoSearchStatus'), simple('fliggySearchStatus'), simple('businessFactStatus'),
   simple('shopifyCheckoutObservationStatus'),
   simple('shopifyPAPaymentStatus'),
   simple('didiOrderTestStatus'), simple('didiOrderTestIdentity'), simple('selectDidiOrderTestPlace'), simple('taskOutcomeStatus'),
@@ -85,6 +86,8 @@ function freshness(store: OntologyObjectStore, owner: string, object: ObjectView
 export function evaluateFunction(store: OntologyObjectStore, owner: string, input: z.infer<typeof functionCallSchema>, budget: ReadBudget): Computation {
   const orderTestResult = evaluateOrderTest(store, owner, input, budget);
   if (orderTestResult) return orderTestResult;
+  const fliggyResult = evaluateFliggy(store, owner, input, budget);
+  if (fliggyResult) return fliggyResult;
   const hotelResult = evaluateRollingGo(store, owner, input, budget);
   const businessFactResult = evaluateBusinessFact(store, owner, input, budget);
   if (businessFactResult) return businessFactResult;
