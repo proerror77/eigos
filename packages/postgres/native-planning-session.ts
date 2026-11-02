@@ -5,7 +5,7 @@ import { digest } from '../core/delegation.js';
 import { DomainError } from '../core/domain.js';
 import type { WorkClaim } from '../core/store.js';
 import type { ActionDiscoveryPage, ActionDiscoveryQuery } from '../core/action-bindings.js';
-import type { AsyncPlanningSession } from '../coordinator/native-planning-session.js';
+import type { ExecutablePlanningSession } from '../coordinator/native-planning-session.js';
 import { PlanningSessionState, modelSessionKey, type PlanningMetadata, type PlanningSessionOptions } from '../coordinator/planning-program.js';
 import { runGraphProgramAsync, type GraphStorage, type ProjectionMetadata } from '../ontology/graph-program.js';
 import { readOntologyRequestProgram } from '../ontology/execution-projection.js';
@@ -83,7 +83,7 @@ function storage(graph: ReadGraph, hooks: NonNullable<GraphStorage['planning']> 
 /** One real PostgreSQL-backed model decision. RPCs serialize local state, but
  * each SQL snapshot closes before a model/provider can run. State is adopted
  * only after the fenced read and its durable receipt commit successfully. */
-export class PostgresNativePlanningSession implements AsyncPlanningSession {
+export class PostgresNativePlanningSession implements ExecutablePlanningSession {
   readonly asynchronous = true;
   readonly graph: ProjectionMetadata & { readonly security: true };
   readonly request: ServiceRequest;

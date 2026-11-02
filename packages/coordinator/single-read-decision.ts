@@ -26,11 +26,11 @@ export async function selectReadPlan(model: OntologyReasoningModel, request: Ser
   capabilities: ReturnType<ExecutionCatalog['summaries']>, signal: AbortSignal, access: PlanningAccess): Promise<{ decision: Grounding; evidence: RunEvidence }> {
   if (access.maxTurns < 1) throw new DomainError('CONFLICT', 'No model decision remains in this task budget');
   const initialPrograms = access.initialPrograms ?? [];
-  const prepared = access.session.prepareContext({ actions: [...new Set(initialPrograms.flatMap(program => program.actionIds))], includeDefinitions: false, includeLinkedFacts: true });
+  const prepared = await access.session.prepareContext({ actions: [...new Set(initialPrograms.flatMap(program => program.actionIds))], includeDefinitions: false, includeLinkedFacts: true });
   const receipts = access.session.receipts();
   if (receipts.some(receipt => receipt.status !== 'ok')) throw new DomainError('CONFLICT', 'The current read-plan definitions or task context are unavailable');
   // Also checks complete original instructions, task ownership and current facts.
-  access.session.acceptReceipts(prepared.receiptIds);
+  await access.session.acceptReceipts(prepared.receiptIds);
   const requirementReferences = [...request.requirements, ...(request.successCriteria ?? [])].map(requirement => ({
     id: requirement.id, kind: requirement.kind, ...(requirement.kind !== 'condition' && requirement.role ? { role: requirement.role } : {}),
   }));
@@ -55,11 +55,11 @@ export async function selectReadPlan(model: OntologyReasoningModel, request: Ser
     JSON.stringify(data.value),
   ].join('\n\n');
   signal.throwIfAborted();
-  access.session.authorizeModel(model.securityChannelId);
+  await access.session.authorizeModel(model.securityChannelId);
   const response = await model.runStructured(prompt, z.toJSONSchema(outputSchema), signal, { toolFree: true });
-  access.session.authorizeModel(model.securityChannelId);
+  await access.session.authorizeModel(model.securityChannelId);
   signal.throwIfAborted();
-  access.session.acceptReceipts(prepared.receiptIds);
+  await access.session.acceptReceipts(prepared.receiptIds);
   const evidence: RunEvidence = { ...response.evidence, promptData: data.metrics,
     singleReadDecision: { version: '1', modelRequests: 1, toolsAvailable: false },
     ontologyContext: { digest: prepared.digest, receiptIds: prepared.receiptIds, startedAt: prepared.startedAt, preparedAt: prepared.preparedAt, model: prepared.model, requestRevision: prepared.requestRevision } };
@@ -70,6 +70,6 @@ export async function selectReadPlan(model: OntologyReasoningModel, request: Ser
     evidence.decisionDigest = digest(raw);
     decision = groundingSchema.parse(raw);
     if (decision.kind === 'resolve' && (!decision.readPlan || !decision.initialSteps?.length || !decision.plannedCompletion || decision.scopeReview)) throw new DomainError('CONFLICT', 'A single read decision requires its typed goal and complete read graph');
-  } finally { access.record(evidence); }
+  } finally { await access.record(evidence); }
   return { decision, evidence };
 }

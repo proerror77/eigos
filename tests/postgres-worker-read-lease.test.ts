@@ -1,3 +1,4 @@
+import type { Client } from 'pg';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -40,6 +41,13 @@ test('a Worker read uses fresh original-token validity across heartbeats without
           return (await auth.readObject({ type: 'ServiceRequest', id: claim.job.id }, ['originalGoal'])).object.properties.originalGoal;
         });
         assert.equal(goal, submitted.goal); assert(renewals > 0); assert.equal(failure, undefined);
+        const slow = new PostgresWorkerStore({
+          run:<T>(action:(client:Client)=>Promise<T>)=>t.database.run(async client=>{const result=await action(client);await delay(5600);return result;}),
+          renewClaim:t.database.renewClaim.bind(t.database),inspectClaim:t.database.inspectClaim.bind(t.database),cleanupReleasedClaims:t.database.cleanupReleasedClaims.bind(t.database),
+        },t.policy);
+        assert.equal(await slow.active(claim),true,'active waits past the original lease timestamp while the same token is renewed');
+        assert.equal(failure,undefined);
+
       } finally { clearInterval(timer); if (pending) await pending; }
       const before = (await t.client.query(`SELECT expires_at FROM ${q}.work_claims WHERE job_id=$1`, [claim.job.id])).rows[0]!.expires_at;
       assert(await t.database.inspectClaim(claim, t.policy));

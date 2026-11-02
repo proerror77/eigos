@@ -1,3 +1,4 @@
+import { derivedInput, runDerivedInputs, runDerivedInputsAsync, type DerivedInputProgram } from '../core/derived-input-program.js';
 import { boundAgentAction, boundAgentActionIds } from '../core/agent-action-binding.js';
 import { z } from 'zod';
 import { digest } from '../core/delegation.js';
@@ -95,10 +96,17 @@ export function validatePlannedCompletion(graph: OntologyObjectStore, program: A
 
 export function bindAcceptedObjects(input: Record<string, unknown>, refs: AgentInputReference[],
   source: (stepId: string) => unknown, compute?: (ref: AgentInputReference, object: ObjectRef) => unknown) {
-  const bound = structuredClone(input);
+  return runDerivedInputs(bindAcceptedObjectsProgram(input,refs,source,!!compute),compute);
+}
+export function bindAcceptedObjectsAsync(input:Record<string,unknown>,refs:AgentInputReference[],source:(stepId:string)=>unknown,compute?:(ref:AgentInputReference,object:ObjectRef)=>unknown){
+  return runDerivedInputsAsync(bindAcceptedObjectsProgram(input,refs,source,!!compute),compute);
+}
+function* bindAcceptedObjectsProgram(input:Record<string,unknown>,refs:AgentInputReference[],source:(stepId:string)=>unknown,compute:boolean):DerivedInputProgram<Record<string,unknown>>{
+  const bound = structuredClone(input), selected = new Map<string,ObjectRef>();
   for (const ref of refs) {
-    const object = objectRefSchema.parse(source(ref.stepId));
-    bound[ref.targetKey] = ref.compute ? compute ? compute(ref, object) : invalid('No declared function resolver') : object;
+    const object = objectRefSchema.parse(source(ref.stepId));selected.set(ref.stepId,object);
+    bound[ref.targetKey] = ref.compute ? compute ? yield* derivedInput(ref, object) : invalid('No declared function resolver') : object;
   }
+  for(const [step,object] of selected)if(digest(objectRefSchema.parse(source(step)))!==digest(object))invalid('Accepted producer changed during the declared calculation');
   return bound;
 }

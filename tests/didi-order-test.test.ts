@@ -48,7 +48,7 @@ function fixture(initial = false, fixed = false) {
  } };
  const catalog = createExecutionCatalog({ store, didi: { ...maps.binding, connector: maps.connector }, didiOrderTestEnabled: true, didiOrderTestSource: source });
  const model: Reasoner = { reviewGoal: syntheticGoalReview, ground: async (r, _caps, _signal, access) => {
-  const prepared = initial ? access.session.prepareContext({ actions: ['SearchDidiTestPlaces', 'EstimateDidiTestOrder'] }) : undefined;
+  const prepared = initial ? await access.session.prepareContext({ actions: ['SearchDidiTestPlaces', 'EstimateDidiTestOrder'] }) : undefined;
   r = observeTaskContext(access) ?? r;
   if (!initial && !access.session.usesTaskContext()) { access.session.call('describe_ontology', { search: 'ServiceRequest', limit: 1 }); access.session.call('query_ontology', { object: { type: 'ServiceRequest', id: r.id } }); }
   const decision = { ...interpretation(r, ORDER_TEST_REF.id, scopeInput), capabilityRef: ORDER_TEST_REF, ...(fixed ? { scopeReview: (await syntheticGoalReview({ request: r, capability: catalog.capability(ORDER_TEST_REF), input: scopeInput })).decision } : {}), ...(initial ? { initialSteps: readGraph({}).map(s => { const input = JSON.parse(s.argumentsJson); delete input.scope; return { ...s, argumentsJson: JSON.stringify(input), scopeInputs: ['scope'] }; }) } : {}) };

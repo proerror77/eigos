@@ -14,6 +14,7 @@ import { ActionRuntime, createActionIntents } from './runtime.js';
 import { authorizationRequest, requiredEffects } from '../core/policy.js';
 import { projectReadResult } from '../ontology/task-projection.js';
 import { groundConditions } from './conditions.js';
+import type { ExecutionPlanningSession } from './native-planning-session.js';
 import { OntologyPlanningSession, modelSessionKey } from './planning-session.js';
 import { reasonWithOntology, type OntologyReasoningModel } from './reasoning-loop.js';
 import { selectReadPlan, supportsSingleReadDecision } from './single-read-decision.js';
@@ -39,7 +40,7 @@ import type { AgentProgram } from '../core/agent-program.js';
 type ModelResult<T> = { decision: T; evidence: RunEvidence };
 const capabilitySelectionFeedback = 'Choose an exact capability reference and version listed by read_task_context for this task; the selected capability was not available.';
 export interface PlanningContext { request: ServiceRequest; capability: ServiceCapability; resolution: Omit<Resolution, 'privateData'> }
-export interface PlanningAccess { session: OntologyPlanningSession; record: (evidence: RunEvidence) => void; maxTurns: number; bootstrapComplete?: boolean; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[]; completionSchema?: object }[]; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
+export interface PlanningAccess { session: ExecutionPlanningSession; record: (evidence: RunEvidence) => unknown; maxTurns: number; bootstrapComplete?: boolean; executionBudget?: ReturnType<typeof executionBudgetStatus>; recovery?: import('../core/task-recovery.js').TaskRecovery; initialPrograms?: { capabilityRef: ServiceCapability['ref']; actionIds: string[]; completionSchema?: object }[]; groundingFeedback?: NonNullable<import('../core/delegation.js').Delegation['groundingFeedback']> }
 export interface AgentPlanningContext { sourceChanges?: import('../ontology/pipeline/facts.js').PipelineFactChange[]; request: ServiceRequest; capability: ServiceCapability; state: AgentExecutionState; prepareContext?: boolean; preparedContextNavigation?: {id:string;programRef:{id:string;version:string};scope:{type:string;id:string};retired:boolean}[]; planningObservationTypes?: readonly string[]; components?: ReturnType<NonNullable<AgentProgram['describeComponents']>>; actionIds: string[]; guidance: string; completionSchema: object; limits?: { modelTurns: number; plans: number; actions: number }; actionOutcomes?: { stepId: string; intentId: string; state: string; object?: unknown }[] }
 export interface Reasoner {
   readonly ontologyContextMode?: 'primitives' | 'task';
@@ -279,12 +280,12 @@ export class Coordinator {
       const groundingRequest = secureRequest(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, d.request);
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) return;
-      groundingAccess.session.authorizeModel(this.reasoner.securityChannelId);
+      (await groundingAccess.session.authorizeModel(this.reasoner.securityChannelId));
       grounded = await this.reasoner.ground(groundingRequest, summaries, signal, groundingAccess);
-      groundingAccess.session.authorizeModel(this.reasoner.securityChannelId);
+      (await groundingAccess.session.authorizeModel(this.reasoner.securityChannelId));
       signal.throwIfAborted();
       if (!this.store.claimActive(claim)) return;
-      const groundingReads = groundingAccess.session.finish();
+      const groundingReads = (await groundingAccess.session.finish());
       if (!this.recordRun(claim, grounded.evidence, 'request_interpreted')) return;
       decision = groundingSchema.parse(grounded.decision);
       initial = decision.kind === 'resolve' && decision.initialSteps?.length ? { modelRunId: grounded.evidence.id, definitionActions: [...new Set(groundingAccess.initialPrograms.flatMap(program => program.actionIds))], groundingPlanning: groundingReads } : undefined;
@@ -410,7 +411,7 @@ export class Coordinator {
     if (proposal.kind !== 'propose_plan') { this.pause(claim, request, proposal.kind === 'clarify', proposal.message); return; }
     const candidate = resolution.candidates.find(c => c.id === proposal.candidateId);
     if (!candidate) throw new DomainError('CONFLICT', 'Model selected an undiscovered candidate');
-    const plan = proposePlan(this.catalog, claim.owner, request, capability, candidate, proposal, session.finish(candidate)); validatePlan(this.catalog, claim.owner, request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref);
+    const plan = proposePlan(this.catalog, claim.owner, request, capability, candidate, proposal, (await session.finish(candidate))); validatePlan(this.catalog, claim.owner, request, plan, this.store.ontologyForJob(claim.owner, claim.job).model.ref);
     for (const step of plan.steps) assertSemanticSubmission(this.store.ontologyForJob(claim.owner, claim.job), claim.owner, request, step, selectedCandidateSubject(plan, candidate));
     const requiresPermit = plan.steps.some(s => !['local', 'read'].includes(s.effect));
     const savePlan = (job: Job) => {
@@ -458,11 +459,11 @@ export class Coordinator {
     if (remainingModelTurns(job) < 1) { this.store.finish(claim, current => pauseExecutionBudget(current, 'modelTurns', 'window')); return false; }
     const context = secureGoalContext({ request: structuredClone(d.request), capability, input: structuredClone(input) },this.store.ontologyForJob(claim.owner, claim.job),d.agent?.scope);
     const access=this.access(claim,d.request,[],signal,'goal_coverage_reviewed');
-    access.session.authorizeModel(this.reasoner.securityChannelId);
+    (await access.session.authorizeModel(this.reasoner.securityChannelId));
     const response = fixed?.decision.scopeReview ? undefined : await this.reasoner.reviewGoal!(context, signal, evidence => {
       if (!this.recordRun(claim, evidence, 'goal_coverage_reviewed')) throw new DomainError('CONFLICT', 'Goal review arrived after cancellation or lease loss');
     });
-    access.session.authorizeModel(this.reasoner.securityChannelId);
+    (await access.session.authorizeModel(this.reasoner.securityChannelId));
     signal.throwIfAborted();
     if (response && !this.recordRun(claim, response.evidence, 'goal_coverage_reviewed')) return false;
     const proof = response ? createGoalCoverage(context, response.decision, response.evidence) : createFixedInputCoverage(context, fixed!.decision, fixed!.evidence);

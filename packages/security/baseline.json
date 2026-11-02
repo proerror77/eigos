@@ -2974,7 +2974,7 @@
     {
       "id": "member-store",
       "file": "packages/members/store.ts",
-      "sourceDigest": "defcb705cdccaceeb6d0d87d4af05ef4455bfbe8e6eaa7a585d7fddba52dd5f7",
+      "sourceDigest": "f7ac965dd1fdb06f88ee3b23f7371d6366357024468eb24b278f8fd9ed92240d",
       "channels": [
         "membership_db"
       ],
@@ -3047,7 +3047,7 @@
     {
       "id": "coordinator",
       "file": "packages/coordinator/coordinator.ts",
-      "sourceDigest": "34dece32f0c51ff47a0d8dd9d66f05c2f71b779e1a3e3ec81f023aa2d0a9549d",
+      "sourceDigest": "6a5e8cf92ea260eb0339f3a548153ea244aa587fcb5019621aea0f7357bbe3b3",
       "channels": [
         "model",
         "dispatch"
@@ -3060,7 +3060,7 @@
     {
       "id": "agent-runtime",
       "file": "packages/coordinator/agent-runtime.ts",
-      "sourceDigest": "63afa0d9412adca2be620afcfd29fa3e510f2748a42fca60d93730176783cf78",
+      "sourceDigest": "2eda24e758ec91984b1107ac7d236b41820b5d277fa241ccaca3c09414a3afc5",
       "channels": [
         "model",
         "dispatch",
@@ -3262,7 +3262,7 @@
     {
       "id": "read-dataflow",
       "file": "packages/coordinator/read-dataflow.ts",
-      "sourceDigest": "ef9bd804616a4b38fda49178da9b43a59882b57b15689b24188747e104410ea0",
+      "sourceDigest": "989cb1121a0133a39c849e07f0077b64702a481b4997ce394a3c3a882a592a15",
       "channels": [
         "model",
         "dispatch",
@@ -4598,7 +4598,7 @@
       "currentControl": "Original accepted ports, same-component declared functions, exact source observations, ownership, freshness and independent input validation",
       "targetControl": "No guessed values, cross-task aliases, implicit conversions or authority from model text",
       "stage": "S5",
-      "sourceDigest": "c2b954d78344264cf57611670be1c2e1461c069eccbbe6b25e5488348c24823b"
+      "sourceDigest": "36e8480e3673418255328e0b7e928bd5684ede096c780072746d6064af62527c"
     },
     {
       "id": "native-agent-decision-contract",
@@ -5087,7 +5087,7 @@
       "currentControl": "Current authorized Ontology receipts before model invocation; exact selected read graph and goal contract; no effect authority",
       "targetControl": "Preserve current data, source and execution boundaries",
       "stage": "S3",
-      "sourceDigest": "0db9c09d59458cd0c7f3ca24a367881d6e1b6aa11aed2b80086f4912612c1572"
+      "sourceDigest": "f1147220f95a56aedc14e0e3217243335a86c1d5c534cc635c019ec67887b789"
     },
     {
       "id": "single-read-kernel",
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "a91298cb49873d06245ac13e6a122e5e787484230a6ea8c3f9661ef3e084c7f1",
+      "sourceDigest": "5d64f126fb6354e0ad94a0f0cdc3a29f305afbdd0ac8c69d6800d3d82674235e",
       "channels": [
         "internal"
       ],
@@ -6278,7 +6278,7 @@
     {
       "id": "native-async-planning-session",
       "file": "packages/coordinator/native-planning-session.ts",
-      "sourceDigest": "1d6f3bd977989168720b4851f1258813afb027dedc3727f456904bf9e136ea7e",
+      "sourceDigest": "9bcdf2ef7fd39d081bc0a171e35e287a0ae05a650229af85447188b55d5c5818",
       "channels": [
         "internal"
       ],
@@ -6326,7 +6326,7 @@
     {
       "id": "postgres-native-planning-session",
       "file": "packages/postgres/native-planning-session.ts",
-      "sourceDigest": "c2b2bebe1cca6ca2f172f2e4e8ad6c4aa6e87ec55650b215931baba3d30db285",
+      "sourceDigest": "2cb34c2cbdd6537908688c3878afa0ffc611403fc1bb19102790b05ac9e1303a",
       "channels": [
         "internal"
       ],
@@ -6357,6 +6357,66 @@
       "content": "Mac PostgreSQL durable execution loop",
       "currentControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
       "targetControl": "Original durable claims with independent serialized heartbeat, shared two-slot queue, model accounting acknowledged before/after dispatch, cancellation/expiry abort, drain/resume and guarded writeback; no model/provider I/O in a transaction or automatic business replay",
+      "stage": "S5"
+    },
+    {
+      "id": "derived-input-program",
+      "file": "packages/core/derived-input-program.ts",
+      "sourceDigest": "437c8fc6aa511eb76decf12f7fb6dff0deb8bf86b25d1c5e9e83204e70ff713e",
+      "channels": [
+        "internal"
+      ],
+      "content": "Awaited declared input derivations",
+      "currentControl": "Only a read-only calculation on an exact accepted object port; synchronous driver rejects promises, async driver resumes the same validation once; no provider dispatch, business write or authority",
+      "targetControl": "Only a read-only calculation on an exact accepted object port; synchronous driver rejects promises, async driver resumes the same validation once; no provider dispatch, business write or authority",
+      "stage": "S5"
+    },
+    {
+      "id": "member-storage-contracts",
+      "file": "packages/members/contracts.ts",
+      "sourceDigest": "bfdbcc29c6e27c81a6a382e35da342755c2be67b165b1330ba384a658d12f52b",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared member identity, profile and error contracts",
+      "currentControl": "Identical validation schemas and error class for SQLite and PostgreSQL; no persistence, authorization or credentials",
+      "targetControl": "Identical validation schemas and error class for SQLite and PostgreSQL; no persistence, authorization or credentials",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-membership-database",
+      "file": "packages/postgres/members-database.ts",
+      "sourceDigest": "848115e1ccc070f60025856a808f61d64cd97f1fe4f6db71a90675b69ad38880",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL imported membership transaction boundary",
+      "currentControl": "Exact immutable import provenance; serialized original tables before MVCC decisions, original transaction boundary, no retry after unknown commit and no task or grant issuance",
+      "targetControl": "Exact immutable import provenance; serialized original tables before MVCC decisions, original transaction boundary, no retry after unknown commit and no task or grant issuance",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-member-store",
+      "file": "packages/postgres/member-store.ts",
+      "sourceDigest": "88e540ab5f6388d1fb408821cb503160fc481417fdd105e62d4b46619004aa49",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL member identity, sessions and connections",
+      "currentControl": "Original issuer/tenant/subject identity, hashed sessions and CSRF, consent and admission; awaited deny observer before revocation; no business or task grants",
+      "targetControl": "Original issuer/tenant/subject identity, hashed sessions and CSRF, consent and admission; awaited deny observer before revocation; no business or task grants",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-member-agents",
+      "file": "packages/postgres/member-agents.ts",
+      "sourceDigest": "6130063469973a9960218e590c45cbf5fa61029297837f45f0aaf0509764a79c",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL registration and installation authority",
+      "currentControl": "Original registration and bearer hash bindings, stable native installation, one-use invitation and freshness/expiry, awaited revocation fence; no provider tokens or business grants",
+      "targetControl": "Original registration and bearer hash bindings, stable native installation, one-use invitation and freshness/expiry, awaited revocation fence; no provider tokens or business grants",
       "stage": "S5"
     }
   ]

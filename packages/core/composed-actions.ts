@@ -1,3 +1,4 @@
+import { derivedInput, runDerivedInputs, runDerivedInputsAsync, type DerivedInputProgram } from './derived-input-program.js';
 import { digest } from './delegation.js';
 import { DomainError } from './domain.js';
 import type { ExecutionCatalog } from './catalog.js';
@@ -85,11 +86,18 @@ export function assertAcceptedOutputCurrent(catalog: ExecutionCatalog, ctx: Agen
  * model-supplied receipts, implicit conversions or cross-task object aliases. */
 export function composedInputs(catalog: ExecutionCatalog, ctx: AgentProgramContext, plan: AgentActionPlan, step: AgentActionPlan['steps'][number], intent: (id: string) => ActionIntent,
   derive?: (ref: AgentStep['inputRefs'][number], object: ObjectRef) => unknown): Record<string, unknown> {
+  return runDerivedInputs(composedInputsProgram(catalog,ctx,plan,step,intent,!!derive),derive);
+}
+export function composedInputsAsync(catalog:ExecutionCatalog,ctx:AgentProgramContext,plan:AgentActionPlan,step:AgentActionPlan['steps'][number],intent:(id:string)=>ActionIntent,
+  derive?:(ref:AgentStep['inputRefs'][number],object:ObjectRef)=>unknown):Promise<Record<string,unknown>> {
+  return runDerivedInputsAsync(composedInputsProgram(catalog,ctx,plan,step,intent,!!derive),derive);
+}
+function* composedInputsProgram(catalog:ExecutionCatalog,ctx:AgentProgramContext,plan:AgentActionPlan,step:AgentActionPlan['steps'][number],intent:(id:string)=>ActionIntent,derive:boolean):DerivedInputProgram<Record<string,unknown>> {
   const contract = ctx.graph.model.action(step.action).composition ?? fail('Missing action composition contract');
-  const input = structuredClone(step.input), targets = new Set<string>();
+  const input = structuredClone(step.input), targets = new Set<string>(), accepted = new Map<string,{intentId:string;port:string;digest:string}>();
   const insert = (target: string, source: ActionIntent, port: string) => {
     if (Object.hasOwn(input, target) || targets.has(target) || !Object.hasOwn(contract.inputs, target)) fail('Ambiguous or unknown composition input');
-    assertAcceptedOutputCurrent(catalog, ctx, source, port);
+    const output=assertAcceptedOutputCurrent(catalog, ctx, source, port);accepted.set(JSON.stringify([source.id,port]),{intentId:source.id,port,digest:output.digest});
     targets.add(target); input[target] = acceptedInput(ctx, source, port, contract.inputs[target]!);
   };
   for (const link of step.acceptedInputs ?? []) insert(link.targetKey, intent(link.intentId), link.port);
@@ -98,12 +106,15 @@ export function composedInputs(catalog: ExecutionCatalog, ctx: AgentProgramConte
     if (!source || !step.dependsOn.includes(link.stepId) || !link.port) fail('Composition dependency requires an exact earlier named output');
     if(link.compute){
       if(!derive||Object.hasOwn(input,link.targetKey)||targets.has(link.targetKey))fail('Unknown or ambiguous derived composition input');
-      const port=validateDerivedCompositionLink(ctx,source,step,link),accepted=intent(source.intentId);
-      assertAcceptedOutputCurrent(catalog,ctx,accepted,link.port);
-      const object=objectRefSchema.parse(acceptedInput(ctx,accepted,link.port,port));
-      targets.add(link.targetKey);input[link.targetKey]=derive(link,object);
+      const port=validateDerivedCompositionLink(ctx,source,step,link),producer=intent(source.intentId);
+      const output=assertAcceptedOutputCurrent(catalog,ctx,producer,link.port);
+      accepted.set(JSON.stringify([producer.id,link.port]),{intentId:producer.id,port:link.port,digest:output.digest});
+      const object=objectRefSchema.parse(acceptedInput(ctx,producer,link.port,port));
+      targets.add(link.targetKey);input[link.targetKey]=yield* derivedInput(link,object);
+      assertAcceptedOutputCurrent(catalog,ctx,producer,link.port);
     }else insert(link.targetKey, intent(source.intentId), link.port);
   }
+  for(const old of accepted.values())if(assertAcceptedOutputCurrent(catalog,ctx,intent(old.intentId),old.port).digest!==old.digest)fail('Accepted producer changed during the declared calculation');
   validateCompositionInputs(ctx, step.action, input, targets, catalog);
   return input;
 }

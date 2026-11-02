@@ -41,8 +41,11 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
   // state or epochs. Import duration is never authority to extend that lease.
   const publisher=new pg.Client(connection),token=randomUUID(),q=`"${schema}"`;
   const leaseMs=securityDefaults.authorityProjectionLeaseSeconds*1000;
+  let lastAttemptAt:number|undefined,lastAcknowledgedAt:number|undefined,acknowledgedUntil:number|undefined;
+  let pending:Promise<void>|undefined,failure:unknown;
+  publisher.on('error',error=>{failure??=error;});
   const refresh=async()=>{
-    const source=new DatabaseSync(f.database),now=Date.now(),until=now+leaseMs;
+    const source=new DatabaseSync(f.database),now=Date.now(),until=now+leaseMs;lastAttemptAt=now;
     let facts:ReturnType<typeof f.members.authorizationFacts>[];
     try{
       facts=source.prepare("SELECT installation_id,member_id FROM security_subjects WHERE state='active'").all()
@@ -57,6 +60,8 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
           AND s.state='active' AND EXISTS(SELECT 1 FROM manager) RETURNING s.installation_id)
       SELECT count(*) AS n FROM manager`,[until,token,now,JSON.stringify(facts)]);
     if(Number(result.rows[0]?.n)!==1)throw new Error('Synthetic eligibility publisher lost its lease');
+    lastAcknowledgedAt=Date.now();acknowledgedUntil=until;
+    if(until<=lastAcknowledgedAt)throw new Error('Synthetic eligibility acknowledgement exceeded its unchanged lease');
     const sourceWrite=new DatabaseSync(f.database);
     try{
       sourceWrite.prepare('UPDATE security_manager SET token=?,expires_at=? WHERE slot=1').run(token,until);
@@ -70,11 +75,16 @@ export async function importPostgresFixture(f:ReturnType<typeof securityFixture>
   }catch(error){
     try{await client.query(`DROP SCHEMA "${schema}" CASCADE`);}finally{await publisher.end();await client.end();}throw error;
   }
-  let pending:Promise<void>|undefined,failure:unknown;
-  const refreshEligibility=()=>pending??(pending=refresh().catch(error=>{failure=error;throw error;}).finally(()=>{pending=undefined;}));
-  const timer=setInterval(()=>{void refreshEligibility().catch(()=>{});},securityDefaults.authorityProjectionRefreshSeconds*1000);timer.unref();
+  const refreshEligibility=()=>pending??(pending=refresh().catch(error=>{failure??=error;throw error;}).finally(()=>{pending=undefined;}));
+  const timer=setInterval(()=>{void refreshEligibility().catch(()=>{clearInterval(timer);});},securityDefaults.authorityProjectionRefreshSeconds*1000);timer.unref();
   const database=new PostgresDatabase(new pg.Pool({...connection,max:2}),schema,authority,{leasePool:new pg.Pool({...connection,max:1})});
-  return {client,schema,authority,policy,database,refreshEligibility,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
+  const ownedRun=database.run.bind(database);
+  database.run=<T>(action:(client:pg.Client)=>Promise<T>):Promise<T>=>{
+    if(failure)return Promise.reject(new Error('Synthetic eligibility publisher failed',{cause:failure}));return ownedRun(action);
+  };
+  const publisherStatus=()=>({lastAttemptAt,lastAcknowledgedAt,acknowledgedUntil,remainingMs:acknowledgedUntil===undefined?undefined:acknowledgedUntil-Date.now(),
+    failure:failure instanceof Error?{name:failure.name,code:'code'in failure?failure.code:undefined,message:failure.message}:failure?{name:'unknown'}:undefined});
+  return {client,schema,authority,policy,database,refreshEligibility,publisherStatus,run:<T>(action:(client:pg.Client)=>Promise<T>)=>{
     if(failure)throw new Error('Synthetic eligibility publisher failed',{cause:failure});
     return postgresBusinessTransaction(client,schema,authority,action);
   },close:async()=>{

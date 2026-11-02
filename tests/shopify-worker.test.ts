@@ -1,3 +1,4 @@
+import { OntologyPlanningSession } from '../packages/coordinator/planning-session.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -226,7 +227,8 @@ test('A later contradictory observation prevents completing with the older price
 
 test('The action model cannot search unrelated owner data or read another task object', async () => {
   const t = setup((ctx, access) => {
-    assert.equal(access.session.catalog().readScope, 'request');
+    const session=access.session;assert(session instanceof OntologyPlanningSession,'This fixture uses the synchronous catalog graph');
+    assert.equal(session.catalog().readScope, 'request');
     const denied = access.session.call('query_ontology', { type: 'SavedAddress' }) as { error: string };
     assert.equal(denied.error, 'FORBIDDEN');
     observe(ctx, access);

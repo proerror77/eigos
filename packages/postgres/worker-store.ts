@@ -11,7 +11,7 @@ import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
 import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
-import {postgresClaimActive,postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
+import {postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
@@ -106,9 +106,11 @@ export class PostgresWorkerStore {
     });
   }
   async active(input:WorkClaim){const claim=postgresWorkReference(input);return this.db.run(async client=>{
-    if(!await postgresClaimActive(client,claim,this.policy))return false;
+    if(!await postgresClaimSnapshotMatches(client,claim,this.policy)||!await this.db.inspectClaim(claim,this.policy))return false;
     const admission=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
-    return admission.authority.id===claim.securityAuthorityId&&admission.authority.authEpoch===claim.securityEpoch&&admission.policyRevision===claim.securityPolicyRevision;
+    if(admission.authority.id!==claim.securityAuthorityId||admission.authority.authEpoch!==claim.securityEpoch||admission.policyRevision!==claim.securityPolicyRevision)return false;
+    postgresConstrainReadDeadline(client,admission.validUntil);postgresRequireLeaseAtCommit(client,digest(claim),()=>this.db.inspectClaim(claim,this.policy));
+    return true;
   });}
   renew(claim:WorkClaim,leaseMs:number){return this.db.renewClaim(claim,leaseMs,this.policy);}
   readRequest(claim:PostgresWorkReference,modelChannel:string){
