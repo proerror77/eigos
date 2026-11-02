@@ -19,7 +19,7 @@ import { submissionDigest } from '../security/submission-digest.js';
 import type { ServiceRequest } from '../ontology/execution.js';
 import {postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
-import {postgresClaimActive} from './work-claim.js';
+import {postgresClaimActive,postgresClaimSnapshotMatches} from './work-claim.js';
 
 const storedLabelSchema=z.strictObject({classification:securityEnvelopeSchema.shape.classification,
   requiredMarkings:securityEnvelopeSchema.shape.requiredMarkings,channels:securityEnvelopeSchema.shape.channels});
@@ -202,10 +202,17 @@ export async function withPostgresTaskReadSnapshot<T>(client:Client,principal:Pr
  * evidence helpers may consume this short-lived scope; the callback performs
  * no model/provider I/O and may append its own read receipts after reading. */
 export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
-  action:(principal:Principal,admission:PostgresTaskReadAdmission)=>Promise<T>):Promise<T>{
+  action:(principal:Principal,admission:PostgresTaskReadAdmission)=>Promise<T>,inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<T>{
   if(snapshots.has(client))throw new Error('Nested PostgreSQL read snapshots are not supported');
   const captured=postgresWorkReference(claim),owner=ownerIdentitySchema.parse(captured.owner);
-  if(!await postgresClaimActive(client,captured,policyDigest))throw new SecurityError('ACCESS_REVOKED');
+  const matches=()=>inspectLease?postgresClaimSnapshotMatches(client,captured,policyDigest):postgresClaimActive(client,captured,policyDigest);
+  const currentLease=async()=>{
+    const lease=await inspectLease!(captured);
+    if(!lease||!Number.isSafeInteger(lease.validUntil)||lease.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
+    return lease.validUntil;
+  };
+  if(!await matches())throw new SecurityError('ACCESS_REVOKED');
+  if(inspectLease)await currentLease();
   const before=await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest);
   if(before.authority.id!==captured.securityAuthorityId||before.authority.authEpoch!==captured.securityEpoch||before.policyRevision!==captured.securityPolicyRevision)throw new SecurityError('POLICY_CHANGED');
   const [issuer,tenant,subject]=z.tuple([z.string(),z.string(),z.string()]).parse(JSON.parse(owner));
@@ -219,7 +226,8 @@ export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:Post
   const snapshot={key:snapshotKey(principal,captured.job.id,policyDigest),admission:freezeData(structuredClone(admission)),ontology:new Map<StagedKernelBuilder|undefined,Promise<ReadOntology>>()};
   snapshots.set(client,snapshot);let result:T;
   try{result=await action(freezeData(principal),snapshot.admission);}finally{snapshots.delete(client);}
-  if(!await postgresClaimActive(client,captured,policyDigest)||digest(before)!==digest(await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest)))throw new SecurityError('POLICY_CHANGED');
+  if(!await matches()||digest(before)!==digest(await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest)))throw new SecurityError('POLICY_CHANGED');
+  if(inspectLease)postgresConstrainReadDeadline(client,await currentLease());
   postgresConstrainReadDeadline(client,before.validUntil);return result;
 }
 

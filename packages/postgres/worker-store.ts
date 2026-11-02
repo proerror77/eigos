@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import type {Client} from 'pg';
-import {DomainError,type Job} from '../core/domain.js';
+import {DomainError,type Job,type Principal} from '../core/domain.js';
 import type {WorkClaim} from '../core/store.js';
 import {digest} from '../core/delegation.js';
 import {scheduleTaskRecovery} from '../core/task-recovery.js';
@@ -15,12 +15,14 @@ import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
+import {withPostgresWorkerEvidenceAuthorization,type PostgresTaskReadAuthorization} from './task-output.js';
+import type {PostgresTaskReadAdmission} from './task-read-access.js';
 
 class LostClaim extends Error{}
 /** Durable queue shared by Mac Workers. Each method releases its transaction
  * before the caller can run a model or contact a provider. */
 export class PostgresWorkerStore {
-  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
   }
   private async expire(client:Client){
@@ -103,7 +105,18 @@ export class PostgresWorkerStore {
     return admission.authority.id===claim.securityAuthorityId&&admission.authority.authEpoch===claim.securityEpoch&&admission.policyRevision===claim.securityPolicyRevision;
   });}
   renew(claim:WorkClaim,leaseMs:number){return this.db.renewClaim(claim,leaseMs,this.policy);}
-  readRequest(claim:WorkClaim,modelChannel:string){const reference=postgresWorkReference(claim);return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel));}
+  readRequest(claim:WorkClaim,modelChannel:string){
+    const reference=postgresWorkReference(claim);
+    return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy)));
+  }
+  /** Host-side tool reads/receipt bookkeeping only. The callback must not run
+   * models/providers or mutate task, policy or claim state. */
+  readEvidence<T>(claim:WorkClaim,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
+    principal:Principal,client:Client)=>Promise<T>):Promise<T>{
+    const reference=postgresWorkReference(claim);
+    return this.db.run(client=>withPostgresWorkerEvidenceAuthorization(client,reference,this.policy,
+      (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy)));
+  }
   private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean){
     const original=postgresWorkReference(claim);
     try{return await this.db.run(async client=>{

@@ -430,10 +430,11 @@ export async function withPostgresTaskReadAuthorization<T>(client:Client,princip
 /** Internal Worker evidence boundary. Reads require the separately configured
  * registered model channel. Validation alone permits no protected disclosure. */
 export async function withPostgresWorkerEvidenceAuthorization<T>(client:Client,claim:PostgresWorkReference,policyDigest:string,
-  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string):Promise<T>{
+  action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,principal:Principal)=>Promise<T>,builder?:StagedKernelBuilder,modelChannel?:string,
+  inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<T>{
   if(modelChannel!==undefined)z.string().min(1).max(200).parse(modelChannel);
   return withPostgresWorkerReadSnapshot(client,claim,policyDigest,(principal,admission)=>
-    withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel}));
+    withTaskAuthorization(client,principal,claim.job.id,policyDigest,auth=>action(auth,admission,principal),builder,{admission,modelChannel}),inspectLease);
 }
 
 /** Check an existing worker seal without exposing unsealed task data. */

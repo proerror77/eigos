@@ -29,7 +29,7 @@ export function postgresCaptureClaim(claim:PostgresWorkReference):PostgresClaimF
   return postgresValidClaimFence({ owner:claim.owner,taskId:claim.job.id,token:claim.token,state:claim.job.state,revision,requestRevision,recovery:claim.recovery === true,
     authorityId:claim.securityAuthorityId,epoch:claim.securityEpoch!,policyRevision:claim.securityPolicyRevision! });
 }
-async function active(client: Client, fence: PostgresClaimFence, policyDigest: string): Promise<boolean> {
+async function active(client: Client, fence: PostgresClaimFence, policyDigest: string,checkLease=true): Promise<boolean> {
   const schema = postgresBusinessSchema(client), authorityDigest = postgresBusinessAuthorityDigest(client), q = `"${schema}"`;
   const row = (await client.query(`SELECT c.revision,c.expires_at,p.revision AS policy_revision,
     pg_catalog.jsonb_typeof(body.value) AS body_type,
@@ -48,8 +48,11 @@ async function active(client: Client, fence: PostgresClaimFence, policyDigest: s
   const authority = await postgresWorkAuthority(client,fence.owner,fence.taskId,policyDigest);
   if (!authority || authority.id !== fence.authorityId || authority.authEpoch !== fence.epoch) return false;
   // A long authority query must not leave an already expired lease eligible.
-  if(BigInt(String(row.expires_at))<=BigInt(Date.now()))return false;
-  postgresConstrainReadDeadline(client,Number(row.expires_at));return true;
+  if(checkLease){
+    if(BigInt(String(row.expires_at))<=BigInt(Date.now()))return false;
+    postgresConstrainReadDeadline(client,Number(row.expires_at));
+  }
+  return true;
 }
 
 /** Current-claim fence for the foundation security mode. The caller must use a
@@ -58,6 +61,13 @@ export async function postgresClaimActive(client: Client, claim: PostgresWorkRef
   postgresBusinessSchema(client);
   const fence = postgresCaptureClaim(claim);
   return fence ? active(client,fence,policyDigest) : false;
+}
+
+/** Header/authority match only. It grants no lease validity; a read boundary
+ * must additionally inspect the current original token outside its MVCC view. */
+export async function postgresClaimSnapshotMatches(client:Client,claim:PostgresWorkReference,policyDigest:string):Promise<boolean>{
+  postgresBusinessSchema(client);const fence=postgresCaptureClaim(claim);
+  return fence?active(client,fence,policyDigest,false):false;
 }
 
 /** Renew only the original unexpired token after rechecking current authority. */

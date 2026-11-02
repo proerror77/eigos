@@ -14,7 +14,8 @@ import {postgresTaskReadHistory} from './task-lineage.js';
 /** Return a checked copy of the original model request and persist its input
  * influence in the same transaction. A caller runs the model only after this
  * transaction commits; no database client is lent to the model process. */
-export async function postgresWorkerRequest(client:Client,claim:PostgresWorkReference,policy:string,modelChannel:string,builder?:StagedKernelBuilder):Promise<ServiceRequest>{
+export async function postgresWorkerRequest(client:Client,claim:PostgresWorkReference,policy:string,modelChannel:string,builder?:StagedKernelBuilder,
+  inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>):Promise<ServiceRequest>{
   const q=`"${postgresBusinessSchema(client)}"`;
   return withPostgresWorkerEvidenceAuthorization(client,claim,policy,async(auth,admission)=>{
     const rows=await client.query(`SELECT CASE WHEN octet_length((source.value#>'{delegation,request}')::text)<=8388608
@@ -41,5 +42,5 @@ export async function postgresWorkerRequest(client:Client,claim:PostgresWorkRefe
     for(const envelope of envelopes)await client.query(`INSERT INTO ${q}.security_reads(grant_id,digest,body) VALUES($1,$2,$3) ON CONFLICT(grant_id,digest) DO NOTHING`,
       [admission.grant.id,digest(envelope),JSON.stringify(envelope)]);
     return structuredClone(request);
-  },builder,modelChannel);
+  },builder,modelChannel,inspectLease);
 }

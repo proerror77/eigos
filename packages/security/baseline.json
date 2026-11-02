@@ -5579,7 +5579,7 @@
       "currentControl": "Fenced transaction, original claim token and authority digest, current task revisions, grant identity and expiry rechecks; claim verification returns bounded scalar fields instead of the task body",
       "targetControl": "Complete claim creation, recovery, result fencing and full authorization before runtime activation",
       "stage": "S5",
-      "sourceDigest": "b8abf777c960c752f0862b91d53e07415aa2677245260f6c3b12e37bdf91444e"
+      "sourceDigest": "881621ce99c09e9787fcd6e1edc292a10453fc5e280756806e9bd68360697cf4"
     },
     {
       "id": "relay-cloudflare-binding",
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "9f705573c21cd825758d3eefacecbbc9e448751fd59896afc9e517c5624c7b73",
+      "sourceDigest": "dcbfdc91d8a78da1021740a4883345c8cf2643f3c68be28cbe54fc42aec6bb0d",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5843,7 +5843,7 @@
     {
       "id": "postgres-task-output-authorization",
       "file": "packages/postgres/task-output.ts",
-      "sourceDigest": "741b1fa8edf13f508a04c3fda29945e63a572be0524c5fcc29464c0b2c3c7b73",
+      "sourceDigest": "3869d16a02b793499d8776bf14541e13f9fafc71e1763e7d5b871ed99dcef272",
       "channels": [
         "internal"
       ],
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "8b32e3cc2a957e49c728fe0a8936c8a8675dbae26e7dc44980c1fd6a76d6b1d1",
+      "sourceDigest": "cacef7c6ce9799a1c67cfceec6d29e6f610edb20fd776abba8f4607e7a7bac69",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "51a9da76a2d888de723eaa6c87bf5ddad7999afe3aa9cc09387319b759516ff8",
+      "sourceDigest": "1ce54201097e25041ead748d9331baace59768d08dc09a4e9f8797e3e6fcca00",
       "channels": [
         "internal"
       ],
@@ -6110,7 +6110,7 @@
     {
       "id": "postgres-worker-input",
       "file": "packages/postgres/worker-input.ts",
-      "sourceDigest": "9af2ed1d796ff1452178ebec89ed6ab66631fa39e33121cad9fe32c83d72d282",
+      "sourceDigest": "62798298f9d7b428791c3c6b5564559026e1bd5d94e34eb50cba3bd07b391abf",
       "channels": [
         "internal"
       ],
@@ -6158,7 +6158,7 @@
     {
       "id": "postgres-independent-lease-renewal",
       "file": "packages/postgres/lease-renewal.ts",
-      "sourceDigest": "534fcff9c4d1c86d56bd6e3e31c2cf298e5479f26ee84f9bc6bd40566f2e4ea4",
+      "sourceDigest": "9ce3c19fd21d145967f34c55afab1f51a7b2583543ad5ef1101951aa9d51e1b9",
       "channels": [
         "internal"
       ],
