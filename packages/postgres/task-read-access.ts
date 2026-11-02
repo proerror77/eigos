@@ -4,7 +4,7 @@ import { digest } from '../core/delegation.js';
 import { ownerKey, requireScope, taskIdSchema, type Principal } from '../core/domain.js';
 import { accessContextSchema, agentAccessGrantSchema, securityEnvelopeSchema, taskDataGrantSchema, SECURITY_CONTRACT, POLICY_VERSION,ownerIdentitySchema,type AccessContext } from '../security/contracts.js';
 import { SecurityError } from '../security/errors.js';
-import { postgresBusinessSchema, postgresConstrainReadDeadline } from './runtime-transaction.js';
+import { postgresBusinessSchema, postgresConstrainReadDeadline,postgresRequireLeaseAtCommit } from './runtime-transaction.js';
 import { postgresOntologyReadContext } from './ontology-release.js';
 import { roleAllows, roleSchema } from '../security/resource-role.js';
 import { currentKernelImplementation } from '../ontology/definition-store.js';
@@ -227,7 +227,7 @@ export async function withPostgresWorkerReadSnapshot<T>(client:Client,claim:Post
   snapshots.set(client,snapshot);let result:T;
   try{result=await action(freezeData(principal),snapshot.admission);}finally{snapshots.delete(client);}
   if(!await matches()||digest(before)!==digest(await postgresWorkerAdmission(client,owner,captured.job.id,policyDigest)))throw new SecurityError('POLICY_CHANGED');
-  if(inspectLease)postgresConstrainReadDeadline(client,await currentLease());
+  if(inspectLease){await currentLease();postgresRequireLeaseAtCommit(client,digest(captured),()=>inspectLease(captured));}
   postgresConstrainReadDeadline(client,before.validUntil);return result;
 }
 

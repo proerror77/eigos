@@ -9,20 +9,21 @@ import {BACKEND_VERSION} from '../ontology/execution.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
-import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline} from './runtime-transaction.js';
-import {postgresClaimActive,postgresWorkReference} from './work-claim.js';
+import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
+import {postgresClaimActive,postgresClaimSnapshotMatches,postgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
 import {withPostgresWorkerEvidenceAuthorization,type PostgresTaskReadAuthorization} from './task-output.js';
 import type {PostgresTaskReadAdmission} from './task-read-access.js';
+import {postgresRecordClaimRelease} from './claim-release.js';
 
 class LostClaim extends Error{}
 /** Durable queue shared by Mac Workers. Each method releases its transaction
  * before the caller can run a model or contact a provider. */
 export class PostgresWorkerStore {
-  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
+  constructor(private readonly db:Pick<PostgresDatabase,'run'|'renewClaim'|'inspectClaim'|'cleanupReleasedClaims'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){
     if(!/^[a-f0-9]{64}$/.test(policy))throw new Error('Invalid PostgreSQL Worker policy');
   }
   private async expire(client:Client){
@@ -55,6 +56,7 @@ export class PostgresWorkerStore {
   async claim(services:string[],leaseMs:number):Promise<WorkClaim|undefined>{
     if(!Number.isSafeInteger(leaseMs)||leaseMs<100||leaseMs>300000)throw new Error('Invalid Worker lease');
     if(!services.includes('eigos.delegate'))return;
+    await this.db.cleanupReleasedClaims();
     return this.db.run(async client=>{
       await this.expire(client);const q=`"${postgresBusinessSchema(client)}"`,now=Date.now();
       const count=await client.query(`SELECT(SELECT count(*) FROM ${q}.work_claims)+(SELECT count(*) FROM ${q}.security_recoveries WHERE state='running' AND lease_until>$1) AS n`,[now]);
@@ -119,10 +121,10 @@ export class PostgresWorkerStore {
   }
   private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean){
     const original=postgresWorkReference(claim);
-    try{return await this.db.run(async client=>{
-      if(!await postgresClaimActive(client,original,this.policy))return false;
+    try{const committed=await this.db.run(async client=>{
+      if(!await postgresClaimSnapshotMatches(client,original,this.policy)||!await this.db.inspectClaim(original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);
-      const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel);
+      const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;
       const result:unknown=update(current);if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
       if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
@@ -131,12 +133,16 @@ export class PostgresWorkerStore {
       const after=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy);
       if(digest(before)!==digest(after))throw new LostClaim();
       const q=`"${postgresBusinessSchema(client)}"`;
-      const lease=await client.query(`SELECT c.expires_at FROM ${q}.work_claims c JOIN ${q}.runtime_work_claims r ON r.job_id=c.job_id AND r.token=c.token
-        WHERE c.job_id=$1 AND c.token=$2 AND c.revision=$3 AND c.expires_at>$4 AND r.authority_digest=$5`,[original.job.id,original.token,revision??0,Date.now(),postgresBusinessAuthorityDigest(client)]);
-      if(lease.rowCount!==1)throw new LostClaim();postgresConstrainReadDeadline(client,Number(lease.rows[0].expires_at));
-      if(finish){await client.query(`DELETE FROM ${q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[original.job.id,original.token]);await client.query(`DELETE FROM ${q}.work_claims WHERE job_id=$1 AND token=$2`,[original.job.id,original.token]);}
+      const headers=await client.query(`SELECT 1 FROM ${q}.work_claims c JOIN ${q}.runtime_work_claims r ON r.job_id=c.job_id AND r.token=c.token
+        WHERE c.job_id=$1 AND c.token=$2 AND c.revision=$3 AND r.authority_digest=$4`,[original.job.id,original.token,revision??0,postgresBusinessAuthorityDigest(client)]);
+      const lease=await this.db.inspectClaim(original,this.policy);
+      if(headers.rowCount!==1||!lease)throw new LostClaim();postgresRequireLeaseAtCommit(client,digest(original),()=>this.db.inspectClaim(original,this.policy));
+      if(finish){await postgresRecordClaimRelease(client,original.owner,original.job.id,original.token);await client.query(`DELETE FROM ${q}.runtime_work_claims WHERE job_id=$1 AND token=$2`,[original.job.id,original.token]);}
       return true;
-    });}catch(error){if(error instanceof LostClaim)return false;throw error;}
+    });
+      if(committed&&finish){try{await this.db.cleanupReleasedClaims();}catch{console.error('Committed Worker result retained; claim cleanup deferred to the next poll');}}
+      return committed;
+    }catch(error){if(error instanceof LostClaim)return false;throw error;}
   }
   checkpoint(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,false);}
   finish(claim:WorkClaim,update:(job:Job)=>void){return this.mutate(claim,update,true);}

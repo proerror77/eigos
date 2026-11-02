@@ -4,7 +4,14 @@ import { SecurityError } from '../security/errors.js';
 const schemaPattern = /^eigos_business_[a-z0-9_]{1,40}$/;
 const digestPattern = /^[a-f0-9]{64}$/;
 const active = new WeakSet<object>();
-const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object }>();
+const contexts = new WeakMap<object, { schema: string; authorityDigest: string; readUntil:number;token:object;leases:Map<string,()=>Promise<{validUntil:number}|undefined>> }>();
+
+/** An original-token inspector, never business/model/provider work. Lease
+ * evidence is refreshed at the outer commit; fixed read deadlines stay fixed. */
+export function postgresRequireLeaseAtCommit(client:Client,key:string,inspect:()=>Promise<{validUntil:number}|undefined>):void{
+  const context=contexts.get(client);if(!context||!/^[a-f0-9]{64}$/.test(key))throw new Error('An original claim transaction is required');
+  context.leases.set(key,inspect);
+}
 
 /** Reserve one request-owned connection before its first awaited command. */
 export function reservePostgresTransactionClient(client:Client):()=>void{
@@ -88,7 +95,7 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertAuthority();
     await assertBoundary();
     await client.query('SAVEPOINT eigos_runtime_action_guard');
-    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({})};
+    const context={schema,authorityDigest:expected.digest,readUntil:Infinity,token:Object.freeze({}),leases:new Map<string,()=>Promise<{validUntil:number}|undefined>>()};
     contexts.set(client,context);
     let result: T;
     try { result = await action(client); }
@@ -104,11 +111,16 @@ export async function postgresBusinessTransaction<T>(client: Client, schema: str
     await assertBoundary();
     await assertAuthority();
     await assertBoundary();
-    if(context.readUntil<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    let leaseUntil=Infinity;
+    for(const inspect of context.leases.values()){
+      const lease=await inspect();if(!lease||!Number.isSafeInteger(lease.validUntil)||lease.validUntil<=Date.now())throw new SecurityError('ACCESS_REVOKED');
+      leaseUntil=Math.min(leaseUntil,lease.validUntil);
+    }
+    if(Math.min(context.readUntil,leaseUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
     committing = true; await client.query('COMMIT'); opened = false;committing=false;
     // The commit was acknowledged, so an expired response is a disclosure
     // denial, not an unknown commit. Mutation callers must retain their receipt.
-    if(context.readUntil<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
+    if(Math.min(context.readUntil,leaseUntil)<=Date.now())throw new SecurityError('OUTPUT_NOT_ALLOWED');
     return result;
   } catch (error) {
     if (opened && !committing) { try { await client.query('ROLLBACK'); } catch { await discard(); throw new Error('PostgreSQL business transaction rollback failed; connection discarded', { cause: error }); } }

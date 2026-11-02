@@ -5540,7 +5540,7 @@
       "currentControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "targetControl": "Serializable business state after transaction-scoped table serialization, exact authority/transaction identity and savepoint guards; current deadlines before/after commit, unknown-outcome eviction and no automatic retries",
       "stage": "S5",
-      "sourceDigest": "45b219b09b6fba45f658aa3730a295bf766b72caf4c810edee9ff30404945b52"
+      "sourceDigest": "16be2bbb17cc4c73dbbbfb4592c88615f37e292b85ba922c4961612ddaff031e"
     },
     {
       "id": "postgres-authority-lock",
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "dcbfdc91d8a78da1021740a4883345c8cf2643f3c68be28cbe54fc42aec6bb0d",
+      "sourceDigest": "c047412ab203c4b2166df590ecc6480bf82395fa356ba1605dbb485ff448caed",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5879,7 +5879,7 @@
     {
       "id": "postgres-database-runtime",
       "file": "packages/postgres/database.ts",
-      "sourceDigest": "cacef7c6ce9799a1c67cfceec6d29e6f610edb20fd776abba8f4607e7a7bac69",
+      "sourceDigest": "543eb98a2ab540e42cd8efb6155fd9be78dd0d55458ad3c76bdf0549e0b2f31b",
       "channels": [
         "internal"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "1ce54201097e25041ead748d9331baace59768d08dc09a4e9f8797e3e6fcca00",
+      "sourceDigest": "b13fcfbe836613aa39b4c65fabc3a90233e27bb4d34a00c1a0119519be171178",
       "channels": [
         "internal"
       ],
@@ -6122,7 +6122,7 @@
     {
       "id": "postgres-worker-output",
       "file": "packages/postgres/worker-output.ts",
-      "sourceDigest": "1295c81d9938ff9e4fba9dc984f5ee76c4ec4a596dc199ee248afbcc650fcd74",
+      "sourceDigest": "26f19cc34973dda7f03f5668a083eb1d8d5eb8d1dfd11f73ca20bdabf37dfdd2",
       "channels": [
         "internal"
       ],
@@ -6285,6 +6285,18 @@
       "content": "Awaitable native planning transport contract",
       "currentControl": "Storage-backed sessions own serialized authorized RPCs; transport awaits data, egress and receipt acceptance before delivering or freezing decisions; legacy SQLite snapshots remain synchronous and no execution authority is issued",
       "targetControl": "Storage-backed sessions own serialized authorized RPCs; transport awaits data, egress and receipt acceptance before delivering or freezing decisions; legacy SQLite snapshots remain synchronous and no execution authority is issued",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-claim-release",
+      "file": "packages/postgres/claim-release.ts",
+      "sourceDigest": "09e7fd247f2a359b387ce815599d4b8cce14cb78cee42a5372f1f0cd3fb33313",
+      "channels": [
+        "internal"
+      ],
+      "content": "Committed Worker finish receipt and control-row release",
+      "currentControl": "Result and runtime-binding removal share the fenced business commit; only exact-token rows with matching runtime/owner/fingerprint finish receipt are cleaned separately in READ COMMITTED; no business replay, lease renewal or missing-binding shortcut",
+      "targetControl": "Result and runtime-binding removal share the fenced business commit; only exact-token rows with matching runtime/owner/fingerprint finish receipt are cleaned separately in READ COMMITTED; no business replay, lease renewal or missing-binding shortcut",
       "stage": "S5"
     }
   ]

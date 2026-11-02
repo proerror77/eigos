@@ -12,12 +12,13 @@ import {withPostgresWorkerEvidenceAuthorization} from './task-output.js';
 
 /** Capture validated influence before the fenced Worker mutation changes its
  * own task/graph. No read history means no authority to seal model output. */
-export async function postgresPrepareWorkerSeal(client:Client,claim:PostgresWorkReference,policy:string,builder?:StagedKernelBuilder){
+export async function postgresPrepareWorkerSeal(client:Client,claim:PostgresWorkReference,policy:string,builder?:StagedKernelBuilder,
+  inspectLease?:(claim:PostgresWorkReference)=>Promise<{validUntil:number}|undefined>){
   return withPostgresWorkerEvidenceAuthorization(client,claim,policy,async auth=>{
     const history=await postgresTaskReadHistory(client,claim.owner,claim.job.id,claim.job.delegation!.request.revision);
     if(!history.length)return undefined;
     return auth.validateEvidence(combineEnvelopes(history));
-  },builder);
+  },builder,undefined,inspectLease);
 }
 
 /** Internal final step of the same fenced checkpoint/finish transaction.

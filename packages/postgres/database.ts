@@ -3,6 +3,7 @@ import type { Client, Pool } from 'pg';
 import { postgresBusinessTransaction, type PostgresRuntimeAuthority } from './runtime-transaction.js';
 import {postgresRenewWorkerLease,postgresInspectWorkerLease} from './lease-renewal.js';
 import type {WorkClaim} from '../core/store.js';
+import {postgresCleanupReleasedClaims} from './claim-release.js';
 
 /** Owns the runtime's connection pool, not a second business authority. Each
  * operation gets one client and one fenced transaction. No implicit retries. */
@@ -40,6 +41,7 @@ export class PostgresDatabase {
     const fence=postgresCaptureClaim(claim);if(!fence)return Promise.resolve(undefined);
     return this.use(this.leasePool,client=>postgresInspectWorkerLease(client,this.schema,this.authority,fence,policy));
   }
+  cleanupReleasedClaims():Promise<void>{return this.use(this.pool,client=>postgresCleanupReleasedClaims(client,this.schema,this.authority.digest));}
   async close():Promise<void> {
     this.closing??=Promise.all([this.pool.end(),...(this.leasePool?[this.leasePool.end()]:[])]).then(()=>{});
     await this.closing;
