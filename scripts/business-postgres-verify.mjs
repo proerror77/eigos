@@ -16,10 +16,11 @@ try {url=new URL(source);}catch {console.error('Invalid PostgreSQL connection UR
 if(!['postgres:','postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.password || !url.pathname.slice(1) || url.search || url.hash){console.error('Connection URL must contain host, database and credentials and must not include options.');process.exit(2);}
 let client;
 try {
+  const {supabaseProxyOptions}=await import('../dist/packages/postgres/supabase-proxy.js');
   const {readRuntimeAuthority,runtimeAuthorityDigest}=await import('../dist/packages/core/runtime-authority.js');
   const {verifyBusinessSnapshot}=await import('../dist/packages/postgres/business-verify.js');
   const authority=readRuntimeAuthority(values.authority);
-  client=new pg.Client({host:url.hostname.replace(/^\[|\]$/g,''),port:url.port?Number(url.port):5432,database:decodeURIComponent(url.pathname.slice(1)),user:decodeURIComponent(url.username),password:decodeURIComponent(url.password),ssl:{ca:readFileSync(caPath,'utf8'),rejectUnauthorized:true},connectionTimeoutMillis:15000});
+  client=new pg.Client({...supabaseProxyOptions(url.hostname.replace(/^\[|\]$/g,''),url.port?Number(url.port):5432,process.env.EIGOS_POSTGRES_PROXY_URL),host:url.hostname.replace(/^\[|\]$/g,''),port:url.port?Number(url.port):5432,database:decodeURIComponent(url.pathname.slice(1)),user:decodeURIComponent(url.username),password:decodeURIComponent(url.password),ssl:{ca:readFileSync(caPath,'utf8'),rejectUnauthorized:true},connectionTimeoutMillis:15000});
   await client.connect();
   const result=await verifyBusinessSnapshot(client,{snapshot:values.snapshot,schema:values.schema,expectedFileDigest:values['expected-file-digest'],expectedAuthorityDigest:runtimeAuthorityDigest(authority),expectedPolicyDigest:values['policy-digest']});
   console.log(JSON.stringify(result,null,2));

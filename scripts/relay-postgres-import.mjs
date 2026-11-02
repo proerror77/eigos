@@ -17,9 +17,10 @@ if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !ur
 }
 let client;
 try {
+  const {supabaseProxyOptions}=await import('../dist/packages/postgres/supabase-proxy.js');
   // Parse components explicitly: URL SSL parameters must not override CA or
   // hostname verification. Credentials never appear in command arguments.
-  client = new pg.Client({ host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port ? Number(url.port) : 5432,
+  client = new pg.Client({...supabaseProxyOptions(url.hostname.replace(/^\[|\]$/g,''),url.port?Number(url.port):5432,process.env.EIGOS_POSTGRES_PROXY_URL), host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port ? Number(url.port) : 5432,
     database: decodeURIComponent(url.pathname.slice(1)), user: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
     ssl: { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true }, connectionTimeoutMillis: 15000 });
   await client.connect();

@@ -5381,7 +5381,7 @@
       "currentControl": "Explicit apply, separate CA and private connection environment, hostname verification, no credential output",
       "targetControl": "Prevent unreviewed live-store replacement or credential exposure",
       "stage": "S5",
-      "sourceDigest": "3cb586443b01beaa806fc6a2a3eb4b597de1c11bf69f008f47eae28d7c33e92b"
+      "sourceDigest": "d4f8fde4fd2fb69e8d0a0120f18175a0c97fda262593f1087c1264402a363431"
     },
     {
       "id": "business-postgres-snapshot-audit",
@@ -5461,7 +5461,7 @@
       "currentControl": "Explicit apply, reviewed snapshot and policy, verified TLS and no credential output",
       "targetControl": "Preserve business authority and evidence before separate runtime activation",
       "stage": "S5",
-      "sourceDigest": "54aba2fa226b70bd1ae306a34909b51f0db12feba305f60a96e343c3a584df6b"
+      "sourceDigest": "27d79bac8a9beb19adb9608c8094165ecd38b50897c0b3f0f83a57e23805129e"
     },
     {
       "id": "security-error-guidance",
@@ -5501,7 +5501,7 @@
       "currentControl": "Reviewed private snapshot, isolated schema, transactional import and readback, no runtime activation",
       "targetControl": "Preserve identity and revocation state with independently verified runtime cutover",
       "stage": "S5",
-      "sourceDigest": "bf6f06f91b79e227eb7ff16dd22e041e03dbc6414c0a054964458170fcd60f15"
+      "sourceDigest": "9adac246d4e1a73557da72ceb5935357560668b1cbf36aad64d3376fd76184f1"
     },
     {
       "id": "postgres-identity-audit",
@@ -5527,7 +5527,7 @@
       "currentControl": "Reviewed receipt digests, read-only consistent transaction, bounded aggregate output and no activation",
       "targetControl": "Detect mismatched identity and revocation projections before runtime cutover",
       "stage": "S5",
-      "sourceDigest": "f6f546002ea31669bac4e7b524d05d4d9b54c7fe24daf47c20cd8680fca71b7b"
+      "sourceDigest": "6a69dc16be3216acaab5d6d113802aeb523d0289fd2ced4b152ecac60b390105"
     },
     {
       "id": "postgres-runtime-transaction",
@@ -5605,7 +5605,7 @@
       "currentControl": "Requires explicit source-stop assertion, private configuration, verified TLS and destination binding; no credential output",
       "targetControl": "Require source stop and independently verified destination before migrating node state",
       "stage": "S5",
-      "sourceDigest": "11ba66334e5d41f1d1b95d3671b81261c6dae35d35b9f8b2adca036fa8a2c9fc"
+      "sourceDigest": "e88fe8ddf9e06cc0996a05d4c27f0339cc2df835c2fdc7417d40e68e898fac76"
     },
     {
       "id": "relay-postgres-grant",
@@ -5631,7 +5631,7 @@
       "currentControl": "Explicit apply and source-stop assertion, reviewed source digest, separate CA and private connection environment, no credential output",
       "targetControl": "Prevent unreviewed grants or credential exposure",
       "stage": "S5",
-      "sourceDigest": "3fe8fb16cd3bc66639061f7953a8985e247f658f0e361f9151caffa0d0c7dc51"
+      "sourceDigest": "c613bc53c203dd696478d38d130becd62ec25f54cae2389859569ce4048bfa2b"
     },
     {
       "channels": [
@@ -5805,7 +5805,7 @@
     {
       "id": "business-postgres-verification-cli",
       "file": "scripts/business-postgres-verify.mjs",
-      "sourceDigest": "72a024539297e6a1402f0540ea20eae3675aa8e1438cdbdfa9b7c79acb65e753",
+      "sourceDigest": "b95dab21ab6c6e32153261de2f668263c994bb7e055083d19454eb686961575c",
       "channels": [
         "offline migration",
         "authorization_control"
@@ -6129,6 +6129,18 @@
       "content": "PostgreSQL Worker output seals",
       "currentControl": "Current original claim and validated accumulated influence; exact task/request submission and output content digests; sealed outputs share the checkpoint commit and retain monotone prior restrictions",
       "targetControl": "Current original claim and validated accumulated influence; exact task/request submission and output content digests; sealed outputs share the checkpoint commit and retain monotone prior restrictions",
+      "stage": "S5"
+    },
+    {
+      "id": "supabase-postgres-local-proxy",
+      "file": "packages/postgres/supabase-proxy.ts",
+      "sourceDigest": "b8b357d3ec45945f9e0a38af3594c0fc7507c4c59e887128198f8cb8667a05ef",
+      "channels": [
+        "internal"
+      ],
+      "content": "Explicit local Supabase PostgreSQL CONNECT transport",
+      "currentControl": "Supabase destination and loopback HTTP proxy allowlists, pinned host/port, bounded headers and timeout; PostgreSQL TLS retains original hostname and CA verification; no global proxy or implicit route changes",
+      "targetControl": "Supabase destination and loopback HTTP proxy allowlists, pinned host/port, bounded headers and timeout; PostgreSQL TLS retains original hostname and CA verification; no global proxy or implicit route changes",
       "stage": "S5"
     }
   ]

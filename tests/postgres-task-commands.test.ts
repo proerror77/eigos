@@ -27,7 +27,6 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
       resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt},f.jobs.security.policies.revision());
     f.jobs.security.policies.setRecipient(installation.id,{classification:'sensitive',markings:['member_private','personal_data'],channels:['agent_response'],expiresAt},f.jobs.security.policies.revision());
     f.jobs.security.policies.setModelChannel('synthetic:mac',{classification:'sensitive',markings:['member_private','personal_data'],expiresAt},f.jobs.security.policies.revision());
-    const sqlite=new DatabaseSync(f.database);try{sqlite.prepare('UPDATE security_manager SET expires_at=?').run(Date.now()+3600000);}finally{sqlite.close();}
     target=await importPostgresFixture(f);const t=target,q=`"${t.schema}"`;
     const job=createSubmittedTask(p,{service:'eigos.delegate',goal:'Synthetic command persistence',requestId:'atomic-submit'},f.jobs.definitions.active().ref);
     const action=async(c:typeof t.client)=>{
@@ -97,6 +96,7 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     assert.equal(await worker.active(first),true);assert.equal(await worker.renew(first,30000),true);
     assert.equal(await worker.active({...first,token:'another-token'}),false);
     assert.equal(await worker.checkpoint(first,current=>{current.delegation!.events.push({at:new Date().toISOString(),event:'synthetic_checkpoint'});}),true);
+    assert.equal(await worker.renew(first,30000),true);
     assert.equal(await worker.finish(first,current=>{current.state='input-required';current.question='Unsealed synthetic model output';}),true);
     const result=await service.get(p,first.job.id);assert.equal(result.state,'input-required');
     assert.equal(result.outputStatus,'restricted');assert.equal(result.question,undefined,'unsealed Worker text must not be disclosed');
@@ -113,12 +113,14 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     const execution=await worker.claim(['eigos.delegate'],30000);assert(execution);assert.equal(execution.job.id,roundtrip.id);
     await assert.rejects(worker.readRequest(execution,'unregistered-model'),/OUTPUT_NOT_ALLOWED/);
     const request=await worker.readRequest(execution,'synthetic:mac');assert.equal(request.originalGoal,roundtrip.goal);
+    assert.equal(await worker.renew(execution,30000),true);
     let escaped:Principal|undefined;
     await t.run(c=>withPostgresWorkerReadSnapshot(c,execution,t.policy,async principal=>{assert.equal(principal.access?.actorKind,'worker');escaped=structuredClone(principal);}));
     await assert.rejects(t.run(c=>postgresTaskView(c,escaped!,execution.job.id,t.policy)),/AUTHORIZATION_REQUIRED/);
     await t.client.query(`UPDATE ${q}.security_model_channels SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE id='synthetic:mac'`,[new Date(Date.now()-1).toISOString()]);
     await assert.rejects(worker.readRequest(execution,'synthetic:mac'),/OUTPUT_NOT_ALLOWED/);
     await t.client.query(`UPDATE ${q}.security_model_channels SET body=jsonb_set(body::jsonb,'{expiresAt}',to_jsonb($1::text))::text WHERE id='synthetic:mac'`,[expiresAt]);
+    assert.equal(await worker.renew(execution,30000),true);
     assert.equal(await worker.finish(execution,current=>{current.state='input-required';current.question='Authorized sealed synthetic question';}),true);
     const delivered=await service.get(p,execution.job.id);assert.equal(delivered.question,'Authorized sealed synthetic question');assert.equal(delivered.outputStatus,'available');
     // Real HTTP adapters and SQL persistence. The model result here remains

@@ -23,12 +23,13 @@ let url;try{url=new URL(source);}catch{console.error('Invalid PostgreSQL connect
 if(!['postgres:','postgresql:'].includes(url.protocol)||!url.hostname||!url.username||!url.password||!url.pathname.slice(1)||url.search||url.hash){console.error('Connection URL must contain host, database and credentials and must not include options.');process.exit(2);}
 let client;
 try {
+  const {supabaseProxyOptions}=await import('../dist/packages/postgres/supabase-proxy.js');
   const {readPrivateJson}=await import('../dist/packages/relay/files.js');
   const config=configSchema.parse(readPrivateJson(values.config,32768));
   const fd=openSync(caPath,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);let ca;
   try{const stat=fstatSync(fd);if(!stat.isFile()||stat.nlink!==1||stat.mode&0o022||(process.getuid&&stat.uid!==process.getuid())||stat.size<1||stat.size>131072)throw new Error('Invalid CA file');const data=Buffer.alloc(stat.size+1);let offset=0;while(offset<data.length){const n=readSync(fd,data,offset,data.length-offset,null);if(!n)break;offset+=n;}const after=fstatSync(fd);if(offset!==stat.size||after.size!==stat.size||after.mtimeMs!==stat.mtimeMs||after.ctimeMs!==stat.ctimeMs)throw new Error('CA file changed');ca=data.subarray(0,offset).toString('utf8');}finally{closeSync(fd);}
   if(createHash('sha256').update(ca).digest('hex')!==config.expectedCaSha256||url.hostname!==config.poolerHost||(url.port&&url.port!=='5432')||!decodeURIComponent(url.username).endsWith('.'+config.projectRef))throw new Error('Database connection does not match the reviewed configuration');
-  client=new pg.Client({host:url.hostname,port:5432,database:decodeURIComponent(url.pathname.slice(1)),user:decodeURIComponent(url.username),password:decodeURIComponent(url.password),ssl:{ca,rejectUnauthorized:true},connectionTimeoutMillis:15000,query_timeout:20000});await client.connect();
+  client=new pg.Client({...supabaseProxyOptions(url.hostname.replace(/^\[|\]$/g,''),url.port?Number(url.port):5432,process.env.EIGOS_POSTGRES_PROXY_URL),host:url.hostname,port:5432,database:decodeURIComponent(url.pathname.slice(1)),user:decodeURIComponent(url.username),password:decodeURIComponent(url.password),ssl:{ca,rejectUnauthorized:true},connectionTimeoutMillis:15000,query_timeout:20000});await client.connect();
   const {cloudflareRelayBindingVerifier}=await import('../dist/packages/relay/cloudflare-binding.js');
   const {repointRelayClient}=await import('../dist/packages/agent-transport/client.js');
   const verifyDestinationBinding=cloudflareRelayBindingVerifier({...config,caPem:ca,targetDatabase:client,configPath:config.wranglerConfigPath});

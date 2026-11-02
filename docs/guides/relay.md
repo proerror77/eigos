@@ -129,7 +129,11 @@ Relay 本身承载有限 JSON 消息。可选的[主实例任务适配器](relay
 
 Worker 配置示例见 [`apps/relay/wrangler.example.jsonc`](../../apps/relay/wrangler.example.jsonc)；复制到忽略目录后须调整 `main` 相对路径。Worker 绑定 `RELAY_DATABASE`（Hyperdrive）和 `RELAY_SCHEMA`；另需设置 `EIGOS_RELAY_PUBLIC_URL`、`EIGOS_RELAY_OAUTH_ISSUER`、`EIGOS_RELAY_OAUTH_AUDIENCE`、`EIGOS_RELAY_OAUTH_JWKS_URL`、`EIGOS_RELAY_CLIENT_IDS`，可选 `EIGOS_RELAY_TENANT_CLAIM`。生产只允许 HTTPS 和 JWT 登记。Hyperdrive 连接应使用可信数据库根证书和 `verify-full`，并关闭查询缓存；为 Relay 使用只具备其 schema 权限的独立数据库角色。
 
-离线导入入口先运行 `npm run build`。准备**已停止源写入且完成 checkpoint 的数据库副本**，将副本切换到 SQLite `DELETE` journal 模式并确保不存在 `-wal`／`-shm`／`-journal` 文件；不要更改原数据库。通过私有环境变量 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE` 提供 PostgreSQL 连接与根证书路径，连接 URL 不接受查询参数，密码中的特殊字符须做 URL 编码。先使用 `shasum -a 256 /private/offline-relay.sqlite` 计算并审查源文件摘要，之后显式执行：
+离线导入入口先运行 `npm run build`。准备**已停止源写入且完成 checkpoint 的数据库副本**，将副本切换到 SQLite `DELETE` journal 模式并确保不存在 `-wal`／`-shm`／`-journal` 文件；不要更改原数据库。通过私有环境变量 `EIGOS_RELAY_POSTGRES_URL` 和 `EIGOS_RELAY_POSTGRES_CA_FILE` 提供 PostgreSQL 连接与根证书路径，连接 URL 不接受查询参数，密码中的特殊字符须做 URL 编码。先使用 `shasum -a 256 /private/offline-relay.sqlite` 计算并审查源文件摘要。
+
+如果 Mac 只能通过本机代理连接 Supabase，为导入、独立校验、角色授权或节点切换命令显式设置 `EIGOS_POSTGRES_PROXY_URL=http://127.0.0.1:<已核实的代理端口>`。这些命令不会自动使用 `HTTP_PROXY`；该可选通道只接受 Supabase 数据库域名和本机 HTTP CONNECT 代理，数据库 TLS 仍校验原主机名及指定 CA。它不改变其他网站的默认分流，也不用于 Cloudflare 的 Hyperdrive 连接。
+
+显式执行导入：
 
 ```sh
 node scripts/relay-postgres-import.mjs --apply --snapshot /private/offline-relay.sqlite --expected-file-digest <reviewed-sha256> --schema eigos_relay_example

@@ -13,7 +13,8 @@ try { url = new URL(source); } catch { console.error('Invalid PostgreSQL connect
 if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || !url.password || !url.pathname.slice(1) || url.search || url.hash) { console.error('Connection URL must contain host, database and credentials without options.'); process.exit(2); }
 let client;
 try {
-  client = new pg.Client({ host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port ? Number(url.port) : 5432,
+  const {supabaseProxyOptions}=await import('../dist/packages/postgres/supabase-proxy.js');
+  client = new pg.Client({...supabaseProxyOptions(url.hostname.replace(/^\[|\]$/g,''),url.port?Number(url.port):5432,process.env.EIGOS_POSTGRES_PROXY_URL), host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port ? Number(url.port) : 5432,
     database: decodeURIComponent(url.pathname.slice(1)), user: decodeURIComponent(url.username), password: decodeURIComponent(url.password),
     ssl: { ca: readFileSync(caPath, 'utf8'), rejectUnauthorized: true }, connectionTimeoutMillis: 15000 });
   await client.connect();
