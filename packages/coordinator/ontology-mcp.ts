@@ -188,7 +188,8 @@ export async function openOntologyMcp(session: NativePlanningSession, signal: Ab
   const abort = () => { void close(); };
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) { await close(); signal.throwIfAborted(); }
-  const connection: NativeMcpConnection = { name: 'eigos_ontology', url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, token, tools: [...offered, 'submit_decision'], trace };
+  const connection: NativeMcpConnection = { name: 'eigos_ontology', url: `http://127.0.0.1:${(http.address() as AddressInfo).port}/mcp`, token, tools: [...offered, 'submit_decision'], trace,
+    ...(isAsyncNativePlanningSession(session) ? { startupTimeoutSeconds: 120, toolTimeoutSeconds: 180 } : {}) };
   return { connection, close, result: () => { active(); if (!decision) throw new Error('The model did not submit a decision through native Ontology MCP'); return decision; },
     evidence: () => ({ server: 'eigos_ontology' as const, transport: 'streamable-http' as const, sessionId, taskId: session.request.id, toolAttempts,
       calls: session.receipts().map(r => ({ tool: r.tool, receiptId: r.id, status: r.status, inputDigest: r.inputDigest, outputDigest: r.outputDigest })), decisionSubmitted: !!decision,

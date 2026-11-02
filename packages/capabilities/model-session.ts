@@ -40,6 +40,7 @@ class CodexModelSession implements StructuredModelSession {
   private sequence = 0;
   private pending = new Map<number, Pending>();
   private active?: Active;
+  private dispatching = false;
   private failure?: Error;
   private threadId = '';
   private model = '';
@@ -170,20 +171,28 @@ class CodexModelSession implements StructuredModelSession {
     this.ready = modelClockMark(); this.readyAt = this.ready.at;
   }
   async run(prompt: string) {
+    if (this.dispatching) throw new Error('Model session already has a turn');
+    this.dispatching = true;
+    try { return await this.runTurn(prompt); } finally { this.dispatching = false; }
+  }
+  private async runTurn(prompt: string) {
     if (this.closed || this.failure) throw this.failure ?? new Error('Model session closed');
     if (this.active) throw new Error('Model session already has a turn');
     this.signal.throwIfAborted(); this.bytes = 0;
-    const remainingMs = this.first ? Math.max(1, this.initialDeadline - performance.now()) : this.timeoutMs;
     const reused = !this.first, id = randomUUID(), started = this.first ? this.opened : modelClockMark(), startedAt = started.at; this.first = false;
-    const recorder = modelUsageRecorder(); recorder?.begin(id, 'codex-app-server', startedAt);
+    const recorder = modelUsageRecorder(); await recorder?.begin(id, 'codex-app-server', startedAt);
     let recorded: RunEvidence | undefined, succeeded = false;
     let resolve!: Active['resolve'], reject!: Active['reject'];
     const completed = new Promise<TurnOutput>((yes, no) => { resolve = yes; reject = no; });
     this.active = { queue: [], text: new Map(), outputs: new Map(), resolve, reject };
     // The request can fail before the notification promise is awaited.
     void completed.catch(() => {});
+    const remainingMs = reused ? this.timeoutMs : Math.max(1, this.initialDeadline - performance.now());
     const timer = setTimeout(() => this.fail(new ModelSessionError('turn_timeout', this.stage)), remainingMs);
     try {
+      if (this.closed || this.failure) throw this.failure ?? new Error('Model session closed');
+      if (this.signal.aborted) throw new ModelSessionError('canceled', this.stage);
+      if (!reused && performance.now() >= this.initialDeadline) throw new ModelSessionError('turn_timeout', this.stage);
       const sent = modelClockMark(), requestSentAt = sent.at;
       this.stage = 'turn_start';
       const result = object(await this.request('turn/start', { threadId: this.threadId, input: [{ type: 'text', text: prompt, text_elements: [] }], outputSchema: this.schema })), turn = object(result.turn);
@@ -199,7 +208,7 @@ class CodexModelSession implements StructuredModelSession {
       const timing = observedModelTiming({ started, sent, acknowledged, completed: finished, ...done, ...(!reused ? { startup: { opened: this.opened, initializeSent: this.initializeSent!, initialized: this.initialized!, ready: this.ready! } } : {}) });
       recorded = { id, runtime: 'codex-app-server', threadId: this.threadId, turnId: done.turnId, startedAt, completedAt: finished.at, outputSha256, model: this.model, reasoningEffort: this.reasoningEffort, serviceTier: this.serviceTier, sessionReadyAt: reused ? startedAt : this.readyAt, sessionOpenedAt: this.opened.at, processInitializedAt: this.initializedAt, threadReadyAt: this.readyAt, sessionReused: reused, requestSentAt, requestAcknowledgedAt, usage: done.usage, promptBytes: Buffer.byteLength(prompt), timing, outputSchemaDigest: createHash('sha256').update(JSON.stringify(this.schema)).digest('hex') } satisfies RunEvidence;
       succeeded = true; return {output, evidence: recorded};
-    } catch (error) { throw error instanceof ModelSessionError ? error : new ModelSessionError('invalid_protocol', this.stage); } finally { clearTimeout(timer); recorder?.finish(id, recorded, succeeded ? 'completed' : this.signal.aborted ? 'interrupted' : 'failed'); }
+    } catch (error) { throw error instanceof ModelSessionError ? error : new ModelSessionError('invalid_protocol', this.stage); } finally { clearTimeout(timer); await recorder?.finish(id, recorded, succeeded ? 'completed' : this.signal.aborted ? 'interrupted' : 'failed'); }
   }
   async close() {
     if (this.closed) return; this.closed = true;

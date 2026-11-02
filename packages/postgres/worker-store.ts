@@ -3,6 +3,7 @@ import type {Client} from 'pg';
 import {DomainError,type Job,type Principal} from '../core/domain.js';
 import type {WorkClaim} from '../core/store.js';
 import {digest} from '../core/delegation.js';
+import {remainingModelTurns} from '../core/execution-budget.js';
 import {scheduleTaskRecovery} from '../core/task-recovery.js';
 import type {ActionIntent} from '../ontology/actions.js';
 import {BACKEND_VERSION} from '../ontology/execution.js';
@@ -17,6 +18,9 @@ import {postgresWorkerRequest} from './worker-input.js';
 import {postgresPrepareWorkerSeal,postgresRecordWorkerOutputs} from './worker-output.js';
 import {withPostgresWorkerEvidenceAuthorization,type PostgresTaskReadAuthorization} from './task-output.js';
 import type {PostgresTaskReadAdmission} from './task-read-access.js';
+import {postgresBeginModelUsage,postgresFinishModelUsage,postgresRecordModelResponse} from './model-usage.js';
+import type {ModelUsageEvidence} from '../core/model-usage-context.js';
+import type {RunEvidence} from '../capabilities/executor.js';
 import {postgresRecordClaimRelease} from './claim-release.js';
 
 class LostClaim extends Error{}
@@ -119,13 +123,45 @@ export class PostgresWorkerStore {
     return this.db.run(client=>withPostgresWorkerEvidenceAuthorization(client,reference,this.policy,
       (auth,admission,principal)=>action(auth,admission,principal,client),this.kernel,modelChannel,fence=>this.db.inspectClaim(fence,this.policy)));
   }
-  private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean){
+  private withUsageClaim<T>(input:PostgresWorkReference,action:(client:Client,claim:PostgresWorkReference)=>Promise<T>):Promise<T>{
+    const claim=postgresWorkReference(input);
+    return this.db.run(async client=>{
+      if(!await postgresClaimSnapshotMatches(client,claim,this.policy)||!await this.db.inspectClaim(claim,this.policy))throw new DomainError('CONFLICT','Model dispatch lease is no longer active');
+      const before=await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy);
+      const result=await action(client,claim);
+      if(!await postgresClaimSnapshotMatches(client,claim,this.policy)||digest(before)!==digest(await postgresWorkerAdmission(client,claim.owner,claim.job.id,this.policy)))throw new SecurityError('POLICY_CHANGED');
+      postgresConstrainReadDeadline(client,before.validUntil);postgresRequireLeaseAtCommit(client,digest(claim),()=>this.db.inspectClaim(claim,this.policy));
+      return result;
+    });
+  }
+  beginModelUsage(claim:PostgresWorkReference,id:string,runtime:string,startedAt:string){
+    return this.withUsageClaim(claim,(client,reference)=>postgresBeginModelUsage(client,reference,id,runtime,startedAt));
+  }
+  finishModelUsage(claim:PostgresWorkReference,id:string,evidence:ModelUsageEvidence|undefined,outcome:'completed'|'failed'|'interrupted'){
+    const reference=postgresWorkReference(claim),captured=evidence===undefined?undefined:structuredClone(evidence);
+    return this.db.run(client=>postgresFinishModelUsage(client,reference,id,captured,outcome));
+  }
+  recordModelUsage(claim:PostgresWorkReference,evidence:RunEvidence){
+    const captured=structuredClone(evidence);return this.withUsageClaim(claim,(client,reference)=>postgresRecordModelResponse(client,reference,captured));
+  }
+  recordRun(claim:WorkClaim,evidence:RunEvidence,event:string){
+    const captured=structuredClone(evidence);
+    if(!event||event.length>80)throw new Error('Invalid model evidence event');
+    return this.mutate(claim,job=>{
+      if(job.runs?.some(run=>run.id===captured.id))return;
+      if(!remainingModelTurns(job))throw new DomainError('CONFLICT','Maximum reasoning turns reached');
+      job.runs=[...(job.runs??[]),{...captured,purpose:event==='request_interpreted'?'grounding':event==='goal_coverage_reviewed'?'goal_coverage':'planning'}];
+      job.updatedAt=new Date().toISOString();job.delegation!.events.push({at:job.updatedAt,event,evidence:captured.id});
+    },false,captured);
+  }
+  private async mutate(claim:WorkClaim,update:(job:Job)=>void,finish:boolean,modelEvidence?:RunEvidence){
     const original=postgresWorkReference(claim);
     try{const committed=await this.db.run(async client=>{
       if(!await postgresClaimSnapshotMatches(client,original,this.policy)||!await this.db.inspectClaim(original,this.policy))return false;
       const before=await postgresWorkerAdmission(client,original.owner,original.job.id,this.policy),store=new PostgresTaskStorage(client,this.kernel);
       const seal=await postgresPrepareWorkerSeal(client,original,this.policy,this.kernel,fence=>this.db.inspectClaim(fence,this.policy));
       const current=await store.get(original.owner,original.job.id),request=current.delegation!.request.revision,revision=current.revision;
+      if(modelEvidence)await postgresRecordModelResponse(client,original,modelEvidence);
       const result:unknown=update(current);if(result&&typeof result==='object'&&'then'in result)throw new Error('Worker mutation callback must not perform asynchronous work');
       if(current.id!==original.job.id||current.revision!==revision||current.delegation?.request.revision!==request)throw new DomainError('CONFLICT','Worker cannot revise the owner request');
       await store.save(original.owner,current);

@@ -4,9 +4,28 @@ import type { RunEvidence } from '../capabilities/executor.js';
 import type { ModelUsageEvidence } from './model-usage-context.js';
 import { nativeModelTimingSchema, type NativeModelTiming } from '../capabilities/native-model-timing.js';
 
-type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string; nativeTiming?: NativeModelTiming };
+export type ModelUsage = { id: string; runtime: string; startedAt: string; completedAt?: string; model?: string; usage?: Record<string, number>; usageReported: boolean; claimTokenDigest?: string; nativeTiming?: NativeModelTiming };
 const cleanUsage = (value: RunEvidence['usage']) => value ? Object.fromEntries(Object.entries(value).filter(([key, n]) => /^[a-z_]{1,80}$/.test(key) && Number.isSafeInteger(n) && n >= 0)) : undefined;
 const cleanTiming = (value: unknown) => { const parsed = nativeModelTimingSchema.safeParse(value); return parsed.success ? parsed.data : undefined; };
+
+/** Pure accounting transitions shared by local and remote persistence. */
+export function modelUsageStarted(id:string,runtime:string,startedAt:string,claimTokenDigest:string):ModelUsage {
+  return {id,runtime,startedAt,claimTokenDigest,usageReported:false};
+}
+export function modelUsageFinished(old:ModelUsage,evidence:ModelUsageEvidence|undefined):ModelUsage {
+  const usage=cleanUsage(evidence?.usage);
+  return {...old,completedAt:evidence?.completedAt??new Date().toISOString(),model:evidence?.model,usage,
+    usageReported:!!usage&&Object.keys(usage).length>0,nativeTiming:old.nativeTiming??cleanTiming(evidence?.nativeTiming)};
+}
+export function modelUsageReported(evidence:RunEvidence):ModelUsage {
+  const usage=cleanUsage(evidence.usage);
+  return {id:evidence.id,runtime:evidence.runtime,startedAt:evidence.startedAt,completedAt:evidence.completedAt,model:evidence.model,usage,
+    usageReported:!!usage&&Object.keys(usage).length>0,nativeTiming:cleanTiming(evidence.nativeTiming)};
+}
+export function assertModelUsageResponse(old:ModelUsage,value:ModelUsage):void {
+  if(old.runtime!==value.runtime||old.model!==value.model||old.startedAt!==value.startedAt||old.completedAt!==value.completedAt
+    ||JSON.stringify(Object.entries(old.usage??{}).sort())!==JSON.stringify(Object.entries(value.usage??{}).sort()))throw new DomainError('CONFLICT','Model usage receipt changed after recording');
+}
 
 export function initializeMemberUsage(db: DatabaseSync) {
   db.exec(`CREATE TABLE IF NOT EXISTS member_model_usage (run_id TEXT PRIMARY KEY, owner TEXT NOT NULL, job_id TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL);
@@ -29,23 +48,22 @@ function existing(db: DatabaseSync, owner: string, jobId: string, id: string) {
 }
 export function beginModelUsage(db: DatabaseSync, owner: string, jobId: string, id: string, runtime: string, startedAt: string, claimTokenDigest: string) {
   if (existing(db, owner, jobId, id)) throw new DomainError('CONFLICT', 'A model attempt cannot be dispatched twice');
-  const value: ModelUsage = { id, runtime, startedAt, claimTokenDigest, usageReported: false };
+  const value = modelUsageStarted(id,runtime,startedAt,claimTokenDigest);
   db.prepare('INSERT INTO member_model_usage VALUES(?,?,?,?,?)').run(id, owner, jobId, 'running', JSON.stringify(value));
 }
 export function finishModelUsage(db: DatabaseSync, owner: string, jobId: string, id: string, evidence: ModelUsageEvidence | undefined, outcome: 'completed' | 'failed' | 'interrupted') {
   const row = existing(db, owner, jobId, id); if (!row) throw new DomainError('CONFLICT', 'Model attempt was not recorded before dispatch');
-  const old: ModelUsage = JSON.parse(String(row.body)), usage = cleanUsage(evidence?.usage);
+  const old: ModelUsage = JSON.parse(String(row.body));
   // Late receipts improve accounting only; they never advance a task or lease.
-  const value: ModelUsage = { ...old, completedAt: evidence?.completedAt ?? new Date().toISOString(), model: evidence?.model, usage, usageReported: !!usage && Object.keys(usage).length > 0, nativeTiming: old.nativeTiming ?? cleanTiming(evidence?.nativeTiming) };
+  const value = modelUsageFinished(old,evidence);
   db.prepare('UPDATE member_model_usage SET state=?,body=? WHERE run_id=? AND owner=?').run(outcome, JSON.stringify(value), id, owner);
 }
 export function recordModelResponse(db: DatabaseSync, owner: string, jobId: string, evidence: RunEvidence) {
-  const usage = cleanUsage(evidence.usage), value: ModelUsage = { id: evidence.id, runtime: evidence.runtime, startedAt: evidence.startedAt, completedAt: evidence.completedAt, model: evidence.model, usage, usageReported: !!usage && Object.keys(usage).length > 0, nativeTiming: cleanTiming(evidence.nativeTiming) };
+  const value = modelUsageReported(evidence);
   const row = existing(db, owner, jobId, evidence.id);
   if (row) {
     const old: ModelUsage = JSON.parse(String(row.body));
-    if (old.runtime !== value.runtime || old.model !== value.model || old.startedAt !== value.startedAt || old.completedAt !== value.completedAt
-      || JSON.stringify(Object.entries(old.usage ?? {}).sort()) !== JSON.stringify(Object.entries(usage ?? {}).sort())) throw new DomainError('CONFLICT', 'Model usage receipt changed after recording');
+    assertModelUsageResponse(old,value);
     return;
   }
   db.prepare('INSERT INTO member_model_usage VALUES(?,?,?,?,?)').run(evidence.id, owner, jobId, 'completed', JSON.stringify(value));

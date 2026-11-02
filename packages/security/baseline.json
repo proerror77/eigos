@@ -3074,7 +3074,7 @@
     {
       "id": "model-session",
       "file": "packages/capabilities/model-session.ts",
-      "sourceDigest": "6dd028eaa681bf9f7ce64dcb0c1cc23487c1fa8b558f134541dc2546b6447c90",
+      "sourceDigest": "1e60ea2f237630a0f56f4f140fb77f518a0890646bd0f36be9fcaf2a0214458d",
       "channels": [
         "registered_model"
       ],
@@ -3135,7 +3135,7 @@
     {
       "id": "executor",
       "file": "packages/capabilities/executor.ts",
-      "sourceDigest": "5788b2b564f5435d1dc74665b30f662ed984be1eef89bfbe6194c3469a946809",
+      "sourceDigest": "9c5ff3b5799370b4ecd66d53ff4c37c7c5dee7472740a994a086a0238991c1b6",
       "channels": [
         "registered_model",
         "private_file"
@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "e37ccbc1f62ff066cd41d6de637873de8f6d4a8a1dde4024b2e514a817deda9e",
+      "sourceDigest": "38dda9b6a1bbe937346bce688f3179435961cf2713d267abecf36b82f36088d9",
       "channels": [
         "model"
       ],
@@ -4864,7 +4864,7 @@
       "currentControl": "Exact owner and task binding; strict timing allowlist; first recorded timing retained; late writes affect accounting only; public usage remains aggregated",
       "targetControl": "Private diagnostics with unchanged task, lease, authorization and usage semantics",
       "stage": "S3",
-      "sourceDigest": "72283cbfc31add8a5b75c8c991e89f72f5492c0a4a908f3f1d21cccbff9608be"
+      "sourceDigest": "d0746ead933392976242b44b12855a1ea93b6ff4c73c7970dae6f7b5582cfbc2"
     },
     {
       "id": "security-projection-origin",
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "798e8a0b6ad3d17fd067462e67886655b6553b2e5339ede051162b861c0dba60",
+      "sourceDigest": "a91298cb49873d06245ac13e6a122e5e787484230a6ea8c3f9661ef3e084c7f1",
       "channels": [
         "internal"
       ],
@@ -6333,6 +6333,18 @@
       "content": "PostgreSQL native model session and durable planning receipts",
       "currentControl": "Original Worker claim and registered model; fresh bounded read snapshots, actual influence and receipt commit before data delivery, serialized RPCs with state fork/adopt only after commit, rejected reads cannot support a decision, no model/provider execution in SQL or new business authority",
       "targetControl": "Original Worker claim and registered model; fresh bounded read snapshots, actual influence and receipt commit before data delivery, serialized RPCs with state fork/adopt only after commit, rejected reads cannot support a decision, no model/provider execution in SQL or new business authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-model-usage",
+      "file": "packages/postgres/model-usage.ts",
+      "sourceDigest": "f2f0eaec77b29dda80163146c2234c7b6cd0ceb0e3189840ba31450344290611",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL model attempt registration and late accounting",
+      "currentControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
+      "targetControl": "Current original claim before dispatch; durable once-only attempt id and captured token digest, shared pure receipt normalization, exact owner/task accounting, late evidence cannot mutate task/claim/output or revive authority",
       "stage": "S5"
     }
   ]
