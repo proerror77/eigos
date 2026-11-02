@@ -1,3 +1,4 @@
+import { postgresDescribeOntology } from './ontology-metadata.js';
 import { z } from 'zod';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DomainError, ownerKey, taskIdSchema, type Principal } from '../core/domain.js';
@@ -22,6 +23,11 @@ export class PostgresTaskReadService implements Pick<TaskServicePort,'get'|'getA
     if(!/^[a-f0-9]{64}$/.test(policyDigest))throw new Error('Invalid PostgreSQL task policy');
     this.waitTimeoutMs=options.waitTimeoutMs??300000;
     if(!Number.isSafeInteger(this.waitTimeoutMs) || this.waitTimeoutMs<1)throw new Error('Invalid blocking task wait');
+  }
+  async describeOntology(principal:Principal,input:unknown,context?:import('../core/tasks.js').OntologyReadContext) {
+    if(context)throw new DomainError('FORBIDDEN','Use the task-scoped foundation read contract');
+    const p=structuredClone(principal),args=structuredClone(input);
+    return this.database.run(client=>postgresDescribeOntology(client,p,args,this.policyDigest,this.builder));
   }
   async get(principal:Principal,taskId:string) {
     const p=structuredClone(principal),id=taskIdSchema.parse(taskId);

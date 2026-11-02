@@ -45,7 +45,7 @@ function freezeData<T>(input:T):T {
  * must come from trusted authentication and reviewed server configuration.
  * This is an internal admission check, not field/output authorization. All writers must use the business
  * transaction fence; callers must recheck before returning protected data. */
-async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:'tasks:read'|'tasks:write') {
+async function postgresAgentAdmission(client: Client, principal: Principal, policyDigest: string,scope:'tasks:read'|'tasks:write'|'services:read') {
   const schema = postgresBusinessSchema(client), q = `"${schema}"`;
   requireScope(principal,scope);
   if (!/^[a-f0-9]{64}$/.test(policyDigest)) throw new Error('Invalid PostgreSQL policy digest');
@@ -79,6 +79,10 @@ async function postgresAgentAdmission(client: Client, principal: Principal, poli
   return {actor,parent,policyRevision:revision,validUntil};
 }
 
+export async function postgresAgentMetadataAdmission(client:Client,principal:Principal,policyDigest:string) {
+  return postgresAgentAdmission(client,principal,policyDigest,'services:read');
+}
+
 export async function postgresAgentReadAdmission(client:Client,principal:Principal,policyDigest:string) {
   return postgresAgentAdmission(client,principal,policyDigest,'tasks:read');
 }
@@ -98,6 +102,16 @@ export async function withPostgresAgentRead<T>(client:Client,principal:Principal
   action:(admission:Awaited<ReturnType<typeof postgresAgentReadAdmission>>)=>Promise<T>):Promise<T> {
   const captured=structuredClone(principal),before=await postgresAgentReadAdmission(client,captured,policyDigest);
   const result=await action(before),after=await postgresAgentReadAdmission(client,captured,policyDigest);
+  if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
+  postgresConstrainReadDeadline(client,after.validUntil);
+  return result;
+}
+
+/** Definition-only discovery still requires current installation and policy. */
+export async function withPostgresAgentMetadata<T>(client:Client,principal:Principal,policyDigest:string,
+  action:(admission:Awaited<ReturnType<typeof postgresAgentMetadataAdmission>>)=>Promise<T>):Promise<T> {
+  const captured=structuredClone(principal),before=await postgresAgentMetadataAdmission(client,captured,policyDigest);
+  const result=await action(before),after=await postgresAgentMetadataAdmission(client,captured,policyDigest);
   if(digest(before)!==digest(after))throw new SecurityError('POLICY_CHANGED');
   postgresConstrainReadDeadline(client,after.validUntil);
   return result;

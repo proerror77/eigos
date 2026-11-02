@@ -3199,7 +3199,7 @@
     {
       "id": "meituan-source",
       "file": "packages/capabilities/meituan-primitives.ts",
-      "sourceDigest": "0dbdd1fb18781b5a9154ad462925aefbbd5ef568bb8c400b173aaf00d6ae6e8b",
+      "sourceDigest": "45b64aef8b8810992ad25c1b8b3fc3b8eadb1d43023f7fd7d4deb76038b8d42f",
       "channels": [
         "source",
         "private_file"
@@ -3474,7 +3474,7 @@
     {
       "id": "security-data-policy",
       "file": "packages/security/policy-store.ts",
-      "sourceDigest": "fccfd53f89331f240e49b830ee5d8ad1e499e5be8c5563d92d58e8594823ff9e",
+      "sourceDigest": "60de0ac123d53b75b056ed9cf23da9424d43ef590dcb09955f258b701d910e0c",
       "channels": [
         "all-reads"
       ],
@@ -3522,7 +3522,7 @@
     {
       "id": "security-ontology-view",
       "file": "packages/security/view.ts",
-      "sourceDigest": "5f0b79d1311608f5c84adf2ecef4e93808ef483aa04bc39c65d206f15b7a93a9",
+      "sourceDigest": "5c914bb28ead42bc84dad89313d9ae39868d48676e758a40357e2c6486b2abcc",
       "channels": [
         "http-mcp-model"
       ],
@@ -5676,7 +5676,7 @@
       "stage": "S5",
       "id": "postgres-task-read-admission",
       "file": "packages/postgres/task-read-access.ts",
-      "sourceDigest": "085828e615be611d3dae4f83af10aa276abb4f8bde00ec5c5a58b70870939357",
+      "sourceDigest": "fa7800a9e412faf65a1751cee79c1c4adccd948176bb6dc51f43a6a0effbfdb5",
       "content": "PostgreSQL agent task-read admission",
       "currentControl": "Current identity/task admission and deadlines, frozen request-scoped read snapshots, pinned ontology, roles, labels, direct/retained evidence and current source checks",
       "targetControl": "Fenced transaction, staged kernel, current roles, labels, direct and retained evidence and current source checks; provenance, lineage and output authorization remain required"
@@ -5891,7 +5891,7 @@
     {
       "id": "postgres-task-read-service",
       "file": "packages/postgres/task-read-service.ts",
-      "sourceDigest": "435c19e9f8f6548cd74f87c310772cb83b8b41864eb08cb902b8c780155eebe8",
+      "sourceDigest": "6544b9219568d07493335ed6dbe72950ba48c0df7b794fbded77e63436c44ad7",
       "channels": [
         "internal"
       ],
@@ -6177,6 +6177,66 @@
       "content": "Shared original-task technical recovery transition",
       "currentControl": "Exact paused task revision, context and read-only operation boundary; preserves original request, cumulative usage, fixed grant and authority; restores only provable original delivery text and never issues permission",
       "targetControl": "Exact paused task revision, context and read-only operation boundary; preserves original request, cumulative usage, fixed grant and authority; restores only provable original delivery text and never issues permission",
+      "stage": "S5"
+    },
+    {
+      "id": "meituan-primitive-contracts",
+      "file": "packages/capabilities/meituan-primitive-contracts.ts",
+      "sourceDigest": "ac2ea034cb548afe08b024d7f6887b766245f5953fa8dda7a7d2f34367a5ab20",
+      "channels": [
+        "internal"
+      ],
+      "content": "Pure Meituan read contracts",
+      "currentControl": "Identical bounded strict input and receipt schemas shared with Mac CLI reader; no executor, credential lookup or filesystem dependency",
+      "targetControl": "Identical bounded strict input and receipt schemas shared with Mac CLI reader; no executor, credential lookup or filesystem dependency",
+      "stage": "S5"
+    },
+    {
+      "id": "security-model-review",
+      "file": "packages/security/model-review.ts",
+      "sourceDigest": "92eea9cc753909e6c657d5719c44c356bab7c32f40eb195363878450387a6f00",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared reviewed historical model compatibility",
+      "currentControl": "Exact known kernel fingerprints, definition and implementation digests; no arbitrary backward compatibility or data authority",
+      "targetControl": "Exact known kernel fingerprints, definition and implementation digests; no arbitrary backward compatibility or data authority",
+      "stage": "S5"
+    },
+    {
+      "id": "security-definition-view",
+      "file": "packages/security/definition-view.ts",
+      "sourceDigest": "07f8711a7568b037306f031390c9a952362284724e36b3b06510ca3f36e450fa",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared authorized definition discovery",
+      "currentControl": "Current reviewed definitions, parent resource fields, resource roles and internal field exclusions before paging; hidden metadata does not affect public digest or counts",
+      "targetControl": "Current reviewed definitions, parent resource fields, resource roles and internal field exclusions before paging; hidden metadata does not affect public digest or counts",
+      "stage": "S5"
+    },
+    {
+      "id": "security-view-contracts",
+      "file": "packages/security/view-contracts.ts",
+      "sourceDigest": "82952e21626b979f6a39dc0e4f999e30d65818edb280e875bbacd754ab62218e",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared task-scoped Ontology read inputs",
+      "currentControl": "Bounded strict describe, query, evaluate and access-check schemas; discovery does not enumerate hidden function argument schemas",
+      "targetControl": "Bounded strict describe, query, evaluate and access-check schemas; discovery does not enumerate hidden function argument schemas",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-ontology-metadata",
+      "file": "packages/postgres/ontology-metadata.ts",
+      "sourceDigest": "94fbbdb19400e338a383d6960fbfc0aa18cebe8902d956809fdb5cbf75ec7c29",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL authorized Ontology discovery",
+      "currentControl": "Current installation and policy before and after discovery; immutable task release, same shared field and role filters; bounded role data and expiry enforced at commit",
+      "targetControl": "Current installation and policy before and after discovery; immutable task release, same shared field and role filters; bounded role data and expiry enforced at commit",
       "stage": "S5"
     }
   ]

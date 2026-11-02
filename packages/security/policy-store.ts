@@ -1,3 +1,4 @@
+import { assertReviewedModel } from './model-review.js';
 import {taskContextFields,TASK_CONTEXT_BINDING_VERSION} from './task-context-contract.js';
 import { selfPersonRef, personalPreferenceRef, personalInputFields, personalContextInputSchema, isPersonalAction } from '../ontology/personal-context.js';
 import {taskContextMembers} from './task-context.js';
@@ -21,7 +22,7 @@ import type {PlanGrant} from '../ontology/actions.js';
 import {actionSources} from './component-authority.js';
 import {compatibleProjectedObject} from '../ontology/task-read-projection.js';
 import {DefinitionStore} from '../ontology/definition-store.js';
-import { SINGLE_READ_PREDECESSOR, PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
+import { PRIOR_GOAL_COVERAGE_FINGERPRINT } from '../ontology/single-read-kernel.js';
 import {assertProjectionOrigin,taskProjectionEvidence,type ProjectionOrigin} from './projection-origin.js';
 import { roleSchema, resourceVersion, roleAllows } from './resource-role.js';
 import { reviewedFieldPolicy } from './field-policy.js';
@@ -86,20 +87,7 @@ export class SecurityPolicies {
    * Cache only immutable model identity; row, field and grant checks stay live. */
   assertModel(model: SecurityStore['model']): void {
     if (model === this.model || this.reviewedModels.has(model)) return;
-    // Reviewed v22 -> RollingGo-only v23 compatibility. Historical tasks keep
-    // their own model and action bindings; current data/source grants still gate reads.
-    if ((this.model.ref.digest === '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127' || ['24','25','26'].includes(this.model.ref.version))
-      && model.ref.id === this.model.ref.id && ['b800ef526f90c2dfbbb6c82495318bf820145520ce2dd1d63635c8b930c5fca4', '2c39527a5973ae4b09b402f382ef192d13f1fca0f5cf3424bcd410b8c3c0a127', '496938a2cf4a6661acab90171d6c3988c890364dee7d4f62c3575b2e2c70d644', SINGLE_READ_PREDECESSOR].includes(model.ref.digest)
-      && model.definitionSnapshot().objects.every(type => this.model.hasType(type.id) && (model.fingerprint(type.id) === this.model.fingerprint(type.id)
-        || this.model.hasType('Person') && type.id === 'RequestFact' && model.fingerprint(type.id) === 'aca8fe3bad913ec40620004cfaf77e1620dbd40d6f59d92a774fc90aca9e1ace'
-        || this.model.ref.version === '26' && type.id === 'GoalCoverage' && model.fingerprint(type.id) === PRIOR_GOAL_COVERAGE_FINGERPRINT))
-      && model.definitionSnapshot().links.every(link => digest(link) === digest(this.model.link(link.id)))
-      && model.definitionSnapshot().functions.every(fn => digest(fn) === digest(this.model.function(fn.id)))
-      && model.actionIds().every(id => digest(model.actionImplementation(id) ?? null) === digest(this.model.actionImplementation(id) ?? null))) {
-      this.reviewedModels.add(model); return;
-    }
-    if (model.ref.id !== this.model.ref.id || model.ref.digest !== this.model.ref.digest
-      || model.actionIds().some(id => digest(model.actionImplementation(id) ?? null) !== digest(this.model.actionImplementation(id) ?? null))) throw new SecurityError('POLICY_CHANGED');
+    assertReviewedModel(this.model, model);
     this.reviewedModels.add(model);
   }
   private roleCache=new WeakMap<AuthorizationScope,{generation:number|undefined;roles:z.infer<typeof roleSchema>[]}>();

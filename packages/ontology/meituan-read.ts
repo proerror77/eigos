@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { objectRefSchema, type ActionDefinition, type FunctionDefinition, type LinkDefinition, type ObjectTypeDefinition, type PropertyDefinition } from './model.js';
-import { meituanPrimitiveReceiptSchema } from '../capabilities/meituan-primitives.js';
+import { meituanPrimitiveReceiptSchema } from '../capabilities/meituan-primitive-contracts.js';
 import { paotuiPublicPlaceSchema } from '../capabilities/paotui-public-locations.js';
 import { meituanReadDefinition, meituanReadDefinitionRef } from './meituan-read-definition.js';
 
