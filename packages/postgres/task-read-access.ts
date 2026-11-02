@@ -269,7 +269,8 @@ export async function postgresTaskSourceObservationAllowed(client: Client, princ
   input: ObjectRef, builder?: StagedKernelBuilder):Promise<boolean> {
   const captured=structuredClone(principal),ref=objectRefSchema.parse(input);
   const checked=await withPostgresTaskReadGrant(client,captured,taskId,policyDigest,async admission=>{
-    const evidence=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
+    const direct=await postgresTaskDirectBindingEvidence(client,captured,taskId,policyDigest,ref,builder);
+    const evidence=direct??await postgresTaskRetainedBindingEvidence(client,captured,taskId,policyDigest,ref,false,builder);
     if(!evidence || ['task_context','task_submission','member_asset','task_projection'].includes(evidence.sourceBindingId))return undefined;
     const schema=postgresBusinessSchema(client),owner=ownerKey(captured);
     let origin:ObservationSource | undefined=evidence.sourceObservation;

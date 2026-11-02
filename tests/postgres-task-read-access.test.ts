@@ -22,8 +22,8 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   // keep the fixture's copied projection valid throughout those checks.
   const clockOffset=1200000;
   const f=securityFixture(()=>Date.now()+clockOffset), installation=f.installation('Synthetic read',3600000),sourceExpiry=new Date(Date.now()+3600000).toISOString();
-  f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']},{type:'RequestSpecification',fields:['id','displayTitle','requestRevision']},{type:'RegisteredCapability',fields:['id','name','capabilityRef','contextRequestId']},{type:'RegisteredActionType',fields:['id','displayTitle','actionId']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
-  f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId:'synthetic-source',programId:'brief.prepare',programDigest:'b'.repeat(64),operations:['synthetic.read'],outputTypes:['ServiceRequest'],expiresAt:sourceExpiry},f.jobs.security.policies.revision());
+  f.coordinator.approveAgentGrant(f.member.id,{installationId:installation.id,capabilityIds:['brief.prepare'],resources:[{type:'ServiceRequest',fields:['requestId','originalGoal']},{type:'Place',fields:['placeId','name','address']},{type:'RequestSpecification',fields:['id','displayTitle','requestRevision']},{type:'RegisteredCapability',fields:['id','name','capabilityRef','contextRequestId']},{type:'RegisteredActionType',fields:['id','displayTitle','actionId']}],sourceBindingIds:['synthetic-source'],channels:['agent_response','registered_model'],expiresAt:sourceExpiry});
+  f.jobs.security.policies.setSource(f.owner,{installationId:installation.id,bindingId:'synthetic-source',programId:'brief.prepare',programDigest:'b'.repeat(64),operations:['synthetic.read'],outputTypes:['ServiceRequest','Place'],expiresAt:sourceExpiry},f.jobs.security.policies.revision());
   const task=f.task(installation.id), principal={...f.principal,access:f.coordinator.authenticate(f.principal,installation.token)};
   assert(principal.access.actorKind==='agent');const parentGrantId=principal.access.agentGrant.id;
   f.jobs.security.policies.setRole({subjectKind:'installation',subjectId:installation.id,resource:{kind:'objectType',id:'ServiceRequest',version:f.jobs.security.policies.resourceVersion('objectType','ServiceRequest')},role:'Viewer',expiresAt:new Date(Date.now()+3600000).toISOString()},f.jobs.security.policies.revision());
@@ -33,9 +33,10 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
   f.jobs.security.policies.setRecipient(installation.id,recipient,f.jobs.security.policies.revision());
   for(const field of ['*','originalGoal','requestId']) f.jobs.security.policies.restrictObject({ownerKey:f.owner,object:{type:'ServiceRequest',id:task.job.id},expectedObjectRevision:1,field,classification:'sensitive',requiredMarkings:['personal_data'],channels:['agent_response']},f.jobs.security.policies.revision());
   const sqlite=new DatabaseSync(f.database), schema=`eigos_business_${randomUUID().replaceAll('-','')}`;
+  if(process.env.EIGOS_TEST_REPORT_SCHEMA==='1')console.log(`Synthetic PostgreSQL schema: ${schema}`);
   const stored=sqlite.prepare('SELECT body FROM security_grants WHERE id=?').get(task.grant.id)!;
   const readGrant=JSON.parse(String(stored.body)); readGrant.operations.push('task.result.read'); readGrant.channels.push('agent_response');
-  readGrant.outputs.push({programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source',type:'Place',fields:['id','name']});
+  readGrant.outputs.push({programId:'brief.prepare',programDigest:'b'.repeat(64),sourceBindingId:'synthetic-source',type:'Place',fields:['placeId','name']});
   sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(readGrant),task.grant.id);
   // Preserve a realistic order: two prior task grants precede the current one.
   sqlite.prepare('UPDATE security_grants SET rowid=100 WHERE id=?').run(task.grant.id);
@@ -161,11 +162,11 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(sqliteContext(actionRef),undefined);assert.equal(await contextCandidate(actionRef),undefined);
     sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(actionBody,f.owner,actionRef.type,actionRef.id);
     await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[actionBody,f.owner,actionRef.type,actionRef.id]);
-    const place={type:'Place',id:'retained-place'},placeBody=JSON.stringify({source:{kind:'provider',id:'synthetic-source'},properties:{id:'retained-place',name:'Synthetic',address:'private'}});
+    const place={type:'Place',id:'retained-place'},placeBody=JSON.stringify({source:{kind:'provider',id:'synthetic-source'},properties:{placeId:'retained-place',name:'Synthetic',address:'private'}});
     sqlite.prepare('INSERT INTO ontology_objects(owner,type,id,revision,definition_digest,body) VALUES(?,?,?,?,?,?)').run(f.owner,place.type,place.id,1,'a'.repeat(64),placeBody);
     await client.query(`INSERT INTO "${schema}".ontology_objects(owner,type,id,revision,definition_digest,body) VALUES($1,$2,$3,1,$4,$5)`,[f.owner,place.type,place.id,'a'.repeat(64),placeBody]);
-    const retainedBase={object:place,revision:1,fields:['id','name','address'],sourceBindingId:'synthetic-source',envelope:rootBinding.envelope};
-    const earlier={...retainedBase,fields:['id']};
+    const retainedBase={object:place,revision:1,fields:['placeId','name','address'],sourceBindingId:'synthetic-source',envelope:rootBinding.envelope};
+    const earlier={...retainedBase,fields:['placeId']};
     for(const [index,value] of [earlier,retainedBase].entries()){
       sqlite.prepare('INSERT INTO security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES(?,?,?,?,?,?,?,?)').run(priorIds[index]!,f.owner,task.job.id,1,place.type,place.id,1,JSON.stringify(value));
       await client.query(`INSERT INTO "${schema}".security_bindings(grant_id,owner,task_id,request_revision,type,object_id,object_revision,body) VALUES($1,$2,$3,1,$4,$5,1,$6)`,[priorIds[index],f.owner,task.job.id,place.type,place.id,JSON.stringify(value)]);
@@ -177,7 +178,15 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const retained=(item:{type:string;id:string},historical=false)=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.retainedBindingEvidence(c,principal,task.job.id,policy,item,historical));
     const privatePolicy=f.jobs.security.policies as unknown as {retainedBinding:(scope:unknown,item:{type:string;id:string},historical:boolean)=>unknown};
     const sqliteRetained=(item:{type:string;id:string},historical=false)=>f.jobs.security.withAgent(principal,task.job.id,'task.result.read',scope=>privatePolicy.retainedBinding(scope,item,historical));
-    const retainedPlace=await retained(place);assert.deepEqual(retainedPlace,sqliteRetained(place));assert.deepEqual(retainedPlace?.fields,['id','name']);
+    const retainedPlace=await retained(place);assert.deepEqual(retainedPlace,sqliteRetained(place));assert.deepEqual(retainedPlace?.fields,['placeId','name']);
+    const retainedSource=()=>postgresBusinessTransaction(client,schema,authority,c=>stagedReader.sourceObservationAllowed(c,principal,task.job.id,policy,place));
+    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),true);
+    assert.equal(await retainedSource(),true);
+    sqlite.prepare("UPDATE security_sources SET state='revoked' WHERE owner=? AND installation_id=?").run(f.owner,installation.id);
+    await client.query(`UPDATE "${schema}".security_sources SET state='revoked' WHERE owner=$1 AND installation_id=$2`,[f.owner,installation.id]);
+    assert.equal(sourceMatchesObservation(f.jobs.security.policies.sources(f.owner,installation.id),retainedOrigin,place.type),false);assert.equal(await retainedSource(),false);
+    sqlite.prepare("UPDATE security_sources SET state='active' WHERE owner=? AND installation_id=?").run(f.owner,installation.id);
+    await client.query(`UPDATE "${schema}".security_sources SET state='active' WHERE owner=$1 AND installation_id=$2`,[f.owner,installation.id]);
     const foreignGrant=randomUUID(),foreignInstallation=randomUUID();
     sqlite.prepare(`INSERT INTO security_grants(rowid,id,kind,owner,member_id,installation_id,parent_id,parent_revision,revision,state,expires_at,body)
       SELECT 110,?,kind,owner,member_id,?,parent_id,parent_revision,revision,'revoked',expires_at,body FROM security_grants WHERE id=?`).run(foreignGrant,foreignInstallation,task.grant.id);
@@ -190,19 +199,19 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     const storedJob=String(sqlite.prepare('SELECT body FROM jobs WHERE owner=? AND id=?').get(f.owner,task.job.id)!.body),retainedChangedJob=JSON.parse(storedJob);retainedChangedJob.delegation.request.originalGoal='different synthetic goal';
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(JSON.stringify(retainedChangedJob),f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[JSON.stringify(retainedChangedJob),f.owner,task.job.id]);
-    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);
     sqlite.prepare('UPDATE jobs SET body=? WHERE owner=? AND id=?').run(storedJob,f.owner,task.job.id);
     await client.query(`UPDATE "${schema}".jobs SET body=$1 WHERE owner=$2 AND id=$3`,[storedJob,f.owner,task.job.id]);
     const withoutOutput={...readGrant,outputs:[]};
     sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(withoutOutput),task.grant.id);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[JSON.stringify(withoutOutput),task.grant.id]);
-    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);
     sqlite.prepare('UPDATE security_grants SET body=? WHERE id=?').run(JSON.stringify(readGrant),task.grant.id);
     await client.query(`UPDATE "${schema}".security_grants SET body=$1 WHERE id=$2`,[JSON.stringify(readGrant),task.grant.id]);
     const changedOrigin={...retainedOrigin,inputEnvelope:{...retainedOrigin.inputEnvelope,submission:{...submission,contentDigest:'c'.repeat(64)}}};
     sqlite.prepare('UPDATE security_object_origins SET body=? WHERE owner=? AND type=? AND object_id=? AND object_revision=1').run(JSON.stringify(changedOrigin),f.owner,place.type,place.id);
     await client.query(`UPDATE "${schema}".security_object_origins SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND object_revision=1`,[JSON.stringify(changedOrigin),f.owner,place.type,place.id]);
-    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);
+    assert.equal(sqliteRetained(place),undefined);assert.equal(await retained(place),undefined);assert.equal(await retainedSource(),false);
     sqlite.prepare('UPDATE security_object_origins SET body=? WHERE owner=? AND type=? AND object_id=? AND object_revision=1').run(JSON.stringify(retainedOrigin),f.owner,place.type,place.id);
     await client.query(`UPDATE "${schema}".security_object_origins SET body=$1 WHERE owner=$2 AND type=$3 AND object_id=$4 AND object_revision=1`,[JSON.stringify(retainedOrigin),f.owner,place.type,place.id]);
     const wrongTask={...retainedBase,sourceBindingId:'task_submission'};
@@ -232,6 +241,9 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
     assert.equal(sqliteRetained(projection),undefined);assert.equal(await retained(projection),undefined);
     sqlite.prepare('UPDATE ontology_objects SET body=? WHERE owner=? AND type=? AND id=?').run(projectionBody,f.owner,projection.type,projection.id);
     await client.query(`UPDATE "${schema}".ontology_objects SET body=$1 WHERE owner=$2 AND type=$3 AND id=$4`,[projectionBody,f.owner,projection.type,projection.id]);
+    // Remote retained-evidence validation can finish on one bounded connection
+    // without replaying the independent admission/role/clearance suite.
+    if(process.env.EIGOS_TEST_RETAINED_ONLY==='1')return;
     if (process.env.EIGOS_TEST_LARGE_ROW==='1') {
       // Generate the synthetic large value inside PostgreSQL; it must never be
       // sent to the client by authorization or ontology-context reads.
@@ -521,5 +533,8 @@ test('PostgreSQL task read admission preserves identity, revocation and grant fe
       await c.query(`UPDATE "${schema}".security_grants SET revision=revision+1 WHERE id=$1`,[task.grant.id]); return 'not exposed';
     })),/POLICY_CHANGED/);
     assert.equal((await read()).grant.revision,original.revision,'failed post-check rolls back the action');
-  } finally {await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await client.end();sqlite.close();f.close();}
+  } finally {
+    try {await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);}
+    finally {try {await client.end();} finally {sqlite.close();f.close();}}
+  }
 });
