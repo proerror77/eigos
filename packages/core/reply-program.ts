@@ -1,5 +1,7 @@
 import {DomainError,type Job,type ReplyInput} from './domain.js';
 import {DELEGATE} from './delegation.js';
+import {submissionDigest} from '../security/submission-digest.js';
+import {BACKEND_VERSION} from '../ontology/execution.js';
 import type {ActionIntent} from '../ontology/actions.js';
 import type {Ref,ServiceRequest} from '../ontology/execution.js';
 import type {PersonalContextInput} from '../ontology/personal-context.js';
@@ -25,7 +27,18 @@ function* replySaveIntent(...args:Parameters<ReplyStorage['saveIntent']>):ReplyP
 function* replyCancel(...args:Parameters<ReplyStorage['cancelActions']>):ReplyProgram<boolean>{return(yield{method:'cancelActions',args}) as boolean;}
 function* replySave(...args:Parameters<ReplyStorage['saveTask']>):ReplyProgram<void>{yield{method:'saveTask',args};}
 function* replyPersonal(...args:Parameters<ReplyStorage['personal']>):ReplyProgram<void>{yield{method:'personal',args};}
-function* replyPrepare(...args:Parameters<ReplyStorage['prepare']>):ReplyProgram<ServiceRequest>{return(yield{method:'prepare',args}) as ServiceRequest;}
+function* replyPrepare(...args:Parameters<ReplyStorage['prepare']>):ReplyProgram<ServiceRequest>{
+  const expected=submissionDigest(args[3]),result=(yield{method:'prepare',args}) as ServiceRequest;
+  if(submissionDigest(result)!==expected)throw new DomainError('CONFLICT','Task preparation changed its original submitted request');
+  return result;
+}
+
+export function assertReplyTaskContext(job:Job,contextId?:string):void{
+  if(job.delegation?.observationContract)throw new DomainError('CONFLICT','An immutable observation contract cannot become an execution task through replies or amendments');
+  if(job.service!==DELEGATE)throw new DomainError('CONFLICT','Historical prototype tasks are read-only in the ontology backend');
+  if(job.delegation?.backendVersion!==BACKEND_VERSION)throw new DomainError('CONFLICT','Historical backend tasks are read-only; restore their original runtime');
+  if(contextId&&job.contextId!==contextId)throw new DomainError('INVALID_INPUT','Context does not match task');
+}
 function perform(port:AsyncReplyStorage,step:Operation):unknown{
   switch(step.method){
     case 'intents':return port.intents(...step.args);case 'intent':return port.intent(...step.args);

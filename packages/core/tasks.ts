@@ -1,4 +1,5 @@
-import {runReplyProgram,replyTransition} from './reply-program.js';
+import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from './technical-resume.js';
+import {runReplyProgram,replyTransition,assertReplyTaskContext} from './reply-program.js';
 import { createSubmittedTask } from './task-submission.js';
 import { DELEGATE, digest, actionOperationKey } from './delegation.js';
 import { ObservationTasks } from './observation-tasks.js';
@@ -329,26 +330,11 @@ export class TaskService {
     requireScope(p, 'tasks:write');
     const args = resumeTaskSchema.parse(input), owner = ownerKey(p);
     return this.store.once(owner, `technical_resume:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
-      const job = this.store.get(owner, args.taskId), d = job.delegation;
-      if (d?.observationContract) throw new DomainError('CONFLICT', 'Observation contracts remain inactive until a reviewed observer is installed');
-      if (contextId && contextId !== job.contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
-      if (d?.backendVersion !== BACKEND_VERSION || job.state !== 'paused' || job.revision !== args.expectedRevision) throw new DomainError('CONFLICT', 'Read the current technical pause before resuming this original task');
-      const intents = this.store.intents(owner, job.id);
-      if (!canRecoverReadOnly(job, intents)) throw new DomainError('FORBIDDEN', 'Unknown business effects require their original reconciliation path');
-      if(this.security) {
-        const previous=d.groundingDecisions?.at(-1)?.decision;
-        const selected=d.agent?.programRef ?? d.suspendedAgent?.programRef ?? d.request.capabilityRef
-          ?? (previous?.kind==='resolve' && previous.requestRevision===d.request.revision?previous.capabilityRef:undefined);
-        if(selected && selected.id!=='eigos.goal')this.catalogForJob(owner,job).agentProgram(selected,owner);
-      }
-      job.updatedAt = new Date().toISOString(); job.revision = (job.revision ?? 0) + 1;
-      continueExecutionBudget(job, 'recovery', args.executionBudget);
-      if (remainingModelTurns(job) < MIN_REASONING_TURNS) throw new DomainError('CONFLICT', 'Task safety budget requires a policy change; confirmed facts must not be resubmitted');
-      const restoredInstruction = restoreOriginalDeliverableInstruction(job, intents.length > 0);
-      if (restoredInstruction) d.events.push({ at: job.updatedAt, event: 'original_submission_instruction_restored', evidence: restoredInstruction });
-      if (d.recovery) { d.recovery.state = 'scheduled'; d.recovery.retryAt = job.updatedAt; d.recovery.nextAction = 'wait_for_retry'; }
-      job.state = 'working'; d.phase = 'recovering'; d.nextAt = 0; delete job.question; delete job.error;
-      d.events.push({ at: job.updatedAt, event: 'technical_resume_requested' });
+      const job=this.store.get(owner,args.taskId);assertTechnicalResumeState(job,args,contextId);
+      const intents=this.store.intents(owner,job.id);
+      const selected=assertTechnicalResume(job,args,intents,contextId,!!this.security);
+      if(selected)this.catalogForJob(owner,job).agentProgram(selected,owner);
+      applyTechnicalResume(job,args,intents.length);
       this.store.save(owner, job); return job;
     });
   }
@@ -366,11 +352,7 @@ export class TaskService {
     const args = replySchema.parse(input);
     const owner = ownerKey(p);
     const current = this.store.get(owner, args.taskId);
-    if (current.delegation?.observationContract) throw new DomainError('CONFLICT', 'An immutable observation contract cannot become an execution task through replies or amendments');
-    if (current.service !== DELEGATE) throw new DomainError('CONFLICT', 'Historical prototype tasks are read-only in the ontology backend');
-    if (current.service === DELEGATE && current.delegation?.backendVersion !== BACKEND_VERSION) throw new DomainError('CONFLICT', 'Historical backend tasks are read-only; submit a new request');
-    if ('requirements' in args && args.requirements && current.service !== DELEGATE) throw new DomainError('INVALID_INPUT', 'Structured requirements belong to the ontology execution service');
-    if (contextId && current.contextId !== contextId) throw new DomainError('INVALID_INPUT', 'Context does not match task');
+    assertReplyTaskContext(current,contextId);
     const replied = this.store.once(owner, `${amendment ? 'amend' : 'reply'}:${args.taskId}`, args.requestId, JSON.stringify(args), () => {
       const job = this.store.get(owner,args.taskId);
       return runReplyProgram({

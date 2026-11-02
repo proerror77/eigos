@@ -1,4 +1,8 @@
-import {ownerKey,submitSchema,taskIdSchema,DomainError,type Principal,type Job} from '../core/domain.js';
+import {ownerKey,submitSchema,replySchema,versionedReplySchema,resumeTaskSchema,taskIdSchema,DomainError,type Principal,type Job} from '../core/domain.js';
+import {runReplyProgramAsync,replyTransition,assertReplyTaskContext} from '../core/reply-program.js';
+import {assertTechnicalResume,assertTechnicalResumeState,applyTechnicalResume} from '../core/technical-resume.js';
+import {postgresWorkerAdmission} from './worker-admission.js';
+import {digest} from '../core/delegation.js';
 import {createSubmittedTask} from '../core/task-submission.js';
 import {selectPersonalContextProgram} from '../core/personal-context.js';
 import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
@@ -15,12 +19,19 @@ import {postgresPersonalInputs} from './task-personal.js';
 import {PostgresProjectionGraph} from './projection-graph.js';
 import type {Client} from 'pg';
 import {randomUUID} from 'node:crypto';
-import {BACKEND_VERSION} from '../ontology/execution.js';
+import {BACKEND_VERSION,type Ref,type ServiceRequest} from '../ontology/execution.js';
+
+export interface PostgresTaskCommandOptions{
+  /** Current configured program preparation only; no model/provider I/O. */
+  prepareRequest?:(client:Client,owner:string,job:Job,program:Ref,request:ServiceRequest)=>ServiceRequest|Promise<ServiceRequest>;
+  assertProgram?:(client:Client,owner:string,job:Job,program:Ref)=>void|Promise<void>;
+}
 
 /** Async task commands. This class owns no model, provider or polling loop. */
 export class PostgresTaskCommandService extends PostgresTaskReadService {
   private commandStopping=false;
-  constructor(private readonly db:Pick<PostgresDatabase,'run'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder){super(db,policy,kernel);}
+  constructor(private readonly db:Pick<PostgresDatabase,'run'>,private readonly policy:string,private readonly kernel?:StagedKernelBuilder,
+    private readonly options:PostgresTaskCommandOptions={}){super(db,policy,kernel);}
   private async view(client:Client,p:Principal,job:Job):Promise<TaskView>{
     const admission=await postgresTaskReceiptGrant(client,p,job.id,this.policy);postgresConstrainReadDeadline(client,admission.validUntil);
     if(p.scopes.includes('tasks:read')&&admission.grant.operations.includes('task.result.read'))return postgresTaskView(client,p,job.id,this.policy,this.kernel);
@@ -72,6 +83,62 @@ export class PostgresTaskCommandService extends PostgresTaskReadService {
       });
       const after=await postgresTaskProcessingGrant(client,p,id,this.policy);
       if(before.grant.id!==after.grant.id||before.grant.revision!==after.grant.revision)throw new DomainError('CONFLICT','Task permission changed');
+      return this.view(client,p,job);
+    }));
+  }
+  async reply(principal:Principal,input:unknown,contextId?:string,expected?:{revision:number;updatedAt:string},amendment=false):Promise<Job>{
+    const p=structuredClone(principal),args=replySchema.parse(input),owner=ownerKey(p);
+    return this.db.run(client=>withPostgresAgentWrite(client,p,this.policy,async admission=>{
+      const before=await postgresTaskProcessingGrant(client,p,args.taskId,this.policy),store=new PostgresTaskStorage(client,this.kernel);
+      assertReplyTaskContext(await store.get(owner,args.taskId),contextId);
+      const result=await store.once(owner,admission.actor.installationId,`${amendment?'amend':'reply'}:${args.taskId}`,args.requestId,JSON.stringify(args),async()=>{
+        const current=await store.get(owner,args.taskId);
+        await runReplyProgramAsync({
+          intents:store.intents.bind(store),intent:store.intent.bind(store),saveIntent:store.saveIntent.bind(store),cancelActions:store.cancelActions.bind(store),
+          saveTask:async(owner,job)=>{await store.save(owner,job);},
+          personal:()=>{throw new DomainError('FORBIDDEN','Personal selection requires the current task grant');},
+          prepare:(owner,job,program,request)=>{
+            if(!this.options.prepareRequest)throw new DomainError('CONFLICT','This original task requires its configured runtime before it can continue');
+            return this.options.prepareRequest(client,owner,job,program,request);
+          },
+        },replyTransition(current,owner,args,{foundation:true,canRead:p.scopes.includes('tasks:read'),amendment,expected}));
+        let saved=await store.get(owner,args.taskId);
+        if(saved.delegation!.request.revision!==before.grant.requestRevision){
+          const inputs=await postgresPersonalInputs(client,p,saved,this.policy,this.kernel);
+          await postgresProvisionTask(client,p,saved,this.policy,inputs,{previous:before.grant,replacePersonalInputs:!!args.personalContext,builder:this.kernel});
+          if(args.personalContext){
+            const graph=await PostgresProjectionGraph.create(client,owner,saved.delegation!.ontologyRelease!,this.kernel);
+            await graph.run(metadata=>selectPersonalContextProgram(metadata,owner,saved.delegation!.request,args.personalContext!));
+            saved=await store.save(owner,saved);
+          }
+        }
+        return saved;
+      });
+      await postgresTaskProcessingGrant(client,p,args.taskId,this.policy);
+      return this.view(client,p,result);
+    }));
+  }
+  async amend(principal:Principal,input:unknown,contextId?:string):Promise<Job>{
+    const args=versionedReplySchema.parse(input);
+    if((!args.personalContext&&!args.locationContext)||args.requirements||args.executionBudget)throw new DomainError('FORBIDDEN','Foundation amendments are limited to an explicit personal or location context refresh');
+    return this.reply(principal,args,contextId,undefined,true);
+  }
+  async resume(principal:Principal,input:unknown,contextId?:string):Promise<Job>{
+    const p=structuredClone(principal),args=resumeTaskSchema.parse(input),owner=ownerKey(p);
+    if(args.executionBudget)throw new DomainError('FORBIDDEN','Foundation recovery uses the current task budget');
+    return this.db.run(client=>withPostgresAgentWrite(client,p,this.policy,async admission=>{
+      const before=await postgresTaskProcessingGrant(client,p,args.taskId,this.policy),authority=await postgresWorkerAdmission(client,owner,args.taskId,this.policy);
+      if(authority.authority.installationId!==admission.actor.installationId||authority.grant.id!==before.grant.id||authority.grant.revision!==before.grant.revision)throw new DomainError('FORBIDDEN','The original task authority is required');
+      const store=new PostgresTaskStorage(client,this.kernel);
+      const job=await store.once(owner,admission.actor.installationId,`technical_resume:${args.taskId}`,args.requestId,JSON.stringify(args),async()=>{
+        const current=await store.get(owner,args.taskId);assertTechnicalResumeState(current,args,contextId);
+        const intents=await store.intents(owner,args.taskId);
+        const selected=assertTechnicalResume(current,args,intents,contextId,true);
+        if(selected){if(!this.options.assertProgram)throw new DomainError('CONFLICT','This original task requires its configured runtime before it can continue');await this.options.assertProgram(client,owner,current,selected);}
+        return store.save(owner,applyTechnicalResume(current,args,intents.length));
+      });
+      const after=await postgresTaskProcessingGrant(client,p,args.taskId,this.policy),currentAuthority=await postgresWorkerAdmission(client,owner,args.taskId,this.policy);
+      if(digest(before.grant)!==digest(after.grant)||digest(authority.authority)!==digest(currentAuthority.authority))throw new DomainError('CONFLICT','Original task authority changed during recovery');
       return this.view(client,p,job);
     }));
   }

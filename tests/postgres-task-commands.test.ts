@@ -15,6 +15,8 @@ import type {TaskServicePort} from '../packages/core/task-service-port.js';
 import {taskProtocolFixture} from './fixtures/task-protocol.js';
 import {randomUUID} from 'node:crypto';
 import {PostgresWorkerStore} from '../packages/postgres/worker-store.js';
+import {scheduleTaskRecovery} from '../packages/core/task-recovery.js';
+import {postgresWorkerAdmission} from '../packages/postgres/worker-admission.js';
 
 test('PostgreSQL task save, grant, projection and operation receipt commit or roll back together',
   {skip:process.env.EIGOS_TEST_PG_LOCAL!=='1'},async()=>{
@@ -154,6 +156,28 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
     assert.equal(await worker.renew(execution,30000),true);
     assert.equal(await worker.finish(execution,current=>{current.state='input-required';current.question='Authorized sealed synthetic question';}),true);
     const delivered=await service.get(p,execution.job.id);assert.equal(delivered.question,'Authorized sealed synthetic question');assert.equal(delivered.outputStatus,'available');
+    const originalGrant=(await t.run(c=>postgresTaskProcessingGrant(c,p,roundtrip.id,t.policy))).grant;
+    const replyInput={taskId:roundtrip.id,requestId:'owner-clarification',expectedRevision:delivered.revision!,answer:'Owner supplied a synthetic clarification'};
+    const replied=await service.reply(p,replyInput);assert.equal(replied.id,roundtrip.id);assert.equal(replied.state,'submitted');
+    const revised=(await t.run(c=>postgresTaskProcessingGrant(c,p,roundtrip.id,t.policy))).grant;
+    assert.notEqual(revised.id,originalGrant.id);assert.equal(revised.requestRevision,originalGrant.requestRevision+1);assert.equal(revised.expiresAt,originalGrant.expiresAt);
+    assert.equal((await service.reply(p,replyInput)).id,replied.id);
+    assert.equal((await t.run(c=>postgresTaskProcessingGrant(c,p,roundtrip.id,t.policy))).grant.id,revised.id,'retry keeps the same replacement scope');
+    await assert.rejects(service.reply(p,{...replyInput,requestId:'stale-question'}),/older task/);
+    const pausedClaim=await worker.claim(['eigos.delegate'],30000);assert(pausedClaim);assert.equal(pausedClaim.job.id,roundtrip.id);
+    assert.equal(await worker.finish(pausedClaim,current=>scheduleTaskRecovery(current,'worker_interrupted','Synthetic technical pause',{automatic:false})),true);
+    const paused=await service.get(p,roundtrip.id),requestBefore=await t.run(c=>new PostgresTaskStorage(c).get(f.owner,roundtrip.id));
+    const authorityBefore=(await t.run(c=>postgresWorkerAdmission(c,f.owner,roundtrip.id,t.policy))).authority;
+    const resumeInput={taskId:roundtrip.id,requestId:'resume-original',expectedRevision:paused.revision!};
+    await assert.rejects(service.resume(p,{...resumeInput,requestId:'stale-resume',expectedRevision:resumeInput.expectedRevision+1}),/current technical pause/);
+    const resumed=await service.resume(p,resumeInput);assert.equal(resumed.id,roundtrip.id);assert.equal(resumed.state,'working');
+    const current=await t.run(c=>new PostgresTaskStorage(c).get(f.owner,roundtrip.id));
+    assert.deepEqual(current.delegation!.request,requestBefore.delegation!.request);assert.deepEqual(current.messages,requestBefore.messages);
+    assert.deepEqual((await t.run(c=>postgresWorkerAdmission(c,f.owner,roundtrip.id,t.policy))).authority,authorityBefore);
+    assert.deepEqual((await t.run(c=>postgresTaskProcessingGrant(c,p,roundtrip.id,t.policy))).grant,revised,'resume does not issue or extend permission');
+    assert.equal((await service.resume(p,resumeInput)).revision,resumed.revision);
+    await assert.rejects(service.resume(p,{...resumeInput,executionBudget:'extended'}),/current task budget/);
+    await service.cancel(p,roundtrip.id);
     // Real HTTP adapters and SQL persistence. The model result here remains
     // explicitly synthetic; this does not certify native Codex/provider work.
     const port=new Proxy({} as TaskServicePort,{get(_target,property){
@@ -177,6 +201,16 @@ test('PostgreSQL task save, grant, projection and operation receipt commit or ro
         const mcp=await protocol.job('get_task',{taskId:id});assert.equal(mcp.id,id);assert.equal(mcp.question,`Sealed synthetic ${ingress} response`);
         const a2a=await protocol.rpc('GetTask',{id});assert(!a2a.error,JSON.stringify(a2a));assert.equal(a2a.result.id,id);
         assert.equal(a2a.result.metadata.question,mcp.question);assert.equal(a2a.result.status.state,'TASK_STATE_INPUT_REQUIRED');
+        const answer=`Owner continuation over ${ingress==='mcp'?'A2A':'MCP'}`,continuationId=`protocol-reply-${ingress}`;
+        if(ingress==='mcp'){
+          const response=await protocol.rpc('SendMessage',{message:{messageId:continuationId,taskId:id,role:'ROLE_USER',metadata:{expectedRevision:mcp.revision},parts:[{text:answer}]},configuration:{returnImmediately:true}});
+          assert(!response.error,JSON.stringify(response));assert.equal(response.result.task.id,id);
+        }else assert.equal((await protocol.job('reply_to_task',{taskId:id,requestId:continuationId,expectedRevision:mcp.revision!,answer})).id,id);
+        const continued=await worker.claim(['eigos.delegate'],30000);assert(continued);assert.equal(continued.job.id,id);
+        const updatedRequest=await worker.readRequest(continued,'synthetic:mac');assert.equal(updatedRequest.messages.at(-1)?.text,answer);
+        assert.equal(await worker.renew(continued,30000),true);
+        assert.equal(await worker.finish(continued,current=>{current.state='input-required';current.question=`Sealed continued ${ingress} response`;}),true);
+        const readback=await protocol.job('get_task',{taskId:id});assert.equal(readback.id,id);assert.equal(readback.question,`Sealed continued ${ingress} response`);
       }
     }finally{await protocol.close();}
   }finally{if(target)await target.close();f.close();}

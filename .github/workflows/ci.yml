@@ -95,7 +95,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --import tsx --test tests/relay-postgres-import.test.ts tests/relay-postgres-grant.test.ts tests/business-postgres-schema.test.ts tests/business-postgres-import.test.ts tests/business-postgres-large-row.test.ts tests/membership-postgres-import.test.ts tests/postgres-identity-audit.test.ts tests/postgres-runtime-transaction.test.ts tests/postgres-work-authority.test.ts tests/postgres-ontology-release.test.ts tests/postgres-task-read-access.test.ts tests/postgres-projection-graph.test.ts tests/postgres-task-commands.test.ts tests/postgres-supabase-proxy.test.ts tests/relay-client-repoint.test.ts
+      - run: node --import tsx --test tests/relay-postgres-import.test.ts tests/relay-postgres-grant.test.ts tests/business-postgres-schema.test.ts tests/business-postgres-import.test.ts tests/business-postgres-large-row.test.ts tests/membership-postgres-import.test.ts tests/postgres-identity-audit.test.ts tests/postgres-runtime-transaction.test.ts tests/postgres-work-authority.test.ts tests/postgres-ontology-release.test.ts tests/postgres-task-read-access.test.ts tests/postgres-projection-graph.test.ts tests/postgres-task-commands.test.ts tests/postgres-task-intents.test.ts tests/postgres-supabase-proxy.test.ts tests/relay-client-repoint.test.ts
   # Preserve required check names. Empty shards validate the scope without
   # installing dependencies or invoking Node's automatic test discovery.
   tests:

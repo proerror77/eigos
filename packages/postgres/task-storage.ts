@@ -66,13 +66,37 @@ export class PostgresTaskStorage {
       if(intent.owner!==owner||intent.jobId!==taskId||intent.id!==row.id||intent.businessOperationKey!==row.business_key)throw new DomainError('CONFLICT','Stored intent identity is invalid');
       return {...intent,state:String(row.state) as ActionIntent['state']};});
   }
+  async intent(owner:string,id:string):Promise<ActionIntent>{
+    const rows=await this.query(`SELECT id,job_id,state,business_key,CASE WHEN octet_length(body)<=8388608 THEN body END AS body
+      FROM "${this.schema}".action_intents WHERE owner=$1 AND id=$2 LIMIT 2`,[owner,id]);
+    if(!rows.rowCount)throw new DomainError('NOT_FOUND','Action intent not found');
+    const row=rows.rows[0];if(rows.rowCount!==1||typeof row?.body!=='string')throw new DomainError('CONFLICT','Stored intent exceeds its safe read bound');
+    const intent=JSON.parse(row.body) as ActionIntent;
+    if(intent.id!==id||intent.owner!==owner||intent.jobId!==row.job_id||intent.businessOperationKey!==row.business_key)throw new DomainError('CONFLICT','Stored intent identity is invalid');
+    await this.get(owner,intent.jobId);return {...intent,state:String(row.state) as ActionIntent['state']};
+  }
+  async saveIntent(owner:string,intent:ActionIntent):Promise<void>{
+    await this.query('SAVEPOINT eigos_intent_save');
+    try{
+      const current=await this.intent(owner,intent.id);
+      if(intent.owner!==owner||intent.jobId!==current.jobId||intent.businessOperationKey!==current.businessOperationKey||intent.planDigest!==current.planDigest)throw new DomainError('CONFLICT','Action identity changed');
+      const {privateData:_private,...body}=intent,text=JSON.stringify(body);
+      if(Buffer.byteLength(text)>8388608)throw new DomainError('CONFLICT','Intent exceeds its safe runtime bound');
+      const q=`"${this.schema}"`,written=await this.query(`WITH checked AS(SELECT ${q}.eigos_try_jsonb($2::text) IS NOT NULL AS valid),
+        written AS(UPDATE ${q}.action_intents SET state=$1,body=$2 WHERE owner=$3 AND id=$4 AND job_id=$5 AND business_key=$6
+          AND state=$7 AND ${q}.eigos_try_jsonb(body)->>'planDigest'=$8 AND(SELECT valid FROM checked) RETURNING id)
+        SELECT valid,(SELECT count(*) FROM written)=1 AS wrote FROM checked`,[intent.state,text,owner,intent.id,intent.jobId,intent.businessOperationKey,current.state,current.planDigest]);
+      if(written.rowCount!==1||written.rows[0]?.valid!==true)throw new DomainError('INVALID_INPUT','Intent JSON is not representable in PostgreSQL storage');
+      if(written.rows[0].wrote!==true)throw new DomainError('CONFLICT','Action identity or state changed');
+      await this.project(owner,await this.get(owner,intent.jobId),false);
+      await this.query('RELEASE SAVEPOINT eigos_intent_save');
+    }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_intent_save');await this.query('RELEASE SAVEPOINT eigos_intent_save');throw error;}
+  }
   async cancelActions(owner:string,taskId:string):Promise<boolean>{
     let pending=false;
     for(const intent of await this.intents(owner,taskId)){
       pending=cancelTaskIntent(intent,Date.now())||pending;
-      const {privateData:_private,...body}=intent;
-      await this.query(`UPDATE "${this.schema}".action_intents SET state=$1,body=$2 WHERE owner=$3 AND job_id=$4 AND id=$5 AND business_key=$6`,
-        [intent.state,JSON.stringify(body),owner,taskId,intent.id,intent.businessOperationKey]);
+      await this.saveIntent(owner,intent);
     }
     return pending;
   }
@@ -101,6 +125,38 @@ export class PostgresTaskStorage {
         digest:String(row.digest),applied:Number(row.applied)===1,verified:Number(row.applied)===1&&result.kind!=='unknown'?true:undefined,result};
     })};
   }
+  private async project(owner:string,job:Job,full:boolean){
+    const q=`"${this.schema}"`;
+  if(job.service!=='eigos.delegate'||job.delegation?.backendVersion!==BACKEND_VERSION||!job.delegation.ontologyRelease)throw new DomainError('CONFLICT','Task has no current pinned execution context');
+  const graph=await PostgresProjectionGraph.create(this.client,owner,job.delegation.ontologyRelease,this.builder,{now:this.now});
+  if(full)await graph.run(metadata=>projectTaskProgram(metadata,owner,job));
+  if(job.state==='completed'&&(await graph.read(owner,{type:'ServiceRequest',id:job.id})).properties.projectionState==='invalid_source')return;
+  const ledger=await this.ledger(owner,job.id);
+  await graph.run(metadata=>projectExecutionProgram(metadata,owner,job,ledger));
+  const loadRecords=async<T>(table:'plan_grants'|'aftersales_cases',where:string):Promise<T[]>=>{
+    const rows=await this.query(`SELECT CASE WHEN octet_length(body)<=8388608 AND sum(octet_length(body)) OVER()<=8388608 THEN body END AS body
+      FROM ${q}.${table} WHERE owner=$1 AND (${where}) LIMIT 2001`,[owner,job.id]);
+    if(rows.rows.length>2000||rows.rows.some(row=>row.body===null))throw new DomainError('CONFLICT','Task business ledger exceeds its safe read bound');
+    return rows.rows.map(row=>JSON.parse(String(row.body)) as T);
+  };
+  const grantsForPlan=await loadRecords<PlanGrant>('plan_grants','job_id=$2');
+  const cases=await loadRecords<AfterSalesCase>('aftersales_cases','original_job_id=$2 OR remedy_job_id=$2');
+  await graph.run(metadata=>projectBusinessChainProgram(metadata,owner,job,{...ledger,grants:grantsForPlan,cases}));
+  if(!full)return;
+  const grants=await this.query(`SELECT d.revision,d.state,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body,
+    g.revision AS parent_revision,g.state AS parent_state,CASE WHEN octet_length(g.body)<=1048576 THEN g.body END AS parent_body
+    FROM ${q}.security_grants d JOIN ${q}.security_grants g ON g.id=d.parent_id AND g.revision=d.parent_revision
+    WHERE d.owner=$1 AND d.kind='task_data' AND d.state='active' AND ${q}.eigos_try_jsonb(d.body)->>'taskId'=$2 LIMIT 257`,[owner,job.id]);
+  if(grants.rows.length>256||grants.rows.some(row=>row.body===null||row.parent_body===null))throw new SecurityError('POLICY_CHANGED');
+  const bindings=new PostgresTaskBindings(this.client,this.builder);
+  for(const row of grants.rows){
+    const grant=taskDataGrantSchema.parse({...JSON.parse(String(row.body)),revision:Number(row.revision),status:row.state});
+    if(grant.requestRevision!==job.delegation.request.revision)continue;
+    const parent=agentAccessGrantSchema.parse({...JSON.parse(String(row.parent_body)),revision:Number(row.parent_revision),status:row.parent_state});
+    if(grant.ownerKey!==owner||grant.taskId!==job.id||parent.ownerKey!==owner||parent.id!==grant.parentGrant.id||parent.installationId!==grant.installationId)throw new SecurityError('POLICY_CHANGED');
+    await bindings.project(grant,parent,job);
+  }
+  }
   async save(owner:string,supplied:Job):Promise<Job>{
     const job=structuredClone(supplied),q=`"${this.schema}"`;
     const authority=await this.query(`SELECT id FROM ${q}.eigos_lock_runtime_authority()`);
@@ -125,33 +181,7 @@ export class PostgresTaskStorage {
         [job.id,owner,job.contextId,job.state,job.createdAt,job.updatedAt,JSON.stringify(job)]);
       if(written.rowCount!==1||written.rows[0]?.valid!==true)throw new DomainError('INVALID_INPUT','Task JSON is not representable in PostgreSQL storage');
       if(written.rows[0].wrote!==true)throw new DomainError('FORBIDDEN','Task owner mismatch');
-      if(job.service!=='eigos.delegate'||job.delegation?.backendVersion!==BACKEND_VERSION||!job.delegation.ontologyRelease)throw new DomainError('CONFLICT','Task has no current pinned execution context');
-      const graph=await PostgresProjectionGraph.create(this.client,owner,job.delegation.ontologyRelease,this.builder,{now:this.now});
-      await graph.run(metadata=>projectTaskProgram(metadata,owner,job));
-      const ledger=await this.ledger(owner,job.id);
-      await graph.run(metadata=>projectExecutionProgram(metadata,owner,job,ledger));
-      const loadRecords=async<T>(table:'plan_grants'|'aftersales_cases',where:string):Promise<T[]>=>{
-        const rows=await this.query(`SELECT CASE WHEN octet_length(body)<=8388608 AND sum(octet_length(body)) OVER()<=8388608 THEN body END AS body
-          FROM ${q}.${table} WHERE owner=$1 AND (${where}) LIMIT 2001`,[owner,job.id]);
-        if(rows.rows.length>2000||rows.rows.some(row=>row.body===null))throw new DomainError('CONFLICT','Task business ledger exceeds its safe read bound');
-        return rows.rows.map(row=>JSON.parse(String(row.body)) as T);
-      };
-      const grantsForPlan=await loadRecords<PlanGrant>('plan_grants','job_id=$2');
-      const cases=await loadRecords<AfterSalesCase>('aftersales_cases','original_job_id=$2 OR remedy_job_id=$2');
-      await graph.run(metadata=>projectBusinessChainProgram(metadata,owner,job,{...ledger,grants:grantsForPlan,cases}));
-      const grants=await this.query(`SELECT d.revision,d.state,CASE WHEN octet_length(d.body)<=1048576 THEN d.body END AS body,
-        g.revision AS parent_revision,g.state AS parent_state,CASE WHEN octet_length(g.body)<=1048576 THEN g.body END AS parent_body
-        FROM ${q}.security_grants d JOIN ${q}.security_grants g ON g.id=d.parent_id AND g.revision=d.parent_revision
-        WHERE d.owner=$1 AND d.kind='task_data' AND d.state='active' AND ${q}.eigos_try_jsonb(d.body)->>'taskId'=$2 LIMIT 257`,[owner,job.id]);
-      if(grants.rows.length>256||grants.rows.some(row=>row.body===null||row.parent_body===null))throw new SecurityError('POLICY_CHANGED');
-      const bindings=new PostgresTaskBindings(this.client,this.builder);
-      for(const row of grants.rows){
-        const grant=taskDataGrantSchema.parse({...JSON.parse(String(row.body)),revision:Number(row.revision),status:row.state});
-        if(grant.requestRevision!==job.delegation.request.revision)continue;
-        const parent=agentAccessGrantSchema.parse({...JSON.parse(String(row.parent_body)),revision:Number(row.parent_revision),status:row.parent_state});
-        if(grant.ownerKey!==owner||grant.taskId!==job.id||parent.ownerKey!==owner||parent.id!==grant.parentGrant.id||parent.installationId!==grant.installationId)throw new SecurityError('POLICY_CHANGED');
-        await bindings.project(grant,parent,job);
-      }
+      await this.project(owner,job,true);
       await this.query('RELEASE SAVEPOINT eigos_task_save');return job;
     }catch(error){await this.query('ROLLBACK TO SAVEPOINT eigos_task_save');await this.query('RELEASE SAVEPOINT eigos_task_save');throw error;}
   }

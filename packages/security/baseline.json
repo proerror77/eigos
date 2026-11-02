@@ -2910,7 +2910,7 @@
     {
       "id": "task-service",
       "file": "packages/core/tasks.ts",
-      "sourceDigest": "edb485aa2daea235cc633849331b2eb502342f496d0cea1811c8ad194a5cb357",
+      "sourceDigest": "0420c78228cab6189dfd8a7464c369d79231951fd24827128d681f5f84f75df5",
       "channels": [
         "http",
         "mcp",
@@ -3402,7 +3402,7 @@
     {
       "id": "security-principal",
       "file": "packages/core/domain.ts",
-      "sourceDigest": "6648fc927a8735cc4bf5ea2e6ce8ff30a976050a53b114407dda300b7110c662",
+      "sourceDigest": "62faf9bac7c98eb55cd938ce9e84989aca8b2e0a1a220175d5dc284b875bd3f0",
       "channels": [
         "authorization_control"
       ],
@@ -5975,7 +5975,7 @@
     {
       "id": "postgres-task-storage",
       "file": "packages/postgres/task-storage.ts",
-      "sourceDigest": "20f324af13d24956fbcec1b78d60c856e463ec10a5a18bf13a54be1bc20c88e6",
+      "sourceDigest": "8cb9ece5b7503d6f7ff9e9ba8856e4a83c88ca452fd7cbfebe036d654d22f5bd",
       "channels": [
         "internal"
       ],
@@ -5987,7 +5987,7 @@
     {
       "id": "postgres-task-commands",
       "file": "packages/postgres/task-command-service.ts",
-      "sourceDigest": "db7893cd93c58052366bcb28cfaa0b28a6d2e8e06da4942ff8af6f99889e18e4",
+      "sourceDigest": "1deccadcc32d0e26fbf712e996b9a79e5660b299a4ce09f295c0c5da0d7732ba",
       "channels": [
         "internal"
       ],
@@ -6146,7 +6146,7 @@
     {
       "id": "task-reply-program",
       "file": "packages/core/reply-program.ts",
-      "sourceDigest": "7d3b24a96ddcf919c92804b343ac3ac6e619ad2881988cd4fcbce255df04c933",
+      "sourceDigest": "2f8e6a5c9e38d7f8eff2e485e9aab7415147cdb54777101512e1b080cd77b452",
       "channels": [
         "internal"
       ],
@@ -6165,6 +6165,18 @@
       "content": "Independent PostgreSQL Worker heartbeat transaction",
       "currentControl": "Only the original unexpired token expiry can change; current runtime/subject/parent/data/policy/epoch/task state and strict persisted contracts; dedicated client capacity; invalid metadata rolls back and uncertain commits evict",
       "targetControl": "Only the original unexpired token expiry can change; current runtime/subject/parent/data/policy/epoch/task state and strict persisted contracts; dedicated client capacity; invalid metadata rolls back and uncertain commits evict",
+      "stage": "S5"
+    },
+    {
+      "id": "task-technical-resume",
+      "file": "packages/core/technical-resume.ts",
+      "sourceDigest": "d1a1579d2b29fdb5bba2fd167c0514a4f2a3b631f2d3b2ce8b85bcd39dca1fe9",
+      "channels": [
+        "internal"
+      ],
+      "content": "Shared original-task technical recovery transition",
+      "currentControl": "Exact paused task revision, context and read-only operation boundary; preserves original request, cumulative usage, fixed grant and authority; restores only provable original delivery text and never issues permission",
+      "targetControl": "Exact paused task revision, context and read-only operation boundary; preserves original request, cumulative usage, fixed grant and authority; restores only provable original delivery text and never issues permission",
       "stage": "S5"
     }
   ]
