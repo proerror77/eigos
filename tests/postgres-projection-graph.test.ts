@@ -65,7 +65,11 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
       sourceEventId:'projection-place-observation',observedAt:at,evidenceLevel:'synthetic',scope:'public_locations',contentDigest:digest(placeProperties),
       subjects:[{object:place,digest:digest(placeProperties),linksDigest:digest([])}],safeSummary:'Synthetic projection test'}}],links:[{type:'PlaceEvidence',from:place,to:receipt}]};
     graph.ingest(owner,placeBatch,source);
-    await postgresBusinessTransaction(client,schema,authority,async c=>{const target=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed});await target.ingest(owner,placeBatch,source);});
+    await postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref,undefined,{now:()=>fixed});await target.ingest(owner,placeBatch,source);
+      const read=await target.read(owner,place);read.properties.name='Caller mutation';
+      assert.equal((await target.read(owner,place)).properties.name,'Synthetic place','returned views cannot mutate a transaction cache');
+    });
     await compare();
     const stale:ObjectBatch={objects:[{ref:place,expectedRevision:99,properties:{placeId:place.id,displayTitle:'Stale change',name:'Stale change'}}]};
     assert.throws(()=>graph.ingest(owner,stale,source),/revision changed/);
@@ -93,6 +97,14 @@ test('PostgreSQL shared projection programs preserve SQLite versions, relationsh
       assert(!second.items.some(item=>first.items.some(prior=>prior.ref.id===item.ref.id)));
     });
     assert.throws(()=>graph.related(owner,{type:'ServiceRequest',id},'instructions',{remaining:1000}),IncompleteRelationshipRead);await compare();
+    const orphan={type:'RequestInstruction',id:'missing-required-request'};
+    const missing:ObjectBatch={objects:[{ref:orphan,properties:{...instructions.objects[0]!.properties,id:orphan.id}}]};
+    assert.throws(()=>graph.ingest(owner,missing,taskSource),/Relationship cardinality/);
+    await postgresBusinessTransaction(client,schema,authority,async c=>{
+      const target=await PostgresProjectionGraph.create(c,owner,release.ref);
+      await assert.rejects(target.ingest(owner,missing,taskSource),/Relationship cardinality/);
+      await assert.rejects(target.read(owner,orphan),/not found/);
+    });await compare();
     let escaped:PostgresProjectionGraph|undefined;
     await postgresBusinessTransaction(client,schema,authority,async c=>{escaped=await PostgresProjectionGraph.create(c,owner,release.ref);});
     await assert.rejects(postgresBusinessTransaction(client,schema,authority,async()=>escaped!.read(owner,place)),/AUTHORIZATION_REQUIRED/);

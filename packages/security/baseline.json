@@ -5927,7 +5927,7 @@
     {
       "id": "postgres-projection-graph",
       "file": "packages/postgres/projection-graph.ts",
-      "sourceDigest": "9af97ec4a1f75f86348b27c331e94ca69e5848f794caa495ac6bf5d4557e77a3",
+      "sourceDigest": "a6dc872f190186f59b5beb08f9c374e00c09c01811cffadeb1fd782227fad575",
       "channels": [
         "internal"
       ],

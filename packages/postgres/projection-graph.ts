@@ -21,7 +21,9 @@ type RawObject={view:ObjectView;definitionDigest:string;body:string};
 
 /** Privileged projection storage only, never a public ontology reader. The
  * enclosing task/source command supplies its authorization and mutation fence.
- * Definitions come from the exact shared immutable release, not a local copy. */
+ * Definitions come from the exact shared immutable release, not a local copy.
+ * Object writes during its lifetime use this graph; direct SQL mutation must
+ * finish before a graph is constructed. Caches never cross its transaction. */
 export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata {
   readonly security=true;
   readonly model:OntologyModel;
@@ -32,6 +34,9 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private readonly token:object;
   private readonly scoped:boolean;
   private readonly compatibility=new Map<string,Promise<boolean>>();
+  private readonly objects=new Map<string,RawObject|undefined>();
+  private readonly deleted=new Map<string,{ref:ObjectRef;revision:number;deletedAt:string}|undefined>();
+  private objectBytes=0;
   private constructor(private readonly client:Client,private readonly owner:string,
     release:Awaited<ReturnType<typeof postgresOntologyRelease>>,private readonly builder:StagedKernelBuilder|undefined,now:()=>number) {
     this.schema=postgresBusinessSchema(client);this.token=postgresBusinessToken(client);
@@ -67,6 +72,14 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     const value=Number(this.one(result)[field]);if(!Number.isSafeInteger(value)||value<0)throw new DomainError('CONFLICT','Invalid projection count');return value;
   }
   private charge(budget:ReadBudget,count=1){budget.remaining-=count;if(budget.remaining<0)throw new DomainError('CONFLICT','Ontology read work budget exhausted; narrow the query');}
+  private cacheObject(ref:ObjectRef,value:RawObject|undefined){
+    const key=JSON.stringify([ref.type,ref.id]),old=this.objects.get(key);
+    this.objectBytes-=old?Buffer.byteLength(old.body):0;this.objects.delete(key);
+    const bytes=value?Buffer.byteLength(value.body):0;
+    while(this.objects.size>=512||this.objectBytes+bytes>8388608){const first=this.objects.keys().next().value;if(first===undefined)break;
+      const removed=this.objects.get(first);this.objectBytes-=removed?Buffer.byteLength(removed.body):0;this.objects.delete(first);}
+    this.objects.set(key,value);this.objectBytes+=bytes;
+  }
   private async objectDefinition(type:string,storedDigest:string,properties:Record<string,unknown>){
     const currentDigest=this.model.fingerprint(type);if(storedDigest===currentDigest)return;
     const key=digest(['object',type,storedDigest,currentDigest,properties]);
@@ -84,21 +97,33 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
   private async raw(ref:ObjectRef,budget:ReadBudget,allowTombstone=false):Promise<RawObject>{
     objectRefSchema.parse(ref);this.model.object(ref.type);this.charge(budget);
     if(isVirtualRef(ref))throw new DomainError('FORBIDDEN','Network objects require their authorized read view');
+    const key=JSON.stringify([ref.type,ref.id]);
+    if(this.objects.has(key)){
+      const cached=this.objects.get(key);if(!cached)throw new DomainError('NOT_FOUND','Ontology object not found');
+      if(cached.view.tombstone&&!allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
+      return structuredClone(cached);
+    }
     const values:unknown[]=[],where=this.owned(values,'o');values.push(ref.type,ref.id,this.ontologyId);
     const rows=await this.sql(`SELECT o.revision,o.definition_digest,CASE WHEN octet_length(o.body)<=1048576 THEN o.body END AS body,
       deleted.revision AS deleted_revision,deleted.deleted_at FROM ${this.table('objects')} o LEFT JOIN "${this.schema}".ontology_tombstones deleted
         ON deleted.ontology_id=$${values.length} AND deleted.owner=o.owner AND deleted.type=o.type AND deleted.id=o.id
       WHERE ${where} AND o.type=$${values.length-2} AND o.id=$${values.length-1} LIMIT 2`,values);
-    if(rows.rowCount===0)throw new DomainError('NOT_FOUND','Ontology object not found');
+    if(rows.rowCount===0){this.cacheObject(ref,undefined);throw new DomainError('NOT_FOUND','Ontology object not found');}
     const row=this.one(rows);if(row.body===null)throw new DomainError('CONFLICT','Ontology object exceeds its safe read bound');
+    if(row.deleted_revision!==null&&!allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
     const body=JSON.parse(String(row.body));
-    if(row.deleted_revision!==null && !allowTombstone)throw new DomainError('NOT_FOUND','Ontology object was tombstoned');
     const revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new DomainError('CONFLICT','Invalid ontology revision');
+    const deletedRevision=row.deleted_revision===null?undefined:Number(row.deleted_revision);
+    if(deletedRevision!==undefined&&(!Number.isSafeInteger(deletedRevision)||deletedRevision<1))throw new DomainError('CONFLICT','Invalid tombstone revision');
     if(!body || !body.properties || typeof body.properties!=='object' || Array.isArray(body.properties) || !body.source || typeof body.createdAt!=='string'
       || body.properties[this.model.object(ref.type).primaryKey]!==ref.id)throw new DomainError('CONFLICT','Invalid ontology object body');
     await this.objectDefinition(ref.type,String(row.definition_digest),body.properties);
-    return {definitionDigest:String(row.definition_digest),body:String(row.body),view:{ref,revision,properties:body.properties,source:body.source,createdAt:body.createdAt,
-      ...(row.deleted_revision!==null?{tombstone:{revision:Number(row.deleted_revision),deletedAt:String(row.deleted_at)}}:{})}};
+    const result:RawObject={definitionDigest:String(row.definition_digest),body:String(row.body),view:{ref,revision,properties:body.properties,source:body.source,createdAt:body.createdAt,
+      ...(deletedRevision!==undefined?{tombstone:{revision:deletedRevision,deletedAt:String(row.deleted_at)}}:{})}};
+    this.cacheObject(ref,result);
+    if(this.deleted.size>=512)this.deleted.clear();
+    this.deleted.set(key,result.view.tombstone?{ref,revision:result.view.tombstone.revision,deletedAt:result.view.tombstone.deletedAt}:undefined);
+    return structuredClone(result);
   }
   private project(object:ObjectView,target:string,selected?:string[]):ObjectView {
     const definitions=this.model.properties(target),fields=selected??Object.keys(definitions).filter(name=>!definitions[name]!.restricted&&!definitions[name]!.derived),properties:Record<string,unknown>={};
@@ -109,14 +134,16 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
     }
     const {readContext:_readContext,...source}=object.source;return {...object,source,properties};
   }
-  async read(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){this.assertOpen(owner);return this.project((await this.raw(ref,budget)).view,ref.type);}
-  async readPrivate(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){this.assertOpen(owner);return structuredClone((await this.raw(ref,budget)).view);}
+  async read(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){this.assertOpen(owner);const object=await this.raw(ref,budget);this.assertOpen(owner);return this.project(object.view,ref.type);}
+  async readPrivate(owner:string,ref:ObjectRef,budget:ReadBudget={remaining:1000}){this.assertOpen(owner);const object=await this.raw(ref,budget);this.assertOpen(owner);return structuredClone(object.view);}
   async tombstone(owner:string,ref:ObjectRef){
     this.assertOpen(owner);objectRefSchema.parse(ref);
+    const key=JSON.stringify([ref.type,ref.id]);if(this.deleted.has(key))return structuredClone(this.deleted.get(key));
     const rows=await this.sql(`SELECT revision,deleted_at FROM "${this.schema}".ontology_tombstones WHERE ontology_id=$1 AND owner=$2 AND type=$3 AND id=$4 LIMIT 2`,[this.ontologyId,this.owner,ref.type,ref.id]);
-    if(rows.rowCount===0)return undefined;if(rows.rowCount!==1)throw new DomainError('CONFLICT','Ambiguous tombstone');
+    if(this.deleted.size>=512)this.deleted.clear();
+    if(rows.rowCount===0){this.deleted.set(key,undefined);return undefined;}if(rows.rowCount!==1)throw new DomainError('CONFLICT','Ambiguous tombstone');
     const row=this.one(rows),revision=Number(row.revision);if(!Number.isSafeInteger(revision)||revision<1)throw new DomainError('CONFLICT','Invalid tombstone revision');
-    return {ref,revision,deletedAt:String(row.deleted_at)};
+    const value={ref,revision,deletedAt:String(row.deleted_at)};this.deleted.set(key,value);return structuredClone(value);
   }
   async containsLinks(owner:string,links:LinkWrite[]):Promise<boolean>{
     this.assertOpen(owner);
@@ -199,6 +226,26 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
       ON CONFLICT(${columns}) DO UPDATE SET revision=dataset_row.revision+1 RETURNING revision`,values);
     if(!Number.isSafeInteger(Number(this.one(result).revision)))throw new DomainError('CONFLICT','Dataset revision exceeds its supported range');
   }
+  /** One round trip for the same per-side cardinality checks. PostgreSQL
+   * evaluates every touched endpoint; only a violation or tombstone returns. */
+  private async cardinality(refs:ObjectRef[]):Promise<Set<string>>{
+    if(!refs.length)return new Set();
+    const checks=refs.flatMap(ref=>this.model.sides(ref.type).filter(({side})=>!side.many||side.required)
+      .map(({link,side,direction})=>({type:ref.type,id:ref.id,link:link.id,outgoing:direction==='forward',many:!!side.many,required:!!side.required})))
+      .map((check,sequence)=>({...check,sequence}));
+    const encoded=JSON.stringify(checks);if(Buffer.byteLength(encoded)>8388608)throw new DomainError('CONFLICT','Relationship checks exceed their bounded batch size');
+    const rows=await this.sql(`WITH touched AS(SELECT * FROM jsonb_to_recordset($3::jsonb) AS r(type text,id text)),
+      deleted AS(SELECT t.type,t.id FROM "${this.schema}".ontology_tombstones t JOIN touched r ON r.type=t.type AND r.id=t.id WHERE t.owner=$1 AND t.ontology_id=$2),
+      checks AS(SELECT * FROM jsonb_to_recordset($4::jsonb) AS c(type text,id text,link text,outgoing boolean,many boolean,required boolean,sequence integer)),
+      violation AS(SELECT c.type,c.id FROM checks c LEFT JOIN ${this.table('links')} l ON l.owner=$1 ${this.scoped?'AND l.ontology_id=$2':''}
+        AND l.type=c.link AND((c.outgoing AND l.from_type=c.type AND l.from_id=c.id) OR(NOT c.outgoing AND l.to_type=c.type AND l.to_id=c.id))
+        WHERE NOT EXISTS(SELECT 1 FROM deleted d WHERE d.type=c.type AND d.id=c.id)
+        GROUP BY c.sequence,c.type,c.id,c.many,c.required HAVING(NOT c.many AND count(l.type)>1) OR(c.required AND count(l.type)=0) LIMIT 1)
+      SELECT 'deleted' AS kind,type,id FROM deleted UNION ALL SELECT 'violation' AS kind,type,id FROM violation`,[this.owner,this.ontologyId,JSON.stringify(refs),encoded]);
+    if(rows.rows.some(row=>row.kind==='violation'))fail('Relationship cardinality violation');
+    if(rows.rows.some(row=>row.kind!=='deleted'||typeof row.type!=='string'||typeof row.id!=='string'))throw new DomainError('CONFLICT','Invalid relationship check result');
+    return new Set(rows.rows.map(row=>JSON.stringify([row.type,row.id])));
+  }
   async ingest(owner:string,input:ObjectBatch,provenance:ObjectSource):Promise<void>{
     this.assertOpen(owner);
     if(Buffer.byteLength(JSON.stringify(input))>1000000)fail('Ontology import byte limit exceeded');
@@ -241,6 +288,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         await this.sql(`INSERT INTO ${this.table('objects')}(${columns}) VALUES(${values.map((_,i)=>'$'+(i+1)).join(',')})
           ON CONFLICT(${conflict}) DO UPDATE SET revision=excluded.revision,definition_digest=excluded.definition_digest,body=excluded.body`,values);
         await this.remember(object.ref,revision,this.model.fingerprint(object.ref.type),body);
+        this.cacheObject(object.ref,{body,definitionDigest:this.model.fingerprint(object.ref.type),view:{ref:object.ref,revision,properties,source,createdAt}});
         changed=true;touched.set(key(object.ref),object.ref);
       }
       for(const [remove,edges] of [[true,batch.removeLinks],[false,batch.links]] as const)for(const edge of edges){
@@ -281,14 +329,9 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
         if(ref.success){await this.raw(ref.data,{remaining:1});return;}for(const child of Object.values(value))await inspect(child);
       };
       for(const object of batch.objects.filter(object=>object.ref.type==='ServiceRequest'))await inspect(object.properties.conditions);
+      const tombstoned=await this.cardinality([...touched.values()]);
       for(const ref of touched.values()){
-        if(await this.tombstone(owner,ref))continue;
-        for(const {link,side,direction} of this.model.sides(ref.type)){
-          if(side.many&&!side.required)continue;
-          const prefix=direction==='forward'?'from':'to',values:unknown[]=[],where=this.owned(values);values.push(link.id,ref.type,ref.id);const n=values.length;
-          const count=this.count(await this.sql(`SELECT count(*) AS n FROM ${this.table('links')} WHERE ${where} AND type=$${n-2} AND ${prefix}_type=$${n-1} AND ${prefix}_id=$${n}`,values));
-          if(!side.many&&count>1||side.required&&count===0)fail('Relationship cardinality violation');
-        }
+        if(tombstoned.has(key(ref)))continue;
         if(ref.type==='Proposal'){
           const proposal=(await this.raw(ref,{remaining:1})).view,values:unknown[]=[],where=this.owned(values);values.push(ref.id);
           if(proposal.properties.kind==='goal'){
@@ -311,6 +354,7 @@ export class PostgresProjectionGraph implements GraphStorage,ProjectionMetadata 
       if(changed)await this.bump();
       await this.sql('RELEASE SAVEPOINT eigos_projection_import');
     }catch(error){
+      this.objects.clear();this.deleted.clear();this.objectBytes=0;
       try{await this.sql('ROLLBACK TO SAVEPOINT eigos_projection_import');await this.sql('RELEASE SAVEPOINT eigos_projection_import');}
       catch(rollback){throw new Error('Projection rollback failed; discard the transaction',{cause:rollback});}
       throw error;
