@@ -4208,7 +4208,7 @@
     {
       "id": "native-model-mcp",
       "file": "packages/coordinator/ontology-mcp.ts",
-      "sourceDigest": "39bfb63eabcbbf92f683250c66b463e40d8f4c7c7a8b040f8601dc7e5938e1e4",
+      "sourceDigest": "e37ccbc1f62ff066cd41d6de637873de8f6d4a8a1dde4024b2e514a817deda9e",
       "channels": [
         "model"
       ],
@@ -6011,7 +6011,7 @@
     {
       "id": "postgres-worker-store",
       "file": "packages/postgres/worker-store.ts",
-      "sourceDigest": "b13fcfbe836613aa39b4c65fabc3a90233e27bb4d34a00c1a0119519be171178",
+      "sourceDigest": "798e8a0b6ad3d17fd067462e67886655b6553b2e5339ede051162b861c0dba60",
       "channels": [
         "internal"
       ],
@@ -6230,7 +6230,7 @@
     {
       "id": "postgres-ontology-metadata",
       "file": "packages/postgres/ontology-metadata.ts",
-      "sourceDigest": "94fbbdb19400e338a383d6960fbfc0aa18cebe8902d956809fdb5cbf75ec7c29",
+      "sourceDigest": "59deb8f8877593a4bc3ec7d0c51d173bc1a12850629c958d0b7a4271993c4e23",
       "channels": [
         "internal"
       ],
@@ -6321,6 +6321,18 @@
       "content": "Shared original-task planning state and checked read program",
       "currentControl": "One bounded receipt, context, instruction, proposal and snapshot program for synchronous and asynchronous storage; host-provided current authority metadata only, actual read/receipt effects, fork/adopt after commit, no business or provider execution authority",
       "targetControl": "One bounded receipt, context, instruction, proposal and snapshot program for synchronous and asynchronous storage; host-provided current authority metadata only, actual read/receipt effects, fork/adopt after commit, no business or provider execution authority",
+      "stage": "S5"
+    },
+    {
+      "id": "postgres-native-planning-session",
+      "file": "packages/postgres/native-planning-session.ts",
+      "sourceDigest": "c2b2bebe1cca6ca2f172f2e4e8ad6c4aa6e87ec55650b215931baba3d30db285",
+      "channels": [
+        "internal"
+      ],
+      "content": "PostgreSQL native model session and durable planning receipts",
+      "currentControl": "Original Worker claim and registered model; fresh bounded read snapshots, actual influence and receipt commit before data delivery, serialized RPCs with state fork/adopt only after commit, rejected reads cannot support a decision, no model/provider execution in SQL or new business authority",
+      "targetControl": "Original Worker claim and registered model; fresh bounded read snapshots, actual influence and receipt commit before data delivery, serialized RPCs with state fork/adopt only after commit, rejected reads cannot support a decision, no model/provider execution in SQL or new business authority",
       "stage": "S5"
     }
   ]

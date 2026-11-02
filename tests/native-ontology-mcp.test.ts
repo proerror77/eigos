@@ -259,3 +259,22 @@ test('native reasoning awaits SQL-shaped authorization and durable run evidence 
   assert.deepEqual(result.output,{message:'Actual transport receipt'});
  }finally{await f.close();}
 });
+
+test('native decision remains unfrozen when the outer read or transaction fails after receipt acceptance',async()=>{
+ let accepting=false,rejectCommit=true;
+ const f=await fixture(undefined,undefined,legacy=>({asynchronous:true,graph:{security:true},request:legacy.request,
+  usesTaskContext:()=>legacy.usesTaskContext(),receipts:()=>legacy.receipts(),lastReceipt:()=>legacy.lastReceipt(),readBudget:()=>legacy.readBudget(),
+  async catalog(){return legacy.catalog();},async authorizeModel(){},async call(...args){return legacy.call(...args);},
+  async acceptReceipts(ids){legacy.acceptReceipts(ids);accepting=true;},
+  async runNativeRead(action){const result=await action();if(accepting&&rejectCommit)throw new SecurityError('POLICY_CHANGED');return result;},
+ }));
+ try{
+  const context=value(await f.client.callTool({name:'read_task_context',arguments:{}}));
+  const args={receiptIds:[context.receipt.id],decisionJson:JSON.stringify({message:'Rejected outer transaction'})};
+  const rejected=await f.client.callTool({name:'submit_decision',arguments:args});assert.equal(rejected.isError,true);
+  assert.throws(()=>f.mcp.result(),/did not submit/);
+  rejectCommit=false;
+  const accepted=await f.client.callTool({name:'submit_decision',arguments:{...args,decisionJson:JSON.stringify({message:'Corrected same-session decision'})}});
+  assert(!accepted.isError,JSON.stringify(accepted));assert.deepEqual(f.mcp.result().output,{message:'Corrected same-session decision'});
+ }finally{await f.close();}
+});

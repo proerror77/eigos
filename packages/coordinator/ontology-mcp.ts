@@ -88,29 +88,34 @@ export async function openOntologyMcp(session: NativePlanningSession, signal: Ab
     return code;
   };
   const active = () => { signal.throwIfAborted(); if (closed) throw new Error('Ontology MCP session closed'); };
-  const respond = (name: string, action: () => unknown): CallToolResult|Promise<CallToolResult> => {
+  let responses:Promise<unknown>=Promise.resolve();
+  const respond = <T>(name: string, action: () => T|Promise<T>, complete:(value:T)=>unknown=value=>value): CallToolResult|Promise<CallToolResult> => {
     const span = trace.start('server_tool', name); let failed = false;
     let stage:'authority'|'tool'|'model_output'='authority';
-    if(isAsyncNativePlanningSession(session))return(async()=>{
+    if(isAsyncNativePlanningSession(session)){const execute=async():Promise<CallToolResult>=>{
       try{
         active();
-        const result=await session.runNativeRead(async()=>{
+        const value=await session.runNativeRead(async()=>{
           active();stage='tool';const value=await action();stage='model_output';
           await session.authorizeModel(modelChannelId);active();return value;
         });
-        return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};
+        const result=complete(value);return {content:[{type:'text',text:JSON.stringify(result)}],structuredContent:{result}};
       }catch(error){failed=true;const code=reject(name,stage,error);return {isError:true,content:[{type:'text',text:JSON.stringify({error:code,message:error instanceof SecurityError?error.reason:error instanceof Error?error.message:'Ontology request rejected'})}]};}
       finally{trace.end(span,failed?'failed':'completed');}
-    })();
+    };const pending=responses.then(execute,execute);responses=pending;return pending;}
     try {
-      active(); const result = authorized(() => {
-        const read = () => { authority?.assertCurrent(); stage='tool'; const value = action(); stage='model_output'; session.authorizeModel(modelChannelId); return value; };
+      active(); const value = authorized(() => {
+        const read = () => {
+          authority?.assertCurrent(); stage='tool'; const value = action();
+          if(value && (typeof value==='object'||typeof value==='function') && 'then'in value && typeof value.then==='function')throw new Error('Synchronous native reads cannot await storage');
+          stage='model_output'; session.authorizeModel(modelChannelId); return value as T;
+        };
         // The read, its receipt and its final egress check are synchronous.
         // Share proofs only inside this RPC; writes/time changes still invalidate
         // them, and the next request always starts a fresh snapshot.
         return session.graph.security ? session.graph.security.readSnapshot(read) : read();
       });
-      return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
+      const result=complete(value);return { content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: { result } };
     } catch (error) {
       failed = true;
       const code=reject(name,stage,error);
@@ -140,12 +145,13 @@ export async function openOntologyMcp(session: NativePlanningSession, signal: Ab
       if (validation && !validation.success) throw new Error('Invalid final decision: ' + validation.error.issues.map(issue => `${issue.path.join('.')}: ${issue.message}`).join('; ').slice(0, 1600));
       const candidate = { output, digest: digest(output), receiptIds: args.receiptIds };
       if (!session.usesTaskContext() && (!session.receipts().some(r => r.tool === 'describe_ontology' && r.status === 'ok') || !session.receipts().some(r => r.tool === 'query_ontology' && r.status === 'ok'))) throw new Error('The model skipped required ontology reads');
-      const commit=()=>{
-        if(decision){if(digest(candidate)!==digest(decision))throw new Error('A different decision was already submitted');}else decision=candidate;
-        return {decisionDigest:decision.digest,sessionId,taskId:session.request.id,execution:'not_dispatched'};
-      };
-      if(isAsyncNativePlanningSession(session))return session.acceptReceipts(args.receiptIds).then(commit);
-      session.acceptReceipts(args.receiptIds);return commit();
+      if(isAsyncNativePlanningSession(session))return session.acceptReceipts(args.receiptIds).then(()=>candidate);
+      session.acceptReceipts(args.receiptIds);return candidate;
+    }, candidate=>{
+      // Freeze only after the complete authorized read/transaction returned.
+      // A failed egress or COMMIT cannot leave a rejected proposal installed.
+      if(decision){if(digest(candidate)!==digest(decision))throw new Error('A different decision was already submitted');}else decision=candidate;
+      return {decisionDigest:decision.digest,sessionId,taskId:session.request.id,execution:'not_dispatched'};
     }));
     return server;
   };

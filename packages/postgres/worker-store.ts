@@ -10,7 +10,7 @@ import type {StagedKernelBuilder} from '../ontology/seed-definition.js';
 import {SecurityError} from '../security/errors.js';
 import type {PostgresDatabase} from './database.js';
 import {postgresBusinessSchema,postgresBusinessAuthorityDigest,postgresConstrainReadDeadline,postgresRequireLeaseAtCommit} from './runtime-transaction.js';
-import {postgresClaimActive,postgresClaimSnapshotMatches,postgresWorkReference} from './work-claim.js';
+import {postgresClaimActive,postgresClaimSnapshotMatches,postgresWorkReference,type PostgresWorkReference} from './work-claim.js';
 import {postgresWorkerAdmission} from './worker-admission.js';
 import {PostgresTaskStorage} from './task-storage.js';
 import {postgresWorkerRequest} from './worker-input.js';
@@ -107,13 +107,13 @@ export class PostgresWorkerStore {
     return admission.authority.id===claim.securityAuthorityId&&admission.authority.authEpoch===claim.securityEpoch&&admission.policyRevision===claim.securityPolicyRevision;
   });}
   renew(claim:WorkClaim,leaseMs:number){return this.db.renewClaim(claim,leaseMs,this.policy);}
-  readRequest(claim:WorkClaim,modelChannel:string){
+  readRequest(claim:PostgresWorkReference,modelChannel:string){
     const reference=postgresWorkReference(claim);
     return this.db.run(client=>postgresWorkerRequest(client,reference,this.policy,modelChannel,this.kernel,fence=>this.db.inspectClaim(fence,this.policy)));
   }
   /** Host-side tool reads/receipt bookkeeping only. The callback must not run
    * models/providers or mutate task, policy or claim state. */
-  readEvidence<T>(claim:WorkClaim,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
+  readEvidence<T>(claim:PostgresWorkReference,modelChannel:string,action:(authorization:PostgresTaskReadAuthorization,admission:PostgresTaskReadAdmission,
     principal:Principal,client:Client)=>Promise<T>):Promise<T>{
     const reference=postgresWorkReference(claim);
     return this.db.run(client=>withPostgresWorkerEvidenceAuthorization(client,reference,this.policy,
